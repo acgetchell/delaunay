@@ -85,7 +85,7 @@ use crate::geometry::traits::coordinate::{
 /// - [`CoordinateConversionError::NonFiniteValue`] if any coordinate is
 ///   NaN or infinite.
 pub fn sos_orientation_sign<const D: usize>(
-    points: &[Point<f64, D>],
+    points: &[Point<D>],
 ) -> Result<i32, CoordinateConversionError> {
     if points.len() != D + 1 {
         return Err(CoordinateConversionError::InvalidSimplexPointCount {
@@ -197,8 +197,8 @@ pub fn sos_orientation_sign<const D: usize>(
 /// - [`CoordinateConversionError::NonFiniteValue`] if any coordinate is
 ///   NaN or infinite.
 pub fn sos_insphere_sign<const D: usize>(
-    simplex: &[Point<f64, D>],
-    test: &Point<f64, D>,
+    simplex: &[Point<D>],
+    test: &Point<D>,
 ) -> Result<i32, CoordinateConversionError> {
     if simplex.len() != D + 1 {
         return Err(CoordinateConversionError::InvalidSimplexPointCount {
@@ -411,7 +411,6 @@ pub(crate) fn exact_det_sign<const N: usize>(matrix: &Matrix<N>) -> i32 {
 mod tests {
     use super::*;
     use crate::geometry::point::Point;
-    use crate::geometry::traits::coordinate::Coordinate;
 
     // =========================================================================
     // GENERIC HELPER FUNCTIONS
@@ -421,19 +420,19 @@ mod tests {
     ///
     /// Construction: origin + (D−1) axis-aligned unit vectors (last coord = 0)
     /// + a barycentric combination with weight 0.5 in each active axis.
-    fn degenerate_orient_points<const D: usize>() -> Vec<Point<f64, D>> {
+    fn degenerate_orient_points<const D: usize>() -> Vec<Point<D>> {
         let mut points = Vec::with_capacity(D + 1);
-        points.push(Point::new([0.0; D]));
+        points.push(Point::from_validated_coords([0.0; D]));
         for i in 0..D.saturating_sub(1) {
             let mut coords = [0.0; D];
             coords[i] = 1.0;
-            points.push(Point::new(coords));
+            points.push(Point::from_validated_coords(coords));
         }
         let mut bary = [0.0; D];
         for c in bary.iter_mut().take(D.saturating_sub(1)) {
             *c = 0.5;
         }
-        points.push(Point::new(bary));
+        points.push(Point::from_validated_coords(bary));
         points
     }
 
@@ -442,25 +441,25 @@ mod tests {
     /// The simplex is the origin plus D axis-aligned unit vectors.
     /// The test point (1,1,…,1) lies on the circumsphere (distance from
     /// center = circumradius for all D ≥ 2).
-    fn cospherical_points<const D: usize>() -> (Vec<Point<f64, D>>, Point<f64, D>) {
+    fn cospherical_points<const D: usize>() -> (Vec<Point<D>>, Point<D>) {
         let mut simplex = Vec::with_capacity(D + 1);
-        simplex.push(Point::new([0.0; D]));
+        simplex.push(Point::from_validated_coords([0.0; D]));
         for i in 0..D {
             let mut coords = [0.0; D];
             coords[i] = 1.0;
-            simplex.push(Point::new(coords));
+            simplex.push(Point::from_validated_coords(coords));
         }
-        (simplex, Point::new([1.0; D]))
+        (simplex, Point::from_validated_coords([1.0; D]))
     }
 
     /// Translate a point by a deterministic per-axis offset.
-    fn translate_point<const D: usize>(p: &Point<f64, D>) -> Point<f64, D> {
+    fn translate_point<const D: usize>(p: &Point<D>) -> Point<D> {
         const OFFSETS: [f64; 5] = [1e6, -5e5, 7.77, -3.33e4, 42.0];
         let mut coords = [0.0; D];
         for (i, c) in coords.iter_mut().enumerate() {
             *c = p.coords()[i] + OFFSETS[i % OFFSETS.len()];
         }
-        Point::new(coords)
+        Point::from_validated_coords(coords)
     }
 
     // =========================================================================
@@ -539,7 +538,7 @@ mod tests {
 
                 #[test]
                 fn [<test_sos_orientation_ $dim d_all_identical_returns_err>]() {
-                    let points = vec![Point::new([0.0; $dim]); $dim + 1];
+                    let points = vec![Point::from_validated_coords([0.0; $dim]); $dim + 1];
                     assert_eq!(
                         sos_orientation_sign(&points),
                         Err(CoordinateConversionError::DegenerateSimplex {
@@ -551,8 +550,8 @@ mod tests {
 
                 #[test]
                 fn [<test_sos_insphere_ $dim d_all_identical_returns_err>]() {
-                    let simplex = vec![Point::new([1.0; $dim]); $dim + 1];
-                    let test_pt = Point::new([1.0; $dim]);
+                    let simplex = vec![Point::from_validated_coords([1.0; $dim]); $dim + 1];
+                    let test_pt = Point::from_validated_coords([1.0; $dim]);
                     assert_eq!(
                         sos_insphere_sign(&simplex, &test_pt),
                         Err(CoordinateConversionError::DegenerateSimplex {
@@ -581,9 +580,9 @@ mod tests {
         // orientation.  (SoS is only guaranteed correct for degenerate inputs;
         // the caller should never invoke SoS for non-degenerate cases.)
         let positive = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0]),
         ];
         let sign = sos_orientation_sign(&positive).unwrap();
         assert_eq!(sign, 1, "Non-degenerate positive triangle should return +1");
@@ -595,7 +594,10 @@ mod tests {
 
     #[test]
     fn test_sos_orientation_wrong_point_count_returns_error() {
-        let points = vec![Point::new([0.0, 0.0]), Point::new([1.0, 0.0])];
+        let points = vec![
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+        ];
         let result = sos_orientation_sign(&points);
         assert_eq!(
             result,
@@ -609,8 +611,11 @@ mod tests {
 
     #[test]
     fn test_sos_insphere_wrong_simplex_count_returns_error() {
-        let simplex = vec![Point::new([0.0, 0.0]), Point::new([1.0, 0.0])];
-        let test = Point::new([0.5, 0.5]);
+        let simplex = vec![
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+        ];
+        let test = Point::from_validated_coords([0.5, 0.5]);
         let result = sos_insphere_sign(&simplex, &test);
         assert_eq!(
             result,
@@ -735,7 +740,10 @@ mod tests {
     fn test_sos_orientation_1d_identical_points() {
         // Two identical 1D points: orientation determinant is exactly zero.
         // SoS must still resolve to ±1.
-        let points = vec![Point::new([5.0]), Point::new([5.0])];
+        let points = vec![
+            Point::from_validated_coords([5.0]),
+            Point::from_validated_coords([5.0]),
+        ];
         let sign = sos_orientation_sign(&points).unwrap();
         assert!(
             sign == 1 || sign == -1,
@@ -746,7 +754,10 @@ mod tests {
     #[test]
     fn test_sos_orientation_1d_distinct_degenerate() {
         // D=1 with distinct points is non-degenerate, but SoS still works.
-        let points = vec![Point::new([0.0]), Point::new([1.0])];
+        let points = vec![
+            Point::from_validated_coords([0.0]),
+            Point::from_validated_coords([1.0]),
+        ];
         let sign = sos_orientation_sign(&points).unwrap();
         assert!(
             sign == 1 || sign == -1,

@@ -15,7 +15,7 @@
 
 use delaunay::geometry::matrix::{Matrix, determinant};
 use delaunay::geometry::util::hypot;
-use delaunay::prelude::construction::{Vertex, vertex};
+use delaunay::prelude::construction::Vertex;
 use delaunay::prelude::geometry::*;
 use serde::{Deserialize, Serialize};
 
@@ -173,9 +173,9 @@ fn test_everything_debug() {
 /// Test 2D circumsphere methods with a triangle
 fn test_2d_circumsphere() {
     let vertices = vec![
-        vertex!([0.0, 0.0], 0),
-        vertex!([1.0, 0.0], 1),
-        vertex!([0.0, 1.0], 2),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 0).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0], 1).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0], 2).unwrap(),
     ];
 
     let test_points = test_points!(
@@ -195,7 +195,7 @@ fn test_2d_circumsphere() {
 
 /// Test a single 2D point against all circumsphere methods
 fn test_2d_point(
-    vertices: &[Vertex<f64, i32, 2>],
+    vertices: &[Vertex<i32, 2>],
     coords: [f64; 2],
     description: &str,
     center: &[f64; 2],
@@ -207,7 +207,7 @@ fn test_2d_point(
 /// Generic function to test circumsphere methods for any dimension
 fn test_circumsphere_generic<const D: usize>(
     dimension_name: &str,
-    vertices: &[Vertex<f64, i32, D>],
+    vertices: &[Vertex<i32, D>],
     test_points: Vec<([f64; D], &str)>,
 ) where
     [f64; D]: Copy + Sized + Serialize + for<'de> Deserialize<'de>,
@@ -224,7 +224,7 @@ fn test_circumsphere_generic<const D: usize>(
     println!();
 
     // Calculate circumcenter and circumradius
-    let vertex_points: Vec<Point<f64, D>> = vertices.iter().map(Point::from).collect();
+    let vertex_points: Vec<Point<D>> = vertices.iter().map(Point::from).collect();
     match (circumcenter(&vertex_points), circumradius(&vertex_points)) {
         (Ok(center), Ok(radius)) => {
             println!("Circumcenter: {:?}", center.to_array());
@@ -244,7 +244,7 @@ fn test_circumsphere_generic<const D: usize>(
 
 /// Generic function to test a single point against circumsphere methods
 fn test_point_generic<const D: usize>(
-    vertices: &[Vertex<f64, i32, D>],
+    vertices: &[Vertex<i32, D>],
     coords: [f64; D],
     description: &str,
     center: &[f64; D],
@@ -252,9 +252,10 @@ fn test_point_generic<const D: usize>(
 ) where
     [f64; D]: Copy + Sized + Serialize + for<'de> Deserialize<'de>,
 {
-    let test_vertex: Vertex<f64, i32, D> = vertex!(coords, 99);
+    let test_vertex: Vertex<i32, D> =
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data(coords, 99).unwrap();
 
-    let vertex_points: Vec<Point<f64, D>> = vertices.iter().map(Point::from).collect();
+    let vertex_points: Vec<Point<D>> = vertices.iter().map(Point::from).collect();
     let result_insphere = insphere(&vertex_points, Point::from(&test_vertex));
     let result_distance = insphere_distance(&vertex_points, Point::from(&test_vertex));
     let result_lifted = insphere_lifted(&vertex_points, Point::from(&test_vertex));
@@ -289,10 +290,10 @@ fn test_point_generic<const D: usize>(
 fn test_3d_circumsphere() {
     // Create a unit tetrahedron: (0,0,0), (1,0,0), (0,1,0), (0,0,1)
     let vertices = vec![
-        vertex!([0.0, 0.0, 0.0], 0),
-        vertex!([1.0, 0.0, 0.0], 1),
-        vertex!([0.0, 1.0, 0.0], 2),
-        vertex!([0.0, 0.0, 1.0], 3),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 0).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 1).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 2).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 3).unwrap(),
     ];
 
     let test_points = test_points!(
@@ -310,7 +311,7 @@ fn test_3d_circumsphere() {
 
 /// Test a single 3D point against all circumsphere methods
 fn test_3d_point(
-    vertices: &[Vertex<f64, i32, 3>],
+    vertices: &[Vertex<i32, 3>],
     coords: [f64; 3],
     description: &str,
     center: &[f64; 3],
@@ -323,11 +324,11 @@ fn test_3d_point(
 fn test_4d_circumsphere() {
     // Create a unit 4-simplex: vertices at origin and unit vectors along each axis
     let vertices = vec![
-        vertex!([0.0, 0.0, 0.0, 0.0], 0),
-        vertex!([1.0, 0.0, 0.0, 0.0], 1),
-        vertex!([0.0, 1.0, 0.0, 0.0], 2),
-        vertex!([0.0, 0.0, 1.0, 0.0], 3),
-        vertex!([0.0, 0.0, 0.0, 1.0], 4),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0, 0.0], 0).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0, 0.0], 1).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0, 0.0], 2).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0, 0.0], 3).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0, 1.0], 4).unwrap(),
     ];
 
     let test_points = test_points!(
@@ -345,7 +346,7 @@ fn test_4d_circumsphere() {
 
 /// Test a single 4D point against all circumsphere methods
 fn test_4d_point(
-    vertices: &[Vertex<f64, i32, 4>],
+    vertices: &[Vertex<i32, 4>],
     coords: [f64; 4],
     description: &str,
     center: &[f64; 4],
@@ -371,16 +372,16 @@ fn test_4d_circumsphere_methods() {
     println!("=============================================");
 
     // Create a unit 4-simplex: vertices at origin and unit vectors along each axis
-    let vertices: Vec<Vertex<f64, i32, 4>> = vec![
-        vertex!([0.0, 0.0, 0.0, 0.0], 1),
-        vertex!([1.0, 0.0, 0.0, 0.0], 1),
-        vertex!([0.0, 1.0, 0.0, 0.0], 1),
-        vertex!([0.0, 0.0, 1.0, 0.0], 1),
-        vertex!([0.0, 0.0, 0.0, 1.0], 2),
+    let vertices: Vec<Vertex<i32, 4>> = vec![
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0, 0.0], 1).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0, 0.0], 1).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0, 0.0], 1).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0, 0.0], 1).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0, 1.0], 2).unwrap(),
     ];
 
     // Calculate circumcenter and circumradius for reference
-    let vertex_points: Vec<Point<f64, 4>> = vertices.iter().map(Point::from).collect();
+    let vertex_points: Vec<Point<4>> = vertices.iter().map(Point::from).collect();
     match circumcenter(&vertex_points) {
         Ok(center) => {
             println!("Circumcenter: {:?}", center.to_array());
@@ -432,12 +433,12 @@ fn test_circumsphere_containment() {
     // This creates a 4D simplex with vertices at the origin and unit vectors
     // along each coordinate axis. The circumcenter is at [0.5, 0.5, 0.5, 0.5] and
     // the circumradius is √4/2 = 1.0.
-    let vertices: [Vertex<f64, i32, 4>; 5] = [
-        vertex!([0.0, 0.0, 0.0, 0.0], 0), // Origin
-        vertex!([1.0, 0.0, 0.0, 0.0], 1), // Unit vector along x-axis
-        vertex!([0.0, 1.0, 0.0, 0.0], 2), // Unit vector along y-axis
-        vertex!([0.0, 0.0, 1.0, 0.0], 3), // Unit vector along z-axis
-        vertex!([0.0, 0.0, 0.0, 1.0], 4), // Unit vector along w-axis
+    let vertices: [Vertex<i32, 4>; 5] = [
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0, 0.0], 0).unwrap(), // Origin
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0, 0.0], 1).unwrap(), // Unit vector along x-axis
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0, 0.0], 2).unwrap(), // Unit vector along y-axis
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0, 0.0], 3).unwrap(), // Unit vector along z-axis
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0, 1.0], 4).unwrap(), // Unit vector along w-axis
     ];
 
     println!("4D simplex vertices:");
@@ -453,16 +454,16 @@ fn test_circumsphere_containment() {
     // Test points that should be inside the circumsphere
     // These are points with small coordinates that should be well within
     // the circumsphere radius of √4/2 = 1.0
-    let test_points_inside: [Vertex<f64, i32, 4>; 5] = [
-        vertex!([0.25, 0.25, 0.25, 0.25], 10),
-        vertex!([0.1, 0.1, 0.1, 0.1], 11),
-        vertex!([0.2, 0.2, 0.2, 0.2], 12),
-        vertex!([0.3, 0.2, 0.1, 0.0], 13),
-        vertex!([0.0, 0.0, 0.0, 0.0], 14), // Origin should be inside
+    let test_points_inside: [Vertex<i32, 4>; 5] = [
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.25, 0.25, 0.25, 0.25], 10).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.1, 0.1, 0.1, 0.1], 11).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.2, 0.2, 0.2, 0.2], 12).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.3, 0.2, 0.1, 0.0], 13).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0, 0.0], 14).unwrap(), // Origin should be inside
     ];
 
     // Calculate circumcenter and circumradius for testing
-    let vertex_points: Vec<Point<f64, 4>> = vertices.iter().map(Point::from).collect();
+    let vertex_points: Vec<Point<4>> = vertices.iter().map(Point::from).collect();
     let (Ok(center), Ok(radius)) = (circumcenter(&vertex_points), circumradius(&vertex_points))
     else {
         println!("Error calculating circumcenter or circumradius");
@@ -479,18 +480,18 @@ fn test_circumsphere_containment() {
     // Test points that should be outside (or on the boundary) of the circumsphere
     // These include points with large coordinates and points along the axes
     // that extend beyond the simplex vertices
-    let test_points_outside: [Vertex<f64, i32, 4>; 6] = [
-        vertex!([2.0, 2.0, 2.0, 2.0], 20),
-        vertex!([1.0, 1.0, 1.0, 1.0], 21), // boundary
-        vertex!([0.8, 0.8, 0.8, 0.8], 22),
-        vertex!([1.5, 0.0, 0.0, 0.0], 23),
-        vertex!([0.0, 1.5, 0.0, 0.0], 24),
-        vertex!([0.0, 0.0, 1.5, 0.0], 25),
+    let test_points_outside: [Vertex<i32, 4>; 6] = [
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([2.0, 2.0, 2.0, 2.0], 20).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 1.0, 1.0, 1.0], 21).unwrap(), // boundary
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.8, 0.8, 0.8, 0.8], 22).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.5, 0.0, 0.0, 0.0], 23).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.5, 0.0, 0.0], 24).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.5, 0.0], 25).unwrap(),
     ];
 
     println!("Testing points that should be OUTSIDE (or on boundary) the circumsphere:");
     for (i, point) in test_points_outside.iter().enumerate() {
-        let vertex_points: Vec<Point<f64, 4>> = vertices.iter().map(Point::from).collect();
+        let vertex_points: Vec<Point<4>> = vertices.iter().map(Point::from).collect();
         let result_determinant = insphere(&vertex_points, Point::from(point));
         let result_distance = insphere_distance(&vertex_points, Point::from(point));
         let coords = *point.point().coords();
@@ -521,7 +522,7 @@ fn test_circumsphere_containment() {
     // These should be on the boundary of the circumsphere (distance = radius)
     println!("Testing the simplex vertices themselves:");
     for (i, vertex) in vertices.iter().enumerate() {
-        let vertex_points: Vec<Point<f64, 4>> = vertices.iter().map(Point::from).collect();
+        let vertex_points: Vec<Point<4>> = vertices.iter().map(Point::from).collect();
         let result = insphere(&vertex_points, Point::from(vertex));
         let coords = *vertex.point().coords();
         println!(
@@ -544,17 +545,17 @@ fn test_circumsphere_containment() {
     // Additional boundary testing with points on edges and faces of the tetrahedron
     // These points lie on the boundary of the 4D simplex and test
     // numerical stability near the boundary
-    let boundary_points: [Vertex<f64, i32, 4>; 5] = [
-        vertex!([0.5, 0.5, 0.0, 0.0], 30),
-        vertex!([0.5, 0.0, 0.5, 0.0], 31),
-        vertex!([0.0, 0.5, 0.5, 0.0], 32),
-        vertex!([0.33, 0.33, 0.33, 0.01], 33),
-        vertex!([0.25, 0.25, 0.25, 0.25], 34),
+    let boundary_points: [Vertex<i32, 4>; 5] = [
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.5, 0.5, 0.0, 0.0], 30).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.5, 0.0, 0.5, 0.0], 31).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.5, 0.5, 0.0], 32).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.33, 0.33, 0.33, 0.01], 33).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.25, 0.25, 0.25, 0.25], 34).unwrap(),
     ];
 
     println!("Testing boundary/edge points:");
     for (i, point) in boundary_points.iter().enumerate() {
-        let vertex_points: Vec<Point<f64, 4>> = vertices.iter().map(Point::from).collect();
+        let vertex_points: Vec<Point<4>> = vertices.iter().map(Point::from).collect();
         let result = insphere(&vertex_points, Point::from(point));
         let coords = *point.point().coords();
         println!(
@@ -583,7 +584,7 @@ fn test_simplex_orientation() {
     let vertices = create_unit_4d_simplex();
 
     // Test the original 4D simplex's orientation
-    let vertex_points: Vec<Point<f64, 4>> = vertices.iter().map(Point::from).collect();
+    let vertex_points: Vec<Point<4>> = vertices.iter().map(Point::from).collect();
     let orientation_original = simplex_orientation(&vertex_points);
     println!(
         "Original 4D simplex orientation: {}",
@@ -598,8 +599,7 @@ fn test_simplex_orientation() {
     // Create a negatively oriented 4D simplex by swapping two vertices
     let vertices_negative = create_negative_4d_simplex();
 
-    let vertex_points_negative: Vec<Point<f64, 4>> =
-        vertices_negative.iter().map(Point::from).collect();
+    let vertex_points_negative: Vec<Point<4>> = vertices_negative.iter().map(Point::from).collect();
     let orientation_negative = simplex_orientation(&vertex_points_negative);
     println!(
         "Negatively oriented 4D simplex: {}",
@@ -612,15 +612,14 @@ fn test_simplex_orientation() {
     );
 
     // Test 3D orientation (tetrahedron) for comparison
-    let tetrahedron_vertices: [Vertex<f64, i32, 3>; 4] = [
-        vertex!([0.0, 0.0, 0.0], 0), // Origin
-        vertex!([1.0, 0.0, 0.0], 1), // Unit vector along x-axis
-        vertex!([0.0, 1.0, 0.0], 2), // Unit vector along y-axis
-        vertex!([0.0, 0.0, 1.0], 3), // Unit vector along z-axis
+    let tetrahedron_vertices: [Vertex<i32, 3>; 4] = [
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 0).unwrap(), // Origin
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 1).unwrap(), // Unit vector along x-axis
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 2).unwrap(), // Unit vector along y-axis
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 3).unwrap(), // Unit vector along z-axis
     ];
 
-    let tetrahedron_points: Vec<Point<f64, 3>> =
-        tetrahedron_vertices.iter().map(Point::from).collect();
+    let tetrahedron_points: Vec<Point<3>> = tetrahedron_vertices.iter().map(Point::from).collect();
     let orientation_3d = simplex_orientation(&tetrahedron_points);
     println!(
         "3D tetrahedron orientation: {}",
@@ -633,13 +632,13 @@ fn test_simplex_orientation() {
     );
 
     // Test 2D orientation (triangle)
-    let triangle_vertices: [Vertex<f64, i32, 2>; 3] = [
-        vertex!([0.0, 0.0], 0),
-        vertex!([1.0, 0.0], 1),
-        vertex!([0.0, 1.0], 2),
+    let triangle_vertices: [Vertex<i32, 2>; 3] = [
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 0).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0], 1).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0], 2).unwrap(),
     ];
 
-    let triangle_points: Vec<Point<f64, 2>> = triangle_vertices.iter().map(Point::from).collect();
+    let triangle_points: Vec<Point<2>> = triangle_vertices.iter().map(Point::from).collect();
     let orientation_2d = simplex_orientation(&triangle_points);
     println!(
         "2D triangle orientation: {}",
@@ -652,13 +651,13 @@ fn test_simplex_orientation() {
     );
 
     // Test 2D orientation with reversed vertex order
-    let triangle_vertices_reversed: [Vertex<f64, i32, 2>; 3] = [
-        vertex!([0.0, 0.0], 0),
-        vertex!([0.0, 1.0], 2), // Swapped order
-        vertex!([1.0, 0.0], 1), // Swapped order
+    let triangle_vertices_reversed: [Vertex<i32, 2>; 3] = [
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 0).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0], 2).unwrap(), // Swapped order
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0], 1).unwrap(), // Swapped order
     ];
 
-    let triangle_points_reversed: Vec<Point<f64, 2>> =
+    let triangle_points_reversed: Vec<Point<2>> =
         triangle_vertices_reversed.iter().map(Point::from).collect();
     let orientation_2d_reversed = simplex_orientation(&triangle_points_reversed);
     println!(
@@ -672,13 +671,13 @@ fn test_simplex_orientation() {
     );
 
     // Test degenerate case (collinear points in 2D)
-    let collinear_vertices: [Vertex<f64, i32, 2>; 3] = [
-        vertex!([0.0, 0.0], 0),
-        vertex!([1.0, 0.0], 1),
-        vertex!([2.0, 0.0], 2), // Collinear point
+    let collinear_vertices: [Vertex<i32, 2>; 3] = [
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 0).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0], 1).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([2.0, 0.0], 2).unwrap(), // Collinear point
     ];
 
-    let collinear_points: Vec<Point<f64, 2>> = collinear_vertices.iter().map(Point::from).collect();
+    let collinear_points: Vec<Point<2>> = collinear_vertices.iter().map(Point::from).collect();
     let orientation_collinear = simplex_orientation(&collinear_points);
     println!(
         "Collinear 2D points: {}",
@@ -691,23 +690,23 @@ fn test_simplex_orientation() {
     );
 }
 
-fn create_unit_4d_simplex() -> [Vertex<f64, i32, 4>; 5] {
+fn create_unit_4d_simplex() -> [Vertex<i32, 4>; 5] {
     [
-        vertex!([0.0, 0.0, 0.0, 0.0], 0),
-        vertex!([1.0, 0.0, 0.0, 0.0], 1),
-        vertex!([0.0, 1.0, 0.0, 0.0], 2),
-        vertex!([0.0, 0.0, 1.0, 0.0], 3),
-        vertex!([0.0, 0.0, 0.0, 1.0], 4),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0, 0.0], 0).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0, 0.0], 1).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0, 0.0], 2).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0, 0.0], 3).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0, 1.0], 4).unwrap(),
     ]
 }
 
-fn create_negative_4d_simplex() -> [Vertex<f64, i32, 4>; 5] {
+fn create_negative_4d_simplex() -> [Vertex<i32, 4>; 5] {
     [
-        vertex!([0.0, 0.0, 0.0, 0.0], 0),
-        vertex!([0.0, 1.0, 0.0, 0.0], 2),
-        vertex!([1.0, 0.0, 0.0, 0.0], 1),
-        vertex!([0.0, 0.0, 1.0, 0.0], 3),
-        vertex!([0.0, 0.0, 0.0, 1.0], 4),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0, 0.0], 0).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0, 0.0], 2).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0, 0.0], 1).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0, 0.0], 3).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0, 1.0], 4).unwrap(),
     ]
 }
 
@@ -718,11 +717,12 @@ fn demonstrate_orientation_impact_on_circumsphere() {
     let vertices = create_unit_4d_simplex();
     let vertices_negative = create_negative_4d_simplex();
 
-    let test_point: Vertex<f64, i32, 4> = vertex!([0.25, 0.25, 0.25, 0.25], 100);
+    let test_point: Vertex<i32, 4> =
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.25, 0.25, 0.25, 0.25], 100)
+            .unwrap();
 
-    let vertex_points: Vec<Point<f64, 4>> = vertices.iter().map(Point::from).collect();
-    let vertex_points_negative: Vec<Point<f64, 4>> =
-        vertices_negative.iter().map(Point::from).collect();
+    let vertex_points: Vec<Point<4>> = vertices.iter().map(Point::from).collect();
+    let vertex_points_negative: Vec<Point<4>> = vertices_negative.iter().map(Point::from).collect();
     let inside_positive = insphere(&vertex_points, Point::from(&test_point));
     let inside_negative = insphere(&vertex_points_negative, Point::from(&test_point));
 
@@ -759,8 +759,7 @@ fn test_3d_simplex_analysis() {
 
     let simplex_vertices_3d = create_3d_test_simplex();
 
-    let simplex_points_3d: Vec<Point<f64, 3>> =
-        simplex_vertices_3d.iter().map(Point::from).collect();
+    let simplex_points_3d: Vec<Point<3>> = simplex_vertices_3d.iter().map(Point::from).collect();
     match circumcenter(&simplex_points_3d) {
         Ok(circumcenter_3d) => match circumradius(&simplex_points_3d) {
             Ok(circumradius_3d) => {
@@ -777,15 +776,19 @@ fn test_3d_simplex_analysis() {
     }
 }
 
-fn create_3d_test_simplex() -> Vec<Vertex<f64, i32, 3>> {
-    let vertex1_3d: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 0.0], 1);
-    let vertex2_3d = vertex!([1.0, 0.0, 0.0], 1);
-    let vertex3_3d = vertex!([0.0, 1.0, 0.0], 1);
-    let vertex4_3d = vertex!([0.0, 0.0, 1.0], 2);
+fn create_3d_test_simplex() -> Vec<Vertex<i32, 3>> {
+    let vertex1_3d: Vertex<i32, 3> =
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 1).unwrap();
+    let vertex2_3d =
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 1).unwrap();
+    let vertex3_3d =
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 1).unwrap();
+    let vertex4_3d =
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 2).unwrap();
     vec![vertex1_3d, vertex2_3d, vertex3_3d, vertex4_3d]
 }
 
-fn print_3d_simplex_info(circumcenter_3d: &Point<f64, 3>, circumradius_3d: f64) {
+fn print_3d_simplex_info(circumcenter_3d: &Point<3>, circumradius_3d: f64) {
     println!("3D Simplex vertices:");
     println!("  v1: (0, 0, 0)");
     println!("  v2: (1, 0, 0)");
@@ -798,12 +801,13 @@ fn print_3d_simplex_info(circumcenter_3d: &Point<f64, 3>, circumradius_3d: f64) 
 }
 
 fn test_point_against_3d_simplex(
-    simplex_vertices_3d: &[Vertex<f64, i32, 3>],
-    circumcenter_3d: &Point<f64, 3>,
+    simplex_vertices_3d: &[Vertex<i32, 3>],
+    circumcenter_3d: &Point<3>,
     circumradius_3d: f64,
 ) {
     // Test the point [0.9, 0.9, 0.9]
-    let test_vertex_3d = vertex!([0.9, 0.9, 0.9], 3);
+    let test_vertex_3d =
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.9, 0.9, 0.9], 3).unwrap();
 
     // Calculate distance from circumcenter to test point
     let distance_to_test_3d = distance(&circumcenter_3d.to_array(), &[0.9, 0.9, 0.9]);
@@ -823,11 +827,8 @@ fn test_point_against_3d_simplex(
     test_boundary_vertex_case(simplex_vertices_3d);
 }
 
-fn test_circumsphere_methods(
-    simplex_vertices: &[Vertex<f64, i32, 3>],
-    test_vertex: Vertex<f64, i32, 3>,
-) {
-    let simplex_points: Vec<Point<f64, 3>> = simplex_vertices.iter().map(Point::from).collect();
+fn test_circumsphere_methods(simplex_vertices: &[Vertex<i32, 3>], test_vertex: Vertex<i32, 3>) {
+    let simplex_points: Vec<Point<3>> = simplex_vertices.iter().map(Point::from).collect();
     match insphere(&simplex_points, Point::from(&test_vertex)) {
         Ok(standard_method_3d) => match insphere_lifted(&simplex_points, Point::from(&test_vertex))
         {
@@ -841,11 +842,11 @@ fn test_circumsphere_methods(
     }
 }
 
-fn test_boundary_vertex_case(simplex_vertices: &[Vertex<f64, i32, 3>]) {
+fn test_boundary_vertex_case(simplex_vertices: &[Vertex<i32, 3>]) {
     println!();
     println!("Testing boundary vertex (vertex1):");
     let vertex1 = simplex_vertices[0];
-    let simplex_points: Vec<Point<f64, 3>> = simplex_vertices.iter().map(Point::from).collect();
+    let simplex_points: Vec<Point<3>> = simplex_vertices.iter().map(Point::from).collect();
     match insphere(&simplex_points, Point::from(&vertex1)) {
         Ok(standard_vertex) => match insphere_lifted(&simplex_points, Point::from(&vertex1)) {
             Ok(matrix_vertex) => {
@@ -861,7 +862,7 @@ fn test_boundary_vertex_case(simplex_vertices: &[Vertex<f64, i32, 3>]) {
 }
 
 // Type alias to simplify complex return type
-type Setup3DResult = (Vec<Vertex<f64, i32, 3>>, [f64; 3], Vertex<f64, i32, 3>);
+type Setup3DResult = (Vec<Vertex<i32, 3>>, [f64; 3], Vertex<i32, 3>);
 
 /// Set up the 3D test matrix data
 fn setup_3d_matrix_test() -> Setup3DResult {
@@ -870,10 +871,11 @@ fn setup_3d_matrix_test() -> Setup3DResult {
     println!("=============================================");
 
     // Create the 3D simplex: vertices at (0,0,0), (1,0,0), (0,1,0), (0,0,1)
-    let vertex1: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 0.0], 1);
-    let vertex2 = vertex!([1.0, 0.0, 0.0], 1);
-    let vertex3 = vertex!([0.0, 1.0, 0.0], 1);
-    let vertex4 = vertex!([0.0, 0.0, 1.0], 2);
+    let vertex1: Vertex<i32, 3> =
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 1).unwrap();
+    let vertex2 = delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 1).unwrap();
+    let vertex3 = delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 1).unwrap();
+    let vertex4 = delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 2).unwrap();
     let simplex_vertices = vec![vertex1, vertex2, vertex3, vertex4];
 
     println!("3D Simplex vertices:");
@@ -885,7 +887,7 @@ fn setup_3d_matrix_test() -> Setup3DResult {
 
     // Test point
     let test_point = [0.9, 0.9, 0.9];
-    let test_vertex = vertex!(test_point, 3);
+    let test_vertex = delaunay::prelude::Vertex::<_, _>::try_new_with_data(test_point, 3).unwrap();
 
     // Get reference vertex (first vertex)
     let ref_coords = [0.0, 0.0, 0.0];
@@ -896,7 +898,7 @@ fn setup_3d_matrix_test() -> Setup3DResult {
 }
 
 /// Build and analyze the matrix for the 3D test
-fn build_and_analyze_matrix(simplex_vertices: &[Vertex<f64, i32, 3>]) -> (f64, bool) {
+fn build_and_analyze_matrix(simplex_vertices: &[Vertex<i32, 3>]) -> (f64, bool) {
     // Manually build the matrix as in the matrix method
     let mut matrix = Matrix::<4>::zero(); // D+1 x D+1 for D=3
 
@@ -967,7 +969,7 @@ fn build_and_analyze_matrix(simplex_vertices: &[Vertex<f64, i32, 3>]) -> (f64, b
     println!("Determinant: {det:.6}");
 
     // Check simplex orientation and return determinant and matrix result
-    let simplex_points: Vec<Point<f64, 3>> = simplex_vertices.iter().map(Point::from).collect();
+    let simplex_points: Vec<Point<3>> = simplex_vertices.iter().map(Point::from).collect();
     match simplex_orientation(&simplex_points) {
         Ok(is_positive_orientation) => {
             let is_positive = matches!(is_positive_orientation, Orientation::POSITIVE);
@@ -1009,11 +1011,11 @@ fn build_and_analyze_matrix(simplex_vertices: &[Vertex<f64, i32, 3>]) -> (f64, b
 
 /// Compare methods with geometry for the 3D test
 fn compare_methods_with_geometry(
-    simplex_vertices: &[Vertex<f64, i32, 3>],
+    simplex_vertices: &[Vertex<i32, 3>],
     test_point: [f64; 3],
-    test_vertex: Vertex<f64, i32, 3>,
+    test_vertex: Vertex<i32, 3>,
 ) -> Option<(f64, f64, bool, InSphere, InSphere)> {
-    let simplex_points: Vec<Point<f64, 3>> = simplex_vertices.iter().map(Point::from).collect();
+    let simplex_points: Vec<Point<3>> = simplex_vertices.iter().map(Point::from).collect();
     match circumcenter(&simplex_points) {
         Ok(circumcenter) => {
             match circumradius(&simplex_points) {
@@ -1105,7 +1107,7 @@ fn print_method_comparison_results(
         println!("✓ Both methods agree with each other");
     } else {
         println!("⚠ Methods disagree (expected for this matrix formulation)");
-        println!("  The matrix method uses coordinates relative to the first vertex,");
+        println!("  The matrix method uses coordinates relative to the first ");
         println!("  which produces an inverted sign convention compared to the standard method.");
         println!("  Both methods are mathematically correct but use different interpretations.");
     }
@@ -1133,13 +1135,14 @@ fn debug_3d_circumsphere_properties() {
     println!("=== 3D Unit Tetrahedron Analysis ===");
 
     // Unit tetrahedron: vertices at (0,0,0), (1,0,0), (0,1,0), (0,0,1)
-    let vertex1: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 0.0], 1);
-    let vertex2 = vertex!([1.0, 0.0, 0.0], 1);
-    let vertex3 = vertex!([0.0, 1.0, 0.0], 1);
-    let vertex4 = vertex!([0.0, 0.0, 1.0], 2);
+    let vertex1: Vertex<i32, 3> =
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 1).unwrap();
+    let vertex2 = delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 1).unwrap();
+    let vertex3 = delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 1).unwrap();
+    let vertex4 = delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 2).unwrap();
     let simplex_vertices = [vertex1, vertex2, vertex3, vertex4];
 
-    let simplex_points: Vec<Point<f64, 3>> = simplex_vertices.iter().map(Point::from).collect();
+    let simplex_points: Vec<Point<3>> = simplex_vertices.iter().map(Point::from).collect();
     let center = circumcenter(&simplex_points).unwrap();
     let radius = circumradius(&simplex_points).unwrap();
 
@@ -1154,7 +1157,8 @@ fn debug_3d_circumsphere_properties() {
         distance_to_center < radius
     );
 
-    let test_vertex: Vertex<f64, i32, 3> = vertex!([0.9, 0.9, 0.9], 4);
+    let test_vertex: Vertex<i32, 3> =
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.9, 0.9, 0.9], 4).unwrap();
 
     let standard_result = insphere_distance(&simplex_points, Point::from(&test_vertex)).unwrap();
     let matrix_result = insphere_lifted(&simplex_points, Point::from(&test_vertex)).unwrap();
@@ -1168,15 +1172,15 @@ fn debug_4d_circumsphere_properties() {
     println!("\n=== 4D Symmetric Simplex Analysis ===");
 
     // Regular 4D simplex with vertices forming a specific pattern
-    let vertex1: Vertex<f64, (), 4> = vertex!([1.0, 1.0, 1.0, 1.0]);
-    let vertex2 = vertex!([1.0, -1.0, -1.0, -1.0]);
-    let vertex3 = vertex!([-1.0, 1.0, -1.0, -1.0]);
-    let vertex4 = vertex!([-1.0, -1.0, 1.0, -1.0]);
-    let vertex5 = vertex!([-1.0, -1.0, -1.0, 1.0]);
+    let vertex1: Vertex<(), 4> =
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0, 1.0, 1.0]).unwrap();
+    let vertex2 = delaunay::prelude::Vertex::<(), _>::try_new([1.0, -1.0, -1.0, -1.0]).unwrap();
+    let vertex3 = delaunay::prelude::Vertex::<(), _>::try_new([-1.0, 1.0, -1.0, -1.0]).unwrap();
+    let vertex4 = delaunay::prelude::Vertex::<(), _>::try_new([-1.0, -1.0, 1.0, -1.0]).unwrap();
+    let vertex5 = delaunay::prelude::Vertex::<(), _>::try_new([-1.0, -1.0, -1.0, 1.0]).unwrap();
     let simplex_vertices_4d = [vertex1, vertex2, vertex3, vertex4, vertex5];
 
-    let simplex_points_4d: Vec<Point<f64, 4>> =
-        simplex_vertices_4d.iter().map(Point::from).collect();
+    let simplex_points_4d: Vec<Point<4>> = simplex_vertices_4d.iter().map(Point::from).collect();
     let center_4d = circumcenter(&simplex_points_4d).unwrap();
     let radius_4d = circumradius(&simplex_points_4d).unwrap();
 
@@ -1191,7 +1195,8 @@ fn debug_4d_circumsphere_properties() {
         distance_to_center_4d < radius_4d
     );
 
-    let origin_vertex: Vertex<f64, (), 4> = vertex!([0.0, 0.0, 0.0, 0.0]);
+    let origin_vertex: Vertex<(), 4> =
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap();
 
     let standard_result_4d =
         insphere_distance(&simplex_points_4d, Point::from(&origin_vertex)).unwrap();
@@ -1207,23 +1212,24 @@ fn compare_circumsphere_methods() {
     println!("\n=== Comparing Circumsphere Methods ===");
 
     // Compare results between standard and matrix methods
-    let vertex1: Vertex<f64, (), 2> = vertex!([0.0, 0.0]);
-    let vertex2 = vertex!([1.0, 0.0]);
-    let vertex3 = vertex!([0.0, 1.0]);
+    let vertex1: Vertex<(), 2> = delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap();
+    let vertex2 = delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap();
+    let vertex3 = delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap();
     let simplex_vertices = [vertex1, vertex2, vertex3];
 
     // Test various points
     let test_points = [
-        Point::new([0.1, 0.1]),   // Should be inside
-        Point::new([0.5, 0.5]),   // Circumcenter region
-        Point::new([10.0, 10.0]), // Far outside
-        Point::new([0.25, 0.25]), // Inside
-        Point::new([2.0, 2.0]),   // Outside
+        Point::try_new([0.1, 0.1]).expect("finite point coordinates"), // Should be inside
+        Point::try_new([0.5, 0.5]).expect("finite point coordinates"), // Circumcenter region
+        Point::try_new([10.0, 10.0]).expect("finite point coordinates"), // Far outside
+        Point::try_new([0.25, 0.25]).expect("finite point coordinates"), // Inside
+        Point::try_new([2.0, 2.0]).expect("finite point coordinates"), // Outside
     ];
 
     for (i, point) in test_points.iter().enumerate() {
-        let test_vertex: Vertex<f64, (), 2> = vertex!(point.to_array());
-        let simplex_points: Vec<Point<f64, 2>> = simplex_vertices.iter().map(Point::from).collect();
+        let test_vertex: Vertex<(), 2> =
+            delaunay::prelude::Vertex::<(), _>::try_new(point.to_array()).unwrap();
+        let simplex_points: Vec<Point<2>> = simplex_vertices.iter().map(Point::from).collect();
 
         let standard_result =
             insphere_distance(&simplex_points, Point::from(&test_vertex)).unwrap();
@@ -1300,13 +1306,13 @@ fn test_single_2d_point() {
 
     // Create a unit triangle: (0,0), (1,0), (0,1)
     let vertices = vec![
-        vertex!([0.0, 0.0], 0),
-        vertex!([1.0, 0.0], 1),
-        vertex!([0.0, 1.0], 2),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 0).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0], 1).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0], 2).unwrap(),
     ];
 
     // Calculate circumcenter and circumradius
-    let vertex_points: Vec<Point<f64, 2>> = vertices.iter().map(Point::from).collect();
+    let vertex_points: Vec<Point<2>> = vertices.iter().map(Point::from).collect();
     match (circumcenter(&vertex_points), circumradius(&vertex_points)) {
         (Ok(center), Ok(radius)) => {
             println!("Triangle vertices:");
@@ -1342,14 +1348,14 @@ fn test_single_3d_point() {
 
     // Create a unit tetrahedron: (0,0,0), (1,0,0), (0,1,0), (0,0,1)
     let vertices = vec![
-        vertex!([0.0, 0.0, 0.0], 0),
-        vertex!([1.0, 0.0, 0.0], 1),
-        vertex!([0.0, 1.0, 0.0], 2),
-        vertex!([0.0, 0.0, 1.0], 3),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 0).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 1).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 2).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 3).unwrap(),
     ];
 
     // Calculate circumcenter and circumradius
-    let vertex_points: Vec<Point<f64, 3>> = vertices.iter().map(Point::from).collect();
+    let vertex_points: Vec<Point<3>> = vertices.iter().map(Point::from).collect();
     match (circumcenter(&vertex_points), circumradius(&vertex_points)) {
         (Ok(center), Ok(radius)) => {
             println!("Tetrahedron vertices:");
@@ -1385,15 +1391,15 @@ fn test_single_4d_point() {
 
     // Create a unit 4-simplex: vertices at origin and unit vectors along each axis
     let vertices = vec![
-        vertex!([0.0, 0.0, 0.0, 0.0], 0),
-        vertex!([1.0, 0.0, 0.0, 0.0], 1),
-        vertex!([0.0, 1.0, 0.0, 0.0], 2),
-        vertex!([0.0, 0.0, 1.0, 0.0], 3),
-        vertex!([0.0, 0.0, 0.0, 1.0], 4),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0, 0.0], 0).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0, 0.0], 1).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0, 0.0], 2).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0, 0.0], 3).unwrap(),
+        delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0, 1.0], 4).unwrap(),
     ];
 
     // Calculate circumcenter and circumradius
-    let vertex_points: Vec<Point<f64, 4>> = vertices.iter().map(Point::from).collect();
+    let vertex_points: Vec<Point<4>> = vertices.iter().map(Point::from).collect();
     match (circumcenter(&vertex_points), circumradius(&vertex_points)) {
         (Ok(center), Ok(radius)) => {
             println!("4D simplex vertices:");

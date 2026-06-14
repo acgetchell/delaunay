@@ -19,6 +19,7 @@
 //!
 //! Run this example with: `cargo run --example into_from_conversions`
 
+use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::query::*;
 
 /// Demonstrates Into/From trait conversions from vertices and points to coordinate arrays.
@@ -26,9 +27,9 @@ use delaunay::prelude::query::*;
 /// This function shows various ways to convert vertices and points to coordinate
 /// arrays using the `Into`/`From` traits, which provide more ergonomic alternatives
 /// to explicitly calling `.to_array()`.
-fn main() {
+fn main() -> Result<(), CoordinateConversionError> {
     // Create a vertex with 3D coordinates
-    let vertex: Vertex<f64, (), 3> = vertex!([1.0, 2.0, 3.0]);
+    let vertex: Vertex<(), 3> = delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0, 3.0])?;
 
     // Before: You had to call .to_array() explicitly
     let coords_explicit: [f64; 3] = vertex.point().to_array();
@@ -39,7 +40,8 @@ fn main() {
     println!("Into/From conversion from vertex: {coords_from_vertex:?}");
 
     // Create another vertex for reference conversion
-    let another_vertex: Vertex<f64, (), 3> = vertex!([4.0, 5.0, 6.0]);
+    let another_vertex: Vertex<(), 3> =
+        delaunay::prelude::Vertex::<(), _>::try_new([4.0, 5.0, 6.0])?;
 
     // You can also convert from a reference to preserve the original vertex
     let coords_from_ref: [f64; 3] = (&another_vertex).into();
@@ -50,16 +52,17 @@ fn main() {
     );
 
     // Point Into/From conversion also works
-    let point = Point::new([7.0, 8.0, 9.0]);
+    let point = Point::try_from([7.0, 8.0, 9.0])?;
     let coords_from_point: [f64; 3] = point.into();
     println!("Into/From conversion from point: {coords_from_point:?}");
 
     // And from point reference
-    let another_point = Point::new([10.0, 11.0, 12.0]);
+    let another_point = Point::try_from([10.0, 11.0, 12.0])?;
     let coords_from_point_ref: [f64; 3] = (&another_point).into();
     println!("Into/From conversion from point reference: {coords_from_point_ref:?}");
     println!(
         "Original point still available: {:?}",
         another_point.to_array()
     );
+    Ok(())
 }

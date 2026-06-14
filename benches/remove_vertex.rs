@@ -18,7 +18,7 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::construction::{DelaunayTriangulation, Vertex};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
-use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, CoordinateRange, Point};
+use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, Point};
 use delaunay::prelude::tds::VertexKey;
 use std::hint::black_box;
 use std::time::Duration;
@@ -35,6 +35,10 @@ const NEAR_DEGENERATE_EPSILON: f64 = 1.0e-10;
 const COSPHERICAL_CENTER: f64 = 0.5;
 const COSPHERICAL_RADIUS: f64 = 0.25;
 const LARGE_COORDINATE_SCALE: f64 = 1.0e6;
+
+fn finite_point<const D: usize>(coords: [f64; D]) -> Point<D> {
+    Point::try_new(coords).unwrap_or_else(|_| std::process::abort())
+}
 
 fn interior_bounds() -> CoordinateRange<f64> {
     bench_result(
@@ -128,7 +132,7 @@ fn generate_vertices<const D: usize>(
     requested_vertices: usize,
     seed: u64,
     fixture_kind: FixtureKind,
-) -> Vec<Vertex<f64, (), D>> {
+) -> Vec<Vertex<(), D>> {
     let generated_count = requested_vertices.saturating_sub(D + 1);
     let mut points = simplex_points::<D>();
     let generated_points = match fixture_kind {
@@ -144,9 +148,8 @@ fn generate_vertices<const D: usize>(
 }
 
 /// Generate well-conditioned interior points inside the canonical simplex.
-fn generate_interior_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<f64, D>> {
-    let raw_points =
-        generate_random_points_in_range_seeded::<f64, D>(count, interior_bounds(), seed);
+fn generate_interior_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<D>> {
+    let raw_points = generate_random_points_in_range_seeded::<D>(count, interior_bounds(), seed);
     let mut points = Vec::with_capacity(count);
 
     for (index, raw_point) in raw_points.iter().enumerate() {
@@ -156,16 +159,15 @@ fn generate_interior_points<const D: usize>(count: usize, seed: u64) -> Vec<Poin
         for (coord, direction_coord) in coords.iter_mut().zip(direction) {
             *coord = radius * direction_coord;
         }
-        points.push(Point::new(coords));
+        points.push(finite_point(coords));
     }
 
     points
 }
 
 /// Generate points close to coordinate-boundary facets of the canonical simplex.
-fn generate_near_boundary_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<f64, D>> {
-    let raw_points =
-        generate_random_points_in_range_seeded::<f64, D>(count, interior_bounds(), seed);
+fn generate_near_boundary_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<D>> {
+    let raw_points = generate_random_points_in_range_seeded::<D>(count, interior_bounds(), seed);
     let mut points = Vec::with_capacity(count);
 
     for (index, raw_point) in raw_points.iter().enumerate() {
@@ -177,16 +179,15 @@ fn generate_near_boundary_points<const D: usize>(count: usize, seed: u64) -> Vec
         }
         coords[near_boundary_axis] =
             NEAR_BOUNDARY_EPSILON * usize_to_f64(index + 1, "near-boundary index too large");
-        points.push(Point::new(coords));
+        points.push(finite_point(coords));
     }
 
     points
 }
 
 /// Generate points on a shared sphere to stress cospherical predicates.
-fn generate_cospherical_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<f64, D>> {
-    let raw_points =
-        generate_random_points_in_range_seeded::<f64, D>(count, interior_bounds(), seed);
+fn generate_cospherical_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<D>> {
+    let raw_points = generate_random_points_in_range_seeded::<D>(count, interior_bounds(), seed);
     let mut points = Vec::with_capacity(count);
 
     for raw_point in &raw_points {
@@ -195,14 +196,14 @@ fn generate_cospherical_points<const D: usize>(count: usize, seed: u64) -> Vec<P
         for (coord, direction_coord) in coords.iter_mut().zip(direction) {
             *coord = COSPHERICAL_RADIUS.mul_add(direction_coord, COSPHERICAL_CENTER);
         }
-        points.push(Point::new(coords));
+        points.push(finite_point(coords));
     }
 
     points
 }
 
 /// Generate points close to a lower-dimensional diagonal simplex.
-fn generate_near_degenerate_simplex<const D: usize>(count: usize, seed: u64) -> Vec<Point<f64, D>> {
+fn generate_near_degenerate_simplex<const D: usize>(count: usize, seed: u64) -> Vec<Point<D>> {
     let seed_offset = f64::from(bench_result(
         u32::try_from(seed % 997),
         "near-degenerate seed phase does not fit in u32",
@@ -219,16 +220,15 @@ fn generate_near_degenerate_simplex<const D: usize>(count: usize, seed: u64) -> 
             *coord = (NEAR_DEGENERATE_EPSILON * axis_factor)
                 .mul_add(index_factor, diagonal + seed_offset);
         }
-        points.push(Point::new(coords));
+        points.push(finite_point(coords));
     }
 
     points
 }
 
 /// Generate finite points with large coordinates to stress scale-sensitive paths.
-fn generate_large_coordinate_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<f64, D>> {
-    let raw_points =
-        generate_random_points_in_range_seeded::<f64, D>(count, interior_bounds(), seed);
+fn generate_large_coordinate_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<D>> {
+    let raw_points = generate_random_points_in_range_seeded::<D>(count, interior_bounds(), seed);
     let mut points = Vec::with_capacity(count);
 
     for (index, raw_point) in raw_points.iter().enumerate() {
@@ -241,28 +241,28 @@ fn generate_large_coordinate_points<const D: usize>(count: usize, seed: u64) -> 
                 LARGE_COORDINATE_JITTER.mul_add(*raw_coord, index_offset),
             );
         }
-        points.push(Point::new(coords));
+        points.push(finite_point(coords));
     }
 
     points
 }
 
 /// Generate the minimal full-dimensional simplex points.
-fn simplex_points<const D: usize>() -> Vec<Point<f64, D>> {
+fn simplex_points<const D: usize>() -> Vec<Point<D>> {
     let mut points = Vec::with_capacity(D + 1);
-    points.push(Point::new([0.0; D]));
+    points.push(finite_point([0.0; D]));
 
     for axis in 0..D {
         let mut coords = [0.0; D];
         coords[axis] = 1.0;
-        points.push(Point::new(coords));
+        points.push(finite_point(coords));
     }
 
     points
 }
 
 /// Generate the minimal full-dimensional simplex for the rollback benchmark.
-fn simplex_vertices<const D: usize>() -> Vec<Vertex<f64, (), D>> {
+fn simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
     Vertex::from_points(&simplex_points::<D>())
 }
 
@@ -276,7 +276,7 @@ fn interior_radius(index: usize) -> f64 {
 }
 
 /// Convert a random point in `[0, 1]^D` into a positive simplex direction.
-fn normalized_positive_direction<const D: usize>(point: &Point<f64, D>) -> [f64; D] {
+fn normalized_positive_direction<const D: usize>(point: &Point<D>) -> [f64; D] {
     let mut weights = [0.0; D];
     let mut weight_sum = 0.0;
 
@@ -293,7 +293,7 @@ fn normalized_positive_direction<const D: usize>(point: &Point<f64, D>) -> [f64;
 }
 
 /// Convert a random point in `[0, 1]^D` into a unit direction around the origin.
-fn centered_unit_direction<const D: usize>(point: &Point<f64, D>) -> [f64; D] {
+fn centered_unit_direction<const D: usize>(point: &Point<D>) -> [f64; D] {
     let mut direction = [0.0; D];
     let mut norm_squared = 0.0;
 

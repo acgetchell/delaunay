@@ -34,8 +34,7 @@
 //! To certify that `K` is a **PL-manifold with boundary**, the canonical condition is:
 //!
 //! 4. **Vertex-link condition (canonical PL-manifold test)**
-//!    For every vertex `v`, the link `Lk(v)` is a (D−1)-sphere if `v` is an interior vertex,
-//!    or a (D−1)-ball if `v` lies on the boundary.
+//!    For every vertex `v`, the link `Lk(v)` is a (D−1)-sphere if `v` is an interior //!    or a (D−1)-ball if `v` lies on the boundary.
 //!
 //! This condition is enforced by [`validate_vertex_links`].
 //!
@@ -190,7 +189,7 @@ fn periodic_simplex_key(lifted_vertices: &[LiftedVertexId]) -> u64 {
 /// Computes an exact lifted simplex key without quotient translation normalization.
 ///
 /// Vertex links already express every lifted vertex relative to the linked
-/// anchor vertex, so applying an additional global translation quotient can
+/// anchor so applying an additional global translation quotient can
 /// collapse distinct link simplices.
 fn anchored_lifted_simplex_key(lifted_vertices: &[LiftedVertexId]) -> u64 {
     if lifted_vertices.iter().all(LiftedVertexId::is_base) {
@@ -209,7 +208,7 @@ fn anchored_lifted_simplex_key(lifted_vertices: &[LiftedVertexId]) -> u64 {
 }
 
 /// Normalizes lifted vertices by subtracting the offset of the first sorted
-/// lifted vertex, making periodic simplex identities translation invariant.
+/// lifted making periodic simplex identities translation invariant.
 fn normalize_lifted_vertices(lifted_vertices: &[LiftedVertexId]) -> LiftedVertexBuffer {
     let mut keys: LiftedVertexBuffer = lifted_vertices.iter().cloned().collect();
     keys.sort_unstable();
@@ -376,7 +375,7 @@ pub enum RidgeVerticesError {
 ///
 /// ```rust
 /// use delaunay::prelude::construction::{
-///     DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
+///     DelaunayTriangulation, DelaunayTriangulationConstructionError,
 /// };
 /// use delaunay::prelude::topology::validation::{RidgeVertices, RidgeVerticesError};
 ///
@@ -388,16 +387,16 @@ pub enum RidgeVerticesError {
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0]),
-///     vertex!([1.0, 0.0]),
-///     vertex!([0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let triangulation = DelaunayTriangulation::new(&vertices)?;
 /// let Some(v0) = triangulation.tds().vertex_keys().next() else {
 ///     return Err(ExampleError::Empty);
 /// };
 ///
-/// // In 2D, a ridge is a vertex, so the validated ridge set has arity 1.
+/// // In 2D, a ridge is a so the validated ridge set has arity 1.
 /// let ridge = RidgeVertices::<2>::try_from_vertices([v0])?;
 /// assert_eq!(ridge.as_slice(), &[v0]);
 /// assert_eq!(ridge.iter().collect::<Vec<_>>(), vec![v0]);
@@ -425,7 +424,7 @@ impl<const D: usize> RidgeVertices<D> {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
+    ///     DelaunayTriangulation, DelaunayTriangulationConstructionError,
     /// };
     /// use delaunay::prelude::topology::validation::{RidgeVertices, RidgeVerticesError};
     ///
@@ -437,10 +436,10 @@ impl<const D: usize> RidgeVertices<D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let triangulation = DelaunayTriangulation::new(&vertices)?;
     /// let keys = triangulation.tds().vertex_keys().collect::<Vec<_>>();
@@ -522,10 +521,10 @@ impl<const D: usize> RidgeVertices<D> {
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices)?;
 /// let facet_to_simplices = tds.build_facet_to_simplices_map()?;
@@ -586,10 +585,10 @@ pub fn validate_facet_degree(
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices)?;
 /// let facet_to_simplices = tds.build_facet_to_simplices_map()?;
@@ -598,8 +597,8 @@ pub fn validate_facet_degree(
 /// # Ok(())
 /// # }
 /// ```
-pub fn validate_closed_boundary<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub fn validate_closed_boundary<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     facet_to_simplices: &FacetToSimplicesMap,
 ) -> Result<(), ManifoldError> {
     // The boundary is a (D-1)-complex. Codimension-2 manifoldness is only meaningful for D>=2.
@@ -714,8 +713,8 @@ pub fn validate_closed_boundary<T, U, V, const D: usize>(
 /// incident-simplex star, then checks only boundary ridges incident to those
 /// touched facets. This keeps post-insertion checks local while preserving the
 /// same codimension-1 and codimension-2 invariants for the mutated region.
-pub(crate) fn validate_local_pseudomanifold_for_simplices<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub(crate) fn validate_local_pseudomanifold_for_simplices<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplices: &[SimplexKey],
 ) -> Result<(), ManifoldError> {
     if D == 0 || simplices.is_empty() {
@@ -728,8 +727,8 @@ pub(crate) fn validate_local_pseudomanifold_for_simplices<T, U, V, const D: usiz
 }
 
 /// Builds full facet-incidence entries for facets owned by the supplied simplices.
-fn build_local_facet_star_map<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn build_local_facet_star_map<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplices: &[SimplexKey],
 ) -> Result<FacetToSimplicesMap, ManifoldError> {
     let mut facet_to_simplices = FacetToSimplicesMap::default();
@@ -754,8 +753,8 @@ fn build_local_facet_star_map<T, U, V, const D: usize>(
 }
 
 /// Returns lifted and bare vertices of one simplex facet by omitting `facet_index`.
-fn simplex_facet_vertex_ids<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn simplex_facet_vertex_ids<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
     facet_index: usize,
 ) -> Result<(LiftedVertexBuffer, VertexKeyBuffer), ManifoldError> {
@@ -793,8 +792,8 @@ fn simplex_facet_vertex_ids<T, U, V, const D: usize>(
 }
 
 /// Finds all simplex/facet handles whose facet has the requested key.
-fn facet_incident_handles<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn facet_incident_handles<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     facet_key: u64,
     facet_vertices_bare: &[VertexKey],
 ) -> Result<SmallBuffer<FacetHandle, 2>, ManifoldError> {
@@ -818,7 +817,7 @@ fn facet_incident_handles<T, U, V, const D: usize>(
                 }
                 .into());
             };
-            handles.push(FacetHandle::new(simplex_key, facet_index));
+            handles.push(FacetHandle::from_validated(simplex_key, facet_index));
         }
     }
 
@@ -826,8 +825,8 @@ fn facet_incident_handles<T, U, V, const D: usize>(
 }
 
 /// Validates boundary closure for boundary facets present in a local facet map.
-fn validate_closed_boundary_for_local_facets<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn validate_closed_boundary_for_local_facets<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     facet_to_simplices: &FacetToSimplicesMap,
 ) -> Result<(), ManifoldError> {
     if D < 2 {
@@ -905,8 +904,8 @@ fn ridge_vertices_for_facet<const D: usize>(
 }
 
 /// Counts boundary facets in the full star of a ridge.
-fn boundary_facet_count_for_ridge<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn boundary_facet_count_for_ridge<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     ridge_vertices: &[LiftedVertexId],
     ridge_vertices_bare: &[VertexKey],
 ) -> Result<usize, ManifoldError> {
@@ -956,8 +955,8 @@ fn boundary_facet_count_for_ridge<T, U, V, const D: usize>(
 /// Periodic quotient TDSs may encode a closed facet identification as a single
 /// facet occurrence whose neighbor slot points back to the owning simplex. That
 /// is valid closed-topology metadata, not a boundary facet.
-fn is_boundary_facet_handle<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn is_boundary_facet_handle<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     handle: FacetHandle,
 ) -> Result<bool, ManifoldError> {
     let simplex_key = handle.simplex_key();
@@ -986,8 +985,8 @@ fn is_boundary_facet_handle<T, U, V, const D: usize>(
 ///
 /// This helper does **not** call `tds.is_valid()`; it performs lightweight checks and
 /// returns [`ManifoldError::Tds`] if the underlying TDS is internally inconsistent.
-fn simplex_star_simplices<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn simplex_star_simplices<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplex_vertices: &[VertexKey],
 ) -> Result<SmallBuffer<SimplexKey, 8>, ManifoldError> {
     if simplex_vertices.is_empty() {
@@ -1036,8 +1035,8 @@ fn simplex_star_simplices<T, U, V, const D: usize>(
 /// For each incident D-simplex, this returns the complementary vertex set (the vertices in the
 /// D-simplex that are not in `simplex_vertices`). This is the standard combinatorial definition of
 /// the link of a simplex in a pure simplicial complex.
-fn simplex_link_simplices_from_star<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn simplex_link_simplices_from_star<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplex_vertices: &[VertexKey],
     star_simplices: &[SimplexKey],
 ) -> Result<LinkSimplexBuffer, ManifoldError> {
@@ -1130,7 +1129,7 @@ fn simplex_link_simplices_from_star<T, U, V, const D: usize>(
 ///
 /// ```rust
 /// use delaunay::prelude::construction::{
-///     DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
+///     DelaunayTriangulation, DelaunayTriangulationConstructionError,
 /// };
 /// use delaunay::prelude::topology::validation::{
 ///     ManifoldError, RidgeVertices, RidgeVerticesError, ridge_star_simplices,
@@ -1145,9 +1144,9 @@ fn simplex_link_simplices_from_star<T, U, V, const D: usize>(
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0]),
-///     vertex!([1.0, 0.0]),
-///     vertex!([0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let triangulation = DelaunayTriangulation::new(&vertices)?;
 /// let Some(v0) = triangulation.tds().vertex_keys().next() else {
@@ -1160,15 +1159,15 @@ fn simplex_link_simplices_from_star<T, U, V, const D: usize>(
 /// # Ok(())
 /// # }
 /// ```
-pub fn ridge_star_simplices<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub fn ridge_star_simplices<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     ridge_vertices: &RidgeVertices<D>,
 ) -> Result<SmallBuffer<SimplexKey, 8>, ManifoldError> {
     simplex_star_simplices(tds, ridge_vertices.as_slice())
 }
 
-fn ridge_link_edges_from_star<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn ridge_link_edges_from_star<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     ridge_vertices: &[LiftedVertexId],
     star_simplices: &[SimplexKey],
 ) -> Result<SmallBuffer<(LiftedVertexId, LiftedVertexId), 8>, ManifoldError> {
@@ -1252,8 +1251,8 @@ struct RidgeStar {
 //
 // This is appropriate for Level 3 topology validation / debugging, but it can be expensive
 // for extremely large triangulations (e.g., millions of simplices) or higher-dimensional complexes.
-fn build_ridge_star_map<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn build_ridge_star_map<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
 ) -> Result<FastHashMap<u64, RidgeStar>, ManifoldError> {
     let simplex_count = tds.number_of_simplices();
     if simplex_count == 0 {
@@ -1329,8 +1328,8 @@ fn build_ridge_star_map<T, U, V, const D: usize>(
     Ok(ridge_to_star)
 }
 
-fn build_ridge_star_map_for_simplices<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn build_ridge_star_map_for_simplices<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplices: &[SimplexKey],
 ) -> Result<FastHashMap<u64, RidgeStar>, ManifoldError> {
     if D < 2 {
@@ -1435,8 +1434,8 @@ fn build_ridge_star_map_for_simplices<T, U, V, const D: usize>(
     Ok(ridge_to_star)
 }
 
-fn normalized_simplex_vertices_for_lifted_target<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn normalized_simplex_vertices_for_lifted_target<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
     target_vertices: &[LiftedVertexId],
 ) -> Result<Option<LiftedVertexBuffer>, ManifoldError> {
@@ -1489,8 +1488,8 @@ fn normalized_simplex_vertices_for_lifted_target<T, U, V, const D: usize>(
 /// - `simplex_vertices` fails for any candidate simplex.
 /// - Periodic offset filtering produces an empty star, indicating inconsistent
 ///   offsets in the TDS.
-fn periodic_aware_ridge_star<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn periodic_aware_ridge_star<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     ridge_key: u64,
     lifted_vertices: &[LiftedVertexId],
     bare_vertices: &VertexKeyBuffer,
@@ -1583,10 +1582,10 @@ fn periodic_aware_ridge_star<T, U, V, const D: usize>(
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices)?;
 ///
@@ -1594,9 +1593,7 @@ fn periodic_aware_ridge_star<T, U, V, const D: usize>(
 /// # Ok(())
 /// # }
 /// ```
-pub fn validate_ridge_links<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
-) -> Result<(), ManifoldError> {
+pub fn validate_ridge_links<U, V, const D: usize>(tds: &Tds<U, V, D>) -> Result<(), ManifoldError> {
     // Ridge links are only meaningful for D>=2.
     if D < 2 {
         return Ok(());
@@ -1667,10 +1664,10 @@ pub fn validate_ridge_links<T, U, V, const D: usize>(
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices)?;
 /// let simplices: SimplexKeyBuffer = tds.simplices().map(|(k, _)| k).collect();
@@ -1679,8 +1676,8 @@ pub fn validate_ridge_links<T, U, V, const D: usize>(
 /// # Ok(())
 /// # }
 /// ```
-pub fn validate_ridge_links_for_simplices<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub fn validate_ridge_links_for_simplices<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplices: &[SimplexKey],
 ) -> Result<(), ManifoldError> {
     // Ridge links are only meaningful for D>=2.
@@ -1764,10 +1761,10 @@ pub fn validate_ridge_links_for_simplices<T, U, V, const D: usize>(
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices)?;
 /// let facet_to_simplices = tds.build_facet_to_simplices_map()?;
@@ -1778,8 +1775,8 @@ pub fn validate_ridge_links_for_simplices<T, U, V, const D: usize>(
 /// # Ok(())
 /// # }
 /// ```
-pub fn validate_vertex_links<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub fn validate_vertex_links<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     facet_to_simplices: &FacetToSimplicesMap,
 ) -> Result<(), ManifoldError> {
     // Vertex links are only meaningful for D>=1.
@@ -1801,8 +1798,8 @@ pub fn validate_vertex_links<T, U, V, const D: usize>(
     Ok(())
 }
 
-fn build_boundary_vertex_set<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn build_boundary_vertex_set<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     facet_to_simplices: &FacetToSimplicesMap,
 ) -> Result<FastHashSet<VertexKey>, ManifoldError> {
     // Single pass: collect all vertices that appear on a boundary facet (a facet incident to exactly 1 D-simplex).
@@ -1938,8 +1935,8 @@ fn validate_vertex_link_d2(
     }
 }
 
-fn validate_single_vertex_link<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn validate_single_vertex_link<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     vertex_key: VertexKey,
     interior_vertex: bool,
 ) -> Result<(), ManifoldError> {
@@ -2477,7 +2474,6 @@ mod tests {
     use crate::core::simplex::Simplex;
     use crate::core::triangulation::Triangulation;
     use crate::geometry::kernel::FastKernel;
-    use crate::vertex;
 
     use slotmap::KeyData;
 
@@ -2491,18 +2487,34 @@ mod tests {
         s
     }
 
-    fn build_closed_surface_s2_tds_2d() -> (Tds<f64, (), (), 2>, [VertexKey; 4]) {
+    fn build_closed_surface_s2_tds_2d() -> (Tds<(), (), 2>, [VertexKey; 4]) {
         // Closed 2D simplicial complex (topologically S²): boundary of a tetrahedron.
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            )
+            .unwrap();
 
         for tri in [[v0, v1, v2], [v0, v1, v3], [v0, v2, v3], [v1, v2, v3]] {
             tds.insert_simplex_with_mapping(
-                Simplex::new(vec![tri[0], tri[1], tri[2]], None).unwrap(),
+                Simplex::try_new_with_data(vec![tri[0], tri[1], tri[2]], None).unwrap(),
             )
             .unwrap();
         }
@@ -2510,39 +2522,59 @@ mod tests {
         (tds, [v0, v1, v2, v3])
     }
 
-    fn build_non_manifold_boundary_ridge_tds_3d() -> (Tds<f64, (), (), 3>, SimplexKey, u64) {
+    fn build_non_manifold_boundary_ridge_tds_3d() -> (Tds<(), (), 3>, SimplexKey, u64) {
         // Two tetrahedra that share an edge but not a facet create a non-manifold boundary:
         // the shared edge is incident to 4 boundary triangles.
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let mut tds: Tds<(), (), 3> = Tds::empty();
 
         let shared_edge_v0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let shared_edge_v1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
 
         let tet1_v2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let tet1_v3 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            )
             .unwrap();
         let tet2_v2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, -1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, -1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let tet2_v3 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, -1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, -1.0]).unwrap(),
+            )
             .unwrap();
 
         let touched_simplex = tds
             .insert_simplex_with_mapping(
-                Simplex::new(vec![shared_edge_v0, shared_edge_v1, tet1_v2, tet1_v3], None).unwrap(),
+                Simplex::try_new_with_data(
+                    vec![shared_edge_v0, shared_edge_v1, tet1_v2, tet1_v3],
+                    None,
+                )
+                .unwrap(),
             )
             .unwrap();
         let _ = tds
             .insert_simplex_with_mapping(
-                Simplex::new(vec![shared_edge_v0, shared_edge_v1, tet2_v2, tet2_v3], None).unwrap(),
+                Simplex::try_new_with_data(
+                    vec![shared_edge_v0, shared_edge_v1, tet2_v2, tet2_v3],
+                    None,
+                )
+                .unwrap(),
             )
             .unwrap();
 
@@ -2553,10 +2585,10 @@ mod tests {
     #[test]
     fn test_validate_facet_degree_ok_for_single_tetrahedron() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let tds =
@@ -2569,32 +2601,46 @@ mod tests {
     #[test]
     fn test_validate_facet_degree_ok_for_two_tetrahedra_sharing_facet() {
         // Two tetrahedra share a facet => that facet has degree 2, all others degree 1.
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let mut tds: Tds<(), (), 3> = Tds::empty();
 
         // Shared triangle.
         let v0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
 
         // Apex points on opposite sides.
         let v3 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            )
             .unwrap();
         let v4 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, -1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, -1.0]).unwrap(),
+            )
             .unwrap();
 
         let _ = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2, v3], None).unwrap(),
+            )
             .unwrap();
         let _ = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v4], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2, v4], None).unwrap(),
+            )
             .unwrap();
 
         let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
@@ -2604,37 +2650,53 @@ mod tests {
     #[test]
     fn test_validate_facet_degree_errors_on_non_manifold_facet_multiplicity() {
         // Three tetrahedra share a single facet -> not a manifold-with-boundary.
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let mut tds: Tds<(), (), 3> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
 
         let v3 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            )
             .unwrap();
         let v4 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 2.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 2.0]).unwrap(),
+            )
             .unwrap();
         let v5 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 3.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 3.0]).unwrap(),
+            )
             .unwrap();
 
         let _ = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2, v3], None).unwrap(),
+            )
             .unwrap();
         let _ = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v4], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2, v4], None).unwrap(),
+            )
             .unwrap();
         let _ = tds
             .insert_simplex_bypassing_topology_checks_for_test(
-                Simplex::new(vec![v0, v1, v2, v5], None).unwrap(),
+                Simplex::try_new_with_data(vec![v0, v1, v2, v5], None).unwrap(),
             )
             .unwrap();
 
@@ -2656,10 +2718,10 @@ mod tests {
     #[test]
     fn test_validate_closed_boundary_ok_for_single_tetrahedron() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let tds =
@@ -2672,10 +2734,10 @@ mod tests {
     #[test]
     fn test_validate_closed_boundary_errors_on_out_of_bounds_facet_index() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let tds =
@@ -2685,7 +2747,7 @@ mod tests {
         // Synthesize an invalid boundary facet handle: facet indices must be < D+1.
         let mut facet_to_simplices: FacetToSimplicesMap = FacetToSimplicesMap::default();
         let mut handles: SmallBuffer<FacetHandle, 2> = SmallBuffer::new();
-        handles.push(FacetHandle::new(simplex_key, u8::MAX));
+        handles.push(FacetHandle::from_validated(simplex_key, u8::MAX));
         facet_to_simplices.insert(0_u64, handles);
 
         match validate_closed_boundary(&tds, &facet_to_simplices) {
@@ -2869,15 +2931,27 @@ mod tests {
     #[test]
     fn test_validate_single_vertex_link_d1_accepts_path_middle_and_endpoints() {
         // 0--1--2 : middle vertex is interior (2 neighbors), endpoints are boundary (1 neighbor).
-        let mut tds: Tds<f64, (), (), 1> = Tds::empty();
+        let mut tds: Tds<(), (), 1> = Tds::empty();
 
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0])).unwrap();
-        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0])).unwrap();
-        let v2 = tds.insert_vertex_with_mapping(vertex!([2.0])).unwrap();
-
-        tds.insert_simplex_with_mapping(Simplex::new(vec![v0, v1], None).unwrap())
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap(),
+            )
             .unwrap();
-        tds.insert_simplex_with_mapping(Simplex::new(vec![v1, v2], None).unwrap())
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
+            )
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([2.0]).unwrap(),
+            )
+            .unwrap();
+
+        tds.insert_simplex_with_mapping(Simplex::try_new_with_data(vec![v0, v1], None).unwrap())
+            .unwrap();
+        tds.insert_simplex_with_mapping(Simplex::try_new_with_data(vec![v1, v2], None).unwrap())
             .unwrap();
 
         validate_single_vertex_link(&tds, v0, false).unwrap();
@@ -2887,12 +2961,20 @@ mod tests {
 
     #[test]
     fn test_validate_single_vertex_link_d1_rejects_endpoint_classified_as_interior() {
-        let mut tds: Tds<f64, (), (), 1> = Tds::empty();
+        let mut tds: Tds<(), (), 1> = Tds::empty();
 
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0])).unwrap();
-        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0])).unwrap();
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap(),
+            )
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
+            )
+            .unwrap();
 
-        tds.insert_simplex_with_mapping(Simplex::new(vec![v0, v1], None).unwrap())
+        tds.insert_simplex_with_mapping(Simplex::try_new_with_data(vec![v0, v1], None).unwrap())
             .unwrap();
 
         assert_matches!(
@@ -2903,14 +2985,28 @@ mod tests {
 
     #[test]
     fn test_validate_single_vertex_link_d2_accepts_boundary_vertex_in_single_triangle() {
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-
-        tds.insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
             .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
+
+        tds.insert_simplex_with_mapping(
+            Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
+        )
+        .unwrap();
 
         validate_single_vertex_link(&tds, v0, false).unwrap();
         assert_matches!(
@@ -2936,13 +3032,33 @@ mod tests {
         //
         // Boundary vertices must have path links (degree-one vertices = 2), while the interior
         // vertex has a cycle link (degree-one vertices = 0).
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let va = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let vb = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let vc = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
-        let vd = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let center = tds.insert_vertex_with_mapping(vertex!([0.5, 0.5])).unwrap();
+        let va = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let vb = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let vc = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            )
+            .unwrap();
+        let vd = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
+        let center = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
+            )
+            .unwrap();
 
         for tri in [
             [center, va, vb],
@@ -2951,7 +3067,7 @@ mod tests {
             [center, vd, va],
         ] {
             tds.insert_simplex_with_mapping(
-                Simplex::new(vec![tri[0], tri[1], tri[2]], None).unwrap(),
+                Simplex::try_new_with_data(vec![tri[0], tri[1], tri[2]], None).unwrap(),
             )
             .unwrap();
         }
@@ -3010,7 +3126,10 @@ mod tests {
 
     #[test]
     fn test_validate_closed_boundary_noop_for_d_lt_2() {
-        let vertices = vec![vertex!([0.0]), vertex!([1.0])];
+        let vertices = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
+        ];
 
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 1>::build_initial_simplex(&vertices).unwrap();
@@ -3049,7 +3168,7 @@ mod tests {
 
     #[test]
     fn test_simplex_star_simplices_errors_on_empty_simplex() {
-        let tds: Tds<f64, (), (), 2> = Tds::empty();
+        let tds: Tds<(), (), 2> = Tds::empty();
 
         match simplex_star_simplices(&tds, &[]) {
             Err(ManifoldError::Tds(TdsError::InconsistentDataStructure { ref message }))
@@ -3060,9 +3179,13 @@ mod tests {
 
     #[test]
     fn test_simplex_star_simplices_returns_empty_for_isolated_vertex() {
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
 
         let star = simplex_star_simplices(&tds, &[v0]).unwrap();
         assert!(star.is_empty());
@@ -3070,7 +3193,7 @@ mod tests {
 
     #[test]
     fn test_simplex_link_simplices_from_star_errors_on_empty_simplex() {
-        let tds: Tds<f64, (), (), 2> = Tds::empty();
+        let tds: Tds<(), (), 2> = Tds::empty();
 
         match simplex_link_simplices_from_star(&tds, &[], &[]) {
             Err(ManifoldError::Tds(TdsError::InconsistentDataStructure { ref message }))
@@ -3084,17 +3207,33 @@ mod tests {
         // Defensive: a simplex vertex that exists in the TDS but is not part of a star simplex should
         // trigger a link-size mismatch (this should not happen when star simplices are produced by
         // `simplex_star_simplices`, but is a robustness check for corrupted inputs).
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(vertex!([10.0, 10.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([10.0, 10.0]).unwrap(),
+            )
             .unwrap();
 
         let simplex_key = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
+            )
             .unwrap();
 
         match simplex_link_simplices_from_star(&tds, &[v0, v3], &[simplex_key]) {
@@ -3121,7 +3260,7 @@ mod tests {
 
     #[test]
     fn test_ridge_link_edges_from_star_noop_for_d_lt_2() {
-        let tds: Tds<f64, (), (), 1> = Tds::empty();
+        let tds: Tds<(), (), 1> = Tds::empty();
 
         let edges = ridge_link_edges_from_star(&tds, &[], &[]).unwrap();
         assert!(edges.is_empty());
@@ -3144,23 +3283,33 @@ mod tests {
 
     #[test]
     fn test_ridge_link_edges_from_star_errors_on_wrong_vertex_count_in_3d() {
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let mut tds: Tds<(), (), 3> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            )
             .unwrap();
 
         let simplex_key = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2, v3], None).unwrap(),
+            )
             .unwrap();
 
         // In 3D, ridges are edges (2 vertices). Passing a single vertex is invalid.
@@ -3177,24 +3326,48 @@ mod tests {
     #[test]
     fn test_ridge_star_simplices_returns_incident_simplices_for_vertex_ridge_in_2d() {
         // In 2D, a ridge is a vertex and its star is the set of incident triangles.
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            )
+            .unwrap();
 
         let c012 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
+            )
             .unwrap();
         let c013 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v3], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v3], None).unwrap(),
+            )
             .unwrap();
         let c023 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v2, v3], None).unwrap(),
+            )
             .unwrap();
         let _c123 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v1, v2, v3], None).unwrap(),
+            )
             .unwrap();
 
         let ridge_vertices = RidgeVertices::<2>::try_from_vertices([v0]).unwrap();
@@ -3209,32 +3382,48 @@ mod tests {
     fn test_ridge_star_simplices_returns_full_edge_star_in_3d() {
         // In 3D, a ridge is an edge. This regression protects k=3 support
         // collection from using only the anchor simplex.
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let mut tds: Tds<(), (), 3> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            )
             .unwrap();
         let v4 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, -1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, -1.0, 0.0]).unwrap(),
+            )
             .unwrap();
 
         let c0123 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2, v3], None).unwrap(),
+            )
             .unwrap();
         let c0134 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v3, v4], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v3, v4], None).unwrap(),
+            )
             .unwrap();
         let c0142 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v4, v2], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v4, v2], None).unwrap(),
+            )
             .unwrap();
 
         let ridge_vertices = RidgeVertices::<3>::try_from_vertices([v0, v1]).unwrap();
@@ -3247,7 +3436,7 @@ mod tests {
 
     #[test]
     fn test_ridge_star_simplices_errors_on_missing_vertex_key() {
-        let tds: Tds<f64, (), (), 2> = Tds::empty();
+        let tds: Tds<(), (), 2> = Tds::empty();
         let missing = VertexKey::from(KeyData::from_ffi(u64::MAX));
 
         let ridge_vertices = RidgeVertices::<2>::try_from_vertices([missing]).unwrap();
@@ -3261,14 +3450,28 @@ mod tests {
 
     #[test]
     fn test_ridge_link_edges_from_star_rejects_self_loop_edge() {
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
 
         let simplex_key = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
+            )
             .unwrap();
 
         // Corrupt the simplex in-place: keep length == D+1 but introduce a duplicate link vertex.
@@ -3314,14 +3517,28 @@ mod tests {
     fn test_validate_ridge_links_errors_on_corrupted_simplex_with_duplicate_vertices() {
         // This is a defensive robustness test: a corrupted simplex with duplicate vertices can
         // produce a malformed ridge link (wrong number of link vertices).
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
 
         let simplex_key = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
+            )
             .unwrap();
 
         // Corrupt the simplex in-place: keep length == D+1 but introduce a duplicate vertex.
@@ -3386,10 +3603,10 @@ mod tests {
     #[test]
     fn test_validate_local_pseudomanifold_for_simplices_errors_on_missing_scope_simplex() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut tds =
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
@@ -3408,10 +3625,10 @@ mod tests {
     #[test]
     fn test_validate_ridge_links_ok_for_single_tetrahedron() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let tds =
@@ -3422,7 +3639,7 @@ mod tests {
 
     #[test]
     fn test_validate_ridge_links_noop_for_empty_tds() {
-        let tds: Tds<f64, (), (), 2> = Tds::empty();
+        let tds: Tds<(), (), 2> = Tds::empty();
         assert!(validate_ridge_links(&tds).is_ok());
     }
 
@@ -3455,88 +3672,140 @@ mod tests {
     }
 
     fn build_two_tetrahedra_sharing_facet_tds_3d()
-    -> (Tds<f64, (), (), 3>, [VertexKey; 5], [SimplexKey; 2]) {
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+    -> (Tds<(), (), 3>, [VertexKey; 5], [SimplexKey; 2]) {
+        let mut tds: Tds<(), (), 3> = Tds::empty();
 
         // Shared triangle.
         let v0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
 
         // Opposite vertices.
         let v3 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            )
             .unwrap();
         let v4 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, -1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, -1.0]).unwrap(),
+            )
             .unwrap();
 
         let c1 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2, v3], None).unwrap(),
+            )
             .unwrap();
         let c2 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v4], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2, v4], None).unwrap(),
+            )
             .unwrap();
 
         (tds, [v0, v1, v2, v3, v4], [c1, c2])
     }
 
     fn build_wedge_two_spheres_share_vertex_tds_2d()
-    -> (Tds<f64, (), (), 2>, VertexKey, SimplexKey, SimplexKey) {
+    -> (Tds<(), (), 2>, VertexKey, SimplexKey, SimplexKey) {
         // Two closed 2D spheres (boundaries of tetrahedra) that share a single vertex.
         // This is a pseudomanifold (every edge has degree 2), but not a PL 2-manifold:
         // the shared vertex has a disconnected link (two disjoint cycles).
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
         // Shared vertex.
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
 
         // First tetrahedron boundary (4 triangles on 4 vertices).
-        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            )
+            .unwrap();
 
         let c012 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
+            )
             .unwrap();
         let _c013 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v3], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v3], None).unwrap(),
+            )
             .unwrap();
         let _c023 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v2, v3], None).unwrap(),
+            )
             .unwrap();
         let c123 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v1, v2, v3], None).unwrap(),
+            )
             .unwrap();
 
         // Second tetrahedron boundary (shares only v0).
         let v4 = tds
-            .insert_vertex_with_mapping(vertex!([10.0, 10.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([10.0, 10.0]).unwrap(),
+            )
             .unwrap();
         let v5 = tds
-            .insert_vertex_with_mapping(vertex!([11.0, 10.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([11.0, 10.0]).unwrap(),
+            )
             .unwrap();
         let v6 = tds
-            .insert_vertex_with_mapping(vertex!([10.0, 11.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([10.0, 11.0]).unwrap(),
+            )
             .unwrap();
 
         let _c045 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v4, v5], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v4, v5], None).unwrap(),
+            )
             .unwrap();
         let _c046 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v4, v6], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v4, v6], None).unwrap(),
+            )
             .unwrap();
         let _c056 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v5, v6], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v5, v6], None).unwrap(),
+            )
             .unwrap();
         let _c456 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v4, v5, v6], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v4, v5, v6], None).unwrap(),
+            )
             .unwrap();
 
         (tds, v0, c012, c123)
@@ -3544,7 +3813,7 @@ mod tests {
 
     #[test]
     fn test_build_ridge_star_map_empty_returns_empty() {
-        let tds: Tds<f64, (), (), 3> = Tds::empty();
+        let tds: Tds<(), (), 3> = Tds::empty();
 
         let map = build_ridge_star_map(&tds).unwrap();
         assert!(map.is_empty());
@@ -3552,14 +3821,28 @@ mod tests {
 
     #[test]
     fn test_build_ridge_star_map_errors_on_corrupted_simplex_vertex_count() {
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
 
         let simplex_key = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
+            )
             .unwrap();
 
         // Corrupt the simplex in-place: change it to have only 2 vertices.
@@ -3586,7 +3869,7 @@ mod tests {
 
     #[test]
     fn test_build_ridge_star_map_for_simplices_noop_for_d_lt_2() {
-        let tds: Tds<f64, (), (), 1> = Tds::empty();
+        let tds: Tds<(), (), 1> = Tds::empty();
         let simplex_key = SimplexKey::from(KeyData::from_ffi(0));
 
         let map = build_ridge_star_map_for_simplices(&tds, &[simplex_key]).unwrap();
@@ -3595,22 +3878,32 @@ mod tests {
 
     #[test]
     fn test_build_ridge_star_map_for_simplices_empty_returns_empty() {
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let mut tds: Tds<(), (), 3> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            )
             .unwrap();
 
         let _ = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2, v3], None).unwrap(),
+            )
             .unwrap();
 
         let map = build_ridge_star_map_for_simplices(&tds, &[]).unwrap();
@@ -3713,14 +4006,28 @@ mod tests {
     #[test]
     fn test_build_ridge_star_map_for_simplices_errors_on_corrupted_simplex_vertex_count() {
         // Corrupt a simplex's vertex list to violate the (D+1)-vertices invariant.
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
 
         let simplex_key = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
+            )
             .unwrap();
 
         // Corrupt the simplex in-place: change it to have only 2 vertices.
@@ -3748,10 +4055,10 @@ mod tests {
     #[test]
     fn test_validate_ridge_links_for_simplices_ok_for_single_tetrahedron_in_3d() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let tds =
@@ -3767,7 +4074,7 @@ mod tests {
     #[test]
     fn test_validate_ridge_links_for_simplices_ok_for_missing_simplex_keys() {
         // Defensive: local validation should ignore missing simplex keys.
-        let tds: Tds<f64, (), (), 3> = Tds::empty();
+        let tds: Tds<(), (), 3> = Tds::empty();
         let missing = SimplexKey::from(KeyData::from_ffi(u64::MAX));
 
         assert!(validate_ridge_links_for_simplices(&tds, &[missing]).is_ok());
@@ -3775,13 +4082,21 @@ mod tests {
 
     #[test]
     fn test_validate_ridge_links_for_simplices_noop_for_d_lt_2() {
-        let mut tds: Tds<f64, (), (), 1> = Tds::empty();
+        let mut tds: Tds<(), (), 1> = Tds::empty();
 
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0])).unwrap();
-        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0])).unwrap();
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap(),
+            )
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
+            )
+            .unwrap();
 
         let c01 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![v0, v1], None).unwrap())
             .unwrap();
 
         assert!(validate_ridge_links_for_simplices(&tds, &[c01]).is_ok());
@@ -3823,7 +4138,7 @@ mod tests {
         assert!(validate_ridge_links_for_simplices(&tds, &[nonincident]).is_ok());
     }
 
-    fn build_cone_on_torus_tds() -> (Tds<f64, (), (), 3>, VertexKey) {
+    fn build_cone_on_torus_tds() -> (Tds<(), (), 3>, VertexKey) {
         // Construct a 3D simplicial complex that is a cone over a triangulated 2-torus.
         //
         // This is a pseudomanifold and passes ridge-link validation, but is NOT a PL 3-manifold:
@@ -3832,7 +4147,7 @@ mod tests {
         const N: usize = 3;
         const M: usize = 3;
 
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let mut tds: Tds<(), (), 3> = Tds::empty();
 
         // Build a small triangulated torus using a periodic 3x3 grid.
         let mut v: [[VertexKey; M]; N] = [[VertexKey::from(KeyData::from_ffi(0)); M]; N];
@@ -3841,14 +4156,18 @@ mod tests {
                 let i_f = <f64 as std::convert::From<u32>>::from(u32::try_from(i).unwrap());
                 let j_f = <f64 as std::convert::From<u32>>::from(u32::try_from(j).unwrap());
                 *slot = tds
-                    .insert_vertex_with_mapping(vertex!([i_f, j_f, 0.0]))
+                    .insert_vertex_with_mapping(
+                        crate::core::vertex::Vertex::<(), _>::try_new([i_f, j_f, 0.0]).unwrap(),
+                    )
                     .unwrap();
             }
         }
 
         // Apex of the cone (interior vertex; not on any boundary facet).
         let apex = tds
-            .insert_vertex_with_mapping(vertex!([0.5, 0.5, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 1.0]).unwrap(),
+            )
             .unwrap();
 
         // Triangulate each periodic square into two triangles, then cone to the apex.
@@ -3865,7 +4184,8 @@ mod tests {
                 for tri in [[v00, v10, v01], [v10, v11, v01]] {
                     let _ = tds
                         .insert_simplex_with_mapping(
-                            Simplex::new(vec![tri[0], tri[1], tri[2], apex], None).unwrap(),
+                            Simplex::try_new_with_data(vec![tri[0], tri[1], tri[2], apex], None)
+                                .unwrap(),
                         )
                         .unwrap();
                 }
@@ -3907,7 +4227,7 @@ mod tests {
 
     #[test]
     fn test_simplex_star_simplices_rejects_missing_vertex() {
-        let tds: Tds<f64, (), (), 2> = Tds::empty();
+        let tds: Tds<(), (), 2> = Tds::empty();
         let stale_key = VertexKey::from(KeyData::from_ffi(0xDEAD));
         match simplex_star_simplices(&tds, &[stale_key]) {
             Err(ManifoldError::Tds(TdsError::VertexNotFound {
@@ -3966,23 +4286,33 @@ mod tests {
     fn test_validate_closed_boundary_dimension_mismatch_on_corrupted_simplex() {
         // Create a 3D TDS with a simplex that has too few vertices (corrupted state),
         // then trigger the DimensionMismatch path in validate_closed_boundary.
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let mut tds: Tds<(), (), 3> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            )
             .unwrap();
 
         let simplex_key = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2, v3], None).unwrap(),
+            )
             .unwrap();
 
         // Build a facet-to-simplices map with a synthetic boundary facet pointing at facet_index=0
@@ -3997,7 +4327,7 @@ mod tests {
 
         let mut facet_to_simplices: FacetToSimplicesMap = FacetToSimplicesMap::default();
         let mut handles: SmallBuffer<FacetHandle, 2> = SmallBuffer::new();
-        handles.push(FacetHandle::new(simplex_key, 0));
+        handles.push(FacetHandle::from_validated(simplex_key, 0));
         facet_to_simplices.insert(0_u64, handles);
 
         match validate_closed_boundary(&tds, &facet_to_simplices) {
@@ -4040,25 +4370,35 @@ mod tests {
         // Cone on the boundary of a tetrahedron (S^2).
         // The apex link is S^2, so this IS a valid PL 3-manifold (a 3-ball).
 
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let mut tds: Tds<(), (), 3> = Tds::empty();
 
         // Base tetrahedron vertices (triangulated S^2 boundary)
         let v0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            )
             .unwrap();
 
         // Apex of the cone
         let apex = tds
-            .insert_vertex_with_mapping(vertex!([0.3, 0.3, 0.3]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.3, 0.3]).unwrap(),
+            )
             .unwrap();
 
         // Each boundary triangle of the tetrahedron, coned to apex
@@ -4072,7 +4412,7 @@ mod tests {
         for tri in sphere_faces {
             let mut verts = tri;
             verts.push(apex);
-            tds.insert_simplex_with_mapping(Simplex::new(verts, None).unwrap())
+            tds.insert_simplex_with_mapping(Simplex::try_new_with_data(verts, None).unwrap())
                 .unwrap();
         }
 
@@ -4091,21 +4431,33 @@ mod tests {
     fn test_build_ridge_star_map_for_simplices_identifies_translated_periodic_images() {
         // Two 2D simplices share bare vertex keys but differ in periodic offsets.
         // The ridge map identifies globally translated quotient ridges.
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let v2 = tds.insert_vertex_with_mapping(vertex!([0.5, 1.0])).unwrap();
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 1.0]).unwrap(),
+            )
+            .unwrap();
 
         // c1: all vertices at base image [0,0].
-        let mut simplex1 = Simplex::new(vec![v0, v1, v2], None).unwrap();
+        let mut simplex1 = Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap();
         simplex1
             .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]])
             .unwrap();
         let c1 = tds.insert_simplex_with_mapping(simplex1).unwrap();
 
         // c2: v0 at periodic image [1,0]; v1 and v2 at base image.
-        let mut simplex2 = Simplex::new(vec![v0, v1, v2], None).unwrap();
+        let mut simplex2 = Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap();
         simplex2
             .set_periodic_vertex_offsets(vec![[1, 0], [0, 0], [0, 0]])
             .unwrap();
@@ -4125,16 +4477,22 @@ mod tests {
 
     #[test]
     fn test_anchored_lifted_simplex_key_preserves_vertex_link_offsets() {
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let mut tds: Tds<(), (), 3> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
 
         let first_link_triangle: LiftedVertexBuffer = [
@@ -4168,14 +4526,28 @@ mod tests {
     fn test_periodic_aware_ridge_star_empty_star_returns_error() {
         // Call periodic_aware_ridge_star with lifted vertices that don't match
         // any simplex's offsets, forcing an empty star after filtering.
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let v2 = tds.insert_vertex_with_mapping(vertex!([0.5, 1.0])).unwrap();
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 1.0]).unwrap(),
+            )
+            .unwrap();
 
         let c1 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
+            )
             .unwrap();
         tds.simplex_mut(c1)
             .unwrap()
@@ -4203,19 +4575,31 @@ mod tests {
     fn test_validate_ridge_links_for_simplices_rejects_split_periodic_link() {
         // These two lifted triangles share quotient ridge vertices but leave a split
         // periodic link, so quotient-aware ridge-link validation must reject them.
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let v2 = tds.insert_vertex_with_mapping(vertex!([0.5, 1.0])).unwrap();
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 1.0]).unwrap(),
+            )
+            .unwrap();
 
-        let mut simplex1 = Simplex::new(vec![v0, v1, v2], None).unwrap();
+        let mut simplex1 = Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap();
         simplex1
             .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]])
             .unwrap();
         let c1 = tds.insert_simplex_with_mapping(simplex1).unwrap();
 
-        let mut simplex2 = Simplex::new(vec![v0, v1, v2], None).unwrap();
+        let mut simplex2 = Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap();
         simplex2
             .set_periodic_vertex_offsets(vec![[1, 0], [0, 0], [0, 0]])
             .unwrap();
@@ -4233,10 +4617,10 @@ mod tests {
         // Each boundary vertex has a link homeomorphic to a 2-ball.
 
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let tds =

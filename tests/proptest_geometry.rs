@@ -32,17 +32,14 @@ fn nonzero_scale() -> impl Strategy<Value = f64> {
     (-90.0_f64..90.0).prop_map(|exponent| 10.0_f64.powf(exponent))
 }
 
-fn axis_aligned_simplex<const D: usize>(
-    base: [f64; D],
-    side_lengths: [f64; D],
-) -> Vec<Point<f64, D>> {
+fn axis_aligned_simplex<const D: usize>(base: [f64; D], side_lengths: [f64; D]) -> Vec<Point<D>> {
     let mut simplex = Vec::with_capacity(D + 1);
-    simplex.push(Point::new(base));
+    simplex.push(Point::try_new(base).expect("finite point coordinates"));
 
     for (axis, side_length) in side_lengths.iter().copied().enumerate() {
         let mut coords = base;
         coords[axis] += side_length;
-        simplex.push(Point::new(coords));
+        simplex.push(Point::try_new(coords).expect("finite point coordinates"));
     }
 
     simplex
@@ -70,7 +67,7 @@ macro_rules! test_geometry_properties {
                 #[test]
                 fn [<prop_circumcenter_equidistance_ $dim d>](
                     simplex_points in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $num_points
                     )
                 ) {
@@ -99,7 +96,7 @@ macro_rules! test_geometry_properties {
                 #[test]
                 fn [<prop_circumradius_matches_distance_ $dim d>](
                     simplex_points in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $num_points
                     )
                 ) {
@@ -154,7 +151,7 @@ macro_rules! test_geometry_properties {
                 #[test]
                 fn [<prop_volume_positivity_ $dim d>](
                     simplex_points in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $num_points
                     )
                 ) {
@@ -172,7 +169,7 @@ macro_rules! test_geometry_properties {
                 #[test]
                 fn [<prop_inradius_positivity_ $dim d>](
                     simplex_points in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $num_points
                     )
                 ) {
@@ -252,23 +249,23 @@ proptest! {
     /// of magnitude. This guards against fixed absolute degeneracy thresholds.
     #[test]
     fn prop_low_dimensional_simplex_volume_accepts_scaled_valid_simplices(scale in nonzero_scale()) {
-        let segment = vec![Point::new([0.0]), Point::new([scale])];
+        let segment = vec![Point::try_new([0.0]).expect("finite point coordinates"), Point::try_new([scale]).expect("finite point coordinates")];
         let length = simplex_volume(&segment).unwrap();
         prop_assert_relative_close(length, scale)?;
 
         let triangle = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([scale, 0.0]),
-            Point::new([0.0, scale]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([scale, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, scale]).expect("finite point coordinates"),
         ];
         let area = simplex_volume(&triangle).unwrap();
         prop_assert_relative_close(area, scale * scale / 2.0)?;
 
         let tetrahedron = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([scale, 0.0, 0.0]),
-            Point::new([0.0, scale, 0.0]),
-            Point::new([0.0, 0.0, scale]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([scale, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, scale, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, scale]).expect("finite point coordinates"),
         ];
         let volume = simplex_volume(&tetrahedron).unwrap();
         prop_assert_relative_close(volume, scale * scale * scale / 6.0)?;
@@ -277,14 +274,14 @@ proptest! {
     /// Property: Low-dimensional facet measure remains scale-aware for valid facets.
     #[test]
     fn prop_low_dimensional_facet_measure_accepts_scaled_valid_facets(scale in nonzero_scale()) {
-        let segment = vec![Point::new([0.0, 0.0]), Point::new([scale, 0.0])];
+        let segment = vec![Point::try_new([0.0, 0.0]).expect("finite point coordinates"), Point::try_new([scale, 0.0]).expect("finite point coordinates")];
         let length = facet_measure(&segment).unwrap();
         prop_assert_relative_close(length, scale)?;
 
         let triangle = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([scale, 0.0, 0.0]),
-            Point::new([0.0, scale, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([scale, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, scale, 0.0]).expect("finite point coordinates"),
         ];
         let area = facet_measure(&triangle).unwrap();
         prop_assert_relative_close(area, scale * scale / 2.0)?;

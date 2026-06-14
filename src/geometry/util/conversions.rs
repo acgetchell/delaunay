@@ -7,9 +7,10 @@
 #![forbid(unsafe_code)]
 
 use crate::geometry::traits::coordinate::{
-    CoordinateConversionError, CoordinateConversionValue, CoordinateScalar, InvalidCoordinateValue,
+    CoordinateConversionError, CoordinateConversionValue, F64_MANTISSA_DIGITS,
+    InvalidCoordinateValue,
 };
-use num_traits::cast;
+use num_traits::ToPrimitive;
 
 /// Structured reason why a direct value conversion failed.
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
@@ -85,24 +86,19 @@ pub enum ValueConversionError {
 ///
 /// Returns `CoordinateConversionError::NonFiniteValue` if the value is NaN or infinite
 /// Returns `CoordinateConversionError::ConversionFailed` if the conversion fails
-pub(in crate::geometry::util) fn safe_cast_to_f64<T: CoordinateScalar>(
-    value: T,
+pub(in crate::geometry::util) fn safe_cast_to_f64(
+    value: f64,
     coordinate_index: usize,
 ) -> Result<f64, CoordinateConversionError> {
     // Check for non-finite values first
-    if !value.is_finite_generic() {
+    if !value.is_finite() {
         return Err(CoordinateConversionError::NonFiniteValue {
             coordinate_index,
             coordinate_value: InvalidCoordinateValue::from_debug(&value),
         });
     }
 
-    cast(value).ok_or_else(|| CoordinateConversionError::ConversionFailed {
-        coordinate_index,
-        coordinate_value: CoordinateConversionValue::from_numeric_debug(&value),
-        from_type: std::any::type_name::<T>(),
-        to_type: "f64",
-    })
+    Ok(value)
 }
 
 /// Safely convert a coordinate value from f64 to type T.
@@ -124,10 +120,10 @@ pub(in crate::geometry::util) fn safe_cast_to_f64<T: CoordinateScalar>(
 ///
 /// Returns `CoordinateConversionError::NonFiniteValue` if the value is NaN or infinite
 /// Returns `CoordinateConversionError::ConversionFailed` if the conversion fails
-pub(in crate::geometry::util) fn safe_cast_from_f64<T: CoordinateScalar>(
+pub(in crate::geometry::util) fn safe_cast_from_f64(
     value: f64,
     coordinate_index: usize,
-) -> Result<T, CoordinateConversionError> {
+) -> Result<f64, CoordinateConversionError> {
     // Check for non-finite values first
     if !value.is_finite() {
         return Err(CoordinateConversionError::NonFiniteValue {
@@ -136,12 +132,7 @@ pub(in crate::geometry::util) fn safe_cast_from_f64<T: CoordinateScalar>(
         });
     }
 
-    cast(value).ok_or_else(|| CoordinateConversionError::ConversionFailed {
-        coordinate_index,
-        coordinate_value: CoordinateConversionValue::from_f64(value),
-        from_type: "f64",
-        to_type: std::any::type_name::<T>(),
-    })
+    Ok(value)
 }
 
 /// Safely convert an array of coordinates from type T to f64.
@@ -179,8 +170,8 @@ pub(in crate::geometry::util) fn safe_cast_from_f64<T: CoordinateScalar>(
 /// # Ok(())
 /// # }
 /// ```
-pub fn safe_coords_to_f64<T: CoordinateScalar, const D: usize>(
-    coords: &[T; D],
+pub fn safe_coords_to_f64<const D: usize>(
+    coords: &[f64; D],
 ) -> Result<[f64; D], CoordinateConversionError> {
     let mut result = [0.0_f64; D];
     for (i, &coord) in coords.iter().enumerate() {
@@ -224,10 +215,10 @@ pub fn safe_coords_to_f64<T: CoordinateScalar, const D: usize>(
 /// # Ok(())
 /// # }
 /// ```
-pub fn safe_coords_from_f64<T: CoordinateScalar, const D: usize>(
+pub fn safe_coords_from_f64<const D: usize>(
     coords: &[f64; D],
-) -> Result<[T; D], CoordinateConversionError> {
-    let mut result = [T::zero(); D];
+) -> Result<[f64; D], CoordinateConversionError> {
+    let mut result = [0.0_f64; D];
     for (i, &coord) in coords.iter().enumerate() {
         result[i] = safe_cast_from_f64(coord, i)?;
     }
@@ -265,7 +256,7 @@ pub fn safe_coords_from_f64<T: CoordinateScalar, const D: usize>(
 /// # Ok(())
 /// # }
 /// ```
-pub fn safe_scalar_to_f64<T: CoordinateScalar>(value: T) -> Result<f64, CoordinateConversionError> {
+pub fn safe_scalar_to_f64(value: f64) -> Result<f64, CoordinateConversionError> {
     safe_cast_to_f64(value, 0)
 }
 
@@ -297,18 +288,14 @@ pub fn safe_scalar_to_f64<T: CoordinateScalar>(value: T) -> Result<f64, Coordina
 /// # Ok(())
 /// # }
 /// ```
-pub fn safe_scalar_from_f64<T: CoordinateScalar>(
-    value: f64,
-) -> Result<T, CoordinateConversionError> {
+pub fn safe_scalar_from_f64(value: f64) -> Result<f64, CoordinateConversionError> {
     safe_cast_from_f64(value, 0)
 }
 
 /// Safely convert a `usize` value to the supported coordinate scalar type.
 ///
-/// This function handles the conversion from `usize` to `T: CoordinateScalar`
-/// with proper precision checking. The currently supported caller-visible
-/// coordinate scalar is `f64`; the generic return type exists to share the
-/// coordinate-scalar contract across APIs.
+/// This function handles the conversion from `usize` to `f64` with proper
+/// precision checking.
 ///
 /// # Arguments
 ///
@@ -351,15 +338,8 @@ pub fn safe_scalar_from_f64<T: CoordinateScalar>(
 /// - `f64` integers are exact up to and including 2^53 (9,007,199,254,740,992)
 /// - For f64 targets: `usize` values larger than 2^53 will cause an error
 /// - On 64-bit platforms, `usize` can be up to 64 bits, so f64 precision loss is possible
-pub fn safe_usize_to_scalar<T: CoordinateScalar>(
-    value: usize,
-) -> Result<T, CoordinateConversionError> {
-    // Guard precision for both the f64 intermediate and the target T.
-    // Use mantissa bits min(53 (f64), T::mantissa_digits()) to bound exact integers.
-    const F64_MANTISSA_BITS: u32 = 53;
-    let t_mantissa_bits: u32 = T::mantissa_digits();
-    let max_precise_bits = core::cmp::min(F64_MANTISSA_BITS, t_mantissa_bits);
-    let max_precise_u128: u128 = 1u128 << max_precise_bits;
+pub fn safe_usize_to_scalar(value: usize) -> Result<f64, CoordinateConversionError> {
+    let max_precise_u128: u128 = 1u128 << F64_MANTISSA_DIGITS;
 
     // Use try_from to safely convert usize to u64 for comparison
     let value_u64 =
@@ -367,7 +347,7 @@ pub fn safe_usize_to_scalar<T: CoordinateScalar>(
             coordinate_index: 0,
             coordinate_value: CoordinateConversionValue::from_usize(value),
             from_type: "usize",
-            to_type: std::any::type_name::<T>(),
+            to_type: "f64",
         })?;
 
     if u128::from(value_u64) > max_precise_u128 {
@@ -375,21 +355,18 @@ pub fn safe_usize_to_scalar<T: CoordinateScalar>(
             coordinate_index: 0,
             coordinate_value: CoordinateConversionValue::from_usize(value),
             from_type: "usize",
-            to_type: std::any::type_name::<T>(),
+            to_type: "f64",
         });
     }
 
-    // Safe to convert to f64 without precision loss, then convert to T
-    // Use cast from num_traits for safe conversion
-    let f64_value: f64 =
-        cast(value).ok_or_else(|| CoordinateConversionError::ConversionFailed {
+    value
+        .to_f64()
+        .ok_or_else(|| CoordinateConversionError::ConversionFailed {
             coordinate_index: 0,
             coordinate_value: CoordinateConversionValue::from_usize(value),
             from_type: "usize",
             to_type: "f64",
-        })?;
-
-    safe_scalar_from_f64(f64_value)
+        })
 }
 
 #[cfg(test)]

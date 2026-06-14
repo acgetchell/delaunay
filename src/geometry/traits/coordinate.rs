@@ -11,8 +11,7 @@
 //!
 //! ## Core Traits
 //!
-//! - **`Coordinate<T, D>`**: Main abstraction for coordinate storage and operations
-//! - **`CoordinateScalar`**: Trait alias consolidating all scalar type requirements
+//! - **`Coordinate<D>`**: Main abstraction for coordinate storage and operations
 //! - **`FiniteCheck`**: Validation of coordinate values (no NaN or infinity)
 //! - **`OrderedEq`**: NaN-aware equality that treats NaN values as equal to themselves
 //! - **`HashCoordinate`**: Consistent hashing of floating-point values
@@ -39,21 +38,23 @@
 //! use delaunay::prelude::geometry::*;
 //! use delaunay::prelude::geometry::Point;
 //!
+//! # fn main() -> Result<(), delaunay::prelude::geometry::CoordinateConversionError> {
 //! // Create coordinates using Point (which implements Coordinate)
-//! let coord: Point<f64, 3> = Coordinate::new([1.0, 2.0, 3.0]);
+//! let coord: Point<3> = Point::try_from([1.0, 2.0, 3.0])?;
 //!
 //! // All coordinate operations are available
 //! assert_eq!(coord.dim(), 3);
 //! assert_eq!(coord.to_array(), [1.0, 2.0, 3.0]);
 //! assert!(coord.validate().is_ok());
 //!
-//! // Special value handling
-//! let nan_coord: Point<f64, 2> = Coordinate::new([f64::NAN, 1.0]);
-//! assert!(nan_coord.validate().is_err());  // NaN detected
+//! // Point parsing rejects non-finite coordinates at the boundary.
+//! assert!(Point::<2>::try_from([f64::NAN, 1.0]).is_err());
 //!
-//! // But NaN coordinates can still be compared and hashed consistently
-//! let nan_coord2: Point<f64, 2> = Coordinate::new([f64::NAN, 1.0]);
-//! assert!(nan_coord.ordered_equals(&nan_coord2));  // NaN == NaN
+//! // Scalar helper traits still provide explicit special-value semantics.
+//! assert!(f64::NAN.ordered_eq(&f64::NAN));
+//! assert!(!f64::NAN.is_finite_generic());
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! The coordinate trait system enables geometric structures (`Point`, `Vertex`,
@@ -67,14 +68,11 @@
 #![forbid(unsafe_code)]
 
 use crate::geometry::matrix::{LaError, MatrixError, StackMatrixDispatchError};
-use num_traits::{Float, Zero};
 use ordered_float::OrderedFloat;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     fmt::{self, Debug, Display},
     hash::{Hash, Hasher},
-    iter::Sum,
-    ops::{AddAssign, SubAssign},
 };
 
 /// A non-finite coordinate value category.
@@ -943,119 +941,8 @@ macro_rules! impl_hash_coordinate {
 // Implement HashCoordinate for the supported coordinate scalar.
 impl_hash_coordinate!(float: f64);
 
-/// Consolidated trait for the supported coordinate scalar requirements.
-///
-/// This trait captures the bounds required by coordinate algorithms while keeping
-/// the current public scalar contract explicit: `f64` is the only supported
-/// caller-visible coordinate scalar. The trait remains generic at call sites to
-/// keep storage and geometry APIs orthogonal, not to promise arbitrary numeric
-/// coordinate support. Future exact-coordinate support, if added, will use a
-/// deliberate documented API.
-///
-/// # Required Traits
-///
-/// - `Float`: Floating-point arithmetic operations (includes `Copy`, `PartialOrd`, etc.)
-/// - `Zero`: Zero value construction
-/// - `OrderedEq`: NaN-aware equality comparison
-/// - `OrderedCmp`: NaN-aware ordering comparison
-/// - `HashCoordinate`: Consistent hashing of floating-point values
-/// - `FiniteCheck`: Validation of coordinate values
-/// - `Default`: Default value construction
-/// - `Debug`: Debug formatting
-/// - `Serialize`: Serialization support
-/// - `DeserializeOwned`: Deserialization support
-/// - `AddAssign`: In-place addition (`+=`) for accumulation loops
-/// - `SubAssign`: In-place subtraction (`-=`) for accumulation loops
-/// - `Sum`: Iterator summation via `iter.sum()`
-///
-/// # Usage
-///
-/// ```rust
-/// use delaunay::prelude::geometry::CoordinateScalar;
-///
-/// fn process_coordinate<T: CoordinateScalar>(value: T) {
-///     // T has all the necessary bounds for coordinate operations,
-///     // including accumulation via AddAssign, SubAssign, and Sum.
-/// }
-/// ```
-pub trait CoordinateScalar:
-    Float
-    + Zero
-    + OrderedEq
-    + OrderedCmp
-    + HashCoordinate
-    + FiniteCheck
-    + Default
-    + Debug
-    + Serialize
-    + DeserializeOwned
-    + AddAssign
-    + SubAssign
-    + Sum
-{
-    /// Returns the appropriate default tolerance for this coordinate scalar type.
-    ///
-    /// This method provides the tolerance value used for `f64` floating-point
-    /// comparisons and geometric computations.
-    ///
-    /// # Returns
-    ///
-    /// The default tolerance value for `f64` coordinates.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use delaunay::prelude::geometry::CoordinateScalar;
-    ///
-    /// // Get appropriate tolerance for f64 coordinates.
-    /// let tolerance_f64 = f64::default_tolerance();
-    /// assert_eq!(tolerance_f64, 1e-15_f64);
-    /// ```
-    ///
-    /// # Usage in Generic Functions
-    ///
-    /// This method is particularly useful in functions generic over
-    /// [`CoordinateScalar`] while the supported implementation is `f64`:
-    ///
-    /// ```
-    /// use delaunay::prelude::geometry::CoordinateScalar;
-    ///
-    /// fn compare_with_tolerance<T: CoordinateScalar>(a: T, b: T) -> bool {
-    ///     (a - b).abs() < T::default_tolerance()
-    /// }
-    /// ```
-    fn default_tolerance() -> Self;
-
-    /// Returns the number of mantissa digits for `f64`.
-    ///
-    /// This is useful for determining the maximum integer value that can be
-    /// represented exactly by the supported coordinate scalar.
-    ///
-    /// # Returns
-    ///
-    /// The number of mantissa digits for `f64` coordinates.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use delaunay::prelude::geometry::CoordinateScalar;
-    ///
-    /// // f64 has 53 mantissa bits
-    /// assert_eq!(f64::mantissa_digits(), 53);
-    /// ```
-    fn mantissa_digits() -> u32;
-}
-
-// Supported coordinate scalar implementation.
-impl CoordinateScalar for f64 {
-    fn default_tolerance() -> Self {
-        DEFAULT_TOLERANCE_F64
-    }
-
-    fn mantissa_digits() -> u32 {
-        Self::MANTISSA_DIGITS
-    }
-}
+/// Number of mantissa digits in the supported `f64` coordinate scalar.
+pub const F64_MANTISSA_DIGITS: u32 = f64::MANTISSA_DIGITS;
 
 /// Storage and formatting requirements for coordinate container types.
 ///
@@ -1080,37 +967,32 @@ pub trait CoordinateIdentity: Eq + Hash + PartialOrd {}
 
 impl<T> CoordinateIdentity for T where T: Eq + Hash + PartialOrd {}
 
-/// A comprehensive trait that encapsulates all coordinate functionality.
+/// Coordinate storage and access over the supported `f64` scalar model.
 ///
-/// This trait combines all the necessary traits for coordinate containers used in
-/// geometric computations, providing a single unified interface for coordinate
-/// storage and operations. It abstracts the storage mechanism, allowing for
-/// different implementations (arrays, vectors, hash maps, etc.) while ensuring
-/// consistent behavior.
+/// This trait provides the coordinate operations used by geometric code without
+/// forcing unrelated serde, formatting, hash, or ordering bounds onto every
+/// implementation. APIs that need those contracts should add
+/// [`CoordinateRepresentation`] or [`CoordinateIdentity`] explicitly.
 ///
 /// # Type Parameters
 ///
-/// * `T` - The scalar type for coordinates (`f64` in this crate)
 /// * `const D: usize` - The dimension of the coordinate system
 ///
 /// # Required Functionality
 ///
-/// The trait requires implementors to support:
-/// - Floating-point arithmetic operations
-/// - [`CoordinateRepresentation`] for copyable, default, debug, and serde support
-/// - [`CoordinateIdentity`] for NaN-aware equality, hashing, and partial ordering
-/// - Validation of coordinate values
-/// - Coordinate access and manipulation
-/// - Zero/origin creation
+/// The trait requires implementors to support coordinate access, validation,
+/// hashing, ordered equality, and origin creation over finite `f64`
+/// coordinates.
 ///
 /// # Examples
 ///
 /// ```
 /// use delaunay::prelude::geometry::{Coordinate, Point};
 ///
+/// # fn main() -> Result<(), delaunay::prelude::geometry::CoordinateConversionError> {
 /// // Create coordinates using Point (which implements Coordinate)
-/// let coord1: Point<f64, 3> = Coordinate::new([1.0, 2.0, 3.0]);
-/// let coord2: Point<f64, 3> = Coordinate::new([1.0, 2.0, 3.0]);
+/// let coord1: Point<3> = Point::try_from([1.0, 2.0, 3.0])?;
+/// let coord2: Point<3> = Point::try_from([1.0, 2.0, 3.0])?;
 ///
 /// // f64 coordinates implement the coordinate trait
 /// assert_eq!(coord1.dim(), 3);
@@ -1121,8 +1003,10 @@ impl<T> CoordinateIdentity for T where T: Eq + Hash + PartialOrd {}
 /// assert!(coord1.validate().is_ok());
 ///
 /// // Create origin coordinate
-/// let origin: Point<f64, 3> = Point::origin();
+/// let origin: Point<3> = Point::origin();
 /// assert_eq!(origin.to_array(), [0.0, 0.0, 0.0]);
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Future Storage Implementations
@@ -1134,18 +1018,18 @@ impl<T> CoordinateIdentity for T where T: Eq + Hash + PartialOrd {}
 /// use delaunay::prelude::geometry::{Coordinate, Point};
 /// use std::collections::HashMap;
 ///
+/// # fn main() -> Result<(), delaunay::prelude::geometry::CoordinateConversionError> {
 /// // Current Point implementation uses arrays
-/// let point_coord: Point<f64, 2> = Coordinate::new([1.0, 2.0]);
+/// let point_coord: Point<2> = Point::try_from([1.0, 2.0])?;
 /// assert_eq!(point_coord.dim(), 2);
 /// assert_eq!(point_coord.to_array(), [1.0, 2.0]);
 ///
 /// // Future implementations could use other storage types
 /// // while maintaining the same Coordinate trait interface
+/// # Ok(())
+/// # }
 /// ```
-pub trait Coordinate<T, const D: usize>: CoordinateRepresentation + CoordinateIdentity
-where
-    T: CoordinateScalar,
-{
+pub trait Coordinate<const D: usize>: Sized {
     /// Get the dimensionality of the coordinate system.
     ///
     /// # Returns
@@ -1157,24 +1041,32 @@ where
     /// ```
     /// use delaunay::prelude::geometry::{Coordinate, Point};
     ///
-    /// let coord: Point<f64, 3> = Coordinate::new([1.0, 2.0, 3.0]);
+    /// # fn main() -> Result<(), delaunay::prelude::geometry::CoordinateConversionError> {
+    /// let coord: Point<3> = Point::try_from([1.0, 2.0, 3.0])?;
     /// assert_eq!(coord.dim(), 3);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     fn dim(&self) -> usize {
         D
     }
 
-    /// Create a new coordinate from an array of scalar values.
+    /// Try to create a new coordinate from an array of scalar values.
     ///
     /// # Arguments
     ///
-    /// * `coords` - Array of coordinates of type T with dimension D
+    /// * `coords` - Array of `f64` coordinates with dimension D
     ///
     /// # Returns
     ///
     /// A new coordinate instance with the specified values.
-    fn new(coords: [T; D]) -> Self;
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoordinateValidationError`] if the raw coordinate values violate
+    /// the coordinate type's storage invariants.
+    fn try_new(coords: [f64; D]) -> Result<Self, CoordinateValidationError>;
 
     /// Convert the coordinate to an array of scalar values.
     ///
@@ -1182,7 +1074,7 @@ where
     ///
     /// An array containing the coordinate values.
     #[must_use]
-    fn to_array(&self) -> [T; D];
+    fn to_array(&self) -> [f64; D];
 
     /// Get a specific coordinate by index.
     ///
@@ -1199,12 +1091,15 @@ where
     /// ```
     /// use delaunay::prelude::geometry::{Coordinate, Point};
     ///
-    /// let coord: Point<f64, 3> = Coordinate::new([1.0, 2.0, 3.0]);
+    /// # fn main() -> Result<(), delaunay::prelude::geometry::CoordinateConversionError> {
+    /// let coord: Point<3> = Point::try_from([1.0, 2.0, 3.0])?;
     /// assert_eq!(coord.get(0), Some(1.0));
     /// assert_eq!(coord.get(3), None);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
-    fn get(&self, index: usize) -> Option<T>;
+    fn get(&self, index: usize) -> Option<f64>;
 
     /// Create a coordinate at the origin (all zeros).
     ///
@@ -1217,15 +1112,12 @@ where
     /// ```
     /// use delaunay::prelude::geometry::{Coordinate, Point};
     ///
-    /// let origin: Point<f64, 3> = Coordinate::origin();
+    /// let origin: Point<3> = Coordinate::origin();
     /// assert_eq!(origin.to_array(), [0.0, 0.0, 0.0]);
     /// ```
     #[must_use]
-    fn origin() -> Self
-    where
-        T: Zero,
-    {
-        Self::new([T::zero(); D])
+    fn origin() -> Self {
+        Self::try_new([0.0; D]).expect("zero coordinates satisfy Coordinate::origin")
     }
 
     /// Validate that all coordinate values are finite.
@@ -1246,11 +1138,13 @@ where
     /// ```
     /// use delaunay::prelude::geometry::{Coordinate, Point};
     ///
-    /// let valid: Point<f64, 3> = Coordinate::new([1.0, 2.0, 3.0]);
+    /// # fn main() -> Result<(), delaunay::prelude::geometry::CoordinateConversionError> {
+    /// let valid: Point<3> = Point::try_from([1.0, 2.0, 3.0])?;
     /// assert!(valid.validate().is_ok());
     ///
-    /// let invalid: Point<f64, 3> = Coordinate::new([1.0, f64::NAN, 3.0]);
-    /// assert!(invalid.validate().is_err());
+    /// assert!(Point::<3>::try_from([1.0, f64::NAN, 3.0]).is_err());
+    /// # Ok(())
+    /// # }
     /// ```
     fn validate(&self) -> Result<(), CoordinateValidationError>;
 
@@ -1496,7 +1390,7 @@ mod tests {
     #[test]
     fn coordinate_trait_basic_functionality() {
         // Test through Point implementation of Coordinate trait with multiple dimensions.
-        let coord: Point<f64, 3> = Point::new([1.0, 2.0, 3.0]);
+        let coord: Point<3> = Point::from_validated_coords([1.0, 2.0, 3.0]);
         assert_eq!(coord.dim(), 3);
         assert_relative_eq!(
             coord.to_array().as_slice(),
@@ -1510,7 +1404,7 @@ mod tests {
         assert_eq!(coord.get(10), None);
 
         // Test with different dimensions
-        let coord_single: Point<f64, 1> = Point::new([42.0]);
+        let coord_single: Point<1> = Point::from_validated_coords([42.0]);
         assert_eq!(coord_single.dim(), 1);
         assert_relative_eq!(
             coord_single.get(0).unwrap(),
@@ -1520,15 +1414,15 @@ mod tests {
         assert_eq!(coord_single.get(1), None);
 
         // Test zero-dimensional
-        let coord_zero: Point<f64, 0> = Point::new([]);
+        let coord_zero: Point<0> = Point::from_validated_coords([]);
         assert_eq!(coord_zero.dim(), 0);
         assert_eq!(coord_zero.to_array().len(), 0);
         assert_eq!(coord_zero.get(0), None);
         assert!(coord_zero.validate().is_ok());
 
         // Test large dimension
-        let coord_large: Point<f64, 10> =
-            Point::new([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]);
+        let coord_large: Point<10> =
+            Point::from_validated_coords([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]);
         assert_eq!(coord_large.dim(), 10);
         assert_eq!(coord_large.get(10), None);
         assert!(coord_large.validate().is_ok());
@@ -1537,7 +1431,7 @@ mod tests {
     #[test]
     fn coordinate_trait_new() {
         // Test new() method
-        let coord1: Point<f64, 2> = Coordinate::new([5.0, 6.0]);
+        let coord1: Point<2> = Point::from_validated_coords([5.0, 6.0]);
         assert_relative_eq!(
             coord1.to_array().as_slice(),
             [5.0, 6.0].as_slice(),
@@ -1545,7 +1439,7 @@ mod tests {
         );
 
         // Test multiple creations with new()
-        let coord2: Point<f64, 2> = Coordinate::new([5.0, 6.0]);
+        let coord2: Point<2> = Point::from_validated_coords([5.0, 6.0]);
         assert_relative_eq!(
             coord2.to_array().as_slice(),
             [5.0, 6.0].as_slice(),
@@ -1559,14 +1453,14 @@ mod tests {
     #[test]
     fn coordinate_trait_origin() {
         // Test origin for different dimensions.
-        let origin_single: Point<f64, 1> = Point::origin();
+        let origin_single: Point<1> = Point::origin();
         assert_relative_eq!(
             origin_single.to_array().as_slice(),
             [0.0].as_slice(),
             epsilon = DEFAULT_TOLERANCE_F64
         );
 
-        let origin_triple: Point<f64, 3> = Point::origin();
+        let origin_triple: Point<3> = Point::origin();
         assert_relative_eq!(
             origin_triple.to_array().as_slice(),
             [0.0, 0.0, 0.0].as_slice(),
@@ -1574,11 +1468,11 @@ mod tests {
         );
 
         // Test zero-dimensional edge case
-        let origin_zero: Point<f64, 0> = Point::origin();
+        let origin_zero: Point<0> = Point::origin();
         assert_eq!(origin_zero.to_array().len(), 0);
 
         // Test large dimension
-        let origin_large: Point<f64, 10> = Point::origin();
+        let origin_large: Point<10> = Point::origin();
         assert_relative_eq!(
             origin_large.to_array().as_slice(),
             [0.0; 10].as_slice(),
@@ -1598,7 +1492,7 @@ mod tests {
         ];
 
         for &(coords, description) in &valid_cases {
-            let coord: Point<f64, 3> = Point::new(coords);
+            let coord: Point<3> = Point::from_validated_coords(coords);
             assert!(coord.validate().is_ok(), "Valid case failed: {description}");
         }
 
@@ -1612,8 +1506,7 @@ mod tests {
         ];
 
         for &(coords, expected_index, expected_dim, description) in &invalid_cases {
-            let coord: Point<f64, 3> = Point::new(coords);
-            let result = coord.validate();
+            let result = Point::<3>::try_new(coords);
             assert!(result.is_err(), "Invalid case should fail: {description}");
 
             if let Err(CoordinateValidationError::InvalidCoordinate {
@@ -1634,12 +1527,12 @@ mod tests {
         }
 
         // Test first invalid coordinate is reported when multiple are invalid
-        let multi_invalid: Point<f64, 4> = Point::new([f64::NAN, f64::INFINITY, f64::NAN, 1.0]);
+        let multi_invalid = Point::<4>::try_new([f64::NAN, f64::INFINITY, f64::NAN, 1.0]);
         if let Err(CoordinateValidationError::InvalidCoordinate {
             coordinate_index,
             dimension,
             ..
-        }) = multi_invalid.validate()
+        }) = multi_invalid
         {
             assert_eq!(
                 coordinate_index, 0,
@@ -1649,19 +1542,17 @@ mod tests {
         }
 
         // Test different dimensions
-        let invalid_1d: Point<f64, 1> = Point::new([f64::NAN]);
-        if let Err(CoordinateValidationError::InvalidCoordinate { dimension, .. }) =
-            invalid_1d.validate()
-        {
+        let invalid_1d = Point::<1>::try_new([f64::NAN]);
+        if let Err(CoordinateValidationError::InvalidCoordinate { dimension, .. }) = invalid_1d {
             assert_eq!(dimension, 1);
         }
 
-        let invalid_5d: Point<f64, 5> = Point::new([1.0, 2.0, f64::INFINITY, 4.0, 5.0]);
+        let invalid_5d = Point::<5>::try_new([1.0, 2.0, f64::INFINITY, 4.0, 5.0]);
         if let Err(CoordinateValidationError::InvalidCoordinate {
             coordinate_index,
             dimension,
             ..
-        }) = invalid_5d.validate()
+        }) = invalid_5d
         {
             assert_eq!(coordinate_index, 2);
             assert_eq!(dimension, 5);
@@ -1671,9 +1562,9 @@ mod tests {
     #[test]
     fn coordinate_trait_hash_coordinate_comprehensive() {
         // Test normal coordinates - same values should produce same hash
-        let coord1: Point<f64, 3> = Point::new([1.0, 2.0, 3.0]);
-        let coord2: Point<f64, 3> = Point::new([1.0, 2.0, 3.0]);
-        let coord3: Point<f64, 3> = Point::new([1.0, 2.0, 4.0]);
+        let coord1: Point<3> = Point::from_validated_coords([1.0, 2.0, 3.0]);
+        let coord2: Point<3> = Point::from_validated_coords([1.0, 2.0, 3.0]);
+        let coord3: Point<3> = Point::from_validated_coords([1.0, 2.0, 4.0]);
 
         let mut hasher1 = DefaultHasher::new();
         let mut hasher2 = DefaultHasher::new();
@@ -1693,68 +1584,23 @@ mod tests {
             "Different coordinates should have different hash"
         );
 
-        // Test special floating-point values - NaN should hash consistently
-        let nan_coord1: Point<f64, 2> = Point::new([f64::NAN, 1.0]);
-        let nan_coord2: Point<f64, 2> = Point::new([f64::NAN, 1.0]);
-        let mut hasher_nan1 = DefaultHasher::new();
-        let mut hasher_nan2 = DefaultHasher::new();
-        nan_coord1.hash_coordinate(&mut hasher_nan1);
-        nan_coord2.hash_coordinate(&mut hasher_nan2);
-        assert_eq!(
-            hasher_nan1.finish(),
-            hasher_nan2.finish(),
-            "NaN coordinates should hash consistently"
-        );
-
-        // Test infinity values
-        let inf_coord1: Point<f64, 2> = Point::new([f64::INFINITY, 1.0]);
-        let inf_coord2: Point<f64, 2> = Point::new([f64::INFINITY, 1.0]);
-        let mut hasher_inf1 = DefaultHasher::new();
-        let mut hasher_inf2 = DefaultHasher::new();
-        inf_coord1.hash_coordinate(&mut hasher_inf1);
-        inf_coord2.hash_coordinate(&mut hasher_inf2);
-        assert_eq!(
-            hasher_inf1.finish(),
-            hasher_inf2.finish(),
-            "Infinity coordinates should hash consistently"
-        );
+        assert!(Point::<2>::try_new([f64::NAN, 1.0]).is_err());
+        assert!(Point::<2>::try_new([f64::INFINITY, 1.0]).is_err());
     }
 
     #[test]
     fn coordinate_trait_ordered_equals_comprehensive() {
         // Test normal values
-        let coord1: Point<f64, 3> = Point::new([1.0, 2.0, 3.0]);
-        let coord2: Point<f64, 3> = Point::new([1.0, 2.0, 3.0]);
-        let coord3: Point<f64, 3> = Point::new([1.0, 2.0, 4.0]);
+        let coord1: Point<3> = Point::from_validated_coords([1.0, 2.0, 3.0]);
+        let coord2: Point<3> = Point::from_validated_coords([1.0, 2.0, 3.0]);
+        let coord3: Point<3> = Point::from_validated_coords([1.0, 2.0, 4.0]);
         assert!(coord1.ordered_equals(&coord2));
         assert!(coord2.ordered_equals(&coord1));
         assert!(!coord1.ordered_equals(&coord3));
 
-        // Test NaN values - should be equal to themselves
-        let nan_coord1: Point<f64, 3> = Point::new([f64::NAN, 2.0, 3.0]);
-        let nan_coord2: Point<f64, 3> = Point::new([f64::NAN, 2.0, 3.0]);
-        let normal_coord: Point<f64, 3> = Point::new([1.0, 2.0, 3.0]);
-        assert!(nan_coord1.ordered_equals(&nan_coord2));
-        assert!(!nan_coord1.ordered_equals(&normal_coord));
-
-        // Multiple NaN coordinates
-        let multi_nan1: Point<f64, 3> = Point::new([f64::NAN, f64::NAN, 3.0]);
-        let multi_nan2: Point<f64, 3> = Point::new([f64::NAN, f64::NAN, 3.0]);
-        assert!(multi_nan1.ordered_equals(&multi_nan2));
-
-        // Test infinity values
-        let inf_coord1: Point<f64, 2> = Point::new([f64::INFINITY, 2.0]);
-        let inf_coord2: Point<f64, 2> = Point::new([f64::INFINITY, 2.0]);
-        let neg_inf_coord: Point<f64, 2> = Point::new([f64::NEG_INFINITY, 2.0]);
-        assert!(inf_coord1.ordered_equals(&inf_coord2));
-        assert!(!inf_coord1.ordered_equals(&neg_inf_coord));
-
-        // Test mixed special values
-        let mixed1: Point<f64, 4> = Point::new([f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 1.0]);
-        let mixed2: Point<f64, 4> = Point::new([f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 1.0]);
-        let mixed3: Point<f64, 4> = Point::new([f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 2.0]);
-        assert!(mixed1.ordered_equals(&mixed2));
-        assert!(!mixed1.ordered_equals(&mixed3));
+        assert!(Point::<3>::try_new([f64::NAN, 2.0, 3.0]).is_err());
+        assert!(Point::<2>::try_new([f64::INFINITY, 2.0]).is_err());
+        assert!(Point::<4>::try_new([f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 1.0]).is_err());
     }
 
     #[test]
@@ -1789,26 +1635,14 @@ mod tests {
     }
 
     #[test]
-    fn coordinate_scalar_default_tolerance() {
-        // Test using tolerance in generic function
-        fn test_tolerance<T: CoordinateScalar>(a: T, b: T) -> bool {
-            (a - b).abs() < T::default_tolerance()
-        }
-
-        // Test that default_tolerance returns the expected value
-        assert_relative_eq!(
-            f64::default_tolerance(),
-            DEFAULT_TOLERANCE_F64,
-            epsilon = f64::EPSILON
-        );
-
+    fn coordinate_default_tolerance_constant() {
         // Test that the tolerance value is reasonable
-        assert_relative_eq!(f64::default_tolerance(), 1e-15_f64, epsilon = f64::EPSILON);
+        assert_relative_eq!(DEFAULT_TOLERANCE_F64, 1e-15_f64, epsilon = f64::EPSILON);
 
         // Test with f64
         let a_f64 = 1.0f64;
-        let b_f64 = 1.0f64 + f64::default_tolerance() / 2.0;
-        assert!(test_tolerance(a_f64, b_f64));
+        let b_f64 = 1.0f64 + DEFAULT_TOLERANCE_F64 / 2.0;
+        assert!((a_f64 - b_f64).abs() < DEFAULT_TOLERANCE_F64);
     }
 
     #[test]
@@ -1828,7 +1662,7 @@ mod tests {
         ];
 
         for coords in test_coords {
-            let coord: Point<f64, 3> = Point::new(coords);
+            let coord: Point<3> = Point::from_validated_coords(coords);
             let mut hash_builder = DefaultHasher::new();
             coord.hash_coordinate(&mut hash_builder);
             hashes.insert(hash_builder.finish());
@@ -1853,28 +1687,18 @@ mod tests {
     }
 
     #[test]
-    fn coordinate_scalar_trait_bounds_comprehensive() {
-        // Test that CoordinateScalar implementations have all required trait bounds
-        fn test_bounds<T: CoordinateScalar>() {
-            let zero = T::zero();
-            let nan = T::nan();
+    fn coordinate_f64_helper_traits_are_consistent() {
+        const _: () = assert!(DEFAULT_TOLERANCE_F64 > 0.0);
 
-            // Test key trait requirements
-            assert!(zero.ordered_eq(&T::zero()));
-            assert!(nan.ordered_eq(&T::nan())); // NaN should equal itself
-            assert!(zero.is_finite_generic());
-            assert!(!nan.is_finite_generic());
-            assert_eq!(T::default(), T::zero());
-            assert!(T::default_tolerance() > T::zero());
-            assert!(T::mantissa_digits() > 0);
-        }
+        let zero = 0.0_f64;
+        let nan = f64::NAN;
 
-        // Test the supported scalar type.
-        test_bounds::<f64>();
-
-        // Verify expected values
-        assert_eq!(f64::mantissa_digits(), 53);
-        assert_relative_eq!(f64::default_tolerance(), 1e-15_f64, epsilon = f64::EPSILON);
+        assert!(zero.ordered_eq(&0.0));
+        assert!(nan.ordered_eq(&f64::NAN));
+        assert!(zero.is_finite_generic());
+        assert!(!nan.is_finite_generic());
+        assert_relative_eq!(f64::default(), 0.0, epsilon = f64::EPSILON);
+        assert_eq!(F64_MANTISSA_DIGITS, 53);
     }
 
     #[test]
@@ -1903,11 +1727,11 @@ mod tests {
         // Test that dimension methods are consistent across supported coordinate dimensions.
 
         // Test various dimensions to ensure const generic consistency
-        let coord_1d: Point<f64, 1> = Point::new([42.0]);
+        let coord_1d: Point<1> = Point::from_validated_coords([42.0]);
         assert_eq!(coord_1d.dim(), 1);
         assert_eq!(coord_1d.to_array().len(), 1);
 
-        let coord_7d: Point<f64, 7> = Point::new([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]);
+        let coord_7d: Point<7> = Point::from_validated_coords([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]);
         assert_eq!(coord_7d.dim(), 7);
         assert_eq!(coord_7d.to_array().len(), 7);
 

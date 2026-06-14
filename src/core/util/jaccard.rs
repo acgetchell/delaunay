@@ -10,7 +10,6 @@ use crate::core::triangulation::Triangulation;
 use crate::geometry::algorithms::convex_hull::ConvexHull;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::CoordinateScalar;
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::{BuildHasher, Hash};
@@ -198,7 +197,7 @@ where
 ///
 /// # Returns
 ///
-/// A `HashSet` containing all unique vertex coordinates as `Point<T, D>`
+/// A `HashSet` containing all unique vertex coordinates as `Point<D>`
 ///
 /// # Examples
 ///
@@ -208,10 +207,10 @@ where
 ///
 /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let tds = dt.tds();
@@ -222,11 +221,8 @@ where
 /// # }
 /// ```
 #[must_use]
-pub fn extract_vertex_coordinate_set<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
-) -> HashSet<Point<T, D>>
+pub fn extract_vertex_coordinate_set<U, V, const D: usize>(tds: &Tds<U, V, D>) -> HashSet<Point<D>>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -275,10 +271,10 @@ const fn canonical_edge(u: u128, v: u128) -> (u128, u128) {
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let tds = dt.tds();
@@ -289,11 +285,10 @@ const fn canonical_edge(u: u128, v: u128) -> (u128, u128) {
 /// # Ok(())
 /// # }
 /// ```
-pub fn extract_edge_set<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub fn extract_edge_set<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
 ) -> Result<HashSet<(u128, u128)>, FacetError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -357,10 +352,10 @@ where
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let tds = dt.tds();
@@ -371,11 +366,10 @@ where
 /// # Ok(())
 /// # }
 /// ```
-pub fn extract_facet_identifier_set<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub fn extract_facet_identifier_set<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
 ) -> Result<HashSet<u64>, FacetError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -433,10 +427,10 @@ where
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices: Vec<_> = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let dt: DelaunayTriangulation<_, (), (), 3> =
 ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -448,7 +442,7 @@ where
 /// # }
 /// ```
 pub fn extract_hull_facet_set<K, U, V, const D: usize>(
-    hull: &ConvexHull<K, U, V, D>,
+    hull: &ConvexHull<U, V, D>,
     tri: &Triangulation<K, U, V, D>,
 ) -> Result<HashSet<u64>, FacetError>
 where
@@ -462,7 +456,7 @@ where
     for facet_handle in hull.facets() {
         // Create FacetView using simplex_key() and facet_index() methods from FacetHandle
         let facet_view =
-            FacetView::new(tds, facet_handle.simplex_key(), facet_handle.facet_index())?;
+            FacetView::try_new(tds, facet_handle.simplex_key(), facet_handle.facet_index())?;
         // Use the existing FacetView::key() method
         let facet_id = facet_view.key()?;
         facet_ids.insert(facet_id);
@@ -648,9 +642,7 @@ mod tests {
     use std::assert_matches;
 
     use crate::core::tds::{Tds, VertexKey};
-    use crate::geometry::traits::coordinate::Coordinate;
     use crate::triangulation::DelaunayTriangulation;
-    use crate::vertex;
     use approx::assert_relative_eq;
     use slotmap::KeyData;
 
@@ -706,10 +698,10 @@ mod tests {
     fn test_set_extraction_utilities_comprehensive() {
         // Create a simple tetrahedron for all extraction tests
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let tds = &dt.as_triangulation().tds;
@@ -717,10 +709,10 @@ mod tests {
         // Sub-test: Vertex coordinate extraction
         let coord_set = extract_vertex_coordinate_set(tds);
         assert_eq!(coord_set.len(), 4, "Should have 4 unique coordinates");
-        assert!(coord_set.contains(&Point::new([0.0, 0.0, 0.0])));
-        assert!(coord_set.contains(&Point::new([1.0, 0.0, 0.0])));
-        assert!(coord_set.contains(&Point::new([0.0, 1.0, 0.0])));
-        assert!(coord_set.contains(&Point::new([0.0, 0.0, 1.0])));
+        assert!(coord_set.contains(&Point::from_validated_coords([0.0, 0.0, 0.0])));
+        assert!(coord_set.contains(&Point::from_validated_coords([1.0, 0.0, 0.0])));
+        assert!(coord_set.contains(&Point::from_validated_coords([0.0, 1.0, 0.0])));
+        assert!(coord_set.contains(&Point::from_validated_coords([0.0, 0.0, 1.0])));
 
         // Sub-test: Edge extraction - tetrahedron has 6 edges (binomial(4,2))
         let edge_set = extract_edge_set(tds).unwrap();
@@ -741,10 +733,10 @@ mod tests {
     #[test]
     fn test_extract_edge_set_errors_on_missing_vertex_key() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
 
@@ -766,10 +758,10 @@ mod tests {
     #[test]
     fn test_extract_facet_identifier_set_errors_on_boundary_facet_retrieval_failure() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
 
@@ -805,10 +797,10 @@ mod tests {
     #[test]
     fn test_extract_hull_facet_set_consistent_with_boundary_facets() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let tri = dt.as_triangulation();
@@ -822,7 +814,7 @@ mod tests {
 
     #[test]
     fn test_extract_edge_set_empty_tds_is_empty() {
-        let tds: Tds<f64, (), (), 3> = Tds::empty();
+        let tds: Tds<(), (), 3> = Tds::empty();
         let edges = extract_edge_set(&tds).unwrap();
         assert!(edges.is_empty());
     }

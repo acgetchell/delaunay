@@ -34,7 +34,7 @@ fn tds_empty_does_not_require_coordinate_scalar() {
     #[derive(Clone, Copy, Debug)]
     struct NotAScalar;
 
-    let tds: Tds<NotAScalar, (), (), 3> = Tds::empty();
+    let tds: Tds<NotAScalar, (), 3> = Tds::empty();
 
     assert_eq!(tds.number_of_vertices(), 0);
     assert_eq!(tds.number_of_simplices(), 0);
@@ -54,42 +54,46 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 }
 
 /// Strategy for generating 2D vertices
-fn vertex_2d() -> impl Strategy<Value = Point<f64, 2>> {
-    prop::array::uniform2(finite_coordinate()).prop_map(Point::new)
+fn vertex_2d() -> impl Strategy<Value = Point<2>> {
+    prop::array::uniform2(finite_coordinate())
+        .prop_map(|coords| Point::try_new(coords).expect("finite point coordinates"))
 }
 
 /// Strategy for generating 3D vertices
-fn vertex_3d() -> impl Strategy<Value = Point<f64, 3>> {
-    prop::array::uniform3(finite_coordinate()).prop_map(Point::new)
+fn vertex_3d() -> impl Strategy<Value = Point<3>> {
+    prop::array::uniform3(finite_coordinate())
+        .prop_map(|coords| Point::try_new(coords).expect("finite point coordinates"))
 }
 
 /// Strategy for generating 4D vertices
-fn vertex_4d() -> impl Strategy<Value = Point<f64, 4>> {
-    prop::array::uniform4(finite_coordinate()).prop_map(Point::new)
+fn vertex_4d() -> impl Strategy<Value = Point<4>> {
+    prop::array::uniform4(finite_coordinate())
+        .prop_map(|coords| Point::try_new(coords).expect("finite point coordinates"))
 }
 
 /// Strategy for generating 5D vertices
-fn vertex_5d() -> impl Strategy<Value = Point<f64, 5>> {
-    prop::array::uniform5(finite_coordinate()).prop_map(Point::new)
+fn vertex_5d() -> impl Strategy<Value = Point<5>> {
+    prop::array::uniform5(finite_coordinate())
+        .prop_map(|coords| Point::try_new(coords).expect("finite point coordinates"))
 }
 
 /// Strategy for generating a small collection of 2D vertices (4-10 vertices)
-fn small_vertex_set_2d() -> impl Strategy<Value = Vec<Vertex<f64, (), 2>>> {
+fn small_vertex_set_2d() -> impl Strategy<Value = Vec<Vertex<(), 2>>> {
     prop::collection::vec(vertex_2d(), 4..=10).prop_map(|v| Vertex::from_points(&v))
 }
 
 /// Strategy for generating a small collection of 3D vertices (5-12 vertices)
-fn small_vertex_set_3d() -> impl Strategy<Value = Vec<Vertex<f64, (), 3>>> {
+fn small_vertex_set_3d() -> impl Strategy<Value = Vec<Vertex<(), 3>>> {
     prop::collection::vec(vertex_3d(), 5..=12).prop_map(|v| Vertex::from_points(&v))
 }
 
 /// Strategy for generating a small collection of 4D vertices (6-14 vertices)
-fn small_vertex_set_4d() -> impl Strategy<Value = Vec<Vertex<f64, (), 4>>> {
+fn small_vertex_set_4d() -> impl Strategy<Value = Vec<Vertex<(), 4>>> {
     prop::collection::vec(vertex_4d(), 6..=14).prop_map(|v| Vertex::from_points(&v))
 }
 
 /// Strategy for generating a small collection of 5D vertices (7-16 vertices)
-fn small_vertex_set_5d() -> impl Strategy<Value = Vec<Vertex<f64, (), 5>>> {
+fn small_vertex_set_5d() -> impl Strategy<Value = Vec<Vertex<(), 5>>> {
     prop::collection::vec(vertex_5d(), 7..=16).prop_map(|v| Vertex::from_points(&v))
 }
 

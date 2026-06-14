@@ -8,9 +8,9 @@
 //! importing flip editing or validation-only APIs.
 //!
 //! Most examples should import these items through
-//! [`delaunay::prelude::construction`](crate::prelude::construction), which
-//! bundles the builder, construction options, construction errors, and the
-//! [`vertex!`](crate::vertex) macro.
+//! [`crate::prelude::construction`](crate::prelude::construction), which
+//! bundles the builder, construction options, construction errors, and
+//! [`Vertex`](crate::prelude::Vertex).
 //!
 //! # Examples
 //!
@@ -18,14 +18,14 @@
 //! use delaunay::prelude::construction::{
 //!     ConstructionOptions, DelaunayTriangulationBuilder,
 //!     DelaunayTriangulationConstructionError, InitialSimplexStrategy,
-//!     InsertionOrderStrategy, vertex,
+//!     InsertionOrderStrategy, Vertex,
 //! };
 //!
 //! # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
-//!     vertex!([0.0, 0.0]),
-//!     vertex!([1.0, 0.0]),
-//!     vertex!([0.0, 1.0]),
+//!     Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+//!     Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+//!     Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
 //! ];
 //!
 //! let options = ConstructionOptions::default()
@@ -70,8 +70,8 @@ use crate::core::tds::{TdsConstructionError, TdsError};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::util::{
-    HilbertBitDepth, coords_equal_exact, coords_within_epsilon, hilbert_quantize_batch_in_range,
-    stable_hash_u64_slice,
+    DeduplicationError, HilbertBitDepth, coords_equal_exact, coords_within_epsilon,
+    hilbert_quantize_batch_in_range, stable_hash_u64_slice,
 };
 use crate::core::validation::{TopologyGuarantee, TriangulationValidationError, ValidationPolicy};
 use crate::core::vertex::Vertex;
@@ -79,19 +79,17 @@ use crate::diagnostics::{BatchLocalRepairTrigger, ConstructionTelemetry, LocalRe
 use crate::geometry::coordinate_range::CoordinateRange;
 use crate::geometry::kernel::{AdaptiveKernel, Kernel};
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar, CoordinateValues};
-use crate::geometry::util::{
-    RandomPointGenerationError, safe_coords_to_f64, safe_usize_to_scalar, simplex_volume,
-};
+use crate::geometry::traits::coordinate::{CoordinateValidationError, CoordinateValues};
+use crate::geometry::util::{RandomPointGenerationError, safe_usize_to_scalar, simplex_volume};
 use crate::locality::{
     accumulate_live_simplex_seeds, clear_simplex_seed_set, retain_live_simplex_seeds,
 };
 use crate::repair::DelaunayRepairPolicy;
-use crate::topology::traits::topological_space::GlobalTopology;
+use crate::topology::traits::{GlobalTopology, GlobalTopologyModelError};
 use crate::triangulation::DelaunayTriangulation;
 use crate::validation::DelaunayTriangulationValidationError;
 use core::{cmp::Ordering, fmt};
-use num_traits::{NumCast, ToPrimitive, Zero};
+use num_traits::ToPrimitive;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
@@ -284,6 +282,34 @@ pub enum DelaunayConstructionFailure {
     GeometricDegeneracy {
         /// Degeneracy detail.
         message: String,
+    },
+
+    /// Topology model configuration was invalid before construction.
+    #[error("topology model configuration failed during construction: {source}")]
+    TopologyModelConfiguration {
+        /// Underlying topology model configuration error.
+        #[source]
+        source: GlobalTopologyModelError,
+    },
+
+    /// A topology model failed while canonicalizing an input vertex.
+    #[error("failed to canonicalize vertex {vertex_index} during construction: {source}")]
+    VertexCanonicalization {
+        /// Zero-based input vertex index.
+        vertex_index: usize,
+        /// Underlying topology model error.
+        #[source]
+        source: GlobalTopologyModelError,
+    },
+
+    /// A canonicalized coordinate tuple failed point validation.
+    #[error("canonicalized vertex {vertex_index} failed point validation: {source}")]
+    CanonicalizedPointValidation {
+        /// Zero-based input vertex index.
+        vertex_index: usize,
+        /// Underlying coordinate validation error.
+        #[source]
+        source: CoordinateValidationError,
     },
 
     /// Periodic quotient construction is not release-validated for this dimension.
@@ -528,6 +554,85 @@ pub enum InsertionOrderStrategy {
     Hilbert,
 }
 
+/// Non-negative finite Euclidean tolerance for epsilon deduplication.
+///
+/// This is the proof-carrying value stored by [`DedupPolicy::Epsilon`].
+/// Construct it with [`Self::try_new`] at raw numeric boundaries; after
+/// construction, [`Self::get`] is infallible.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::construction::{DedupPolicy, DedupTolerance};
+///
+/// # fn main() -> Result<(), delaunay::prelude::construction::DeduplicationError> {
+/// let tolerance = DedupTolerance::try_new(1.0e-9)?;
+/// let policy = DedupPolicy::epsilon(tolerance);
+///
+/// assert_eq!(tolerance.get(), 1.0e-9);
+/// std::assert_matches!(policy, DedupPolicy::Epsilon { .. });
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[must_use]
+pub struct DedupTolerance(f64);
+
+impl DedupTolerance {
+    /// Parses a raw `f64` into a non-negative finite deduplication tolerance.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeduplicationError::NonFiniteEpsilon`] for NaN or infinite
+    /// values, and [`DeduplicationError::NegativeEpsilon`] for negative values.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{DeduplicationError, DedupTolerance};
+    ///
+    /// let err = DedupTolerance::try_new(-1.0).unwrap_err();
+    /// assert_eq!(err, DeduplicationError::NegativeEpsilon);
+    /// ```
+    pub fn try_new(tolerance: f64) -> Result<Self, DeduplicationError> {
+        if !tolerance.is_finite() {
+            return Err(DeduplicationError::NonFiniteEpsilon);
+        }
+
+        if tolerance < 0.0 {
+            return Err(DeduplicationError::NegativeEpsilon);
+        }
+
+        Ok(Self(if tolerance == 0.0 { 0.0 } else { tolerance }))
+    }
+
+    /// Returns the validated non-negative finite tolerance.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::DedupTolerance;
+    ///
+    /// # fn main() -> Result<(), delaunay::prelude::construction::DeduplicationError> {
+    /// let tolerance = DedupTolerance::try_new(0.25)?;
+    /// assert_eq!(tolerance.get(), 0.25);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub const fn get(self) -> f64 {
+        self.0
+    }
+}
+
+impl TryFrom<f64> for DedupTolerance {
+    type Error = DeduplicationError;
+
+    fn try_from(tolerance: f64) -> Result<Self, Self::Error> {
+        Self::try_new(tolerance)
+    }
+}
+
 /// Policy controlling optional preprocessing to remove duplicate vertices.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[non_exhaustive]
@@ -544,8 +649,59 @@ pub enum DedupPolicy {
     /// Remove near-duplicates within the given Euclidean tolerance.
     Epsilon {
         /// Non-negative Euclidean tolerance.
-        tolerance: f64,
+        tolerance: DedupTolerance,
     },
+}
+
+impl DedupPolicy {
+    /// Parses a raw `f64` tolerance into an epsilon deduplication policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeduplicationError`] when `tolerance` is negative, NaN, or
+    /// infinite.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{DedupPolicy, DeduplicationError};
+    ///
+    /// # fn main() -> Result<(), DeduplicationError> {
+    /// let policy = DedupPolicy::try_epsilon(1.0e-8)?;
+    /// std::assert_matches!(policy, DedupPolicy::Epsilon { .. });
+    ///
+    /// assert_eq!(
+    ///     DedupPolicy::try_epsilon(f64::NAN),
+    ///     Err(DeduplicationError::NonFiniteEpsilon)
+    /// );
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn try_epsilon(tolerance: f64) -> Result<Self, DeduplicationError> {
+        Ok(Self::Epsilon {
+            tolerance: DedupTolerance::try_new(tolerance)?,
+        })
+    }
+
+    /// Builds an epsilon deduplication policy from an already-validated tolerance.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{DedupPolicy, DedupTolerance};
+    ///
+    /// # fn main() -> Result<(), delaunay::prelude::construction::DeduplicationError> {
+    /// let tolerance = DedupTolerance::try_new(0.0)?;
+    /// let policy = DedupPolicy::epsilon(tolerance);
+    ///
+    /// std::assert_matches!(policy, DedupPolicy::Epsilon { tolerance: t } if t.get() == 0.0);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub const fn epsilon(tolerance: DedupTolerance) -> Self {
+        Self::Epsilon { tolerance }
+    }
 }
 
 /// Strategy controlling how the initial D+1 simplex vertices are selected.
@@ -999,18 +1155,18 @@ pub(crate) fn batch_local_repair_trigger<const D: usize>(
 // BATCH CONSTRUCTION ORDERING HELPERS (INTERNAL)
 // =============================================================================
 
-type VertexBuffer<T, U, const D: usize> = Vec<Vertex<T, U, D>>;
+type VertexBuffer<U, const D: usize> = Vec<Vertex<U, D>>;
 
 /// Preprocessed vertex ordering state used by batch construction to preserve
 /// deterministic insertion order, retry fallback order, and deduplication-grid
 /// reuse across public construction entry points.
-pub(crate) struct PreprocessVertices<T, U, const D: usize> {
-    primary: Option<VertexBuffer<T, U, D>>,
-    fallback: Option<VertexBuffer<T, U, D>>,
-    grid_cell_size: Option<T>,
+pub(crate) struct PreprocessVertices<U, const D: usize> {
+    primary: Option<VertexBuffer<U, D>>,
+    fallback: Option<VertexBuffer<U, D>>,
+    grid_cell_size: Option<f64>,
 }
 
-impl<T, U, const D: usize> fmt::Debug for PreprocessVertices<T, U, D> {
+impl<U, const D: usize> fmt::Debug for PreprocessVertices<U, D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PreprocessVertices")
             .field("primary_len", &self.primary.as_ref().map(Vec::len))
@@ -1020,62 +1176,42 @@ impl<T, U, const D: usize> fmt::Debug for PreprocessVertices<T, U, D> {
     }
 }
 
-impl<T, U, const D: usize> PreprocessVertices<T, U, D> {
+impl<U, const D: usize> PreprocessVertices<U, D> {
     /// Borrows the preprocessed vertex order when one exists, avoiding a clone
     /// for policies that leave the input unchanged.
-    pub(crate) fn primary_slice<'a>(
-        &'a self,
-        input: &'a [Vertex<T, U, D>],
-    ) -> &'a [Vertex<T, U, D>] {
+    pub(crate) fn primary_slice<'a>(&'a self, input: &'a [Vertex<U, D>]) -> &'a [Vertex<U, D>] {
         self.primary.as_deref().unwrap_or(input)
     }
 
     /// Exposes the original order as a retry fallback for balanced-simplex
     /// preprocessing.
-    pub(crate) fn fallback_slice(&self) -> Option<&[Vertex<T, U, D>]> {
+    pub(crate) fn fallback_slice(&self) -> Option<&[Vertex<U, D>]> {
         self.fallback.as_deref()
     }
 
     /// Carries the dedup grid size forward so incremental insertion can reuse a
     /// compatible spatial index.
-    pub(crate) const fn grid_cell_size(&self) -> Option<T>
-    where
-        T: Copy,
-    {
+    pub(crate) const fn grid_cell_size(&self) -> Option<f64> {
         self.grid_cell_size
     }
 }
 
-pub(crate) type PreprocessVerticesResult<T, U, const D: usize> =
-    Result<PreprocessVertices<T, U, D>, DelaunayTriangulationConstructionError>;
+pub(crate) type PreprocessVerticesResult<U, const D: usize> =
+    Result<PreprocessVertices<U, D>, DelaunayTriangulationConstructionError>;
 
 /// Hashes coordinates as a deterministic tiebreaker for partial vertex ordering.
-fn vertex_coordinate_hash<T, U, const D: usize>(vertex: &Vertex<T, U, D>) -> u64
-where
-    T: CoordinateScalar,
-{
+fn vertex_coordinate_hash<U, const D: usize>(vertex: &Vertex<U, D>) -> u64 {
     let mut hasher = FastHasher::default();
     vertex.hash(&mut hasher);
     hasher.finish()
 }
 
-fn total_cmp_for_coordinate<T>(left: &T, right: &T) -> Ordering
-where
-    T: CoordinateScalar,
-{
-    left.ordered_partial_cmp(right)
-        .expect("CoordinateScalar::ordered_partial_cmp must define a total order")
-}
-
-fn compare_vertices_by_coordinates<T, U, const D: usize>(
-    left: &Vertex<T, U, D>,
-    right: &Vertex<T, U, D>,
-) -> Ordering
-where
-    T: CoordinateScalar,
-{
+fn compare_vertices_by_coordinates<U, const D: usize>(
+    left: &Vertex<U, D>,
+    right: &Vertex<U, D>,
+) -> Ordering {
     for (left_coord, right_coord) in left.point().coords().iter().zip(right.point().coords()) {
-        let ordering = total_cmp_for_coordinate(left_coord, right_coord);
+        let ordering = left_coord.total_cmp(right_coord);
         if ordering != Ordering::Equal {
             return ordering;
         }
@@ -1085,13 +1221,10 @@ where
 
 /// Produces a stable construction order when Hilbert ordering is unavailable or
 /// unsuitable.
-fn order_vertices_lexicographic<T, U, const D: usize>(
-    vertices: Vec<Vertex<T, U, D>>,
-) -> Vec<Vertex<T, U, D>>
-where
-    T: CoordinateScalar,
-{
-    let mut keyed: Vec<(Vertex<T, U, D>, u64, usize)> = vertices
+fn order_vertices_lexicographic<U, const D: usize>(
+    vertices: Vec<Vertex<U, D>>,
+) -> Vec<Vertex<U, D>> {
+    let mut keyed: Vec<(Vertex<U, D>, u64, usize)> = vertices
         .into_iter()
         .enumerate()
         .map(|(input_index, vertex)| {
@@ -1114,14 +1247,11 @@ const BATCH_DEDUP_MAX_DIMENSION: usize = 5;
 
 /// Centralizes insertion-order dispatch so preprocessing applies dedup and
 /// ordering in a consistent sequence.
-fn order_vertices_by_strategy<T, U, const D: usize>(
-    vertices: Vec<Vertex<T, U, D>>,
+fn order_vertices_by_strategy<U, const D: usize>(
+    vertices: Vec<Vertex<U, D>>,
     insertion_order: InsertionOrderStrategy,
     dedup_quantized: bool,
-) -> Vec<Vertex<T, U, D>>
-where
-    T: CoordinateScalar,
-{
+) -> Vec<Vertex<U, D>> {
     match insertion_order {
         InsertionOrderStrategy::Input => vertices,
         InsertionOrderStrategy::Hilbert => order_vertices_hilbert(vertices, dedup_quantized),
@@ -1130,8 +1260,8 @@ where
 
 /// Provides a scalar-aware tolerance for dedup paths that need a nonzero grid
 /// size even under exact duplicate policy.
-pub(crate) fn default_duplicate_tolerance<T: CoordinateScalar>() -> T {
-    <T as NumCast>::from(1e-10_f64).unwrap_or_else(T::default_tolerance)
+pub(crate) const fn default_duplicate_tolerance() -> f64 {
+    1e-10_f64
 }
 
 /// Builds a hash-grid index after construction has validated its tolerance.
@@ -1140,12 +1270,9 @@ pub(crate) fn default_duplicate_tolerance<T: CoordinateScalar>() -> T {
 /// construction inputs and the internal duplicate index: a failure here means
 /// an upstream construction invariant was broken after validation, so it is
 /// surfaced as a typed spatial-index construction failure.
-fn hash_grid_from_validated_cell_size<T, const D: usize, I>(
-    cell_size: T,
-) -> Result<HashGridIndex<T, D, I>, DelaunayTriangulationConstructionError>
-where
-    T: CoordinateScalar,
-{
+fn hash_grid_from_validated_cell_size<const D: usize, I>(
+    cell_size: f64,
+) -> Result<HashGridIndex<D, I>, DelaunayTriangulationConstructionError> {
     HashGridIndex::try_new(cell_size).map_err(|error| {
         DelaunayTriangulationConstructionError::from(
             TriangulationConstructionError::SpatialIndexConstruction {
@@ -1157,13 +1284,10 @@ where
 
 /// Verifies the hash grid can represent every input coordinate before choosing
 /// the O(n) duplicate path.
-fn hash_grid_usable_for_vertices<T, U, const D: usize>(
-    grid: &HashGridIndex<T, D, usize>,
-    vertices: &[Vertex<T, U, D>],
-) -> bool
-where
-    T: CoordinateScalar,
-{
+fn hash_grid_usable_for_vertices<U, const D: usize>(
+    grid: &HashGridIndex<D, usize>,
+    vertices: &[Vertex<U, D>],
+) -> bool {
     if !grid.is_usable() {
         return false;
     }
@@ -1174,14 +1298,11 @@ where
 
 /// Keeps exact dedup deterministic when the hash grid cannot safely key the
 /// input coordinates.
-fn dedup_vertices_exact_sorted<T, U, const D: usize>(
-    vertices: Vec<Vertex<T, U, D>>,
-) -> Vec<Vertex<T, U, D>>
-where
-    T: CoordinateScalar,
-{
+fn dedup_vertices_exact_sorted<U, const D: usize>(
+    vertices: Vec<Vertex<U, D>>,
+) -> Vec<Vertex<U, D>> {
     let ordered = order_vertices_lexicographic(vertices);
-    let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(ordered.len());
+    let mut unique: Vec<Vertex<U, D>> = Vec::with_capacity(ordered.len());
 
     for v in ordered {
         if let Some(last) = unique.last()
@@ -1199,18 +1320,15 @@ where
 
 /// Uses the spatial grid for exact duplicate removal while falling back to the
 /// sorted path if coordinate keying is unavailable.
-fn dedup_vertices_exact_hash_grid<T, U, const D: usize>(
-    vertices: Vec<Vertex<T, U, D>>,
-    grid: &mut HashGridIndex<T, D, usize>,
-) -> Vec<Vertex<T, U, D>>
-where
-    T: CoordinateScalar,
-{
+fn dedup_vertices_exact_hash_grid<U, const D: usize>(
+    vertices: Vec<Vertex<U, D>>,
+    grid: &mut HashGridIndex<D, usize>,
+) -> Vec<Vertex<U, D>> {
     if !hash_grid_usable_for_vertices(grid, &vertices) {
         return dedup_vertices_exact_sorted(vertices);
     }
     grid.clear();
-    let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(vertices.len());
+    let mut unique: Vec<Vertex<U, D>> = Vec::with_capacity(vertices.len());
 
     for v in vertices {
         let coords = *v.point().coords();
@@ -1243,13 +1361,10 @@ struct QuantizedKey<const D: usize>([i64; D]);
 
 /// Quantizes coordinates for epsilon buckets only when finite values can be
 /// represented without losing the bucket invariant.
-fn quantize_coords<T: CoordinateScalar, const D: usize>(
-    coords: &[T; D],
-    inv_cell: f64,
-) -> Option<[i64; D]> {
+fn quantize_coords<const D: usize>(coords: &[f64; D], inv_cell: f64) -> Option<[i64; D]> {
     let mut key = [0_i64; D];
     for (axis, coord) in coords.iter().enumerate() {
-        let c = coord.to_f64()?;
+        let c = *coord;
         if !c.is_finite() {
             return None;
         }
@@ -1293,14 +1408,11 @@ where
 
 /// Provides the correctness fallback for epsilon dedup when bucket or grid
 /// assumptions fail.
-fn dedup_vertices_epsilon_n2<T, U, const D: usize>(
-    vertices: Vec<Vertex<T, U, D>>,
-    epsilon: T,
-) -> Vec<Vertex<T, U, D>>
-where
-    T: CoordinateScalar,
-{
-    let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(vertices.len());
+fn dedup_vertices_epsilon_n2<U, const D: usize>(
+    vertices: Vec<Vertex<U, D>>,
+    epsilon: f64,
+) -> Vec<Vertex<U, D>> {
+    let mut unique: Vec<Vertex<U, D>> = Vec::with_capacity(vertices.len());
     for v in vertices {
         let mut duplicate = false;
         for u in &unique {
@@ -1319,20 +1431,15 @@ where
 
 /// Uses bounded quantized buckets for epsilon dedup in practical dimensions
 /// while preserving an exact fallback for unsupported cases.
-fn dedup_vertices_epsilon_quantized<T, U, const D: usize>(
-    vertices: Vec<Vertex<T, U, D>>,
-    epsilon: T,
-) -> Vec<Vertex<T, U, D>>
-where
-    T: CoordinateScalar,
-{
+fn dedup_vertices_epsilon_quantized<U, const D: usize>(
+    vertices: Vec<Vertex<U, D>>,
+    epsilon: f64,
+) -> Vec<Vertex<U, D>> {
     if D > BATCH_DEDUP_MAX_DIMENSION {
         return dedup_vertices_epsilon_n2(vertices, epsilon);
     }
 
-    let Some(eps_f64) = epsilon.to_f64() else {
-        return dedup_vertices_epsilon_n2(vertices, epsilon);
-    };
+    let eps_f64 = epsilon;
     if !eps_f64.is_finite() || eps_f64 <= 0.0 {
         return dedup_vertices_epsilon_n2(vertices, epsilon);
     }
@@ -1344,7 +1451,7 @@ where
         QuantizedKey<D>,
         SmallBuffer<usize, BATCH_DEDUP_BUCKET_INLINE_CAPACITY>,
     > = SecureHashMap::default();
-    let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(vertices.len());
+    let mut unique: Vec<Vertex<U, D>> = Vec::with_capacity(vertices.len());
     let mut iter = vertices.into_iter();
     while let Some(v) = iter.next() {
         let coords = v.point().coords();
@@ -1390,19 +1497,16 @@ where
 
 /// Prefers the reusable hash grid for epsilon dedup when its coordinate model is
 /// valid for every input vertex.
-fn dedup_vertices_epsilon_hash_grid<T, U, const D: usize>(
-    vertices: Vec<Vertex<T, U, D>>,
-    epsilon: T,
-    grid: &mut HashGridIndex<T, D, usize>,
-) -> Vec<Vertex<T, U, D>>
-where
-    T: CoordinateScalar,
-{
+fn dedup_vertices_epsilon_hash_grid<U, const D: usize>(
+    vertices: Vec<Vertex<U, D>>,
+    epsilon: f64,
+    grid: &mut HashGridIndex<D, usize>,
+) -> Vec<Vertex<U, D>> {
     if !hash_grid_usable_for_vertices(grid, &vertices) {
         return dedup_vertices_epsilon_quantized(vertices, epsilon);
     }
     grid.clear();
-    let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(vertices.len());
+    let mut unique: Vec<Vertex<U, D>> = Vec::with_capacity(vertices.len());
 
     let epsilon_sq = epsilon * epsilon;
     for v in vertices {
@@ -1412,10 +1516,10 @@ where
         let used_index = grid.for_each_candidate_vertex_key(&coords, |idx| {
             candidate_count = candidate_count.saturating_add(1);
             let existing_coords = unique[idx].point().coords();
-            let mut dist_sq = T::zero();
+            let mut dist_sq = 0.0;
             for i in 0..D {
                 let diff = coords[i] - existing_coords[i];
-                dist_sq += diff * diff;
+                dist_sq = diff.mul_add(diff, dist_sq);
             }
             if dist_sq < epsilon_sq {
                 duplicate = true;
@@ -1438,13 +1542,10 @@ where
 
 /// Converts candidate simplex vertices to f64 coordinates for deterministic
 /// preprocessing heuristics without hiding non-finite inputs.
-fn vertices_coords_f64<T, U, const D: usize>(vertices: &[Vertex<T, U, D>]) -> Option<Vec<[f64; D]>>
-where
-    T: CoordinateScalar,
-{
+fn vertices_coords_f64<U, const D: usize>(vertices: &[Vertex<U, D>]) -> Option<Vec<[f64; D]>> {
     let mut coords_f64: Vec<[f64; D]> = Vec::with_capacity(vertices.len());
     for v in vertices {
-        let coords = safe_coords_to_f64(v.point().coords()).ok()?;
+        let coords = *v.point().coords();
         if coords.iter().any(|coord| !coord.is_finite()) {
             return None;
         }
@@ -1634,12 +1735,9 @@ fn initial_simplex_candidate_pool_indices<const D: usize>(coords_f64: &[[f64; D]
 
 /// Chooses a well-spread initial simplex to reduce early degeneracy in
 /// incremental construction.
-fn select_balanced_simplex_indices<T, U, const D: usize>(
-    vertices: &[Vertex<T, U, D>],
-) -> Option<Vec<usize>>
-where
-    T: CoordinateScalar,
-{
+fn select_balanced_simplex_indices<U, const D: usize>(
+    vertices: &[Vertex<U, D>],
+) -> Option<Vec<usize>> {
     if vertices.len() < D + 1 {
         return None;
     }
@@ -1741,10 +1839,10 @@ fn simplex_volume_for_indices<const D: usize>(
         return None;
     }
 
-    let mut points: SmallBuffer<Point<f64, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+    let mut points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::with_capacity(simplex_indices.len());
     for &idx in simplex_indices {
-        points.push(Point::new(coords_f64[idx]));
+        points.push(Point::from_validated_coords(coords_f64[idx]));
     }
     simplex_volume(&points)
         .ok()
@@ -1753,12 +1851,9 @@ fn simplex_volume_for_indices<const D: usize>(
 
 /// Chooses the largest-volume nondegenerate real simplex from a bounded
 /// extreme-vertex candidate pool.
-fn select_max_volume_simplex_indices<T, U, const D: usize>(
-    vertices: &[Vertex<T, U, D>],
-) -> Option<Vec<usize>>
-where
-    T: CoordinateScalar,
-{
+fn select_max_volume_simplex_indices<U, const D: usize>(
+    vertices: &[Vertex<U, D>],
+) -> Option<Vec<usize>> {
     if vertices.len() < D + 1 {
         return None;
     }
@@ -1796,12 +1891,11 @@ where
 
 /// Places the selected simplex first while preserving every remaining input
 /// vertex exactly once.
-fn reorder_vertices_for_simplex<T, U, const D: usize>(
-    vertices: &[Vertex<T, U, D>],
+fn reorder_vertices_for_simplex<U, const D: usize>(
+    vertices: &[Vertex<U, D>],
     simplex_indices: &[usize],
-) -> Option<Vec<Vertex<T, U, D>>>
+) -> Option<Vec<Vertex<U, D>>>
 where
-    T: Copy,
     U: Copy,
 {
     if simplex_indices.len() != D + 1 {
@@ -1850,30 +1944,24 @@ fn hilbert_bits_per_coord<const D: usize>() -> Option<HilbertBitDepth> {
 /// Returns `None` if any coordinate cannot be represented as `f64`, allowing
 /// callers to omit diagnostic coordinates instead of hiding conversion failure
 /// behind `NaN` or infinity.
-pub(crate) fn vertex_coords_f64<T, U, const D: usize>(vertex: &Vertex<T, U, D>) -> Option<Vec<f64>>
-where
-    T: CoordinateScalar,
-{
+pub(crate) fn vertex_coords_f64<U, const D: usize>(vertex: &Vertex<U, D>) -> Option<Vec<f64>> {
     vertex
         .point()
         .coords()
         .iter()
-        .map(|coord| coord.to_f64().filter(|value| value.is_finite()))
+        .map(|coord| coord.is_finite().then_some(*coord))
         .collect()
 }
 
-/// Sort key for Hilbert ordering: `(Hilbert index, quantized coords, vertex, input index)`.
-type HilbertSortKey<T, U, const D: usize> = (u128, [u32; D], Vertex<T, U, D>, usize);
+/// Sort key for Hilbert ordering: `(Hilbert index, quantized coords, input index)`.
+type HilbertSortKey<U, const D: usize> = (u128, [u32; D], Vertex<U, D>, usize);
 
 /// Orders vertices along a Hilbert curve to improve insertion locality while
 /// retaining deterministic lexicographic fallbacks.
-fn order_vertices_hilbert<T, U, const D: usize>(
-    vertices: Vec<Vertex<T, U, D>>,
+fn order_vertices_hilbert<U, const D: usize>(
+    vertices: Vec<Vertex<U, D>>,
     dedup_quantized: bool,
-) -> Vec<Vertex<T, U, D>>
-where
-    T: CoordinateScalar,
-{
+) -> Vec<Vertex<U, D>> {
     if vertices.is_empty() || D == 0 {
         return vertices;
     }
@@ -1889,9 +1977,7 @@ where
 
     for v in &vertices {
         for &coord in v.point().coords() {
-            let Some(c) = coord.to_f64() else {
-                return order_vertices_lexicographic(vertices);
-            };
+            let c = coord;
             if !c.is_finite() {
                 return order_vertices_lexicographic(vertices);
             }
@@ -1908,11 +1994,7 @@ where
         };
     }
 
-    let (Some(min_t), Some(max_t)) = (NumCast::from(min), NumCast::from(max)) else {
-        return order_vertices_lexicographic(vertices);
-    };
-
-    let Ok(bounds) = CoordinateRange::try_new(min_t, max_t) else {
+    let Ok(bounds) = CoordinateRange::try_new(min, max) else {
         return order_vertices_lexicographic(vertices);
     };
 
@@ -1934,7 +2016,7 @@ where
     }
 
     // Pair indices with vertices, quantized coords, and input indices.
-    let mut keyed: Vec<HilbertSortKey<T, U, D>> = vertices
+    let mut keyed: Vec<HilbertSortKey<U, D>> = vertices
         .into_iter()
         .zip(quantized)
         .zip(indices)
@@ -2001,14 +2083,14 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
     ///
     /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -2016,9 +2098,7 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn new(
-        vertices: &[Vertex<f64, (), D>],
-    ) -> Result<Self, DelaunayTriangulationConstructionError> {
+    pub fn new(vertices: &[Vertex<(), D>]) -> Result<Self, DelaunayTriangulationConstructionError> {
         Self::with_kernel(&AdaptiveKernel::<f64>::new(), vertices)
     }
 
@@ -2039,14 +2119,14 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
     ///
     /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -2059,7 +2139,7 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
         reason = "Public API intentionally returns by-value construction statistics for compatibility"
     )]
     pub fn new_with_construction_statistics(
-        vertices: &[Vertex<f64, (), D>],
+        vertices: &[Vertex<(), D>],
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
         let kernel = AdaptiveKernel::<f64>::new();
@@ -2089,16 +2169,16 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     ConstructionOptions, DelaunayTriangulationBuilder, RetryPolicy, vertex,
+    ///     ConstructionOptions, DelaunayTriangulationBuilder, RetryPolicy,
     /// };
     /// use std::num::NonZeroUsize;
     ///
     /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     ///
     /// let Some(attempts) = NonZeroUsize::new(2) else {
@@ -2120,7 +2200,7 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
         reason = "Public API intentionally returns by-value construction statistics for compatibility"
     )]
     pub fn new_with_options_and_construction_statistics(
-        vertices: &[Vertex<f64, (), D>],
+        vertices: &[Vertex<(), D>],
         options: ConstructionOptions,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
@@ -2143,15 +2223,14 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// ```rust
     /// use delaunay::prelude::construction::{
     ///     ConstructionOptions, DedupPolicy, DelaunayTriangulationBuilder, InsertionOrderStrategy,
-    ///     vertex,
     /// };
     ///
     /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let options = ConstructionOptions::default()
     ///     .with_insertion_order(InsertionOrderStrategy::Hilbert)
@@ -2165,7 +2244,7 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # }
     /// ```
     pub fn new_with_options(
-        vertices: &[Vertex<f64, (), D>],
+        vertices: &[Vertex<(), D>],
         options: ConstructionOptions,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
         let kernel = AdaptiveKernel::<f64>::new();
@@ -2193,11 +2272,11 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
+    ///     DelaunayTriangulationBuilder, TopologyGuarantee,
     /// };
     ///
     /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
-    /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
+    /// let vertices = vec![delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"), delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"), delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates")];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
     ///     .build::<()>()?;
@@ -2206,7 +2285,7 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # }
     /// ```
     pub fn new_with_topology_guarantee(
-        vertices: &[Vertex<f64, (), D>],
+        vertices: &[Vertex<(), D>],
         topology_guarantee: TopologyGuarantee,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
         let kernel = AdaptiveKernel::<f64>::new();
@@ -2252,41 +2331,37 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
 
     /// Creates a fluent builder for default `f64` Delaunay triangulations.
     ///
-    /// For non-`f64` coordinates, vertex data, or custom kernels, construct
+    /// For vertex data or custom kernels, construct
     /// [`DelaunayTriangulationBuilder::new`] directly.
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
     ///
     /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
-    /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
+    /// let vertices = vec![delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"), delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"), delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates")];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.number_of_vertices(), 3);
     /// # Ok(())
     /// # }
     /// ```
     #[must_use]
-    pub fn builder(
-        vertices: &[Vertex<f64, (), D>],
-    ) -> DelaunayTriangulationBuilder<'_, f64, (), D> {
+    pub fn builder(vertices: &[Vertex<(), D>]) -> DelaunayTriangulationBuilder<'_, (), D> {
         DelaunayTriangulationBuilder::new(vertices)
     }
 }
 
 // =============================================================================
-// CONSTRUCTION (Requires Numeric Scalar Bounds)
+// CONSTRUCTION (Requires f64 Coordinate Storage)
 // =============================================================================
 //
 // Batch and incremental constructors, preprocessing, Hilbert ordering, spatial
-// hashing, and deduplication — the kernel already guarantees `CoordinateScalar`;
-// these paths add `NumCast`.
+// hashing, and deduplication operate on f64-backed vertices.
 
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
 where
-    K: Kernel<D>,
-    K::Scalar: NumCast,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -2302,11 +2377,11 @@ where
     )]
     pub(crate) fn build_with_shuffled_retries(
         kernel: &K,
-        vertices: &[Vertex<K::Scalar, U, D>],
+        vertices: &[Vertex<U, D>],
         topology_guarantee: TopologyGuarantee,
         attempts: NonZeroUsize,
         base_seed: Option<u64>,
-        grid_cell_size: Option<K::Scalar>,
+        grid_cell_size: Option<f64>,
         batch_repair_policy: DelaunayRepairPolicy,
         use_global_repair_fallback: bool,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
@@ -2488,11 +2563,11 @@ where
     )]
     pub(crate) fn build_with_shuffled_retries_with_construction_statistics(
         kernel: &K,
-        vertices: &[Vertex<K::Scalar, U, D>],
+        vertices: &[Vertex<U, D>],
         topology_guarantee: TopologyGuarantee,
         attempts: NonZeroUsize,
         base_seed: Option<u64>,
-        grid_cell_size: Option<K::Scalar>,
+        grid_cell_size: Option<f64>,
         batch_repair_policy: DelaunayRepairPolicy,
         use_global_repair_fallback: bool,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
@@ -2724,9 +2799,9 @@ where
     /// final validation path as the statistics variant.
     pub(crate) fn build_with_kernel_inner(
         kernel: K,
-        vertices: &[Vertex<K::Scalar, U, D>],
+        vertices: &[Vertex<U, D>],
         topology_guarantee: TopologyGuarantee,
-        grid_cell_size: Option<K::Scalar>,
+        grid_cell_size: Option<f64>,
         batch_repair_policy: DelaunayRepairPolicy,
         use_global_repair_fallback: bool,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
@@ -2768,9 +2843,9 @@ where
     )]
     pub(crate) fn build_with_kernel_inner_with_construction_statistics(
         kernel: K,
-        vertices: &[Vertex<K::Scalar, U, D>],
+        vertices: &[Vertex<U, D>],
         topology_guarantee: TopologyGuarantee,
-        grid_cell_size: Option<K::Scalar>,
+        grid_cell_size: Option<f64>,
         batch_repair_policy: DelaunayRepairPolicy,
         use_global_repair_fallback: bool,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
@@ -2826,11 +2901,11 @@ where
     )]
     fn build_with_kernel_inner_seeded_with_construction_statistics(
         kernel: K,
-        vertices: &[Vertex<K::Scalar, U, D>],
+        vertices: &[Vertex<U, D>],
         topology_guarantee: TopologyGuarantee,
         perturbation_seed: u64,
         run_final_repair: bool,
-        grid_cell_size: Option<K::Scalar>,
+        grid_cell_size: Option<f64>,
         batch_repair_policy: DelaunayRepairPolicy,
         use_global_repair_fallback: bool,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
@@ -2971,11 +3046,11 @@ where
     )]
     fn build_with_kernel_inner_seeded(
         kernel: K,
-        vertices: &[Vertex<K::Scalar, U, D>],
+        vertices: &[Vertex<U, D>],
         topology_guarantee: TopologyGuarantee,
         perturbation_seed: u64,
         run_final_repair: bool,
-        grid_cell_size: Option<K::Scalar>,
+        grid_cell_size: Option<f64>,
         batch_repair_policy: DelaunayRepairPolicy,
         use_global_repair_fallback: bool,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
@@ -3232,15 +3307,15 @@ where
     )]
     fn insert_remaining_vertices_seeded(
         &mut self,
-        vertices: &[Vertex<K::Scalar, U, D>],
+        vertices: &[Vertex<U, D>],
         perturbation_seed: u64,
-        grid_cell_size: Option<K::Scalar>,
+        grid_cell_size: Option<f64>,
         batch_repair_policy: DelaunayRepairPolicy,
         construction_stats: Option<&mut ConstructionStatistics>,
         pending_repair_seeds: &mut Vec<SimplexKey>,
         soft_fail_seeds: &mut Vec<SimplexKey>,
     ) -> Result<(), DelaunayTriangulationConstructionError> {
-        let mut grid_index: Option<HashGridIndex<K::Scalar, D>> = match grid_cell_size {
+        let mut grid_index: Option<HashGridIndex<D>> = match grid_cell_size {
             Some(cell_size) => Some(hash_grid_from_validated_cell_size(cell_size)?),
             None => None,
         };
@@ -3854,8 +3929,7 @@ where
 
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
 where
-    K: Kernel<D>,
-    K::Scalar: NumCast,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -3876,7 +3950,7 @@ where
     /// ```
     #[must_use]
     pub fn with_empty_kernel(kernel: K) -> Self {
-        let duplicate_tolerance = default_duplicate_tolerance::<K::Scalar>();
+        let duplicate_tolerance = default_duplicate_tolerance();
 
         Self {
             tri: Triangulation::new_empty(kernel),
@@ -3905,7 +3979,7 @@ where
         kernel: K,
         topology_guarantee: TopologyGuarantee,
     ) -> Self {
-        let duplicate_tolerance = default_duplicate_tolerance::<K::Scalar>();
+        let duplicate_tolerance = default_duplicate_tolerance();
 
         let mut tri = Triangulation::new_empty(kernel);
         tri.topology_guarantee = topology_guarantee;
@@ -3931,15 +4005,15 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
     /// use delaunay::prelude::geometry::RobustKernel;
     ///
     /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let kernel = RobustKernel::<f64>::new();
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
@@ -3950,7 +4024,7 @@ where
     /// ```
     pub fn with_kernel(
         kernel: &K,
-        vertices: &[Vertex<K::Scalar, U, D>],
+        vertices: &[Vertex<U, D>],
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
         Self::with_topology_guarantee(kernel, vertices, TopologyGuarantee::DEFAULT)
     }
@@ -3971,16 +4045,16 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
+    ///     DelaunayTriangulationBuilder, TopologyGuarantee,
     /// };
     /// use delaunay::prelude::geometry::RobustKernel;
     ///
     /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let kernel = RobustKernel::<f64>::new();
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
@@ -3992,7 +4066,7 @@ where
     /// ```
     pub fn with_topology_guarantee(
         kernel: &K,
-        vertices: &[Vertex<K::Scalar, U, D>],
+        vertices: &[Vertex<U, D>],
         topology_guarantee: TopologyGuarantee,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
         Self::with_topology_guarantee_and_options(
@@ -4018,16 +4092,16 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     ConstructionOptions, DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
+    ///     ConstructionOptions, DelaunayTriangulationBuilder, TopologyGuarantee,
     /// };
     /// use delaunay::prelude::geometry::RobustKernel;
     ///
     /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let kernel = RobustKernel::<f64>::new();
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
@@ -4040,7 +4114,7 @@ where
     /// ```
     pub fn with_topology_guarantee_and_options(
         kernel: &K,
-        vertices: &[Vertex<K::Scalar, U, D>],
+        vertices: &[Vertex<U, D>],
         topology_guarantee: TopologyGuarantee,
         options: ConstructionOptions,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
@@ -4060,10 +4134,10 @@ where
             initial_simplex,
         )?;
         let grid_cell_size = preprocessed.grid_cell_size();
-        let primary_vertices: &[Vertex<K::Scalar, U, D>] = preprocessed.primary_slice(vertices);
+        let primary_vertices: &[Vertex<U, D>] = preprocessed.primary_slice(vertices);
         let fallback_vertices = preprocessed.fallback_slice();
 
-        let build_with_vertices = |vertices: &[Vertex<K::Scalar, U, D>]| {
+        let build_with_vertices = |vertices: &[Vertex<U, D>]| {
             match retry_policy {
                 RetryPolicy::Disabled => {}
                 RetryPolicy::Shuffled {
@@ -4141,16 +4215,16 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     ConstructionOptions, DelaunayTriangulation, TopologyGuarantee, vertex,
+    ///     ConstructionOptions, DelaunayTriangulation, TopologyGuarantee,
     /// };
     /// use delaunay::prelude::geometry::RobustKernel;
     ///
     /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionErrorWithStatistics> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let kernel = RobustKernel::<f64>::new();
     /// let (dt, stats) =
@@ -4174,7 +4248,7 @@ where
     )]
     pub fn with_options_and_statistics(
         kernel: &K,
-        vertices: &[Vertex<K::Scalar, U, D>],
+        vertices: &[Vertex<U, D>],
         topology_guarantee: TopologyGuarantee,
         options: ConstructionOptions,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
@@ -4211,10 +4285,10 @@ where
         };
         let preprocessing_nanos = duration_nanos_saturating(preprocessing_started.elapsed());
         let grid_cell_size = preprocessed.grid_cell_size();
-        let primary_vertices: &[Vertex<K::Scalar, U, D>] = preprocessed.primary_slice(vertices);
+        let primary_vertices: &[Vertex<U, D>] = preprocessed.primary_slice(vertices);
         let fallback_vertices = preprocessed.fallback_slice();
 
-        let build_with_vertices = |vertices: &[Vertex<K::Scalar, U, D>]| {
+        let build_with_vertices = |vertices: &[Vertex<U, D>]| {
             match retry_policy {
                 RetryPolicy::Disabled => {}
                 RetryPolicy::Shuffled {
@@ -4308,55 +4382,30 @@ where
 
     /// Applies deduplication, insertion ordering, and initial-simplex selection
     /// before any topology is created.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "preprocessing keeps dedup, ordering, and initial-simplex selection in one boundary"
-    )]
     pub(crate) fn preprocess_vertices_for_construction(
-        vertices: &[Vertex<K::Scalar, U, D>],
+        vertices: &[Vertex<U, D>],
         dedup_policy: DedupPolicy,
         insertion_order: InsertionOrderStrategy,
         initial_simplex: InitialSimplexStrategy,
-    ) -> PreprocessVerticesResult<K::Scalar, U, D> {
-        let default_tolerance = default_duplicate_tolerance::<K::Scalar>();
+    ) -> PreprocessVerticesResult<U, D> {
+        let default_tolerance = default_duplicate_tolerance();
 
-        let mut epsilon: Option<K::Scalar> = None;
-        if let DedupPolicy::Epsilon { tolerance } = dedup_policy {
-            if !tolerance.is_finite() || tolerance < 0.0 {
-                return Err(TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!(
-                        "Invalid DedupPolicy::Epsilon tolerance {tolerance:?} (must be finite and non-negative)"
-                    ),
-                }
-                .into());
-            }
-
-            let Some(epsilon_value) = <K::Scalar as NumCast>::from(tolerance) else {
-                return Err(TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!(
-                        "Failed to convert DedupPolicy::Epsilon tolerance {tolerance:?} into scalar type"
-                    ),
-                }
-                .into());
-            };
-            epsilon = Some(epsilon_value);
-        }
+        let epsilon = if let DedupPolicy::Epsilon { tolerance } = dedup_policy {
+            Some(tolerance.get())
+        } else {
+            None
+        };
 
         let grid_cell_size_value =
             if let (DedupPolicy::Epsilon { .. }, Some(eps)) = (dedup_policy, epsilon) {
-                if eps > K::Scalar::zero() {
-                    eps
-                } else {
-                    default_tolerance
-                }
+                if eps > 0.0 { eps } else { default_tolerance }
             } else {
                 default_tolerance
             };
-        let mut grid =
-            hash_grid_from_validated_cell_size::<K::Scalar, D, usize>(grid_cell_size_value)?;
+        let mut grid = hash_grid_from_validated_cell_size::<D, usize>(grid_cell_size_value)?;
 
         // Deduplicate first to reduce work for ordering strategies.
-        let mut owned_vertices: Option<Vec<Vertex<K::Scalar, U, D>>> = match dedup_policy {
+        let mut owned_vertices: Option<Vec<Vertex<U, D>>> = match dedup_policy {
             DedupPolicy::Off => None,
             DedupPolicy::Exact => {
                 let vertices = vertices.to_vec();
@@ -4572,7 +4621,8 @@ where
             | InsertionError::NonManifoldTopology { .. }
             | InsertionError::HullExtension { .. }
             | InsertionError::DelaunayValidationFailed { .. }
-            | InsertionError::DuplicateCoordinates { .. }) => {
+            | InsertionError::DuplicateCoordinates { .. }
+            | InsertionError::PerturbedCoordinateInvalid { .. }) => {
                 TriangulationConstructionError::GeometricDegeneracy {
                     message: format!(
                         "Failed to canonicalize orientation after post-construction repair: {error}"
@@ -4647,17 +4697,22 @@ where
             InsertionError::SpatialIndexConstruction { reason } => {
                 TriangulationConstructionError::SpatialIndexConstruction { reason }
             }
+            InsertionError::PerturbedCoordinateInvalid { source } => {
+                TriangulationConstructionError::GeometricDegeneracy {
+                    message: format!("Perturbation retry produced invalid coordinates: {source}"),
+                }
+            }
         }
     }
 
     /// Avoids retry work when construction has no incremental phase to reorder.
-    pub(crate) const fn should_retry_construction(vertices: &[Vertex<K::Scalar, U, D>]) -> bool {
+    pub(crate) const fn should_retry_construction(vertices: &[Vertex<U, D>]) -> bool {
         D >= 2 && vertices.len() > D + 1
     }
 
     /// Derives an input-order-independent seed so shuffled retries are
     /// reproducible for the same vertex set.
-    pub(crate) fn construction_shuffle_seed(vertices: &[Vertex<K::Scalar, U, D>]) -> u64 {
+    pub(crate) fn construction_shuffle_seed(vertices: &[Vertex<U, D>]) -> u64 {
         let mut vertex_hashes = Vec::with_capacity(vertices.len());
         for vertex in vertices {
             let mut hasher = FastHasher::default();
@@ -4669,7 +4724,7 @@ where
     }
 
     /// Keeps construction retry shuffling deterministic for diagnostics and tests.
-    pub(crate) fn shuffle_vertices(vertices: &mut [Vertex<K::Scalar, U, D>], seed: u64) {
+    pub(crate) fn shuffle_vertices(vertices: &mut [Vertex<U, D>], seed: u64) {
         let mut rng = StdRng::seed_from_u64(seed);
         vertices.shuffle(&mut rng);
     }
@@ -4751,10 +4806,10 @@ pub(crate) fn log_bulk_progress_if_due(
     let chunk_elapsed = state.last_progress.elapsed();
     let chunk_processed = sample.bulk_processed.saturating_sub(state.last_processed);
 
-    let overall_rate = safe_usize_to_scalar::<f64>(sample.bulk_processed)
+    let overall_rate = safe_usize_to_scalar(sample.bulk_processed)
         .ok()
         .map(|processed| processed / elapsed.as_secs_f64().max(1e-9));
-    let chunk_rate = safe_usize_to_scalar::<f64>(chunk_processed)
+    let chunk_rate = safe_usize_to_scalar(chunk_processed)
         .ok()
         .map(|processed| processed / chunk_elapsed.as_secs_f64().max(1e-9));
 
@@ -4867,7 +4922,6 @@ mod tests {
     use crate::core::validation::{
         TopologyGuarantee, TriangulationValidationError, ValidationPolicy,
     };
-    use crate::core::vertex::VertexBuilder;
     use crate::diagnostics::BatchLocalRepairTrigger;
     use crate::geometry::coordinate_range::{CoordinateRangeError, CoordinateRangeOrdering};
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel, RobustKernel};
@@ -4879,7 +4933,6 @@ mod tests {
     use crate::repair::DelaunayRepairPolicy;
     use crate::topology::characteristics::euler::TopologyClassification;
     use crate::validation::DelaunayTriangulationValidationError;
-    use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
     use std::num::NonZeroUsize;
@@ -4957,11 +5010,11 @@ mod tests {
     #[test]
     fn test_finalize_bulk_construction_validates_pseudomanifold_topology() {
         init_tracing();
-        let vertices: Vec<Vertex<f64, (), 2>> = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([2.0, 0.0]),
-            vertex!([0.0, 2.0]),
-            vertex!([2.0, 1.0]),
+        let vertices: Vec<Vertex<(), 2>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 2.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::new_with_topology_guarantee(
             &vertices,
@@ -5001,10 +5054,10 @@ mod tests {
                 #[test]
                 fn [<test_incremental_insertion_ $dim d>]() {
                     init_tracing();
-                    let mut vertices: Vec<Vertex<f64, (), $dim>> = vec![
-                        $(vertex!($simplex_coords)),+
+                    let mut vertices: Vec<Vertex<(), $dim>> = vec![
+                        $(crate::core::vertex::Vertex::<(), _>::try_new($simplex_coords).unwrap()),+
                     ];
-                    vertices.push(vertex!($interior_point));
+                    vertices.push(crate::core::vertex::Vertex::<(), _>::try_new($interior_point).unwrap());
 
                     let expected_vertices = vertices.len();
                     let dt: DelaunayTriangulation<_, (), (), $dim> =
@@ -5022,7 +5075,7 @@ mod tests {
                     assert_eq!(dt.number_of_vertices(), 0);
                     assert_eq!(dt.number_of_simplices(), 0);
 
-                    let vertices = vec![$(vertex!($simplex_coords)),+];
+                    let vertices = vec![$(crate::core::vertex::Vertex::<(), _>::try_new($simplex_coords).unwrap()),+];
                     assert_eq!(vertices.len(), $dim + 1);
 
                     for (i, vertex) in vertices.iter().take($dim).enumerate() {
@@ -5042,14 +5095,14 @@ mod tests {
                     init_tracing();
                     let mut dt: DelaunayTriangulation<_, (), (), $dim> =
                         DelaunayTriangulation::empty();
-                    let initial_vertices = vec![$(vertex!($simplex_coords)),+];
+                    let initial_vertices = vec![$(crate::core::vertex::Vertex::<(), _>::try_new($simplex_coords).unwrap()),+];
 
                     for vertex in &initial_vertices {
                         dt.insert(*vertex).unwrap();
                     }
                     assert_eq!(dt.number_of_simplices(), 1);
 
-                    dt.insert(vertex!($interior_point)).unwrap();
+                    dt.insert(crate::core::vertex::Vertex::<(), _>::try_new($interior_point).unwrap()).unwrap();
                     assert_eq!(dt.number_of_vertices(), $dim + 2);
                     assert!(dt.number_of_simplices() > 1);
                     assert!(dt.is_valid().is_ok());
@@ -5058,7 +5111,7 @@ mod tests {
                 #[test]
                 fn [<test_bootstrap_equivalent_to_batch_ $dim d>]() {
                     init_tracing();
-                    let vertices = vec![$(vertex!($simplex_coords)),+];
+                    let vertices = vec![$(crate::core::vertex::Vertex::<(), _>::try_new($simplex_coords).unwrap()),+];
 
                     let mut dt_bootstrap: DelaunayTriangulation<_, (), (), $dim> =
                         DelaunayTriangulation::empty();
@@ -5123,9 +5176,9 @@ mod tests {
     fn test_with_kernel_fast_kernel() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
 
         let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
@@ -5139,9 +5192,9 @@ mod tests {
     fn test_with_kernel_robust_kernel() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
 
         let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 2> =
@@ -5154,7 +5207,10 @@ mod tests {
     #[test]
     fn test_with_kernel_insufficient_vertices_2d() {
         init_tracing();
-        let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0])];
+        let vertices = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+        ];
 
         let result: Result<DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2>, _> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices);
@@ -5171,9 +5227,9 @@ mod tests {
     fn test_with_kernel_insufficient_vertices_3d() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
         ];
 
         let result: Result<DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>, _> =
@@ -5191,14 +5247,16 @@ mod tests {
     fn test_with_kernel_aborts_on_duplicate_uuid_in_insertion_loop() {
         init_tracing();
         let mut vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([2.0, 0.0]),
-            vertex!([0.0, 2.0]),
-            vertex!([0.25, 0.25]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 2.0]).unwrap(),
         ];
 
         let dup_uuid = vertices[0].uuid();
-        vertices[3].set_uuid(dup_uuid).unwrap();
+        vertices.push(
+            Vertex::try_new_with_uuid(Point::from_validated_coords([0.25, 0.25]), dup_uuid, None)
+                .unwrap(),
+        );
 
         let result: Result<DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2>, _> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices);
@@ -5217,11 +5275,11 @@ mod tests {
     fn test_batch_3d_construction_with_extra_vertex_triggers_incremental_repair() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.3, 0.3, 0.3]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.3, 0.3]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -5233,11 +5291,11 @@ mod tests {
     fn test_batch_3d_construction_statistics_with_extra_vertex_triggers_incremental_repair() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.3, 0.3, 0.3]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.3, 0.3]).unwrap(),
         ];
         let (dt, stats) =
             DelaunayTriangulation::<_, (), (), 3>::new_with_construction_statistics(&vertices)
@@ -5251,13 +5309,13 @@ mod tests {
     fn test_batch_4d_forced_nonconvergent_local_repair_canonicalizes_without_stats() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0]),
-            vertex!([0.2, 0.2, 0.2, 0.2]),
-            vertex!([0.35, 0.25, 0.15, 0.3]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.35, 0.25, 0.15, 0.3]).unwrap(),
         ];
 
         let _guard = ForceRepairNonconvergentGuard::enable();
@@ -5276,13 +5334,13 @@ mod tests {
     fn test_batch_4d_forced_nonconvergent_local_repair_canonicalizes_with_stats() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0]),
-            vertex!([0.2, 0.2, 0.2, 0.2]),
-            vertex!([0.35, 0.25, 0.15, 0.3]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.35, 0.25, 0.15, 0.3]).unwrap(),
         ];
 
         let _guard = ForceRepairNonconvergentGuard::enable();
@@ -5307,13 +5365,13 @@ mod tests {
     fn test_batch_4d_every_n_repair_cadence_runs_with_pending_seeds() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0]),
-            vertex!([0.2, 0.2, 0.2, 0.2]),
-            vertex!([0.35, 0.25, 0.15, 0.3]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.35, 0.25, 0.15, 0.3]).unwrap(),
         ];
 
         test_hooks::reset_batch_local_repair_calls();
@@ -5571,7 +5629,8 @@ mod tests {
     #[test]
     fn test_vertex_coords_f64_converts_f64_vertex_coords() {
         init_tracing();
-        let vertex: Vertex<f64, (), 3> = vertex!([1.25, -2.5, 3.75]);
+        let vertex: Vertex<(), 3> =
+            crate::core::vertex::Vertex::<(), _>::try_new([1.25, -2.5, 3.75]).unwrap();
 
         assert_eq!(vertex_coords_f64(&vertex), Some(vec![1.25, -2.5, 3.75]));
     }
@@ -5579,20 +5638,11 @@ mod tests {
     #[test]
     fn test_vertex_coords_f64_rejects_non_finite_coords() {
         init_tracing();
-        let nan_vertex: Vertex<f64, (), 3> = VertexBuilder::default()
-            .point(Point::new([1.0, f64::NAN, 3.0]))
-            .build()
-            .unwrap();
-        let infinite_vertex: Vertex<f64, (), 3> = VertexBuilder::default()
-            .point(Point::new([1.0, f64::INFINITY, 3.0]))
-            .build()
-            .unwrap();
-
-        assert_eq!(vertex_coords_f64(&nan_vertex), None);
-        assert_eq!(vertex_coords_f64(&infinite_vertex), None);
+        assert!(Point::<3>::try_new([1.0, f64::NAN, 3.0]).is_err());
+        assert!(Point::<3>::try_new([1.0, f64::INFINITY, 3.0]).is_err());
     }
 
-    fn coord_sequence_2d(vertices: &[Vertex<f64, (), 2>]) -> Vec<[f64; 2]> {
+    fn coord_sequence_2d(vertices: &[Vertex<(), 2>]) -> Vec<[f64; 2]> {
         vertices.iter().map(|v| *v.point().coords()).collect()
     }
 
@@ -5600,9 +5650,9 @@ mod tests {
     fn order_vertices_input_preserves_order() {
         init_tracing();
         let vertices = vec![
-            vertex!([2.0, 0.0]),
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
         ];
         let expected = coord_sequence_2d(&vertices);
 
@@ -5614,11 +5664,11 @@ mod tests {
     #[test]
     fn preprocess_hilbert_with_dedup_off_preserves_duplicate_vertices() {
         init_tracing();
-        let vertices: Vec<Vertex<f64, (), 2>> = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-            vertex!([1.0, 0.0]),
+        let vertices: Vec<Vertex<(), 2>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
         ];
 
         let preprocess = TestDelaunay::<2>::preprocess_vertices_for_construction(
@@ -5636,10 +5686,10 @@ mod tests {
     fn dedup_exact_sorted_without_grid() {
         init_tracing();
         let vertices = vec![
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
 
         let unique = dedup_vertices_exact_sorted(vertices);
@@ -5654,21 +5704,21 @@ mod tests {
     fn dedup_exact_grid_fallback() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 0.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
         ];
-        let mut grid = HashGridIndex::<f64, 2, usize>::try_new(1.0e-10).unwrap();
+        let mut grid = HashGridIndex::<2, usize>::try_new(1.0e-10).unwrap();
 
         let unique = dedup_vertices_exact_hash_grid(vertices, &mut grid);
 
         assert_eq!(coord_sequence_2d(&unique), vec![[0.0, 0.0], [1.0, 0.0]]);
 
         let vertices_6d = vec![
-            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
         ];
-        let mut unusable_grid = HashGridIndex::<f64, 6, usize>::try_new(1.0e-10).unwrap();
+        let mut unusable_grid = HashGridIndex::<6, usize>::try_new(1.0e-10).unwrap();
 
         let fallback_unique = dedup_vertices_exact_hash_grid(vertices_6d, &mut unusable_grid);
 
@@ -5679,29 +5729,27 @@ mod tests {
     fn epsilon_dedup_quantized_paths() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([0.09, 0.0]),
-            vertex!([0.25, 0.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.09, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.0]).unwrap(),
         ];
 
         let unique = dedup_vertices_epsilon_quantized(vertices, 0.1);
 
         assert_eq!(coord_sequence_2d(&unique), vec![[0.0, 0.0], [0.25, 0.0]]);
 
-        let zero_epsilon_vertices = vec![vertex!([0.0, 0.0]), vertex!([0.0, 0.0])];
+        let zero_epsilon_vertices = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+        ];
         let zero_epsilon_unique = dedup_vertices_epsilon_quantized(zero_epsilon_vertices, 0.0);
         assert_eq!(zero_epsilon_unique.len(), 2);
 
-        let nonfinite_vertices = vec![
-            vertex!([0.0, 0.0]),
-            Vertex::new_with_uuid(Point::new([f64::NAN, 0.0]), Uuid::new_v4(), None),
-        ];
-        let nonfinite_unique = dedup_vertices_epsilon_quantized(nonfinite_vertices, 0.1);
-        assert_eq!(nonfinite_unique.len(), 2);
+        assert!(Point::<2>::try_new([f64::NAN, 0.0]).is_err());
 
         let vertices_6d = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.01, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.01, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
         ];
         let fallback_unique = dedup_vertices_epsilon_quantized(vertices_6d, 0.1);
         assert_eq!(fallback_unique.len(), 1);
@@ -5711,18 +5759,21 @@ mod tests {
     fn dedup_epsilon_grid_fallback() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([0.05, 0.0]),
-            vertex!([0.25, 0.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.05, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.0]).unwrap(),
         ];
-        let mut grid = HashGridIndex::<f64, 2, usize>::try_new(0.1).unwrap();
+        let mut grid = HashGridIndex::<2, usize>::try_new(0.1).unwrap();
 
         let unique = dedup_vertices_epsilon_hash_grid(vertices, 0.1, &mut grid);
 
         assert_eq!(coord_sequence_2d(&unique), vec![[0.0, 0.0], [0.25, 0.0]]);
 
-        let fallback_vertices = vec![vertex!([0.0, 0.0]), vertex!([0.05, 0.0])];
-        let mut unusable_grid = HashGridIndex::<f64, 2, usize>::try_new(0.1).unwrap();
+        let fallback_vertices = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.05, 0.0]).unwrap(),
+        ];
+        let mut unusable_grid = HashGridIndex::<2, usize>::try_new(0.1).unwrap();
         unusable_grid.remove_vertex(&0, &[f64::NAN, 0.0]);
 
         let fallback_unique =
@@ -5735,9 +5786,9 @@ mod tests {
     fn preprocess_falls_back_when_grid_unusable() {
         init_tracing();
         let exact_vertices = vec![
-            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
         ];
 
         let exact = TestDelaunay::<6>::preprocess_vertices_for_construction(
@@ -5752,14 +5803,14 @@ mod tests {
         assert!(exact.grid_cell_size().is_none());
 
         let epsilon_vertices = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.01, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.5, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.01, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
         ];
 
         let epsilon = TestDelaunay::<6>::preprocess_vertices_for_construction(
             &epsilon_vertices,
-            DedupPolicy::Epsilon { tolerance: 0.1 },
+            DedupPolicy::try_epsilon(0.1).unwrap(),
             InsertionOrderStrategy::Input,
             InitialSimplexStrategy::First,
         )
@@ -5773,14 +5824,14 @@ mod tests {
     fn preprocess_zero_epsilon_keeps_base() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
         ];
 
         let preprocess = TestDelaunay::<3>::preprocess_vertices_for_construction(
             &vertices,
-            DedupPolicy::Epsilon { tolerance: 0.0 },
+            DedupPolicy::try_epsilon(0.0).unwrap(),
             InsertionOrderStrategy::Input,
             InitialSimplexStrategy::Balanced,
         )
@@ -5794,7 +5845,7 @@ mod tests {
     #[test]
     fn hash_grid_from_validated_cell_size_rejects_invalid_internal_tolerance() {
         init_tracing();
-        let error = hash_grid_from_validated_cell_size::<f64, 3, usize>(0.0)
+        let error = hash_grid_from_validated_cell_size::<3, usize>(0.0)
             .expect_err("invalid internal hash-grid tolerance should fail");
 
         assert_matches!(
@@ -5826,37 +5877,18 @@ mod tests {
     }
 
     #[test]
-    fn hilbert_fallback_for_nonfinite_coords() {
+    fn hilbert_rejects_nonfinite_coords_at_point_boundary() {
         init_tracing();
-        let vertices = vec![
-            vertex!([1.0, 0.0]),
-            Vertex::new_with_uuid(Point::new([f64::NAN, 0.0]), Uuid::new_v4(), None),
-            vertex!([0.0, 0.0]),
-        ];
-
-        let ordered = order_vertices_hilbert(vertices, true);
-
-        assert_eq!(ordered.len(), 3);
-        assert!(
-            ordered.iter().any(|v| v.point().coords()[0].is_nan()),
-            "fallback ordering should preserve the non-finite vertex"
-        );
-        assert!(
-            ordered
-                .iter()
-                .any(|v| coords_equal_exact(v.point().coords(), &[0.0, 0.0]))
-        );
-        assert!(
-            ordered
-                .iter()
-                .any(|v| coords_equal_exact(v.point().coords(), &[1.0, 0.0]))
-        );
+        assert!(Point::<2>::try_new([f64::NAN, 0.0]).is_err());
     }
 
     #[test]
     fn hilbert_fallback_for_unsupported_dim() {
         init_tracing();
-        let vertices = vec![vertex!([1.0; 17]), vertex!([0.0; 17])];
+        let vertices = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0; 17]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0; 17]).unwrap(),
+        ];
 
         let ordered = order_vertices_hilbert(vertices, true);
 
@@ -5867,10 +5899,10 @@ mod tests {
     #[test]
     fn test_select_balanced_simplex_indices_insufficient_vertices() {
         init_tracing();
-        let vertices: Vec<Vertex<f64, (), 3>> = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
+        let vertices: Vec<Vertex<(), 3>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
         ];
 
         let result = select_balanced_simplex_indices(&vertices);
@@ -5878,17 +5910,9 @@ mod tests {
     }
 
     #[test]
-    fn test_select_balanced_simplex_indices_rejects_non_finite_coords() {
+    fn test_select_balanced_simplex_indices_non_finite_coords_rejected_at_point_boundary() {
         init_tracing();
-        let vertices: Vec<Vertex<f64, (), 3>> = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            Vertex::new_with_uuid(Point::new([f64::NAN, 0.0, 0.0]), Uuid::new_v4(), None),
-        ];
-
-        let result = select_balanced_simplex_indices(&vertices);
-        assert!(result.is_none());
+        assert!(Point::<3>::try_new([f64::NAN, 0.0, 0.0]).is_err());
     }
 
     macro_rules! max_volume_axis_simplex_test {
@@ -5896,7 +5920,7 @@ mod tests {
             #[test]
             fn $test_name() {
                 init_tracing();
-                let vertices: Vec<Vertex<f64, (), $dimension>> = vec![$(vertex!($coords)),+];
+                let vertices: Vec<Vertex<(), $dimension>> = vec![$(crate::core::vertex::Vertex::<(), _>::try_new($coords).unwrap()),+];
 
                 let result = select_max_volume_simplex_indices(&vertices)
                     .expect("max-volume simplex selection failed");
@@ -5981,11 +6005,11 @@ mod tests {
     #[test]
     fn test_select_max_volume_simplex_indices_rejects_degenerate_pool() {
         init_tracing();
-        let vertices: Vec<Vertex<f64, (), 3>> = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([2.0, 0.0, 0.0]),
-            vertex!([3.0, 0.0, 0.0]),
+        let vertices: Vec<Vertex<(), 3>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([3.0, 0.0, 0.0]).unwrap(),
         ];
 
         let result = select_max_volume_simplex_indices(&vertices);
@@ -5995,12 +6019,12 @@ mod tests {
     #[test]
     fn test_reorder_vertices_for_simplex_valid_and_invalid() {
         init_tracing();
-        let vertices: Vec<Vertex<f64, (), 3>> = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([2.0, 2.0, 2.0]),
+        let vertices: Vec<Vertex<(), 3>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 2.0, 2.0]).unwrap(),
         ];
 
         let indices = [2_usize, 0, 3, 1];
@@ -6029,12 +6053,12 @@ mod tests {
     #[test]
     fn test_preprocess_vertices_for_construction_balanced_sets_fallback() {
         init_tracing();
-        let vertices: Vec<Vertex<f64, (), 3>> = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([2.0, 2.0, 2.0]),
+        let vertices: Vec<Vertex<(), 3>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 2.0, 2.0]).unwrap(),
         ];
 
         let preprocess = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::preprocess_vertices_for_construction(
@@ -6054,14 +6078,14 @@ mod tests {
     #[test]
     fn test_preprocess_vertices_for_construction_max_volume_sets_largest_simplex_first() {
         init_tracing();
-        let vertices: Vec<Vertex<f64, (), 3>> = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([10.0, 0.0, 0.0]),
-            vertex!([0.0, 10.0, 0.0]),
-            vertex!([0.0, 0.0, 10.0]),
+        let vertices: Vec<Vertex<(), 3>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([10.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 10.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 10.0]).unwrap(),
         ];
 
         let preprocess = DelaunayTriangulation::<
@@ -6099,85 +6123,68 @@ mod tests {
     }
 
     #[test]
-    fn test_preprocess_vertices_rejects_invalid_epsilon_tolerance() {
+    fn dedup_tolerance_rejects_invalid_raw_values() {
         init_tracing();
-        let vertices: Vec<Vertex<f64, (), 3>> = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
 
-        let result = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::preprocess_vertices_for_construction(
-            &vertices,
-            DedupPolicy::Epsilon { tolerance: -1.0 },
-            InsertionOrderStrategy::Input,
-            InitialSimplexStrategy::First,
+        assert_eq!(
+            DedupTolerance::try_new(-1.0),
+            Err(DeduplicationError::NegativeEpsilon)
+        );
+        assert_eq!(
+            DedupTolerance::try_new(f64::NAN),
+            Err(DeduplicationError::NonFiniteEpsilon)
+        );
+        assert_eq!(
+            DedupTolerance::try_new(f64::INFINITY),
+            Err(DeduplicationError::NonFiniteEpsilon)
         );
 
-        assert_matches!(
-            result,
-            Err(DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::GeometricDegeneracy { .. }
-            ))
-        );
+        let zero = DedupTolerance::try_new(-0.0).expect("signed zero is non-negative");
+        assert_eq!(zero.get().to_bits(), 0.0_f64.to_bits());
     }
 
     #[test]
-    fn stats_preprocess_error_defaults() {
+    fn dedup_policy_try_epsilon_parses_raw_tolerance() {
         init_tracing();
-        let vertices: Vec<Vertex<f64, (), 3>> = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let options = ConstructionOptions::default().with_dedup_policy(DedupPolicy::Epsilon {
-            tolerance: f64::NAN,
-        });
 
-        let error =
-            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::with_options_and_statistics(
-                &AdaptiveKernel::new(),
-                &vertices,
-                TopologyGuarantee::PLManifold,
-                options,
-            )
-            .expect_err("NaN epsilon should fail during preprocessing");
+        let policy = DedupPolicy::try_epsilon(1.0e-10).expect("finite non-negative tolerance");
+        assert_eq!(
+            policy,
+            DedupPolicy::epsilon(DedupTolerance::try_new(1.0e-10).unwrap())
+        );
 
-        assert_eq!(error.statistics.inserted, 0);
-        assert_eq!(error.statistics.total_skipped(), 0);
-        assert_eq!(error.statistics.total_attempts, 0);
-        assert!(error.statistics.skip_samples.is_empty());
-        assert_matches!(
-            error.error,
-            DelaunayTriangulationConstructionError::Triangulation(_)
+        assert_eq!(
+            DedupPolicy::try_epsilon(f64::NEG_INFINITY),
+            Err(DeduplicationError::NonFiniteEpsilon)
         );
     }
 
     fn vertices_from_coords_permutation_3d(
         coords: &[[f64; 3]],
         permutation: &[usize],
-    ) -> Vec<Vertex<f64, (), 3>> {
-        permutation.iter().map(|&i| vertex!(coords[i])).collect()
+    ) -> Vec<Vertex<(), 3>> {
+        permutation
+            .iter()
+            .map(|&i| crate::core::vertex::Vertex::<(), _>::try_new(coords[i]).unwrap())
+            .collect()
     }
 
     #[test]
     fn test_bulk_construction_skips_near_duplicate_coordinates_3d() {
         init_tracing();
         // Test that epsilon-based deduplication removes near-duplicates
-        let vertices: Vec<Vertex<f64, (), 3>> = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.25, 0.25, 0.25]),
+        let vertices: Vec<Vertex<(), 3>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.25, 0.25]).unwrap(),
             // Near-duplicate within tolerance 1e-10
-            vertex!([0.25 + 5e-11, 0.25, 0.25]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.25 + 5e-11, 0.25, 0.25]).unwrap(),
         ];
 
         let opts = ConstructionOptions::default()
-            .with_dedup_policy(DedupPolicy::Epsilon { tolerance: 1e-10 })
+            .with_dedup_policy(DedupPolicy::try_epsilon(1e-10).unwrap())
             .with_retry_policy(RetryPolicy::Disabled);
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new_with_options(&vertices, opts).unwrap();
@@ -6186,7 +6193,7 @@ mod tests {
         assert!(dt.validate().is_ok());
     }
 
-    fn coord_sequence_3d(vertices: &[Vertex<f64, (), 3>]) -> Vec<[f64; 3]> {
+    fn coord_sequence_3d(vertices: &[Vertex<(), 3>]) -> Vec<[f64; 3]> {
         vertices.iter().map(Into::into).collect()
     }
 
@@ -6236,35 +6243,35 @@ mod tests {
     // =========================================================================
 
     /// Build D+1 standard simplex vertices: origin + D unit vectors.
-    fn simplex_vertices<const D: usize>() -> Vec<Vertex<f64, (), D>> {
+    fn simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
         let mut verts = Vec::with_capacity(D + 1);
-        verts.push(vertex!([0.0; D]));
+        verts.push(crate::core::vertex::Vertex::<(), _>::try_new([0.0; D]).unwrap());
         for i in 0..D {
             let mut coords = [0.0; D];
             coords[i] = 1.0;
-            verts.push(vertex!(coords));
+            verts.push(crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap());
         }
         verts
     }
 
     /// Build simplex vertices plus exact duplicates of the first two.
-    fn simplex_with_duplicates<const D: usize>() -> (Vec<Vertex<f64, (), D>>, usize) {
+    fn simplex_with_duplicates<const D: usize>() -> (Vec<Vertex<(), D>>, usize) {
         let mut verts = simplex_vertices::<D>();
         let distinct = verts.len();
         // Duplicate the origin and first unit vector
-        verts.push(vertex!([0.0; D]));
+        verts.push(crate::core::vertex::Vertex::<(), _>::try_new([0.0; D]).unwrap());
         let mut unit = [0.0; D];
         unit[0] = 1.0;
-        verts.push(vertex!(unit));
+        verts.push(crate::core::vertex::Vertex::<(), _>::try_new(unit).unwrap());
         (verts, distinct)
     }
 
     /// Build simplex vertices plus an interior point (all distinct).
-    fn simplex_with_interior<const D: usize>() -> Vec<Vertex<f64, (), D>> {
+    fn simplex_with_interior<const D: usize>() -> Vec<Vertex<(), D>> {
         let mut verts = simplex_vertices::<D>();
-        let dimension = safe_usize_to_scalar::<f64>(D).expect("test dimensions fit in f64");
+        let dimension = safe_usize_to_scalar(D).expect("test dimensions fit in f64");
         let interior = [0.1_f64 / dimension; D];
-        verts.push(vertex!(interior));
+        verts.push(crate::core::vertex::Vertex::<(), _>::try_new(interior).unwrap());
         verts
     }
 
@@ -6311,10 +6318,10 @@ mod tests {
                 #[test]
                 fn [<test_hilbert_sort_dedup_all_identical_ $dim d>]() {
                     init_tracing();
-                    let vertices: Vec<Vertex<f64, (), $dim>> = vec![
-                        vertex!([0.5; $dim]),
-                        vertex!([0.5; $dim]),
-                        vertex!([0.5; $dim]),
+                    let vertices: Vec<Vertex<(), $dim>> = vec![
+                        crate::core::vertex::Vertex::<(), _>::try_new([0.5; $dim]).unwrap(),
+                        crate::core::vertex::Vertex::<(), _>::try_new([0.5; $dim]).unwrap(),
+                        crate::core::vertex::Vertex::<(), _>::try_new([0.5; $dim]).unwrap(),
                     ];
                     let result = order_vertices_hilbert(vertices, true);
                     assert_eq!(
@@ -6339,14 +6346,15 @@ mod tests {
 
     #[test]
     fn test_hilbert_dedup_empty_input() {
-        let vertices: Vec<Vertex<f64, (), 3>> = vec![];
+        let vertices: Vec<Vertex<(), 3>> = vec![];
         let result = order_vertices_hilbert(vertices, true);
         assert!(result.is_empty(), "empty input must produce empty output");
     }
 
     #[test]
     fn test_hilbert_dedup_single_vertex() {
-        let vertices: Vec<Vertex<f64, (), 3>> = vec![vertex!([1.0, 2.0, 3.0])];
+        let vertices: Vec<Vertex<(), 3>> =
+            vec![crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap()];
         let result = order_vertices_hilbert(vertices, true);
         assert_eq!(result.len(), 1, "single vertex must be preserved");
     }
@@ -6354,11 +6362,11 @@ mod tests {
     #[test]
     fn test_hilbert_dedup_already_unique() {
         // Distinct vertices — dedup should be a no-op.
-        let vertices: Vec<Vertex<f64, (), 3>> = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+        let vertices: Vec<Vertex<(), 3>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let n = vertices.len();
         let result = order_vertices_hilbert(vertices, true);
@@ -6368,12 +6376,12 @@ mod tests {
     #[test]
     fn test_new_with_options_hilbert_smoke_3d() {
         init_tracing();
-        let vertices: Vec<Vertex<f64, (), 3>> = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.25, 0.25, 0.25]),
+        let vertices: Vec<Vertex<(), 3>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.25, 0.25]).unwrap(),
         ];
 
         let opts = ConstructionOptions::default()
@@ -6390,12 +6398,12 @@ mod tests {
     #[test]
     fn test_new_with_options_shuffled_retry_policy_smoke_3d() {
         init_tracing();
-        let vertices: Vec<Vertex<f64, (), 3>> = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.25, 0.25, 0.25]),
+        let vertices: Vec<Vertex<(), 3>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.25, 0.25]).unwrap(),
         ];
 
         let opts = ConstructionOptions::default()
@@ -6415,11 +6423,11 @@ mod tests {
     #[test]
     fn test_new_with_options_smoke_3d() {
         init_tracing();
-        let vertices: Vec<Vertex<f64, (), 3>> = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+        let vertices: Vec<Vertex<(), 3>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let opts = ConstructionOptions::default().with_retry_policy(RetryPolicy::Disabled);
@@ -6434,11 +6442,11 @@ mod tests {
     #[test]
     fn test_new_with_construction_statistics_counts_initial_simplex_3d() {
         init_tracing();
-        let vertices: Vec<Vertex<f64, (), 3>> = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+        let vertices: Vec<Vertex<(), 3>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let (dt, stats) =
@@ -6455,12 +6463,12 @@ mod tests {
     #[test]
     fn test_new_with_options_and_construction_statistics_skips_duplicate_3d() {
         init_tracing();
-        let vertices: Vec<Vertex<f64, (), 3>> = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.0, 0.0, 0.0]),
+        let vertices: Vec<Vertex<(), 3>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
         ];
         let duplicate_uuid = vertices[4].uuid();
 
@@ -6493,10 +6501,10 @@ mod tests {
     #[test]
     fn test_new_with_topology_guarantee_sets_pl() {
         init_tracing();
-        let vertices: Vec<Vertex<f64, (), 2>> = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+        let vertices: Vec<Vertex<(), 2>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 2> =
@@ -6568,11 +6576,14 @@ mod tests {
         let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
         assert_eq!(dt.number_of_vertices(), 0);
 
-        dt.insert(vertex!([0.0, 0.0])).unwrap();
-        dt.insert(vertex!([1.0, 0.0])).unwrap();
+        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .unwrap();
+        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+            .unwrap();
         assert_eq!(dt.number_of_simplices(), 0);
 
-        dt.insert(vertex!([0.0, 1.0])).unwrap();
+        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap())
+            .unwrap();
         assert_eq!(dt.number_of_simplices(), 1);
     }
 

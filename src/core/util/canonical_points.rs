@@ -22,21 +22,67 @@
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::core::simplex::Simplex;
 use crate::core::tds::{Tds, VertexKey};
-use crate::core::traits::DataType;
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::CoordinateScalar;
 use slotmap::Key;
+use thiserror::Error;
 
 // =============================================================================
 // CANONICAL POINT-COLLECTION HELPERS
 // =============================================================================
+
+/// Errors that can occur while collecting canonical simplex predicate points.
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub(crate) enum CanonicalSimplexPointError {
+    /// A simplex did not contain exactly `D + 1` vertices for predicate input.
+    #[error("canonical simplex point collection expected {expected} vertices, found {found}")]
+    InvalidArity {
+        /// Expected simplex vertex count.
+        expected: usize,
+        /// Observed simplex vertex count.
+        found: usize,
+    },
+
+    /// A vertex key referenced by a simplex was not present in the TDS.
+    #[error("vertex {vertex_key:?} not found while collecting canonical simplex predicate points")]
+    MissingVertex {
+        /// Missing vertex key.
+        vertex_key: VertexKey,
+    },
+}
+
+/// Errors that can occur while collecting canonical facet predicate points.
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub(crate) enum CanonicalFacetPointError {
+    /// A facet did not contain exactly `D` vertices before appending the extra point.
+    #[error("canonical facet point collection expected {expected} vertices, found {found}")]
+    InvalidArity {
+        /// Expected facet vertex count.
+        expected: usize,
+        /// Observed facet vertex count.
+        found: usize,
+    },
+
+    /// A vertex key referenced by a facet was not present in the TDS.
+    #[error("vertex {vertex_key:?} not found while collecting canonical facet predicate points")]
+    MissingVertex {
+        /// Missing vertex key.
+        vertex_key: VertexKey,
+    },
+}
 
 /// Collect simplex vertex points in canonical [`VertexKey`] order.
 ///
 /// Sorts the simplex's vertex keys by their stable identity
 /// (`vk.data().as_ffi()`), then resolves each to its [`Point`].
 ///
-/// Returns [`None`] if any vertex key cannot be resolved via the TDS.
+/// # Errors
+///
+/// Returns [`CanonicalSimplexPointError::InvalidArity`] if `simplex` does not
+/// have exactly `D + 1` vertices. Returns
+/// [`CanonicalSimplexPointError::MissingVertex`] if any vertex key cannot be
+/// resolved via the TDS.
 ///
 /// # Arguments
 ///
@@ -46,28 +92,33 @@ use slotmap::Key;
 /// # Examples
 ///
 /// ```rust,ignore
-/// let points = sorted_simplex_points(tds, simplex)
-///     .ok_or(SomeError::MissingVertex)?;
+/// let points = sorted_simplex_points(tds, simplex)?;
 /// let sign = kernel.in_sphere(&points, &query_point)?;
 /// ```
-pub fn sorted_simplex_points<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
-    simplex: &Simplex<T, U, V, D>,
-) -> Option<SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+pub(crate) fn sorted_simplex_points<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    simplex: &Simplex<V, D>,
+) -> Result<SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>, CanonicalSimplexPointError> {
+    let vertex_count = simplex.number_of_vertices();
+    if vertex_count != D + 1 {
+        return Err(CanonicalSimplexPointError::InvalidArity {
+            expected: D + 1,
+            found: vertex_count,
+        });
+    }
+
     let mut keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
         simplex.vertices().iter().copied().collect();
     keys.sort_unstable_by_key(|vk| vk.data().as_ffi());
 
     let mut points = SmallBuffer::with_capacity(keys.len());
     for &vk in &keys {
-        points.push(*tds.vertex(vk)?.point());
+        let vertex = tds
+            .vertex(vk)
+            .ok_or(CanonicalSimplexPointError::MissingVertex { vertex_key: vk })?;
+        points.push(*vertex.point());
     }
-    Some(points)
+    Ok(points)
 }
 
 /// Collect facet vertex points in canonical [`VertexKey`] order, then append
@@ -76,7 +127,12 @@ where
 /// Sorts `facet_keys` by their stable identity (`vk.data().as_ffi()`),
 /// resolves each to its [`Point`], and appends `extra` at the end.
 ///
-/// Returns [`None`] if any vertex key cannot be resolved via the TDS.
+/// # Errors
+///
+/// Returns [`CanonicalFacetPointError::InvalidArity`] if `facet_keys` does not
+/// contain exactly `D` vertices. Returns
+/// [`CanonicalFacetPointError::MissingVertex`] if any vertex key cannot be
+/// resolved via the TDS.
 ///
 /// # Arguments
 ///
@@ -87,30 +143,34 @@ where
 /// # Examples
 ///
 /// ```rust,ignore
-/// let points = sorted_facet_points_with_extra(tds, &facet_keys, opposite_point)
-///     .ok_or(SomeError::MissingVertex)?;
+/// let points = sorted_facet_points_with_extra(tds, &facet_keys, opposite_point)?;
 /// let orient = kernel.orientation(&points)?;
 /// ```
-pub fn sorted_facet_points_with_extra<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub(crate) fn sorted_facet_points_with_extra<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     facet_keys: &[VertexKey],
-    extra: Point<T, D>,
-) -> Option<SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+    extra: Point<D>,
+) -> Result<SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>, CanonicalFacetPointError> {
+    if facet_keys.len() != D {
+        return Err(CanonicalFacetPointError::InvalidArity {
+            expected: D,
+            found: facet_keys.len(),
+        });
+    }
+
     let mut sorted_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
         facet_keys.iter().copied().collect();
     sorted_keys.sort_unstable_by_key(|vk| vk.data().as_ffi());
 
     let mut points = SmallBuffer::with_capacity(sorted_keys.len() + 1);
     for &vk in &sorted_keys {
-        points.push(*tds.vertex(vk)?.point());
+        let vertex = tds
+            .vertex(vk)
+            .ok_or(CanonicalFacetPointError::MissingVertex { vertex_key: vk })?;
+        points.push(*vertex.point());
     }
     points.push(extra);
-    Some(points)
+    Ok(points)
 }
 
 // =============================================================================
@@ -120,9 +180,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::vertex::VertexBuilder;
+    use crate::core::vertex::Vertex;
     use crate::geometry::kernel::{AdaptiveKernel, Kernel};
-    use crate::geometry::traits::coordinate::Coordinate;
+    use slotmap::KeyData;
 
     // =========================================================================
     // HELPER FUNCTIONS
@@ -132,14 +192,11 @@ mod tests {
     /// vertex keys in insertion order.
     fn build_tds_with_points<const D: usize>(
         coords: &[[f64; D]],
-    ) -> (Tds<f64, (), (), D>, Vec<VertexKey>) {
-        let mut tds = Tds::<f64, (), (), D>::empty();
+    ) -> (Tds<(), (), D>, Vec<VertexKey>) {
+        let mut tds = Tds::<(), (), D>::empty();
         let mut keys = Vec::with_capacity(coords.len());
         for c in coords {
-            let v = VertexBuilder::<_, (), _>::default()
-                .point(Point::new(*c))
-                .build()
-                .expect("vertex build should succeed");
+            let v = Vertex::<(), D>::try_new(*c).expect("finite point coordinates");
             let vk = tds
                 .insert_vertex_with_mapping(v)
                 .expect("insert should succeed");
@@ -158,7 +215,8 @@ mod tests {
         let (mut tds, keys) = build_tds_with_points(&[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
 
         // Create a simplex with vertices in insertion order
-        let simplex = Simplex::new(keys.clone(), None::<()>).expect("simplex should be valid");
+        let simplex =
+            Simplex::try_new_with_data(keys.clone(), None::<()>).expect("simplex should be valid");
         let simplex_key = tds
             .insert_simplex_with_mapping(simplex)
             .expect("insert should succeed");
@@ -182,15 +240,51 @@ mod tests {
         let (tds, keys) = build_tds_with_points(&[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
 
         // Create two simplices with vertices in different orders
-        let simplex_a = Simplex::new(vec![keys[0], keys[1], keys[2]], None::<()>)
+        let simplex_a = Simplex::try_new_with_data(vec![keys[0], keys[1], keys[2]], None::<()>)
             .expect("simplex should be valid");
-        let simplex_b = Simplex::new(vec![keys[2], keys[0], keys[1]], None::<()>)
+        let simplex_b = Simplex::try_new_with_data(vec![keys[2], keys[0], keys[1]], None::<()>)
             .expect("simplex should be valid");
         let points_a = sorted_simplex_points(&tds, &simplex_a).unwrap();
         let points_b = sorted_simplex_points(&tds, &simplex_b).unwrap();
 
         // Both should produce the same canonical ordering
         assert_eq!(points_a.as_slice(), points_b.as_slice());
+    }
+
+    #[test]
+    fn test_sorted_simplex_points_rejects_wrong_arity() {
+        let (tds, keys) = build_tds_with_points(&[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
+        let mut simplex = Simplex::try_new_with_data(vec![keys[0], keys[1], keys[2]], None::<()>)
+            .expect("simplex should be valid");
+
+        simplex.clear_vertex_keys();
+        simplex.push_vertex_key(keys[0]);
+        simplex.push_vertex_key(keys[1]);
+
+        let err = sorted_simplex_points(&tds, &simplex).unwrap_err();
+
+        assert!(matches!(
+            err,
+            CanonicalSimplexPointError::InvalidArity {
+                expected: 3,
+                found: 2,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_sorted_simplex_points_reports_missing_vertex_key() {
+        let (tds, keys) = build_tds_with_points(&[[0.0, 0.0], [1.0, 0.0]]);
+        let missing = VertexKey::from(KeyData::from_ffi(999_999));
+        let simplex = Simplex::try_new_with_data(vec![keys[0], keys[1], missing], None::<()>)
+            .expect("simplex arity and uniqueness should be valid");
+
+        let err = sorted_simplex_points(&tds, &simplex).unwrap_err();
+
+        assert!(matches!(
+            err,
+            CanonicalSimplexPointError::MissingVertex { vertex_key } if vertex_key == missing
+        ));
     }
 
     // =========================================================================
@@ -202,7 +296,7 @@ mod tests {
         let (tds, keys) = build_tds_with_points(&[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
 
         let facet_keys = &[keys[0], keys[1]];
-        let extra = Point::new([0.5, 0.5]);
+        let extra = Point::from_validated_coords([0.5, 0.5]);
 
         let points =
             sorted_facet_points_with_extra(&tds, facet_keys, extra).expect("should resolve");
@@ -217,13 +311,43 @@ mod tests {
     fn test_sorted_facet_points_with_extra_permutation_invariant() {
         let (tds, keys) = build_tds_with_points(&[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
 
-        let extra = Point::new([0.5, 0.5]);
+        let extra = Point::from_validated_coords([0.5, 0.5]);
 
         let points_a = sorted_facet_points_with_extra(&tds, &[keys[0], keys[1]], extra).unwrap();
         let points_b = sorted_facet_points_with_extra(&tds, &[keys[1], keys[0]], extra).unwrap();
 
         // Both orderings should produce the same result
         assert_eq!(points_a.as_slice(), points_b.as_slice());
+    }
+
+    #[test]
+    fn test_sorted_facet_points_with_extra_rejects_wrong_arity() {
+        let (tds, keys) = build_tds_with_points(&[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
+        let extra = Point::from_validated_coords([0.5, 0.5]);
+
+        let err = sorted_facet_points_with_extra(&tds, &[keys[0]], extra).unwrap_err();
+
+        assert!(matches!(
+            err,
+            CanonicalFacetPointError::InvalidArity {
+                expected: 2,
+                found: 1,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_sorted_facet_points_with_extra_reports_missing_vertex_key() {
+        let (tds, keys) = build_tds_with_points(&[[0.0, 0.0]]);
+        let missing = VertexKey::from(KeyData::from_ffi(999_999));
+        let extra = Point::from_validated_coords([0.5, 0.5]);
+
+        let err = sorted_facet_points_with_extra(&tds, &[keys[0], missing], extra).unwrap_err();
+
+        assert!(matches!(
+            err,
+            CanonicalFacetPointError::MissingVertex { vertex_key } if vertex_key == missing
+        ));
     }
 
     // =========================================================================
@@ -238,7 +362,7 @@ mod tests {
         // 3 points forming a right triangle + a cospherical test point.
         // The circumcircle of (0,0),(1,0),(0,1) passes through (1,1).
         let (tds, keys) = build_tds_with_points(&[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
-        let test_point = Point::new([1.0, 1.0]);
+        let test_point = Point::from_validated_coords([1.0, 1.0]);
         let kernel = AdaptiveKernel::<f64>::new();
 
         // All 6 permutations of the 3 vertices
@@ -253,7 +377,7 @@ mod tests {
 
         let mut signs = Vec::new();
         for perm in &permutations {
-            let simplex = Simplex::new(
+            let simplex = Simplex::try_new_with_data(
                 vec![keys[perm[0]], keys[perm[1]], keys[perm[2]]],
                 None::<()>,
             )
@@ -282,7 +406,7 @@ mod tests {
             [0.0, 1.0, 0.0],
             [0.0, 0.0, 1.0],
         ]);
-        let test_point = Point::new([1.0, 1.0, 1.0]);
+        let test_point = Point::from_validated_coords([1.0, 1.0, 1.0]);
         let kernel = AdaptiveKernel::<f64>::new();
 
         // All 24 permutations of 4 vertices
@@ -296,7 +420,7 @@ mod tests {
 
         let mut signs = Vec::new();
         for perm in &perms {
-            let simplex = Simplex::new(
+            let simplex = Simplex::try_new_with_data(
                 vec![keys[perm[0]], keys[perm[1]], keys[perm[2]], keys[perm[3]]],
                 None::<()>,
             )

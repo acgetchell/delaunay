@@ -46,15 +46,15 @@ use thiserror::Error;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+/// use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
 /// use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 ///
 /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
@@ -189,7 +189,7 @@ impl ValidationCadence {
                 } else {
                     // Logically unreachable because `Some(0)` is matched above.
                     // Keep this branch so the function remains const without
-                    // introducing unsafe code for `NonZeroUsize::new_unchecked`.
+                    // introducing unsafe code for `NonZeroUsize::from_validated_coords`.
                     Self::Never
                 }
             }
@@ -228,7 +228,7 @@ impl ValidationCadence {
 
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -261,11 +261,11 @@ where
     ///
     /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices_4d = [
-    ///     vertex!([0.0, 0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
     ///
@@ -303,10 +303,10 @@ where
     ///
     /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -339,11 +339,11 @@ where
     ///
     /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices_4d = [
-    ///     vertex!([0.0, 0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
     ///
@@ -383,10 +383,10 @@ where
     ///
     /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = [
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
@@ -480,7 +480,7 @@ where
     /// ```rust
     /// use delaunay::prelude::geometry::FastKernel;
     /// use delaunay::prelude::tds::Tds;
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, DelaunayTriangulationBuilder, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -493,11 +493,11 @@ where
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
@@ -505,7 +505,7 @@ where
     /// let json = serde_json::to_string(dt.tds())?;
     ///
     /// // Deserialize Tds and reconstruct DelaunayTriangulation
-    /// let tds: Tds<f64, (), (), 4> = serde_json::from_str(&json)?;
+    /// let tds: Tds<(), (), 4> = serde_json::from_str(&json)?;
     /// let reconstructed = DelaunayTriangulation::try_from_tds(tds, FastKernel::new())?;
     /// assert_eq!(reconstructed.number_of_vertices(), 5);
     /// # Ok(())
@@ -517,7 +517,7 @@ where
     /// Returns [`DelaunayTriangulationValidationError`] if the TDS violates
     /// structural, topological, or Delaunay invariants.
     pub fn try_from_tds(
-        tds: Tds<K::Scalar, U, V, D>,
+        tds: Tds<U, V, D>,
         kernel: K,
     ) -> Result<Self, DelaunayTriangulationValidationError> {
         Self::try_from_tds_with_topology_context(
@@ -538,7 +538,7 @@ where
     /// ```rust
     /// use delaunay::prelude::geometry::FastKernel;
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulation, DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
+    ///     DelaunayTriangulation, DelaunayTriangulationBuilder, TopologyGuarantee,
     /// };
     ///
     /// # #[derive(Debug, thiserror::Error)]
@@ -550,9 +550,9 @@ where
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
@@ -575,7 +575,7 @@ where
     /// Returns [`DelaunayTriangulationValidationError`] if the TDS violates
     /// structural, topological, or Delaunay invariants.
     pub fn try_from_tds_with_topology_guarantee(
-        tds: Tds<K::Scalar, U, V, D>,
+        tds: Tds<U, V, D>,
         kernel: K,
         topology_guarantee: TopologyGuarantee,
     ) -> Result<Self, DelaunayTriangulationValidationError> {
@@ -599,7 +599,6 @@ where
     /// use delaunay::prelude::geometry::FastKernel;
     /// use delaunay::prelude::construction::{
     ///     DelaunayTriangulation, DelaunayTriangulationBuilder, GlobalTopology, TopologyGuarantee,
-    ///     vertex,
     /// };
     ///
     /// # #[derive(Debug, thiserror::Error)]
@@ -611,9 +610,9 @@ where
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
@@ -639,7 +638,7 @@ where
     /// structural, topological, or Delaunay invariants under the supplied
     /// topology context.
     pub fn try_from_tds_with_topology_context(
-        tds: Tds<K::Scalar, U, V, D>,
+        tds: Tds<U, V, D>,
         kernel: K,
         topology_guarantee: TopologyGuarantee,
         global_topology: GlobalTopology<D>,
@@ -678,7 +677,7 @@ where
     /// [`OnSuspicion`](crate::ValidationPolicy::OnSuspicion).
     #[must_use]
     pub(crate) const fn from_tds_with_topology_guarantee(
-        tds: Tds<K::Scalar, U, V, D>,
+        tds: Tds<U, V, D>,
         kernel: K,
         topology_guarantee: TopologyGuarantee,
     ) -> Self {
@@ -704,7 +703,6 @@ mod tests {
     use crate::core::simplex::Simplex;
     use crate::core::tds::{SimplexKey, TriangulationConstructionState, VertexKey};
     use crate::geometry::kernel::AdaptiveKernel;
-    use crate::vertex;
     use std::{error::Error, sync::Once};
     use uuid::Uuid;
 
@@ -720,17 +718,37 @@ mod tests {
         });
     }
 
-    fn non_delaunay_quad_tds() -> Tds<f64, (), (), 2> {
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v1 = tds.insert_vertex_with_mapping(vertex!([4.0, 0.0])).unwrap();
-        let v2 = tds.insert_vertex_with_mapping(vertex!([4.0, 2.0])).unwrap();
-        let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 2.0])).unwrap();
+    fn non_delaunay_quad_tds() -> Tds<(), (), 2> {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([4.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([4.0, 2.0]).unwrap(),
+            )
+            .unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap(),
+            )
+            .unwrap();
 
-        tds.insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
-            .unwrap();
-        tds.insert_simplex_with_mapping(Simplex::new(vec![v0, v2, v3], None).unwrap())
-            .unwrap();
+        tds.insert_simplex_with_mapping(
+            Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
+        )
+        .unwrap();
+        tds.insert_simplex_with_mapping(
+            Simplex::try_new_with_data(vec![v0, v2, v3], None).unwrap(),
+        )
+        .unwrap();
         tds.construction_state = TriangulationConstructionState::Constructed;
         tds.assign_neighbors().unwrap();
         tds.assign_incident_simplices().unwrap();
@@ -865,10 +883,10 @@ mod tests {
     fn test_validation_report_ok_for_valid_triangulation() {
         init_tracing();
         let vertices = [
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
@@ -880,10 +898,10 @@ mod tests {
     fn test_validation_report_returns_mapping_failures_only() {
         init_tracing();
         let vertices = [
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
@@ -915,10 +933,10 @@ mod tests {
     fn test_validation_report_includes_vertex_incidence_violation() {
         init_tracing();
         let vertices = [
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
@@ -945,10 +963,10 @@ mod tests {
     fn test_dt_validate_maps_tds_error_to_tds_variant() {
         init_tracing();
         let vertices = [
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -971,10 +989,10 @@ mod tests {
     fn test_dt_validate_maps_topology_error_to_triangulation_variant() {
         init_tracing();
         let vertices = [
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -982,7 +1000,9 @@ mod tests {
         // Add an isolated vertex so Level 3 (topology) fails.
         let _ = dt
             .tds_mut()
-            .insert_vertex_with_mapping(vertex!([0.5, 0.5, 0.5]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
+            )
             .unwrap();
 
         match dt.validate() {

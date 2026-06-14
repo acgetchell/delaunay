@@ -44,7 +44,7 @@ where
 /// ```rust
 /// # use delaunay::prelude::geometry::*;
 /// # use delaunay::prelude::tds::Tds;
-/// # use delaunay::prelude::construction::{DelaunayTriangulation, DelaunayTriangulationBuilder, vertex};
+/// # use delaunay::prelude::construction::{DelaunayTriangulation, DelaunayTriangulationBuilder};
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
 /// #     #[error(transparent)]
@@ -56,15 +56,15 @@ where
 /// # }
 /// # fn example() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let json = serde_json::to_string(&dt)?;
 ///
-/// let tds: Tds<f64, (), (), 3> = serde_json::from_str(&json)?;
+/// let tds: Tds<(), (), 3> = serde_json::from_str(&json)?;
 /// let dt_adaptive = DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())?;
 /// # let _ = dt_adaptive;
 /// # Ok(())
@@ -72,7 +72,7 @@ where
 /// ```
 impl<'de, const D: usize> Deserialize<'de> for DelaunayTriangulation<RobustKernel<f64>, (), (), D>
 where
-    Tds<f64, (), (), D>: Deserialize<'de>,
+    Tds<(), (), D>: Deserialize<'de>,
 {
     fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
     where
@@ -89,7 +89,6 @@ mod tests {
     use crate::core::simplex::Simplex;
     use crate::core::tds::TriangulationConstructionState;
     use crate::geometry::kernel::AdaptiveKernel;
-    use crate::vertex;
     use std::sync::Once;
 
     fn init_tracing() {
@@ -104,17 +103,37 @@ mod tests {
         });
     }
 
-    fn non_delaunay_quad_tds() -> Tds<f64, (), (), 2> {
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v1 = tds.insert_vertex_with_mapping(vertex!([4.0, 0.0])).unwrap();
-        let v2 = tds.insert_vertex_with_mapping(vertex!([4.0, 2.0])).unwrap();
-        let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 2.0])).unwrap();
+    fn non_delaunay_quad_tds() -> Tds<(), (), 2> {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([4.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([4.0, 2.0]).unwrap(),
+            )
+            .unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap(),
+            )
+            .unwrap();
 
-        tds.insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
-            .unwrap();
-        tds.insert_simplex_with_mapping(Simplex::new(vec![v0, v2, v3], None).unwrap())
-            .unwrap();
+        tds.insert_simplex_with_mapping(
+            Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
+        )
+        .unwrap();
+        tds.insert_simplex_with_mapping(
+            Simplex::try_new_with_data(vec![v0, v2, v3], None).unwrap(),
+        )
+        .unwrap();
         tds.construction_state = TriangulationConstructionState::Constructed;
         tds.assign_neighbors().unwrap();
         tds.assign_incident_simplices().unwrap();
@@ -141,10 +160,10 @@ mod tests {
     fn serde_roundtrip_uses_custom_deserialize_impl() {
         init_tracing();
         let vertices = [
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
@@ -152,7 +171,7 @@ mod tests {
 
         let json = serde_json::to_string(&dt).unwrap();
 
-        let tds: Tds<f64, (), (), 3> = serde_json::from_str(&json).unwrap();
+        let tds: Tds<(), (), 3> = serde_json::from_str(&json).unwrap();
         let roundtrip_adaptive =
             DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new()).unwrap();
 

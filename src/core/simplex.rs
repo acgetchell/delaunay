@@ -5,9 +5,8 @@
 //!
 //! # Key Features
 //!
-//! - **Geometry when you need it**: the `Simplex` type does not require `T: CoordinateScalar`
-//!   at the type level, but geometric operations, validation, and serialization are only
-//!   available when `T: CoordinateScalar` (`f64` in this crate)
+//! - **Topology-only storage**: the `Simplex` type stores vertex keys rather than
+//!   coordinate-bearing vertices, so it is generic only over simplex data and dimension
 //! - **Unique Identification**: Each simplex has a UUID for consistent identification
 //! - **Vertices Management**: Stores vertices that form the simplex
 //! - **Neighbor Tracking**: Maintains references to neighboring simplices
@@ -23,10 +22,10 @@
 //! # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 //! // Create vertices for a tetrahedron
 //! let vertices = vec![
-//!     vertex!([0.0, 0.0, 0.0]),
-//!     vertex!([1.0, 0.0, 0.0]),
-//!     vertex!([0.0, 1.0, 0.0]),
-//!     vertex!([0.0, 0.0, 1.0]),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 //! ];
 //!
 //! // Create a 3D triangulation with simplices
@@ -48,20 +47,19 @@
 // IMPORTS
 // =============================================================================
 
-use super::vertex::Vertex;
+use super::vertex::{Vertex, VertexValidationError};
 use super::{
     facet::{FacetError, FacetView},
-    tds::{SimplexKey, Tds, VertexKey},
+    tds::{EntityKind, SimplexKey, Tds, TdsConstructionError, VertexKey},
     traits::{DataDeserialize, DataSerialize},
     util::{UuidValidationError, make_uuid, usize_to_u8, validate_uuid},
-    vertex::VertexValidationError,
 };
 use crate::core::collections::{
     FastHashMap, FastHashSet, NeighborBuffer, PeriodicOffsetBuffer, SimplexVertexKeyBuffer,
-    SimplexVertexUuidBuffer,
+    SimplexVertexUuidBuffer, fast_hash_map_with_capacity,
 };
 use crate::geometry::matrix::StackMatrixDispatchError;
-use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
+use crate::geometry::traits::coordinate::CoordinateConversionError;
 use serde::{
     Deserialize, Deserializer, Serialize,
     de::{self, IgnoredAny, MapAccess, Visitor},
@@ -176,23 +174,12 @@ impl From<StackMatrixDispatchError> for SimplexValidationError {
     }
 }
 
-fn total_cmp_for_coordinate<T>(left: &T, right: &T) -> cmp::Ordering
-where
-    T: CoordinateScalar,
-{
-    left.ordered_partial_cmp(right)
-        .expect("CoordinateScalar::ordered_partial_cmp must define a total order")
-}
-
-fn compare_vertices_by_coordinates<T, U, const D: usize>(
-    left: &Vertex<T, U, D>,
-    right: &Vertex<T, U, D>,
-) -> cmp::Ordering
-where
-    T: CoordinateScalar,
-{
+fn compare_vertices_by_coordinates<U, const D: usize>(
+    left: &Vertex<U, D>,
+    right: &Vertex<U, D>,
+) -> cmp::Ordering {
     for (left_coord, right_coord) in left.point().coords().iter().zip(right.point().coords()) {
-        let ordering = total_cmp_for_coordinate(left_coord, right_coord);
+        let ordering = left_coord.total_cmp(right_coord);
         if ordering != cmp::Ordering::Equal {
             return ordering;
         }
@@ -295,7 +282,7 @@ impl NeighborSlot {
 /// - `uuid`: Universally unique identifier for the simplex.
 /// - `neighbors`: Optional keys to neighboring simplices (opposite each vertex). Access via `neighbors()` method.
 /// - `data`: Optional user data associated with the simplex. Read via [`data()`](Self::data),
-///   mutate via [`Tds::set_simplex_data`](crate::core::tds::Tds::set_simplex_data).
+///   mutate via [`Tds::set_simplex_data`](crate::prelude::tds::Tds::set_simplex_data).
 ///
 /// # Accessing Vertices
 ///
@@ -307,9 +294,9 @@ impl NeighborSlot {
 /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 /// // Create a triangulation with some vertices
 /// let vertices = vec![
-///     vertex!([0.0, 0.0]),
-///     vertex!([1.0, 0.0]),
-///     vertex!([0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
@@ -329,7 +316,7 @@ impl NeighborSlot {
 /// # Ok(())
 /// # }
 /// ```
-pub struct Simplex<T, U, V, const D: usize> {
+pub struct Simplex<V, const D: usize> {
     /// Keys to the vertices forming this simplex.
     ///
     /// - Zero heap allocation for D ≤ 7 (stack-allocated)
@@ -367,10 +354,6 @@ pub struct Simplex<T, U, V, const D: usize> {
     /// `periodic_vertex_offsets[i]` corresponds to `vertices[i]`.
     /// Offsets are omitted from serialization and are reconstructed by periodic builders.
     pub(crate) periodic_vertex_offsets: Option<PeriodicOffsetBuffer<D>>,
-
-    /// Phantom data to maintain type parameters T and U for coordinate and vertex data types.
-    /// These are needed because simplices store keys to vertices, not the vertices themselves.
-    _phantom: PhantomData<(T, U)>,
 }
 
 // =============================================================================
@@ -379,15 +362,16 @@ pub struct Simplex<T, U, V, const D: usize> {
 
 /// Manual implementation of Serialize for Simplex.
 ///
-/// This implementation handles serialization of Simplex fields. The `vertices` and `neighbors`
-/// fields are skipped as they contain keys that are only valid within the current `SlotMap`.
-/// During deserialization, these are reconstructed by the TDS.
+/// This implementation deliberately omits vertex keys because `VertexKey`
+/// values are slotmap-local. `Tds` serialization stores a simplex UUID → vertex
+/// UUID mapping and resolves those UUIDs back to live keys during TDS
+/// deserialization.
 ///
 /// **Field Count Optimization**: We dynamically adjust the field count and conditionally
 /// serialize `data` to omit it from JSON when None (reducing output size). The second
 /// `is_some()` check matches the field count logic—both could be removed to always
 /// serialize "data": null, but tests explicitly verify the field is omitted when None.
-impl<T, U, V, const D: usize> Serialize for Simplex<T, U, V, D>
+impl<V, const D: usize> Serialize for Simplex<V, D>
 where
     V: DataSerialize,
 {
@@ -410,8 +394,18 @@ where
 // DESERIALIZATION IMPLEMENTATION
 // =============================================================================
 
-/// Manual implementation of Deserialize for Simplex
-impl<'de, T, U, V, const D: usize> Deserialize<'de> for Simplex<T, U, V, D>
+/// Raw serialized simplex record used by `Tds` deserialization.
+///
+/// TDS serialization carries simplex-to-vertex relationships separately as
+/// vertex UUIDs. This DTO intentionally does not construct a `Simplex`; the TDS
+/// deserializer resolves those UUIDs to live vertex keys and then calls
+/// `Simplex::try_new_with_uuid`.
+pub(crate) struct SerializedSimplex<V> {
+    pub(crate) uuid: Uuid,
+    pub(crate) data: Option<V>,
+}
+
+impl<'de, V> Deserialize<'de> for SerializedSimplex<V>
 where
     V: DataDeserialize,
 {
@@ -419,32 +413,32 @@ where
     where
         De: Deserializer<'de>,
     {
-        struct SimplexVisitor<T, U, V, const D: usize>
+        struct SerializedSimplexVisitor<V>
         where
             V: DataDeserialize,
         {
-            _phantom: PhantomData<(T, U, V)>,
+            _phantom: PhantomData<V>,
         }
 
-        impl<'de, T, U, V, const D: usize> Visitor<'de> for SimplexVisitor<T, U, V, D>
+        impl<'de, V> Visitor<'de> for SerializedSimplexVisitor<V>
         where
             V: DataDeserialize,
         {
-            type Value = Simplex<T, U, V, D>;
+            type Value = SerializedSimplex<V>;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a Simplex struct")
+                formatter.write_str("a serialized Simplex record")
             }
 
-            fn visit_map<A>(self, mut map: A) -> Result<Simplex<T, U, V, D>, A::Error>
+            fn visit_map<A>(self, mut map: A) -> Result<SerializedSimplex<V>, A::Error>
             where
                 A: MapAccess<'de>,
             {
                 let mut uuid = None;
                 let mut data = None;
 
-                while let Some(key) = map.next_key()? {
-                    match key {
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
                         "uuid" => {
                             if uuid.is_some() {
                                 return Err(de::Error::duplicate_field("uuid"));
@@ -457,9 +451,12 @@ where
                             }
                             data = Some(map.next_value()?);
                         }
+                        "vertices" | "neighbors" | "periodic_vertex_offsets" => {
+                            return Err(de::Error::custom(format!(
+                                "{key} is storage-local simplex state and must not be deserialized; deserialize Tds so UUID relationships can be reconstructed",
+                            )));
+                        }
                         _ => {
-                            // Ignore any other fields (vertices, neighbors, etc.)
-                            // These are skipped during serialization and reconstructed by TDS
                             let _ = map.next_value::<IgnoredAny>()?;
                         }
                     }
@@ -468,24 +465,66 @@ where
                 let uuid: Uuid = uuid.ok_or_else(|| de::Error::missing_field("uuid"))?;
                 validate_uuid(&uuid)
                     .map_err(|e| de::Error::custom(format!("invalid uuid: {e}")))?;
-                // data is Option<Option<V>>: None if field missing, Some(inner) if present
-                // flatten() converts None -> None and Some(inner) -> inner
-                let data = data.flatten();
 
-                // Vertices and neighbors are not serialized. They are reconstructed
-                // by TDS deserialization using:
-                // - vertices: rebuilt by the TDS using its serialized simplex→vertex mapping
-                // - neighbors: rebuilt by the TDS via assign_neighbors()
-                let vertices = SimplexVertexKeyBuffer::new();
-
-                Ok(Simplex {
-                    vertices,
+                Ok(SerializedSimplex {
                     uuid,
-                    neighbors: None, // Will be reconstructed by TDS
-                    data,
-                    periodic_vertex_offsets: None,
-                    _phantom: PhantomData,
+                    data: data.flatten(),
                 })
+            }
+        }
+
+        const FIELDS: &[&str] = &["uuid", "data", "vertices"];
+        deserializer.deserialize_struct(
+            "SerializedSimplex",
+            FIELDS,
+            SerializedSimplexVisitor {
+                _phantom: PhantomData,
+            },
+        )
+    }
+}
+
+/// Manual implementation of Deserialize for Simplex.
+///
+/// A standalone simplex cannot be reconstructed safely from serialized data
+/// because its vertex keys are slotmap-local. Deserialize the containing
+/// [`Tds`] so simplex vertex UUIDs can be resolved to
+/// live keys first.
+impl<'de, V, const D: usize> Deserialize<'de> for Simplex<V, D>
+where
+    V: DataDeserialize,
+{
+    fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
+    where
+        De: Deserializer<'de>,
+    {
+        struct SimplexVisitor<V, const D: usize>
+        where
+            V: DataDeserialize,
+        {
+            _phantom: PhantomData<V>,
+        }
+
+        impl<'de, V, const D: usize> Visitor<'de> for SimplexVisitor<V, D>
+        where
+            V: DataDeserialize,
+        {
+            type Value = Simplex<V, D>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a Simplex struct")
+            }
+
+            fn visit_map<A>(self, map: A) -> Result<Simplex<V, D>, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let _record = SerializedSimplex::<V>::deserialize(
+                    de::value::MapAccessDeserializer::new(map),
+                )?;
+                Err(de::Error::custom(
+                    "standalone Simplex deserialization is unsupported; deserialize Tds so simplex vertex UUIDs can be resolved to live keys",
+                ))
             }
         }
 
@@ -505,24 +544,34 @@ where
 // =============================================================================
 
 // Minimal trait bounds impl block
-impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
-    /// Internal constructor for TDS use only.
+impl<V, const D: usize> Simplex<V, D> {
+    /// Tries to create a simplex from vertex keys without user data.
     ///
-    /// Creates a simplex with the given vertex keys and optional data.
-    /// This constructor is `pub(crate)` to restrict usage to within the crate,
-    /// ensuring simplices are always created through proper TDS methods.
+    /// This constructor is `pub(crate)` because live [`VertexKey`] values are
+    /// TDS-local handles. Public callers should construct triangulations from
+    /// vertices or explicit index lists so the owning TDS can validate and map
+    /// those handles.
     ///
-    /// # Arguments
+    /// # Errors
     ///
-    /// * `vertices` - Keys to the vertices forming this simplex (must be D+1 keys)
-    /// * `data` - Optional simplex data
+    /// Returns [`SimplexValidationError::InsufficientVertices`] if `vertices`
+    /// does not contain exactly `D + 1` keys, or
+    /// [`SimplexValidationError::DuplicateVertices`] if a key appears more than
+    /// once.
+    pub(crate) fn try_new(
+        vertices: impl Into<SimplexVertexKeyBuffer>,
+    ) -> Result<Self, SimplexValidationError> {
+        Self::try_new_with_data(vertices, None)
+    }
+
+    /// Tries to create a simplex from vertex keys with user data.
     ///
     /// # Errors
     ///
     /// Returns:
     /// - `SimplexValidationError::InsufficientVertices` if `vertices` doesn't have exactly D+1 elements.
     /// - `SimplexValidationError::DuplicateVertices` if any vertex key appears more than once.
-    pub(crate) fn new(
+    pub(crate) fn try_new_with_data(
         vertices: impl Into<SimplexVertexKeyBuffer>,
         data: Option<V>,
     ) -> Result<Self, SimplexValidationError> {
@@ -552,8 +601,32 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
             neighbors: None,
             data,
             periodic_vertex_offsets: None,
-            _phantom: PhantomData,
         })
+    }
+
+    /// Tries to create a simplex with a caller-provided UUID.
+    ///
+    /// This crate-internal constructor is used by TDS deserialization after
+    /// serialized vertex UUID relationships have been resolved back to live
+    /// [`VertexKey`] handles. Public callers construct simplices through the
+    /// owning TDS so key locality and UUID validity are established together.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SimplexValidationError::InvalidUuid`] if `uuid` is nil,
+    /// [`SimplexValidationError::InsufficientVertices`] if `vertices` does not
+    /// contain exactly `D + 1` keys, or
+    /// [`SimplexValidationError::DuplicateVertices`] if any key appears more
+    /// than once.
+    pub(crate) fn try_new_with_uuid(
+        vertices: impl Into<SimplexVertexKeyBuffer>,
+        uuid: Uuid,
+        data: Option<V>,
+    ) -> Result<Self, SimplexValidationError> {
+        validate_uuid(&uuid)?;
+        let mut simplex = Self::try_new_with_data(vertices, data)?;
+        simplex.uuid = uuid;
+        Ok(simplex)
     }
 
     /// Checks if this simplex contains the given vertex key.
@@ -575,9 +648,9 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     ///
     /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((_, simplex)) = dt.simplices().next() else {
@@ -615,10 +688,10 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     ///
     /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
-    ///     vertex!([1.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let mut simplices_iter = dt.simplices().map(|(_, simplex)| simplex);
@@ -653,9 +726,9 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     ///
     /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((_, simplex)) = dt.simplices().next() else {
@@ -694,9 +767,9 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     ///
     /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((_, simplex)) = dt.simplices().next() else {
@@ -780,9 +853,9 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let mut tds = dt.tds().clone();
@@ -836,9 +909,9 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((_, simplex)) = dt.simplices().next() else {
@@ -936,29 +1009,16 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
         mirror_idx
     }
 
-    /// Adds a vertex key to this simplex.
-    ///
-    /// # Internal Use Only
-    ///
-    /// This method is used internally by TDS deserialization to rebuild simplex vertex keys.
-    /// It should not be used outside of TDS serialization/deserialization code.
-    ///
-    /// # Arguments
-    ///
-    /// * `vertex_key` - The vertex key to add
+    /// Adds a vertex key in tests that deliberately construct invalid topology.
+    #[cfg(test)]
     #[inline]
     pub(crate) fn push_vertex_key(&mut self, vertex_key: VertexKey) {
         self.vertices.push(vertex_key);
         self.periodic_vertex_offsets = None;
     }
 
-    /// Clears all vertex keys from this simplex.
-    ///
-    /// # Internal Use Only
-    ///
-    /// This method is used internally by TDS deserialization to clear stale vertex keys
-    /// before rebuilding them from the serialized `simplex_vertices` mapping.
-    /// It should not be used outside of TDS serialization/deserialization code.
+    /// Clears vertex keys in tests that deliberately construct invalid topology.
+    #[cfg(test)]
     #[inline]
     pub(crate) fn clear_vertex_keys(&mut self) {
         self.vertices.clear();
@@ -1039,7 +1099,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
 }
 
 // Standard read-only and validation impl block
-impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
+impl<V, const D: usize> Simplex<V, D> {
     /// The function returns the number of vertices in the [Simplex].
     ///
     /// # Returns
@@ -1064,10 +1124,10 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
@@ -1111,10 +1171,10 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 1.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1151,9 +1211,9 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<i32>()?;
     /// let Some((_, simplex)) = dt.simplices().next() else {
@@ -1169,36 +1229,11 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
         self.data.as_ref()
     }
 
-    /// Sets the simplex UUID with validation.
-    ///
-    /// This is a test-only utility for creating simplices with specific UUIDs
-    /// to test error handling (e.g., duplicate UUID detection).
-    ///
-    /// # Arguments
-    ///
-    /// * `uuid` - The new UUID to set for this simplex
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` if the UUID is valid and was set successfully,
-    /// otherwise returns a `SimplexValidationError::InvalidUuid` if the UUID
-    /// is nil or has an invalid version.
-    ///
-    /// # Errors
-    ///
-    /// Returns `SimplexValidationError::InvalidUuid` if the UUID is nil or invalid.
-    #[cfg(test)]
-    pub(crate) fn set_uuid(&mut self, uuid: Uuid) -> Result<(), SimplexValidationError> {
-        validate_uuid(&uuid)?;
-        self.uuid = uuid;
-        Ok(())
-    }
-
     /// Clears the neighbors of the [Simplex].
     ///
     /// **Internal API**: This method is `pub(crate)` to enforce that all neighbor
     /// modifications go through validated TDS methods. External code should use
-    /// [`Tds::clear_all_neighbors()`](crate::core::tds::Tds::clear_all_neighbors)
+    /// [`Tds::clear_all_neighbors()`](crate::prelude::tds::Tds::clear_all_neighbors)
     /// which properly invalidates caches and maintains triangulation consistency.
     ///
     /// This method sets the `neighbors` field to `None`, effectively removing all
@@ -1222,9 +1257,9 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices = vec![
-    /// #     vertex!([0.0, 0.0]),
-    /// #     vertex!([1.0, 0.0]),
-    /// #     vertex!([0.0, 1.0]),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// # ];
     /// # let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// // Note: clear_all_neighbors() is a Tds method, not on DelaunayTriangulation
@@ -1281,10 +1316,10 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
@@ -1300,9 +1335,9 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # }
     /// ```
     #[inline]
-    pub fn vertex_uuids(
+    pub fn vertex_uuids<U>(
         &self,
-        tds: &Tds<T, U, V, D>,
+        tds: &Tds<U, V, D>,
     ) -> Result<SimplexVertexUuidBuffer, SimplexValidationError> {
         self.vertices
             .iter()
@@ -1349,9 +1384,9 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
@@ -1367,9 +1402,9 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # }
     /// ```
     #[inline]
-    pub fn vertex_uuid_iter<'a>(
+    pub fn vertex_uuid_iter<'a, U>(
         &'a self,
-        tds: &'a Tds<T, U, V, D>,
+        tds: &'a Tds<U, V, D>,
     ) -> impl ExactSizeIterator<Item = Result<Uuid, SimplexValidationError>> + 'a {
         self.vertices.iter().map(move |&vkey| {
             tds.vertex(vkey)
@@ -1403,10 +1438,10 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 1.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1453,20 +1488,22 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// #     Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
     /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+    /// #     #[error(transparent)]
+    /// #     TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create two separate triangulations
     /// let vertices1 = vec![
-    ///     vertex!([0.0, 0.0, 1.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
     /// ];
     /// let vertices2 = vec![
-    ///     vertex!([1.0, 1.0, 1.0]),
-    ///     vertex!([2.0, 1.0, 1.0]),
-    ///     vertex!([1.0, 2.0, 1.0]),
-    ///     vertex!([1.0, 1.0, 2.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([2.0, 1.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0, 2.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt1: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices1).build::<()>()?;
@@ -1484,7 +1521,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// let uuid1 = simplex1.uuid();
     /// let uuid2 = simplex2.uuid();
     ///
-    /// let simplex_map = Simplex::into_hashmap([simplex1, simplex2]);
+    /// let simplex_map = Simplex::try_into_hashmap([simplex1, simplex2])?;
     ///
     /// // Access simplices by their UUIDs
     /// assert_eq!(simplex_map.get(&uuid1).map(Simplex::uuid), Some(uuid1));
@@ -1498,22 +1535,40 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// use delaunay::prelude::tds::Simplex;
     ///
     /// // Empty collection produces empty FastHashMap
-    /// let empty_map = Simplex::<f64, (), (), 3>::into_hashmap([]);
+    /// let empty_map = Simplex::<(), 3>::try_into_hashmap([])?;
     /// assert!(empty_map.is_empty());
+    /// # Ok::<(), delaunay::prelude::tds::TdsConstructionError>(())
     /// ```
-    #[must_use]
-    pub fn into_hashmap<I>(simplices: I) -> FastHashMap<Uuid, Self>
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TdsConstructionError::DuplicateUuid`] if the input contains
+    /// duplicate simplex UUIDs.
+    pub fn try_into_hashmap<I>(
+        simplices: I,
+    ) -> Result<FastHashMap<Uuid, Self>, TdsConstructionError>
     where
         I: IntoIterator<Item = Self>,
     {
-        simplices.into_iter().map(|c| (c.uuid, c)).collect()
+        let iter = simplices.into_iter();
+        let mut map = fast_hash_map_with_capacity(iter.size_hint().0);
+        for simplex in iter {
+            let uuid = simplex.uuid();
+            if map.insert(uuid, simplex).is_some() {
+                return Err(TdsConstructionError::DuplicateUuid {
+                    entity: EntityKind::Simplex,
+                    uuid,
+                });
+            }
+        }
+        Ok(map)
     }
 
     /// The function `is_valid` checks if a [Simplex] is valid.
     ///
     /// # Type Parameters
     ///
-    /// This method relies on capabilities implied by `T: CoordinateScalar`
+    /// This method relies on f64-backed vertex coordinate comparisons
     /// (finite, comparable, and hashable coordinates suitable for geometric checks).
     ///
     /// # Returns
@@ -1558,10 +1613,10 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 1.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1616,7 +1671,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
 }
 
 // Advanced implementation block for Simplex methods
-impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
+impl<V, const D: usize> Simplex<V, D> {
     /// Returns all facets (faces) of the simplex.
     ///
     /// A facet is a (D-1)-dimensional face of a D-dimensional simplex, obtained by removing
@@ -1648,7 +1703,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     ///
     /// # Returns
     ///
-    /// A `Result<Vec<FacetView<T, U, V, D>>, FacetError>` containing all facets of the simplex.
+    /// A `Result<Vec<FacetView<U, V, D>>, FacetError>` containing all facets of the simplex.
     /// The returned vector has exactly D+1 facets, where each facet contains D vertices
     /// (one fewer than the original simplex's D+1 vertices).
     ///
@@ -1707,10 +1762,10 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt: DelaunayTriangulation<_, _, _, 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1728,10 +1783,10 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn facet_views_from_tds(
-        tds: &Tds<T, U, V, D>,
+    pub fn facet_views_from_tds<U>(
+        tds: &Tds<U, V, D>,
         simplex_key: SimplexKey,
-    ) -> Result<Vec<FacetView<'_, T, U, V, D>>, FacetError> {
+    ) -> Result<Vec<FacetView<'_, U, V, D>>, FacetError> {
         // Get the simplex from the TDS using the key
         let simplex = tds
             .simplex(simplex_key)
@@ -1748,7 +1803,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
         let mut facet_views = Vec::with_capacity(vertex_count);
         for idx in 0..vertex_count {
             let facet_index = usize_to_u8(idx, vertex_count)?;
-            facet_views.push(FacetView::new(tds, simplex_key, facet_index)?);
+            facet_views.push(FacetView::try_new(tds, simplex_key, facet_index)?);
         }
         Ok(facet_views)
     }
@@ -1790,9 +1845,9 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # fn main() -> Result<(), ExampleError> {
     /// // Example 1: Comparing simplices from different TDS instances with same coordinates
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt1: DelaunayTriangulation<_, _, _, 2> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1831,14 +1886,14 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # fn main() -> Result<(), ExampleError> {
     /// // Example 2: Comparing simplices with different coordinates returns false
     /// let vertices1 = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let vertices2 = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([2.0, 0.0]),  // Different coordinate
-    ///     vertex!([0.0, 2.0]),  // Different coordinate
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0]).expect("finite vertex coordinates"),  // Different coordinate
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 2.0]).expect("finite vertex coordinates"),  // Different coordinate
     /// ];
     /// let dt1: DelaunayTriangulation<_, _, _, 2> =
     ///     DelaunayTriangulationBuilder::new(&vertices1).build::<()>()?;
@@ -1859,15 +1914,12 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn eq_by_vertices(
+    pub fn eq_by_vertices<U>(
         &self,
-        self_tds: &Tds<T, U, V, D>,
+        self_tds: &Tds<U, V, D>,
         other: &Self,
-        other_tds: &Tds<T, U, V, D>,
-    ) -> bool
-    where
-        T: CoordinateScalar,
-    {
+        other_tds: &Tds<U, V, D>,
+    ) -> bool {
         // Get vertices for both simplices
         let self_vertices: Option<Vec<_>> = self
             .vertices()
@@ -1941,10 +1993,10 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt: DelaunayTriangulation<_, _, _, 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1984,10 +2036,10 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt: DelaunayTriangulation<_, _, _, 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -2004,13 +2056,11 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn facet_view_iter(
-        tds: &Tds<T, U, V, D>,
+    pub fn facet_view_iter<U>(
+        tds: &Tds<U, V, D>,
         simplex_key: SimplexKey,
-    ) -> Result<
-        impl ExactSizeIterator<Item = Result<FacetView<'_, T, U, V, D>, FacetError>>,
-        FacetError,
-    > {
+    ) -> Result<impl ExactSizeIterator<Item = Result<FacetView<'_, U, V, D>, FacetError>>, FacetError>
+    {
         // Get the simplex from the TDS using the key
         let simplex = tds
             .simplex(simplex_key)
@@ -2027,7 +2077,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
         // Return a simple range-based iterator that maps indices to FacetView creation
         Ok((0..vertex_count).map(move |idx| {
             let facet_index = usize_to_u8(idx, vertex_count)?;
-            FacetView::new(tds, simplex_key, facet_index)
+            FacetView::try_new(tds, simplex_key, facet_index)
         }))
     }
 }
@@ -2043,7 +2093,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
 ///
 /// **Note**: This compares simplices within the same TDS context. For cross-TDS
 /// comparison by coordinates, use [`Simplex::eq_by_vertices`].
-impl<T, U, V, const D: usize> PartialEq for Simplex<T, U, V, D> {
+impl<V, const D: usize> PartialEq for Simplex<V, D> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         // Fast comparison using vertex keys (just u64 comparisons)
@@ -2060,7 +2110,7 @@ impl<T, U, V, const D: usize> PartialEq for Simplex<T, U, V, D> {
 ///
 /// This provides a consistent ordering for simplices based on their vertex keys.
 /// Fast (O(D log D)) and doesn't require TDS access.
-impl<T, U, V, const D: usize> PartialOrd for Simplex<T, U, V, D> {
+impl<V, const D: usize> PartialOrd for Simplex<V, D> {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         // Fast comparison using vertex keys
@@ -2081,7 +2131,7 @@ impl<T, U, V, const D: usize> PartialOrd for Simplex<T, U, V, D> {
 ///
 /// Maintains the Eq contract with `PartialEq`: simplices with the same vertex keys
 /// are considered equal.
-impl<T, U, V, const D: usize> Eq for Simplex<T, U, V, D> {}
+impl<V, const D: usize> Eq for Simplex<V, D> {}
 
 /// Custom Hash implementation for Simplex using sorted vertex keys.
 ///
@@ -2092,7 +2142,7 @@ impl<T, U, V, const D: usize> Eq for Simplex<T, U, V, D> {}
 ///
 /// **Note**: UUID, neighbors, and data are excluded from hashing to match
 /// the `PartialEq` implementation which only compares vertex keys.
-impl<T, U, V, const D: usize> Hash for Simplex<T, U, V, D> {
+impl<V, const D: usize> Hash for Simplex<V, D> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         // Hash sorted vertex keys for consistent ordering
         // Use SimplexVertexKeyBuffer for stack allocation (D+1 keys fit on stack for D ≤ 7)
@@ -2115,7 +2165,6 @@ mod tests {
     use super::*;
     use crate::builder::DelaunayTriangulationBuilder;
     use crate::core::facet::FacetError;
-    use crate::core::vertex::vertex;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::geometry::matrix::MAX_STACK_MATRIX_DIM;
     use crate::geometry::point::Point;
@@ -2130,15 +2179,15 @@ mod tests {
         hash::Hasher,
     };
     // Type aliases for commonly used types to reduce repetition
-    type TestVertex3D = Vertex<f64, (), 3>;
-    type TestVertex2D = Vertex<f64, (), 2>;
+    type TestVertex3D = Vertex<(), 3>;
+    type TestVertex2D = Vertex<(), 2>;
 
     struct NonDataType(String);
 
     fn simplex_with_non_data_type_metadata<const D: usize>(
         vertex_ids: [u64; D],
         data: NonDataType,
-    ) -> Simplex<f64, String, NonDataType, D> {
+    ) -> Simplex<NonDataType, D> {
         Simplex {
             vertices: vertex_ids
                 .into_iter()
@@ -2148,7 +2197,6 @@ mod tests {
             neighbors: None,
             data: Some(data),
             periodic_vertex_offsets: None,
-            _phantom: PhantomData,
         }
     }
 
@@ -2170,7 +2218,7 @@ mod tests {
     ///
     /// ```ignore
     /// test_simplex_dimensions! {
-    ///     simplex_2d => 2 => vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])],
+    ///     simplex_2d => 2 => vec![delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"), delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"), delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates")],
     /// }
     /// ```
     macro_rules! test_simplex_dimensions {
@@ -2214,9 +2262,9 @@ mod tests {
 
                         let serialized = serde_json::to_string(&simplex).unwrap();
                         assert!(serialized.contains("\"data\":"));
-                        let deserialized: Simplex<f64, (), i32, $dim> = serde_json::from_str(&serialized).unwrap();
-                        assert_eq!(deserialized.data, Some(99));
-                        assert_eq!(deserialized.uuid(), simplex.uuid());
+                        let err = serde_json::from_str::<Simplex<i32, $dim>>(&serialized)
+                            .expect_err("standalone Simplex deserialization should require TDS UUID mapping");
+                        assert!(err.to_string().contains("standalone Simplex deserialization"));
 
                         // Test serialization with None data - use simple constructor
                         let vertices = $vertices;
@@ -2225,8 +2273,9 @@ mod tests {
 
                         let serialized = serde_json::to_string(&simplex).unwrap();
                         assert!(!serialized.contains("\"data\":"));
-                        let deserialized: Simplex<f64, (), Option<i32>, $dim> = serde_json::from_str(&serialized).unwrap();
-                        assert_eq!(deserialized.data, None);
+                        let err = serde_json::from_str::<Simplex<Option<i32>, $dim>>(&serialized)
+                            .expect_err("standalone Simplex deserialization should require TDS UUID mapping");
+                        assert!(err.to_string().contains("standalone Simplex deserialization"));
                     }
 
                     #[test]
@@ -2276,30 +2325,30 @@ mod tests {
     // Generate tests for dimensions 2D through 5D
     test_simplex_dimensions! {
         simplex_2d => 2 => vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ],
         simplex_3d => 3 => vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ],
         simplex_4d => 4 => vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
         ],
         simplex_5d => 5 => vec![
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
         ],
     }
 
@@ -2308,8 +2357,8 @@ mod tests {
     // =============================================================================
 
     /// Simplified helper function to test basic simplex properties
-    fn assert_simplex_properties<T, U, V, const D: usize>(
-        simplex: &Simplex<T, U, V, D>,
+    fn assert_simplex_properties<V, const D: usize>(
+        simplex: &Simplex<V, D>,
         expected_vertices: usize,
         expected_dim: usize,
     ) {
@@ -2321,18 +2370,18 @@ mod tests {
     // Helper functions for creating common test data
     fn create_test_vertices_3d() -> Vec<TestVertex3D> {
         vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ]
     }
 
     fn create_test_vertices_2d() -> Vec<TestVertex2D> {
         vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ]
     }
 
@@ -2343,10 +2392,10 @@ mod tests {
     fn simplex_macro_without_data() {
         // Test the simplex! macro without data (explicit type annotation required)
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]), // Need 4 vertices for 3D simplex
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(), // Need 4 vertices for 3D simplex
         ];
 
         // Create DT to get a simplex with TDS context.
@@ -2385,9 +2434,6 @@ mod tests {
                 "Input vertex {original_coords:?} not found in simplex"
             );
         }
-
-        // Human readable output for cargo test -- --nocapture
-        println!("Simplex without data: {simplex:?}");
     }
 
     // =============================================================================
@@ -2396,14 +2442,12 @@ mod tests {
 
     #[test]
     fn test_eq_by_vertices_same_coordinates_different_tds() {
-        println!("Testing eq_by_vertices with same coordinates across different TDS");
-
         // Create two separate TDS instances with identical vertex coordinates
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt1 = DelaunayTriangulation::new(&vertices).unwrap();
         let dt2 = DelaunayTriangulation::new(&vertices).unwrap();
@@ -2414,17 +2458,14 @@ mod tests {
         // Despite different DT instances (and thus different vertex keys),
         // simplices should be equal by coordinates
         assert!(simplex1.eq_by_vertices(dt1.tds(), simplex2, dt2.tds()));
-        println!("  ✓ Simplices from different DT with same coordinates are equal");
     }
 
     #[test]
     fn test_eq_by_vertices_2d() {
-        println!("Testing eq_by_vertices in 2D");
-
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt1 = DelaunayTriangulation::new(&vertices).unwrap();
         let dt2 = DelaunayTriangulation::new(&vertices).unwrap();
@@ -2433,17 +2474,16 @@ mod tests {
         let simplex2 = dt2.simplices().next().unwrap().1;
 
         assert!(simplex1.eq_by_vertices(dt1.tds(), simplex2, dt2.tds()));
-        println!("  ✓ 2D simplices with same coordinates are equal");
     }
 
     #[test]
     fn simplex_macro_with_data() {
         // Test the simplex! macro with data by creating TDS, cloning simplex, and modifying
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         // Build DT with integer simplex data type
@@ -2486,9 +2526,6 @@ mod tests {
                 "Input vertex {original_coords:?} not found in simplex"
             );
         }
-
-        // Human readable output for cargo test -- --nocapture
-        println!("Simplex with data: {simplex:?}");
     }
 
     #[test]
@@ -2496,10 +2533,10 @@ mod tests {
         // Test simplices with vertex data through TDS.
         // Don't use simplex! macro since we need TDS context for vertex data access
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0], 1),
-            vertex!([1.0, 0.0, 0.0], 2),
-            vertex!([0.0, 1.0, 0.0], 3),
-            vertex!([0.0, 0.0, 1.0], 4), // Need 4 vertices for 3D simplex
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 1).unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 2).unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 3).unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 4).unwrap(), // Need 4 vertices for 3D simplex
         ];
 
         // Create DT with vertex data - simple constructor works since simplex data is ()
@@ -2535,10 +2572,10 @@ mod tests {
     fn simplex_partial_eq() {
         // Test PartialEq using simplices from TDS.
         let vertices = vec![
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let (_, simplex1) = dt.simplices().next().unwrap();
@@ -2558,11 +2595,11 @@ mod tests {
     fn simplex_partial_ord() {
         // Test PartialOrd using TDS with multiple simplices.
         let all_vertices = vec![
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 1.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&all_vertices).unwrap();
         let simplices: Vec<_> = dt.simplices().map(|(_, simplex)| simplex).collect();
@@ -2584,10 +2621,10 @@ mod tests {
     #[test]
     fn simplex_hash() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let (_, simplex1) = dt.simplices().next().unwrap();
@@ -2609,10 +2646,10 @@ mod tests {
     #[test]
     fn simplex_clone() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 1.0], 1),
-            vertex!([0.0, 1.0, 0.0], 1),
-            vertex!([1.0, 0.0, 0.0], 1),
-            vertex!([1.0, 1.0, 1.0], 2),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 1).unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 1).unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 1).unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 1.0, 1.0], 2).unwrap(),
         ];
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, i32, 3> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
@@ -2627,10 +2664,10 @@ mod tests {
     #[test]
     fn simplex_ordering_edge_cases() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let (_, simplex1) = dt.simplices().next().unwrap();
@@ -2669,10 +2706,10 @@ mod tests {
     fn simplex_mirror_facet_index_shared_facet_2d() {
         // Four points in convex position should yield two triangles that share an edge.
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-            vertex!([1.0, 1.1]), // break cocircular symmetry
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.1]).unwrap(), // break cocircular symmetry
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
@@ -2744,11 +2781,11 @@ mod tests {
     fn simplex_mirror_facet_index_returns_none_when_simplices_do_not_share_facet_2d() {
         // Add a point strictly inside the convex hull to yield multiple triangles.
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-            vertex!([1.0, 1.0]),
-            vertex!([0.5, 0.5]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
@@ -2802,10 +2839,14 @@ mod tests {
 
     #[test]
     fn simplex_contains_vertex() {
-        let vertex1: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 1.0], 1);
-        let vertex2 = vertex!([0.0, 1.0, 0.0], 1);
-        let vertex3 = vertex!([1.0, 0.0, 0.0], 1);
-        let vertex4 = vertex!([1.0, 1.0, 1.0], 2);
+        let vertex1: Vertex<i32, 3> =
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 1).unwrap();
+        let vertex2 =
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 1).unwrap();
+        let vertex3 =
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 1).unwrap();
+        let vertex4 =
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 1.0, 1.0], 2).unwrap();
 
         // Create DT to get VertexKeys - use generic constructor for vertex data
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
@@ -2822,19 +2863,16 @@ mod tests {
         assert!(simplex.contains_vertex(vertex_keys[1]));
         assert!(simplex.contains_vertex(vertex_keys[2]));
         assert!(simplex.contains_vertex(vertex_keys[3]));
-
-        // Human readable output for cargo test -- --nocapture
-        println!("Simplex: {simplex:?}");
     }
 
     #[test]
     fn simplex_has_vertex_in_common() {
         // Test has_vertex_in_common (replacement for deprecated contains_vertex_of)
         let vertices1 = vec![
-            vertex!([0.0, 0.0, 1.0], 1),
-            vertex!([0.0, 1.0, 0.0], 1),
-            vertex!([1.0, 0.0, 0.0], 1),
-            vertex!([1.0, 1.0, 1.0], 2),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 1).unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 1).unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 1).unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 1.0, 1.0], 2).unwrap(),
         ];
         let tds1: DelaunayTriangulation<AdaptiveKernel<f64>, i32, i32, 3> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices1).unwrap();
@@ -2843,10 +2881,10 @@ mod tests {
         simplex.data = Some(42);
 
         let vertices2 = vec![
-            vertex!([0.0, 0.0, 1.0], 1),
-            vertex!([0.0, 1.0, 0.0], 1),
-            vertex!([1.0, 0.0, 0.0], 1),
-            vertex!([0.0, 0.0, 0.0], 0),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 1).unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 1).unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 1).unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 0).unwrap(),
         ];
         let tds2: DelaunayTriangulation<AdaptiveKernel<f64>, i32, i32, 3> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices2).unwrap();
@@ -2855,12 +2893,7 @@ mod tests {
         simplex2.data = Some(43);
 
         assert!(simplex.has_vertex_in_common(&simplex2));
-
-        // Human readable output for cargo test -- --nocapture
-        println!("Simplex: {simplex:?}");
     }
-
-    // Removed: simplex_facets_contains - redundant with simplex_facet_views_comprehensive
 
     // =============================================================================
     // VERTEX_UUIDS METHOD TESTS
@@ -2870,10 +2903,14 @@ mod tests {
     #[test]
     fn test_vertex_uuids_success() {
         // Test the vertex_uuids method returns correct vertex UUIDs vector
-        let vertex1 = vertex!([0.0, 0.0, 0.0], 10);
-        let vertex2 = vertex!([1.0, 0.0, 0.0], 20);
-        let vertex3 = vertex!([0.0, 1.0, 0.0], 30);
-        let vertex4 = vertex!([0.0, 0.0, 1.0], 40);
+        let vertex1 =
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 10).unwrap();
+        let vertex2 =
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 20).unwrap();
+        let vertex3 =
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 30).unwrap();
+        let vertex4 =
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 40).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 3> =
@@ -2901,8 +2938,6 @@ mod tests {
         for uuid in simplex.vertex_uuid_iter(dt.tds()) {
             assert_ne!(uuid.unwrap(), Uuid::nil());
         }
-
-        println!("✓ vertex_uuids method returns correct vertex UUIDs");
     }
 
     #[test]
@@ -2910,22 +2945,24 @@ mod tests {
         // Test that TDS creation fails gracefully with insufficient vertices for dimension
         // Tested through TDS, which is the user-facing API.
 
-        let vertices = vec![vertex!([0.0, 0.0, 0.0])];
+        let vertices =
+            vec![crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap()];
         let result = DelaunayTriangulation::new(&vertices);
 
         assert!(result.is_err());
         let error = result.unwrap_err();
         assert!(error.to_string().contains("Insufficient vertices"));
-
-        println!("✓ DT construction properly validates vertex count");
     }
 
     #[test]
     fn test_vertex_uuids_2d_simplex() {
         // Test vertex_uuids with a 2D simplex (triangle)
-        let vertex1 = vertex!([0.0, 0.0], 1);
-        let vertex2 = vertex!([1.0, 0.0], 2);
-        let vertex3 = vertex!([0.5, 1.0], 3);
+        let vertex1 =
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 1).unwrap();
+        let vertex2 =
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0], 2).unwrap();
+        let vertex3 =
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.5, 1.0], 3).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3];
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 2> =
@@ -2952,19 +2989,22 @@ mod tests {
         for uuid in simplex.vertex_uuid_iter(dt.tds()) {
             assert_ne!(uuid.unwrap(), Uuid::nil());
         }
-
-        println!("✓ vertex_uuids works correctly for 2D simplices");
     }
 
     #[test]
     fn test_vertex_uuids_4d_simplex() {
         // Test vertex_uuids with a 4D simplex (4-simplex) using integer data
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0], 1),
-            vertex!([1.0, 0.0, 0.0, 0.0], 2),
-            vertex!([0.0, 1.0, 0.0, 0.0], 3),
-            vertex!([0.0, 0.0, 1.0, 0.0], 4),
-            vertex!([0.0, 0.0, 0.0, 1.0], 5),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0, 0.0], 1)
+                .unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0, 0.0], 2)
+                .unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0, 0.0], 3)
+                .unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0, 0.0], 4)
+                .unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0, 1.0], 5)
+                .unwrap(),
         ];
 
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 4> =
@@ -3005,8 +3045,6 @@ mod tests {
         for uuid in simplex.vertex_uuid_iter(dt.tds()) {
             assert_ne!(uuid.unwrap(), Uuid::nil());
         }
-
-        println!("✓ vertex_uuids works correctly for 4D simplices");
     }
 
     // =============================================================================
@@ -3021,7 +3059,10 @@ mod tests {
     // Keep 1D test separate as it's less common
     #[test]
     fn simplex_1d() {
-        let vertices = vec![vertex!([0.0]), vertex!([1.0])];
+        let vertices = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
+        ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let (_, simplex) = dt.simplices().next().unwrap();
         assert_simplex_properties(simplex, 2, 1);
@@ -3031,7 +3072,8 @@ mod tests {
     fn simplex_single_vertex() {
         // Test that creating a 3D triangulation with insufficient vertices fails validation
         // Tested through TDS, which is the user-facing API.
-        let vertices = vec![vertex!([0.0, 0.0, 0.0])];
+        let vertices =
+            vec![crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap()];
         let result = DelaunayTriangulation::new(&vertices);
 
         assert!(result.is_err());
@@ -3044,10 +3086,10 @@ mod tests {
     #[test]
     fn simplex_neighbors_none_by_default() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let (_, simplex) = dt.simplices().next().unwrap();
@@ -3059,10 +3101,10 @@ mod tests {
     #[test]
     fn simplex_data_none_by_default() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let (_, simplex) = dt.simplices().next().unwrap();
@@ -3073,10 +3115,10 @@ mod tests {
     #[test]
     fn simplex_data_can_be_set() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), i32, 3> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
@@ -3090,7 +3132,7 @@ mod tests {
 
     #[test]
     fn simplex_into_hashmap_empty() {
-        let hashmap = Simplex::<f64, (), (), 3>::into_hashmap([]);
+        let hashmap = Simplex::<(), 3>::try_into_hashmap([]).unwrap();
 
         assert!(hashmap.is_empty());
     }
@@ -3098,11 +3140,11 @@ mod tests {
     #[test]
     fn simplex_into_hashmap_multiple() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([1.0, 1.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
@@ -3118,11 +3160,12 @@ mod tests {
 
         let uuid1 = simplex1.uuid();
         let uuid2 = simplex2.uuid();
-        let hashmap = Simplex::into_hashmap(
+        let hashmap = Simplex::try_into_hashmap(
             std::iter::once(simplex1)
                 .chain(std::iter::once(simplex2))
                 .chain(simplices_iter),
-        );
+        )
+        .unwrap();
 
         assert!(hashmap.len() >= 2);
         assert!(hashmap.contains_key(&uuid1));
@@ -3130,14 +3173,37 @@ mod tests {
     }
 
     #[test]
+    fn simplex_try_into_hashmap_rejects_duplicate_uuid() {
+        let vertices = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let (_, simplex_ref) = dt.simplices().next().unwrap();
+        let simplex = simplex_ref.clone();
+        let uuid = simplex.uuid();
+        let duplicate =
+            Simplex::try_new_with_uuid(simplex.vertices().to_vec(), uuid, None).unwrap();
+
+        assert_matches!(
+            Simplex::try_into_hashmap([simplex, duplicate]),
+            Err(TdsConstructionError::DuplicateUuid {
+                entity: EntityKind::Simplex,
+                uuid: duplicate_uuid,
+            }) if duplicate_uuid == uuid
+        );
+    }
+
+    #[test]
     fn simplex_debug_format() {
         // Use a simple non-degenerate 3D tetrahedron so `DelaunayTriangulation::new` can construct
         // a valid simplex for debug-format testing.
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), i32, 3> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
@@ -3167,10 +3233,10 @@ mod tests {
         // Use a non-degenerate 3D tetrahedron so `DelaunayTriangulation::new` can construct a
         // valid initial simplex.
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
@@ -3180,7 +3246,7 @@ mod tests {
         assert!(serialized.contains("simplices"));
 
         // Deserialize back to DT via try_from_tds (AdaptiveKernel has no auto-Deserialize).
-        let tds: Tds<f64, (), (), 3> = serde_json::from_str(&serialized).unwrap();
+        let tds: Tds<(), (), 3> = serde_json::from_str(&serialized).unwrap();
         let deserialized = DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())
             .expect("serialized Delaunay TDS should validate");
 
@@ -3195,8 +3261,6 @@ mod tests {
             assert_eq!(simplex.dim(), 3);
             assert_eq!(simplex.number_of_vertices(), 4);
         }
-
-        println!("TDS serialization/deserialization test passed");
     }
 
     #[test]
@@ -3205,8 +3269,7 @@ mod tests {
 
         // Test missing required field (uuid)
         let invalid_json_missing_uuid = r#"{"data": null}"#;
-        let result: Result<Simplex<f64, (), (), 3>, _> =
-            serde_json::from_str(invalid_json_missing_uuid);
+        let result: Result<Simplex<(), 3>, _> = serde_json::from_str(invalid_json_missing_uuid);
         assert!(result.is_err(), "Missing UUID should cause error");
         let error = result.unwrap_err().to_string();
         assert!(
@@ -3216,54 +3279,74 @@ mod tests {
 
         // Test invalid UUID format
         let invalid_json_bad_uuid = r#"{"uuid": "not-a-valid-uuid"}"#;
-        let result: Result<Simplex<f64, (), (), 3>, _> =
-            serde_json::from_str(invalid_json_bad_uuid);
+        let result: Result<Simplex<(), 3>, _> = serde_json::from_str(invalid_json_bad_uuid);
         assert!(result.is_err(), "Invalid UUID format should cause error");
 
         // Test completely invalid JSON syntax
         let invalid_json_syntax = r"{this is not valid JSON}";
-        let result: Result<Simplex<f64, (), (), 3>, _> = serde_json::from_str(invalid_json_syntax);
+        let result: Result<Simplex<(), 3>, _> = serde_json::from_str(invalid_json_syntax);
         assert!(result.is_err(), "Invalid JSON syntax should cause error");
 
         // Test empty JSON object (missing required uuid)
         let empty_json = r"{}";
-        let result: Result<Simplex<f64, (), (), 3>, _> = serde_json::from_str(empty_json);
+        let result: Result<Simplex<(), 3>, _> = serde_json::from_str(empty_json);
         assert!(result.is_err(), "Empty JSON should fail (missing uuid)");
 
-        // Test deserialization with unknown fields (should succeed - ignored)
+        // Test deserialization with unknown fields still rejects standalone simplex records.
         let json_unknown_field = r#"{
             "uuid": "550e8400-e29b-41d4-a716-446655440000",
             "unknown_field": "value",
             "another_unknown": 123
         }"#;
-        let result: Result<Simplex<f64, (), (), 3>, _> = serde_json::from_str(json_unknown_field);
-        assert!(result.is_ok(), "Unknown fields should be ignored");
+        let result: Result<Simplex<(), 3>, _> = serde_json::from_str(json_unknown_field);
+        let err = result.expect_err("standalone simplex records should not deserialize");
+        assert!(
+            err.to_string()
+                .contains("standalone Simplex deserialization")
+        );
+
+        let json_with_slotmap_vertices = r#"{
+            "uuid": "550e8400-e29b-41d4-a716-446655440000",
+            "vertices": [{"idx": 1, "version": 1}]
+        }"#;
+        let result: Result<Simplex<(), 3>, _> = serde_json::from_str(json_with_slotmap_vertices);
+        let err = result.expect_err("slotmap vertex keys must be rejected");
+        assert!(
+            err.to_string().contains("storage-local simplex state"),
+            "unexpected error for serialized slotmap vertex keys: {err}"
+        );
+
+        let json_with_neighbors = r#"{
+            "uuid": "550e8400-e29b-41d4-a716-446655440000",
+            "neighbors": [null, null, null, null]
+        }"#;
+        let result: Result<Simplex<(), 3>, _> = serde_json::from_str(json_with_neighbors);
+        let err = result.expect_err("slotmap neighbor keys must be rejected");
+        assert!(
+            err.to_string().contains("storage-local simplex state"),
+            "unexpected error for serialized slotmap neighbor keys: {err}"
+        );
     }
 
     #[test]
     fn simplex_serialization_data_field_handling() {
         // Comprehensive test for data field serialization behavior
 
-        // Test 1: Minimal valid JSON (only uuid required)
+        // Test 1: Minimal simplex record is valid only as a TDS reconstruction DTO.
         let minimal_valid_json = r#"{"uuid": "550e8400-e29b-41d4-a716-446655440000"}"#;
-        let result: Result<Simplex<f64, (), (), 3>, _> = serde_json::from_str(minimal_valid_json);
+        let result: Result<Simplex<(), 3>, _> = serde_json::from_str(minimal_valid_json);
+        let err = result.expect_err("minimal standalone simplex record should fail");
         assert!(
-            result.is_ok(),
-            "Minimal valid JSON with just UUID should succeed"
+            err.to_string()
+                .contains("standalone Simplex deserialization")
         );
-        let simplex = result.unwrap();
-        assert_eq!(
-            simplex.uuid().to_string(),
-            "550e8400-e29b-41d4-a716-446655440000"
-        );
-        assert!(simplex.data.is_none());
 
         // Test 2: Serialization with Some(data) includes field
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), i32, 3> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
@@ -3276,8 +3359,12 @@ mod tests {
             "Some(data) should include data field"
         );
         assert!(serialized.contains("42"));
-        let deserialized: Simplex<f64, (), i32, 3> = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(deserialized.data, Some(42));
+        let err = serde_json::from_str::<Simplex<i32, 3>>(&serialized)
+            .expect_err("standalone Simplex deserialization should require TDS UUID mapping");
+        assert!(
+            err.to_string()
+                .contains("standalone Simplex deserialization")
+        );
 
         // Test 3: Serialization with None data omits field (optimization)
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
@@ -3287,15 +3374,21 @@ mod tests {
             !serialized_none.contains("\"data\":"),
             "None should omit data field"
         );
-        let deserialized_none: Simplex<f64, (), Option<i32>, 3> =
-            serde_json::from_str(&serialized_none).unwrap();
-        assert_eq!(deserialized_none.data, None);
+        let err = serde_json::from_str::<Simplex<Option<i32>, 3>>(&serialized_none)
+            .expect_err("standalone Simplex deserialization should require TDS UUID mapping");
+        assert!(
+            err.to_string()
+                .contains("standalone Simplex deserialization")
+        );
 
-        // Test 4: Backward compatibility - explicit "data": null works
+        // Test 4: Explicit "data": null still rejects outside TDS reconstruction.
         let json_with_null = r#"{"uuid":"550e8400-e29b-41d4-a716-446655440000","data":null}"#;
-        let simplex_explicit_null: Simplex<f64, (), Option<i32>, 3> =
-            serde_json::from_str(json_with_null).unwrap();
-        assert_eq!(simplex_explicit_null.data, None);
+        let err = serde_json::from_str::<Simplex<Option<i32>, 3>>(json_with_null)
+            .expect_err("standalone simplex record should fail");
+        assert!(
+            err.to_string()
+                .contains("standalone Simplex deserialization")
+        );
     }
 
     // =============================================================================
@@ -3309,10 +3402,10 @@ mod tests {
 
         // Negative coordinates: fully in negative octant
         let negative_vertices = vec![
-            vertex!([-1.0, -1.0, -1.0]),
-            vertex!([-2.0, -1.0, -1.0]),
-            vertex!([-1.0, -2.0, -1.0]),
-            vertex!([-1.0, -1.0, -2.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([-1.0, -1.0, -1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([-2.0, -1.0, -1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([-1.0, -2.0, -1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([-1.0, -1.0, -2.0]).unwrap(),
         ];
         let dt_neg = DelaunayTriangulation::new(&negative_vertices).unwrap();
         let (_, simplex_neg) = dt_neg.tds().simplices().next().unwrap();
@@ -3321,10 +3414,10 @@ mod tests {
 
         // Large coordinates: large-magnitude coordinates
         let large_vertices = vec![
-            vertex!([1e6, 1e6, 1e6]),
-            vertex!([2e6, 1e6, 1e6]),
-            vertex!([1e6, 2e6, 1e6]),
-            vertex!([1e6, 1e6, 2e6]),
+            crate::core::vertex::Vertex::<(), _>::try_new([1e6, 1e6, 1e6]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([2e6, 1e6, 1e6]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1e6, 2e6, 1e6]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1e6, 1e6, 2e6]).unwrap(),
         ];
         let dt_large = DelaunayTriangulation::new(&large_vertices).unwrap();
         let (_, simplex_large) = dt_large.tds().simplices().next().unwrap();
@@ -3333,10 +3426,10 @@ mod tests {
 
         // Small coordinates: scaled-down tetrahedron without degeneracy
         let small_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1e-3, 0.0, 0.0]),
-            vertex!([0.0, 1e-3, 0.0]),
-            vertex!([0.0, 0.0, 1e-3]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1e-3, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1e-3, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1e-3]).unwrap(),
         ];
         let dt_small = DelaunayTriangulation::new(&small_vertices).unwrap();
         let (_, simplex_small) = dt_small.tds().simplices().next().unwrap();
@@ -3346,9 +3439,9 @@ mod tests {
 
     #[test]
     fn simplex_circumradius_2d() {
-        let vertex1 = vertex!([0.0, 0.0]);
-        let vertex2 = vertex!([1.0, 0.0]);
-        let vertex3 = vertex!([0.0, 1.0]);
+        let vertex1 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap();
+        let vertex2 = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap();
+        let vertex3 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
@@ -3356,7 +3449,7 @@ mod tests {
         let simplex = &dt.tds().simplex(simplex_key).unwrap();
 
         // Resolve VertexKeys to actual vertices
-        let vertex_points: Vec<Point<f64, 2>> = simplex
+        let vertex_points: Vec<Point<2>> = simplex
             .vertices()
             .iter()
             .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
@@ -3370,11 +3463,12 @@ mod tests {
 
     #[test]
     fn simplex_contains_vertex_false() {
-        let vertex1 = vertex!([0.0, 0.0, 0.0]);
-        let vertex2 = vertex!([1.0, 0.0, 0.0]);
-        let vertex3 = vertex!([0.0, 1.0, 0.0]);
-        let vertex4 = vertex!([0.0, 0.0, 1.0]); // 4th vertex to complete 3D simplex
-        let vertex_outside: Vertex<f64, (), 3> = vertex!([2.0, 2.0, 2.0]);
+        let vertex1 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap();
+        let vertex2 = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap();
+        let vertex3 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap();
+        let vertex4 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(); // 4th vertex to complete 3D simplex
+        let vertex_outside: Vertex<(), 3> =
+            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 2.0, 2.0]).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
@@ -3390,10 +3484,14 @@ mod tests {
     fn simplex_circumsphere_contains_vertex_determinant() {
         // Test the matrix determinant method for circumsphere containment
         // Use a simple, well-known case: unit tetrahedron
-        let vertex1 = vertex!([0.0, 0.0, 0.0], 1);
-        let vertex2 = vertex!([1.0, 0.0, 0.0], 1);
-        let vertex3 = vertex!([0.0, 1.0, 0.0], 1);
-        let vertex4 = vertex!([0.0, 0.0, 1.0], 2);
+        let vertex1 =
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 1).unwrap();
+        let vertex2 =
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 1).unwrap();
+        let vertex3 =
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 1).unwrap();
+        let vertex4 =
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 2).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 3> =
@@ -3402,9 +3500,10 @@ mod tests {
         let simplex = &dt.tds().simplex(simplex_key).unwrap();
 
         // Test vertex clearly outside circumsphere
-        let vertex_far_outside: Vertex<f64, i32, 3> = vertex!([10.0, 10.0, 10.0], 4);
+        let vertex_far_outside: Vertex<i32, 3> =
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([10.0, 10.0, 10.0], 4).unwrap();
         // Just check that the method runs without error for now
-        let vertex_points: Vec<Point<f64, 3>> = simplex
+        let vertex_points: Vec<Point<3>> = simplex
             .vertices()
             .iter()
             .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
@@ -3413,8 +3512,9 @@ mod tests {
         assert!(result.is_ok());
 
         // Test with origin (should be inside or on boundary)
-        let origin: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 0.0], 3);
-        let vertex_points: Vec<Point<f64, 3>> = simplex
+        let origin: Vertex<i32, 3> =
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 3).unwrap();
+        let vertex_points: Vec<Point<3>> = simplex
             .vertices()
             .iter()
             .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
@@ -3426,9 +3526,9 @@ mod tests {
     #[test]
     fn simplex_circumsphere_contains_vertex_2d() {
         // Test 2D case for circumsphere containment using determinant method
-        let vertex1 = vertex!([0.0, 0.0]);
-        let vertex2 = vertex!([1.0, 0.0]);
-        let vertex3 = vertex!([0.0, 1.0]);
+        let vertex1 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap();
+        let vertex2 = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap();
+        let vertex3 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
@@ -3436,8 +3536,9 @@ mod tests {
         let simplex = &dt.tds().simplex(simplex_key).unwrap();
 
         // Test vertex far outside circumcircle
-        let vertex_far_outside: Vertex<f64, (), 2> = vertex!([10.0, 10.0]);
-        let vertex_points: Vec<Point<f64, 2>> = simplex
+        let vertex_far_outside: Vertex<(), 2> =
+            crate::core::vertex::Vertex::<(), _>::try_new([10.0, 10.0]).unwrap();
+        let vertex_points: Vec<Point<2>> = simplex
             .vertices()
             .iter()
             .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
@@ -3446,8 +3547,9 @@ mod tests {
         assert!(result.is_ok());
 
         // Test with center of triangle (should be inside)
-        let center: Vertex<f64, (), 2> = vertex!([0.33, 0.33]);
-        let vertex_points: Vec<Point<f64, 2>> = simplex
+        let center: Vertex<(), 2> =
+            crate::core::vertex::Vertex::<(), _>::try_new([0.33, 0.33]).unwrap();
+        let vertex_points: Vec<Point<2>> = simplex
             .vertices()
             .iter()
             .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
@@ -3459,17 +3561,17 @@ mod tests {
     #[test]
     fn simplex_circumradius_with_center() {
         // Test the circumradius_with_center method
-        let vertex1 = vertex!([0.0, 0.0, 0.0]);
-        let vertex2 = vertex!([1.0, 0.0, 0.0]);
-        let vertex3 = vertex!([0.0, 1.0, 0.0]);
-        let vertex4 = vertex!([0.0, 0.0, 1.0]);
+        let vertex1 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap();
+        let vertex2 = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap();
+        let vertex3 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap();
+        let vertex4 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
         let simplex = &dt.tds().simplex(simplex_key).unwrap();
 
-        let vertex_points: Vec<Point<f64, 3>> = simplex
+        let vertex_points: Vec<Point<3>> = simplex
             .vertices()
             .iter()
             .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
@@ -3487,10 +3589,10 @@ mod tests {
     #[test]
     fn simplex_facet_views_comprehensive() {
         // Test comprehensive facet view functionality
-        let vertex1 = vertex!([0.0, 0.0, 0.0]);
-        let vertex2 = vertex!([1.0, 0.0, 0.0]);
-        let vertex3 = vertex!([0.0, 1.0, 0.0]);
-        let vertex4 = vertex!([0.0, 0.0, 1.0]);
+        let vertex1 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap();
+        let vertex2 = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap();
+        let vertex3 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap();
+        let vertex4 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
@@ -3534,10 +3636,10 @@ mod tests {
     #[test]
     fn test_facet_vertex_uniqueness() {
         // Test that facet vertices are unique and don't include the opposite vertex
-        let vertex1 = vertex!([0.0, 0.0, 1.0]);
-        let vertex2 = vertex!([0.0, 1.0, 0.0]);
-        let vertex3 = vertex!([1.0, 0.0, 0.0]);
-        let vertex4 = vertex!([1.0, 1.0, 1.0]);
+        let vertex1 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap();
+        let vertex2 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap();
+        let vertex3 = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap();
+        let vertex4 = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
@@ -3581,12 +3683,18 @@ mod tests {
     #[test]
     fn simplex_high_dimensional() {
         // Test with higher dimensions (5D)
-        let vertex1 = vertex!([0.0, 0.0, 0.0, 0.0, 0.0]);
-        let vertex2 = vertex!([1.0, 0.0, 0.0, 0.0, 0.0]);
-        let vertex3 = vertex!([0.0, 1.0, 0.0, 0.0, 0.0]);
-        let vertex4 = vertex!([0.0, 0.0, 1.0, 0.0, 0.0]);
-        let vertex5 = vertex!([0.0, 0.0, 0.0, 1.0, 0.0]);
-        let vertex6 = vertex!([0.0, 0.0, 0.0, 0.0, 1.0]);
+        let vertex1 =
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap();
+        let vertex2 =
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap();
+        let vertex3 =
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap();
+        let vertex4 =
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap();
+        let vertex5 =
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap();
+        let vertex6 =
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4, vertex5, vertex6];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
@@ -3606,10 +3714,14 @@ mod tests {
     #[test]
     fn simplex_vertex_data_consistency() {
         // Test simplices with vertices that have different data types
-        let vertex1 = vertex!([0.0, 0.0, 0.0], 1);
-        let vertex2 = vertex!([1.0, 0.0, 0.0], 2);
-        let vertex3 = vertex!([0.0, 1.0, 0.0], 3);
-        let vertex4 = vertex!([0.0, 0.0, 1.0], 4); // Need 4 vertices for 3D simplex
+        let vertex1 =
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 1).unwrap();
+        let vertex2 =
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 2).unwrap();
+        let vertex3 =
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 3).unwrap();
+        let vertex4 =
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 4).unwrap(); // Need 4 vertices for 3D simplex
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, u32, 3> =
@@ -3668,10 +3780,10 @@ mod tests {
 
         // Valid 3D simplex with correct vertex count (D+1 = 4)
         let vertices_3d = vec![
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices_3d).unwrap();
         let (_, simplex_3d) = dt.simplices().next().unwrap();
@@ -3682,9 +3794,9 @@ mod tests {
 
         // Valid 2D simplex with correct vertex count (D+1 = 3)
         let vertices_2d = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices_2d).unwrap();
         let (_, simplex_ref) = dt.simplices().next().unwrap();
@@ -3717,10 +3829,10 @@ mod tests {
 
         // Invalid UUID (nil)
         let vertices = vec![
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let (_, simplex_ref) = dt.simplices().next().unwrap();
@@ -3735,7 +3847,10 @@ mod tests {
         );
 
         // Insufficient vertices (TDS construction fails)
-        let insufficient_vertices = vec![vertex!([0.0, 0.0, 1.0]), vertex!([0.0, 1.0, 0.0])];
+        let insufficient_vertices = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+        ];
         let result = DelaunayTriangulation::new(&insufficient_vertices);
         assert!(
             result.is_err(),
@@ -3744,9 +3859,9 @@ mod tests {
 
         // Invalid neighbors length (too few)
         let vertices_2d = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices_2d).unwrap();
         let (_, simplex_ref) = dt.simplices().next().unwrap();
@@ -3786,17 +3901,17 @@ mod tests {
     #[test]
     fn simplex_new_rejects_insufficient_and_duplicate_vertices() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let vkeys: Vec<_> = dt.tds().vertices().map(|(k, _)| k).collect();
 
         // Too few vertices for a 3D simplex (D+1 = 4)
-        let err =
-            Simplex::<f64, (), (), 3>::new(vec![vkeys[0], vkeys[1], vkeys[2]], None).unwrap_err();
+        let err = Simplex::<(), 3>::try_new_with_data(vec![vkeys[0], vkeys[1], vkeys[2]], None)
+            .unwrap_err();
         assert_matches!(
             err,
             SimplexValidationError::InsufficientVertices {
@@ -3808,7 +3923,7 @@ mod tests {
 
         // Duplicate vertex keys are rejected
         let err =
-            Simplex::<f64, (), (), 3>::new(vec![vkeys[0], vkeys[1], vkeys[2], vkeys[0]], None)
+            Simplex::<(), 3>::try_new_with_data(vec![vkeys[0], vkeys[1], vkeys[2], vkeys[0]], None)
                 .unwrap_err();
         assert_matches!(err, SimplexValidationError::DuplicateVertices);
     }
@@ -3816,10 +3931,10 @@ mod tests {
     #[test]
     fn simplex_is_valid_rejects_insufficient_and_duplicate_vertices() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let (_, simplex_ref) = dt.simplices().next().unwrap();
@@ -3844,9 +3959,9 @@ mod tests {
     #[test]
     fn simplex_ensure_neighbors_buffer_mut_initializes_and_reuses() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let (simplex_key, simplex_ref) = dt.simplices().next().unwrap();
@@ -3868,9 +3983,9 @@ mod tests {
     #[test]
     fn simplex_neighbor_views_distinguish_unassigned_boundary_and_neighbor_slots() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let (simplex_key, simplex_ref) = dt.simplices().next().unwrap();
@@ -3902,9 +4017,9 @@ mod tests {
     #[test]
     fn simplex_validation_rejects_unassigned_slot_inside_assigned_neighbors() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let (_, simplex_ref) = dt.simplices().next().unwrap();
@@ -3922,9 +4037,9 @@ mod tests {
     #[test]
     fn simplex_swap_vertex_slots_swaps_vertices_neighbors_and_offsets() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let (simplex_key, simplex_ref) = dt.simplices().next().unwrap();
@@ -3958,9 +4073,9 @@ mod tests {
     #[should_panic(expected = "neighbors index out of bounds")]
     fn simplex_swap_vertex_slots_panics_when_neighbors_shorter_than_vertices() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let (_, simplex_ref) = dt.simplices().next().unwrap();
@@ -3975,10 +4090,10 @@ mod tests {
     #[test]
     fn simplex_facet_view_helpers_reject_excessive_vertex_count() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
         let simplex_key = dt.tds().simplex_keys().next().unwrap();
@@ -4026,40 +4141,37 @@ mod tests {
     #[test]
     fn simplex_deserialize_rejects_missing_uuid_and_duplicate_fields_and_invalid_uuid() {
         // Expecting() should surface for non-map inputs.
-        let err = serde_json::from_str::<Simplex<f64, (), i32, 3>>("null").unwrap_err();
+        let err = serde_json::from_str::<Simplex<i32, 3>>("null").unwrap_err();
         assert!(err.to_string().contains("a Simplex struct"));
 
         // Missing required field.
-        let err = serde_json::from_str::<Simplex<f64, (), i32, 3>>("{\"data\":1}").unwrap_err();
+        let err = serde_json::from_str::<Simplex<i32, 3>>("{\"data\":1}").unwrap_err();
         assert!(err.to_string().contains("missing field `uuid`"));
 
         // Duplicate uuid.
         let uuid = uuid::Uuid::new_v4();
         let json = format!("{{\"uuid\":\"{uuid}\",\"uuid\":\"{uuid}\"}}");
-        let err = serde_json::from_str::<Simplex<f64, (), i32, 3>>(&json).unwrap_err();
+        let err = serde_json::from_str::<Simplex<i32, 3>>(&json).unwrap_err();
         assert!(err.to_string().contains("duplicate field `uuid`"));
 
         // Duplicate data.
         let uuid = uuid::Uuid::new_v4();
         let json = format!("{{\"uuid\":\"{uuid}\",\"data\":1,\"data\":2}}");
-        let err = serde_json::from_str::<Simplex<f64, (), i32, 3>>(&json).unwrap_err();
+        let err = serde_json::from_str::<Simplex<i32, 3>>(&json).unwrap_err();
         assert!(err.to_string().contains("duplicate field `data`"));
 
         // Invalid uuid (nil) should be rejected by validate_uuid.
         let json = "{\"uuid\":\"00000000-0000-0000-0000-000000000000\"}";
-        let err = serde_json::from_str::<Simplex<f64, (), i32, 3>>(json).unwrap_err();
+        let err = serde_json::from_str::<Simplex<i32, 3>>(json).unwrap_err();
         assert!(err.to_string().contains("invalid uuid"));
 
-        // Unknown fields are ignored.
+        // Unknown fields are ignored by the raw DTO parser, then rejected at the standalone boundary.
         let uuid = uuid::Uuid::new_v4();
-        let json = format!("{{\"uuid\":\"{uuid}\",\"data\":5,\"neighbors\":[1,2,3]}}");
-        let simplex = serde_json::from_str::<Simplex<f64, (), i32, 3>>(&json).unwrap();
-        assert_eq!(simplex.data, Some(5));
-        assert!(simplex.neighbors.is_none());
-        assert_eq!(
-            simplex.number_of_vertices(),
-            0,
-            "vertices are not serialized"
+        let json = format!("{{\"uuid\":\"{uuid}\",\"data\":5,\"extra\":[1,2,3]}}");
+        let err = serde_json::from_str::<Simplex<i32, 3>>(&json).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("standalone Simplex deserialization")
         );
     }
 
@@ -4085,9 +4197,9 @@ mod tests {
     fn test_simplex_partial_eq_different_dimensions() {
         // Test equality for simplices of different dimensions
         let vertices_2d = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt1 = DelaunayTriangulation::new(&vertices_2d).unwrap();
         let (_, simplex_2d) = dt1.tds().simplices().next().unwrap();
@@ -4099,18 +4211,16 @@ mod tests {
             simplex_2d, simplex_2d_copy,
             "Identical 2D simplices should be equal"
         );
-
-        println!("✓ 2D simplices work correctly with PartialEq");
     }
 
     #[test]
     fn test_facet_view_iter() {
         // Test the iterator-based facet_view_iter method
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
@@ -4172,18 +4282,14 @@ mod tests {
             vec_facets.len(),
             "Iterator and Vec methods should return same count"
         );
-
-        println!("✓ facet_view_iter zero-allocation iterator works correctly");
     }
-
-    // Removed: test_facet_view_memory_efficiency_comparison - covered by test_facet_view_iter
 
     #[test]
     fn test_simplex_data_accessor() {
         let vertices = [
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<i32>()
@@ -4196,69 +4302,5 @@ mod tests {
         // Set data and verify via accessor
         dt.set_simplex_data(key, Some(99));
         assert_eq!(dt.tds().simplex(key).unwrap().data(), Some(&99));
-    }
-
-    #[test]
-    fn test_clear_vertex_keys() {
-        // Test the clear_vertex_keys method used in deserialization
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
-
-        // Get a simplex and clone it (since we need mutable access)
-        let (_simplex_key, original_simplex) = dt.simplices().next().unwrap();
-        let mut test_simplex = original_simplex.clone();
-
-        // Verify the simplex has 4 vertices initially
-        assert_eq!(
-            test_simplex.number_of_vertices(),
-            4,
-            "Simplex should start with 4 vertices"
-        );
-
-        // Clear the vertex keys
-        test_simplex.clear_vertex_keys();
-
-        // Verify the simplex now has 0 vertices
-        assert_eq!(
-            test_simplex.number_of_vertices(),
-            0,
-            "Simplex should have 0 vertices after clearing"
-        );
-        assert_eq!(
-            test_simplex.vertices().len(),
-            0,
-            "Vertices slice should be empty after clearing"
-        );
-
-        // Test that we can rebuild vertex keys after clearing (simulating deserialization)
-        for &vkey in original_simplex.vertices() {
-            test_simplex.push_vertex_key(vkey);
-        }
-
-        // Verify we've restored the correct number of vertices
-        assert_eq!(
-            test_simplex.number_of_vertices(),
-            4,
-            "Simplex should have 4 vertices after rebuilding"
-        );
-
-        // Verify the vertex keys match the original
-        for (original_vkey, rebuilt_vkey) in original_simplex
-            .vertices()
-            .iter()
-            .zip(test_simplex.vertices().iter())
-        {
-            assert_eq!(
-                original_vkey, rebuilt_vkey,
-                "Rebuilt vertex keys should match original keys"
-            );
-        }
-
-        println!("✓ clear_vertex_keys() correctly clears and allows rebuilding of vertex keys");
     }
 }

@@ -35,12 +35,10 @@ use crate::core::validation::{
 };
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
-use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::repair::{DelaunayRepairOperation, DelaunayRepairPolicy};
 use crate::topology::manifold::{ManifoldError, validate_ridge_links_for_simplices};
 use crate::triangulation::DelaunayTriangulation;
 use crate::validation::DelaunayTriangulationValidationError;
-use num_traits::NumCast;
 use std::env;
 
 const RIDGE_LINK_REPAIR_VALIDATION_MESSAGE: &str = "Topology invalid after Delaunay repair";
@@ -60,14 +58,12 @@ fn ridge_link_repair_validation_error(err: ManifoldError) -> InsertionError {
 // =============================================================================
 //
 // Incremental insertion, removal, and post-insertion repair/check helpers.
-// These require `NumCast` for spatial-index construction, Triangulation-layer
-// insertion, and Triangulation-layer removal. `Kernel` already guarantees
-// `CoordinateScalar`.
+// These require an f64-backed kernel for spatial-index construction,
+// Triangulation-layer insertion, and Triangulation-layer removal.
 
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
 where
-    K: Kernel<D>,
-    K::Scalar: NumCast,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -78,8 +74,7 @@ where
             return Ok(());
         }
 
-        let duplicate_tolerance: K::Scalar =
-            <K::Scalar as NumCast>::from(1e-10_f64).unwrap_or_else(K::Scalar::default_tolerance);
+        let duplicate_tolerance = 1e-10_f64;
         let mut index = HashGridIndex::try_new(duplicate_tolerance)?;
 
         for (vkey, vertex) in self.tri.tds.vertices() {
@@ -127,7 +122,7 @@ where
     /// Incremental insertion from empty triangulation:
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulation};
     /// use delaunay::prelude::insertion::InsertionError;
     ///
     /// # fn main() -> Result<(), InsertionError> {
@@ -137,19 +132,19 @@ where
     /// assert_eq!(dt.number_of_simplices(), 0);
     ///
     /// // Insert vertices one by one - bootstrap phase (no simplices yet)
-    /// dt.insert(vertex!([0.0, 0.0, 0.0]))?;
-    /// dt.insert(vertex!([1.0, 0.0, 0.0]))?;
-    /// dt.insert(vertex!([0.0, 1.0, 0.0]))?;
+    /// dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates")).expect("finite vertex coordinates");
+    /// dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates")).expect("finite vertex coordinates");
+    /// dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates")).expect("finite vertex coordinates");
     /// assert_eq!(dt.number_of_vertices(), 3);
     /// assert_eq!(dt.number_of_simplices(), 0); // Still no simplices
     ///
     /// // 4th vertex triggers initial simplex creation
-    /// dt.insert(vertex!([0.0, 0.0, 1.0]))?;
+    /// dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates")).expect("finite vertex coordinates");
     /// assert_eq!(dt.number_of_vertices(), 4);
     /// assert_eq!(dt.number_of_simplices(), 1); // First simplex created!
     ///
     /// // Further insertions use cavity-based algorithm
-    /// dt.insert(vertex!([0.2, 0.2, 0.2]))?;
+    /// dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.2, 0.2]).expect("finite vertex coordinates")).expect("finite vertex coordinates");
     /// assert_eq!(dt.number_of_vertices(), 5);
     /// assert!(dt.number_of_simplices() > 1);
     /// # Ok(())
@@ -159,7 +154,7 @@ where
     /// Using batch construction (traditional approach):
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -171,23 +166,23 @@ where
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create initial triangulation with 5 vertices (4-simplex)
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.number_of_vertices(), 5);
     ///
     /// // Insert additional interior vertex
-    /// dt.insert(vertex!([0.2, 0.2, 0.2, 0.2]))?;
+    /// dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2]).expect("finite vertex coordinates")).expect("finite vertex coordinates");
     /// assert_eq!(dt.number_of_vertices(), 6);
     /// assert!(dt.number_of_simplices() > 1);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn insert(&mut self, vertex: Vertex<K::Scalar, U, D>) -> Result<VertexKey, InsertionError> {
+    pub fn insert(&mut self, vertex: Vertex<U, D>) -> Result<VertexKey, InsertionError> {
         self.ensure_spatial_index_seeded()?;
 
         // Fully delegate to Triangulation layer
@@ -284,19 +279,27 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulation};
     /// use delaunay::prelude::insertion::{InsertionError, InsertionOutcome};
     ///
-    /// # fn main() -> Result<(), InsertionError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Coordinates(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// #     #[error(transparent)]
+    /// #     Insertion(#[from] InsertionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
     ///
-    /// let (outcome, stats) = dt
-    ///     .insert_with_statistics(vertex!([0.0, 0.0, 0.0]))?;
+    /// let vertex = delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?;
+    /// let (outcome, stats) = dt.insert_with_statistics(vertex)?;
     ///
     /// assert!(stats.success());
     /// std::assert_matches!(outcome, InsertionOutcome::Inserted { .. });
     ///
-    /// let duplicate = dt.insert_with_statistics(vertex!([0.0, 0.0, 0.0]));
+    /// let duplicate_vertex = delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?;
+    /// let duplicate = dt.insert_with_statistics(duplicate_vertex);
     /// std::assert_matches!(
     ///     duplicate,
     ///     Err(InsertionError::DuplicateCoordinates { .. })
@@ -306,7 +309,7 @@ where
     /// ```
     pub fn insert_with_statistics(
         &mut self,
-        vertex: Vertex<K::Scalar, U, D>,
+        vertex: Vertex<U, D>,
     ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError> {
         match self.insert_best_effort_with_statistics(vertex)? {
             (outcome @ InsertionOutcome::Inserted { .. }, stats) => Ok((outcome, stats)),
@@ -332,21 +335,21 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulation};
     /// use delaunay::prelude::insertion::InsertionOutcome;
     ///
     /// # fn main() -> Result<(), delaunay::InsertionError> {
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
     ///
     /// let (outcome, stats) = dt
-    ///     .insert_best_effort_with_statistics(vertex!([0.0, 0.0, 0.0]))?;
+    ///     .insert_best_effort_with_statistics(delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates")).expect("finite vertex coordinates");
     ///
     /// assert!(stats.success());
     /// std::assert_matches!(outcome, InsertionOutcome::Inserted { .. });
     ///
     /// let vertices_before_duplicate = dt.number_of_vertices();
     /// let (duplicate_outcome, duplicate_stats) = dt
-    ///     .insert_best_effort_with_statistics(vertex!([0.0, 0.0, 0.0]))?;
+    ///     .insert_best_effort_with_statistics(delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates")).expect("finite vertex coordinates");
     ///
     /// std::assert_matches!(duplicate_outcome, InsertionOutcome::Skipped { .. });
     /// assert!(duplicate_stats.skipped_duplicate());
@@ -356,7 +359,7 @@ where
     /// ```
     pub fn insert_best_effort_with_statistics(
         &mut self,
-        vertex: Vertex<K::Scalar, U, D>,
+        vertex: Vertex<U, D>,
     ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError> {
         self.ensure_spatial_index_seeded()?;
 
@@ -471,7 +474,7 @@ where
             if !self.tri.tds.contains_simplex(ck) {
                 if env::var_os("DELAUNAY_REPAIR_TRACE").is_some() {
                     tracing::debug!(
-                        "[repair] insertion seed hint missing (simplex={ck:?}, vertex={vertex_key:?})"
+                        "[repair] insertion seed hint missing (simplex={ck:?}={vertex_key:?})"
                     );
                 }
                 return None;
@@ -484,7 +487,7 @@ where
                 .is_some_and(|simplex| simplex.contains_vertex(vertex_key));
             if !contains_vertex && env::var_os("DELAUNAY_REPAIR_TRACE").is_some() {
                 tracing::debug!(
-                    "[repair] insertion seed hint does not contain vertex (simplex={ck:?}, vertex={vertex_key:?})"
+                    "[repair] insertion seed hint does not contain vertex (simplex={ck:?}={vertex_key:?})"
                 );
             }
 
@@ -695,7 +698,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -705,12 +708,12 @@ where
     /// #     Invariant(#[from] delaunay::tds::InvariantError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
-    /// let interior = vertex!([0.3, 0.3]);
+    /// let interior = delaunay::prelude::Vertex::<(), _>::try_new([0.3, 0.3]).expect("finite vertex coordinates");
     /// let interior_uuid = interior.uuid();
     /// let vertices = [
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     ///     interior,
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -733,15 +736,15 @@ where
     /// Removals that would leave a non-manifold remnant fail and roll back:
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
     /// use delaunay::prelude::tds::InvariantError;
     /// use delaunay::prelude::triangulation::TriangulationValidationError;
     ///
     /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = [
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((vertex_key, _)) = dt.vertices().next() else {
@@ -852,7 +855,6 @@ mod tests {
     use crate::flips::BistellarFlips;
     use crate::geometry::kernel::{AdaptiveKernel, RobustKernel};
     use crate::geometry::util::safe_usize_to_scalar;
-    use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
     use std::sync::Once;
@@ -888,33 +890,32 @@ mod tests {
         }
     }
 
-    fn simplex_vertices<const D: usize>() -> Vec<Vertex<f64, (), D>> {
+    fn simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
         let mut vertices = Vec::with_capacity(D + 1);
-        vertices.push(vertex!([0.0; D]));
+        vertices.push(crate::core::vertex::Vertex::<(), _>::try_new([0.0; D]).unwrap());
         for axis in 0..D {
             let mut coords = [0.0; D];
             coords[axis] = 1.0;
-            vertices.push(vertex!(coords));
+            vertices.push(crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap());
         }
         vertices
     }
 
-    fn interior_vertex_for_k1_insert<const D: usize>() -> Vertex<f64, (), D> {
-        let denominator = safe_usize_to_scalar::<f64>(D + 2)
+    fn interior_vertex_for_k1_insert<const D: usize>() -> Vertex<(), D> {
+        let denominator = safe_usize_to_scalar(D + 2)
             .expect("D + 2 should convert exactly for rollback test dimensions");
         let coord = 1.0 / denominator;
-        vertex!([coord; D])
+        crate::core::vertex::Vertex::<(), _>::try_new([coord; D]).unwrap()
     }
 
-    fn rollback_probe_vertex<const D: usize>(point_index: usize) -> Vertex<f64, (), D> {
-        let dimension =
-            safe_usize_to_scalar::<f64>(D).expect("test dimensions should convert exactly");
+    fn rollback_probe_vertex<const D: usize>(point_index: usize) -> Vertex<(), D> {
+        let dimension = safe_usize_to_scalar(D).expect("test dimensions should convert exactly");
         let point_index_scalar =
-            safe_usize_to_scalar::<f64>(point_index).expect("point index should convert exactly");
+            safe_usize_to_scalar(point_index).expect("point index should convert exactly");
         let mut coords = [0.2 / dimension; D];
         let axis = point_index % D;
         coords[axis] += point_index_scalar.mul_add(0.005, 0.02);
-        vertex!(coords)
+        crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap()
     }
 
     fn incident_simplex_count<const D: usize>(
@@ -935,7 +936,7 @@ mod tests {
         let simplex_count_before = dt.number_of_simplices();
         let hint_simplex_before = dt.simplices().next().map(|(key, _)| key);
         dt.insertion_state.last_inserted_simplex = hint_simplex_before;
-        let mut spatial_index = HashGridIndex::<f64, D>::try_new(1.0).unwrap();
+        let mut spatial_index = HashGridIndex::<D>::try_new(1.0).unwrap();
         for (vertex_key, vertex) in dt.vertices() {
             spatial_index.insert_vertex(vertex_key, vertex.point().coords());
         }
@@ -944,7 +945,7 @@ mod tests {
         let spatial_index_before = dt
             .spatial_index
             .as_ref()
-            .map(HashGridIndex::<f64, D>::debug_snapshot);
+            .map(HashGridIndex::<D>::debug_snapshot);
 
         let _guard = ForceRepairNonconvergentGuard::enable();
         let result = dt.remove_vertex(vertex_key);
@@ -977,7 +978,7 @@ mod tests {
         assert_eq!(
             dt.spatial_index
                 .as_ref()
-                .map(HashGridIndex::<f64, D>::debug_snapshot),
+                .map(HashGridIndex::<D>::debug_snapshot),
             spatial_index_before,
             "remove_vertex rollback should restore spatial_index"
         );
@@ -1106,11 +1107,11 @@ mod tests {
     #[test]
     fn test_remove_vertex_fast_path_inverse_k1() {
         init_tracing();
-        let vertices: Vec<Vertex<f64, (), 3>> = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+        let vertices: Vec<Vertex<(), 3>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
@@ -1120,7 +1121,8 @@ mod tests {
         let original_simplex_count = dt.number_of_simplices();
 
         let simplex_key = dt.simplices().next().unwrap().0;
-        let inserted_vertex = vertex!([0.2, 0.2, 0.2]);
+        let inserted_vertex =
+            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2]).unwrap();
         let inserted_uuid = inserted_vertex.uuid();
         dt.flip_k1_insert(simplex_key, inserted_vertex).unwrap();
 
@@ -1146,18 +1148,20 @@ mod tests {
     #[test]
     fn remove_vertex_invalidates_locate_hint_and_prunes_spatial_index() {
         init_tracing();
-        let vertices: Vec<Vertex<f64, (), 2>> = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+        let vertices: Vec<Vertex<(), 2>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
-        let vertex_key = dt.insert(vertex!([0.25, 0.25])).unwrap();
+        let vertex_key = dt
+            .insert(crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.25]).unwrap())
+            .unwrap();
         let hint_simplex = dt.simplices().next().map(|(key, _)| key);
         dt.insertion_state.last_inserted_simplex = hint_simplex;
-        let mut spatial_index = HashGridIndex::<f64, 2>::try_new(1.0).unwrap();
+        let mut spatial_index = HashGridIndex::<2>::try_new(1.0).unwrap();
         for (vertex_key, vertex) in dt.vertices() {
             spatial_index.insert_vertex(vertex_key, vertex.point().coords());
         }
@@ -1189,9 +1193,9 @@ mod tests {
     fn test_insert_single_interior_point_2d() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
@@ -1200,7 +1204,9 @@ mod tests {
         assert_eq!(dt.number_of_vertices(), 3);
         assert_eq!(dt.number_of_simplices(), 1);
 
-        let v_key = dt.insert(vertex!([0.3, 0.3])).unwrap();
+        let v_key = dt
+            .insert(crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.3]).unwrap())
+            .unwrap();
 
         // Verify insertion succeeded
         assert_eq!(dt.number_of_vertices(), 4);
@@ -1214,22 +1220,25 @@ mod tests {
     fn test_insert_multiple_sequential_points_2d() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
         // Insert 3 interior points sequentially
-        dt.insert(vertex!([0.3, 0.3])).unwrap();
+        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.3]).unwrap())
+            .unwrap();
         assert_eq!(dt.number_of_vertices(), 4);
 
-        dt.insert(vertex!([0.5, 0.2])).unwrap();
+        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.2]).unwrap())
+            .unwrap();
         assert_eq!(dt.number_of_vertices(), 5);
 
-        dt.insert(vertex!([0.2, 0.5])).unwrap();
+        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.5]).unwrap())
+            .unwrap();
         assert_eq!(dt.number_of_vertices(), 6);
 
         // All vertices should be present
@@ -1240,23 +1249,26 @@ mod tests {
     fn test_insert_multiple_sequential_points_3d() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
         // Insert 3 interior points sequentially (well inside the tetrahedron)
-        dt.insert(vertex!([0.1, 0.1, 0.1])).unwrap();
+        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.1, 0.1, 0.1]).unwrap())
+            .unwrap();
         assert_eq!(dt.number_of_vertices(), 5);
 
-        dt.insert(vertex!([0.15, 0.15, 0.1])).unwrap();
+        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.15, 0.15, 0.1]).unwrap())
+            .unwrap();
         assert_eq!(dt.number_of_vertices(), 6);
 
-        dt.insert(vertex!([0.1, 0.15, 0.15])).unwrap();
+        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.1, 0.15, 0.15]).unwrap())
+            .unwrap();
         assert_eq!(dt.number_of_vertices(), 7);
 
         assert!(dt.number_of_simplices() > 1);
@@ -1266,9 +1278,9 @@ mod tests {
     fn test_insert_updates_last_inserted_simplex() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
@@ -1279,7 +1291,8 @@ mod tests {
         assert!(dt.insertion_state.last_inserted_simplex.is_none());
 
         // After insertion, should have a cached simplex
-        dt.insert(vertex!([0.3, 0.3])).unwrap();
+        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.3]).unwrap())
+            .unwrap();
         assert!(dt.insertion_state.last_inserted_simplex.is_some());
     }
 
@@ -1293,12 +1306,16 @@ mod tests {
         assert_eq!(dt.number_of_vertices(), 0);
 
         // Bootstrap with robust predicates
-        dt.insert(vertex!([0.0, 0.0, 0.0])).unwrap();
-        dt.insert(vertex!([1.0, 0.0, 0.0])).unwrap();
-        dt.insert(vertex!([0.0, 1.0, 0.0])).unwrap();
+        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap())
+            .unwrap();
+        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap())
+            .unwrap();
+        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap())
+            .unwrap();
         assert_eq!(dt.number_of_simplices(), 0); // Still bootstrapping
 
-        dt.insert(vertex!([0.0, 0.0, 1.0])).unwrap();
+        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap())
+            .unwrap();
         assert_eq!(dt.number_of_simplices(), 1); // Initial simplex created
 
         assert!(dt.is_valid().is_ok());
@@ -1309,16 +1326,16 @@ mod tests {
     #[test]
     fn test_maybe_repair_after_insertion_robust_fallback_on_forced_nonconvergent() {
         init_tracing();
-        let vertices: Vec<Vertex<f64, (), 2>> = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+        let vertices: Vec<Vertex<(), 2>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
         let _guard = ForceRepairNonconvergentGuard::enable();
-        let result = dt.insert(vertex!([0.5, 0.5]));
+        let result = dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap());
         let inserted_key = result
             .as_ref()
             .copied()
@@ -1342,50 +1359,88 @@ mod tests {
         assert!(dt.validate().is_ok());
     }
 
-    fn wedge_two_spheres_share_vertex_tds_2d() -> (Tds<f64, (), (), 2>, SimplexKey, SimplexKey) {
+    fn wedge_two_spheres_share_vertex_tds_2d() -> (Tds<(), (), 2>, SimplexKey, SimplexKey) {
         // Two closed 2D spheres (boundaries of tetrahedra) sharing one vertex are
         // pseudomanifold but not PL-manifold: the shared vertex has a disconnected link.
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            )
+            .unwrap();
 
         let incident = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
+            )
             .unwrap();
         let _ = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v3], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v3], None).unwrap(),
+            )
             .unwrap();
         let _ = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v2, v3], None).unwrap(),
+            )
             .unwrap();
         let nonincident = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v1, v2, v3], None).unwrap(),
+            )
             .unwrap();
 
         let v4 = tds
-            .insert_vertex_with_mapping(vertex!([10.0, 10.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([10.0, 10.0]).unwrap(),
+            )
             .unwrap();
         let v5 = tds
-            .insert_vertex_with_mapping(vertex!([11.0, 10.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([11.0, 10.0]).unwrap(),
+            )
             .unwrap();
         let v6 = tds
-            .insert_vertex_with_mapping(vertex!([10.0, 11.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([10.0, 11.0]).unwrap(),
+            )
             .unwrap();
 
         let _ = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v4, v5], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v4, v5], None).unwrap(),
+            )
             .unwrap();
         let _ = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v4, v6], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v4, v6], None).unwrap(),
+            )
             .unwrap();
         let _ = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v5, v6], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v5, v6], None).unwrap(),
+            )
             .unwrap();
         let _ = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v4, v5, v6], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v4, v5, v6], None).unwrap(),
+            )
             .unwrap();
 
         (tds, incident, nonincident)
@@ -1394,11 +1449,11 @@ mod tests {
     #[test]
     fn test_collect_local_repair_seed_simplices_merges_adjacent_extra_and_ignores_stale() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-            vertex!([1.0, 1.0]),
-            vertex!([0.5, 0.5]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();

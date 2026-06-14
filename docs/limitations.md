@@ -66,11 +66,11 @@ Euclidean construction is the default and best-covered path.
 
 Toroidal support has two modes:
 
-- `.canonicalized_toroidal([..])` canonicalizes vertices into the fundamental domain, then
+- `.try_canonicalized_toroidal([..])` canonicalizes vertices into the fundamental domain, then
   builds the Euclidean Delaunay triangulation of the wrapped point set. It does
   not identify opposite boundary facets. The 2D and 3D canonical toroidal
   construction paths are part of routine release coverage.
-- `.toroidal([..])` uses the 3^D image-point method to construct a
+- `.try_toroidal([..])` uses the 3^D image-point method to construct a
   true periodic quotient with rewired neighbor pointers. This path is release
   covered in 2D and compact 3D, where periodic triangulations validate as
   closed tori through Levels 1-4. 4D/5D periodic construction fails fast until

@@ -6,7 +6,7 @@
 
 use delaunay::flips::FacetHandle;
 use delaunay::prelude::construction::{
-    DelaunayRepairPolicy, DelaunayTriangulation, TopologyGuarantee, vertex,
+    DelaunayRepairPolicy, DelaunayTriangulation, TopologyGuarantee,
 };
 use delaunay::prelude::flips::BistellarFlips;
 use delaunay::prelude::repair::DelaunayRepairHeuristicConfig;
@@ -46,10 +46,10 @@ macro_rules! test_debug_info {
 fn repair_fallback_produces_valid_triangulation() {
     init_tracing();
     let vertices = vec![
-        vertex!([0.0, 0.0]),
-        vertex!([4.0, 0.0]),
-        vertex!([4.0, 2.0]),
-        vertex!([1.0, 2.0]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([4.0, 0.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([4.0, 2.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
         DelaunayTriangulation::new_with_topology_guarantee(
@@ -64,7 +64,10 @@ fn repair_fallback_produces_valid_triangulation() {
             for (index, neighbor) in neighbors.enumerate() {
                 if neighbor.is_some() {
                     let facet_index = u8::try_from(index).expect("2D facet index fits in u8");
-                    candidate_facets.push(FacetHandle::new(simplex_key, facet_index));
+                    candidate_facets.push(
+                        FacetHandle::try_new(dt.tds(), simplex_key, facet_index)
+                            .expect("interior facet index should be valid"),
+                    );
                 }
             }
         }
@@ -114,13 +117,13 @@ fn incremental_insertion_with_repair_fallback() {
 
     // Insert vertices that might trigger repair challenges
     let test_vertices = vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([2.0, 0.0, 0.0]),
-        vertex!([1.0, 2.0, 0.0]),
-        vertex!([1.0, 0.5, 1.5]),
-        vertex!([1.0, 0.5, 0.5]), // Interior point
-        vertex!([0.8, 0.8, 0.8]), // Another interior point
-        vertex!([1.2, 0.6, 0.7]), // Close to existing
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0, 0.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.5, 1.5]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.5, 0.5]).unwrap(), // Interior point
+        delaunay::prelude::Vertex::<(), _>::try_new([0.8, 0.8, 0.8]).unwrap(), // Another interior point
+        delaunay::prelude::Vertex::<(), _>::try_new([1.2, 0.6, 0.7]).unwrap(), // Close to existing
     ];
 
     for (i, vertex) in test_vertices.into_iter().enumerate() {
@@ -158,14 +161,14 @@ fn incremental_insertion_with_repair_fallback() {
 fn repair_fallback_2d() {
     // Use non-collinear points to avoid degeneracy
     let vertices = vec![
-        vertex!([0.0, 0.0]),
-        vertex!([4.0, 0.0]),
-        vertex!([2.0, 3.5]), // Non-collinear with first two
-        vertex!([0.5, 2.0]),
-        vertex!([3.5, 2.0]),
-        vertex!([1.5, 1.0]),
-        vertex!([2.5, 2.5]),
-        vertex!([1.0, 3.0]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([4.0, 0.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 3.5]).unwrap(), // Non-collinear with first two
+        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 2.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([3.5, 2.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([1.5, 1.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([2.5, 2.5]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 3.0]).unwrap(),
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 2> =
@@ -188,11 +191,11 @@ fn explicit_repair_call_validates_result() {
     init_tracing();
     // Build a triangulation
     let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
-        vertex!([0.5, 0.5, 0.5]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
     ];
 
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
@@ -225,10 +228,10 @@ fn explicit_repair_call_validates_result() {
 #[test]
 fn repair_policy_configuration_with_fallback() {
     let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
     ];
 
     // Test with different repair policies

@@ -2,7 +2,7 @@
 //!
 //! This module owns transactional vertex insertion, duplicate-coordinate
 //! detection, perturbation retry, conflict-region shaping, cavity insertion,
-//! and insertion telemetry for [`Triangulation`](crate::core::triangulation::Triangulation).
+//! and insertion telemetry for [`Triangulation`](crate::prelude::triangulation::Triangulation).
 
 use crate::core::algorithms::incremental_insertion::{
     CavityFillingError, CavityRepairStage, HullExtensionReason, InsertionError, extend_hull,
@@ -31,16 +31,13 @@ use crate::core::triangulation::Triangulation;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{
-    Coordinate, CoordinateConversionValue, CoordinateScalar, CoordinateValues,
-};
+use crate::geometry::traits::coordinate::{CoordinateValues, DEFAULT_TOLERANCE_F64};
 use crate::locality::{
     append_live_unique_simplex_seeds, collect_local_exterior_conflict_seed_simplices,
     replace_simplices_and_record_removed, retain_simplices_and_record_removed,
 };
 #[cfg(debug_assertions)]
 use crate::topology::manifold::validate_ridge_links;
-use num_traits::{Float, NumCast, One, Zero};
 use std::borrow::Cow;
 use std::env;
 use std::sync::{
@@ -183,6 +180,22 @@ fn cavity_conflict_error_summary(error: &ConflictError) -> String {
             message,
         } => {
             format!("simplex_data_access_failed simplex_key={simplex_key:?} message={message}")
+        }
+        ConflictError::InvalidSimplexArity {
+            simplex_key,
+            expected,
+            found,
+        } => {
+            format!(
+                "invalid_simplex_arity simplex_key={simplex_key:?} expected={expected} \
+                 found={found}"
+            )
+        }
+        ConflictError::MissingSimplexVertex {
+            simplex_key,
+            vertex_key,
+        } => {
+            format!("missing_simplex_vertex simplex_key={simplex_key:?} vertex_key={vertex_key:?}")
         }
         ConflictError::InternalInconsistency { site } => {
             format!("internal_inconsistency site={site}")
@@ -365,8 +378,7 @@ pub(crate) struct DetailedInsertionResult {
 
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
 where
-    K: Kernel<D>,
-    K::Scalar: NumCast,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -429,11 +441,11 @@ where
     /// their local repair frontier without changing the public insertion API.
     pub(crate) fn insert_with_statistics_seeded_indexed_detailed(
         &mut self,
-        vertex: Vertex<K::Scalar, U, D>,
+        vertex: Vertex<U, D>,
         conflict_simplices: Option<&SimplexKeyBuffer>,
         hint: Option<SimplexKey>,
         perturbation_seed: u64,
-        index: Option<&mut HashGridIndex<K::Scalar, D>>,
+        index: Option<&mut HashGridIndex<D>>,
         bulk_index: Option<usize>,
     ) -> Result<DetailedInsertionResult, InsertionError> {
         self.insert_with_statistics_seeded_indexed_detailed_with_telemetry(
@@ -458,11 +470,11 @@ where
     )]
     pub(crate) fn insert_with_statistics_seeded_indexed_detailed_with_telemetry(
         &mut self,
-        vertex: Vertex<K::Scalar, U, D>,
+        vertex: Vertex<U, D>,
         conflict_simplices: Option<&SimplexKeyBuffer>,
         hint: Option<SimplexKey>,
         perturbation_seed: u64,
-        index: Option<&mut HashGridIndex<K::Scalar, D>>,
+        index: Option<&mut HashGridIndex<D>>,
         bulk_index: Option<usize>,
         telemetry_mode: InsertionTelemetryMode,
     ) -> Result<DetailedInsertionResult, InsertionError> {
@@ -490,12 +502,12 @@ where
     )]
     fn insert_transactional_detailed(
         &mut self,
-        vertex: Vertex<K::Scalar, U, D>,
+        vertex: Vertex<U, D>,
         conflict_simplices: Option<&SimplexKeyBuffer>,
         hint: Option<SimplexKey>,
         max_perturbation_attempts: usize,
         perturbation_seed: u64,
-        mut index: Option<&mut HashGridIndex<K::Scalar, D>>,
+        mut index: Option<&mut HashGridIndex<D>>,
         bulk_index: Option<usize>,
         telemetry_mode: InsertionTelemetryMode,
     ) -> Result<DetailedInsertionResult, InsertionError> {
@@ -504,10 +516,6 @@ where
         let original_coords = *vertex.point().coords();
         let original_uuid = vertex.uuid();
         let mut current_vertex = vertex;
-        // Preserve the last retryable failure so an exhausted perturbation loop can
-        // explain why the vertex was skipped instead of reporting a generic error.
-        let mut last_retryable_error: Option<InsertionError> = None;
-
         // Reuse the caller's spatial index as a locate-hint source when batch insertion did
         // not already provide a better hint. This keeps retries and bulk runs on the same
         // point-location path.
@@ -526,12 +534,8 @@ where
             self.estimate_duplicate_coordinate_tolerance(&original_coords, hint);
         self.ensure_duplicate_index_cell_size(index.as_deref_mut(), duplicate_tolerance);
 
-        // Base perturbation epsilon: ≈ √machine_epsilon for the scalar type.
-        let epsilon_value: f64 = if K::Scalar::mantissa_digits() <= 24 {
-            1e-4
-        } else {
-            1e-8
-        };
+        // Base perturbation epsilon: ≈ √machine_epsilon for f64.
+        let epsilon_value: f64 = 1e-8;
 
         for attempt in 0..=max_perturbation_attempts {
             stats.attempts = attempt + 1;
@@ -550,33 +554,15 @@ where
                     reason = "attempt is at most DEFAULT_PERTURBATION_RETRIES (3), fits in i32"
                 )]
                 let scale_factor = 10.0_f64.powi(attempt as i32);
-                let Some(epsilon) = <K::Scalar as NumCast>::from(epsilon_value * scale_factor)
-                else {
-                    // We failed to convert the perturbation scale into the scalar type.
-                    //
-                    // This should not happen for the supported scalar type (`f64`), but if it
-                    // does (e.g. with a custom scalar), we degrade gracefully by skipping this vertex
-                    // rather than aborting the whole insertion.
-                    stats.result = InsertionResult::SkippedDegeneracy;
-                    let error = last_retryable_error.unwrap_or_else(|| {
-                        CavityFillingError::PerturbationScaleConversion {
-                            value: CoordinateConversionValue::from_f64(epsilon_value),
-                        }
-                        .into()
-                    });
-                    return Ok(DetailedInsertionResult {
-                        outcome: InsertionOutcome::Skipped { error },
-                        stats,
-                        telemetry,
-                        repair_seed_simplices: SimplexKeyBuffer::new(),
-                        delaunay_repair_required: false,
-                    });
-                };
+                let epsilon = epsilon_value * scale_factor;
 
                 let perturbation_scale = epsilon * local_scale;
                 for (idx, coord) in perturbed_coords.iter_mut().enumerate() {
-                    let coord_scale =
-                        <K::Scalar as NumCast>::from(idx + 1).unwrap_or_else(K::Scalar::one);
+                    #[expect(
+                        clippy::cast_precision_loss,
+                        reason = "D is a const-generic triangulation dimension and practical dimensions are tiny"
+                    )]
+                    let coord_scale = (idx + 1) as f64;
                     let signed_perturbation = if perturbation_seed == 0 {
                         if (attempt + idx) % 2 == 0 {
                             perturbation_scale
@@ -599,8 +585,10 @@ where
                 // Preserve the caller-provided vertex UUID across perturbation retries.
                 // This ensures the inserted vertex retains its original identity even if we have
                 // to retry with perturbed coordinates.
+                let perturbed_point = Point::try_new(perturbed_coords)
+                    .map_err(|source| InsertionError::PerturbedCoordinateInvalid { source })?;
                 current_vertex =
-                    Vertex::new_with_uuid(Point::new(perturbed_coords), original_uuid, vertex.data);
+                    Vertex::new_with_uuid(perturbed_point, original_uuid, current_vertex.data);
             }
 
             // Duplicate coordinate detection uses the hash grid when available; otherwise it
@@ -740,7 +728,6 @@ where
                     }
 
                     if is_retryable && attempt < max_perturbation_attempts {
-                        last_retryable_error = Some(e.clone());
                         #[cfg(debug_assertions)]
                         tracing::debug!(
                             "RETRYING: Attempt {} failed with: {e}. Applying perturbation...",
@@ -790,10 +777,10 @@ where
 
     fn select_locate_hint_from_hash_grid(
         &self,
-        coords: &[K::Scalar; D],
-        index: &HashGridIndex<K::Scalar, D>,
+        coords: &[f64; D],
+        index: &HashGridIndex<D>,
     ) -> Option<SimplexKey> {
-        let mut best: Option<(K::Scalar, SimplexKey)> = None;
+        let mut best: Option<(f64, SimplexKey)> = None;
 
         index.for_each_candidate_vertex_key(coords, |vkey| {
             let Some(vertex) = self.tds.vertex(vkey) else {
@@ -809,10 +796,10 @@ where
             }
 
             let vcoords = vertex.point().coords();
-            let mut dist_sq = K::Scalar::zero();
+            let mut dist_sq = 0.0;
             for i in 0..D {
                 let diff = vcoords[i] - coords[i];
-                dist_sq += diff * diff;
+                dist_sq = diff.mul_add(diff, dist_sq);
             }
 
             match best {
@@ -828,23 +815,18 @@ where
         best.map(|(_, simplex_key)| simplex_key)
     }
 
-    /// Chooses the relative duplicate-coordinate tolerance for the scalar precision.
-    fn duplicate_relative_tolerance() -> K::Scalar {
-        let value = if K::Scalar::mantissa_digits() <= 24 {
-            1e-6_f64
-        } else {
-            1e-10_f64
-        };
-        <K::Scalar as NumCast>::from(value).unwrap_or_else(K::Scalar::default_tolerance)
+    /// Returns the f64 relative tolerance used for duplicate-coordinate detection.
+    const fn duplicate_relative_tolerance() -> f64 {
+        1e-10_f64
     }
 
     /// Keeps duplicate-scale estimates tied to existing geometry rather than
     /// hard-coding a scalar-unit epsilon.
     fn include_duplicate_scale_reference(
-        point_coords: &[K::Scalar; D],
-        axis_min: &mut [K::Scalar; D],
-        axis_max: &mut [K::Scalar; D],
-        magnitude_scale: &mut K::Scalar,
+        point_coords: &[f64; D],
+        axis_min: &mut [f64; D],
+        axis_max: &mut [f64; D],
+        magnitude_scale: &mut f64,
         saw_reference: &mut bool,
     ) {
         *saw_reference = true;
@@ -868,12 +850,12 @@ where
     /// a small ULP-scaled floor for translated coordinate systems.
     fn estimate_duplicate_coordinate_tolerance(
         &self,
-        coords: &[K::Scalar; D],
+        coords: &[f64; D],
         hint: Option<SimplexKey>,
-    ) -> K::Scalar {
+    ) -> f64 {
         let mut axis_min = *coords;
         let mut axis_max = *coords;
-        let mut magnitude_scale = K::Scalar::zero();
+        let mut magnitude_scale = 0.0;
         let mut saw_reference = false;
         let mut local_feature_scale = None;
 
@@ -902,7 +884,7 @@ where
 
         if !saw_reference {
             let local_scale = self.estimate_local_perturbation_scale(coords, None);
-            if local_scale.is_finite() && local_scale > K::Scalar::zero() {
+            if local_scale.is_finite() && local_scale > 0.0 {
                 if local_scale > magnitude_scale {
                     magnitude_scale = local_scale;
                 }
@@ -911,23 +893,22 @@ where
         }
 
         let feature_scale = local_feature_scale.unwrap_or_else(|| {
-            let mut span_sq = K::Scalar::zero();
+            let mut span_sq = 0.0;
             for i in 0..D {
                 let span = axis_max[i] - axis_min[i];
-                span_sq += span * span;
+                span_sq = span.mul_add(span, span_sq);
             }
             span_sq.sqrt()
         });
         let relative_tolerance = Self::duplicate_relative_tolerance() * feature_scale;
-        let ulp_factor = <K::Scalar as NumCast>::from(16.0_f64).unwrap_or_else(K::Scalar::one);
-        let ulp_tolerance = K::Scalar::epsilon() * ulp_factor * magnitude_scale;
+        let ulp_tolerance = f64::EPSILON * 16.0 * magnitude_scale;
         let mut tolerance = if relative_tolerance > ulp_tolerance {
             relative_tolerance
         } else {
             ulp_tolerance
         };
 
-        if !tolerance.is_finite() || tolerance <= K::Scalar::zero() {
+        if !tolerance.is_finite() || tolerance <= 0.0 {
             tolerance = Self::duplicate_relative_tolerance();
         }
 
@@ -938,16 +919,13 @@ where
     /// the current grid cell size, preserving complete candidate coverage.
     fn ensure_duplicate_index_cell_size(
         &self,
-        index: Option<&mut HashGridIndex<K::Scalar, D>>,
-        tolerance: K::Scalar,
+        index: Option<&mut HashGridIndex<D>>,
+        tolerance: f64,
     ) {
         let Some(index) = index else {
             return;
         };
-        if !HashGridIndex::<K::Scalar, D>::supports_dimension()
-            || !tolerance.is_finite()
-            || tolerance <= K::Scalar::zero()
-        {
+        if !HashGridIndex::<D>::supports_dimension() || !tolerance.is_finite() || tolerance <= 0.0 {
             return;
         }
         if index.cell_size() >= tolerance {
@@ -965,7 +943,7 @@ where
 
     /// Compares a squared distance against the duplicate tolerance without
     /// overflowing the tolerance square on extreme coordinate scales.
-    fn duplicate_distance_within_tolerance(dist_sq: K::Scalar, tolerance: K::Scalar) -> bool {
+    fn duplicate_distance_within_tolerance(dist_sq: f64, tolerance: f64) -> bool {
         let tolerance_sq = tolerance * tolerance;
         if tolerance_sq.is_finite() {
             dist_sq <= tolerance_sq
@@ -978,9 +956,9 @@ where
     /// linear-scan fallback (O(n·D) per insertion) if the index is unavailable/unusable.
     fn duplicate_coordinates_error(
         &self,
-        coords: &[K::Scalar; D],
-        tolerance: K::Scalar,
-        index: Option<&HashGridIndex<K::Scalar, D>>,
+        coords: &[f64; D],
+        tolerance: f64,
+        index: Option<&HashGridIndex<D>>,
     ) -> Option<InsertionError> {
         let mut duplicate_found = false;
         let make_duplicate_error = || {
@@ -999,10 +977,10 @@ where
                 };
 
                 let vcoords = vertex.point().coords();
-                let mut dist_sq = K::Scalar::zero();
+                let mut dist_sq = 0.0;
                 for i in 0..D {
                     let diff = vcoords[i] - coords[i];
-                    dist_sq += diff * diff;
+                    dist_sq = diff.mul_add(diff, dist_sq);
                 }
 
                 if Self::duplicate_distance_within_tolerance(dist_sq, tolerance) {
@@ -1027,10 +1005,10 @@ where
 
         for (_, existing_vertex) in self.tds.vertices() {
             let existing_coords = existing_vertex.point().coords();
-            let mut dist_sq = K::Scalar::zero();
+            let mut dist_sq = 0.0;
             for i in 0..D {
                 let diff = coords[i] - existing_coords[i];
-                dist_sq += diff * diff;
+                dist_sq = diff.mul_add(diff, dist_sq);
             }
 
             if Self::duplicate_distance_within_tolerance(dist_sq, tolerance) {
@@ -1053,18 +1031,17 @@ where
     /// proportional to local feature size.
     fn estimate_local_perturbation_scale(
         &self,
-        coords: &[K::Scalar; D],
+        coords: &[f64; D],
         hint: Option<SimplexKey>,
-    ) -> K::Scalar {
-        let mut min_dist_sq: Option<K::Scalar> = None;
+    ) -> f64 {
+        let mut min_dist_sq: Option<f64> = None;
 
-        let consider_vertex = |vertex: &Vertex<K::Scalar, U, D>,
-                               min_dist_sq: &mut Option<K::Scalar>| {
+        let consider_vertex = |vertex: &Vertex<U, D>, min_dist_sq: &mut Option<f64>| {
             let vcoords = vertex.point().coords();
-            let mut dist_sq = K::Scalar::zero();
+            let mut dist_sq = 0.0;
             for i in 0..D {
                 let diff = vcoords[i] - coords[i];
-                dist_sq += diff * diff;
+                dist_sq = diff.mul_add(diff, dist_sq);
             }
             match min_dist_sq {
                 Some(current) => {
@@ -1094,9 +1071,9 @@ where
             }
         }
 
-        let mut scale = min_dist_sq.map_or_else(K::Scalar::one, num_traits::Float::sqrt);
+        let mut scale = min_dist_sq.map_or(1.0, f64::sqrt);
 
-        let min_scale = K::Scalar::default_tolerance();
+        let min_scale = DEFAULT_TOLERANCE_F64;
         if scale < min_scale {
             scale = min_scale;
         }
@@ -1112,11 +1089,11 @@ where
     )]
     fn try_insert_with_topology_safety_net(
         &mut self,
-        vertex: Vertex<K::Scalar, U, D>,
+        vertex: Vertex<U, D>,
         conflict_simplices: Option<&SimplexKeyBuffer>,
         hint: Option<SimplexKey>,
         attempt: usize,
-        tds_snapshot: &Tds<K::Scalar, U, V, D>,
+        tds_snapshot: &Tds<U, V, D>,
         telemetry: &mut InsertionTelemetry,
         telemetry_mode: InsertionTelemetryMode,
     ) -> Result<TryInsertImplOk, InsertionError> {
@@ -1165,7 +1142,7 @@ where
     /// - We re-run Level 3 validation after the fallback to avoid "recovering" into an invalid state.
     fn try_star_split_fallback_after_topology_failure(
         &mut self,
-        vertex: Vertex<K::Scalar, U, D>,
+        vertex: Vertex<U, D>,
         hint: Option<SimplexKey>,
         attempt: usize,
         validation_err: InvariantError,
@@ -1256,7 +1233,7 @@ where
     fn star_split_boundary_facets(start_simplex: SimplexKey) -> CavityBoundaryBuffer {
         (0..=D)
             .map(|i| {
-                FacetHandle::new(
+                FacetHandle::from_validated(
                     start_simplex,
                     u8::try_from(i).expect("facet index must fit in u8"),
                 )
@@ -1490,7 +1467,7 @@ where
     fn insert_with_conflict_region(
         &mut self,
         v_key: VertexKey,
-        point: &Point<K::Scalar, D>,
+        point: &Point<D>,
         mut conflict_simplices: SimplexKeyBuffer,
         fallback_simplex: Option<SimplexKey>,
         suspicion: &mut SuspicionFlags,
@@ -1963,7 +1940,7 @@ where
 
     fn collect_exterior_repair_seed_simplices(
         &self,
-        point: &Point<K::Scalar, D>,
+        point: &Point<D>,
         terminal_simplex: SimplexKey,
         locate_stats: &LocateStats,
         telemetry_mode: InsertionTelemetryMode,
@@ -2004,7 +1981,7 @@ where
     )]
     fn try_insert_impl(
         &mut self,
-        vertex: Vertex<K::Scalar, U, D>,
+        vertex: Vertex<U, D>,
         conflict_simplices: Option<&SimplexKeyBuffer>,
         hint: Option<SimplexKey>,
         telemetry: &mut InsertionTelemetry,
@@ -2685,14 +2662,13 @@ mod tests {
     use crate::core::algorithms::locate::InternalInconsistencySite;
     use crate::core::collections::spatial_hash_grid::HashGridIndex;
     use crate::core::simplex::Simplex;
-    use crate::core::vertex::VertexBuilder;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::{
-        Coordinate, CoordinateConversionError, CoordinateConversionValue, CoordinateScalar,
+        CoordinateConversionError, CoordinateConversionValue, DEFAULT_TOLERANCE_F64,
+        F64_MANTISSA_DIGITS,
     };
     use crate::triangulation::DelaunayTriangulation;
-    use crate::vertex;
     use std::assert_matches;
 
     use slotmap::KeyData;
@@ -2727,13 +2703,12 @@ mod tests {
 
     fn insert<K, U, V, const D: usize>(
         tri: &mut Triangulation<K, U, V, D>,
-        vertex: Vertex<K::Scalar, U, D>,
+        vertex: Vertex<U, D>,
         conflict_simplices: Option<&SimplexKeyBuffer>,
         hint: Option<SimplexKey>,
     ) -> Result<(VertexKey, Option<SimplexKey>), InsertionError>
     where
-        K: Kernel<D>,
-        K::Scalar: NumCast,
+        K: Kernel<D, Scalar = f64>,
         U: DataType,
         V: DataType,
     {
@@ -2755,13 +2730,12 @@ mod tests {
 
     fn insert_with_statistics<K, U, V, const D: usize>(
         tri: &mut Triangulation<K, U, V, D>,
-        vertex: Vertex<K::Scalar, U, D>,
+        vertex: Vertex<U, D>,
         conflict_simplices: Option<&SimplexKeyBuffer>,
         hint: Option<SimplexKey>,
     ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError>
     where
-        K: Kernel<D>,
-        K::Scalar: NumCast,
+        K: Kernel<D, Scalar = f64>,
         U: DataType,
         V: DataType,
     {
@@ -2783,17 +2757,16 @@ mod tests {
     )]
     fn insert_transactional<K, U, V, const D: usize>(
         tri: &mut Triangulation<K, U, V, D>,
-        vertex: Vertex<K::Scalar, U, D>,
+        vertex: Vertex<U, D>,
         conflict_simplices: Option<&SimplexKeyBuffer>,
         hint: Option<SimplexKey>,
         max_perturbation_attempts: usize,
         perturbation_seed: u64,
-        index: Option<&mut HashGridIndex<K::Scalar, D>>,
+        index: Option<&mut HashGridIndex<D>>,
         bulk_index: Option<usize>,
     ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError>
     where
-        K: Kernel<D>,
-        K::Scalar: NumCast,
+        K: Kernel<D, Scalar = f64>,
         U: DataType,
         V: DataType,
     {
@@ -3005,25 +2978,25 @@ mod tests {
         assert!(after.grid_candidates >= before.grid_candidates + 3);
     }
 
-    fn unit_simplex_vertices<const D: usize>() -> Vec<Vertex<f64, (), D>> {
+    fn unit_simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
         let mut vertices = Vec::with_capacity(D + 1);
-        vertices.push(vertex!([0.0_f64; D]));
+        vertices.push(crate::core::vertex::Vertex::<(), _>::try_new([0.0_f64; D]).unwrap());
         for axis in 0..D {
             let mut coords = [0.0_f64; D];
             coords[axis] = 1.0;
-            vertices.push(vertex!(coords));
+            vertices.push(crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap());
         }
         vertices
     }
 
     /// Build a simplex whose feature length is controlled by one shared axis scale.
-    fn axis_scaled_simplex_vertices<const D: usize>(scale: f64) -> Vec<Vertex<f64, (), D>> {
+    fn axis_scaled_simplex_vertices<const D: usize>(scale: f64) -> Vec<Vertex<(), D>> {
         let mut vertices = Vec::with_capacity(D + 1);
-        vertices.push(vertex!([0.0_f64; D]));
+        vertices.push(crate::core::vertex::Vertex::<(), _>::try_new([0.0_f64; D]).unwrap());
         for axis in 0..D {
             let mut coords = [0.0_f64; D];
             coords[axis] = scale;
-            vertices.push(vertex!(coords));
+            vertices.push(crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap());
         }
         vertices
     }
@@ -3038,16 +3011,16 @@ mod tests {
     #[test]
     fn test_select_locate_hint_from_hash_grid_returns_incident_simplex() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
         let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
         let simplex_key = tri.tds.simplex_keys().next().unwrap();
 
-        let mut index: HashGridIndex<f64, 2> = HashGridIndex::try_new(1.0).unwrap();
+        let mut index: HashGridIndex<2> = HashGridIndex::try_new(1.0).unwrap();
         for (vkey, vertex) in tri.tds.vertices() {
             index.insert_vertex(vkey, vertex.point().coords());
         }
@@ -3062,14 +3035,16 @@ mod tests {
             Triangulation::new_empty(FastKernel::new());
         let vkey = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         {
             let vertex = tri.tds.vertex_mut(vkey).unwrap();
             vertex.set_incident_simplex(Some(SimplexKey::default()));
         }
 
-        let mut index: HashGridIndex<f64, 2> = HashGridIndex::try_new(1.0).unwrap();
+        let mut index: HashGridIndex<2> = HashGridIndex::try_new(1.0).unwrap();
         index.insert_vertex(vkey, &[0.0, 0.0]);
 
         let hint = tri.select_locate_hint_from_hash_grid(&[0.0, 0.0], &index);
@@ -3082,10 +3057,12 @@ mod tests {
             Triangulation::new_empty(FastKernel::new());
         let vkey = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
             .unwrap();
 
-        let mut index: HashGridIndex<f64, 2> = HashGridIndex::try_new(1.0).unwrap();
+        let mut index: HashGridIndex<2> = HashGridIndex::try_new(1.0).unwrap();
         index.insert_vertex(vkey, &[0.0, 0.0]);
 
         let tol = 1e-10_f64;
@@ -3099,10 +3076,12 @@ mod tests {
             Triangulation::new_empty(FastKernel::new());
         let _ = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
             .unwrap();
 
-        let mut index: HashGridIndex<f64, 2> = HashGridIndex::try_new(1.0).unwrap();
+        let mut index: HashGridIndex<2> = HashGridIndex::try_new(1.0).unwrap();
         index.remove_vertex(&VertexKey::default(), &[f64::NAN, 0.0]);
         let tol = 1e-10_f64;
         let err = tri.duplicate_coordinates_error(&[0.0, 0.0], tol, Some(&index));
@@ -3114,7 +3093,10 @@ mod tests {
             Triangulation::new_empty(FastKernel::new());
         let _ = tri
             .tds
-            .insert_vertex_with_mapping(vertex!(coords_with_first::<D>(1.0e-6)))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new(coords_with_first::<D>(1.0e-6))
+                    .unwrap(),
+            )
             .unwrap();
 
         let candidate = coords_with_first::<D>(1.0e-6 + 1.0e-11);
@@ -3158,7 +3140,7 @@ mod tests {
         let hint = tri.tds.simplex_keys().next();
         let candidate = [1.0_f64; D];
         let tolerance = tri.estimate_duplicate_coordinate_tolerance(&candidate, hint);
-        let mut index: HashGridIndex<f64, D> = HashGridIndex::try_new(1.0e-10).unwrap();
+        let mut index: HashGridIndex<D> = HashGridIndex::try_new(1.0e-10).unwrap();
         for (vkey, vertex) in tri.tds.vertices() {
             index.insert_vertex(vkey, vertex.point().coords());
         }
@@ -3216,9 +3198,9 @@ mod tests {
     #[test]
     fn test_estimate_local_perturbation_scale_uses_hint_simplex_vertices() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
@@ -3235,11 +3217,13 @@ mod tests {
             Triangulation::new_empty(FastKernel::new());
         let _ = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
             .unwrap();
 
         let scale = tri.estimate_local_perturbation_scale(&[0.0, 0.0], None);
-        let min_scale = <f64 as CoordinateScalar>::default_tolerance();
+        let min_scale = DEFAULT_TOLERANCE_F64;
         approx::assert_abs_diff_eq!(scale, min_scale, epsilon = f64::EPSILON);
     }
 
@@ -3249,17 +3233,33 @@ mod tests {
             Triangulation::new_empty(FastKernel::new());
 
         // First insertion succeeds.
-        insert(&mut tri, vertex!([0.0, 0.0, 0.0]), None, None)
-            .expect("first insertion should succeed");
+        insert(
+            &mut tri,
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            None,
+            None,
+        )
+        .expect("first insertion should succeed");
         assert_eq!(tri.number_of_vertices(), 1);
 
         // Second insertion at same coordinates: insert() returns Err; the internal
         // statistics helper reports Skipped so telemetry can classify the no-op.
-        let err = insert(&mut tri, vertex!([0.0, 0.0, 0.0]), None, None).unwrap_err();
+        let err = insert(
+            &mut tri,
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            None,
+            None,
+        )
+        .unwrap_err();
         assert_matches!(err, InsertionError::DuplicateCoordinates { .. });
 
-        let (outcome, stats) =
-            insert_with_statistics(&mut tri, vertex!([0.0, 0.0, 0.0]), None, None).unwrap();
+        let (outcome, stats) = insert_with_statistics(
+            &mut tri,
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
         assert!(stats.skipped());
         assert_matches!(outcome, InsertionOutcome::Skipped { .. });
 
@@ -3269,17 +3269,26 @@ mod tests {
 
     #[test]
     fn test_insert_duplicate_uuid_is_non_retryable_and_rolls_back() {
-        // Insert a vertex, then attempt to insert another vertex with the same UUID.
+        // Insert a then attempt to insert another vertex with the same UUID.
         let mut tri: Triangulation<FastKernel<f64>, (), (), 3> =
             Triangulation::new_empty(FastKernel::new());
 
-        insert(&mut tri, vertex!([0.0, 0.0, 0.0]), None, None)
-            .expect("first insertion should succeed");
+        insert(
+            &mut tri,
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            None,
+            None,
+        )
+        .expect("first insertion should succeed");
         assert_eq!(tri.number_of_vertices(), 1);
 
         let existing_uuid = tri.tds.vertices().next().unwrap().1.uuid();
-        let mut dup = vertex!([1.0, 0.0, 0.0]);
-        dup.set_uuid(existing_uuid).unwrap();
+        let dup = Vertex::try_new_with_uuid(
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            existing_uuid,
+            None,
+        )
+        .unwrap();
 
         let err = insert(&mut tri, dup, None, None).unwrap_err();
         assert!(
@@ -3301,8 +3310,13 @@ mod tests {
             Triangulation::new_empty(FastKernel::new());
 
         // Insert first vertex
-        let (outcome, stats) = insert_with_statistics(&mut tri, vertex!([0.0, 0.0]), None, None)
-            .expect("insertion should succeed");
+        let (outcome, stats) = insert_with_statistics(
+            &mut tri,
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            None,
+            None,
+        )
+        .expect("insertion should succeed");
 
         assert_matches!(outcome, InsertionOutcome::Inserted { hint: None, .. });
         assert_eq!(stats.attempts, 1);
@@ -3319,10 +3333,10 @@ mod tests {
 
         // Insert D+1 vertices to create initial simplex
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         for (i, v) in vertices.into_iter().enumerate() {
@@ -3355,13 +3369,19 @@ mod tests {
             [0.0, 1.0, 0.0],
             [0.0, 0.0, 1.0],
         ] {
-            insert_with_statistics(&mut tri, vertex!(coords), None, None).unwrap();
+            insert_with_statistics(
+                &mut tri,
+                crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap(),
+                None,
+                None,
+            )
+            .unwrap();
         }
 
         let hint = tri.simplices().next().map(|(simplex_key, _)| simplex_key);
         let detail = tri
             .insert_with_statistics_seeded_indexed_detailed(
-                vertex!([2.0, 2.0, 2.0]),
+                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 2.0, 2.0]).unwrap(),
                 None,
                 hint,
                 0,
@@ -3404,14 +3424,20 @@ mod tests {
             [0.0, 1.0, 0.0],
             [0.0, 0.0, 1.0],
         ] {
-            insert_with_statistics(&mut tri, vertex!(coords), None, None).unwrap();
+            insert_with_statistics(
+                &mut tri,
+                crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap(),
+                None,
+                None,
+            )
+            .unwrap();
         }
 
         let hint = tri.simplices().next().map(|(simplex_key, _)| simplex_key);
         let empty_conflicts = SimplexKeyBuffer::new();
         let detail = tri
             .insert_with_statistics_seeded_indexed_detailed(
-                vertex!([2.0, 2.0, 2.0]),
+                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 2.0, 2.0]).unwrap(),
                 Some(&empty_conflicts),
                 hint,
                 0,
@@ -3443,9 +3469,9 @@ mod tests {
     #[test]
     fn triangulation_caller_conflicts_do_not_force_delaunay_repair() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
@@ -3461,7 +3487,7 @@ mod tests {
         conflict_simplices.push(start_simplex);
         let detail = tri
             .insert_with_statistics_seeded_indexed_detailed(
-                vertex!([0.25, 0.25]),
+                crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.25]).unwrap(),
                 Some(&conflict_simplices),
                 Some(start_simplex),
                 0,
@@ -3489,14 +3515,24 @@ mod tests {
             if i > 0 {
                 coords[i - 1] = 1.0;
             }
-            insert_with_statistics(&mut tri, vertex!(coords), None, None).unwrap();
+            insert_with_statistics(
+                &mut tri,
+                crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap(),
+                None,
+                None,
+            )
+            .unwrap();
         }
 
         // Insert with explicit hint
         let hint_simplex = tri.simplices().next().map(|(key, _)| key);
-        let (outcome, stats) =
-            insert_with_statistics(&mut tri, vertex!([0.2, 0.2, 0.2, 0.2]), None, hint_simplex)
-                .unwrap();
+        let (outcome, stats) = insert_with_statistics(
+            &mut tri,
+            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2]).unwrap(),
+            None,
+            hint_simplex,
+        )
+        .unwrap();
 
         assert_matches!(outcome, InsertionOutcome::Inserted { hint: Some(_), .. });
         assert_eq!(stats.attempts, 1);
@@ -3509,10 +3545,21 @@ mod tests {
             Triangulation::new_empty(FastKernel::new());
 
         // Insert first vertex
-        insert_with_statistics(&mut tri, vertex!([1.0, 2.0, 3.0]), None, None).unwrap();
+        insert_with_statistics(
+            &mut tri,
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
 
         // Try duplicate - should be skipped
-        let result = insert_with_statistics(&mut tri, vertex!([1.0, 2.0, 3.0]), None, None);
+        let result = insert_with_statistics(
+            &mut tri,
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap(),
+            None,
+            None,
+        );
 
         assert_matches!(
             result,
@@ -3531,11 +3578,11 @@ mod tests {
             Triangulation::new_empty(FastKernel::new());
 
         let points = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.5, 1.0]),
-            vertex!([0.3, 0.3]),
-            vertex!([0.7, 0.3]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.3]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.7, 0.3]).unwrap(),
         ];
 
         let mut all_succeeded = true;
@@ -3564,8 +3611,13 @@ mod tests {
             Triangulation::new_empty(FastKernel::new());
 
         // Test Inserted variant
-        let (outcome, _) =
-            insert_with_statistics(&mut tri, vertex!([0.0, 0.0]), None, None).unwrap();
+        let (outcome, _) = insert_with_statistics(
+            &mut tri,
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
 
         match outcome {
             InsertionOutcome::Inserted { vertex_key, hint } => {
@@ -3589,8 +3641,13 @@ mod tests {
                 coords[i - 1] = 1.0;
             }
 
-            let (outcome, stats) =
-                insert_with_statistics(&mut tri, vertex!(coords), None, None).unwrap();
+            let (outcome, stats) = insert_with_statistics(
+                &mut tri,
+                crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap(),
+                None,
+                None,
+            )
+            .unwrap();
 
             assert_matches!(outcome, InsertionOutcome::Inserted { .. });
             assert_eq!(stats.attempts, 1);
@@ -3607,15 +3664,38 @@ mod tests {
             Triangulation::new_empty(FastKernel::new());
 
         // Build simplex
-        insert_with_statistics(&mut tri, vertex!([0.0, 0.0]), None, None).unwrap();
-        insert_with_statistics(&mut tri, vertex!([1.0, 0.0]), None, None).unwrap();
-        insert_with_statistics(&mut tri, vertex!([0.5, 1.0]), None, None).unwrap();
+        insert_with_statistics(
+            &mut tri,
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
+        insert_with_statistics(
+            &mut tri,
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
+        insert_with_statistics(
+            &mut tri,
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 1.0]).unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
 
         let simplices_before = tri.number_of_simplices();
 
         // Insert interior point - might trigger repair
-        let (_outcome, stats) =
-            insert_with_statistics(&mut tri, vertex!([0.5, 0.3]), None, None).unwrap();
+        let (_outcome, stats) = insert_with_statistics(
+            &mut tri,
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.3]).unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
 
         let simplices_after = tri.number_of_simplices();
 
@@ -3652,45 +3732,63 @@ mod tests {
         // Two triangles that share no vertices (→ DisconnectedBoundary on extraction).
         let v0 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v1 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v2 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.5, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 1.0]).unwrap(),
+            )
             .unwrap();
         let v3 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([5.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([5.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v4 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([6.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([6.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v5 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([5.5, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([5.5, 1.0]).unwrap(),
+            )
             .unwrap();
 
         let simplex_a = tri
             .tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
+            )
             .unwrap();
         let simplex_b = tri
             .tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v3, v4, v5], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v3, v4, v5], None).unwrap(),
+            )
             .unwrap();
 
         // Neither simplex has any neighbour pointers, so `simplices_to_add` will be empty on
         // the first iteration and the `else { break; }` arm fires immediately.
         let new_v = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.5, 0.3]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.3]).unwrap(),
+            )
             .unwrap();
-        let point = Point::new([0.5_f64, 0.3_f64]);
+        let point = Point::from_validated_coords([0.5_f64, 0.3_f64]);
 
         let mut conflict_simplices = SimplexKeyBuffer::new();
         conflict_simplices.push(simplex_a);
@@ -3725,50 +3823,68 @@ mod tests {
 
         let v0 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v1 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v2 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         // Three distinct fourth vertices that all pair with the {v0,v1,v2} face.
         let v3 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            )
             .unwrap();
         let v4 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, -1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, -1.0]).unwrap(),
+            )
             .unwrap();
         let v5 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 2.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 2.0]).unwrap(),
+            )
             .unwrap();
 
         let simplex1 = tri
             .tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2, v3], None).unwrap(),
+            )
             .unwrap();
         let simplex2 = tri
             .tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v4], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2, v4], None).unwrap(),
+            )
             .unwrap();
         let simplex3 = tri
             .tds
             .insert_simplex_bypassing_topology_checks_for_test(
-                Simplex::new(vec![v0, v1, v2, v5], None).unwrap(),
+                Simplex::try_new_with_data(vec![v0, v1, v2, v5], None).unwrap(),
             )
             .unwrap();
 
         let new_v = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.1, 0.1, 0.1]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.1, 0.1, 0.1]).unwrap(),
+            )
             .unwrap();
-        let point = Point::new([0.1_f64, 0.1_f64, 0.1_f64]);
+        let point = Point::from_validated_coords([0.1_f64, 0.1_f64, 0.1_f64]);
 
         let mut conflict_simplices = SimplexKeyBuffer::new();
         conflict_simplices.push(simplex1);
@@ -3799,6 +3915,10 @@ mod tests {
     ///
     /// Covers: `RidgeFan` SHRINK body (lines 3434-3442) and re-extraction (line 3514).
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "regression test keeps the ridge-fan shrink fixture explicit"
+    )]
     fn test_cavity_reduction_ridge_fan_shrink_fires_for_4_conflict_simplices_2d() {
         let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_empty(FastKernel::new());
@@ -3806,63 +3926,91 @@ mod tests {
         // `center` appears in 8 boundary edges (2 per simplex × 4 simplices) → RidgeFan.
         let center = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let va = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([-1.0, 2.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([-1.0, 2.0]).unwrap(),
+            )
             .unwrap();
         let vb = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([1.0, 2.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap(),
+            )
             .unwrap();
         let vc = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([-3.0, -2.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([-3.0, -2.0]).unwrap(),
+            )
             .unwrap();
         let vd = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([-2.0, -3.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([-2.0, -3.0]).unwrap(),
+            )
             .unwrap();
         let ve = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([3.0, -2.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([3.0, -2.0]).unwrap(),
+            )
             .unwrap();
         let vf = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([2.0, -3.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([2.0, -3.0]).unwrap(),
+            )
             .unwrap();
         let vg = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([-4.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([-4.0, 1.0]).unwrap(),
+            )
             .unwrap();
         let vh = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([-4.0, -1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([-4.0, -1.0]).unwrap(),
+            )
             .unwrap();
 
         let simplex1 = tri
             .tds
-            .insert_simplex_with_mapping(Simplex::new(vec![center, va, vb], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![center, va, vb], None).unwrap(),
+            )
             .unwrap();
         let simplex2 = tri
             .tds
-            .insert_simplex_with_mapping(Simplex::new(vec![center, vc, vd], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![center, vc, vd], None).unwrap(),
+            )
             .unwrap();
         let simplex3 = tri
             .tds
-            .insert_simplex_with_mapping(Simplex::new(vec![center, ve, vf], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![center, ve, vf], None).unwrap(),
+            )
             .unwrap();
         let simplex4 = tri
             .tds
-            .insert_simplex_with_mapping(Simplex::new(vec![center, vg, vh], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![center, vg, vh], None).unwrap(),
+            )
             .unwrap();
 
         let new_v = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.3, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.3, 1.0]).unwrap(),
+            )
             .unwrap();
-        let point = Point::new([0.3_f64, 1.0_f64]);
+        let point = Point::from_validated_coords([0.3_f64, 1.0_f64]);
 
         let mut conflict_simplices = SimplexKeyBuffer::new();
         conflict_simplices.push(simplex1);
@@ -3912,6 +4060,10 @@ mod tests {
     /// Covers: EXPAND body (lines 3470-3480), SHRINK-fallback (lines 3481-3491),
     /// and re-extraction after each reshape (line 3514).
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "regression test keeps the disconnected cavity fixture explicit"
+    )]
     fn test_cavity_reduction_disconnected_expand_then_shrink_2d() {
         let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_empty(FastKernel::new());
@@ -3919,55 +4071,79 @@ mod tests {
         // Group A: simplex_a = {v0,v1,v2} shares edge {v0,v1} with simplex_c = {v0,v1,v6}.
         let v0 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v1 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v2 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.5, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 1.0]).unwrap(),
+            )
             .unwrap();
         let v6 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.5, -1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.5, -1.0]).unwrap(),
+            )
             .unwrap();
         // Group B: simplex_b = {v3,v4,v5} shares edge {v3,v4} with simplex_d = {v3,v4,v7}.
         let v3 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([5.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([5.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v4 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([6.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([6.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v5 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([5.5, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([5.5, 1.0]).unwrap(),
+            )
             .unwrap();
         let v7 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([5.5, -1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([5.5, -1.0]).unwrap(),
+            )
             .unwrap();
 
         let simplex_a = tri
             .tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
+            )
             .unwrap();
         // simplex_c is a non-conflict neighbour of simplex_a (not initially in conflict_simplices).
         let simplex_c = tri
             .tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v6], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v6], None).unwrap(),
+            )
             .unwrap();
         let simplex_b = tri
             .tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v3, v4, v5], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v3, v4, v5], None).unwrap(),
+            )
             .unwrap();
         // simplex_d is a non-conflict neighbour of simplex_b.
         let simplex_d = tri
             .tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v3, v4, v7], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v3, v4, v7], None).unwrap(),
+            )
             .unwrap();
 
         // Wire neighbours so EXPAND discovers simplex_c via simplex_a and simplex_d via simplex_b.
@@ -3986,9 +4162,11 @@ mod tests {
 
         let new_v = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.5, 0.3]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.3]).unwrap(),
+            )
             .unwrap();
-        let point = Point::new([0.5_f64, 0.3_f64]);
+        let point = Point::from_validated_coords([0.5_f64, 0.3_f64]);
 
         let mut conflict_simplices = SimplexKeyBuffer::new();
         conflict_simplices.push(simplex_a);
@@ -4054,25 +4232,15 @@ mod tests {
     // =========================================================================
 
     /// Helper: build a set of D+1 affinely independent vertices for dimension D.
-    fn simplex_vertices<const D: usize>() -> Vec<Vertex<f64, (), D>> {
+    fn simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
         let mut verts = Vec::with_capacity(D + 1);
         // Origin
-        verts.push(
-            VertexBuilder::default()
-                .point(Point::new([0.0; D]))
-                .build()
-                .unwrap(),
-        );
+        verts.push(Vertex::try_new([0.0; D]).unwrap());
         // Unit vectors along each axis
         for i in 0..D {
             let mut coords = [0.0; D];
             coords[i] = 1.0;
-            verts.push(
-                VertexBuilder::default()
-                    .point(Point::new(coords))
-                    .build()
-                    .unwrap(),
-            );
+            verts.push(Vertex::try_new(coords).unwrap());
         }
         verts
     }
@@ -4131,10 +4299,7 @@ mod tests {
                     for c in interior.iter_mut() {
                         *c = 1.0 / (<f64 as std::convert::From<i32>>::from($dim + 1) * 2.0);
                     }
-                    let interior_vertex = VertexBuilder::default()
-                        .point(Point::new(interior))
-                        .build()
-                        .unwrap();
+                    let interior_vertex = Vertex::try_new(interior).unwrap();
                     let (_, hint) = insert(&mut tri, interior_vertex, None, None).unwrap();
 
                     assert!(hint.is_some(), "{}D: hint returned after D+2 insertion", $dim);
@@ -4161,8 +4326,13 @@ mod tests {
 
         let points = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [0.25, 0.25]];
         for coords in &points {
-            let (outcome, stats) =
-                insert_with_statistics(&mut tri, vertex!(*coords), None, None).unwrap();
+            let (outcome, stats) = insert_with_statistics(
+                &mut tri,
+                crate::core::vertex::Vertex::<(), _>::try_new(*coords).unwrap(),
+                None,
+                None,
+            )
+            .unwrap();
             assert!(stats.success());
             assert_matches!(outcome, InsertionOutcome::Inserted { .. });
             assert_eq!(stats.attempts, 1);
@@ -4181,7 +4351,9 @@ mod tests {
             Triangulation::new_empty(FastKernel::new());
         let _ = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([3.0, 4.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([3.0, 4.0]).unwrap(),
+            )
             .unwrap();
 
         let tol = 1e-10_f64;
@@ -4230,9 +4402,16 @@ mod tests {
                 [0.0, 1.0, 1.0],
                 [0.5, 0.5, 0.5],
             ];
-            let vertices: Vec<Vertex<f64, (), 3>> = base_coords
+            let vertices: Vec<Vertex<(), 3>> = base_coords
                 .iter()
-                .map(|c| vertex!([c[0] * scale, c[1] * scale, c[2] * scale]))
+                .map(|c| {
+                    crate::core::vertex::Vertex::<(), _>::try_new([
+                        c[0] * scale,
+                        c[1] * scale,
+                        c[2] * scale,
+                    ])
+                    .unwrap()
+                })
                 .collect();
             let dt: DelaunayTriangulation<_, (), (), 3> =
                 DelaunayTriangulation::new(&vertices).unwrap();
@@ -4278,18 +4457,17 @@ mod tests {
     fn test_perturbation_epsilon_selection_and_retry() {
         // Assert the supported scalar's mantissa-digits branch.
         assert_eq!(
-            f64::mantissa_digits(),
-            53,
+            F64_MANTISSA_DIGITS, 53,
             "f64 should take the 1e-8 epsilon path"
         );
 
         // Build a 2D triangulation, then insert a point exactly on an existing edge.
         // This near-degenerate configuration exercises the full insert_transactional path
         // including epsilon_value computation.
-        let initial_f64: Vec<Vertex<f64, (), 2>> = vec![
-            vertex!([0.0_f64, 0.0]),
-            vertex!([1.0_f64, 0.0]),
-            vertex!([0.0_f64, 1.0]),
+        let initial_f64: Vec<Vertex<(), 2>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0_f64, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0_f64, 1.0]).unwrap(),
         ];
         let tds_f64 =
             Triangulation::<AdaptiveKernel<f64>, (), (), 2>::build_initial_simplex(&initial_f64)
@@ -4299,8 +4477,13 @@ mod tests {
             tds_f64,
         );
 
-        let (outcome_f64, stats_f64) =
-            insert_with_statistics(&mut tri_f64, vertex!([0.5_f64, 0.0]), None, None).unwrap();
+        let (outcome_f64, stats_f64) = insert_with_statistics(
+            &mut tri_f64,
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5_f64, 0.0]).unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
         assert!(
             stats_f64.attempts >= 1,
             "f64 insertion must execute at least 1 attempt"
@@ -4327,127 +4510,127 @@ mod tests {
         clippy::too_many_lines,
         reason = "Literal 4D repro point set keeps retry-path coverage deterministic"
     )]
-    fn perturbation_retry_repro_points_4d() -> [Point<f64, 4>; 20] {
+    fn perturbation_retry_repro_points_4d() -> [Point<4>; 20] {
         // Fixed adversarial insertion sequence captured from the former
         // randomized sweep (seed 4, index 19). The final insertion exhausts
         // perturbation retries in the current 4D path, so this keeps retry
         // coverage deterministic without looping over random seeds.
         [
-            Point::new([
+            Point::from_validated_coords([
                 0.660_063_804_566_304_3,
                 3.139_352_812_821_116,
                 1.460_437_437_858_557_2,
                 1.683_976_950_416_514_7,
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 2.451_966_162_957_145,
                 9.547_229_335_697_903,
                 3.306_128_696_560_687_5,
                 -3.722_166_730_957_705_6,
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 -2.344_360_378_074_79,
                 -2.755_831_029_562_339,
                 -1.275_699_073_649_171_6,
                 7.667_812_493_160_508,
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 -8.633_692_230_033_44,
                 1.995_093_685_275_964_6,
                 7.993_316_108_703_105,
                 -3.310_780_098_197_376_7,
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 9.710_410_828_147_591,
                 -9.675_293_457_452_888,
                 -7.169_080_272_753_141,
                 5.405_946_111_675_925_5,
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 2.266_246_031_487_613,
                 2.481_673_939_102_995,
                 3.039_413_140_674_462,
                 4.441_464_307_622_285,
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 2.565_731_492_709_954,
                 8.916_218_617_699_3,
                 -3.878_340_784_199_263_4,
                 -9.518_720_806_139_726,
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 -2.067_801_258_479_087_2,
                 -5.739_002_626_992_522,
                 7.554_154_642_458_165,
                 -2.983_334_995_469_171_2,
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 7.592_645_474_686_005,
                 -3.326_646_745_715_216,
                 -3.259_537_116_123_248,
                 -4.935_000_398_073_641,
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 -5.931_807_896_262_18,
                 8.897_268_005_841_394,
                 0.324_049_126_782_281_15,
                 -8.328_532_028_712_647,
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 -8.182_644_118_410_867,
                 5.373_925_359_941_506,
                 -9.015_837_749_827_128,
                 -1.703_973_344_007_208,
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 1.455_467_619_488_706_2,
                 9.869_985_381_801_74,
                 8.605_618_759_378_327,
                 -1.050_236_122_559_873_3,
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 -5.687_160_826_499_058,
                 6.504_655_423_433_022,
                 8.941_590_411_569_816,
                 9.543_547_641_077_382,
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 8.975_549_245_653_312,
                 -8.089_655_037_805_944,
                 9.936_284_142_216_682,
                 -7.816_992_427_475_977,
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 5.825_845_324_524_742,
                 -7.639_141_597_632_388,
                 1.549_524_653_880_336_4,
                 4.563_088_344_949_309,
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 7.387_141_055_690_918,
                 6.194_972_387_680_284,
                 -5.764_015_058_796_046,
                 9.298_338_336_238_999,
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 -1.597_916_740_077_209_9,
                 -4.938_008_036_006_716,
                 7.414_979_546_687_874,
                 -7.718_146_418_588_452,
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 -2.414_045_007_912_424_3,
                 8.888_648_260_600_007,
                 -5.859_329_894_512_815,
                 3.268_096_825_406_147,
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 -8.294_250_893_230_837,
                 3.083_275_278_154_95,
                 8.020_989_920_767_69,
                 8.155_291_219_012_977,
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 6.718_748_825_685_814_6,
                 -4.640_634_945_941_695,
                 2.283_644_483_657_752_7,
@@ -4464,12 +4647,12 @@ mod tests {
     /// retry exhaustion.
     #[test]
     fn test_perturbation_retry_and_exhaustion_4d() {
-        let initial_vertices: Vec<Vertex<f64, (), 4>> = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0]),
+        let initial_vertices: Vec<Vertex<(), 4>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
         ];
         let tds = Triangulation::<AdaptiveKernel<f64>, (), (), 4>::build_initial_simplex(
             &initial_vertices,
@@ -4481,10 +4664,7 @@ mod tests {
         );
 
         let _guard = ForceNextRetryableInsertionFailureGuard::enable();
-        let retry_success_vertex = VertexBuilder::default()
-            .point(Point::new([0.2, 0.2, 0.2, 0.2]))
-            .build()
-            .unwrap();
+        let retry_success_vertex = Vertex::try_new([0.2, 0.2, 0.2, 0.2]).unwrap();
         let (_outcome, retry_success_stats) =
             insert_with_statistics(&mut retry_success_tri, retry_success_vertex, None, None)
                 .unwrap();
@@ -4495,7 +4675,7 @@ mod tests {
         let mut saw_exhausted_skip = false;
 
         for point in perturbation_retry_repro_points_4d() {
-            let v = VertexBuilder::default().point(point).build().unwrap();
+            let v = Vertex::from_validated_point(point);
             let (outcome, stats) =
                 insert_with_statistics(&mut exhaustion_tri, v, None, None).unwrap();
 
@@ -4529,7 +4709,7 @@ mod tests {
             Triangulation::new_empty(AdaptiveKernel::new());
 
         for point in perturbation_retry_repro_points_4d() {
-            let v = VertexBuilder::default().point(point).build().unwrap();
+            let v = Vertex::from_validated_point(point);
             let (_outcome, stats) = insert_transactional(
                 &mut tri,
                 v,

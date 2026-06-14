@@ -7,7 +7,7 @@
 //! This layer provides geometric operations while delegating topology to Tds.
 //!
 //! Validation policy, topology guarantees, and validation passes are implemented
-//! in [`crate::core::validation`].
+//! in [`crate::prelude::validation`].
 //!
 
 #![forbid(unsafe_code)]
@@ -35,11 +35,11 @@ use crate::topology::traits::topological_space::GlobalTopology;
 /// assert_eq!(tri.number_of_vertices(), 0);
 /// ```
 #[derive(Clone, Debug)]
-pub struct Triangulation<K: Kernel<D>, U, V, const D: usize> {
+pub struct Triangulation<K, U, V, const D: usize> {
     /// The geometric kernel for predicates.
     pub(crate) kernel: K,
     /// The combinatorial triangulation data structure.
-    pub(crate) tds: Tds<K::Scalar, U, V, D>,
+    pub(crate) tds: Tds<U, V, D>,
     /// Runtime metadata describing the global topological space represented by this triangulation.
     pub(crate) global_topology: GlobalTopology<D>,
     pub(crate) validation_policy: ValidationPolicy,
@@ -80,7 +80,11 @@ where
 
     #[cfg(test)]
     #[inline]
-    pub(crate) const fn new_with_tds(kernel: K, tds: Tds<K::Scalar, U, V, D>) -> Self {
+    #[expect(
+        clippy::missing_const_for_fn,
+        reason = "test-only constructor is not a pure math helper"
+    )]
+    pub(crate) fn new_with_tds(kernel: K, tds: Tds<U, V, D>) -> Self {
         Self {
             kernel,
             tds,
@@ -90,7 +94,7 @@ where
         }
     }
 
-    /// Sets the auxiliary data on a vertex, returning the previous value.
+    /// Sets the auxiliary data on a returning the previous value.
     ///
     /// Delegates to [`Tds::set_vertex_data`]. This is a safe O(1) operation
     /// that does not affect geometry, topology, or Delaunay invariants.
@@ -104,7 +108,7 @@ where
     ///
     /// ```
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex, vertex,
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
     /// };
     ///
     /// # #[derive(Debug, thiserror::Error)]
@@ -115,10 +119,10 @@ where
     /// #     MissingVertex,
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
-    /// let vertices: [Vertex<f64, i32, 2>; 3] = [
-    ///     vertex!([0.0, 0.0], 10i32),
-    ///     vertex!([1.0, 0.0], 20),
-    ///     vertex!([0.0, 1.0], 30),
+    /// let vertices: [Vertex<i32, 2>; 3] = [
+    ///     delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 10i32).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0], 20).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0], 30).expect("finite vertex coordinates"),
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let key = dt.vertices().next().ok_or(ExampleError::MissingVertex)?.0;
@@ -152,7 +156,7 @@ where
     ///
     /// ```
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
     /// };
     ///
     /// # #[derive(Debug, thiserror::Error)]
@@ -164,9 +168,9 @@ where
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<i32>()?;
     /// let key = dt.simplices().next().ok_or(ExampleError::MissingSimplex)?.0;

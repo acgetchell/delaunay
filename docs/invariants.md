@@ -229,7 +229,7 @@ via `TopologyGuarantee`, re-exported at the crate root and in
 
 - `TopologyGuarantee::Pseudomanifold`
   checks the codimension-1 incidence conditions (plus boundary consistency, connectedness,
-  isolated-vertex, and Euler characteristic checks).
+  isolated-vertex checks, and Euler characteristic checks).
 - `TopologyGuarantee::PLManifold` and
   `TopologyGuarantee::PLManifoldStrict`
   add **link-based** conditions (ridge links and/or vertex links) that are characteristic of
@@ -249,7 +249,7 @@ and intuition.
 
 A **vertex link** is the simplicial complex formed by taking all simplices incident
 to a given vertex and removing that vertex from each simplex. Intuitively, the
-vertex link represents the local neighborhood “around” the vertex, abstracted
+vertex link represents the local neighborhood around the vertex, abstracted
 away from the embedding space.
 
 For a PL-manifold, the link of every interior vertex must be homeomorphic to a
@@ -301,9 +301,9 @@ facets are expected unless the simplex complex represents a closed manifold by c
 
 Toroidal workflows are integrated as first-class topology options:
 
-- `.canonicalized_toroidal()` canonicalizes coordinates into the fundamental domain and uses
+- `.try_canonicalized_toroidal()` canonicalizes coordinates into the fundamental domain and uses
   toroidal topology metadata for validation.
-- `.toroidal(...)` constructs a periodic image-point triangulation over neighboring
+- `.try_toroidal(...)` constructs a periodic image-point triangulation over neighboring
   fundamental domains. The 2D and compact 3D paths are validated periodic quotients; 4D/5D
   periodic construction fails fast until quotient selection scales to routine release validation
   under issue #416.

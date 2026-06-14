@@ -23,20 +23,22 @@
 //! #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
 //! #     #[error(transparent)]
 //! #     Insertion(#[from] delaunay::prelude::InsertionError),
+//! #     #[error(transparent)]
+//! #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 //! #     #[error("expected tetrahedron hull to have a first facet")]
 //! #     MissingFacet,
 //! # }
 //! # fn main() -> Result<(), ExampleError> {
 //! let vertices = vec![
-//!     vertex!([0.0, 0.0, 0.0]),
-//!     vertex!([1.0, 0.0, 0.0]),
-//!     vertex!([0.0, 1.0, 0.0]),
-//!     vertex!([0.0, 0.0, 1.0]),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 //! ];
 //! let dt: DelaunayTriangulation<_, (), (), 3> =
 //!     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //! let hull = ConvexHull::from_triangulation(dt.as_triangulation())?;
-//! let outside = Point::new([2.0, 2.0, 2.0]);
+//! let outside = Point::try_from([2.0, 2.0, 2.0])?;
 //! assert!(hull.is_point_outside(&outside, dt.as_triangulation())?);
 //! # Ok(())
 //! # }
@@ -58,14 +60,10 @@ use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::simplex_orientation;
-use crate::geometry::traits::coordinate::{
-    Coordinate, CoordinateConversionError, CoordinateScalar,
-};
+use crate::geometry::traits::coordinate::{CoordinateConversionError, DEFAULT_TOLERANCE_F64};
 use crate::geometry::util::{safe_usize_to_scalar, squared_norm};
 use arc_swap::ArcSwapOption;
-use num_traits::Zero;
 use std::marker::PhantomData;
-use std::ops::{DivAssign, Sub};
 use std::sync::{
     Arc, OnceLock,
     atomic::{AtomicU64, Ordering},
@@ -299,7 +297,6 @@ pub enum ConvexHullConstructionError {
 /// ```rust
 /// # use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
 /// # use delaunay::prelude::query::ConvexHull;
-/// # use delaunay::vertex;
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
 /// #     #[error(transparent)]
@@ -313,16 +310,16 @@ pub enum ConvexHullConstructionError {
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// # let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulationBuilder::new(&vec![
-/// #     vertex!([0.0, 0.0, 0.0]),
-/// #     vertex!([1.0, 0.0, 0.0]),
-/// #     vertex!([0.0, 1.0, 0.0]),
-/// #     vertex!([0.0, 0.0, 1.0]),
+/// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+/// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+/// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+/// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// # ]).build::<()>()?;
 /// let hull = ConvexHull::from_triangulation(dt.as_triangulation())?;
 /// assert!(hull.is_valid_for_triangulation(dt.as_triangulation())); // Valid initially
 ///
 /// // Hull extension is now implemented - inserting outside points works!
-/// dt.insert(vertex!([2.0, 2.0, 2.0]))?;
+/// dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([2.0, 2.0, 2.0]).expect("finite vertex coordinates")).expect("finite vertex coordinates");
 /// # Ok(())
 /// # }
 /// ```
@@ -340,7 +337,6 @@ pub enum ConvexHullConstructionError {
 /// ```rust
 /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
 /// use delaunay::prelude::query::ConvexHull;
-/// use delaunay::vertex;
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -355,10 +351,10 @@ pub enum ConvexHullConstructionError {
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulationBuilder::new(&vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ]).build::<()>()?;
 ///
 /// // Create initial hull (note: immutable binding)
@@ -368,7 +364,7 @@ pub enum ConvexHullConstructionError {
 ///
 /// // Hull extension is now implemented - inserting outside points works!
 /// // Note: The hull becomes invalid after modification and needs to be recreated
-/// let new_vertex = vertex!([2.0, 2.0, 2.0]);
+/// let new_vertex = delaunay::prelude::Vertex::<(), _>::try_new([2.0, 2.0, 2.0]).expect("finite vertex coordinates");
 /// dt.insert(new_vertex)?; // Now works with hull extension!
 /// assert!(!hull.is_valid_for_triangulation(dt.as_triangulation())); // Hull is stale
 /// # Ok(())
@@ -377,7 +373,6 @@ pub enum ConvexHullConstructionError {
 ///
 /// # Type Parameters
 ///
-/// * `T` - The coordinate scalar type (`f64` in this crate)
 /// * `U` - The vertex data type
 /// * `V` - The simplex data type  
 /// * `D` - The dimension of the triangulation
@@ -415,7 +410,7 @@ pub enum ConvexHullConstructionError {
 ///   *Computational Geometry* 5, no. 2 (1995): 115-116. DOI: [10.1016/0925-7721(95)00013-Y](https://doi.org/10.1016/0925-7721(95)00013-Y)
 #[must_use]
 #[derive(Debug)]
-pub struct ConvexHull<K, U, V, const D: usize> {
+pub struct ConvexHull<U, V, const D: usize> {
     /// The boundary facets that form the convex hull
     /// Stored as `FacetHandle` tuples (`SimplexKey`, `facet_index`) to enable reconstruction of `FacetView`
     ///
@@ -428,7 +423,6 @@ pub struct ConvexHull<K, U, V, const D: usize> {
     hull_facets: Vec<FacetHandle>,
     /// Cache for the facet-to-simplices mapping to avoid rebuilding it for each facet check
     /// Uses `ArcSwapOption` for lock-free atomic updates when cache needs invalidation
-    /// This avoids Some/None wrapping boilerplate compared to `ArcSwap<Option<K::Scalar>>`
     facet_to_simplices_cache: ArcSwapOption<FacetToSimplicesMap>,
     /// Immutable triangulation generation at hull creation time.
     /// Set once in `from_triangulation()` and never modified. Used to detect stale hulls.
@@ -445,11 +439,11 @@ pub struct ConvexHull<K, U, V, const D: usize> {
     /// Uses `Arc<AtomicU64>` for consistent tracking across cloned `ConvexHull` instances.
     cached_generation: Arc<AtomicU64>,
     /// Phantom data to mark unused type parameters
-    _phantom: PhantomData<(K, U, V)>,
+    _phantom: PhantomData<(U, V)>,
 }
 
 // Minimal impl block for simple accessor methods that don't require arithmetic operations
-impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
+impl<U, V, const D: usize> ConvexHull<U, V, D> {
     /// Returns the number of hull facets
     ///
     /// # Examples
@@ -457,7 +451,6 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// ```rust
     /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::ConvexHull;
-    /// use delaunay::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -473,10 +466,10 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -507,7 +500,6 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// ```rust
     /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::ConvexHull;
-    /// use delaunay::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -517,16 +509,18 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
     /// #     #[error(transparent)]
     /// #     Insertion(#[from] delaunay::prelude::InsertionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// #     #[error("expected tetrahedron hull to have a first facet")]
     /// #     MissingFacet,
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -552,7 +546,6 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// ```rust
     /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::ConvexHull;
-    /// use delaunay::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -570,10 +563,10 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -588,7 +581,7 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// // Note: facets() returns FacetHandle structs - need to create FacetView to access vertices
     /// use delaunay::prelude::tds::FacetView;
     /// for facet_handle in hull.facets() {
-    ///     if let Ok(facet_view) = FacetView::new(&dt.tds(), facet_handle.simplex_key(), facet_handle.facet_index()) {
+    ///     if let Ok(facet_view) = FacetView::try_new(&dt.tds(), facet_handle.simplex_key(), facet_handle.facet_index()) {
     ///         assert_eq!(facet_view.vertices()?.count(), 3); // 3D facets have 3 vertices
     ///     }
     /// }
@@ -606,7 +599,6 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// ```rust
     /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::ConvexHull;
-    /// use delaunay::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -621,15 +613,15 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// // Empty hull
-    /// let empty_hull: ConvexHull<delaunay::geometry::kernel::FastKernel<f64>, (), (), 3> = ConvexHull::default();
+    /// let empty_hull: ConvexHull<(), (), 3> = ConvexHull::default();
     /// assert!(empty_hull.is_empty());
     ///
     /// // Non-empty hull
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -653,7 +645,6 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// ```rust
     /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::ConvexHull;
-    /// use delaunay::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -669,9 +660,9 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create different dimensional hulls
     /// let vertices_2d: Vec<_> = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt_2d: DelaunayTriangulation<_, (), (), 2> =
     ///     DelaunayTriangulationBuilder::new(&vertices_2d).build::<()>()?;
@@ -680,10 +671,10 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// assert_eq!(hull_2d.dimension(), 2);
     ///
     /// let vertices_3d: Vec<_> = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt_3d: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices_3d).build::<()>()?;
@@ -699,10 +690,7 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     }
 }
 
-impl<K, U, V, const D: usize> ConvexHull<K, U, V, D>
-where
-    K: Kernel<D>,
-{
+impl<U, V, const D: usize> ConvexHull<U, V, D> {
     /// Checks if this convex hull is valid for the given triangulation
     ///
     /// Returns `true` if the hull's creation generation matches the triangulation generation,
@@ -725,7 +713,6 @@ where
     /// ```rust
     /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::ConvexHull;
-    /// use delaunay::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -740,10 +727,10 @@ where
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulationBuilder::new(&vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ]).build::<()>()?;
     ///
     /// // Create hull and verify it's valid
@@ -757,7 +744,10 @@ where
     /// # }
     /// ```
     #[must_use]
-    pub fn is_valid_for_triangulation(&self, tri: &Triangulation<K, U, V, D>) -> bool {
+    pub fn is_valid_for_triangulation<K>(&self, tri: &Triangulation<K, U, V, D>) -> bool
+    where
+        K: Kernel<D>,
+    {
         // Use creation_generation (immutable) for validity check, not cached_generation (mutable)
         // Empty hull (with creation_generation unset) is always valid - it has no facets to be stale
         let Some(&creation_generation) = self.creation_generation.get() else {
@@ -776,7 +766,10 @@ where
             .map_or_else(uuid::Uuid::nil, |identity| *identity.as_ref())
     }
 
-    fn tds_identity_uuid(tri: &Triangulation<K, U, V, D>) -> uuid::Uuid {
+    fn tds_identity_uuid<K>(tri: &Triangulation<K, U, V, D>) -> uuid::Uuid
+    where
+        K: Kernel<D>,
+    {
         *tri.tds.identity().as_ref()
     }
 
@@ -784,7 +777,10 @@ where
     ///
     /// Centralizes the error construction pattern to avoid duplication.
     #[inline]
-    fn stale_hull_error(&self, tri: &Triangulation<K, U, V, D>) -> ConvexHullValidationError {
+    fn stale_hull_error<K>(&self, tri: &Triangulation<K, U, V, D>) -> ConvexHullValidationError
+    where
+        K: Kernel<D>,
+    {
         ConvexHullValidationError::StaleHull {
             hull_generation: self.creation_generation.get().copied().unwrap_or(0),
             tds_generation: tri.tds.generation(),
@@ -792,10 +788,13 @@ where
     }
 
     #[inline]
-    fn identity_mismatch_error(
+    fn identity_mismatch_error<K>(
         &self,
         tri: &Triangulation<K, U, V, D>,
-    ) -> ConvexHullValidationError {
+    ) -> ConvexHullValidationError
+    where
+        K: Kernel<D>,
+    {
         ConvexHullValidationError::IdentityMismatch {
             hull_identity: self.hull_identity_uuid(),
             tds_identity: Self::tds_identity_uuid(tri),
@@ -806,10 +805,13 @@ where
     ///
     /// Centralizes the error construction pattern to avoid duplication.
     #[inline]
-    fn stale_hull_construction_error(
+    fn stale_hull_construction_error<K>(
         &self,
         tri: &Triangulation<K, U, V, D>,
-    ) -> ConvexHullConstructionError {
+    ) -> ConvexHullConstructionError
+    where
+        K: Kernel<D>,
+    {
         ConvexHullConstructionError::StaleHull {
             hull_generation: self.creation_generation.get().copied().unwrap_or(0),
             tds_generation: tri.tds.generation(),
@@ -817,20 +819,26 @@ where
     }
 
     #[inline]
-    fn identity_mismatch_construction_error(
+    fn identity_mismatch_construction_error<K>(
         &self,
         tri: &Triangulation<K, U, V, D>,
-    ) -> ConvexHullConstructionError {
+    ) -> ConvexHullConstructionError
+    where
+        K: Kernel<D>,
+    {
         ConvexHullConstructionError::IdentityMismatch {
             hull_identity: self.hull_identity_uuid(),
             tds_identity: Self::tds_identity_uuid(tri),
         }
     }
 
-    fn ensure_current_for_construction(
+    fn ensure_current_for_construction<K>(
         &self,
         tri: &Triangulation<K, U, V, D>,
-    ) -> Result<(), ConvexHullConstructionError> {
+    ) -> Result<(), ConvexHullConstructionError>
+    where
+        K: Kernel<D>,
+    {
         if self.is_empty() && self.creation_generation.get().is_none() {
             return Ok(());
         }
@@ -847,10 +855,13 @@ where
         Ok(())
     }
 
-    fn ensure_current_for_validation(
+    fn ensure_current_for_validation<K>(
         &self,
         tri: &Triangulation<K, U, V, D>,
-    ) -> Result<(), ConvexHullValidationError> {
+    ) -> Result<(), ConvexHullValidationError>
+    where
+        K: Kernel<D>,
+    {
         if self.is_empty() && self.creation_generation.get().is_none() {
             return Ok(());
         }
@@ -868,7 +879,7 @@ where
     }
 }
 
-impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
+impl<U, V, const D: usize> ConvexHull<U, V, D> {
     /// Invalidates the internal facet-to-simplices cache and resets the cached generation counter
     ///
     /// This method forces the cache to be rebuilt on the next visibility test.
@@ -897,7 +908,6 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// ```rust
     /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::ConvexHull;
-    /// use delaunay::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -907,16 +917,18 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
     /// #     #[error(transparent)]
     /// #     Insertion(#[from] delaunay::prelude::InsertionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// #     #[error("expected tetrahedron hull to have a first facet")]
     /// #     MissingFacet,
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -943,10 +955,8 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
 }
 
 // Full impl block for construction and geometric operations
-impl<K, U, V, const D: usize> ConvexHull<K, U, V, D>
+impl<U, V, const D: usize> ConvexHull<U, V, D>
 where
-    K: Kernel<D>,
-    K::Scalar: Sub<Output = K::Scalar> + DivAssign + Copy,
     U: DataType,
     V: DataType,
 {
@@ -974,7 +984,6 @@ where
     /// ```rust
     /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::ConvexHull;
-    /// use delaunay::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -990,24 +999,24 @@ where
     /// # fn main() -> Result<(), ExampleError> {
     /// // 3D example
     /// let vertices_3d: Vec<_> = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt_3d: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices_3d).build::<()>()?;
-    /// let hull_3d: ConvexHull<_, (), (), 3> =
+    /// let hull_3d: ConvexHull<(), (), 3> =
     ///     ConvexHull::from_triangulation(dt_3d.as_triangulation())?;
     /// assert_eq!(hull_3d.number_of_facets(), 4); // Tetrahedron has 4 faces
     ///
     /// // 4D example
     /// let vertices_4d: Vec<_> = vec![
-    ///     vertex!([0.0, 0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt_4d: DelaunayTriangulation<_, (), (), 4> =
     ///     DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
@@ -1017,9 +1026,12 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub fn from_triangulation(
+    pub fn from_triangulation<K>(
         tri: &Triangulation<K, U, V, D>,
-    ) -> Result<Self, ConvexHullConstructionError> {
+    ) -> Result<Self, ConvexHullConstructionError>
+    where
+        K: Kernel<D>,
+    {
         let tds = &tri.tds;
 
         // Validate input triangulation
@@ -1043,7 +1055,9 @@ where
         // Collect facet handles (SimplexKey, facet_index) for storage
         // These can be used to reconstruct FacetViews when needed
         let hull_facets: Vec<_> = hull_facets_iter
-            .map(|facet_view| FacetHandle::new(facet_view.simplex_key(), facet_view.facet_index()))
+            .map(|facet_view| {
+                FacetHandle::from_validated(facet_view.simplex_key(), facet_view.facet_index())
+            })
             .collect();
 
         // Additional validation: ensure we have at least one boundary facet
@@ -1085,7 +1099,7 @@ where
     /// 2. Find the "inside" vertex of the adjacent simplex (vertex not in the facet)
     /// 3. Create two simplices: facet + `inside_vertex` and facet + `test_point`  
     /// 4. Compare orientations - different orientations mean opposite sides
-    /// 5. If test point is on opposite side from inside vertex, facet is visible
+    /// 5. If test point is on opposite side from inside facet is visible
     ///
     /// # Arguments
     ///
@@ -1123,7 +1137,6 @@ where
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::prelude::geometry::Point;
     /// use delaunay::prelude::geometry::Coordinate;
-    /// use delaunay::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1133,16 +1146,18 @@ where
     /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
     /// #     #[error(transparent)]
     /// #     Insertion(#[from] delaunay::prelude::InsertionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// #     #[error("expected tetrahedron hull to have a first facet")]
     /// #     MissingFacet,
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1155,8 +1170,8 @@ where
     /// };
     ///
     /// // Test visibility from different points
-    /// let inside_point = Point::new([0.2, 0.2, 0.2]); // Inside the tetrahedron
-    /// let outside_point = Point::new([2.0, 2.0, 2.0]); // Outside the tetrahedron
+    /// let inside_point = Point::try_from([0.2, 0.2, 0.2])?; // Inside the tetrahedron
+    /// let outside_point = Point::try_from([2.0, 2.0, 2.0])?; // Outside the tetrahedron
     ///
     /// // Inside point should not see the facet (facet not visible)
     /// let inside_visible = hull.is_facet_visible_from_point(facet, &inside_point, dt.as_triangulation())?;
@@ -1170,12 +1185,15 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub fn is_facet_visible_from_point(
+    pub fn is_facet_visible_from_point<K>(
         &self,
         facet_handle: &FacetHandle,
-        point: &Point<K::Scalar, D>,
+        point: &Point<D>,
         tri: &Triangulation<K, U, V, D>,
-    ) -> Result<bool, ConvexHullConstructionError> {
+    ) -> Result<bool, ConvexHullConstructionError>
+    where
+        K: Kernel<D>,
+    {
         let tds = &tri.tds;
 
         // Staleness guard: fail fast before any cache work
@@ -1218,13 +1236,16 @@ where
         clippy::too_many_lines,
         reason = "visibility check keeps predicate setup, cache lookup, and diagnostics together"
     )]
-    fn is_facet_visible_from_point_with_cache(
+    fn is_facet_visible_from_point_with_cache<K>(
         &self,
         facet_handle: &FacetHandle,
-        point: &Point<K::Scalar, D>,
+        point: &Point<D>,
         tri: &Triangulation<K, U, V, D>,
         facet_to_simplices: &FacetToSimplicesMap,
-    ) -> Result<bool, ConvexHullConstructionError> {
+    ) -> Result<bool, ConvexHullConstructionError>
+    where
+        K: Kernel<D>,
+    {
         let tds = &tri.tds;
 
         // Two-generation design: creation_generation (immutable) vs cached_generation (mutable)
@@ -1348,7 +1369,7 @@ where
         // Materialize facet vertices only when needed for orientation computation
         // This happens after cache lookup and inside vertex identification
         // Use SmallBuffer to avoid heap allocation for typical dimensions (up to 7D on stack)
-        let facet_vertices: SmallBuffer<Vertex<K::Scalar, U, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+        let facet_vertices: SmallBuffer<Vertex<U, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
             facet_vertex_keys
                 .iter()
                 .map(|&k| {
@@ -1363,7 +1384,7 @@ where
         // Create test simplices to compare orientations
         // Build facet_points from the vertices (fetched only once, when needed)
         // Use SmallBuffer to keep typical dimensions on-stack and avoid heap allocation
-        let mut facet_points: SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+        let mut facet_points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
             SmallBuffer::with_capacity(D);
         for v in &facet_vertices {
             facet_points.push(*v.point());
@@ -1438,18 +1459,17 @@ where
     /// 4. Add a small relative epsilon (1e-12 scale) to avoid false positives from numeric noise
     /// 5. Return true if the distance exceeds the adjusted threshold (likely outside/visible)
     fn fallback_visibility_test(
-        facet_vertices: &[Vertex<K::Scalar, U, D>],
-        point: &Point<K::Scalar, D>,
+        facet_vertices: &[Vertex<U, D>],
+        point: &Point<D>,
     ) -> Result<bool, ConvexHullConstructionError> {
         // Use SmallBuffer for stack allocation (D vertices fit on stack for D ≤ 7)
-        let vertex_points: SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
-            facet_vertices
-                .iter()
-                .map(|vertex| *vertex.point())
-                .collect();
+        let vertex_points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> = facet_vertices
+            .iter()
+            .map(|vertex| *vertex.point())
+            .collect();
 
         // Calculate facet centroid
-        let mut centroid_coords = [K::Scalar::zero(); D];
+        let mut centroid_coords = [0.0; D];
         for vertex_point in &vertex_points {
             let coords = vertex_point.coords();
             for (i, &coord) in coords.iter().enumerate() {
@@ -1464,7 +1484,7 @@ where
 
         // Simple heuristic: if point is far from centroid, it's likely visible
         let point_coords = point.coords();
-        let mut diff_coords = [K::Scalar::zero(); D];
+        let mut diff_coords = [0.0; D];
         for i in 0..D {
             diff_coords[i] = point_coords[i] - centroid_coords[i];
         }
@@ -1472,30 +1492,30 @@ where
 
         // Use a threshold to determine visibility - this is a simple heuristic
         // Scale-aware threshold: use the facet diameter squared (max pairwise edge length squared)
-        let mut max_edge_sq = K::Scalar::zero();
+        let mut max_edge_sq = 0.0;
         for (i, vertex_a) in vertex_points.iter().enumerate() {
             let ai = vertex_a.coords();
             for vertex_b in vertex_points.iter().skip(i + 1) {
                 let bj = vertex_b.coords();
-                let mut diff = [K::Scalar::zero(); D];
+                let mut diff = [0.0; D];
                 for k in 0..D {
                     diff[k] = ai[k] - bj[k];
                 }
                 let edge_sq = squared_norm(&diff);
-                if max_edge_sq.is_zero() || edge_sq > max_edge_sq {
+                if max_edge_sq == 0.0 || edge_sq > max_edge_sq {
                     max_edge_sq = edge_sq;
                 }
             }
         }
 
-        if max_edge_sq.is_zero() {
+        if max_edge_sq == 0.0 {
             // Degenerate facet geometry; treat as not visible.
             return Ok(false);
         }
         // Add epsilon-based bound to avoid false positives from numeric noise
         // Use the f64 default tolerance to handle near-surface points.
-        let epsilon_factor = K::Scalar::default_tolerance();
-        let adjusted_threshold = max_edge_sq + max_edge_sq * epsilon_factor;
+        let epsilon_factor = DEFAULT_TOLERANCE_F64;
+        let adjusted_threshold = max_edge_sq.mul_add(epsilon_factor, max_edge_sq);
 
         Ok(distance_squared > adjusted_threshold)
     }
@@ -1523,7 +1543,6 @@ where
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::prelude::geometry::Point;
     /// use delaunay::prelude::geometry::Coordinate;
-    /// use delaunay::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1533,16 +1552,18 @@ where
     /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
     /// #     #[error(transparent)]
     /// #     Insertion(#[from] delaunay::prelude::InsertionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// #     #[error("expected tetrahedron hull to have a first facet")]
     /// #     MissingFacet,
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1550,22 +1571,25 @@ where
     ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     ///
     /// // Test with a point outside the hull
-    /// let outside_point = Point::new([2.0, 2.0, 2.0]);
+    /// let outside_point = Point::try_from([2.0, 2.0, 2.0])?;
     /// let visible_facets = hull.find_visible_facets(&outside_point, dt.as_triangulation())?;
     /// assert!(!visible_facets.is_empty(), "Outside point should see some facets");
     ///
     /// // Test with a point inside the hull
-    /// let inside_point = Point::new([0.2, 0.2, 0.2]);
+    /// let inside_point = Point::try_from([0.2, 0.2, 0.2])?;
     /// let visible_facets = hull.find_visible_facets(&inside_point, dt.as_triangulation())?;
     /// assert!(visible_facets.is_empty(), "Inside point should see no facets");
     /// # Ok(())
     /// # }
     /// ```
-    pub fn find_visible_facets(
+    pub fn find_visible_facets<K>(
         &self,
-        point: &Point<K::Scalar, D>,
+        point: &Point<D>,
         tri: &Triangulation<K, U, V, D>,
-    ) -> Result<Vec<usize>, ConvexHullConstructionError> {
+    ) -> Result<Vec<usize>, ConvexHullConstructionError>
+    where
+        K: Kernel<D>,
+    {
         let tds = &tri.tds;
 
         // Fail fast if hull is stale relative to this TDS (using immutable creation_generation)
@@ -1613,7 +1637,6 @@ where
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::prelude::geometry::Point;
     /// use delaunay::prelude::geometry::Coordinate;
-    /// use delaunay::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1623,16 +1646,18 @@ where
     /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
     /// #     #[error(transparent)]
     /// #     Insertion(#[from] delaunay::prelude::InsertionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// #     #[error("expected tetrahedron hull to have a first facet")]
     /// #     MissingFacet,
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1640,24 +1665,24 @@ where
     ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     ///
     /// // Test with a point outside the hull - should find a nearest visible facet
-    /// let outside_point = Point::new([2.0, 2.0, 2.0]);
+    /// let outside_point = Point::try_from([2.0, 2.0, 2.0])?;
     /// let nearest_facet = hull.find_nearest_visible_facet(&outside_point, dt.as_triangulation())?;
     /// assert!(nearest_facet.is_some(), "Outside point should have a nearest visible facet");
     ///
     /// // Test with a point inside the hull - should find no visible facets
-    /// let inside_point = Point::new([0.2, 0.2, 0.2]);
+    /// let inside_point = Point::try_from([0.2, 0.2, 0.2])?;
     /// let nearest_facet = hull.find_nearest_visible_facet(&inside_point, dt.as_triangulation())?;
     /// assert!(nearest_facet.is_none(), "Inside point should have no visible facets");
     /// # Ok(())
     /// # }
     /// ```
-    pub fn find_nearest_visible_facet(
+    pub fn find_nearest_visible_facet<K>(
         &self,
-        point: &Point<K::Scalar, D>,
+        point: &Point<D>,
         tri: &Triangulation<K, U, V, D>,
     ) -> Result<Option<usize>, ConvexHullConstructionError>
     where
-        K::Scalar: PartialOrd + Copy,
+        K: Kernel<D>,
     {
         let tds = &tri.tds;
 
@@ -1671,26 +1696,26 @@ where
         }
 
         // Find the facet with minimum distance to the point
-        let mut min_distance: Option<K::Scalar> = None;
+        let mut min_distance: Option<f64> = None;
         let mut nearest_facet = None;
 
         for &facet_index in &visible_facets {
             let facet_handle = &self.hull_facets[facet_index];
             // Create FacetView to access facet vertices
             let facet_view =
-                FacetView::new(tds, facet_handle.simplex_key(), facet_handle.facet_index())
+                FacetView::try_new(tds, facet_handle.simplex_key(), facet_handle.facet_index())
                     .map_err(
                         |source| ConvexHullConstructionError::FacetDataAccessFailed { source },
                     )?;
             // Extract points directly to avoid materializing Vertex copies
-            let facet_points: Vec<Point<K::Scalar, D>> = facet_view
+            let facet_points: Vec<Point<D>> = facet_view
                 .vertices()
                 .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })?
                 .map(|v| *v.point())
                 .collect();
 
             // Calculate distance from point to facet centroid as a simple heuristic
-            let mut centroid_coords = [K::Scalar::zero(); D];
+            let mut centroid_coords = [0.0; D];
             let num_vertices = safe_usize_to_scalar(facet_points.len())
                 .map_err(ConvexHullConstructionError::CoordinateConversion)?;
 
@@ -1705,12 +1730,12 @@ where
                 *coord /= num_vertices;
             }
 
-            let centroid = Point::new(centroid_coords);
+            let centroid = Point::from_validated_coords(centroid_coords);
 
             // Calculate squared distance using squared_norm
             let point_coords = point.coords();
             let centroid_coords = centroid.coords();
-            let mut diff_coords = [K::Scalar::zero(); D];
+            let mut diff_coords = [0.0; D];
             for i in 0..D {
                 diff_coords[i] = point_coords[i] - centroid_coords[i];
             }
@@ -1750,7 +1775,6 @@ where
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::prelude::geometry::Point;
     /// use delaunay::prelude::geometry::Coordinate;
-    /// use delaunay::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1760,16 +1784,18 @@ where
     /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
     /// #     #[error(transparent)]
     /// #     Insertion(#[from] delaunay::prelude::InsertionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// #     #[error("expected tetrahedron hull to have a first facet")]
     /// #     MissingFacet,
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1777,20 +1803,23 @@ where
     ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     ///
     /// // Test with a point inside the hull
-    /// let inside_point = Point::new([0.2, 0.2, 0.2]);
+    /// let inside_point = Point::try_from([0.2, 0.2, 0.2])?;
     /// assert!(!hull.is_point_outside(&inside_point, dt.as_triangulation())?);
     ///
     /// // Test with a point outside the hull
-    /// let outside_point = Point::new([2.0, 2.0, 2.0]);
+    /// let outside_point = Point::try_from([2.0, 2.0, 2.0])?;
     /// assert!(hull.is_point_outside(&outside_point, dt.as_triangulation())?);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn is_point_outside(
+    pub fn is_point_outside<K>(
         &self,
-        point: &Point<K::Scalar, D>,
+        point: &Point<D>,
         tri: &Triangulation<K, U, V, D>,
-    ) -> Result<bool, ConvexHullConstructionError> {
+    ) -> Result<bool, ConvexHullConstructionError>
+    where
+        K: Kernel<D>,
+    {
         let visible_facets = self.find_visible_facets(point, tri)?;
         Ok(!visible_facets.is_empty())
     }
@@ -1812,7 +1841,6 @@ where
     /// ```rust
     /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::ConvexHull;
-    /// use delaunay::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1828,10 +1856,10 @@ where
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a valid 3D tetrahedron
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1842,16 +1870,19 @@ where
     /// assert!(hull.validate(dt.as_triangulation()).is_ok());
     ///
     /// // Empty hull should also validate
-    /// let empty_hull: ConvexHull<delaunay::geometry::kernel::AdaptiveKernel<f64>, (), (), 3> = ConvexHull::default();
+    /// let empty_hull: ConvexHull<(), (), 3> = ConvexHull::default();
     /// // Note: validate() requires a TDS, so use an empty TDS for validation
     /// assert!(empty_hull.validate(dt.as_triangulation()).is_ok());
     /// # Ok(())
     /// # }
     /// ```
-    pub fn validate(
+    pub fn validate<K>(
         &self,
         tri: &Triangulation<K, U, V, D>,
-    ) -> Result<(), ConvexHullValidationError> {
+    ) -> Result<(), ConvexHullValidationError>
+    where
+        K: Kernel<D>,
+    {
         let tds = &tri.tds;
 
         // Check staleness first - validate() should explicitly fail on stale hulls
@@ -1863,7 +1894,7 @@ where
         // facets are (D-1)-dimensional and have D vertices)
         for (index, facet_handle) in self.hull_facets.iter().enumerate() {
             let facet_view =
-                FacetView::new(tds, facet_handle.simplex_key(), facet_handle.facet_index())
+                FacetView::try_new(tds, facet_handle.simplex_key(), facet_handle.facet_index())
                     .map_err(|source| ConvexHullValidationError::InvalidFacet {
                         facet_index: index,
                         source,
@@ -1927,9 +1958,8 @@ where
 // Implementation of FacetCacheProvider trait for ConvexHull
 // Separate impl block with FacetCacheProvider-specific trait bounds
 // (main impl block has simpler bounds that don't include Sum, DeserializeOwned, etc.)
-impl<K, U, V, const D: usize> FacetCacheProvider<K::Scalar, U, V, D> for ConvexHull<K, U, V, D>
+impl<U, V, const D: usize> FacetCacheProvider<U, V, D> for ConvexHull<U, V, D>
 where
-    K: Kernel<D>,
     U: DataType,
     V: DataType,
 {
@@ -1942,7 +1972,7 @@ where
     }
 }
 
-impl<K, U, V, const D: usize> Default for ConvexHull<K, U, V, D> {
+impl<U, V, const D: usize> Default for ConvexHull<U, V, D> {
     fn default() -> Self {
         Self {
             hull_facets: Vec::new(),
@@ -1956,12 +1986,12 @@ impl<K, U, V, const D: usize> Default for ConvexHull<K, U, V, D> {
 }
 
 // Type aliases for common use cases
-/// Type alias for 2D convex hulls with `FastKernel`
-pub type ConvexHull2D<K, U, V> = ConvexHull<K, U, V, 2>;
-/// Type alias for 3D convex hulls with `FastKernel`
-pub type ConvexHull3D<K, U, V> = ConvexHull<K, U, V, 3>;
-/// Type alias for 4D convex hulls with `FastKernel`
-pub type ConvexHull4D<K, U, V> = ConvexHull<K, U, V, 4>;
+/// Type alias for 2D convex hulls.
+pub type ConvexHull2D<U, V> = ConvexHull<U, V, 2>;
+/// Type alias for 3D convex hulls.
+pub type ConvexHull3D<U, V> = ConvexHull<U, V, 3>;
+/// Type alias for 4D convex hulls.
+pub type ConvexHull4D<U, V> = ConvexHull<U, V, 4>;
 
 #[cfg(test)]
 mod tests {
@@ -1978,7 +2008,6 @@ mod tests {
         CoordinateConversionError, CoordinateConversionValue, InvalidCoordinateValue,
     };
     use crate::triangulation::DelaunayTriangulation;
-    use crate::vertex;
     use std::assert_matches;
     use std::error::Error;
     use std::sync::atomic::Ordering;
@@ -2007,7 +2036,7 @@ mod tests {
     /// This uses `DelaunayTriangulation::with_kernel` and returns the owned
     /// triangulation directly.
     fn create_triangulation<const D: usize>(
-        vertices: &[Vertex<f64, (), D>],
+        vertices: &[Vertex<(), D>],
     ) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
         DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), vertices).unwrap()
     }
@@ -2020,7 +2049,7 @@ mod tests {
     fn extract_facet_vertices<K, U, V, const D: usize>(
         facet_handle: &FacetHandle,
         tri: &Triangulation<K, U, V, D>,
-    ) -> Result<Vec<Vertex<K::Scalar, U, D>>, ConvexHullConstructionError>
+    ) -> Result<Vec<Vertex<U, D>>, ConvexHullConstructionError>
     where
         K: Kernel<D>,
         U: DataType,
@@ -2028,7 +2057,7 @@ mod tests {
     {
         let tds = &tri.tds;
         let facet_view =
-            FacetView::new(tds, facet_handle.simplex_key(), facet_handle.facet_index())
+            FacetView::try_new(tds, facet_handle.simplex_key(), facet_handle.facet_index())
                 .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })?;
         // Use the shared utility for extracting vertices
         facet_view_to_vertices(&facet_view)
@@ -2064,7 +2093,7 @@ mod tests {
     /// ```ignore
     /// test_hull_dimensions! {
     ///     hull_2d => 2 => "triangle" => 3 =>
-    ///         vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])],
+    ///         vec![delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"), delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"), delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates")],
     /// }
     /// ```
     ///
@@ -2091,7 +2120,7 @@ mod tests {
                 fn $test_name() {
                     let vertices = $vertices;
                     let dt = create_triangulation(&vertices);
-                    let hull: ConvexHull<AdaptiveKernel<f64>, (), (), $dim> =
+                    let hull: ConvexHull<(), (), $dim> =
                         ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
                     assert_eq!(
@@ -2122,7 +2151,7 @@ mod tests {
                     fn [<$test_name _facet_access>]() {
                         let vertices = $vertices;
                         let dt = create_triangulation(&vertices);
-                        let hull: ConvexHull<AdaptiveKernel<f64>, (), (), $dim> =
+                        let hull: ConvexHull<(), (), $dim> =
                             ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
                         // Test facet iterator
@@ -2151,14 +2180,14 @@ mod tests {
                     fn [<$test_name _point_containment>]() {
                         let vertices = $vertices;
                         let dt = create_triangulation(&vertices);
-                        let hull: ConvexHull<AdaptiveKernel<f64>, (), (), $dim> =
+                        let hull: ConvexHull<(), (), $dim> =
                             ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
                         // Test with inside point (scaled to ensure it's inside the unit simplex)
                         // For a unit simplex, a point is inside if sum of coordinates <= 1
                         // Use 0.1 per dimension to ensure sum stays well below 1 for all dimensions
                         let inside_coords = [0.1; $dim];
-                        let inside_point = Point::new(inside_coords);
+                        let inside_point = Point::from_validated_coords(inside_coords);
                         assert!(
                             !hull.is_point_outside(&inside_point, dt.as_triangulation()).unwrap(),
                             "{}D hull: point with small coordinates should be inside",
@@ -2167,7 +2196,7 @@ mod tests {
 
                         // Test with outside point
                         let outside_coords = [2.0; $dim];
-                        let outside_point = Point::new(outside_coords);
+                        let outside_point = Point::from_validated_coords(outside_coords);
                         assert!(
                             hull.is_point_outside(&outside_point, dt.as_triangulation()).unwrap(),
                             "{}D hull: point far outside should be detected",
@@ -2182,43 +2211,43 @@ mod tests {
     // Generate tests for dimensions 1D through 6D
     test_hull_dimensions! {
         hull_1d_segment => 1 => "line segment" => 2 => vec![
-            vertex!([0.0]),
-            vertex!([1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
         ],
         hull_2d_triangle => 2 => "triangle" => 3 => vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ],
         hull_3d_tetrahedron => 3 => "tetrahedron" => 4 => vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.5, 1.0, 0.0]),
-            vertex!([0.5, 0.5, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 1.0]).unwrap(),
         ],
         hull_4d_simplex => 4 => "4-simplex" => 5 => vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
         ],
         hull_5d_simplex => 5 => "5-simplex" => 6 => vec![
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
         ],
         hull_6d_simplex => 6 => "6-simplex" => 7 => vec![
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
         ],
     }
 
@@ -2226,15 +2255,15 @@ mod tests {
     fn test_empty_hull_comprehensive() {
         // Create a triangulation for validation purposes
         let vertices_3d = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_3d = create_triangulation(&vertices_3d);
 
         // Test empty hull (default constructor)
-        let empty_hull: ConvexHull3D<AdaptiveKernel<f64>, (), ()> = ConvexHull::default();
+        let empty_hull: ConvexHull3D<(), ()> = ConvexHull::default();
 
         // Basic empty hull properties
         assert_eq!(
@@ -2301,16 +2330,16 @@ mod tests {
         // ========================================================================
         test_debug!("  Testing 2D visibility algorithms...");
         let vertices_2d = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt_2d = create_triangulation(&vertices_2d);
-        let hull_2d: ConvexHull2D<AdaptiveKernel<f64>, (), ()> =
+        let hull_2d: ConvexHull2D<(), ()> =
             ConvexHull::from_triangulation(dt_2d.as_triangulation()).unwrap();
 
-        let inside_point_2d = Point::new([0.1, 0.1]);
-        let outside_point_2d = Point::new([2.0, 2.0]);
+        let inside_point_2d = Point::from_validated_coords([0.1, 0.1]);
+        let outside_point_2d = Point::from_validated_coords([2.0, 2.0]);
 
         // Test point outside detection
         assert!(
@@ -2348,17 +2377,17 @@ mod tests {
         // ========================================================================
         test_debug!("  Testing 3D visibility algorithms...");
         let vertices_3d = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_3d = create_triangulation(&vertices_3d);
-        let hull_3d: ConvexHull3D<AdaptiveKernel<f64>, (), ()> =
+        let hull_3d: ConvexHull3D<(), ()> =
             ConvexHull::from_triangulation(dt_3d.as_triangulation()).unwrap();
 
-        let inside_point_3d = Point::new([0.2, 0.2, 0.2]);
-        let outside_point_3d = Point::new([2.0, 2.0, 2.0]);
+        let inside_point_3d = Point::from_validated_coords([0.2, 0.2, 0.2]);
+        let outside_point_3d = Point::from_validated_coords([2.0, 2.0, 2.0]);
 
         // Test point outside detection
         assert!(
@@ -2409,7 +2438,7 @@ mod tests {
         );
 
         // Test find_visible_facets with far outside point (multiple visible facets)
-        let far_outside_point = Point::new([10.0, 10.0, 10.0]);
+        let far_outside_point = Point::from_validated_coords([10.0, 10.0, 10.0]);
         let visible_facets = hull_3d
             .find_visible_facets(&far_outside_point, dt_3d.as_triangulation())
             .unwrap();
@@ -2445,10 +2474,10 @@ mod tests {
         // ========================================================================
         test_debug!("  Testing visibility edge cases...");
         let boundary_points = [
-            Point::new([0.5, 0.5, 0.0]), // On a face
-            Point::new([0.3, 0.3, 0.3]), // Near centroid
-            Point::new([0.0, 0.0, 0.0]), // At a vertex
-            Point::new([0.5, 0.0, 0.0]), // On an edge
+            Point::from_validated_coords([0.5, 0.5, 0.0]), // On a face
+            Point::from_validated_coords([0.3, 0.3, 0.3]), // Near centroid
+            Point::from_validated_coords([0.0, 0.0, 0.0]), // At a vertex
+            Point::from_validated_coords([0.5, 0.0, 0.0]), // On an edge
         ];
 
         for (i, point) in boundary_points.iter().enumerate() {
@@ -2461,10 +2490,10 @@ mod tests {
 
         // Test with points very close to the hull
         let close_points = vec![
-            Point::new([1e-10, 1e-10, 1e-10]),
-            Point::new([0.999_999, 0.0, 0.0]),
-            Point::new([0.0, 0.999_999, 0.0]),
-            Point::new([0.0, 0.0, 0.999_999]),
+            Point::from_validated_coords([1e-10, 1e-10, 1e-10]),
+            Point::from_validated_coords([0.999_999, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.999_999, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.999_999]),
         ];
 
         for point in close_points {
@@ -2481,7 +2510,7 @@ mod tests {
         test_debug!("  Testing edge case distance calculations...");
 
         // Test find_nearest_visible_facet with equidistant points
-        let equidistant_point = Point::new([0.5, 0.5, 0.5]);
+        let equidistant_point = Point::from_validated_coords([0.5, 0.5, 0.5]);
         let result =
             hull_3d.find_nearest_visible_facet(&equidistant_point, dt_3d.as_triangulation());
         assert!(
@@ -2490,7 +2519,7 @@ mod tests {
         );
 
         // Test with very large coordinates that might cause overflow
-        let large_point = Point::new([1e15, 1e15, 1e15]);
+        let large_point = Point::from_validated_coords([1e15, 1e15, 1e15]);
         let result = hull_3d.find_nearest_visible_facet(&large_point, dt_3d.as_triangulation());
         assert!(
             result.is_ok(),
@@ -2498,7 +2527,7 @@ mod tests {
         );
 
         // Test with very small coordinates that might cause underflow
-        let small_point = Point::new([1e-15, 1e-15, 1e-15]);
+        let small_point = Point::from_validated_coords([1e-15, 1e-15, 1e-15]);
         let result = hull_3d.find_nearest_visible_facet(&small_point, dt_3d.as_triangulation());
         assert!(
             result.is_ok(),
@@ -2510,18 +2539,18 @@ mod tests {
         // ========================================================================
         test_debug!("  Testing 4D visibility algorithms...");
         let vertices_4d = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_4d = create_triangulation(&vertices_4d);
-        let hull_4d: ConvexHull4D<AdaptiveKernel<f64>, (), ()> =
+        let hull_4d: ConvexHull4D<(), ()> =
             ConvexHull::from_triangulation(dt_4d.as_triangulation()).unwrap();
 
-        let inside_point_4d = Point::new([0.1, 0.1, 0.1, 0.1]);
-        let outside_point_4d = Point::new([2.0, 2.0, 2.0, 2.0]);
+        let inside_point_4d = Point::from_validated_coords([0.1, 0.1, 0.1, 0.1]);
+        let outside_point_4d = Point::from_validated_coords([2.0, 2.0, 2.0, 2.0]);
 
         assert!(
             !hull_4d
@@ -2541,19 +2570,19 @@ mod tests {
         // ========================================================================
         test_debug!("  Testing 5D visibility algorithms...");
         let vertices_5d = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_5d = create_triangulation(&vertices_5d);
-        let hull_5d: ConvexHull<AdaptiveKernel<f64>, (), (), 5> =
+        let hull_5d: ConvexHull<(), (), 5> =
             ConvexHull::from_triangulation(dt_5d.as_triangulation()).unwrap();
 
-        let inside_point_5d = Point::new([0.1, 0.1, 0.1, 0.1, 0.1]);
-        let outside_point_5d = Point::new([2.0, 2.0, 2.0, 2.0, 2.0]);
+        let inside_point_5d = Point::from_validated_coords([0.1, 0.1, 0.1, 0.1, 0.1]);
+        let outside_point_5d = Point::from_validated_coords([2.0, 2.0, 2.0, 2.0, 2.0]);
 
         assert!(
             !hull_5d
@@ -2588,10 +2617,10 @@ mod tests {
         // Test distance-based heuristic with 3D tetrahedron
         test_debug!("  Testing distance-based heuristic...");
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
@@ -2602,20 +2631,29 @@ mod tests {
 
         // Test with points at various distances to verify scale-adaptive threshold
         let distance_test_points = vec![
-            (Point::new([0.1, 0.1, 0.1]), "Very close to centroid"),
-            (Point::new([0.5, 0.5, 0.5]), "Medium distance from centroid"),
-            (Point::new([2.0, 2.0, 2.0]), "Far from centroid"),
-            (Point::new([5.0, 5.0, 5.0]), "Very far point"),
+            (
+                Point::from_validated_coords([0.1, 0.1, 0.1]),
+                "Very close to centroid",
+            ),
+            (
+                Point::from_validated_coords([0.5, 0.5, 0.5]),
+                "Medium distance from centroid",
+            ),
+            (
+                Point::from_validated_coords([2.0, 2.0, 2.0]),
+                "Far from centroid",
+            ),
+            (
+                Point::from_validated_coords([5.0, 5.0, 5.0]),
+                "Very far point",
+            ),
         ];
 
         let mut visibility_results = Vec::new();
         for (point, description) in &distance_test_points {
             let is_visible =
-                ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
-                    &test_facet_vertices,
-                    point,
-                )
-                .unwrap();
+                ConvexHull::<(), (), 3>::fallback_visibility_test(&test_facet_vertices, point)
+                    .unwrap();
             visibility_results.push(is_visible);
             let coords = point.coords();
             test_debug!("    Point {coords:?} ({description}) - Visible: {is_visible}");
@@ -2630,19 +2668,23 @@ mod tests {
         // Test degenerate cases
         test_debug!("  Testing degenerate and edge cases...");
         let degenerate_points = vec![
-            (Point::new([0.0, 0.0, 0.0]), "Origin point"),
             (
-                Point::new([f64::EPSILON, f64::EPSILON, f64::EPSILON]),
+                Point::from_validated_coords([0.0, 0.0, 0.0]),
+                "Origin point",
+            ),
+            (
+                Point::from_validated_coords([f64::EPSILON, f64::EPSILON, f64::EPSILON]),
                 "Very small coordinates",
             ),
-            (Point::new([1e-15, 1e-15, 1e-15]), "Near-zero coordinates"),
+            (
+                Point::from_validated_coords([1e-15, 1e-15, 1e-15]),
+                "Near-zero coordinates",
+            ),
         ];
 
         for (point, description) in degenerate_points {
-            let result = ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
-                &test_facet_vertices,
-                &point,
-            );
+            let result =
+                ConvexHull::<(), (), 3>::fallback_visibility_test(&test_facet_vertices, &point);
             assert!(
                 result.is_ok(),
                 "{description} should not cause fallback to error"
@@ -2652,10 +2694,10 @@ mod tests {
 
         // Test consistency - same point multiple times should give same result
         test_debug!("  Testing consistency...");
-        let consistency_point = Point::new([2.0, 2.0, 2.0]);
+        let consistency_point = Point::from_validated_coords([2.0, 2.0, 2.0]);
         let consistency_results: Vec<bool> = (0..5)
             .map(|_| {
-                ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
+                ConvexHull::<(), (), 3>::fallback_visibility_test(
                     &test_facet_vertices,
                     &consistency_point,
                 )
@@ -2679,13 +2721,13 @@ mod tests {
         // Test numerical precision with high-precision coordinates
         test_debug!("  Testing numerical precision...");
         let precise_points = vec![
-            Point::new([1e-15, 1e-15, 1e-15]),
-            Point::new([
+            Point::from_validated_coords([1e-15, 1e-15, 1e-15]),
+            Point::from_validated_coords([
                 1.000_000_000_000_000_1,
                 1.000_000_000_000_000_1,
                 1.000_000_000_000_000_1,
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 0.999_999_999_999_999_9,
                 0.999_999_999_999_999_9,
                 0.999_999_999_999_999_9,
@@ -2693,10 +2735,8 @@ mod tests {
         ];
 
         for point in precise_points {
-            let result = ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
-                &test_facet_vertices,
-                &point,
-            );
+            let result =
+                ConvexHull::<(), (), 3>::fallback_visibility_test(&test_facet_vertices, &point);
             assert!(
                 result.is_ok(),
                 "High precision coordinates should not cause errors"
@@ -2712,17 +2752,17 @@ mod tests {
 
         // Test 2D fallback
         let vertices_2d = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt_2d = create_triangulation(&vertices_2d);
-        let hull_2d: ConvexHull<AdaptiveKernel<f64>, (), (), 2> =
+        let hull_2d: ConvexHull<(), (), 2> =
             ConvexHull::from_triangulation(dt_2d.as_triangulation()).unwrap();
         let test_facet_2d_vertices =
             extract_facet_vertices(&hull_2d.hull_facets[0], dt_2d.as_triangulation()).unwrap();
-        let test_point_2d = Point::new([2.0, 2.0]);
-        let result_2d = ConvexHull::<AdaptiveKernel<f64>, (), (), 2>::fallback_visibility_test(
+        let test_point_2d = Point::from_validated_coords([2.0, 2.0]);
+        let result_2d = ConvexHull::<(), (), 2>::fallback_visibility_test(
             &test_facet_2d_vertices,
             &test_point_2d,
         );
@@ -2731,19 +2771,19 @@ mod tests {
 
         // Test 4D fallback
         let vertices_4d = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_4d = create_triangulation(&vertices_4d);
-        let hull_4d: ConvexHull<AdaptiveKernel<f64>, (), (), 4> =
+        let hull_4d: ConvexHull<(), (), 4> =
             ConvexHull::from_triangulation(dt_4d.as_triangulation()).unwrap();
         let test_facet_4d_vertices =
             extract_facet_vertices(&hull_4d.hull_facets[0], dt_4d.as_triangulation()).unwrap();
-        let test_point_4d = Point::new([2.0, 2.0, 2.0, 2.0]);
-        let result_4d = ConvexHull::<AdaptiveKernel<f64>, (), (), 4>::fallback_visibility_test(
+        let test_point_4d = Point::from_validated_coords([2.0, 2.0, 2.0, 2.0]);
+        let result_4d = ConvexHull::<(), (), 4>::fallback_visibility_test(
             &test_facet_4d_vertices,
             &test_point_4d,
         );
@@ -2767,9 +2807,9 @@ mod tests {
 
         // Create a minimal valid triangulation first to ensure the path works
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation());
@@ -2782,17 +2822,17 @@ mod tests {
     #[test]
     fn test_is_facet_visible_from_point_error_cases() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         // Get a valid facet
         let facet = &hull.hull_facets[0];
-        let test_point = Point::new([1.0, 1.0, 1.0]);
+        let test_point = Point::from_validated_coords([1.0, 1.0, 1.0]);
 
         // Test normal case first
         let result = hull.is_facet_visible_from_point(facet, &test_point, dt.as_triangulation());
@@ -2810,13 +2850,13 @@ mod tests {
         // Most validation edge cases are covered by the existing comprehensive tests
 
         // Test empty hull validation (should pass)
-        let empty_hull: ConvexHull<AdaptiveKernel<f64>, (), (), 3> = ConvexHull::default();
+        let empty_hull: ConvexHull<(), (), 3> = ConvexHull::default();
         // Create a dummy triangulation for validation
         let dummy_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dummy_dt = create_triangulation(&dummy_vertices);
         assert!(
@@ -2826,10 +2866,10 @@ mod tests {
 
         // Test valid hull validation (should pass)
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
@@ -2862,9 +2902,12 @@ mod tests {
         test_debug!("  Testing valid hull validation in different dimensions...");
 
         // Test 1D hull (empty hull validation)
-        let dummy_vertices_1d = vec![vertex!([0.0]), vertex!([1.0])];
+        let dummy_vertices_1d = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
+        ];
         let dummy_dt_1d = create_triangulation(&dummy_vertices_1d);
-        let hull_1d: ConvexHull<AdaptiveKernel<f64>, (), (), 1> = ConvexHull::default();
+        let hull_1d: ConvexHull<(), (), 1> = ConvexHull::default();
         assert!(
             hull_1d.validate(dummy_dt_1d.as_triangulation()).is_ok(),
             "1D empty hull should validate"
@@ -2873,12 +2916,12 @@ mod tests {
 
         // Test 2D hull
         let vertices_2d = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt_2d = create_triangulation(&vertices_2d);
-        let hull_2d: ConvexHull<AdaptiveKernel<f64>, (), (), 2> =
+        let hull_2d: ConvexHull<(), (), 2> =
             ConvexHull::from_triangulation(dt_2d.as_triangulation()).unwrap();
         assert!(
             hull_2d.validate(dt_2d.as_triangulation()).is_ok(),
@@ -2886,7 +2929,7 @@ mod tests {
         );
         // Validate vertices through FacetView
         for (i, facet_handle) in hull_2d.hull_facets.iter().enumerate() {
-            let facet_view = FacetView::new(
+            let facet_view = FacetView::try_new(
                 &dt_2d.as_triangulation().tds,
                 facet_handle.simplex_key(),
                 facet_handle.facet_index(),
@@ -2901,7 +2944,7 @@ mod tests {
         );
 
         // Test empty 2D hull validation
-        let empty_hull_2d: ConvexHull<AdaptiveKernel<f64>, (), (), 2> = ConvexHull::default();
+        let empty_hull_2d: ConvexHull<(), (), 2> = ConvexHull::default();
         assert!(
             empty_hull_2d.validate(dt_2d.as_triangulation()).is_ok(),
             "2D empty hull should validate successfully"
@@ -2909,13 +2952,13 @@ mod tests {
 
         // Test 3D hull
         let vertices_3d = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_3d = create_triangulation(&vertices_3d);
-        let hull_3d: ConvexHull<AdaptiveKernel<f64>, (), (), 3> =
+        let hull_3d: ConvexHull<(), (), 3> =
             ConvexHull::from_triangulation(dt_3d.as_triangulation()).unwrap();
         assert!(
             hull_3d.validate(dt_3d.as_triangulation()).is_ok(),
@@ -2923,7 +2966,7 @@ mod tests {
         );
         // Validate vertices through FacetView
         for (i, facet_handle) in hull_3d.hull_facets.iter().enumerate() {
-            let facet_view = FacetView::new(
+            let facet_view = FacetView::try_new(
                 &dt_3d.as_triangulation().tds,
                 facet_handle.simplex_key(),
                 facet_handle.facet_index(),
@@ -2938,7 +2981,7 @@ mod tests {
         );
 
         // Test empty 3D hull validation
-        let empty_hull_3d: ConvexHull<AdaptiveKernel<f64>, (), (), 3> = ConvexHull::default();
+        let empty_hull_3d: ConvexHull<(), (), 3> = ConvexHull::default();
         assert!(
             empty_hull_3d.validate(dt_3d.as_triangulation()).is_ok(),
             "3D empty hull should validate successfully"
@@ -2946,14 +2989,14 @@ mod tests {
 
         // Test 4D hull
         let vertices_4d = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_4d = create_triangulation(&vertices_4d);
-        let hull_4d: ConvexHull<AdaptiveKernel<f64>, (), (), 4> =
+        let hull_4d: ConvexHull<(), (), 4> =
             ConvexHull::from_triangulation(dt_4d.as_triangulation()).unwrap();
         assert!(
             hull_4d.validate(dt_4d.as_triangulation()).is_ok(),
@@ -2961,7 +3004,7 @@ mod tests {
         );
         // Validate vertices through FacetView
         for (i, facet_handle) in hull_4d.hull_facets.iter().enumerate() {
-            let facet_view = FacetView::new(
+            let facet_view = FacetView::try_new(
                 &dt_4d.as_triangulation().tds,
                 facet_handle.simplex_key(),
                 facet_handle.facet_index(),
@@ -2976,7 +3019,7 @@ mod tests {
         );
 
         // Test empty 4D hull validation
-        let empty_hull_4d: ConvexHull<AdaptiveKernel<f64>, (), (), 4> = ConvexHull::default();
+        let empty_hull_4d: ConvexHull<(), (), 4> = ConvexHull::default();
         assert!(
             empty_hull_4d.validate(dt_4d.as_triangulation()).is_ok(),
             "4D empty hull should validate successfully"
@@ -2984,15 +3027,15 @@ mod tests {
 
         // Test 5D hull (minimum required coverage)
         let vertices_5d: Vec<_> = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_5d = create_triangulation(&vertices_5d);
-        let hull_5d: ConvexHull<AdaptiveKernel<f64>, (), (), 5> =
+        let hull_5d: ConvexHull<(), (), 5> =
             ConvexHull::from_triangulation(dt_5d.as_triangulation()).unwrap();
         assert!(
             hull_5d.validate(dt_5d.as_triangulation()).is_ok(),
@@ -3000,7 +3043,7 @@ mod tests {
         );
         // Validate vertices through FacetView
         for (i, facet_handle) in hull_5d.hull_facets.iter().enumerate() {
-            let facet_view = FacetView::new(
+            let facet_view = FacetView::try_new(
                 &dt_5d.as_triangulation().tds,
                 facet_handle.simplex_key(),
                 facet_handle.facet_index(),
@@ -3015,7 +3058,7 @@ mod tests {
         );
 
         // Test empty 5D hull validation
-        let empty_hull_5d: ConvexHull<AdaptiveKernel<f64>, (), (), 5> = ConvexHull::default();
+        let empty_hull_5d: ConvexHull<(), (), 5> = ConvexHull::default();
         assert!(
             empty_hull_5d.validate(dt_5d.as_triangulation()).is_ok(),
             "5D empty hull should validate successfully"
@@ -3031,10 +3074,10 @@ mod tests {
 
         // Test with integer vertex data
         let vertices_int = vec![
-            vertex!([0.0, 0.0, 0.0], 1i32),
-            vertex!([1.0, 0.0, 0.0], 2i32),
-            vertex!([0.0, 1.0, 0.0], 3i32),
-            vertex!([0.0, 0.0, 1.0], 4i32),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 1i32).unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 2i32).unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 3i32).unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 4i32).unwrap(),
         ];
         let dt_int = DelaunayTriangulation::<AdaptiveKernel<f64>, i32, (), 3>::with_kernel(
             &AdaptiveKernel::new(),
@@ -3049,10 +3092,10 @@ mod tests {
 
         // Test with character vertex data
         let vertices_char = vec![
-            vertex!([0.0, 0.0, 0.0], 'A'),
-            vertex!([1.0, 0.0, 0.0], 'B'),
-            vertex!([0.0, 1.0, 0.0], 'C'),
-            vertex!([0.0, 0.0, 1.0], 'D'),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 'A').unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 'B').unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 'C').unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 'D').unwrap(),
         ];
         let dt_char = DelaunayTriangulation::<AdaptiveKernel<f64>, char, (), 3>::with_kernel(
             &AdaptiveKernel::new(),
@@ -3075,30 +3118,33 @@ mod tests {
             // Large coordinates
             (
                 vec![
-                    vertex!([0.0, 0.0, 0.0]),
-                    vertex!([1e15, 0.0, 0.0]),
-                    vertex!([0.0, 1e15, 0.0]),
-                    vertex!([0.0, 0.0, 1e15]),
+                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+                    crate::core::vertex::Vertex::<(), _>::try_new([1e15, 0.0, 0.0]).unwrap(),
+                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1e15, 0.0]).unwrap(),
+                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1e15]).unwrap(),
                 ],
                 "large",
             ),
             // Small coordinates
             (
                 vec![
-                    vertex!([0.0, 0.0, 0.0]),
-                    vertex!([1e-15, 0.0, 0.0]),
-                    vertex!([0.0, 1e-15, 0.0]),
-                    vertex!([0.0, 0.0, 1e-15]),
+                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+                    crate::core::vertex::Vertex::<(), _>::try_new([1e-15, 0.0, 0.0]).unwrap(),
+                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1e-15, 0.0]).unwrap(),
+                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1e-15]).unwrap(),
                 ],
                 "small",
             ),
             // Mixed extreme coordinates
             (
                 vec![
-                    vertex!([f64::MIN_POSITIVE, 0.0, 0.0]),
-                    vertex!([f64::MAX / 1e10, 0.0, 0.0]),
-                    vertex!([0.0, f64::EPSILON, 0.0]),
-                    vertex!([0.0, 0.0, 1.0]),
+                    crate::core::vertex::Vertex::<(), _>::try_new([f64::MIN_POSITIVE, 0.0, 0.0])
+                        .unwrap(),
+                    crate::core::vertex::Vertex::<(), _>::try_new([f64::MAX / 1e10, 0.0, 0.0])
+                        .unwrap(),
+                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, f64::EPSILON, 0.0])
+                        .unwrap(),
+                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
                 ],
                 "mixed",
             ),
@@ -3110,7 +3156,7 @@ mod tests {
 
             match dt_result {
                 Ok(dt) => {
-                    let hull: ConvexHull<_, (), (), 3> =
+                    let hull: ConvexHull<(), (), 3> =
                         ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
                     assert!(
                         hull.validate(dt.as_triangulation()).is_ok(),
@@ -3212,7 +3258,7 @@ mod tests {
         }
 
         // Test validation with empty hull
-        let empty_hull: ConvexHull<AdaptiveKernel<f64>, (), (), 3> = ConvexHull::default();
+        let empty_hull: ConvexHull<(), (), 3> = ConvexHull::default();
         assert!(
             empty_hull.validate(dt_3d.as_triangulation()).is_ok(),
             "Empty hull validation should succeed"
@@ -3220,13 +3266,13 @@ mod tests {
 
         // Performance test - validate 100 times
         let perf_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let perf_dt = create_triangulation(&perf_vertices);
-        let perf_hull: ConvexHull<AdaptiveKernel<f64>, (), (), 3> =
+        let perf_hull: ConvexHull<(), (), 3> =
             ConvexHull::from_triangulation(perf_dt.as_triangulation()).unwrap();
 
         let start_time = std::time::Instant::now();
@@ -3256,16 +3302,16 @@ mod tests {
     #[test]
     fn test_find_nearest_visible_facet_comprehensive() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         // Test with inside point - should return None
-        let inside_point = Point::new([0.1, 0.1, 0.1]);
+        let inside_point = Point::from_validated_coords([0.1, 0.1, 0.1]);
         let result = hull
             .find_nearest_visible_facet(&inside_point, dt.as_triangulation())
             .unwrap();
@@ -3275,7 +3321,7 @@ mod tests {
         );
 
         // Test with outside point - should return Some index
-        let outside_point = Point::new([2.0, 2.0, 2.0]);
+        let outside_point = Point::from_validated_coords([2.0, 2.0, 2.0]);
         let result = hull
             .find_nearest_visible_facet(&outside_point, dt.as_triangulation())
             .unwrap();
@@ -3290,10 +3336,10 @@ mod tests {
 
         // Test with point at various distances to verify distance calculation
         let test_points = vec![
-            Point::new([1.5, 1.5, 1.5]),
-            Point::new([3.0, 0.0, 0.0]),
-            Point::new([0.0, 3.0, 0.0]),
-            Point::new([0.0, 0.0, 3.0]),
+            Point::from_validated_coords([1.5, 1.5, 1.5]),
+            Point::from_validated_coords([3.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 3.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 3.0]),
         ];
 
         for point in test_points {
@@ -3306,10 +3352,10 @@ mod tests {
     #[test]
     fn test_facet_access_edge_cases() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
@@ -3339,7 +3385,7 @@ mod tests {
 
         // Verify all facets in iterator are valid - create FacetView to check vertices
         for facet_handle in hull.facets() {
-            let facet_view = FacetView::new(
+            let facet_view = FacetView::try_new(
                 &dt.as_triangulation().tds,
                 facet_handle.simplex_key(),
                 facet_handle.facet_index(),
@@ -3354,10 +3400,10 @@ mod tests {
     fn test_generic_types_comprehensive() {
         // Test coordinate type validation with f64
         let vertices_f64 = vec![
-            vertex!([0.0f64, 0.0f64, 0.0f64]),
-            vertex!([1.0f64, 0.0f64, 0.0f64]),
-            vertex!([0.0f64, 1.0f64, 0.0f64]),
-            vertex!([0.0f64, 0.0f64, 1.0f64]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0f64, 0.0f64, 0.0f64]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0f64, 0.0f64, 0.0f64]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0f64, 1.0f64, 0.0f64]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0f64, 0.0f64, 1.0f64]).unwrap(),
         ];
         let dt_f64 = create_triangulation(&vertices_f64);
         let hull_f64 = ConvexHull::from_triangulation(dt_f64.as_triangulation()).unwrap();
@@ -3366,16 +3412,20 @@ mod tests {
         assert!(!hull_f64.is_empty());
 
         // Test point operations with f64
-        let test_point_f64 = Point::new([2.0f64, 2.0f64, 2.0f64]);
+        let test_point_f64 = Point::from_validated_coords([2.0f64, 2.0f64, 2.0f64]);
         let result = hull_f64.is_point_outside(&test_point_f64, dt_f64.as_triangulation());
         assert!(result.is_ok());
 
         // Test with high precision f64 coordinates
         let vertices_high_precision = vec![
-            vertex!([0.000_000_000_000_001, 0.0, 0.0]),
-            vertex!([1.000_000_000_000_001, 0.0, 0.0]),
-            vertex!([0.0, 1.000_000_000_000_001, 0.0]),
-            vertex!([0.0, 0.0, 1.000_000_000_000_001]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.000_000_000_000_001, 0.0, 0.0])
+                .unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.000_000_000_000_001, 0.0, 0.0])
+                .unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.000_000_000_000_001, 0.0])
+                .unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.000_000_000_000_001])
+                .unwrap(),
         ];
         let dt_hp = create_triangulation(&vertices_high_precision);
         let hull_hp = ConvexHull::from_triangulation(dt_hp.as_triangulation()).unwrap();
@@ -3387,10 +3437,10 @@ mod tests {
 
         // Test with integer vertex data
         let vertices_int = vec![
-            vertex!([0.0, 0.0, 0.0], 1i32),
-            vertex!([1.0, 0.0, 0.0], 2i32),
-            vertex!([0.0, 1.0, 0.0], 3i32),
-            vertex!([0.0, 0.0, 1.0], 4i32),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 1i32).unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 2i32).unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 3i32).unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 4i32).unwrap(),
         ];
         let dt_int = DelaunayTriangulation::<AdaptiveKernel<f64>, i32, (), 3>::with_kernel(
             &AdaptiveKernel::new(),
@@ -3405,10 +3455,10 @@ mod tests {
 
         // Test with character vertex data
         let vertices_char = vec![
-            vertex!([0.0, 0.0, 0.0], 'A'),
-            vertex!([1.0, 0.0, 0.0], 'B'),
-            vertex!([0.0, 1.0, 0.0], 'C'),
-            vertex!([0.0, 0.0, 1.0], 'D'),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 'A').unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 'B').unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 'C').unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 'D').unwrap(),
         ];
         let dt_char = DelaunayTriangulation::<AdaptiveKernel<f64>, char, (), 3>::with_kernel(
             &AdaptiveKernel::new(),
@@ -3423,10 +3473,14 @@ mod tests {
 
         // Test with Option<i32> vertex data
         let vertices_with_data = vec![
-            vertex!([0.0, 0.0, 0.0], Some(1)),
-            vertex!([1.0, 0.0, 0.0], Some(2)),
-            vertex!([0.0, 1.0, 0.0], Some(3)),
-            vertex!([0.0, 0.0, 1.0], Some(4)),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], Some(1))
+                .unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], Some(2))
+                .unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], Some(3))
+                .unwrap(),
+            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], Some(4))
+                .unwrap(),
         ];
         let dt_with_data =
             DelaunayTriangulation::<AdaptiveKernel<f64>, Option<i32>, (), 3>::with_kernel(
@@ -3449,10 +3503,10 @@ mod tests {
     fn test_extreme_coordinate_values() {
         // Test with very large coordinates
         let vertices_large = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1e6, 0.0, 0.0]),
-            vertex!([0.0, 1e6, 0.0]),
-            vertex!([0.0, 0.0, 1e6]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1e6, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1e6, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1e6]).unwrap(),
         ];
         let dt_large = create_triangulation(&vertices_large);
         let hull_large = ConvexHull::from_triangulation(dt_large.as_triangulation()).unwrap();
@@ -3461,8 +3515,8 @@ mod tests {
         assert!(hull_large.validate(dt_large.as_triangulation()).is_ok());
 
         // Test visibility with large coordinates
-        let inside_large = Point::new([1000.0, 1000.0, 1000.0]);
-        let outside_large = Point::new([2e6, 2e6, 2e6]);
+        let inside_large = Point::from_validated_coords([1000.0, 1000.0, 1000.0]);
+        let outside_large = Point::from_validated_coords([2e6, 2e6, 2e6]);
 
         assert!(
             !hull_large
@@ -3478,10 +3532,10 @@ mod tests {
         // Test with very small coordinates (but still large enough to avoid being
         // treated as numerically degenerate by the initial simplex search)
         let vertices_small = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1e-3, 0.0, 0.0]),
-            vertex!([0.0, 1e-3, 0.0]),
-            vertex!([0.0, 0.0, 1e-3]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1e-3, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1e-3, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1e-3]).unwrap(),
         ];
         let dt_small = create_triangulation(&vertices_small);
         let hull_small = ConvexHull::from_triangulation(dt_small.as_triangulation()).unwrap();
@@ -3493,10 +3547,10 @@ mod tests {
     #[test]
     fn test_trait_implementations_comprehensive() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
@@ -3518,32 +3572,32 @@ mod tests {
 
         // Test Default trait for various dimensions
         let dummy_vertices_2d = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dummy_dt_2d = create_triangulation(&dummy_vertices_2d);
-        let hull_2d: ConvexHull<AdaptiveKernel<f64>, (), (), 2> = ConvexHull::default();
+        let hull_2d: ConvexHull<(), (), 2> = ConvexHull::default();
         assert!(hull_2d.is_empty());
         assert_eq!(hull_2d.number_of_facets(), 0);
         assert_eq!(hull_2d.dimension(), 2);
         assert!(hull_2d.validate(dummy_dt_2d.as_triangulation()).is_ok());
 
-        let hull_3d_default: ConvexHull<AdaptiveKernel<f64>, (), (), 3> = ConvexHull::default();
+        let hull_3d_default: ConvexHull<(), (), 3> = ConvexHull::default();
         assert!(hull_3d_default.is_empty());
         assert_eq!(hull_3d_default.number_of_facets(), 0);
         assert_eq!(hull_3d_default.dimension(), 3);
         assert!(hull_3d_default.validate(dt.as_triangulation()).is_ok());
 
         let dummy_vertices_4d = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
         ];
         let dummy_dt_4d = create_triangulation(&dummy_vertices_4d);
-        let hull_4d: ConvexHull<AdaptiveKernel<f64>, (), (), 4> = ConvexHull::default();
+        let hull_4d: ConvexHull<(), (), 4> = ConvexHull::default();
         assert!(hull_4d.is_empty());
         assert_eq!(hull_4d.number_of_facets(), 0);
         assert_eq!(hull_4d.dimension(), 4);
@@ -3554,33 +3608,33 @@ mod tests {
     fn test_type_aliases() {
         // Test that type aliases compile and work correctly
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
-        let _hull_2d: ConvexHull2D<AdaptiveKernel<f64>, (), ()> =
+        let _hull_2d: ConvexHull2D<(), ()> =
             ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         let vertices_3d = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_3d = create_triangulation(&vertices_3d);
-        let _hull_3d: ConvexHull3D<AdaptiveKernel<f64>, (), ()> =
+        let _hull_3d: ConvexHull3D<(), ()> =
             ConvexHull::from_triangulation(dt_3d.as_triangulation()).unwrap();
 
         let vertices_4d = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_4d = create_triangulation(&vertices_4d);
-        let _hull_4d: ConvexHull4D<AdaptiveKernel<f64>, (), ()> =
+        let _hull_4d: ConvexHull4D<(), ()> =
             ConvexHull::from_triangulation(dt_4d.as_triangulation()).unwrap();
     }
 
@@ -3614,12 +3668,12 @@ mod tests {
     fn test_from_triangulation_no_simplices_error() {
         // Create a manually constructed TDS with vertices but no simplices
         // Note: We need to use the underlying TDS directly for this edge case test
-        let mut tds = Tds::<f64, (), (), 3>::empty();
-        let vertex = vertex!([0.0, 0.0, 0.0]);
+        let mut tds = Tds::<(), (), 3>::empty();
+        let vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap();
         tds.insert_vertex_with_mapping(vertex).unwrap();
 
         // Use the test-only constructor to avoid brittle struct literals.
-        let tri = Triangulation::new_with_tds(AdaptiveKernel::new(), tds);
+        let tri = Triangulation::new_with_tds(AdaptiveKernel::<f64>::new(), tds);
 
         let result = ConvexHull::from_triangulation(&tri);
         assert!(result.is_err());
@@ -3637,10 +3691,10 @@ mod tests {
         // by creating a TDS that would fail boundary facet extraction
         // For now, just test that the error mapping works with a valid TDS
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let result = ConvexHull::from_triangulation(dt.as_triangulation());
@@ -3653,16 +3707,16 @@ mod tests {
     fn test_visibility_check_insufficient_vertices_error() {
         // Create a hull and manually create a degenerate facet to test error path
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         // Test a normal facet first to ensure visibility checks work
-        let test_point = Point::new([2.0, 2.0, 2.0]);
+        let test_point = Point::from_validated_coords([2.0, 2.0, 2.0]);
         if let Some(facet) = hull.facet(0) {
             let result =
                 hull.is_facet_visible_from_point(facet, &test_point, dt.as_triangulation());
@@ -3678,10 +3732,10 @@ mod tests {
     fn test_fallback_visibility_test_degenerate_facet() {
         // Test the fallback visibility algorithm with degenerate geometry
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
@@ -3689,7 +3743,7 @@ mod tests {
         // Test fallback with various points
         if let Some(facet_handle) = hull.facet(0) {
             // Create FacetView to get vertices
-            let facet_view = FacetView::new(
+            let facet_view = FacetView::try_new(
                 &dt.as_triangulation().tds,
                 facet_handle.simplex_key(),
                 facet_handle.facet_index(),
@@ -3698,19 +3752,15 @@ mod tests {
             let facet_vertices = facet_view_to_vertices(&facet_view).unwrap();
 
             // Test with a point very close to the facet (should not be visible)
-            let close_point = Point::new([0.1, 0.1, 0.1]);
-            let result = ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
-                &facet_vertices,
-                &close_point,
-            );
+            let close_point = Point::from_validated_coords([0.1, 0.1, 0.1]);
+            let result =
+                ConvexHull::<(), (), 3>::fallback_visibility_test(&facet_vertices, &close_point);
             assert!(result.is_ok());
 
             // Test with a point far from the facet (should be visible)
-            let far_point = Point::new([10.0, 10.0, 10.0]);
-            let result = ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
-                &facet_vertices,
-                &far_point,
-            );
+            let far_point = Point::from_validated_coords([10.0, 10.0, 10.0]);
+            let result =
+                ConvexHull::<(), (), 3>::fallback_visibility_test(&facet_vertices, &far_point);
             assert!(result.is_ok());
             assert!(result.unwrap()); // Should be visible from far point
         }
@@ -3721,16 +3771,16 @@ mod tests {
         // Consolidated test for inside point detection (no visible facets)
         // Tests both find_nearest_visible_facet and is_point_outside
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         // Test with a point inside the hull
-        let inside_point = Point::new([0.2, 0.2, 0.2]);
+        let inside_point = Point::from_validated_coords([0.2, 0.2, 0.2]);
 
         // Test find_nearest_visible_facet (no facets should be visible)
         let result = hull.find_nearest_visible_facet(&inside_point, dt.as_triangulation());
@@ -3746,16 +3796,16 @@ mod tests {
     #[test]
     fn test_find_nearest_visible_facet_equidistant_cases() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         // Test with a point that's equidistant from multiple facets
-        let equidistant_point = Point::new([5.0, 5.0, 5.0]);
+        let equidistant_point = Point::from_validated_coords([5.0, 5.0, 5.0]);
         let result = hull.find_nearest_visible_facet(&equidistant_point, dt.as_triangulation());
         assert!(result.is_ok());
         // Should return some facet index or None
@@ -3764,10 +3814,10 @@ mod tests {
     #[test]
     fn test_hull_operations_extended() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
@@ -3791,10 +3841,10 @@ mod tests {
     #[test]
     fn test_invalidate_cache() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
@@ -3803,7 +3853,7 @@ mod tests {
         hull.invalidate_cache();
 
         // Verify we can still perform operations after cache invalidation
-        let test_point = Point::new([2.0, 2.0, 2.0]);
+        let test_point = Point::from_validated_coords([2.0, 2.0, 2.0]);
         let result = hull.is_point_outside(&test_point, dt.as_triangulation());
         assert!(result.is_ok());
     }
@@ -3811,10 +3861,10 @@ mod tests {
     #[test]
     fn test_facet_cache_provider_implementation() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
@@ -3871,10 +3921,10 @@ mod tests {
     #[test]
     fn test_comprehensive_facet_iteration() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
@@ -3912,7 +3962,7 @@ mod tests {
             .hull_facets
             .iter()
             .map(|facet_handle| {
-                FacetView::new(
+                FacetView::try_new(
                     &dt.as_triangulation().tds,
                     facet_handle.simplex_key(),
                     facet_handle.facet_index(),
@@ -3933,27 +3983,27 @@ mod tests {
     #[test]
     fn test_dimensional_consistency() {
         // Test that dimension() always returns D regardless of hull state
-        let empty_hull_1d: ConvexHull<AdaptiveKernel<f64>, (), (), 1> = ConvexHull::default();
+        let empty_hull_1d: ConvexHull<(), (), 1> = ConvexHull::default();
         assert_eq!(empty_hull_1d.dimension(), 1);
 
-        let empty_hull_2d: ConvexHull<AdaptiveKernel<f64>, (), (), 2> = ConvexHull::default();
+        let empty_hull_2d: ConvexHull<(), (), 2> = ConvexHull::default();
         assert_eq!(empty_hull_2d.dimension(), 2);
 
-        let empty_hull_3d: ConvexHull<AdaptiveKernel<f64>, (), (), 3> = ConvexHull::default();
+        let empty_hull_3d: ConvexHull<(), (), 3> = ConvexHull::default();
         assert_eq!(empty_hull_3d.dimension(), 3);
 
-        let empty_hull_4d: ConvexHull<AdaptiveKernel<f64>, (), (), 4> = ConvexHull::default();
+        let empty_hull_4d: ConvexHull<(), (), 4> = ConvexHull::default();
         assert_eq!(empty_hull_4d.dimension(), 4);
 
-        let empty_hull_ten_d: ConvexHull<AdaptiveKernel<f64>, (), (), 10> = ConvexHull::default();
+        let empty_hull_ten_d: ConvexHull<(), (), 10> = ConvexHull::default();
         assert_eq!(empty_hull_ten_d.dimension(), 10);
 
         // Test with populated hull
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
@@ -3962,7 +4012,7 @@ mod tests {
 
         // Dimension is a const generic parameter, so it never changes
         // Empty hulls also preserve the dimension
-        let empty_hull: ConvexHull<AdaptiveKernel<f64>, (), (), 3> = ConvexHull::default();
+        let empty_hull: ConvexHull<(), (), 3> = ConvexHull::default();
         assert_eq!(empty_hull.dimension(), 3);
     }
 
@@ -3971,10 +4021,10 @@ mod tests {
         test_debug!("Testing error handling paths in convex hull methods");
 
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
@@ -3982,20 +4032,18 @@ mod tests {
         // Test fallback_visibility_test with a regular facet and extreme point
         let test_facet_vertices =
             extract_facet_vertices(&hull.hull_facets[0], dt.as_triangulation()).unwrap();
-        let test_point = Point::new([1e-20, 1e-20, 1e-20]);
-        let result = ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
-            &test_facet_vertices,
-            &test_point,
-        );
+        let test_point = Point::from_validated_coords([1e-20, 1e-20, 1e-20]);
+        let result =
+            ConvexHull::<(), (), 3>::fallback_visibility_test(&test_facet_vertices, &test_point);
 
         // The method should handle extreme coordinates gracefully
         test_debug!("  Fallback visibility result with extreme point: {result:?}");
 
         // Test normal visibility methods with edge case points
         let edge_points = vec![
-            Point::new([0.0, 0.0, 0.0]),                            // At vertex
-            Point::new([0.5, 0.0, 0.0]),                            // On edge
-            Point::new([f64::EPSILON, f64::EPSILON, f64::EPSILON]), // Very small
+            Point::from_validated_coords([0.0, 0.0, 0.0]), // At vertex
+            Point::from_validated_coords([0.5, 0.0, 0.0]), // On edge
+            Point::from_validated_coords([f64::EPSILON, f64::EPSILON, f64::EPSILON]), // Very small
         ];
 
         for point in edge_points {
@@ -4013,19 +4061,19 @@ mod tests {
         // Create a triangulation that might produce degenerate orientations
         // while still allowing the initial simplex search to succeed.
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1e-3, 0.0, 0.0]), // Small but not numerically wiped out
-            vertex!([0.0, 1e-3, 0.0]),
-            vertex!([0.0, 0.0, 1e-3]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1e-3, 0.0, 0.0]).unwrap(), // Small but not numerically wiped out
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1e-3, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1e-3]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         // Test with points that might cause degenerate orientations
         let test_points = vec![
-            Point::new([5e-11, 5e-11, 5e-11]), // Very close to the degenerate vertices
-            Point::new([1e-9, 1e-9, 1e-9]),    // Slightly further but still small
-            Point::new([0.0, 0.0, 0.0]),       // At origin
+            Point::from_validated_coords([5e-11, 5e-11, 5e-11]), // Very close to the degenerate vertices
+            Point::from_validated_coords([1e-9, 1e-9, 1e-9]),    // Slightly further but still small
+            Point::from_validated_coords([0.0, 0.0, 0.0]),       // At origin
         ];
 
         for point in test_points {
@@ -4052,10 +4100,10 @@ mod tests {
 
         // Test with coordinates at the limits of f64 precision
         let vertices_extreme = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([f64::MIN_POSITIVE, 0.0, 0.0]),
-            vertex!([0.0, f64::MIN_POSITIVE, 0.0]),
-            vertex!([0.0, 0.0, f64::MIN_POSITIVE]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([f64::MIN_POSITIVE, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, f64::MIN_POSITIVE, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, f64::MIN_POSITIVE]).unwrap(),
         ];
 
         let dt_extreme_result = DelaunayTriangulation::new(&vertices_extreme);
@@ -4066,7 +4114,7 @@ mod tests {
                     ConvexHull::from_triangulation(dt_extreme.as_triangulation()).unwrap();
 
                 // Test visibility with extreme coordinates
-                let test_point = Point::new([
+                let test_point = Point::from_validated_coords([
                     f64::MIN_POSITIVE * 2.0,
                     f64::MIN_POSITIVE * 2.0,
                     f64::MIN_POSITIVE * 2.0,
@@ -4085,10 +4133,7 @@ mod tests {
                 )
                 .unwrap();
                 let fallback_result =
-                    ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
-                        &facet_vertices,
-                        &test_point,
-                    );
+                    ConvexHull::<(), (), 3>::fallback_visibility_test(&facet_vertices, &test_point);
                 test_debug!("  Extreme precision fallback result: {fallback_result:?}");
             }
             Err(DelaunayTriangulationConstructionError::Triangulation(
@@ -4110,15 +4155,16 @@ mod tests {
 
         // Test with maximum finite values
         let vertices_max = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_max = create_triangulation(&vertices_max);
         let hull_max = ConvexHull::from_triangulation(dt_max.as_triangulation()).unwrap();
 
-        let max_point = Point::new([f64::MAX / 2.0, f64::MAX / 2.0, f64::MAX / 2.0]);
+        let max_point =
+            Point::from_validated_coords([f64::MAX / 2.0, f64::MAX / 2.0, f64::MAX / 2.0]);
         let result = hull_max.is_point_outside(&max_point, dt_max.as_triangulation());
         assert!(
             result.is_ok(),
@@ -4133,16 +4179,16 @@ mod tests {
         test_debug!("Testing numeric cast error handling in find_nearest_visible_facet");
 
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         // Test with a normal point to ensure the method works correctly first
-        let outside_point = Point::new([2.0, 2.0, 2.0]);
+        let outside_point = Point::from_validated_coords([2.0, 2.0, 2.0]);
         let result = hull.find_nearest_visible_facet(&outside_point, dt.as_triangulation());
         assert!(
             result.is_ok(),
@@ -4160,9 +4206,9 @@ mod tests {
 
         // Test with various edge cases that could potentially cause numeric issues
         let edge_points = vec![
-            Point::new([0.0, 0.0, 0.0]),       // At vertex
-            Point::new([1e-10, 1e-10, 1e-10]), // Very small but positive
-            Point::new([1e10, 1e10, 1e10]),    // Very large
+            Point::from_validated_coords([0.0, 0.0, 0.0]), // At vertex
+            Point::from_validated_coords([1e-10, 1e-10, 1e-10]), // Very small but positive
+            Point::from_validated_coords([1e10, 1e10, 1e10]), // Very large
         ];
 
         for point in edge_points {
@@ -4190,10 +4236,10 @@ mod tests {
 
         // Create initial triangulation
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
@@ -4216,7 +4262,7 @@ mod tests {
         );
 
         // Test initial cache building - first visibility test should build the cache
-        let test_point = Point::new([2.0, 2.0, 2.0]);
+        let test_point = Point::from_validated_coords([2.0, 2.0, 2.0]);
         let facet = hull.facet(0).unwrap();
 
         test_debug!("  Performing initial visibility test to build cache...");
@@ -4257,7 +4303,7 @@ mod tests {
         let stale_hull_gen = hull.cached_generation().load(Ordering::Acquire);
 
         // Add a new vertex - this will bump the generation
-        let new_vertex = vertex!([0.5, 0.5, 0.5]); // Interior point
+        let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(); // Interior point
         dt.insert(new_vertex)
             .expect("Failed to insert vertex into DelaunayTriangulation");
 
@@ -4406,7 +4452,7 @@ mod tests {
         let test_results: Vec<_> = (0..10)
             .map(|i| {
                 let x = NumCast::from(i).unwrap_or(0.0f64).mul_add(0.1, 2.0);
-                let test_pt = Point::new([x, 2.0, 2.0]);
+                let test_pt = Point::from_validated_coords([x, 2.0, 2.0]);
                 new_hull.is_facet_visible_from_point(new_facet, &test_pt, dt.as_triangulation())
             })
             .collect();
@@ -4430,10 +4476,10 @@ mod tests {
 
         // Create a triangulation
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
@@ -4489,7 +4535,7 @@ mod tests {
         let old_generation = dt.as_triangulation().tds.generation();
 
         // Add a new vertex to trigger generation bump
-        let new_vertex = vertex!([0.5, 0.5, 0.5]); // Interior point
+        let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(); // Interior point
         dt.insert(new_vertex).expect("Failed to insert vertex");
 
         let new_generation = dt.as_triangulation().tds.generation();
@@ -4530,10 +4576,10 @@ mod tests {
 
         // Create a triangulation
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
@@ -4549,7 +4595,7 @@ mod tests {
         for i in 0..hull.number_of_facets() {
             let facet_handle = hull.facet(i).unwrap();
             // Create FacetView to get vertices
-            let facet_view = FacetView::new(
+            let facet_view = FacetView::try_new(
                 &dt.as_triangulation().tds,
                 facet_handle.simplex_key(),
                 facet_handle.facet_index(),
@@ -4598,7 +4644,7 @@ mod tests {
 
         // Test that helper methods work correctly together in visibility testing
         test_debug!("  Testing helper methods in visibility context...");
-        let test_point = Point::new([2.0, 2.0, 2.0]);
+        let test_point = Point::from_validated_coords([2.0, 2.0, 2.0]);
         let test_facet = hull.facet(0).unwrap();
 
         let visibility_result =
@@ -4622,17 +4668,17 @@ mod tests {
         // connected and that the method signature returns the right error type.
 
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         // Test that normal cache building succeeds and returns the right error type
         let test_facet = hull.facet(0).unwrap();
-        let test_point = Point::new([2.0, 2.0, 2.0]);
+        let test_point = Point::from_validated_coords([2.0, 2.0, 2.0]);
 
         // Call the method that should propagate TdsError as FacetCacheBuildFailed
         let result =
@@ -4676,10 +4722,10 @@ mod tests {
 
         // Create a symmetric triangulation where multiple facets might be equidistant
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]), // Origin
-            vertex!([1.0, 0.0, 0.0]), // X axis
-            vertex!([0.0, 1.0, 0.0]), // Y axis
-            vertex!([0.0, 0.0, 1.0]), // Z axis
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(), // Origin
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(), // X axis
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(), // Y axis
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(), // Z axis
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
@@ -4687,7 +4733,7 @@ mod tests {
         test_debug!("  Testing with point equidistant from multiple facets...");
 
         // Point at (1,1,1) should be roughly equidistant from all facets
-        let equidistant_point = Point::new([1.0, 1.0, 1.0]);
+        let equidistant_point = Point::from_validated_coords([1.0, 1.0, 1.0]);
         let nearest_result =
             hull.find_nearest_visible_facet(&equidistant_point, dt.as_triangulation());
 
@@ -4730,7 +4776,7 @@ mod tests {
         test_debug!("  Testing with point clearly outside...");
 
         // Point clearly outside should always find a nearest facet
-        let far_point = Point::new([10.0, 10.0, 10.0]);
+        let far_point = Point::from_validated_coords([10.0, 10.0, 10.0]);
         let far_result = hull.find_nearest_visible_facet(&far_point, dt.as_triangulation());
 
         match far_result {
@@ -4749,7 +4795,7 @@ mod tests {
         test_debug!("  Testing with point clearly inside...");
 
         // Point clearly inside should see no facets
-        let inside_point = Point::new([0.1, 0.1, 0.1]);
+        let inside_point = Point::from_validated_coords([0.1, 0.1, 0.1]);
         let inside_result = hull.find_nearest_visible_facet(&inside_point, dt.as_triangulation());
 
         match inside_result {
@@ -4777,10 +4823,10 @@ mod tests {
 
         // Create a triangulation
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
@@ -4801,7 +4847,7 @@ mod tests {
             let handle = thread::spawn(move || {
                 // Each thread tries to use methods that require the cache
                 let thread_offset: f64 = NumCast::from(thread_id).unwrap();
-                let test_point = Point::new([2.0 + thread_offset, 2.0, 2.0]);
+                let test_point = Point::from_validated_coords([2.0 + thread_offset, 2.0, 2.0]);
 
                 // This will internally call try_get_or_build_facet_cache
                 let visible_facets =
@@ -4862,7 +4908,7 @@ mod tests {
         );
 
         // Test a few operations to make sure everything still works
-        let test_point = Point::new([1.5, 1.5, 1.5]);
+        let test_point = Point::from_validated_coords([1.5, 1.5, 1.5]);
         let final_result = hull.find_visible_facets(&test_point, dt.as_triangulation());
         assert!(
             final_result.is_ok(),
@@ -4881,10 +4927,10 @@ mod tests {
 
         // Create a triangulation
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
@@ -4956,7 +5002,7 @@ mod tests {
 
         // Verify functionality still works after invalidation/rebuild cycle
         test_debug!("  Testing functionality after invalidation/rebuild...");
-        let test_point = Point::new([2.0, 2.0, 2.0]);
+        let test_point = Point::from_validated_coords([2.0, 2.0, 2.0]);
         let visible_facets = hull.find_visible_facets(&test_point, dt.as_triangulation());
         assert!(
             visible_facets.is_ok(),
@@ -4978,17 +5024,17 @@ mod tests {
 
         // Create a valid setup
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         test_debug!("  Testing error types are properly propagated...");
 
-        let test_point = Point::new([2.0, 2.0, 2.0]);
+        let test_point = Point::from_validated_coords([2.0, 2.0, 2.0]);
         let test_facet = hull.facet(0).unwrap();
 
         // Test is_facet_visible_from_point returns ConvexHullConstructionError
@@ -5046,16 +5092,16 @@ mod tests {
 
         // Create a simple triangulation to test with
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         // Test normal case to verify the error type is available
-        let test_point = Point::new([2.0, 2.0, 2.0]);
+        let test_point = Point::from_validated_coords([2.0, 2.0, 2.0]);
         let test_facet = hull.facet(0).unwrap();
 
         // This should succeed in normal cases
@@ -5466,10 +5512,10 @@ mod tests {
 
         // Test with very large coordinates (may cause numeric issues)
         let large_vertices = vec![
-            vertex!([1e10, 0.0, 0.0]),
-            vertex!([0.0, 1e10, 0.0]),
-            vertex!([0.0, 0.0, 1e10]),
-            vertex!([1e10, 1e10, 1e10]),
+            crate::core::vertex::Vertex::<(), _>::try_new([1e10, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1e10, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1e10]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1e10, 1e10, 1e10]).unwrap(),
         ];
 
         match DelaunayTriangulation::new(&large_vertices) {
@@ -5479,7 +5525,7 @@ mod tests {
                         assert!(!large_hull.is_empty());
                         assert!(large_hull.validate(large_dt.as_triangulation()).is_ok());
 
-                        let large_test_point = Point::new([2e10, 2e10, 2e10]);
+                        let large_test_point = Point::from_validated_coords([2e10, 2e10, 2e10]);
                         let visibility_result = large_hull
                             .is_point_outside(&large_test_point, large_dt.as_triangulation());
                         assert!(
@@ -5513,10 +5559,10 @@ mod tests {
 
         // Test with very small coordinates (may cause precision issues)
         let small_vertices = vec![
-            vertex!([1e-15, 0.0, 0.0]),
-            vertex!([0.0, 1e-15, 0.0]),
-            vertex!([0.0, 0.0, 1e-15]),
-            vertex!([1e-15, 1e-15, 1e-15]),
+            crate::core::vertex::Vertex::<(), _>::try_new([1e-15, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1e-15, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1e-15]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1e-15, 1e-15, 1e-15]).unwrap(),
         ];
 
         match DelaunayTriangulation::new(&small_vertices) {
@@ -5536,10 +5582,10 @@ mod tests {
 
         // Test fallback visibility with extreme coordinates
         let normal_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let normal_dt = create_triangulation(&normal_vertices);
         let normal_hull = ConvexHull::from_triangulation(normal_dt.as_triangulation()).unwrap();
@@ -5548,17 +5594,14 @@ mod tests {
                 .unwrap();
 
         let extreme_points = [
-            Point::new([1e-100, 1e-100, 1e-100]), // Extremely small
-            Point::new([1e100, 1e100, 1e100]),    // Extremely large
-            Point::new([f64::EPSILON, f64::EPSILON, f64::EPSILON]), // Machine epsilon
+            Point::from_validated_coords([1e-100, 1e-100, 1e-100]), // Extremely small
+            Point::from_validated_coords([1e100, 1e100, 1e100]),    // Extremely large
+            Point::from_validated_coords([f64::EPSILON, f64::EPSILON, f64::EPSILON]), // Machine epsilon
         ];
 
         for (i, point) in extreme_points.iter().enumerate() {
             let fallback_result =
-                ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
-                    &test_facet_vertices,
-                    point,
-                );
+                ConvexHull::<(), (), 3>::fallback_visibility_test(&test_facet_vertices, point);
             match fallback_result {
                 Ok(is_visible) => {
                     test_debug!("    Extreme point {i}: fallback visibility = {is_visible}");
@@ -5588,10 +5631,10 @@ mod tests {
 
         // Create basic triangulation to get valid facet structure
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
@@ -5599,7 +5642,7 @@ mod tests {
         test_debug!("  Testing fallback with points at various distances...");
 
         let facet_handle = hull.facet(0).unwrap();
-        let facet_view = FacetView::new(
+        let facet_view = FacetView::try_new(
             &dt.as_triangulation().tds,
             facet_handle.simplex_key(),
             facet_handle.facet_index(),
@@ -5610,18 +5653,38 @@ mod tests {
         // Test points at different distance scales
         let test_cases = vec![
             // (Point, expected_visibility_description, distance_category)
-            (Point::new([0.0, 0.0, 0.0]), "vertex point", "zero_distance"),
             (
-                Point::new([0.1, 0.1, 0.1]),
+                Point::from_validated_coords([0.0, 0.0, 0.0]),
+                "vertex point",
+                "zero_distance",
+            ),
+            (
+                Point::from_validated_coords([0.1, 0.1, 0.1]),
                 "very close point",
                 "very_close",
             ),
-            (Point::new([0.5, 0.5, 0.5]), "moderate distance", "moderate"),
-            (Point::new([1.0, 1.0, 1.0]), "unit distance", "unit"),
-            (Point::new([2.0, 2.0, 2.0]), "double distance", "double"),
-            (Point::new([10.0, 10.0, 10.0]), "far point", "far"),
             (
-                Point::new([100.0, 100.0, 100.0]),
+                Point::from_validated_coords([0.5, 0.5, 0.5]),
+                "moderate distance",
+                "moderate",
+            ),
+            (
+                Point::from_validated_coords([1.0, 1.0, 1.0]),
+                "unit distance",
+                "unit",
+            ),
+            (
+                Point::from_validated_coords([2.0, 2.0, 2.0]),
+                "double distance",
+                "double",
+            ),
+            (
+                Point::from_validated_coords([10.0, 10.0, 10.0]),
+                "far point",
+                "far",
+            ),
+            (
+                Point::from_validated_coords([100.0, 100.0, 100.0]),
                 "very far point",
                 "very_far",
             ),
@@ -5629,10 +5692,7 @@ mod tests {
 
         for (point, description, category) in test_cases {
             let fallback_result =
-                ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
-                    &test_facet_vertices,
-                    &point,
-                );
+                ConvexHull::<(), (), 3>::fallback_visibility_test(&test_facet_vertices, &point);
 
             match fallback_result {
                 Ok(is_visible) => {
@@ -5680,10 +5740,10 @@ mod tests {
 
         // Create a triangulation with near-collinear points
         let near_collinear_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([2.0, 1e-10, 0.0]), // Nearly collinear with first two
-            vertex!([0.5, 0.5, 1.0]),   // Out of plane
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 1e-10, 0.0]).unwrap(), // Nearly collinear with first two
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 1.0]).unwrap(), // Out of plane
         ];
 
         match DelaunayTriangulation::new(&near_collinear_vertices) {
@@ -5697,13 +5757,12 @@ mod tests {
                             collinear_dt.as_triangulation(),
                         )
                         .unwrap();
-                        let test_point = Point::new([1.5, 0.5, 0.5]);
+                        let test_point = Point::from_validated_coords([1.5, 0.5, 0.5]);
 
-                        let collinear_result =
-                            ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
-                                &collinear_facet_vertices,
-                                &test_point,
-                            );
+                        let collinear_result = ConvexHull::<(), (), 3>::fallback_visibility_test(
+                            &collinear_facet_vertices,
+                            &test_point,
+                        );
 
                         match collinear_result {
                             Ok(is_visible) => {
@@ -5731,10 +5790,10 @@ mod tests {
 
         // Create a triangulation where facets might have very small areas
         let tiny_area_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1e-6, 0.0, 0.0]),
-            vertex!([0.0, 1e-6, 0.0]),
-            vertex!([0.0, 0.0, 1e-6]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1e-6, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1e-6, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1e-6]).unwrap(),
         ];
 
         match DelaunayTriangulation::new(&tiny_area_vertices) {
@@ -5748,13 +5807,12 @@ mod tests {
                             tiny_dt.as_triangulation(),
                         )
                         .unwrap();
-                        let test_point = Point::new([1e-3, 1e-3, 1e-3]);
+                        let test_point = Point::from_validated_coords([1e-3, 1e-3, 1e-3]);
 
-                        let tiny_result =
-                            ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
-                                &tiny_facet_vertices,
-                                &test_point,
-                            );
+                        let tiny_result = ConvexHull::<(), (), 3>::fallback_visibility_test(
+                            &tiny_facet_vertices,
+                            &test_point,
+                        );
 
                         match tiny_result {
                             Ok(is_visible) => {
@@ -5791,10 +5849,10 @@ mod tests {
 
         // Create a well-defined triangulation
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
@@ -5812,9 +5870,9 @@ mod tests {
 
         for &multiplier in &multipliers {
             let distance = base_distance * multiplier;
-            let test_point = Point::new([distance, distance, distance]);
+            let test_point = Point::from_validated_coords([distance, distance, distance]);
 
-            let result = ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
+            let result = ConvexHull::<(), (), 3>::fallback_visibility_test(
                 &test_facet_vertices,
                 &test_point,
             );
@@ -5881,19 +5939,19 @@ mod tests {
             (
                 "equilateral-like triangle",
                 vec![
-                    vertex!([0.0, 0.0, 0.0]),
-                    vertex!([1.0, 0.0, 0.0]),
-                    vertex!([0.5, 0.866, 0.0]),
-                    vertex!([0.333, 0.289, 1.0]),
+                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+                    crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+                    crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.866, 0.0]).unwrap(),
+                    crate::core::vertex::Vertex::<(), _>::try_new([0.333, 0.289, 1.0]).unwrap(),
                 ],
             ),
             (
                 "elongated triangle",
                 vec![
-                    vertex!([0.0, 0.0, 0.0]),
-                    vertex!([10.0, 0.0, 0.0]), // Very long edge
-                    vertex!([0.1, 0.1, 0.0]),  // Short edge
-                    vertex!([1.0, 1.0, 1.0]),
+                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+                    crate::core::vertex::Vertex::<(), _>::try_new([10.0, 0.0, 0.0]).unwrap(), // Very long edge
+                    crate::core::vertex::Vertex::<(), _>::try_new([0.1, 0.1, 0.0]).unwrap(), // Short edge
+                    crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(),
                 ],
             ),
         ];
@@ -5909,13 +5967,12 @@ mod tests {
                             edge_dt.as_triangulation(),
                         )
                         .unwrap();
-                        let test_point = Point::new([5.0, 5.0, 5.0]);
+                        let test_point = Point::from_validated_coords([5.0, 5.0, 5.0]);
 
-                        let edge_result =
-                            ConvexHull::<AdaptiveKernel<f64>, (), (), 3>::fallback_visibility_test(
-                                &edge_facet_vertices,
-                                &test_point,
-                            );
+                        let edge_result = ConvexHull::<(), (), 3>::fallback_visibility_test(
+                            &edge_facet_vertices,
+                            &test_point,
+                        );
 
                         match edge_result {
                             Ok(is_visible) => {
@@ -5958,9 +6015,9 @@ mod tests {
         test_debug!("  Testing perfectly collinear points in 2D...");
 
         let collinear_2d_vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([2.0, 0.0]), // Collinear with first two
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(), // Collinear with first two
         ];
 
         match DelaunayTriangulation::new(&collinear_2d_vertices) {
@@ -5976,7 +6033,7 @@ mod tests {
                         test_debug!("    Facet count: {}", collinear_hull.number_of_facets());
 
                         // Test operations on collinear hull
-                        let test_point = Point::new([0.5, 1.0]);
+                        let test_point = Point::from_validated_coords([0.5, 1.0]);
                         let visibility_result = collinear_hull
                             .is_point_outside(&test_point, collinear_dt.as_triangulation());
                         match visibility_result {
@@ -6017,9 +6074,9 @@ mod tests {
         test_debug!("  Testing nearly collinear points with small perturbations...");
 
         let nearly_collinear_vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 1e-12]),  // Nearly on the line y=0
-            vertex!([2.0, -1e-12]), // Nearly on the line y=0
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1e-12]).unwrap(), // Nearly on the line y=0
+            crate::core::vertex::Vertex::<(), _>::try_new([2.0, -1e-12]).unwrap(), // Nearly on the line y=0
         ];
 
         match DelaunayTriangulation::new(&nearly_collinear_vertices) {
@@ -6030,7 +6087,7 @@ mod tests {
                         assert!(nearly_hull.validate(nearly_dt.as_triangulation()).is_ok());
 
                         // Test that operations handle numerical precision gracefully
-                        let precision_test_point = Point::new([1.0, 1e-6]);
+                        let precision_test_point = Point::from_validated_coords([1.0, 1e-6]);
                         let precision_result = nearly_hull
                             .is_point_outside(&precision_test_point, nearly_dt.as_triangulation());
                         match precision_result {
@@ -6057,10 +6114,10 @@ mod tests {
         test_debug!("  Testing collinear points in 3D (degenerate configuration)...");
 
         let collinear_3d_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 1.0, 1.0]),
-            vertex!([2.0, 2.0, 2.0]), // Collinear with first two
-            vertex!([3.0, 3.0, 3.0]), // Also collinear
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 2.0, 2.0]).unwrap(), // Collinear with first two
+            crate::core::vertex::Vertex::<(), _>::try_new([3.0, 3.0, 3.0]).unwrap(), // Also collinear
         ];
 
         match DelaunayTriangulation::new(&collinear_3d_vertices) {
@@ -6091,10 +6148,10 @@ mod tests {
 
         // Four points in the same plane (z=0)
         let coplanar_3d_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([1.0, 1.0, 0.0]), // All in z=0 plane
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 0.0]).unwrap(), // All in z=0 plane
         ];
 
         match DelaunayTriangulation::new(&coplanar_3d_vertices) {
@@ -6113,10 +6170,10 @@ mod tests {
         test_debug!("  Testing nearly coplanar points with small z-perturbations...");
 
         let nearly_coplanar_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 1e-10]),
-            vertex!([0.0, 1.0, -1e-10]),
-            vertex!([1.0, 1.0, 1e-10]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 1e-10]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, -1e-10]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 1e-10]).unwrap(),
         ];
 
         match DelaunayTriangulation::new(&nearly_coplanar_vertices) {
@@ -6139,7 +6196,7 @@ mod tests {
                         }
 
                         // Test visibility operations on nearly coplanar hull
-                        let test_point = Point::new([0.5, 0.5, 1.0]);
+                        let test_point = Point::from_validated_coords([0.5, 0.5, 1.0]);
                         let visibility_result = nearly_coplanar_hull
                             .is_point_outside(&test_point, nearly_coplanar_dt.as_triangulation());
                         match visibility_result {
@@ -6194,11 +6251,11 @@ mod tests {
 
         // Five points in the same 3D hyperplane (w=0)
         let coplanar_4d_vertices = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0]),
-            vertex!([1.0, 1.0, 1.0, 0.0]), // All in w=0 hyperplane
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 1.0, 0.0]).unwrap(), // All in w=0 hyperplane
         ];
 
         match DelaunayTriangulation::new(&coplanar_4d_vertices) {
@@ -6224,11 +6281,11 @@ mod tests {
         test_debug!("  Testing exact duplicate vertices...");
 
         let duplicate_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.0, 0.0, 0.0]), // Exact duplicate of first vertex
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(), // Exact duplicate of first vertex
         ];
 
         match DelaunayTriangulation::new(&duplicate_vertices) {
@@ -6272,11 +6329,11 @@ mod tests {
         test_debug!("  Testing nearly coincident vertices (within floating-point precision)...");
 
         let nearly_coincident_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([1e-15, 1e-15, 1e-15]), // Nearly coincident with first
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1e-15, 1e-15, 1e-15]).unwrap(), // Nearly coincident with first
         ];
 
         match DelaunayTriangulation::new(&nearly_coincident_vertices) {
@@ -6286,7 +6343,7 @@ mod tests {
                         test_debug!("    ✓ Hull with nearly coincident vertices constructed");
 
                         // Test operations to see how they handle near-duplicates
-                        let test_point = Point::new([2.0, 2.0, 2.0]);
+                        let test_point = Point::from_validated_coords([2.0, 2.0, 2.0]);
                         let visibility_result = nearly_coin_hull
                             .is_point_outside(&test_point, nearly_coin_dt.as_triangulation());
                         match visibility_result {
@@ -6337,13 +6394,13 @@ mod tests {
 
         // Create a 6D simplex (7 vertices)
         let vertices_6d = vec![
-            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
-            vertex!([0.1, 0.1, 0.1, 0.1, 0.1, 0.1]), // Interior point to make it non-degenerate
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.1, 0.1, 0.1, 0.1, 0.1, 0.1]).unwrap(), // Interior point to make it non-degenerate
         ];
 
         match DelaunayTriangulation::new(&vertices_6d) {
@@ -6366,7 +6423,8 @@ mod tests {
                         }
 
                         // Test visibility operations in 6D
-                        let test_point_6d = Point::new([2.0, 2.0, 2.0, 2.0, 2.0, 2.0]);
+                        let test_point_6d =
+                            Point::from_validated_coords([2.0, 2.0, 2.0, 2.0, 2.0, 2.0]);
                         let visibility_result =
                             hull_6d.is_point_outside(&test_point_6d, dt_6d.as_triangulation());
                         match visibility_result {
@@ -6393,14 +6451,22 @@ mod tests {
         test_debug!("  Testing 7D convex hull...");
 
         let vertices_7d = vec![
-            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
-            vertex!([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+                .unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+                .unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0])
+                .unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
+                .unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
+                .unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0])
+                .unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
+                .unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
+                .unwrap(),
         ];
 
         match DelaunayTriangulation::new(&vertices_7d) {
@@ -6423,15 +6489,24 @@ mod tests {
         test_debug!("  Testing 8D convex hull (stress test)...");
 
         let vertices_8d = vec![
-            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
-            vertex!([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+                .unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+                .unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+                .unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0])
+                .unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
+                .unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
+                .unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0])
+                .unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
+                .unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
+                .unwrap(),
         ];
 
         match DelaunayTriangulation::new(&vertices_8d) {
@@ -6485,7 +6560,7 @@ mod tests {
             let x = radius * angle1.cos() * angle2.sin();
             let y = radius * angle1.sin() * angle2.sin();
             let z = radius * angle2.cos();
-            large_vertices.push(vertex!([x, y, z]));
+            large_vertices.push(crate::core::vertex::Vertex::<(), _>::try_new([x, y, z]).unwrap());
         }
 
         test_debug!("    Generated {num_vertices} vertices");
@@ -6526,7 +6601,7 @@ mod tests {
                         );
 
                         // Test visibility operations
-                        let test_point = Point::new([2.0, 2.0, 2.0]);
+                        let test_point = Point::from_validated_coords([2.0, 2.0, 2.0]);
                         let visibility_result =
                             large_hull.is_point_outside(&test_point, large_dt.as_triangulation());
                         assert!(
@@ -6570,7 +6645,7 @@ mod tests {
             let radius = <f64 as From<_>>::from(i).mul_add(0.01, 1.0);
             let x = radius * angle.cos();
             let y = radius * angle.sin();
-            large_2d_vertices.push(vertex!([x, y]));
+            large_2d_vertices.push(crate::core::vertex::Vertex::<(), _>::try_new([x, y]).unwrap());
         }
 
         let start_2d = std::time::Instant::now();
@@ -6622,10 +6697,10 @@ mod tests {
 
         // Create a basic triangulation for testing
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
@@ -6641,7 +6716,12 @@ mod tests {
 
         // Rapidly modify the TDS to increment generation many times
         for i in 0..20 {
-            let new_vertex = vertex!([<f64 as From<_>>::from(i).mul_add(0.01, 0.1), 0.1, 0.1]);
+            let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([
+                <f64 as From<_>>::from(i).mul_add(0.01, 0.1),
+                0.1,
+                0.1,
+            ])
+            .unwrap();
             if dt.insert(new_vertex).is_ok() {
                 let current_gen = dt.as_triangulation().tds.generation();
                 test_debug!("    After modification {i}: TDS generation = {current_gen}");
@@ -6664,7 +6744,7 @@ mod tests {
         test_debug!("    Final TDS generation: {final_generation}");
 
         // Force cache rebuild
-        let test_point = Point::new([2.0, 2.0, 2.0]);
+        let test_point = Point::from_validated_coords([2.0, 2.0, 2.0]);
         let visibility_result = hull.is_point_outside(&test_point, dt.as_triangulation());
         match visibility_result {
             Ok(is_outside) => {
@@ -6714,14 +6794,18 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "stress test keeps the cache mutation sequence together"
+    )]
     fn test_cache_consistency_under_stress() {
         test_debug!("Testing cache consistency under rapid operations");
 
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
@@ -6730,10 +6814,10 @@ mod tests {
 
         let num_cycles = 50;
         let test_points = [
-            Point::new([2.0, 2.0, 2.0]),
-            Point::new([1.5, 1.5, 1.5]),
-            Point::new([0.1, 0.1, 0.1]),
-            Point::new([10.0, 10.0, 10.0]),
+            Point::from_validated_coords([2.0, 2.0, 2.0]),
+            Point::from_validated_coords([1.5, 1.5, 1.5]),
+            Point::from_validated_coords([0.1, 0.1, 0.1]),
+            Point::from_validated_coords([10.0, 10.0, 10.0]),
         ];
 
         for cycle in 0..num_cycles {
@@ -6808,7 +6892,11 @@ mod tests {
 
         // Perform multiple operations without TDS changes
         for i in 0..10 {
-            let test_point = Point::new([<f64 as From<_>>::from(i).mul_add(0.1, 1.0), 2.0, 2.0]);
+            let test_point = Point::from_validated_coords([
+                <f64 as From<_>>::from(i).mul_add(0.1, 1.0),
+                2.0,
+                2.0,
+            ]);
             let result = hull.is_point_outside(&test_point, dt.as_triangulation());
             assert!(result.is_ok(), "Visibility test {i} should succeed");
         }
@@ -6854,16 +6942,16 @@ mod tests {
         test_debug!("  Testing cache memory cleanup...");
 
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         // Build cache
-        let test_point = Point::new([2.0, 2.0, 2.0]);
+        let test_point = Point::from_validated_coords([2.0, 2.0, 2.0]);
         let _ = hull.is_point_outside(&test_point, dt.as_triangulation());
 
         // Verify cache exists
@@ -6894,9 +6982,9 @@ mod tests {
         test_debug!("  Testing multiple hull instances with shared TDS...");
 
         // Create multiple hull instances from the same triangulation
-        let hull1: ConvexHull<AdaptiveKernel<f64>, (), (), 3> =
+        let hull1: ConvexHull<(), (), 3> =
             ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
-        let hull2: ConvexHull<AdaptiveKernel<f64>, (), (), 3> =
+        let hull2: ConvexHull<(), (), 3> =
             ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         // Each should have independent cache
@@ -6958,10 +7046,10 @@ mod tests {
 
         // Step 1: Create hull from initial DelaunayTriangulation
         let mut dt = DelaunayTriangulation::new(&[
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ])
         .unwrap();
         let initial_gen = dt.as_triangulation().tds.generation();
@@ -6975,7 +7063,8 @@ mod tests {
         test_debug!("  ✓ Hull created with generation {initial_gen}");
 
         // Step 2: Mutate triangulation (increases generation)
-        dt.insert(vertex!([0.5, 0.5, 0.5])).unwrap();
+        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap())
+            .unwrap();
         let new_gen = dt.as_triangulation().tds.generation();
         assert_ne!(
             initial_gen, new_gen,
@@ -6995,7 +7084,7 @@ mod tests {
         test_debug!("  ✓ Called invalidate_cache()");
 
         // Step 4: Try to use the hull (this would trigger cache rebuild in the old buggy code)
-        let test_point = Point::new([2.0, 2.0, 2.0]);
+        let test_point = Point::from_validated_coords([2.0, 2.0, 2.0]);
         let visibility_result = hull.find_visible_facets(&test_point, dt.as_triangulation());
 
         // The visibility operation should fail with StaleHull error
@@ -7033,7 +7122,7 @@ mod tests {
         );
 
         // Step 6: Verify that creating a new hull works correctly
-        let new_hull: ConvexHull<_, (), (), 3> =
+        let new_hull: ConvexHull<(), (), 3> =
             ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
         assert!(
             new_hull.is_valid_for_triangulation(dt.as_triangulation()),
@@ -7055,10 +7144,10 @@ mod tests {
     #[test]
     fn test_hull_rejects_different_tds_with_same_generation() {
         let vertices = [
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt1: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -7080,7 +7169,7 @@ mod tests {
         let facet = hull.facet(0).expect("tetrahedron hull should have facets");
         let visibility = hull.is_facet_visible_from_point(
             facet,
-            &Point::new([2.0, 2.0, 2.0]),
+            &Point::from_validated_coords([2.0, 2.0, 2.0]),
             dt2.as_triangulation(),
         );
         assert_matches!(
@@ -7096,10 +7185,10 @@ mod tests {
     #[test]
     fn test_hull_rejects_cloned_tds_with_same_generation() {
         let vertices = [
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt1: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -7120,7 +7209,7 @@ mod tests {
         let facet = hull.facet(0).expect("tetrahedron hull should have facets");
         let visibility = hull.is_facet_visible_from_point(
             facet,
-            &Point::new([2.0, 2.0, 2.0]),
+            &Point::from_validated_coords([2.0, 2.0, 2.0]),
             dt2.as_triangulation(),
         );
         assert_matches!(
@@ -7136,10 +7225,10 @@ mod tests {
     #[test]
     fn test_hull_cache_key_survives_failed_insert_rollback() {
         let vertices = [
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -7174,8 +7263,11 @@ mod tests {
             .expect("tetrahedron should have vertices")
             .1
             .uuid();
-        let duplicate_uuid_vertex =
-            Vertex::new_with_uuid(Point::new([0.25, 0.25, 0.125]), duplicate_uuid, None);
+        let duplicate_uuid_vertex = Vertex::new_with_uuid(
+            Point::from_validated_coords([0.25, 0.25, 0.125]),
+            duplicate_uuid,
+            None,
+        );
 
         let result = dt.insert(duplicate_uuid_vertex);
         assert_matches!(
@@ -7205,7 +7297,7 @@ mod tests {
             "facet cache should be reused when rollback restores the same generation"
         );
 
-        let outside = Point::new([2.0, 2.0, 2.0]);
+        let outside = Point::from_validated_coords([2.0, 2.0, 2.0]);
         assert!(
             hull.is_point_outside(&outside, dt.as_triangulation())
                 .unwrap(),
@@ -7223,18 +7315,19 @@ mod tests {
         test_debug!("Testing that all hull operations fail on stale hull");
 
         let mut dt = DelaunayTriangulation::new(&[
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ])
         .unwrap();
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         // Modify triangulation to make hull stale
-        dt.insert(vertex!([0.5, 0.5, 0.5])).unwrap();
+        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap())
+            .unwrap();
 
-        let test_point = Point::new([2.0, 2.0, 2.0]);
+        let test_point = Point::from_validated_coords([2.0, 2.0, 2.0]);
 
         // Test that all operations detect staleness
         test_debug!("  Testing find_visible_facets...");
@@ -7291,16 +7384,16 @@ mod tests {
 
         // Create hull with nearly coplanar points (z << x,y) but still valid simplex
         let dt = DelaunayTriangulation::new(&[
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 1e-6]),
-            vertex!([0.0, 1.0, 1e-6]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 1e-6]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 1e-6]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ])
         .unwrap();
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         test_debug!("  Testing point visibility with degenerate geometry...");
-        let test_point = Point::new([0.5, 0.5, 1.0]);
+        let test_point = Point::from_validated_coords([0.5, 0.5, 1.0]);
         let result = hull.is_point_outside(&test_point, dt.as_triangulation());
 
         assert!(
@@ -7317,16 +7410,16 @@ mod tests {
 
         // Create a very flat triangulation (extreme aspect ratio)
         let dt = DelaunayTriangulation::new(&[
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1000.0, 0.0, 0.0]), // Very long in x
-            vertex!([0.0, 0.001, 0.0]),  // Very short in y
-            vertex!([0.0, 0.0, 0.001]),  // Very short in z
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1000.0, 0.0, 0.0]).unwrap(), // Very long in x
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.001, 0.0]).unwrap(), // Very short in y
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.001]).unwrap(), // Very short in z
         ])
         .unwrap();
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         test_debug!("  Testing operations with extreme aspect ratio...");
-        let test_point = Point::new([500.0, 10.0, 10.0]);
+        let test_point = Point::from_validated_coords([500.0, 10.0, 10.0]);
         let result = hull.is_point_outside(&test_point, dt.as_triangulation());
 
         assert!(
@@ -7346,23 +7439,23 @@ mod tests {
         test_debug!("Testing points exactly on hull surface");
 
         let dt = create_triangulation(&[
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ]);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         test_debug!("  Testing point on facet plane...");
         // Point on the plane defined by (1,0,0), (0,1,0), (0,0,0)
-        let on_facet = Point::new([0.5, 0.5, 0.0]);
+        let on_facet = Point::from_validated_coords([0.5, 0.5, 0.0]);
         let result = hull.is_point_outside(&on_facet, dt.as_triangulation());
         // Should handle boundary case without panic
         assert!(result.is_ok(), "Point on facet should be handled");
         test_debug!("  ✓ Point on facet handled: inside={}", !result.unwrap());
 
         test_debug!("  Testing point at vertex...");
-        let at_vertex = Point::new([1.0, 0.0, 0.0]);
+        let at_vertex = Point::from_validated_coords([1.0, 0.0, 0.0]);
         let result = hull.is_point_outside(&at_vertex, dt.as_triangulation());
         assert!(result.is_ok(), "Point at vertex should be handled");
         // Point at vertex should be inside hull
@@ -7370,7 +7463,7 @@ mod tests {
         test_debug!("  ✓ Point at vertex correctly identified as inside");
 
         test_debug!("  Testing point on edge...");
-        let on_edge = Point::new([0.5, 0.0, 0.0]);
+        let on_edge = Point::from_validated_coords([0.5, 0.0, 0.0]);
         let result = hull.is_point_outside(&on_edge, dt.as_triangulation());
         assert!(result.is_ok(), "Point on edge should be handled");
         test_debug!("  ✓ Point on edge handled");
@@ -7381,21 +7474,21 @@ mod tests {
         test_debug!("Testing points very close to hull surface (epsilon distance)");
 
         let dt = create_triangulation(&[
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ]);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         test_debug!("  Testing point just outside (epsilon away)...");
-        let just_outside = Point::new([0.5, 0.5, f64::EPSILON * 10.0]);
+        let just_outside = Point::from_validated_coords([0.5, 0.5, f64::EPSILON * 10.0]);
         let result = hull.is_point_outside(&just_outside, dt.as_triangulation());
         assert!(result.is_ok(), "Near-surface point should be handled");
         test_debug!("  ✓ Epsilon-distance point handled");
 
         test_debug!("  Testing point just inside (negative epsilon)...");
-        let just_inside = Point::new([0.25, 0.25, -f64::EPSILON * 10.0]);
+        let just_inside = Point::from_validated_coords([0.25, 0.25, -f64::EPSILON * 10.0]);
         let result = hull.is_point_outside(&just_inside, dt.as_triangulation());
         assert!(result.is_ok(), "Near-surface point should be handled");
         test_debug!("  ✓ Negative epsilon-distance point handled");
@@ -7412,7 +7505,8 @@ mod tests {
                 // Origin - use nested macro to get correct type
                 macro_rules! make_vertex {
                     ($coords:expr) => {{
-                        let v: Vertex<f64, (), $dim> = vertex!($coords);
+                        let v: Vertex<(), $dim> =
+                            crate::core::vertex::Vertex::<(), _>::try_new($coords).unwrap();
                         v
                     }};
                 }
@@ -7460,7 +7554,7 @@ mod tests {
                 // Test point outside
                 test_debug!("  Testing point outside {}D hull...", $dim);
                 let outside_coords = [2.0; $dim];
-                let outside_point = Point::new(outside_coords);
+                let outside_point = Point::from_validated_coords(outside_coords);
                 let is_outside = hull
                     .is_point_outside(&outside_point, dt.as_triangulation())
                     .expect(&format!("Failed to test outside point in {}D", $dim));
@@ -7477,7 +7571,7 @@ mod tests {
                 for i in 0..$dim {
                     inside_coords[i] = 1.0 / <f64 as std::convert::From<i32>>::from($dim + 1);
                 }
-                let inside_point = Point::new(inside_coords);
+                let inside_point = Point::from_validated_coords(inside_coords);
                 let is_outside = hull
                     .is_point_outside(&inside_point, dt.as_triangulation())
                     .expect(&format!("Failed to test inside point in {}D", $dim));
@@ -7526,14 +7620,14 @@ mod tests {
         test_debug!("Testing cache lifecycle through multiple operations");
 
         let dt = create_triangulation(&[
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ]);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
-        let test_point = Point::new([2.0, 2.0, 2.0]);
+        let test_point = Point::from_validated_coords([2.0, 2.0, 2.0]);
 
         test_debug!("  Initial state: cache already built during construction");
         let initial_gen = hull.cached_generation().load(Ordering::Acquire);
@@ -7604,22 +7698,22 @@ mod tests {
         test_debug!("Testing cache independence between multiple hull instances");
 
         let dt = create_triangulation(&[
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ]);
 
         test_debug!("  Creating first hull and building cache...");
-        let hull1: ConvexHull<AdaptiveKernel<f64>, (), (), 3> =
+        let hull1: ConvexHull<(), (), 3> =
             ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
-        let test_point = Point::new([2.0, 2.0, 2.0]);
+        let test_point = Point::from_validated_coords([2.0, 2.0, 2.0]);
         hull1
             .find_visible_facets(&test_point, dt.as_triangulation())
             .unwrap();
 
         test_debug!("  Creating second hull from same triangulation...");
-        let hull2: ConvexHull<AdaptiveKernel<f64>, (), (), 3> =
+        let hull2: ConvexHull<(), (), 3> =
             ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         test_debug!("  Second hull also has cache built during construction...");

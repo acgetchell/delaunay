@@ -62,7 +62,7 @@ For most use cases, the builder with default options is sufficient:
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
 };
 use delaunay::prelude::insertion::InsertionError;
 use delaunay::prelude::tds::InvariantError;
@@ -80,15 +80,15 @@ enum ExampleError {
 fn main() -> Result<(), ExampleError> {
     // Simple construction from vertices (Euclidean space, default options)
     let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     ];
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
     // Incremental insertion (maintains Delaunay property)
-    let new_vertex = vertex!([0.5, 0.5, 0.5]);
+    let new_vertex = delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.5])?;
     dt.insert(new_vertex)?;
 
     // Vertex removal (topology-preserving, with automatic repair when enabled)
@@ -107,7 +107,6 @@ use `DelaunayTriangulationBuilder`:
 ```rust
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
-    vertex,
 };
 use delaunay::prelude::insertion::InsertionError;
 use delaunay::prelude::validation::ValidationPolicy;
@@ -123,28 +122,29 @@ enum ExampleError {
 fn main() -> Result<(), ExampleError> {
     // Canonicalized toroidal triangulation in 2D
     let vertices = vec![
-        vertex!([0.1, 0.1]),
-        vertex!([0.9, 0.9]),
-        vertex!([0.5, 0.5]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.1])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.9, 0.9])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5])?,
     ];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-        .canonicalized_toroidal([1.0, 1.0]) // Canonicalized toroidal construction
+        .try_canonicalized_toroidal([1.0, 1.0])
+        .expect("unit toroidal domain is valid") // Canonicalized toroidal construction
         .topology_guarantee(TopologyGuarantee::PLManifoldStrict)
         .build::<()>()?;
 
     dt.set_validation_policy(ValidationPolicy::Always);
 
     // Works like any other DelaunayTriangulation
-    dt.insert(vertex!([0.25, 0.75]))?;
+    dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([0.25, 0.75])?)?;
     Ok(())
 }
 ```
 
 **When to use the Builder:**
 
-- **Toroidal construction**: Use `.toroidal()` for periodic image-point construction or
-  `.canonicalized_toroidal()` for canonicalized construction with explicit domain periods.
+- **Toroidal construction**: Use `.try_toroidal()` for periodic image-point construction or
+  `.try_canonicalized_toroidal()` for canonicalized construction with explicit domain periods.
   The periodic image-point path is release-validated in 2D and compact 3D; 4D/5D
   fail fast pending scalable quotient construction in issue #416.
 - **Custom topology guarantees**: Set stricter or more relaxed manifold checks
@@ -185,7 +185,7 @@ The Edit API is exposed through the `BistellarFlips` trait in `prelude::flips`:
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
 };
 use delaunay::prelude::flips::*;
 
@@ -200,10 +200,10 @@ enum ExampleError {
 fn main() -> Result<(), ExampleError> {
     // Start with a valid triangulation
     let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     ];
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
@@ -211,7 +211,7 @@ fn main() -> Result<(), ExampleError> {
     let Some((simplex_key, _)) = dt.simplices().next() else {
         return Ok(());
     };
-    let info = dt.flip_k1_insert(simplex_key, vertex!([0.25, 0.25, 0.25]))?;
+    let info = dt.flip_k1_insert(simplex_key, delaunay::prelude::Vertex::<(), _>::try_new([0.25, 0.25, 0.25])?)?;
 
     // k=1 inverse: Remove a vertex (collapses its star)
     let vertex_key = info.inserted_face_vertices[0];
@@ -222,7 +222,7 @@ fn main() -> Result<(), ExampleError> {
     let info = dt.flip_k2(facet)?;
 
     // k=2 inverse: Flip from an edge star (D simplices ↔ 2 simplices)
-    let edge = EdgeKey::new(info.inserted_face_vertices[0], info.inserted_face_vertices[1]);
+    let edge = EdgeKey::try_new(info.inserted_face_vertices[0], info.inserted_face_vertices[1])?;
     dt.flip_k2_inverse_from_edge(edge)?;
 
     // k=3 move: Flip a ridge (3 simplices ↔ D-1 simplices, requires D ≥ 3)
@@ -230,11 +230,11 @@ fn main() -> Result<(), ExampleError> {
     let info = dt.flip_k3(ridge)?;
 
     // k=3 inverse: Flip from a triangle star (D-1 simplices ↔ 3 simplices)
-    let triangle = TriangleHandle::new(
+    let triangle = TriangleHandle::try_new(
         info.inserted_face_vertices[0],
         info.inserted_face_vertices[1],
         info.inserted_face_vertices[2],
-    );
+    )?;
     dt.flip_k3_inverse_from_triangle(triangle)?;
     Ok(())
 }
@@ -308,7 +308,7 @@ You can mix both APIs in the same workflow:
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
 };
 use delaunay::prelude::flips::*;
 use delaunay::prelude::insertion::InsertionError;
@@ -326,15 +326,15 @@ enum ExampleError {
 fn main() -> Result<(), ExampleError> {
     // 1. Build initial triangulation (Builder API)
     let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     ];
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
     // 2. Add vertices using Builder API (maintains Delaunay)
-    dt.insert(vertex!([0.5, 0.5, 0.5]))?;
+    dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.5])?)?;
 
     // 3. Make custom topology edits (Edit API)
     let facet = /* ... */;
@@ -418,7 +418,7 @@ common "repair topology then restore Delaunay" workflow:
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
 };
 use delaunay::prelude::delaunayize::{
     DelaunayizeConfig, DelaunayizeError, delaunayize_by_flips,
@@ -434,10 +434,10 @@ enum ExampleError {
 
 fn main() -> Result<(), ExampleError> {
     let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     ];
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 

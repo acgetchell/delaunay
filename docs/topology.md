@@ -44,10 +44,10 @@ src/
 Notes:
 
 - This repository does not use `mod.rs`; module declarations live in `src/lib.rs`.
-- Topology is combinatorial: core types (`Tds`, `Simplex`, `Vertex`) do not require
-  `T: CoordinateScalar` at the type level; geometric operations/validation are
-  gated behind `T: CoordinateScalar`. The currently supported caller-visible
-  coordinate scalar is `f64`; exact-coordinate input, if added in the future,
+- Topology is combinatorial: core types (`Tds`, `Simplex`, `Vertex`) keep
+  topology and payload data separate from coordinate parsing. The currently
+  supported caller-visible coordinate scalar is finite `f64`, stored through
+  validated `Point` coordinates; exact-coordinate input, if added in the future,
   should be an explicit documented API rather than incidental generic support.
 
 ## Level 3 topology validation (`Triangulation::is_valid()`)
@@ -184,26 +184,27 @@ Toroidal (periodic) triangulations are **fully implemented and functional**. You
 construct toroidal triangulations using `DelaunayTriangulationBuilder`:
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
 
 // 2D canonicalized toroidal triangulation
 let vertices = vec![
-    vertex!([0.1, 0.1]),
-    vertex!([0.9, 0.9]),
+    delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.1])?,
+    delaunay::prelude::Vertex::<(), _>::try_new([0.9, 0.9])?,
     // ...
 ];
 
 let dt = DelaunayTriangulationBuilder::new(&vertices)
-    .canonicalized_toroidal([1.0, 1.0]) // Canonicalized toroidal construction
+    .try_canonicalized_toroidal([1.0, 1.0])
+    .expect("unit toroidal domain is valid") // Canonicalized toroidal construction
     .build::<()>()
     .unwrap();
 ```
 
 Canonicalized toroidal construction wraps coordinates into the fundamental
 domain before building the Euclidean triangulation. Topology-aware operations can
-use the toroidal domain for periodic distances, but `.canonicalized_toroidal([..])` does not
+use the toroidal domain for periodic distances, but `.try_canonicalized_toroidal([..])` does not
 rewire opposite boundary facets. For a true periodic quotient, use
-`.toroidal([..])`; the validated image-point path currently covers 2D
+`.try_toroidal([..])`; the validated image-point path currently covers 2D
 and compact 3D fixtures. 4D/5D periodic quotients fail fast pending scalable
 construction work in issue #416.
 

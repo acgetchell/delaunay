@@ -3,7 +3,7 @@
 //! Public API roundtrip tests for Pachner/bistellar flips.
 
 use delaunay::prelude::construction::{
-    ConstructionOptions, DelaunayTriangulation, InsertionOrderStrategy, TopologyGuarantee, vertex,
+    ConstructionOptions, DelaunayTriangulation, InsertionOrderStrategy, TopologyGuarantee,
 };
 use delaunay::prelude::flips::{
     BistellarFlips, EdgeKey, FacetHandle, RidgeHandle, SimplexKey, TriangleHandle, VertexKey,
@@ -61,7 +61,7 @@ fn public_pachner_roundtrips_preserve_stable_4d_topology() {
 fn build_stable_dt_4d() -> Dt4 {
     let vertices = STABLE_POINTS_4D
         .iter()
-        .map(|coords| vertex!(*coords))
+        .map(|coords| delaunay::prelude::Vertex::<(), _>::try_new(*coords).unwrap())
         .collect::<Vec<_>>();
     let options =
         ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
@@ -138,7 +138,8 @@ fn simplex_centroid(dt: &Dt4, simplex_key: SimplexKey) -> [f64; 4] {
 
 fn roundtrip_k1(dt: &mut Dt4) {
     let simplex_key = first_simplex(dt);
-    let new_vertex = vertex!(simplex_centroid(dt, simplex_key));
+    let new_vertex =
+        delaunay::prelude::Vertex::<(), _>::try_new(simplex_centroid(dt, simplex_key)).unwrap();
     let new_uuid = new_vertex.uuid();
     dt.flip_k1_insert(simplex_key, new_vertex)
         .expect("k=1 insert should succeed on stable 4D fixture");
@@ -159,10 +160,14 @@ fn interior_facets(dt: &Dt4) -> Vec<FacetHandle> {
         };
         for (facet_index, neighbor) in neighbors.enumerate() {
             if neighbor.is_some() {
-                facets.push(FacetHandle::new(
-                    simplex_key,
-                    u8::try_from(facet_index).expect("facet index should fit in u8"),
-                ));
+                facets.push(
+                    FacetHandle::try_new(
+                        dt.tds(),
+                        simplex_key,
+                        u8::try_from(facet_index).expect("facet index should fit in u8"),
+                    )
+                    .expect("interior facet index should be valid"),
+                );
             }
         }
     }
@@ -173,7 +178,7 @@ fn flippable_k2_facet(dt: &Dt4) -> FacetHandle {
     for facet in interior_facets(dt) {
         let mut trial = dt.clone();
         if let Ok(info) = trial.flip_k2(facet) {
-            let edge = inserted_edge(&info.inserted_face_vertices);
+            let edge = inserted_edge(&trial, &info.inserted_face_vertices);
             if trial.flip_k2_inverse_from_edge(edge).is_ok() && trial.validate().is_ok() {
                 return facet;
             }
@@ -186,13 +191,16 @@ fn roundtrip_k2(dt: &mut Dt4, facet: FacetHandle) {
     let info = dt
         .flip_k2(facet)
         .expect("k=2 flip should succeed on selected stable 4D facet");
-    dt.flip_k2_inverse_from_edge(inserted_edge(&info.inserted_face_vertices))
+    let edge = inserted_edge(dt, &info.inserted_face_vertices);
+    dt.flip_k2_inverse_from_edge(edge)
         .expect("k=2 inverse should succeed after k=2 flip");
 }
 
-fn inserted_edge(vertices: &[VertexKey]) -> EdgeKey {
+fn inserted_edge(dt: &Dt4, vertices: &[VertexKey]) -> EdgeKey {
     match vertices {
-        [a, b] => EdgeKey::new(*a, *b),
+        [a, b] => {
+            EdgeKey::try_new(dt.tds(), *a, *b).expect("k=2 flip should report a real inserted edge")
+        }
         _ => panic!("k=2 flip should report an inserted edge"),
     }
 }
@@ -202,11 +210,15 @@ fn ridges(dt: &Dt4) -> Vec<RidgeHandle> {
     for (simplex_key, simplex) in dt.simplices() {
         for i in 0..simplex.number_of_vertices() {
             for j in (i + 1)..simplex.number_of_vertices() {
-                ridges.push(RidgeHandle::new(
-                    simplex_key,
-                    u8::try_from(i).expect("ridge index should fit in u8"),
-                    u8::try_from(j).expect("ridge index should fit in u8"),
-                ));
+                ridges.push(
+                    RidgeHandle::try_new(
+                        dt.tds(),
+                        simplex_key,
+                        u8::try_from(i).expect("ridge index should fit in u8"),
+                        u8::try_from(j).expect("ridge index should fit in u8"),
+                    )
+                    .expect("ridge indices should be valid"),
+                );
             }
         }
     }
@@ -236,7 +248,8 @@ fn roundtrip_k3(dt: &mut Dt4, ridge: RidgeHandle) {
 
 fn inserted_triangle(vertices: &[VertexKey]) -> TriangleHandle {
     match vertices {
-        [a, b, c] => TriangleHandle::new(*a, *b, *c),
+        [a, b, c] => TriangleHandle::try_new(*a, *b, *c)
+            .expect("k=3 flip should report a valid inserted triangle"),
         _ => panic!("k=3 flip should report an inserted triangle"),
     }
 }

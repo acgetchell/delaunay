@@ -166,6 +166,7 @@ rules:
     paths:
       include:
         - "/src/core/**/*.rs"
+        - "/tests/semgrep/src/core/**/*.rs"
         - "/src/geometry/**/*.rs"
         - "/src/topology/**/*.rs"
         - "/src/delaunay/**/*.rs"
@@ -381,6 +382,287 @@ rules:
       - pattern: $VALUE.expect(...)
       - pattern: panic!(...)
 
+  - id: delaunay.rust.no-legacy-coordinate-generic-api
+    languages:
+      - generic
+    severity: WARNING
+    message: "Use the current f64-coordinate API: Point<D>, Vertex<U, D>, Tds<U, V, D>, ConvexHull<U, V, D>, and Point::try_new/try_from."
+    metadata:
+      category: maintainability
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
+      rationale: >-
+        Coordinate storage is now finite f64 by construction. The coordinate
+        scalar is no longer a public type parameter on Point, Vertex, Tds, or
+        related builders, and raw point construction must parse through the
+        fallible boundary.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/examples/**/*.rs"
+        - "/docs/**/*.md"
+        - "/README.md"
+      exclude:
+        - "/docs/archive/**"
+    pattern-regex: >-
+      \b(?:Point\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|Vertex\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,[^>\n,]+,\s*[^>\n]+>|VertexBuilder\s*::\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|Tds\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|Simplex\s*<\s*(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|DelaunayTriangulationBuilder\s*<\s*(?:'[^,]+,\s*)?(?:T|f64|K::Scalar|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|ConvexHull\s*<\s*(?:_|T|f64|K|K::Scalar|FastKernel\s*<[^>\n]+>|AdaptiveKernel\s*<[^>\n]+>|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,[^>\n,]+,\s*[^>\n,]+,\s*[^>\n]+>|ConvexHull(?:2D|3D|4D)\s*<\s*(?:_|T|f64|K|K::Scalar|FastKernel\s*<[^>\n]+>|AdaptiveKernel\s*<[^>\n]+>|[A-Za-z_][A-Za-z0-9_]*::Scalar)\s*,|Point::new\s*\()
+
+  - id: delaunay.rust.no-raw-point-coordinate-storage
+    languages:
+      - generic
+    severity: WARNING
+    message: "Point must store validated coordinate domain state, not a raw [f64; D] array."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
+      rationale: >-
+        Raw f64 storage discards the finite-coordinate proof and risks regressing
+        the Eq/Hash/Ord semantics for signed zero and other floating-point edge
+        cases. Keep raw f64 at parse/serialization boundaries and store a
+        validated coordinate wrapper inside Point.
+    paths:
+      include:
+        - "/src/geometry/point.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-regex: >-
+      (?s)\bstruct\s+Point\s*<[^>{}]*>\s*\{[^}]*\bcoords\s*:\s*\[\s*f64\s*;\s*D\s*\]
+
+  - id: delaunay.rust.no-coordinate-scalar-trait
+    languages:
+      - generic
+    severity: WARNING
+    message: "Do not reintroduce CoordinateScalar; keep coordinate invariants on validated coordinate/domain types."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
+      rationale: >-
+        CoordinateScalar made arbitrary numeric support look available while
+        the crate's storage, predicates, and topology model support validated
+        f64 coordinates. Future exact or alternate coordinate models should be
+        explicit invariant-bearing types, not a loose scalar trait.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/examples/**/*.rs"
+        - "/docs/code_organization.md"
+        - "/README.md"
+    pattern-regex: '\bCoordinateScalar\b'
+
+  - id: delaunay.rust.no-vertex-macro
+    languages:
+      - generic
+    severity: WARNING
+    message: "Use Vertex::try_new or Vertex::try_new_with_data so coordinate validation remains explicit."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
+      rationale: >-
+        The vertex! macro hid a fallible coordinate-construction boundary behind
+        macro syntax. Vertex construction should now flow through the named
+        smart constructors that return typed validation errors.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/examples/**/*.rs"
+        - "/docs/**/*.md"
+        - "/README.md"
+      exclude:
+        - "/docs/archive/**"
+        - "/tests/semgrep/**"
+    pattern-regex: '\bvertex!\s*(?:\(|\[)'
+
+  - id: delaunay.rust.no-vertex-empty-constructor
+    languages:
+      - generic
+    severity: WARNING
+    message: "Use Vertex::try_new or Vertex::try_new_with_data; do not construct placeholder vertices with invalid UUIDs."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
+      rationale: >-
+        Vertex::empty produced a storable invalid vertex with a nil UUID. Invalid
+        UUIDs should be rejected at construction boundaries rather than stored
+        and discovered by later validation.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/examples/**/*.rs"
+      exclude:
+        - "/tests/semgrep/**"
+    pattern-regex: '\bVertex\s*(?:::<[^>\n]+>)?\s*::\s*empty\s*\('
+
+  - id: delaunay.rust.no-slotmap-key-topology-deserialization
+    languages:
+      - generic
+    severity: WARNING
+    message: "Do not deserialize topology relationships from slotmap keys; deserialize UUIDs and resolve them inside Tds reconstruction."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
+      rationale: >-
+        VertexKey and SimplexKey values are storage-local slotmap keys. Serialized
+        topology must use stable vertex and simplex UUIDs, then resolve those UUIDs
+        to fresh live keys while rebuilding the TDS.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-either:
+      - pattern-regex: '\bnext_value\s*::\s*<\s*(?:Vec\s*<\s*)?(?:VertexKey|SimplexKey|SimplexVertexKeyBuffer|VertexKeyBuffer|SimplexKeyBuffer)\b'
+      - pattern-regex: '\bnext_value\s*::\s*<\s*NeighborBuffer\s*<\s*(?:Option\s*<\s*)?SimplexKey\b'
+
+  - id: delaunay.rust.no-simplex-slotmap-key-serialization
+    languages:
+      - generic
+    severity: WARNING
+    message: "Do not serialize Simplex slotmap-key fields; serialize simplex UUIDs plus Tds-level vertex UUID relationships instead."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
+      rationale: >-
+        Simplex vertex and neighbor slots contain VertexKey and SimplexKey values,
+        which are storage-local handles. The wire format must carry UUIDs so it
+        can be deserialized into fresh slotmap keys.
+    paths:
+      include:
+        - "/src/core/simplex.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-regex: '\bserialize_field\s*\(\s*"(?:vertices|neighbors|neighbor|incident_simplex)"\s*,\s*&self\.'
+
+  - id: delaunay.rust.no-simplex-new-constructor
+    languages:
+      - generic
+    severity: WARNING
+    message: "Use Simplex::try_new or Simplex::try_new_with_data so fallible simplex validation is explicit."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
+      rationale: >-
+        Simplex construction validates D+1 vertex-key arity and duplicate keys.
+        The constructor name must expose that boundary instead of looking like an
+        infallible raw-value constructor.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/examples/**/*.rs"
+    pattern-regex: '\bSimplex\s*::\s*new\s*\('
+
+  - id: delaunay.rust.no-facet-new-constructors
+    languages:
+      - generic
+    severity: WARNING
+    message: "Use try_new for fallible facet handles, views, and iterators so validation and dimension-capacity errors are explicit."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
+      rationale: >-
+        FacetHandle and FacetView validate simplex presence and facet index
+        bounds, while facet iterators can fail when the dimension exceeds the
+        u8 facet-index representation. Constructor names must expose those
+        fallible boundaries.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/examples/**/*.rs"
+    pattern-either:
+      - pattern-regex: '\bFacetView\s*::\s*new\s*\('
+      - pattern-regex: '\bFacetHandle\s*::\s*new\s*\('
+      - pattern-regex: '\bAllFacetsIter\s*::\s*new\s*\('
+      - pattern-regex: '\bBoundaryFacetsIter\s*::\s*new\s*\('
+
+  - id: delaunay.rust.no-ridgehandle-new-constructor
+    languages:
+      - generic
+    severity: WARNING
+    message: "Use RidgeHandle::try_new for raw omitted indices, or the crate-private validated constructor after bounds are already proven."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
+      rationale: >-
+        A RidgeHandle must identify a valid codimension-2 face in a live simplex.
+        Public raw index construction must reject duplicate or out-of-range
+        omitted indices instead of storing invalid ridge selectors for later
+        validation.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/examples/**/*.rs"
+    pattern-regex: '\bRidgeHandle\s*::\s*new\s*\('
+
+  - id: delaunay.rust.no-edgekey-new-constructor
+    languages:
+      - generic
+    severity: WARNING
+    message: "Use EdgeKey::try_new with a live TDS for raw endpoints, or the crate-private validated constructor after edge incidence is already proven."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
+      rationale: >-
+        An EdgeKey must identify a real edge in a live TDS, so public raw
+        endpoint construction needs to reject duplicate, missing, or non-incident
+        vertex keys instead of storing an invalid edge selector.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/examples/**/*.rs"
+    pattern-regex: '\bEdgeKey\s*::\s*new\s*\('
+
+  - id: delaunay.rust.no-edgekey-try-new-without-tds
+    languages:
+      - generic
+    severity: WARNING
+    message: "Pass a live TDS to EdgeKey::try_new so the edge can be proven to exist."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
+      rationale: >-
+        EdgeKey::try_new must parse raw endpoint keys against live topology.
+        A two-argument call can only check distinctness and cannot prove that the
+        endpoints form a real edge.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/examples/**/*.rs"
+    pattern-regex: '\bEdgeKey\s*::\s*try_new\s*\(\s*[^,\n()]+,\s*[^,\n()]+\s*\)'
+
+  - id: delaunay.rust.no-tds-storage-map-serde
+    languages:
+      - generic
+    severity: WARNING
+    message: "Do not serialize or deserialize TDS StorageMap/DenseSlotMap storage; use UUID-keyed DTO records and rebuild fresh slotmap keys."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
+      rationale: >-
+        DenseSlotMap/StorageMap layouts and generated keys are process-local storage
+        details. TDS persistence must serialize stable vertex/simplex UUID records
+        and UUID relationships, then reconstruct fresh keys during deserialization.
+    paths:
+      include:
+        - "/src/core/**/*.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-either:
+      - pattern-regex: '\bserialize_field\s*\(\s*"(?:vertices|simplices)"\s*,\s*&(?:self|tds)\.(?:vertices|simplices)\b'
+      - pattern-regex: '\bOption\s*<\s*StorageMap\s*<\s*(?:VertexKey|SimplexKey)\b'
+      - pattern-regex: '\bserialized_simplices\s*:\s*StorageMap\s*<\s*SimplexKey\b'
+
   - id: delaunay.rust.public-error-enums-non-exhaustive
     languages:
       - generic
@@ -543,6 +825,24 @@ rules:
         - "/tests/semgrep/**"
     pattern-regex: '^\s*pub(?:\([^)]*\))?\s+(?:const\s+|async\s+|unsafe\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*_unchecked\s*\(' # yamllint disable-line rule:line-length
 
+  - id: delaunay.rust.no-public-vertex-new-with-uuid
+    languages:
+      - generic
+    severity: WARNING
+    message: "Use public Vertex::try_new_with_uuid for raw UUIDs; keep infallible UUID-preserving constructors crate-private."
+    metadata:
+      category: correctness
+      rationale: >-
+        Caller-provided UUIDs are invariant-bearing input. Public APIs must
+        validate them before storing them in Vertex, while crate-internal
+        UUID-preserving paths may remain infallible after validation has already
+        happened at the boundary.
+    paths:
+      include:
+        - "/src/core/vertex.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-regex: '^\s*pub\s+(?:const\s+)?fn\s+new_with_uuid\s*\('
+
   - id: delaunay.rust.no-unwrap-expect-in-doctests
     languages:
       - generic
@@ -553,11 +853,18 @@ rules:
       rationale: >-
         Public Rust documentation examples should model typed error handling
         with DelaunayResult and ? rather than teaching panic-based control flow.
+        Literal vertex fixtures may use `expect("finite vertex coordinates")`
+        with `try_new` or `try_new_with_data` because the panic documents an
+        impossible finite-literal invariant, while keeping examples focused on
+        the API under discussion.
     paths:
       include:
         - "/src/**/*.rs"
         - "/tests/semgrep/doctests/**/*.txt"
-    pattern-regex: '^\s*//[!/]\s*(?:#\s*)?.*(?:\b[\w:]+|[\]\)])\.(unwrap|expect)\s*\('
+    patterns:
+      - pattern-regex: '^\s*//[!/]\s*(?:#\s*)?.*(?:\b[\w:]+|[\]\)])\.(unwrap|expect)\s*\('
+      - pattern-not-regex: '^\s*//[!/].*\bVertex(?:\s*::<[^>]+>)?::try_new\s*\(\s*\[[^\]]*\]\s*\)\.expect\("finite vertex coordinates"\)'
+      - pattern-not-regex: '^\s*//[!/].*\bVertex(?:\s*::<[^>]+>)?::try_new_with_data\s*\(\s*\[[^\]]*\]\s*,[^()]*\)\.expect\("finite vertex coordinates"\)'
 
   - id: delaunay.rust.no-box-dyn-error-in-doctests
     languages:

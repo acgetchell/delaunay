@@ -5,18 +5,14 @@
 
 #![forbid(unsafe_code)]
 
-use super::conversions::{
-    ValueConversionError, safe_coords_to_f64, safe_scalar_from_f64, safe_scalar_to_f64,
-};
+use super::conversions::{ValueConversionError, safe_coords_to_f64};
 use super::norms::{hypot, squared_norm};
 use crate::geometry::matrix::{
     DEFAULT_SINGULAR_TOL, LaError, LaVector, Matrix, MatrixError, StackMatrixDispatchError,
     matrix_set,
 };
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{
-    Coordinate, CoordinateConversionError, CoordinateConversionValue, CoordinateScalar,
-};
+use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateConversionValue};
 use core::{fmt, hint::cold_path};
 
 /// Geometric measure involved in a degenerate simplex or facet calculation.
@@ -315,7 +311,7 @@ impl From<LaError> for CircumcenterError {
 /// * `points` - A slice of points that form the simplex
 ///
 /// # Returns
-/// The circumcenter as a Point<T, D> if successful, or an error if the
+/// The circumcenter as a `Point<D>` if successful, or an error if the
 /// simplex is degenerate or the matrix inversion fails.
 ///
 /// # Errors
@@ -331,22 +327,17 @@ impl From<LaError> for CircumcenterError {
 /// use delaunay::prelude::geometry::{CircumcenterError, Coordinate, Point, circumcenter};
 ///
 /// # fn main() -> Result<(), CircumcenterError> {
-/// let point1 = Point::new([0.0, 0.0, 0.0]);
-/// let point2 = Point::new([1.0, 0.0, 0.0]);
-/// let point3 = Point::new([0.0, 1.0, 0.0]);
-/// let point4 = Point::new([0.0, 0.0, 1.0]);
+/// let point1 = Point::try_from([0.0, 0.0, 0.0])?;
+/// let point2 = Point::try_from([1.0, 0.0, 0.0])?;
+/// let point3 = Point::try_from([0.0, 1.0, 0.0])?;
+/// let point4 = Point::try_from([0.0, 0.0, 1.0])?;
 /// let points = vec![point1, point2, point3, point4];
 /// let center = circumcenter(&points)?;
-/// assert_eq!(center, Point::new([0.5, 0.5, 0.5]));
+/// assert_eq!(center, Point::try_from([0.5, 0.5, 0.5])?);
 /// # Ok(())
 /// # }
 /// ```
-pub fn circumcenter<T, const D: usize>(
-    points: &[Point<T, D>],
-) -> Result<Point<T, D>, CircumcenterError>
-where
-    T: CoordinateScalar,
-{
+pub fn circumcenter<const D: usize>(points: &[Point<D>]) -> Result<Point<D>, CircumcenterError> {
     // LCOV_EXCL_START
     #[cfg(debug_assertions)]
     if std::env::var_os("DELAUNAY_DEBUG_UNUSED_IMPORTS").is_some() {
@@ -393,15 +384,11 @@ where
         }
 
         // Calculate squared distance using squared_norm for consistency
-        let mut diff_coords = [T::zero(); D];
+        let mut diff_coords = [0.0; D];
         for j in 0..D {
-            diff_coords[j] = coords_point[j] - coords_0[j];
+            diff_coords[j] = coords_point_f64[j] - coords_0_f64[j];
         }
-        let squared_distance = squared_norm(&diff_coords);
-
-        // Use safe coordinate conversion for squared distance
-        let squared_distance_f64: f64 = safe_scalar_to_f64(squared_distance)?;
-        b_arr[i] = squared_distance_f64;
+        b_arr[i] = squared_norm(&diff_coords);
     }
 
     // Solve for x, then C = x0 + 1/2 * x.
@@ -442,12 +429,22 @@ where
     };
 
     // Use safe coordinate conversion for solution and add back the first point
-    let mut circumcenter_coords = [T::zero(); D];
+    let mut circumcenter_coords = [0.0; D];
     for i in 0..D {
-        let relative_coord: T = safe_scalar_from_f64(0.5 * x[i])?;
-        circumcenter_coords[i] = coords_0[i] + relative_coord;
+        circumcenter_coords[i] = 0.5_f64.mul_add(x[i], coords_0_f64[i]);
     }
-    Ok(Point::new(circumcenter_coords))
+    for value in circumcenter_coords {
+        if !value.is_finite() {
+            return Err(CircumcenterError::MatrixInversionFailed {
+                reason: CircumcenterFailureReason::NonFiniteMeasure {
+                    measure: DegenerateMeasure::Volume,
+                    value: CoordinateConversionValue::from_numeric_debug(&value),
+                },
+            });
+        }
+    }
+
+    Ok(Point::from_validated_coords(circumcenter_coords))
 }
 
 /// Calculate the circumradius of a set of points forming a simplex.
@@ -473,10 +470,10 @@ where
 /// use approx::assert_relative_eq;
 ///
 /// # fn main() -> Result<(), CircumcenterError> {
-/// let point1 = Point::new([0.0, 0.0, 0.0]);
-/// let point2 = Point::new([1.0, 0.0, 0.0]);
-/// let point3 = Point::new([0.0, 1.0, 0.0]);
-/// let point4 = Point::new([0.0, 0.0, 1.0]);
+/// let point1 = Point::try_from([0.0, 0.0, 0.0])?;
+/// let point2 = Point::try_from([1.0, 0.0, 0.0])?;
+/// let point3 = Point::try_from([0.0, 1.0, 0.0])?;
+/// let point4 = Point::try_from([0.0, 0.0, 1.0])?;
 /// let points = vec![point1, point2, point3, point4];
 /// let radius = circumradius(&points)?;
 /// let expected_radius = (3.0_f64.sqrt() / 2.0);
@@ -484,10 +481,7 @@ where
 /// # Ok(())
 /// # }
 /// ```
-pub fn circumradius<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
-where
-    T: CoordinateScalar,
-{
+pub fn circumradius<const D: usize>(points: &[Point<D>]) -> Result<f64, CircumcenterError> {
     let circumcenter = circumcenter(points)?;
     circumradius_with_center(points, &circumcenter)
 }
@@ -522,10 +516,10 @@ where
 /// use approx::assert_relative_eq;
 ///
 /// # fn main() -> Result<(), CircumcenterError> {
-/// let point1 = Point::new([0.0, 0.0, 0.0]);
-/// let point2 = Point::new([1.0, 0.0, 0.0]);
-/// let point3 = Point::new([0.0, 1.0, 0.0]);
-/// let point4 = Point::new([0.0, 0.0, 1.0]);
+/// let point1 = Point::try_from([0.0, 0.0, 0.0])?;
+/// let point2 = Point::try_from([1.0, 0.0, 0.0])?;
+/// let point3 = Point::try_from([0.0, 1.0, 0.0])?;
+/// let point4 = Point::try_from([0.0, 0.0, 1.0])?;
 /// let points = vec![point1, point2, point3, point4];
 /// let center = circumcenter(&points)?;
 /// let radius = circumradius_with_center(&points, &center)?;
@@ -534,13 +528,10 @@ where
 /// # Ok(())
 /// # }
 /// ```
-pub fn circumradius_with_center<T, const D: usize>(
-    points: &[Point<T, D>],
-    circumcenter: &Point<T, D>,
-) -> Result<T, CircumcenterError>
-where
-    T: CoordinateScalar,
-{
+pub fn circumradius_with_center<const D: usize>(
+    points: &[Point<D>],
+    circumcenter: &Point<D>,
+) -> Result<f64, CircumcenterError> {
     if points.is_empty() {
         return Err(CircumcenterError::EmptyPointSet);
     }
@@ -549,7 +540,7 @@ where
     let circumcenter_coords = circumcenter.coords();
 
     // Calculate distance using hypot for numerical stability
-    let mut diff_coords = [T::zero(); D];
+    let mut diff_coords = [0.0; D];
     for i in 0..D {
         diff_coords[i] = circumcenter_coords[i] - point_coords[i];
     }
@@ -691,22 +682,22 @@ mod tests {
     #[test]
     fn predicates_circumcenter() {
         let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0]),
         ];
         let center = circumcenter(&points).unwrap();
 
-        assert_eq!(center, Point::new([0.5, 0.5, 0.5]));
+        assert_eq!(center, Point::from_validated_coords([0.5, 0.5, 0.5]));
     }
 
     #[test]
     fn predicates_circumcenter_fail() {
         let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
         ];
         let center = circumcenter(&points);
 
@@ -716,10 +707,10 @@ mod tests {
     #[test]
     fn predicates_circumradius() {
         let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0]),
         ];
         let radius = circumradius(&points).unwrap();
         let expected_radius: f64 = 3.0_f64.sqrt() / 2.0;
@@ -730,9 +721,9 @@ mod tests {
     #[test]
     fn predicates_circumcenter_2d() {
         let points = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([2.0, 0.0]),
-            Point::new([1.0, 2.0]),
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([2.0, 0.0]),
+            Point::from_validated_coords([1.0, 2.0]),
         ];
         let center = circumcenter(&points).unwrap();
 
@@ -746,8 +737,8 @@ mod tests {
         // Hits the `points.is_empty()` early-return branch in
         // `circumradius_with_center` (previously only exercised by
         // `circumcenter`).
-        let points: Vec<Point<f64, 3>> = Vec::new();
-        let center = Point::new([0.0, 0.0, 0.0]);
+        let points: Vec<Point<3>> = Vec::new();
+        let center = Point::from_validated_coords([0.0, 0.0, 0.0]);
         match circumradius_with_center(&points, &center) {
             Err(CircumcenterError::EmptyPointSet) => {}
             other => panic!("expected EmptyPointSet, got {other:?}"),
@@ -757,9 +748,9 @@ mod tests {
     #[test]
     fn predicates_circumradius_2d() {
         let points = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0]),
         ];
         let radius = circumradius(&points).unwrap();
 
@@ -772,10 +763,10 @@ mod tests {
     fn predicates_circumradius_with_center() {
         // Test the circumradius_with_center function
         let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0]),
         ];
 
         let center = circumcenter(&points).unwrap();
@@ -789,10 +780,10 @@ mod tests {
     fn test_circumcenter_regular_simplex_3d() {
         // Test with a regular tetrahedron - use simpler vertices
         let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.5, 3.0_f64.sqrt() / 2.0, 0.0]),
-            Point::new([0.5, 3.0_f64.sqrt() / 6.0, (2.0 / 3.0_f64).sqrt()]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.5, 3.0_f64.sqrt() / 2.0, 0.0]),
+            Point::from_validated_coords([0.5, 3.0_f64.sqrt() / 6.0, (2.0 / 3.0_f64).sqrt()]),
         ];
         let center = circumcenter(&points).unwrap();
 
@@ -828,12 +819,12 @@ mod tests {
     #[test]
     fn test_circumcenter_regular_simplex_4d() {
         // Test 4D simplex - use orthonormal basis plus origin
-        let points: Vec<Point<f64, 4>> = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0]),
+        let points: Vec<Point<4>> = vec![
+            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0]),
         ];
         let center = circumcenter(&points).unwrap();
 
@@ -853,9 +844,9 @@ mod tests {
     fn test_circumcenter_right_triangle_2d() {
         // Test with right triangle - circumcenter should be at hypotenuse midpoint
         let points = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([4.0, 0.0]),
-            Point::new([0.0, 3.0]),
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([4.0, 0.0]),
+            Point::from_validated_coords([0.0, 3.0]),
         ];
         let center = circumcenter(&points).unwrap();
 
@@ -870,15 +861,15 @@ mod tests {
         // Test that scaling preserves circumcenter properties
         let scale = 10.0;
         let points = vec![
-            Point::new([0.0 * scale, 0.0 * scale, 0.0 * scale]),
-            Point::new([1.0 * scale, 0.0 * scale, 0.0 * scale]),
-            Point::new([0.0 * scale, 1.0 * scale, 0.0 * scale]),
-            Point::new([0.0 * scale, 0.0 * scale, 1.0 * scale]),
+            Point::from_validated_coords([0.0 * scale, 0.0 * scale, 0.0 * scale]),
+            Point::from_validated_coords([1.0 * scale, 0.0 * scale, 0.0 * scale]),
+            Point::from_validated_coords([0.0 * scale, 1.0 * scale, 0.0 * scale]),
+            Point::from_validated_coords([0.0 * scale, 0.0 * scale, 1.0 * scale]),
         ];
         let center = circumcenter(&points).unwrap();
 
         // Scaled simplex should have scaled circumcenter
-        let expected_center = Point::new([0.5 * scale, 0.5 * scale, 0.5 * scale]);
+        let expected_center = Point::from_validated_coords([0.5 * scale, 0.5 * scale, 0.5 * scale]);
         let center_coords = center.coords();
         let expected_coords = expected_center.coords();
 
@@ -892,22 +883,22 @@ mod tests {
         // Test that translation preserves relative circumcenter position
         let translation = [10.0, 20.0, 30.0];
         let points = vec![
-            Point::new([
+            Point::from_validated_coords([
                 0.0 + translation[0],
                 0.0 + translation[1],
                 0.0 + translation[2],
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 1.0 + translation[0],
                 0.0 + translation[1],
                 0.0 + translation[2],
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 0.0 + translation[0],
                 1.0 + translation[1],
                 0.0 + translation[2],
             ]),
-            Point::new([
+            Point::from_validated_coords([
                 0.0 + translation[0],
                 0.0 + translation[1],
                 1.0 + translation[2],
@@ -917,10 +908,10 @@ mod tests {
 
         // Get the circumcenter of the untranslated simplex for comparison
         let untranslated_points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0]),
         ];
         let untranslated_center = circumcenter(&untranslated_points).unwrap();
 
@@ -947,11 +938,11 @@ mod tests {
     fn test_circumcenter_nearly_degenerate_simplex() {
         // Test with points that are nearly collinear (may succeed or fail gracefully)
         let eps = 1e-3; // Use larger epsilon for more robustness
-        let points: Vec<Point<f64, 3>> = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.5, eps, 0.0]), // Slightly off the line
-            Point::new([0.5, 0.0, eps]), // Slightly off the plane
+        let points: Vec<Point<3>> = vec![
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.5, eps, 0.0]), // Slightly off the line
+            Point::from_validated_coords([0.5, 0.0, eps]), // Slightly off the plane
         ];
 
         let result = circumcenter(&points);
@@ -970,7 +961,7 @@ mod tests {
 
     #[test]
     fn test_circumcenter_empty_points() {
-        let points: Vec<Point<f64, 3>> = vec![];
+        let points: Vec<Point<3>> = vec![];
         let result = circumcenter(&points);
 
         assert!(result.is_err());
@@ -983,7 +974,10 @@ mod tests {
     #[test]
     fn test_circumcenter_wrong_dimension() {
         // Test with 2 points for 3D (need 4 points for 3D circumcenter)
-        let points = vec![Point::new([0.0, 0.0, 0.0]), Point::new([1.0, 0.0, 0.0])];
+        let points = vec![
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+        ];
         let result = circumcenter(&points);
 
         assert!(result.is_err());
@@ -1008,9 +1002,9 @@ mod tests {
         let height = side_length * 3.0_f64.sqrt() / 2.0;
 
         let points = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([side_length, 0.0]),
-            Point::new([side_length / 2.0, height]),
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([side_length, 0.0]),
+            Point::from_validated_coords([side_length / 2.0, height]),
         ];
 
         let center = circumcenter(&points).unwrap();
@@ -1024,7 +1018,7 @@ mod tests {
         assert_relative_eq!(center_coords[1], expected_y, epsilon = 1e-10);
 
         // Verify all vertices are equidistant from circumcenter
-        let _center_point = Point::new([center_coords[0], center_coords[1]]);
+        let _center_point = Point::from_validated_coords([center_coords[0], center_coords[1]]);
         let distances: Vec<f64> = points
             .iter()
             .map(|p| {
@@ -1046,10 +1040,10 @@ mod tests {
     #[test]
     fn test_circumcenter_numerical_stability() {
         // Test with points that could cause numerical instability
-        let points: Vec<Point<f64, 2>> = vec![
-            Point::new([1.0, 0.0]),
-            Point::new([1.000_000_1, 0.0]), // Very close to first point
-            Point::new([1.000_000_1, 0.000_000_1]), // Forms very thin triangle
+        let points: Vec<Point<2>> = vec![
+            Point::from_validated_coords([1.0, 0.0]),
+            Point::from_validated_coords([1.000_000_1, 0.0]), // Very close to first point
+            Point::from_validated_coords([1.000_000_1, 0.000_000_1]), // Forms very thin triangle
         ];
 
         let result = circumcenter(&points);
@@ -1069,7 +1063,10 @@ mod tests {
     #[test]
     fn test_circumcenter_1d_case() {
         // Test 1D case (2 points)
-        let points = vec![Point::new([0.0]), Point::new([2.0])];
+        let points = vec![
+            Point::from_validated_coords([0.0]),
+            Point::from_validated_coords([2.0]),
+        ];
 
         let center = circumcenter(&points).unwrap();
         let center_coords = center.coords();
@@ -1081,13 +1078,13 @@ mod tests {
     #[test]
     fn test_circumcenter_high_dimension() {
         // Test higher dimensional case (5D)
-        let points: Vec<Point<f64, 5>> = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 0.0, 1.0]),
+        let points: Vec<Point<5>> = vec![
+            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 1.0]),
         ];
 
         let result = circumcenter(&points);
@@ -1132,10 +1129,10 @@ mod tests {
         // Test with precisely known circumcenter values
         // Using a simplex where we can calculate the circumcenter analytically
         let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([6.0, 0.0, 0.0]),
-            Point::new([0.0, 8.0, 0.0]),
-            Point::new([0.0, 0.0, 10.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([6.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 8.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 10.0]),
         ];
 
         let center = circumcenter(&points).unwrap();
@@ -1149,7 +1146,7 @@ mod tests {
 
     #[test]
     fn test_circumcenter_empty_point_set() {
-        let empty_points: Vec<Point<f64, 3>> = vec![];
+        let empty_points: Vec<Point<3>> = vec![];
         let result = circumcenter(&empty_points);
 
         assert_matches!(result, Err(CircumcenterError::EmptyPointSet));
@@ -1159,8 +1156,8 @@ mod tests {
     fn test_circumcenter_invalid_simplex() {
         // Test wrong number of points for dimension
         let points_2d = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
             // Missing third point for 2D circumcenter
         ];
 
@@ -1169,10 +1166,10 @@ mod tests {
 
         // Test too many points
         let points_extra = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.0, 1.0]),
-            Point::new([0.5, 0.5]), // Extra point for 2D
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0]),
+            Point::from_validated_coords([0.5, 0.5]), // Extra point for 2D
         ];
 
         let result = circumcenter(&points_extra);
@@ -1183,9 +1180,9 @@ mod tests {
     fn test_circumcenter_degenerate_matrix() {
         // Test collinear points in 2D (should cause matrix inversion to fail)
         let collinear_points = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([2.0, 0.0]), // Collinear with first two
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+            Point::from_validated_coords([2.0, 0.0]), // Collinear with first two
         ];
 
         let result = circumcenter(&collinear_points);
@@ -1204,11 +1201,11 @@ mod tests {
         // ill-conditioned enough to trip DEFAULT_SINGULAR_TOL, exercising the
         // solve_exact_rounded_f64 fallback path.
         let eps = 1e-14; // Perturbation small enough to make LU reject
-        let points: Vec<Point<f64, 3>> = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.5, 0.5, eps]), // Barely off the z=0 plane
+        let points: Vec<Point<3>> = vec![
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.5, 0.5, eps]), // Barely off the z=0 plane
         ];
 
         let result = circumcenter(&points);
@@ -1248,10 +1245,10 @@ mod tests {
         // The system matrix has a row with tiny entries, likely tripping
         // DEFAULT_SINGULAR_TOL.
         let eps = 1e-15;
-        let points: Vec<Point<f64, 2>> = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.5, eps]), // Nearly collinear
+        let points: Vec<Point<2>> = vec![
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+            Point::from_validated_coords([0.5, eps]), // Nearly collinear
         ];
 
         let result = circumcenter(&points);

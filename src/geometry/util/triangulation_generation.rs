@@ -21,13 +21,11 @@ use crate::core::vertex::Vertex;
 use crate::geometry::coordinate_range::{CoordinateRange, CoordinateRangeError};
 use crate::geometry::kernel::{AdaptiveKernel, Kernel};
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{CoordinateScalar, FiniteCheck};
 use crate::triangulation::DelaunayTriangulation;
 use rand::SeedableRng;
-use rand::distr::uniform::SampleUniform;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
-use std::{fmt::Debug, num::NonZeroUsize};
+use std::num::NonZeroUsize;
 
 const RANDOM_TRIANGULATION_MAX_SHUFFLE_ATTEMPTS: usize = 6;
 const RANDOM_TRIANGULATION_MAX_POINTSET_ATTEMPTS: usize = 6;
@@ -52,14 +50,11 @@ const fn random_point_generation_error(
 /// error boundary: generation failures become
 /// [`DelaunayConstructionFailure::RandomPointGeneration`] before construction
 /// or validation can reinterpret them as geometric failures.
-fn random_points_with_seed<T, const D: usize>(
+fn random_points_with_seed<const D: usize>(
     n_points: usize,
-    bounds: CoordinateRange<T>,
+    bounds: CoordinateRange<f64>,
     seed: Option<u64>,
-) -> Vec<Point<T, D>>
-where
-    T: CoordinateScalar + SampleUniform,
-{
+) -> Vec<Point<D>> {
     #[expect(
         clippy::option_if_let_else,
         reason = "explicit match keeps seeded and unseeded generator paths readable"
@@ -79,7 +74,7 @@ fn validate_random_triangulation<K, U, V, const D: usize>(
     dt: DelaunayTriangulation<K, U, V, D>,
 ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -102,7 +97,7 @@ fn random_triangulation_is_acceptable<K, U, V, const D: usize>(
     min_vertices: usize,
 ) -> bool
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -114,15 +109,14 @@ where
 /// This isolates the single-attempt contract used by the shuffled fallback
 /// loop: build with input order, validate topology, then enforce the minimum
 /// retained-vertex threshold.
-fn random_triangulation_try_build<K, T, U, V, const D: usize>(
+fn random_triangulation_try_build<K, U, V, const D: usize>(
     kernel: &K,
-    vertices: &[Vertex<T, U, D>],
+    vertices: &[Vertex<U, D>],
     min_vertices: usize,
     topology_guarantee: TopologyGuarantee,
 ) -> Result<Option<DelaunayTriangulation<K, U, V, D>>, DelaunayTriangulationConstructionError>
 where
-    K: Kernel<D, Scalar = T>,
-    T: CoordinateScalar,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -148,19 +142,22 @@ where
 /// Vertex construction from generated, already-validated points is infallible,
 /// so random-triangulation errors remain attributable to point generation,
 /// construction, or validation rather than wrapper allocation.
-fn random_triangulation_build_vertices<T, U, const D: usize>(
-    points: Vec<Point<T, D>>,
+fn random_triangulation_build_vertices<U, const D: usize>(
+    points: Vec<Point<D>>,
     vertex_data: Option<U>,
-) -> Vec<Vertex<T, U, D>>
+) -> Vec<Vertex<U, D>>
 where
     U: Copy,
 {
     match vertex_data {
         Some(data) => points
             .into_iter()
-            .map(|point| Vertex::from_point_with_data(point, data))
+            .map(|point| Vertex::from_validated_point_with_data(point, data))
             .collect(),
-        None => points.into_iter().map(Vertex::from_point).collect(),
+        None => points
+            .into_iter()
+            .map(Vertex::from_validated_point)
+            .collect(),
     }
 }
 
@@ -168,7 +165,7 @@ where
 ///
 /// All code paths that build a non-empty triangulation should use this factory
 /// so they share the same kernel type.
-const fn make_adaptive_kernel<T>() -> AdaptiveKernel<T> {
+const fn make_adaptive_kernel() -> AdaptiveKernel<f64> {
     AdaptiveKernel::new()
 }
 
@@ -176,21 +173,20 @@ const fn make_adaptive_kernel<T>() -> AdaptiveKernel<T> {
 ///
 /// The public random-triangulation APIs call this after point generation so
 /// all retry attempts share the same [`AdaptiveKernel`] and topology guarantee.
-fn random_triangulation_try_with_vertices<T, U, V, const D: usize>(
-    vertices: &[Vertex<T, U, D>],
+fn random_triangulation_try_with_vertices<U, V, const D: usize>(
+    vertices: &[Vertex<U, D>],
     min_vertices: usize,
     shuffle_seed: Option<u64>,
     topology_guarantee: TopologyGuarantee,
 ) -> Result<
-    Option<DelaunayTriangulation<AdaptiveKernel<T>, U, V, D>>,
+    Option<DelaunayTriangulation<AdaptiveKernel<f64>, U, V, D>>,
     DelaunayTriangulationConstructionError,
 >
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    let adaptive_kernel = make_adaptive_kernel::<T>();
+    let adaptive_kernel = make_adaptive_kernel();
     let mut last_error = None;
 
     match random_triangulation_try_build(
@@ -512,7 +508,7 @@ where
 ///         DelaunayConstructionFailure::RandomPointGeneration { source: source.into() },
 ///     )
 /// })?;
-/// let dt = generate_random_triangulation_in_range::<f64, (), (), 3>(
+/// let dt = generate_random_triangulation_in_range::<(), (), 3>(
 ///     twelve,
 ///     range,
 ///     None,
@@ -522,14 +518,16 @@ where
 /// # Ok(())
 /// # }
 /// ```
-pub fn generate_random_triangulation_in_range<T, U, V, const D: usize>(
+pub fn generate_random_triangulation_in_range<U, V, const D: usize>(
     n_points: NonZeroUsize,
-    bounds: CoordinateRange<T>,
+    bounds: CoordinateRange<f64>,
     vertex_data: Option<U>,
     seed: Option<u64>,
-) -> Result<DelaunayTriangulation<AdaptiveKernel<T>, U, V, D>, DelaunayTriangulationConstructionError>
+) -> Result<
+    DelaunayTriangulation<AdaptiveKernel<f64>, U, V, D>,
+    DelaunayTriangulationConstructionError,
+>
 where
-    T: CoordinateScalar + SampleUniform,
     U: DataType,
     V: DataType,
 {
@@ -591,7 +589,7 @@ where
 ///         DelaunayConstructionFailure::RandomPointGeneration { source: source.into() },
 ///     )
 /// })?;
-/// let dt = generate_random_triangulation_in_range_with_topology_guarantee::<f64, (), (), 3>(
+/// let dt = generate_random_triangulation_in_range_with_topology_guarantee::<(), (), 3>(
 ///     twelve,
 ///     range,
 ///     None,
@@ -602,15 +600,17 @@ where
 /// # Ok(())
 /// # }
 /// ```
-pub fn generate_random_triangulation_in_range_with_topology_guarantee<T, U, V, const D: usize>(
+pub fn generate_random_triangulation_in_range_with_topology_guarantee<U, V, const D: usize>(
     n_points: NonZeroUsize,
-    bounds: CoordinateRange<T>,
+    bounds: CoordinateRange<f64>,
     vertex_data: Option<U>,
     seed: Option<u64>,
     topology_guarantee: TopologyGuarantee,
-) -> Result<DelaunayTriangulation<AdaptiveKernel<T>, U, V, D>, DelaunayTriangulationConstructionError>
+) -> Result<
+    DelaunayTriangulation<AdaptiveKernel<f64>, U, V, D>,
+    DelaunayTriangulationConstructionError,
+>
 where
-    T: CoordinateScalar + SampleUniform,
     U: DataType,
     V: DataType,
 {
@@ -628,7 +628,7 @@ where
         .into());
     }
 
-    let points: Vec<Point<T, D>> = random_points_with_seed(n_points, bounds, seed);
+    let points: Vec<Point<D>> = random_points_with_seed(n_points, bounds, seed);
 
     let min_vertices = (n_points / 6).max(D + 1);
 
@@ -740,15 +740,15 @@ where
 /// # }
 /// ```
 #[must_use]
-pub struct RandomTriangulationBuilder<T> {
+pub struct RandomTriangulationBuilder {
     n_points: NonZeroUsize,
-    bounds: CoordinateRange<T>,
+    bounds: CoordinateRange<f64>,
     seed: Option<u64>,
     topology_guarantee: TopologyGuarantee,
     construction_options: ConstructionOptions,
 }
 
-impl<T> RandomTriangulationBuilder<T> {
+impl RandomTriangulationBuilder {
     /// Creates a new builder with the specified number of points and raw coordinate bounds.
     ///
     /// # Arguments
@@ -789,10 +789,10 @@ impl<T> RandomTriangulationBuilder<T> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn try_new(n_points: NonZeroUsize, bounds: (T, T)) -> Result<Self, CoordinateRangeError<T>>
-    where
-        T: Debug + FiniteCheck + PartialOrd,
-    {
+    pub fn try_new(
+        n_points: NonZeroUsize,
+        bounds: (f64, f64),
+    ) -> Result<Self, CoordinateRangeError<f64>> {
         Ok(Self {
             n_points,
             bounds: CoordinateRange::try_from(bounds)?,
@@ -831,7 +831,7 @@ impl<T> RandomTriangulationBuilder<T> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn new_in_range(n_points: NonZeroUsize, bounds: CoordinateRange<T>) -> Self {
+    pub fn new_in_range(n_points: NonZeroUsize, bounds: CoordinateRange<f64>) -> Self {
         Self {
             n_points,
             bounds,
@@ -961,12 +961,6 @@ impl<T> RandomTriangulationBuilder<T> {
         self.construction_options = options;
         self
     }
-}
-
-impl<T> RandomTriangulationBuilder<T>
-where
-    T: CoordinateScalar + SampleUniform,
-{
     /// Builds the random triangulation with the configured options.
     ///
     /// The builder stores a [`CoordinateRange`] after [`Self::try_new`] or
@@ -1022,7 +1016,7 @@ where
     pub fn build<U, V, const D: usize>(
         self,
     ) -> Result<
-        DelaunayTriangulation<AdaptiveKernel<T>, U, V, D>,
+        DelaunayTriangulation<AdaptiveKernel<f64>, U, V, D>,
         DelaunayTriangulationConstructionError,
     >
     where
@@ -1080,7 +1074,7 @@ where
         self,
         vertex_data: Option<U>,
     ) -> Result<
-        DelaunayTriangulation<AdaptiveKernel<T>, U, V, D>,
+        DelaunayTriangulation<AdaptiveKernel<f64>, U, V, D>,
         DelaunayTriangulationConstructionError,
     >
     where
@@ -1101,7 +1095,7 @@ where
             .into());
         }
 
-        let points: Vec<Point<T, D>> = random_points_with_seed(n_points, self.bounds, self.seed);
+        let points: Vec<Point<D>> = random_points_with_seed(n_points, self.bounds, self.seed);
 
         // Convert to vertices
         let vertices = random_triangulation_build_vertices(points, vertex_data);
@@ -1119,7 +1113,7 @@ where
             );
         }
         let dt = DelaunayTriangulation::with_topology_guarantee_and_options(
-            &make_adaptive_kernel::<T>(),
+            &make_adaptive_kernel(),
             &vertices,
             self.topology_guarantee,
             self.construction_options,
@@ -1134,7 +1128,6 @@ mod tests {
     use crate::geometry::coordinate_range::{
         CoordinateRangeBound, CoordinateRangeOrdering, InvalidCoordinateValue,
     };
-    use crate::vertex;
     use approx::assert_relative_eq;
     use std::assert_matches;
 
@@ -1264,7 +1257,7 @@ mod tests {
         );
 
         let Err(CoordinateRangeError::NonFiniteBound { bound, value }) =
-            RandomTriangulationBuilder::<f64>::try_new(nonzero(10), (0.0, f64::INFINITY))
+            RandomTriangulationBuilder::try_new(nonzero(10), (0.0, f64::INFINITY))
         else {
             panic!("expected invalid infinite bounds to fail");
         };
@@ -1276,13 +1269,9 @@ mod tests {
     fn test_random_triangulation_range_apis_accept_validated_bounds() {
         let range = CoordinateRange::try_new(-1.0_f64, 1.0).unwrap();
 
-        let triangulation = generate_random_triangulation_in_range::<f64, (), (), 2>(
-            nonzero(10),
-            range,
-            None,
-            Some(42),
-        )
-        .unwrap();
+        let triangulation =
+            generate_random_triangulation_in_range::<(), (), 2>(nonzero(10), range, None, Some(42))
+                .unwrap();
         assert_eq!(triangulation.dim(), 2);
         triangulation.is_valid().unwrap();
 
@@ -1294,7 +1283,7 @@ mod tests {
         builder_triangulation.is_valid().unwrap();
 
         let guaranteed_triangulation =
-            generate_random_triangulation_in_range_with_topology_guarantee::<f64, (), (), 2>(
+            generate_random_triangulation_in_range_with_topology_guarantee::<(), (), 2>(
                 nonzero(10),
                 range,
                 None,
@@ -1311,7 +1300,7 @@ mod tests {
 
     #[test]
     fn test_random_triangulation_builder_success_and_error_paths() {
-        let triangulation = RandomTriangulationBuilder::<f64>::try_new(nonzero(10), (-5.0, 5.0))
+        let triangulation = RandomTriangulationBuilder::try_new(nonzero(10), (-5.0, 5.0))
             .unwrap()
             .seed(42)
             .build::<(), (), 2>()
@@ -1320,12 +1309,11 @@ mod tests {
         assert!(triangulation.number_of_vertices() >= 3);
         triangulation.is_valid().unwrap();
 
-        let triangulation_with_data =
-            RandomTriangulationBuilder::<f64>::try_new(nonzero(10), (-5.0, 5.0))
-                .unwrap()
-                .seed(43)
-                .build_with_vertex_data::<u32, (), 2>(Some(7))
-                .unwrap();
+        let triangulation_with_data = RandomTriangulationBuilder::try_new(nonzero(10), (-5.0, 5.0))
+            .unwrap()
+            .seed(43)
+            .build_with_vertex_data::<u32, (), 2>(Some(7))
+            .unwrap();
         let vertex_data: Vec<_> = triangulation_with_data
             .tds()
             .vertices()
@@ -1338,7 +1326,7 @@ mod tests {
         assert!(vertex_data.iter().all(|&data| data == 7));
         triangulation_with_data.is_valid().unwrap();
 
-        let too_few_vertices = RandomTriangulationBuilder::<f64>::try_new(nonzero(2), (-1.0, 1.0))
+        let too_few_vertices = RandomTriangulationBuilder::try_new(nonzero(2), (-1.0, 1.0))
             .unwrap()
             .build::<(), (), 2>();
         let Err(DelaunayTriangulationConstructionError::Triangulation(
@@ -1357,7 +1345,7 @@ mod tests {
             }
         );
 
-        let invalid_bounds = RandomTriangulationBuilder::<f64>::try_new(nonzero(10), (5.0, 1.0));
+        let invalid_bounds = RandomTriangulationBuilder::try_new(nonzero(10), (5.0, 1.0));
         let Err(CoordinateRangeError::NonIncreasing { ordering, min, max }) = invalid_bounds else {
             panic!("expected invalid bounds to fail");
         };
@@ -1365,7 +1353,7 @@ mod tests {
         assert_relative_eq!(min, 5.0, epsilon = f64::EPSILON);
         assert_relative_eq!(max, 1.0, epsilon = f64::EPSILON);
 
-        let equal_bounds = RandomTriangulationBuilder::<f64>::try_new(nonzero(10), (2.0, 2.0));
+        let equal_bounds = RandomTriangulationBuilder::try_new(nonzero(10), (2.0, 2.0));
         let Err(CoordinateRangeError::NonIncreasing { ordering, min, max }) = equal_bounds else {
             panic!("expected equal bounds to fail");
         };
@@ -1408,13 +1396,13 @@ mod tests {
     #[test]
     fn test_random_triangulation_try_with_vertices_exercises_fallbacks() {
         // Use a valid 2D simplex, but require more vertices than provided to force retries.
-        let vertices: Vec<Vertex<f64, (), 2>> = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+        let vertices: Vec<Vertex<(), 2>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
 
-        let result = random_triangulation_try_with_vertices::<f64, (), (), 2>(
+        let result = random_triangulation_try_with_vertices::<(), (), 2>(
             &vertices,
             vertices.len() + 1,
             Some(7),

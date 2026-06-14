@@ -20,23 +20,27 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 }
 
 /// Strategy for generating 2D points
-fn point_2d() -> impl Strategy<Value = Point<f64, 2>> {
-    prop::array::uniform2(finite_coordinate()).prop_map(Point::new)
+fn point_2d() -> impl Strategy<Value = Point<2>> {
+    prop::array::uniform2(finite_coordinate())
+        .prop_map(|coords| Point::try_new(coords).expect("finite point coordinates"))
 }
 
 /// Strategy for generating 3D points
-fn point_3d() -> impl Strategy<Value = Point<f64, 3>> {
-    prop::array::uniform3(finite_coordinate()).prop_map(Point::new)
+fn point_3d() -> impl Strategy<Value = Point<3>> {
+    prop::array::uniform3(finite_coordinate())
+        .prop_map(|coords| Point::try_new(coords).expect("finite point coordinates"))
 }
 
 /// Strategy for generating 4D points
-fn point_4d() -> impl Strategy<Value = Point<f64, 4>> {
-    prop::array::uniform4(finite_coordinate()).prop_map(Point::new)
+fn point_4d() -> impl Strategy<Value = Point<4>> {
+    prop::array::uniform4(finite_coordinate())
+        .prop_map(|coords| Point::try_new(coords).expect("finite point coordinates"))
 }
 
 /// Strategy for generating 5D points
-fn point_5d() -> impl Strategy<Value = Point<f64, 5>> {
-    prop::array::uniform5(finite_coordinate()).prop_map(Point::new)
+fn point_5d() -> impl Strategy<Value = Point<5>> {
+    prop::array::uniform5(finite_coordinate())
+        .prop_map(|coords| Point::try_new(coords).expect("finite point coordinates"))
 }
 
 // =============================================================================
@@ -156,7 +160,7 @@ macro_rules! gen_insphere_inward_scaling_inside {
                         for i in 0..$dim { centroid[i] *= inv_len; }
 
                         // Use centroid, which is guaranteed to lie inside the simplex
-                        let interior_point = Point::new(centroid);
+                        let interior_point = Point::try_new(centroid).expect("finite point coordinates");
 
                         if let Ok(result) = insphere(&simplex, interior_point) {
                             // Check separation to avoid degenerate case
@@ -206,7 +210,7 @@ macro_rules! gen_insphere_distant_point_outside_by_radius {
                         for i in 0..$dim {
                             far[i] = dir[i].mul_add(distance, center_coords[i]);
                         }
-                        let far_point = Point::new(far);
+                        let far_point = Point::try_new(far).expect("finite point coordinates");
                         if let Ok(result) = insphere(&simplex, far_point) {
                             prop_assert!(result == InSphere::OUTSIDE, "Point at 10x circumradius from center should be OUTSIDE, got {:?}", result);
                         }
@@ -231,7 +235,7 @@ macro_rules! gen_insphere_scale_center_outside {
                         let scale = 10000.0;
                         let mut far = [0.0_f64; $dim];
                         for i in 0..$dim { far[i] = center_coords[i] * scale; }
-                        let far_point = Point::new(far);
+                        let far_point = Point::try_new(far).expect("finite point coordinates");
                         if let Ok(result) = insphere(&simplex, far_point) {
                             if center_coords.iter().any(|&c| c.abs() > 0.01) {
                                 prop_assert!(result == InSphere::OUTSIDE, "Point scaled away from circumcenter should be OUTSIDE, got {:?}", result);
@@ -293,24 +297,24 @@ proptest! {
         prop_assume!((base + delta).to_bits() != base.to_bits());
 
         let local_simplex = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([delta, 0.0, 0.0]),
-            Point::new([0.0, delta, 0.0]),
-            Point::new([0.0, 0.0, delta]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([delta, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, delta, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, delta]).expect("finite point coordinates"),
         ];
-        let local_inside = Point::new([0.25 * delta, 0.25 * delta, 0.25 * delta]);
-        let local_outside = Point::new([2.0 * delta, 2.0 * delta, 2.0 * delta]);
+        let local_inside = Point::try_new([0.25 * delta, 0.25 * delta, 0.25 * delta]).expect("finite point coordinates");
+        let local_outside = Point::try_new([2.0 * delta, 2.0 * delta, 2.0 * delta]).expect("finite point coordinates");
 
         let translated_simplex = vec![
-            Point::new([base, base, base]),
-            Point::new([base + delta, base, base]),
-            Point::new([base, base + delta, base]),
-            Point::new([base, base, base + delta]),
+            Point::try_new([base, base, base]).expect("finite point coordinates"),
+            Point::try_new([base + delta, base, base]).expect("finite point coordinates"),
+            Point::try_new([base, base + delta, base]).expect("finite point coordinates"),
+            Point::try_new([base, base, base + delta]).expect("finite point coordinates"),
         ];
         let inside_coord = 0.25_f64.mul_add(delta, base);
         let outside_coord = 2.0_f64.mul_add(delta, base);
-        let translated_inside = Point::new([inside_coord, inside_coord, inside_coord]);
-        let translated_outside = Point::new([outside_coord, outside_coord, outside_coord]);
+        let translated_inside = Point::try_new([inside_coord, inside_coord, inside_coord]).expect("finite point coordinates");
+        let translated_outside = Point::try_new([outside_coord, outside_coord, outside_coord]).expect("finite point coordinates");
 
         let local_inside_result = robust_insphere(&local_simplex, &local_inside)
             .map_err(|error| TestCaseError::fail(format!("{error:?}")))?;
@@ -345,8 +349,8 @@ proptest! {
     ) {
         // Create a nearly degenerate simplex (three nearly collinear points)
         let coords0 = *p0.coords();
-        let p1 = Point::new([coords0[0] + 1.0, coords0[1]]);
-        let p2 = Point::new([coords0[0] + 2.0, f64::mul_add(scale, 0.01, coords0[1])]);  // Very small y offset
+        let p1 = Point::try_new([coords0[0] + 1.0, coords0[1]]).expect("finite point coordinates");
+        let p2 = Point::try_new([coords0[0] + 2.0, f64::mul_add(scale, 0.01, coords0[1])]).expect("finite point coordinates");  // Very small y offset
 
         let simplex = [p0, p1, p2];
 

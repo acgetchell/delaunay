@@ -6,12 +6,12 @@
 
 use delaunay::prelude::construction::{
     ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder,
-    InsertionOrderStrategy, RetryPolicy, TopologyGuarantee, Vertex, vertex,
+    InsertionOrderStrategy, RetryPolicy, TopologyGuarantee, Vertex,
 };
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::diagnostics::debug_print_first_delaunay_violation;
 use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
-use delaunay::prelude::geometry::{Coordinate, CoordinateRange, Point, RobustKernel};
+use delaunay::prelude::geometry::{CoordinateRange, Point, RobustKernel};
 use delaunay::prelude::insertion::{
     HullExtensionReason, InsertionError, InsertionErrorKind, InsertionErrorSummary,
 };
@@ -23,9 +23,9 @@ use delaunay::prelude::ordering::{
 /// Replays a full Hilbert ordering while keeping only the prefix that first
 /// exposed issue #307, so the regression stays fast and deterministic.
 fn hilbert_ordered_prefix<const D: usize>(
-    points: Vec<Point<f64, D>>,
+    points: Vec<Point<D>>,
     prefix_len: usize,
-) -> Vec<Vertex<f64, (), D>> {
+) -> Vec<Vertex<(), D>> {
     let bounds = coordinate_bounds(&points);
     let bits_per_coord = HilbertBitDepth::try_new(31).expect("test bit depth must be valid");
     let quantized: Vec<[u32; D]> = points
@@ -38,7 +38,7 @@ fn hilbert_ordered_prefix<const D: usize>(
     let indices = hilbert_indices_prequantized(&quantized, bits_per_coord)
         .expect("4D Hilbert indices should fit in u128");
 
-    let mut keyed: Vec<(u128, [u32; D], Point<f64, D>, usize)> = points
+    let mut keyed: Vec<(u128, [u32; D], Point<D>, usize)> = points
         .into_iter()
         .enumerate()
         .map(|(input_index, point)| {
@@ -68,13 +68,13 @@ fn hilbert_ordered_prefix<const D: usize>(
     keyed
         .into_iter()
         .take(prefix_len)
-        .map(|(_, _, point, _)| vertex!(point))
+        .map(|(_, _, point, _)| delaunay::prelude::Vertex::<(), _>::try_new(point.into()).unwrap())
         .collect()
 }
 
 /// Computes the scalar range used by batch Hilbert ordering so regression
 /// prefixes match the original full construction order.
-fn coordinate_bounds<const D: usize>(points: &[Point<f64, D>]) -> CoordinateRange<f64> {
+fn coordinate_bounds<const D: usize>(points: &[Point<D>]) -> CoordinateRange<f64> {
     let (min, max) = points
         .iter()
         .flat_map(Point::coords)
@@ -96,7 +96,7 @@ fn coordinate_bounds<const D: usize>(points: &[Point<f64, D>]) -> CoordinateRang
 /// insertion order — across representative dimensions and adversarial inputs.
 #[test]
 fn regression_hilbert_batch_quantize_matches_two_step_path() {
-    fn assert_paths_match<const D: usize>(points: &[Point<f64, D>]) {
+    fn assert_paths_match<const D: usize>(points: &[Point<D>]) {
         let bounds = coordinate_bounds(points);
         // Mirror `order_vertices_hilbert`'s per-dimension precision so the
         // `D * bits <= 128` index-width invariant holds for every D.
@@ -132,35 +132,53 @@ fn regression_hilbert_batch_quantize_matches_two_step_path() {
     // Adversarial mixes: negative/asymmetric ranges, clamping at both ends,
     // duplicate cells, and exact endpoints.
     assert_paths_match::<2>(&[
-        Point::new([-2.0, -1.0]),
-        Point::new([-1.5, 0.25]),
-        Point::new([0.1, -0.7]),
-        Point::new([3.0, 3.0]),
-        Point::new([3.0, 3.0]),
+        Point::try_new([-2.0, -1.0]).expect("finite point coordinates"),
+        Point::try_new([-1.5, 0.25]).expect("finite point coordinates"),
+        Point::try_new([0.1, -0.7]).expect("finite point coordinates"),
+        Point::try_new([3.0, 3.0]).expect("finite point coordinates"),
+        Point::try_new([3.0, 3.0]).expect("finite point coordinates"),
     ]);
     assert_paths_match::<3>(&[
-        Point::new([-2.0, -1.0, 0.0]),
-        Point::new([-1.5, 0.25, 1.75]),
-        Point::new([0.1, -0.7, 2.2]),
-        Point::new([3.0, 3.0, -2.0]),
+        Point::try_new([-2.0, -1.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([-1.5, 0.25, 1.75]).expect("finite point coordinates"),
+        Point::try_new([0.1, -0.7, 2.2]).expect("finite point coordinates"),
+        Point::try_new([3.0, 3.0, -2.0]).expect("finite point coordinates"),
     ]);
     assert_paths_match::<5>(&[
-        Point::new([-2.0, -1.0, 0.0, 1.0, 2.0]),
-        Point::new([-1.5, 0.25, 1.75, 2.5, -0.5]),
-        Point::new([0.1, -0.7, 2.2, -1.8, 1.4]),
-        Point::new([3.0, 3.0, -2.0, -2.0, 0.5]),
+        Point::try_new([-2.0, -1.0, 0.0, 1.0, 2.0]).expect("finite point coordinates"),
+        Point::try_new([-1.5, 0.25, 1.75, 2.5, -0.5]).expect("finite point coordinates"),
+        Point::try_new([0.1, -0.7, 2.2, -1.8, 1.4]).expect("finite point coordinates"),
+        Point::try_new([3.0, 3.0, -2.0, -2.0, 0.5]).expect("finite point coordinates"),
     ]);
 }
 
 #[test]
 fn regression_empty_circumsphere_2d_minimal_case() {
     let vertices = vec![
-        vertex!([48.564_246_621_452_234, 23.481_505_128_710_488]),
-        vertex!([-9.807_184_344_740_996, -36.451_902_443_093_33]),
-        vertex!([75.784_620_110_257_45, 25.382_048_382_678_306]),
-        vertex!([50.330_335_525_698_53, 25.294_356_716_784_847]),
-        vertex!([77.411_339_748_608_4, -86.531_849_594_875_54]),
-        vertex!([-93.661_180_847_043, 1.562_430_007_326_195_9]),
+        delaunay::prelude::Vertex::<(), _>::try_new([
+            48.564_246_621_452_234,
+            23.481_505_128_710_488,
+        ])
+        .unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([
+            -9.807_184_344_740_996,
+            -36.451_902_443_093_33,
+        ])
+        .unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([
+            75.784_620_110_257_45,
+            25.382_048_382_678_306,
+        ])
+        .unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([
+            50.330_335_525_698_53,
+            25.294_356_716_784_847,
+        ])
+        .unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([77.411_339_748_608_4, -86.531_849_594_875_54])
+            .unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([-93.661_180_847_043, 1.562_430_007_326_195_9])
+            .unwrap(),
     ];
 
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
@@ -187,10 +205,10 @@ fn regression_empty_circumsphere_2d_minimal_case() {
 fn regression_issue_120_minimal_failing_input_2d() {
     // From docs/archive/issue_120_investigation.md (Example Failure Case (2D)).
     let vertices = vec![
-        vertex!([0.0, 0.0]),
-        vertex!([-54.687, 0.0]),
-        vertex!([-85.026, 36.185]),
-        vertex!([0.0, 38.424]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([-54.687, 0.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([-85.026, 36.185]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 38.424]).unwrap(),
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 2> =
@@ -229,19 +247,21 @@ fn regression_insertion_error_summary_preserves_top_level_retryability() {
 
 #[test]
 fn regression_periodic_neighbor_validation_uses_lifted_vertex_offsets() {
-    let vertices: Vec<Vertex<f64, (), 2>> = (0..7)
+    let vertices: Vec<Vertex<(), 2>> = (0..7)
         .map(|index| {
             let index_f64 = f64::from(u32::try_from(index).expect("test index fits in u32"));
-            vertex!([
+            delaunay::prelude::Vertex::<(), _>::try_new([
                 0.9_f64.mul_add(((index_f64 + 1.0) * 0.618_033_988_749_894_8).fract(), 0.05),
                 0.9_f64.mul_add(((index_f64 + 1.0) * 0.414_213_562_373_095_03).fract(), 0.05),
             ])
+            .unwrap()
         })
         .collect();
     let kernel = RobustKernel::<f64>::new();
 
     let dt = DelaunayTriangulationBuilder::new(&vertices)
-        .toroidal([1.0_f64; 2])
+        .try_toroidal([1.0_f64; 2])
+        .unwrap()
         .build_with_kernel::<_, ()>(&kernel)
         .expect("periodic 2D build should succeed");
 
@@ -252,7 +272,7 @@ fn regression_periodic_neighbor_validation_uses_lifted_vertex_offsets() {
     );
     assert!(
         dt.tds().is_valid().is_ok(),
-        "neighbor validation must compare lifted (vertex, offset) identities"
+        "neighbor validation must compare lifted (offset) identities"
     );
 }
 
@@ -270,9 +290,12 @@ fn regression_periodic_neighbor_validation_uses_lifted_vertex_offsets() {
 #[test]
 fn regression_issue_306_3d_construction_succeeds() {
     let seed: u64 = 0xE30C_7858_2376_677C;
-    let points = generate_random_points_in_ball_seeded::<f64, 3>(35, 100.0, seed)
+    let points = generate_random_points_in_ball_seeded::<3>(35, 100.0, seed)
         .expect("point generation should succeed");
-    let vertices: Vec<Vertex<f64, (), 3>> = points.into_iter().map(|p| vertex!(p)).collect();
+    let vertices: Vec<Vertex<(), 3>> = points
+        .into_iter()
+        .map(|p| delaunay::prelude::Vertex::<(), _>::try_new(p.into()).unwrap())
+        .collect();
 
     let dt: Result<DelaunayTriangulation<_, (), (), 3>, _> = DelaunayTriangulation::new(&vertices);
     assert!(
@@ -288,7 +311,7 @@ fn regression_issue_306_3d_construction_succeeds() {
 #[test]
 fn regression_issue_307_4d_bulk_repair_keeps_positive_orientation() {
     let seed: u64 = 0x9B77_86C9_99C5_6A16;
-    let points = generate_random_points_in_ball_seeded::<f64, 4>(100, 100.0, seed)
+    let points = generate_random_points_in_ball_seeded::<4>(100, 100.0, seed)
         .expect("point generation should succeed");
     let vertices = hilbert_ordered_prefix(points, 14);
 
@@ -353,9 +376,12 @@ fn regression_issue_204_4d_500_local_repair_budget() {
     let ball_radius = 100.0;
     let n_points: usize = 500;
 
-    let points = generate_random_points_in_ball_seeded::<f64, 4>(n_points, ball_radius, seed)
+    let points = generate_random_points_in_ball_seeded::<4>(n_points, ball_radius, seed)
         .expect("point generation should succeed");
-    let vertices: Vec<Vertex<f64, (), 4>> = points.into_iter().map(|p| vertex!(p)).collect();
+    let vertices: Vec<Vertex<(), 4>> = points
+        .into_iter()
+        .map(|p| delaunay::prelude::Vertex::<(), _>::try_new(p.into()).unwrap())
+        .collect();
 
     let (dt, stats) =
         DelaunayTriangulation::<_, (), (), 4>::new_with_construction_statistics(&vertices)

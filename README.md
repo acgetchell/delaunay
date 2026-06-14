@@ -22,7 +22,7 @@ efficient spatial indexing. Provides an explicit
 [4-level validation hierarchy][Validation Guide] on individual elements,
 triangulation data structure validity, manifold topology, and Delaunay property
 adherence. Allows for the complete set of [Pachner moves] up to D=5 using
-bistellar flips, vertex insertion and deletion, and the conversion of
+bistellar flips insertion and deletion, and the conversion of
 non-Delaunay triangulations into Delaunay triangulations via bounded
 flip/rebuilds. Auxiliary data may be stored directly in vertices and simplices
 with external [secondary maps][Secondary maps] provided for vertex- and
@@ -74,9 +74,9 @@ complete technical background.
   for well-conditioned exploratory work.
 - [x] D-dimensional [Convex hulls] and [Delaunay triangulations].
 - [x] Euclidean and toroidal construction through
-  [`DelaunayTriangulationBuilder`]: `.toroidal(...)` builds the periodic
+  [`DelaunayTriangulationBuilder`]: `.try_toroidal(...)` builds the periodic
   image-point quotient in validated dimensions, while
-  `.canonicalized_toroidal(...)` wraps coordinates without quotient rewiring.
+  `.try_canonicalized_toroidal(...)` wraps coordinates without quotient rewiring.
 - [x] Exact predicates, stack-allocated linear algebra through [la-stack], and
   deterministic SoS degeneracy handling.
 - [x] Focused public preludes for common construction, query, geometry, repair,
@@ -119,17 +119,23 @@ prelude map and namespace policy, see the
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
 };
 
 fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     let vertices = vec![
-        vertex!([0.0, 0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 0.0, 1.0]),
-        vertex!([0.2, 0.2, 0.2, 0.2]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0])
+            .expect("finite vertex coordinates"),
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0])
+            .expect("finite vertex coordinates"),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0])
+            .expect("finite vertex coordinates"),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0])
+            .expect("finite vertex coordinates"),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0])
+            .expect("finite vertex coordinates"),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2])
+            .expect("finite vertex coordinates"),
     ];
 
     let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -148,23 +154,29 @@ fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 ### Toroidal Triangulations
 
 For coordinate wrapping on a toroidal domain, use
-`DelaunayTriangulationBuilder::canonicalized_toroidal`:
+`DelaunayTriangulationBuilder::try_canonicalized_toroidal`:
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyKind, vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyKind,
 };
 
 fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     let vertices = vec![
-        vertex!([0.1, 0.2]),
-        vertex!([0.8, 0.3]),
-        vertex!([0.5, 0.7]),
-        vertex!([1.2, 0.4]), // Wraps to [0.2, 0.4]
+        delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.2])
+            .expect("finite vertex coordinates"),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.8, 0.3])
+            .expect("finite vertex coordinates"),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.7])
+            .expect("finite vertex coordinates"),
+        // Wraps to [0.2, 0.4].
+        delaunay::prelude::Vertex::<(), _>::try_new([1.2, 0.4])
+            .expect("finite vertex coordinates"),
     ];
 
     let dt = DelaunayTriangulationBuilder::new(&vertices)
-        .canonicalized_toroidal([1.0, 1.0])
+        .try_canonicalized_toroidal([1.0, 1.0])
+        .expect("unit toroidal domain is valid")
         .build::<()>()?;
 
     assert_eq!(dt.topology_kind(), TopologyKind::Toroidal);
@@ -173,7 +185,7 @@ fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 ```
 
 For boundary-facet identification and periodic neighbor pointers, use
-`.toroidal([..])` in 2D or compact 3D; see the
+`.try_toroidal([..])` in 2D or compact 3D; see the
 [toroidal construction workflow] for the full recipe and current 4D/5D
 guardrails.
 
@@ -257,8 +269,8 @@ For reproducible checks in CI/local runs, use `just check`, `just test`,
   skipped none, ran final repair, and passed `validation_report` in about
   52 seconds. The 3,000-point 4D harness remains a manual characterization probe
   for issue #340 rather than routine CI.
-- **Periodic domains:** `.toroidal()` uses the periodic image-point method and
-  is release-validated in 2D and compact 3D. `.canonicalized_toroidal()`
+- **Periodic domains:** `.try_toroidal()` uses the periodic image-point method and
+  is release-validated in 2D and compact 3D. `.try_canonicalized_toroidal()`
   canonicalizes coordinates into the fundamental domain without quotient
   rewiring. 4D/5D periodic quotients fail fast pending scalable construction
   work in issue #416.

@@ -35,7 +35,7 @@
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
 use ::uuid::Uuid;
-use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee, Vertex, vertex};
+use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee, Vertex};
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::tds::SimplexKey;
 use proptest::prelude::*;
@@ -163,7 +163,7 @@ macro_rules! test_simplex_quality_properties {
                 #[test]
                 fn [<prop_radius_ratio_lower_bound_ $dim d>](
                     simplex_points in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $num_points
                     )
                 ) {
@@ -188,7 +188,7 @@ macro_rules! test_simplex_quality_properties {
                 #[test]
                 fn [<prop_radius_ratio_scale_invariant_ $dim d>](
                     simplex_points in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $num_points
                     ),
                     scale in 0.1f64..10.0f64
@@ -199,7 +199,7 @@ macro_rules! test_simplex_quality_properties {
                             let ratio1 = r1 / r_inner_1;
 
                             // Scale all points
-                            let scaled_points: Vec<Point<f64, $dim>> = simplex_points
+                            let scaled_points: Vec<Point<$dim>> = simplex_points
                                 .iter()
                                 .map(|p| {
                                     let coords = *p.coords();
@@ -207,7 +207,7 @@ macro_rules! test_simplex_quality_properties {
                                     for i in 0..$dim {
                                         scaled[i] = coords[i] * scale;
                                     }
-                                    Point::new(scaled)
+                                    Point::try_new(scaled).expect("finite point coordinates")
                                 })
                                 .collect();
 
@@ -239,26 +239,26 @@ macro_rules! test_simplex_quality_properties {
 
                     // First vertex at origin (scaled)
                     let origin = [0.0f64; $dim];
-                    regular_points.push(Point::new(origin));
+                    regular_points.push(Point::try_new(origin).expect("finite point coordinates"));
 
                     // D more vertices with one coordinate = base_scale
                     for i in 0..$dim {
                         let mut coords = [0.0f64; $dim];
                         coords[i] = base_scale;
-                        regular_points.push(Point::new(coords));
+                        regular_points.push(Point::try_new(coords).expect("finite point coordinates"));
                     }
 
                     // Create a flatter simplex (still valid but lower quality)
                     // Make it elongated in one direction with small extent in others
                     let mut degenerate_points = Vec::with_capacity($dim + 1);
-                    degenerate_points.push(Point::new([0.0f64; $dim]));
+                    degenerate_points.push(Point::try_new([0.0f64; $dim]).expect("finite point coordinates"));
                     for i in 0..$dim {
                         let mut coords = [0.0f64; $dim];
                         let i_f64: f64 = safe_usize_to_scalar(i).unwrap();
                         coords[0] = (10.0 + i_f64) * base_scale;
                         let axis = (i + 1) % $dim;
                         coords[axis] = 0.05_f64.mul_add(base_scale, coords[axis]);
-                        degenerate_points.push(Point::new(coords));
+                        degenerate_points.push(Point::try_new(coords).expect("finite point coordinates"));
                     }
 
                     // Try to compute quality metrics, but skip if degenerate
@@ -295,11 +295,11 @@ macro_rules! test_simplex_quality_properties {
                 ) {
                     // Create a regular simplex
                     let mut regular_points = Vec::new();
-                    regular_points.push(Point::new([0.0f64; $dim]));
+                    regular_points.push(Point::try_new([0.0f64; $dim]).expect("finite point coordinates"));
                     for i in 0..$dim {
                         let mut coords = [0.0f64; $dim];
                         coords[i] = base_scale;
-                        regular_points.push(Point::new(coords));
+                        regular_points.push(Point::try_new(coords).expect("finite point coordinates"));
                     }
 
                     // Create a nearly-degenerate version (collapse last vertex toward origin)
@@ -311,7 +311,7 @@ macro_rules! test_simplex_quality_properties {
                         for i in 0..$dim {
                             collapsed_coords[i] *= 0.01; // Move 99% toward origin
                         }
-                        *last = Point::new(collapsed_coords);
+                        *last = Point::try_new(collapsed_coords).expect("finite point coordinates");
                     }
 
                     // Compare quality metrics - collapsed should be much worse
@@ -351,7 +351,7 @@ macro_rules! test_quality_properties {
                 #[test]
                 fn [<prop_radius_ratio_positive_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
@@ -381,7 +381,7 @@ macro_rules! test_quality_properties {
                 #[test]
                 fn [<prop_radius_ratio_translation_invariant_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v)),
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
@@ -400,7 +400,7 @@ macro_rules! test_quality_properties {
                                 for i in 0..$dim {
                                     translated[i] = coords[i] + translation[i];
                                 }
-                                Point::new(translated)
+                                Point::try_new(translated).expect("finite point coordinates")
                             })
                             .collect::<Vec<_>>();
 
@@ -455,7 +455,7 @@ macro_rules! test_quality_properties {
                 #[test]
                 fn [<prop_normalized_volume_translation_invariant_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v)),
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
@@ -474,7 +474,7 @@ macro_rules! test_quality_properties {
                                 for i in 0..$dim {
                                     translated[i] = coords[i] + translation[i];
                                 }
-                                Point::new(translated)
+                                Point::try_new(translated).expect("finite point coordinates")
                             })
                             .collect::<Vec<_>>();
 
@@ -529,7 +529,7 @@ macro_rules! test_quality_properties {
                 #[test]
                 fn [<prop_normalized_volume_scale_invariant_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v)),
                     scale in 0.1f64..10.0f64
@@ -548,7 +548,7 @@ macro_rules! test_quality_properties {
                                 for i in 0..$dim {
                                     scaled[i] = coords[i] * scale;
                                 }
-                                Point::new(scaled)
+                                Point::try_new(scaled).expect("finite point coordinates")
                             })
                             .collect::<Vec<_>>();
 
@@ -603,7 +603,7 @@ macro_rules! test_quality_properties {
                 #[test]
                 fn [<prop_degeneracy_consistency_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
@@ -684,7 +684,7 @@ macro_rules! test_facet_topology_invariant {
                 #[test]
                 fn [<prop_no_over_shared_facets_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| vertex!(coords)),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap()),
                         $min_vertices..$max_vertices
                     )
                 ) {
@@ -714,7 +714,7 @@ macro_rules! test_facet_topology_invariant {
                 #[test]
                 fn [<prop_repair_fixes_all_issues_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| vertex!(coords)),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap()),
                         $min_vertices..$max_vertices
                     )
                 ) {
@@ -750,7 +750,7 @@ macro_rules! test_facet_topology_invariant {
                 #[test]
                 fn [<prop_empty_simplex_list_no_issues_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| vertex!(coords)),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap()),
                         $min_vertices..$max_vertices
                     )
                 ) {
@@ -806,7 +806,7 @@ macro_rules! gen_high_dim_facet_topology_smoke {
                 let target_cases = config.cases;
                 let mut runner = TestRunner::new(config);
                 let strategy = prop::collection::vec(
-                    prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| vertex!(coords)),
+                    prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap()),
                     $min_vertices..=$max_vertices,
                 );
                 let stats = RefCell::new(SmokeStats::default());

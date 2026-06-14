@@ -206,7 +206,7 @@ fn prop_empty_circumsphere_4d(vertices: Vec<Vertex<f64, Option<()>, 4>>) {
     let mut algorithm = RobustBowyerWatson::new();
 
     for vertex in vertices {
-        match algorithm.insert_vertex(&mut tds, vertex) {
+        match algorithm.insert_vertex(&mut tds, vertex.uuid(), vertex.point().coords()) {
             Ok(_) => {
                 // Success - verify invariants hold
                 assert!(tds.is_valid().is_ok(), "Invariants must hold after successful insertion");

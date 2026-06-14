@@ -168,7 +168,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
 
 **Optimizations IMPLEMENTED:**
 
-- **✅ InsertionBuffers structure**: Reusable buffers for bad cells, boundary facets, vertex points, and visible facets
+- **✅ InsertionBuffers structure**: Reusable buffers for bad cells, boundary facets points, and visible facets
 - **✅ Pre-allocated capacity**: Buffers created with appropriate initial capacity
 - **✅ Buffer preparation methods**: `prepare_bad_cells_buffer()`, `prepare_vertex_points_buffer()`, etc.
 - **✅ Reduced allocations**: Algorithm reuses buffers across multiple insertions
@@ -434,7 +434,7 @@ where
         SpatialIndex { tree }
     }
 
-    fn find_bad_cells_spatial(&self, vertex: &Vertex<T, U, D>, 
+    fn find_bad_cells_spatial(&self, vertex: &Vertex<T, U, D>,
                             index: &SpatialIndex<T, D>) -> Vec<CellKey> {
         let vertex_point = vertex.point().to_array();
 
@@ -533,7 +533,7 @@ fn is_valid_parallel(&self) -> Result<(), TriangulationValidationError> {
 }
 
 // Parallel bad cell detection for Bowyer-Watson
-fn find_bad_cells_parallel(&self, vertex: &Vertex<T, U, D>) -> Vec<CellKey> {
+    fn find_bad_cells_parallel(&self, vertex: &Vertex<T, U, D>) -> Vec<CellKey> {
     self.cells
         .par_iter()
         .filter_map(|(cell_key, cell)| {

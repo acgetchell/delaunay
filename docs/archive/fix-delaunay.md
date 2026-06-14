@@ -38,7 +38,7 @@ Goal: build an initial D-simplex from the input vertex set, handling duplicates 
 
 ## Stage 2: Unified Per-Vertex Insertion (Fast → Robust → Skip)
 
-Goal: for each vertex, attempt fast insertion, then robust insertion, and finally skip with diagnostics if both fail.
+Goal: for each attempt fast insertion, then robust insertion, and finally skip with diagnostics if both fail.
 
 ### Vertex classification
 

@@ -9,12 +9,11 @@
 
 #![forbid(unsafe_code)]
 
-use crate::geometry::{
-    coordinate_range::{CoordinateRange, CoordinateRangeError, CoordinateRangeOrdering},
-    traits::coordinate::CoordinateScalar,
+use crate::geometry::coordinate_range::{
+    CoordinateRange, CoordinateRangeError, CoordinateRangeOrdering,
 };
 use core::fmt;
-use num_traits::cast;
+use num_traits::ToPrimitive;
 use std::num::NonZeroU32;
 
 /// Maximum supported Hilbert bit depth per coordinate accepted by [`HilbertBitDepth`].
@@ -49,17 +48,6 @@ pub enum HilbertError {
     DimensionTooLarge {
         /// The dimension that exceeded representable limits.
         dimension: usize,
-    },
-
-    /// The quantization grid maximum could not be represented as the coordinate scalar.
-    #[error(
-        "Hilbert quantization grid maximum {max_grid_value} for {bits} bits cannot be represented by the coordinate scalar"
-    )]
-    QuantizationScaleConversionFailed {
-        /// The requested number of Hilbert bits per coordinate.
-        bits: u32,
-        /// The computed grid maximum, `2^bits - 1`.
-        max_grid_value: u32,
     },
 
     /// A Hilbert quantization bound was non-finite.
@@ -490,9 +478,7 @@ impl<const D: usize> HilbertQuantizedVec<D> {
 ///
 /// Returns [`HilbertError::IndexOverflow`] if `D * bits > 128` (index would not fit in `u128`).
 /// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`.
-/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the quantization
-/// grid maximum cannot be represented by the coordinate scalar type. Returns
-/// [`HilbertError::NonFiniteBoundsExtent`], [`HilbertError::NonFiniteCoordinate`],
+/// Returns [`HilbertError::NonFiniteBoundsExtent`], [`HilbertError::NonFiniteCoordinate`],
 /// [`HilbertError::NonFiniteNormalizedCoordinate`], or
 /// [`HilbertError::QuantizedCoordinateConversionFailed`] if coordinate
 /// quantization fails.
@@ -519,15 +505,12 @@ impl<const D: usize> HilbertQuantizedVec<D> {
 /// # Ok(())
 /// # }
 /// ```
-pub fn hilbert_quantize_batch_in_range<Item, T, const D: usize>(
+pub fn hilbert_quantize_batch_in_range<Item, const D: usize>(
     items: &[Item],
-    bounds: CoordinateRange<T>,
+    bounds: CoordinateRange<f64>,
     bits: HilbertBitDepth,
-    mut coords_of: impl FnMut(&Item) -> [T; D],
-) -> Result<HilbertQuantizedVec<D>, HilbertError>
-where
-    T: CoordinateScalar,
-{
+    mut coords_of: impl FnMut(&Item) -> [f64; D],
+) -> Result<HilbertQuantizedVec<D>, HilbertError> {
     let index_mode = HilbertIndexMode::try_new(bits)?;
 
     if D == 0 {
@@ -537,7 +520,7 @@ where
         });
     }
 
-    let (max_val_u32, max_val_t) = quantization_scale::<T>(bits)?;
+    let (max_val_u32, max_val_t) = quantization_scale(bits);
 
     let quantized = items
         .iter()
@@ -553,20 +536,10 @@ where
     })
 }
 
-/// Converts a validated bit depth into a scalar grid maximum so Hilbert
-/// ordering cannot silently collapse when a coordinate type cannot represent it.
-fn quantization_scale<T: CoordinateScalar>(
-    bits: HilbertBitDepth,
-) -> Result<(u32, T), HilbertError> {
-    let bits_value = bits.get();
+/// Converts a validated bit depth into the exact f64 grid maximum.
+fn quantization_scale(bits: HilbertBitDepth) -> (u32, f64) {
     let max_grid_value = max_quantized_coordinate(bits);
-    let Some(max_grid_value_scalar): Option<T> = cast(max_grid_value) else {
-        return Err(HilbertError::QuantizationScaleConversionFailed {
-            bits: bits_value,
-            max_grid_value,
-        });
-    };
-    Ok((max_grid_value, max_grid_value_scalar))
+    (max_grid_value, f64::from(max_grid_value))
 }
 
 /// Returns the largest coordinate accepted by Hilbert APIs for the selected grid.
@@ -633,11 +606,9 @@ fn validate_index_width<const D: usize>(bits: HilbertBitDepth) -> Result<(), Hil
     Ok(())
 }
 
-fn parse_hilbert_bounds<T: CoordinateScalar>(
-    bounds: (T, T),
-) -> Result<CoordinateRange<T>, HilbertError> {
-    let lower_bound_finite = bounds.0.is_finite_generic();
-    let upper_bound_finite = bounds.1.is_finite_generic();
+fn parse_hilbert_bounds(bounds: (f64, f64)) -> Result<CoordinateRange<f64>, HilbertError> {
+    let lower_bound_finite = bounds.0.is_finite();
+    let upper_bound_finite = bounds.1.is_finite();
 
     CoordinateRange::try_from(bounds).map_err(|error| match error {
         CoordinateRangeError::NonFiniteBound { .. } => HilbertError::NonFiniteBounds {
@@ -656,9 +627,6 @@ fn parse_hilbert_bounds<T: CoordinateScalar>(
 /// dimension and then clamped to `[0, 1]` before quantization.
 ///
 /// # Errors
-///
-/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the quantization
-/// grid maximum cannot be represented by the coordinate scalar type.
 ///
 /// Returns [`HilbertError::NonFiniteBounds`],
 /// [`HilbertError::NonIncreasingBounds`],
@@ -680,9 +648,9 @@ fn parse_hilbert_bounds<T: CoordinateScalar>(
 /// assert!(q[0] <= 3 && q[1] <= 3);
 /// # Ok::<(), HilbertError>(())
 /// ```
-pub fn try_hilbert_quantize<T: CoordinateScalar, const D: usize>(
-    coords: &[T; D],
-    bounds: (T, T),
+pub fn try_hilbert_quantize<const D: usize>(
+    coords: &[f64; D],
+    bounds: (f64, f64),
     bits: HilbertBitDepth,
 ) -> Result<[u32; D], HilbertError> {
     let bounds = parse_hilbert_bounds(bounds)?;
@@ -691,7 +659,7 @@ pub fn try_hilbert_quantize<T: CoordinateScalar, const D: usize>(
         return Ok([0_u32; D]);
     }
 
-    let (max_val_u32, max_val_t) = quantization_scale::<T>(bits)?;
+    let (max_val_u32, max_val_t) = quantization_scale(bits);
 
     quantize_with_scale(coords, bounds, bits, max_val_u32, max_val_t)
 }
@@ -700,9 +668,7 @@ pub fn try_hilbert_quantize<T: CoordinateScalar, const D: usize>(
 ///
 /// # Errors
 ///
-/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the
-/// quantization grid maximum cannot be represented by the coordinate scalar
-/// type. Returns [`HilbertError::NonFiniteBoundsExtent`] if the validated bounds
+/// Returns [`HilbertError::NonFiniteBoundsExtent`] if the validated bounds
 /// produce a non-finite extent. Returns [`HilbertError::NonFiniteCoordinate`] or
 /// [`HilbertError::NonFiniteNormalizedCoordinate`] if a coordinate or its
 /// normalized value is non-finite. Returns
@@ -726,47 +692,47 @@ pub fn try_hilbert_quantize<T: CoordinateScalar, const D: usize>(
 /// # Ok(())
 /// # }
 /// ```
-pub fn hilbert_quantize_in_range<T: CoordinateScalar, const D: usize>(
-    coords: &[T; D],
-    bounds: CoordinateRange<T>,
+pub fn hilbert_quantize_in_range<const D: usize>(
+    coords: &[f64; D],
+    bounds: CoordinateRange<f64>,
     bits: HilbertBitDepth,
 ) -> Result<[u32; D], HilbertError> {
     if D == 0 {
         return Ok([0_u32; D]);
     }
 
-    let (max_val_u32, max_val_t) = quantization_scale::<T>(bits)?;
+    let (max_val_u32, max_val_t) = quantization_scale(bits);
     quantize_with_scale(coords, bounds, bits, max_val_u32, max_val_t)
 }
 
 /// Quantizes coordinates with a precomputed scalar grid maximum so hot callers
 /// can validate conversion once before sorting or batch index generation.
 #[inline]
-fn quantize_with_scale<T: CoordinateScalar, const D: usize>(
-    coords: &[T; D],
-    bounds: CoordinateRange<T>,
+fn quantize_with_scale<const D: usize>(
+    coords: &[f64; D],
+    bounds: CoordinateRange<f64>,
     bits: HilbertBitDepth,
     max_val_u32: u32,
-    max_val_t: T,
+    max_val_t: f64,
 ) -> Result<[u32; D], HilbertError> {
     let min = bounds.min();
     let max = bounds.max();
     let extent = max - min;
-    if !extent.is_finite_generic() {
+    if !extent.is_finite() {
         return Err(HilbertError::NonFiniteBoundsExtent {});
     }
 
     let mut quantized = [0_u32; D];
     for (i, &coord) in coords.iter().enumerate() {
-        if !coord.is_finite_generic() {
+        if !coord.is_finite() {
             return Err(HilbertError::NonFiniteCoordinate {
                 coordinate_index: i,
             });
         }
 
         let t = (coord - min) / extent;
-        let normalized = if t.is_finite_generic() {
-            t.max(T::zero()).min(T::one())
+        let normalized = if t.is_finite() {
+            t.clamp(0.0, 1.0)
         } else {
             return Err(HilbertError::NonFiniteNormalizedCoordinate {
                 coordinate_index: i,
@@ -859,9 +825,6 @@ fn apply_order<Item>(
 /// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`
 /// (extremely unlikely in practice).
 ///
-/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the quantization
-/// grid maximum cannot be represented by the coordinate scalar type.
-///
 /// Returns [`HilbertError::NonFiniteBounds`],
 /// [`HilbertError::NonIncreasingBounds`],
 /// [`HilbertError::NonFiniteBoundsExtent`],
@@ -881,9 +844,9 @@ fn apply_order<Item>(
 /// assert_eq!(idx, 0);
 /// # Ok::<(), HilbertError>(())
 /// ```
-pub fn try_hilbert_index<T: CoordinateScalar, const D: usize>(
-    coords: &[T; D],
-    bounds: (T, T),
+pub fn try_hilbert_index<const D: usize>(
+    coords: &[f64; D],
+    bounds: (f64, f64),
     bits: HilbertBitDepth,
 ) -> Result<u128, HilbertError> {
     let bounds = parse_hilbert_bounds(bounds)?;
@@ -896,9 +859,7 @@ pub fn try_hilbert_index<T: CoordinateScalar, const D: usize>(
 ///
 /// Returns [`HilbertError::IndexOverflow`] if `D * bits > 128` (index would not fit in `u128`).
 /// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`.
-/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the quantization
-/// grid maximum cannot be represented by the coordinate scalar type. Returns
-/// [`HilbertError::NonFiniteBoundsExtent`], [`HilbertError::NonFiniteCoordinate`],
+/// Returns [`HilbertError::NonFiniteBoundsExtent`], [`HilbertError::NonFiniteCoordinate`],
 /// [`HilbertError::NonFiniteNormalizedCoordinate`], or
 /// [`HilbertError::QuantizedCoordinateConversionFailed`] if coordinate
 /// quantization fails.
@@ -918,9 +879,9 @@ pub fn try_hilbert_index<T: CoordinateScalar, const D: usize>(
 /// # Ok(())
 /// # }
 /// ```
-pub fn hilbert_index_in_range<T: CoordinateScalar, const D: usize>(
-    coords: &[T; D],
-    bounds: CoordinateRange<T>,
+pub fn hilbert_index_in_range<const D: usize>(
+    coords: &[f64; D],
+    bounds: CoordinateRange<f64>,
     bits: HilbertBitDepth,
 ) -> Result<u128, HilbertError> {
     let index_mode = HilbertIndexMode::try_new(bits)?;
@@ -1020,9 +981,6 @@ fn index_from_quantized<const D: usize>(coords: &[u32; D], params: HilbertIndexP
 /// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`
 /// (extremely unlikely in practice).
 ///
-/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the quantization
-/// grid maximum cannot be represented by the coordinate scalar type.
-///
 /// Returns [`HilbertError::NonFiniteBounds`],
 /// [`HilbertError::NonIncreasingBounds`],
 /// [`HilbertError::NonFiniteBoundsExtent`],
@@ -1048,11 +1006,11 @@ fn index_from_quantized<const D: usize>(coords: &[u32; D], params: HilbertIndexP
 /// assert_eq!(points[0], [0.1, 0.1]);
 /// # Ok::<(), HilbertError>(())
 /// ```
-pub fn try_hilbert_sort_by_stable<Item, T: CoordinateScalar, const D: usize>(
+pub fn try_hilbert_sort_by_stable<Item, const D: usize>(
     items: &mut [Item],
-    bounds: (T, T),
+    bounds: (f64, f64),
     bits: HilbertBitDepth,
-    coords_of: impl FnMut(&Item) -> [T; D],
+    coords_of: impl FnMut(&Item) -> [f64; D],
 ) -> Result<(), HilbertError> {
     let bounds = parse_hilbert_bounds(bounds)?;
     hilbert_sort_by_stable_in_range(items, bounds, bits, coords_of)
@@ -1067,9 +1025,7 @@ pub fn try_hilbert_sort_by_stable<Item, T: CoordinateScalar, const D: usize>(
 ///
 /// Returns [`HilbertError::IndexOverflow`] if `D * bits > 128` (index would not fit in `u128`).
 /// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`.
-/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the quantization
-/// grid maximum cannot be represented by the coordinate scalar type. Returns
-/// [`HilbertError::NonFiniteBoundsExtent`], [`HilbertError::NonFiniteCoordinate`],
+/// Returns [`HilbertError::NonFiniteBoundsExtent`], [`HilbertError::NonFiniteCoordinate`],
 /// [`HilbertError::NonFiniteNormalizedCoordinate`], or
 /// [`HilbertError::QuantizedCoordinateConversionFailed`] if coordinate
 /// quantization fails.
@@ -1097,18 +1053,18 @@ pub fn try_hilbert_sort_by_stable<Item, T: CoordinateScalar, const D: usize>(
 /// # Ok(())
 /// # }
 /// ```
-pub fn hilbert_sort_by_stable_in_range<Item, T: CoordinateScalar, const D: usize>(
+pub fn hilbert_sort_by_stable_in_range<Item, const D: usize>(
     items: &mut [Item],
-    bounds: CoordinateRange<T>,
+    bounds: CoordinateRange<f64>,
     bits: HilbertBitDepth,
-    mut coords_of: impl FnMut(&Item) -> [T; D],
+    mut coords_of: impl FnMut(&Item) -> [f64; D],
 ) -> Result<(), HilbertError> {
     let index_mode = HilbertIndexMode::try_new(bits)?;
     let HilbertIndexMode::Positive(index_params) = index_mode else {
         return Ok(());
     };
 
-    let (max_val_u32, max_val_t) = quantization_scale::<T>(bits)?;
+    let (max_val_u32, max_val_t) = quantization_scale(bits);
 
     let mut keyed: Vec<((u128, [u32; D]), usize)> = items
         .iter()
@@ -1143,9 +1099,6 @@ pub fn hilbert_sort_by_stable_in_range<Item, T: CoordinateScalar, const D: usize
 /// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`
 /// (extremely unlikely in practice).
 ///
-/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the quantization
-/// grid maximum cannot be represented by the coordinate scalar type.
-///
 /// Returns [`HilbertError::NonFiniteBounds`],
 /// [`HilbertError::NonIncreasingBounds`],
 /// [`HilbertError::NonFiniteBoundsExtent`],
@@ -1171,11 +1124,11 @@ pub fn hilbert_sort_by_stable_in_range<Item, T: CoordinateScalar, const D: usize
 /// assert_eq!(points[0], [0.1, 0.1]);
 /// # Ok::<(), HilbertError>(())
 /// ```
-pub fn try_hilbert_sort_by_unstable<Item, T: CoordinateScalar, const D: usize>(
+pub fn try_hilbert_sort_by_unstable<Item, const D: usize>(
     items: &mut [Item],
-    bounds: (T, T),
+    bounds: (f64, f64),
     bits: HilbertBitDepth,
-    coords_of: impl FnMut(&Item) -> [T; D],
+    coords_of: impl FnMut(&Item) -> [f64; D],
 ) -> Result<(), HilbertError> {
     let bounds = parse_hilbert_bounds(bounds)?;
     hilbert_sort_by_unstable_in_range(items, bounds, bits, coords_of)
@@ -1190,9 +1143,7 @@ pub fn try_hilbert_sort_by_unstable<Item, T: CoordinateScalar, const D: usize>(
 ///
 /// Returns [`HilbertError::IndexOverflow`] if `D * bits > 128` (index would not fit in `u128`).
 /// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`.
-/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the quantization
-/// grid maximum cannot be represented by the coordinate scalar type. Returns
-/// [`HilbertError::NonFiniteBoundsExtent`], [`HilbertError::NonFiniteCoordinate`],
+/// Returns [`HilbertError::NonFiniteBoundsExtent`], [`HilbertError::NonFiniteCoordinate`],
 /// [`HilbertError::NonFiniteNormalizedCoordinate`], or
 /// [`HilbertError::QuantizedCoordinateConversionFailed`] if coordinate
 /// quantization fails.
@@ -1220,18 +1171,18 @@ pub fn try_hilbert_sort_by_unstable<Item, T: CoordinateScalar, const D: usize>(
 /// # Ok(())
 /// # }
 /// ```
-pub fn hilbert_sort_by_unstable_in_range<Item, T: CoordinateScalar, const D: usize>(
+pub fn hilbert_sort_by_unstable_in_range<Item, const D: usize>(
     items: &mut [Item],
-    bounds: CoordinateRange<T>,
+    bounds: CoordinateRange<f64>,
     bits: HilbertBitDepth,
-    mut coords_of: impl FnMut(&Item) -> [T; D],
+    mut coords_of: impl FnMut(&Item) -> [f64; D],
 ) -> Result<(), HilbertError> {
     let index_mode = HilbertIndexMode::try_new(bits)?;
     let HilbertIndexMode::Positive(index_params) = index_mode else {
         return Ok(());
     };
 
-    let (max_val_u32, max_val_t) = quantization_scale::<T>(bits)?;
+    let (max_val_u32, max_val_t) = quantization_scale(bits);
 
     let mut keyed: Vec<((u128, [u32; D]), usize)> = items
         .iter()
@@ -1425,9 +1376,6 @@ fn indices_for_mode<const D: usize>(
 /// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`
 /// (extremely unlikely in practice).
 ///
-/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the quantization
-/// grid maximum cannot be represented by the coordinate scalar type.
-///
 /// Returns [`HilbertError::NonFiniteBounds`],
 /// [`HilbertError::NonIncreasingBounds`],
 /// [`HilbertError::NonFiniteBoundsExtent`],
@@ -1448,9 +1396,9 @@ fn indices_for_mode<const D: usize>(
 /// assert_eq!(order.len(), coords.len());
 /// # Ok::<(), HilbertError>(())
 /// ```
-pub fn try_hilbert_sorted_indices<T: CoordinateScalar, const D: usize>(
-    coords: &[[T; D]],
-    bounds: (T, T),
+pub fn try_hilbert_sorted_indices<const D: usize>(
+    coords: &[[f64; D]],
+    bounds: (f64, f64),
     bits: HilbertBitDepth,
 ) -> Result<Vec<usize>, HilbertError> {
     let bounds = parse_hilbert_bounds(bounds)?;
@@ -1466,9 +1414,7 @@ pub fn try_hilbert_sorted_indices<T: CoordinateScalar, const D: usize>(
 ///
 /// Returns [`HilbertError::IndexOverflow`] if `D * bits > 128` (index would not fit in `u128`).
 /// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`.
-/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the quantization
-/// grid maximum cannot be represented by the coordinate scalar type. Returns
-/// [`HilbertError::NonFiniteBoundsExtent`], [`HilbertError::NonFiniteCoordinate`],
+/// Returns [`HilbertError::NonFiniteBoundsExtent`], [`HilbertError::NonFiniteCoordinate`],
 /// [`HilbertError::NonFiniteNormalizedCoordinate`], or
 /// [`HilbertError::QuantizedCoordinateConversionFailed`] if coordinate
 /// quantization fails.
@@ -1491,9 +1437,9 @@ pub fn try_hilbert_sorted_indices<T: CoordinateScalar, const D: usize>(
 /// # Ok(())
 /// # }
 /// ```
-pub fn hilbert_sorted_indices_in_range<T: CoordinateScalar, const D: usize>(
-    coords: &[[T; D]],
-    bounds: CoordinateRange<T>,
+pub fn hilbert_sorted_indices_in_range<const D: usize>(
+    coords: &[[f64; D]],
+    bounds: CoordinateRange<f64>,
     bits: HilbertBitDepth,
 ) -> Result<Vec<usize>, HilbertError> {
     let index_mode = HilbertIndexMode::try_new(bits)?;
@@ -1501,7 +1447,7 @@ pub fn hilbert_sorted_indices_in_range<T: CoordinateScalar, const D: usize>(
         return Ok((0..coords.len()).collect());
     };
 
-    let (max_val_u32, max_val_t) = quantization_scale::<T>(bits)?;
+    let (max_val_u32, max_val_t) = quantization_scale(bits);
 
     let mut keyed: Vec<((u128, [u32; D]), usize)> = coords
         .iter()
@@ -1523,7 +1469,6 @@ mod tests {
     use std::assert_matches;
 
     use crate::geometry::point::Point;
-    use crate::geometry::traits::coordinate::Coordinate;
 
     fn bit_depth(value: u32) -> HilbertBitDepth {
         HilbertBitDepth::try_new(value).expect("test bit depth must be valid")
@@ -2240,7 +2185,7 @@ mod tests {
 
     #[test]
     fn test_point_coords_work_with_hilbert() {
-        let p: Point<f64, 2> = Point::new([0.25, 0.75]);
+        let p: Point<2> = Point::from_validated_coords([0.25, 0.75]);
         let idx = try_hilbert_index(p.coords(), (0.0, 1.0), bit_depth(16)).unwrap();
         assert!(idx > 0);
     }

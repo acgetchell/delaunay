@@ -44,10 +44,10 @@ use thiserror::Error;
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let tds = dt.tds();
@@ -71,7 +71,7 @@ use thiserror::Error;
 ///
 /// # See Also
 ///
-/// - [`crate::core::facet::facet_key_from_vertices`] - Low-level function that computes the hash from keys
+/// - [`crate::prelude::tds::facet_key_from_vertices`] - Low-level function that computes the hash from keys
 pub fn checked_facet_key_from_vertex_keys<const D: usize>(
     facet_vertex_keys: &[VertexKey],
 ) -> Result<u64, FacetError> {
@@ -126,9 +126,9 @@ pub(crate) enum PeriodicFacetKeyDerivationError {
 /// Computes a translation-invariant periodic facet key from lifted simplex vertices.
 ///
 /// `lifted_vertices` must represent one full lifted simplex as `(vertex_key, lattice_offset)` pairs.
-/// The facet opposite `facet_index` is selected, vertex keys are sorted for permutation
-/// invariance, and offsets are normalized against the first facet vertex so equivalent
-/// periodic facets hash identically.
+/// The facet opposite `facet_index` is selected first. Keys are sorted for
+/// permutation invariance, and offsets are normalized against the first facet
+/// vertex so equivalent periodic facets hash identically.
 pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
     lifted_vertices: &[(VertexKey, [i8; D])],
     facet_index: usize,
@@ -219,7 +219,7 @@ pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
 /// use delaunay::prelude::tds::{FacetError, Tds, verify_facet_index_consistency};
 ///
 /// fn validate_neighbor_consistency(
-///     tds: &Tds<f64, (), (), 3>,
+///     tds: &Tds<(), (), 3>,
 /// ) -> Result<bool, FacetError> {
 ///     // Get two neighboring simplex keys
 ///     let simplex_keys: Vec<_> = tds.simplex_keys().take(2).collect();
@@ -248,8 +248,8 @@ pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
 ///
 /// - Time Complexity: O(D²) where D is the dimension (iterates over facets and vertices)
 /// - Space Complexity: O(D) for temporary vertex buffers
-pub fn verify_facet_index_consistency<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub fn verify_facet_index_consistency<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplex1_key: SimplexKey,
     simplex2_key: SimplexKey,
     facet_idx: usize,
@@ -365,7 +365,6 @@ mod tests {
     use crate::core::simplex::Simplex;
     use crate::core::util::measure_with_result;
     use crate::triangulation::DelaunayTriangulation;
-    use crate::vertex;
 
     use std::thread;
     use std::time::Instant;
@@ -467,10 +466,10 @@ mod tests {
 
         // Create a triangulation
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let tds = &dt.as_triangulation().tds;
@@ -607,10 +606,10 @@ mod tests {
     fn test_verify_facet_index_consistency_true_false_and_error_cases() {
         // True case: comparing a simplex to itself.
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let tds = &dt.as_triangulation().tds;
@@ -628,31 +627,47 @@ mod tests {
         assert_matches!(err_large, FacetError::InvalidFacetIndexOverflow { .. });
 
         // False case: two disjoint triangles in the same TDS share no facet keys.
-        let mut tds2: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds2: Tds<(), (), 2> = Tds::empty();
         let v_a = tds2
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v_b = tds2
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v_c = tds2
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
             .unwrap();
         let v_d = tds2
-            .insert_vertex_with_mapping(vertex!([10.0, 10.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([10.0, 10.0]).unwrap(),
+            )
             .unwrap();
         let v_e = tds2
-            .insert_vertex_with_mapping(vertex!([11.0, 10.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([11.0, 10.0]).unwrap(),
+            )
             .unwrap();
         let v_f = tds2
-            .insert_vertex_with_mapping(vertex!([10.0, 11.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([10.0, 11.0]).unwrap(),
+            )
             .unwrap();
 
         let c1 = tds2
-            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_c], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v_a, v_b, v_c], None).unwrap(),
+            )
             .unwrap();
         let c2 = tds2
-            .insert_simplex_with_mapping(Simplex::new(vec![v_d, v_e, v_f], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v_d, v_e, v_f], None).unwrap(),
+            )
             .unwrap();
 
         assert!(!verify_facet_index_consistency(&tds2, c1, c2, 0).unwrap());

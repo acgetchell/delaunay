@@ -11,14 +11,11 @@ use super::predicates::{
     InSphere, Orientation, relative_insphere_classification, relative_insphere_determinant_sign,
     relative_insphere_signs,
 };
-use super::util::safe_coords_to_f64;
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::geometry::matrix::{MAX_STACK_MATRIX_DIM, matrix_set};
 use crate::geometry::point::Point;
 use crate::geometry::sos::{sos_insphere_sign, sos_orientation_sign};
-use crate::geometry::traits::coordinate::{
-    Coordinate, CoordinateConversionError, CoordinateScalar,
-};
+use crate::geometry::traits::coordinate::CoordinateConversionError;
 use core::{cmp::Ordering, hint::cold_path};
 #[cfg(test)]
 use std::cell::Cell;
@@ -191,14 +188,14 @@ pub enum InsphereConsistencyError {
 /// # fn main() -> Result<(), CoordinateConversionError> {
 ///
 /// let tetra = vec![
-///     Point::new([0.0, 0.0, 0.0]),
-///     Point::new([1.0, 0.0, 0.0]),
-///     Point::new([0.0, 1.0, 0.0]),
-///     Point::new([0.0, 0.0, 1.0]),
+///     Point::try_from([0.0, 0.0, 0.0])?,
+///     Point::try_from([1.0, 0.0, 0.0])?,
+///     Point::try_from([0.0, 1.0, 0.0])?,
+///     Point::try_from([0.0, 0.0, 1.0])?,
 /// ];
 ///
-/// let inside = Point::new([0.25, 0.25, 0.25]);
-/// let outside = Point::new([2.0, 2.0, 2.0]);
+/// let inside = Point::try_from([0.25, 0.25, 0.25])?;
+/// let outside = Point::try_from([2.0, 2.0, 2.0])?;
 ///
 /// let r_in = robust_insphere(&tetra, &inside)?;
 /// let r_out = robust_insphere(&tetra, &outside)?;
@@ -215,13 +212,10 @@ pub enum InsphereConsistencyError {
 /// [`crate::geometry::predicates::insphere_lifted`] for D ≤ 5. If a relative
 /// squared norm is non-finite, the error is returned instead of falling through
 /// to a symbolic classification.
-pub fn robust_insphere<T, const D: usize>(
-    simplex_points: &[Point<T, D>],
-    test_point: &Point<T, D>,
-) -> Result<InSphere, CoordinateConversionError>
-where
-    T: CoordinateScalar,
-{
+pub fn robust_insphere<const D: usize>(
+    simplex_points: &[Point<D>],
+    test_point: &Point<D>,
+) -> Result<InSphere, CoordinateConversionError> {
     if simplex_points.len() != D + 1 {
         return Err(CoordinateConversionError::InvalidSimplexPointCount {
             actual: simplex_points.len(),
@@ -278,12 +272,12 @@ where
     // insphere_distance itself failed).  The SoS cofactor minors are one
     // size smaller, so this succeeds where the full insphere matrix
     // dispatch does not.
-    let mut f64_simplex: SmallBuffer<Point<f64, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+    let mut f64_simplex: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::with_capacity(simplex_points.len());
     for point in simplex_points {
-        f64_simplex.push(Point::new(safe_coords_to_f64(point.coords())?));
+        f64_simplex.push(*point);
     }
-    let f64_test: Point<f64, D> = Point::new(safe_coords_to_f64(test_point.coords())?);
+    let f64_test = *test_point;
 
     // Use exact orientation when available; fall back to SoS only when the
     // exact predicate reports DEGENERATE (or fails entirely).
@@ -317,13 +311,10 @@ where
 /// This skips the orientation determinant that [`robust_insphere`] normally uses
 /// to normalize the lifted determinant sign. It is intended for hot triangulation
 /// paths that evaluate stored simplices after orientation canonicalization.
-pub(crate) fn robust_insphere_positive_oriented<T, const D: usize>(
-    simplex_points: &[Point<T, D>],
-    test_point: &Point<T, D>,
-) -> Result<InSphere, CoordinateConversionError>
-where
-    T: CoordinateScalar,
-{
+pub(crate) fn robust_insphere_positive_oriented<const D: usize>(
+    simplex_points: &[Point<D>],
+    test_point: &Point<D>,
+) -> Result<InSphere, CoordinateConversionError> {
     if simplex_points.len() != D + 1 {
         return Err(CoordinateConversionError::InvalidSimplexPointCount {
             actual: simplex_points.len(),
@@ -374,13 +365,10 @@ const fn should_use_sos_fallback(error: &CoordinateConversionError) -> bool {
 /// Uses the relative-coordinate lifted formulation shared with
 /// [`super::predicates::insphere_lifted`] for provably correct sign
 /// classification on finite local geometry.
-fn relative_exact_insphere<T, const D: usize>(
-    simplex_points: &[Point<T, D>],
-    test_point: &Point<T, D>,
-) -> Result<InSphere, CoordinateConversionError>
-where
-    T: CoordinateScalar,
-{
+fn relative_exact_insphere<const D: usize>(
+    simplex_points: &[Point<D>],
+    test_point: &Point<D>,
+) -> Result<InSphere, CoordinateConversionError> {
     if D > 5 {
         return Err(CoordinateConversionError::UnsupportedMatrixDimension {
             requested: D + 2,
@@ -417,21 +405,18 @@ where
 ///
 /// # fn main() -> Result<(), CoordinateConversionError> {
 /// let tri = vec![
-///     Point::new([0.0, 0.0]),
-///     Point::new([1.0, 0.0]),
-///     Point::new([0.0, 1.0]),
+///     Point::try_from([0.0, 0.0])?,
+///     Point::try_from([1.0, 0.0])?,
+///     Point::try_from([0.0, 1.0])?,
 /// ];
 /// let orientation = robust_orientation(&tri)?;
 /// assert_eq!(orientation, Orientation::POSITIVE);
 /// # Ok(())
 /// # }
 /// ```
-pub fn robust_orientation<T, const D: usize>(
-    simplex_points: &[Point<T, D>],
-) -> Result<Orientation, CoordinateConversionError>
-where
-    T: CoordinateScalar,
-{
+pub fn robust_orientation<const D: usize>(
+    simplex_points: &[Point<D>],
+) -> Result<Orientation, CoordinateConversionError> {
     if simplex_points.len() != D + 1 {
         return Err(CoordinateConversionError::InvalidSimplexPointCount {
             actual: simplex_points.len(),
@@ -444,11 +429,7 @@ where
 
     try_with_la_stack_matrix!(k, |matrix| {
         for (i, point) in simplex_points.iter().enumerate() {
-            let coords = point.coords();
-
-            // Add coordinates using safe conversion
-            let coords_f64 = safe_coords_to_f64(coords)?;
-            for (j, &v) in coords_f64.iter().enumerate() {
+            for (j, &v) in point.coords().iter().enumerate() {
                 matrix_set(&mut matrix, i, j, v)?;
             }
 
@@ -494,14 +475,11 @@ where
 /// - [`ConsistencyResult::Consistent`] if the two methods agree
 /// - [`ConsistencyResult::Inconsistent`] if there's a direct contradiction
 /// - [`ConsistencyResult::Unverifiable`] if the verification method fails
-fn verify_insphere_consistency<T, const D: usize>(
-    simplex_points: &[Point<T, D>],
-    test_point: &Point<T, D>,
+fn verify_insphere_consistency<const D: usize>(
+    simplex_points: &[Point<D>],
+    test_point: &Point<D>,
     determinant_result: InSphere,
-) -> ConsistencyResult
-where
-    T: CoordinateScalar,
-{
+) -> ConsistencyResult {
     // Use the existing distance-based insphere test for verification
     super::predicates::insphere_distance(simplex_points, *test_point).map_or(
         ConsistencyResult::Unverifiable,
@@ -549,19 +527,19 @@ mod tests {
     #[test]
     fn test_robust_insphere_general() {
         let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0]),
         ];
 
         // Test point clearly inside
-        let inside_point = Point::new([0.25, 0.25, 0.25]);
+        let inside_point = Point::from_validated_coords([0.25, 0.25, 0.25]);
         let result = robust_insphere(&points, &inside_point).unwrap();
         assert_eq!(result, InSphere::INSIDE);
 
         // Test point clearly outside
-        let outside_point = Point::new([2.0, 2.0, 2.0]);
+        let outside_point = Point::from_validated_coords([2.0, 2.0, 2.0]);
         let result = robust_insphere(&points, &outside_point).unwrap();
         assert_eq!(result, InSphere::OUTSIDE);
     }
@@ -569,15 +547,18 @@ mod tests {
     #[test]
     fn test_positive_oriented_insphere_matches_robust_insphere() {
         let simplex_2d = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0]),
         ];
         assert_eq!(
             robust_orientation(&simplex_2d).unwrap(),
             Orientation::POSITIVE
         );
-        for point in [Point::new([0.2, 0.2]), Point::new([2.0, 2.0])] {
+        for point in [
+            Point::from_validated_coords([0.2, 0.2]),
+            Point::from_validated_coords([2.0, 2.0]),
+        ] {
             assert_eq!(
                 robust_insphere_positive_oriented(&simplex_2d, &point).unwrap(),
                 robust_insphere(&simplex_2d, &point).unwrap()
@@ -585,16 +566,19 @@ mod tests {
         }
 
         let simplex_3d = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0]),
         ];
         assert_eq!(
             robust_orientation(&simplex_3d).unwrap(),
             Orientation::POSITIVE
         );
-        for point in [Point::new([0.2, 0.2, 0.2]), Point::new([2.0, 2.0, 2.0])] {
+        for point in [
+            Point::from_validated_coords([0.2, 0.2, 0.2]),
+            Point::from_validated_coords([2.0, 2.0, 2.0]),
+        ] {
             assert_eq!(
                 robust_insphere_positive_oriented(&simplex_3d, &point).unwrap(),
                 robust_insphere(&simplex_3d, &point).unwrap()
@@ -602,19 +586,19 @@ mod tests {
         }
 
         let simplex_4d = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0]),
         ];
         assert_eq!(
             robust_orientation(&simplex_4d).unwrap(),
             Orientation::POSITIVE
         );
         for point in [
-            Point::new([0.2, 0.2, 0.2, 0.2]),
-            Point::new([2.0, 2.0, 2.0, 2.0]),
+            Point::from_validated_coords([0.2, 0.2, 0.2, 0.2]),
+            Point::from_validated_coords([2.0, 2.0, 2.0, 2.0]),
         ] {
             assert_eq!(
                 robust_insphere_positive_oriented(&simplex_4d, &point).unwrap(),
@@ -623,20 +607,20 @@ mod tests {
         }
 
         let simplex_5d = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 1.0]),
         ];
         assert_eq!(
             robust_orientation(&simplex_5d).unwrap(),
             Orientation::POSITIVE
         );
         for point in [
-            Point::new([0.2, 0.2, 0.2, 0.2, 0.2]),
-            Point::new([2.0, 2.0, 2.0, 2.0, 2.0]),
+            Point::from_validated_coords([0.2, 0.2, 0.2, 0.2, 0.2]),
+            Point::from_validated_coords([2.0, 2.0, 2.0, 2.0, 2.0]),
         ] {
             assert_eq!(
                 robust_insphere_positive_oriented(&simplex_5d, &point).unwrap(),
@@ -648,21 +632,27 @@ mod tests {
     #[test]
     fn test_positive_oriented_insphere_boundary_and_invalid_count() {
         let simplex = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0]),
         ];
         assert_eq!(robust_orientation(&simplex).unwrap(), Orientation::POSITIVE);
 
-        let boundary = Point::new([1.0, 1.0]);
+        let boundary = Point::from_validated_coords([1.0, 1.0]);
         assert_eq!(
             robust_insphere_positive_oriented(&simplex, &boundary).unwrap(),
             InSphere::BOUNDARY
         );
 
-        let too_few = vec![Point::new([0.0, 0.0]), Point::new([1.0, 0.0])];
-        let err =
-            robust_insphere_positive_oriented(&too_few, &Point::new([0.25, 0.25])).unwrap_err();
+        let too_few = vec![
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+        ];
+        let err = robust_insphere_positive_oriented(
+            &too_few,
+            &Point::from_validated_coords([0.25, 0.25]),
+        )
+        .unwrap_err();
         assert_eq!(
             err,
             CoordinateConversionError::InvalidSimplexPointCount {
@@ -675,17 +665,17 @@ mod tests {
 
     #[test]
     fn test_positive_oriented_insphere_uses_robust_fallback_above_stack_dimension() {
-        let simplex: Vec<Point<f64, 6>> = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
+        let simplex: Vec<Point<6>> = vec![
+            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
         ];
         assert_eq!(robust_orientation(&simplex).unwrap(), Orientation::POSITIVE);
-        let test_point = Point::new([0.15, 0.15, 0.15, 0.15, 0.15, 0.15]);
+        let test_point = Point::from_validated_coords([0.15, 0.15, 0.15, 0.15, 0.15, 0.15]);
 
         assert_eq!(
             robust_insphere_positive_oriented(&simplex, &test_point).unwrap(),
@@ -696,12 +686,12 @@ mod tests {
     #[test]
     fn test_verify_insphere_consistency_reports_direct_contradiction() {
         let simplex = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0]),
         ];
-        let inside = Point::new([0.25, 0.25, 0.25]);
+        let inside = Point::from_validated_coords([0.25, 0.25, 0.25]);
 
         assert_eq!(
             verify_insphere_consistency(&simplex, &inside, InSphere::OUTSIDE),
@@ -741,12 +731,12 @@ mod tests {
     fn test_strict_insphere_consistency_override_exercises_error_path() {
         let _guard = set_strict_insphere_consistency_for_current_test(true);
         let simplex = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0]),
         ];
-        let test_point = Point::new([0.25, 0.25, 0.25]);
+        let test_point = Point::from_validated_coords([0.25, 0.25, 0.25]);
 
         assert_eq!(
             robust_insphere(&simplex, &test_point).unwrap(),
@@ -764,10 +754,10 @@ mod tests {
     #[test]
     fn test_robust_orientation() {
         let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0]),
         ];
 
         let result = robust_orientation(&points).unwrap();
@@ -781,9 +771,9 @@ mod tests {
         // Canonical CCW triangle to exercise the robust_orientation matrix path
         // and confirm the exact-sign helper returns POSITIVE.
         let points = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0]),
         ];
 
         let robust = robust_orientation(&points).unwrap();
@@ -798,9 +788,9 @@ mod tests {
         // Standard CCW triangle — robust_orientation uses provable
         // det_errbound and exact Bareiss arithmetic, no configuration.
         let points = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0]),
         ];
 
         let result = robust_orientation(&points);
@@ -813,9 +803,9 @@ mod tests {
         // but exact determinant sign should remain POSITIVE.
         let eps = 2f64.powi(-50);
         let points = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.5, eps]),
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+            Point::from_validated_coords([0.5, eps]),
         ];
 
         let result = robust_orientation(&points).unwrap();
@@ -831,10 +821,10 @@ mod tests {
         // Near-degenerate tetrahedron where exact sign should prevent false DEGENERATE.
         let eps = 2f64.powi(-50);
         let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, eps]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, eps]),
         ];
 
         let result = robust_orientation(&points).unwrap();
@@ -852,15 +842,15 @@ mod tests {
         // tolerance band and the exact-sign path (Stage 2) must resolve it.
         let eps = 2f64.powi(-50);
         let triangle = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0]),
         ];
         // Circumcenter = (0.5, 0.5), circumradius = sqrt(0.5).
         // Place test points along the +x direction from the circumcenter.
         let radius = 0.5_f64.sqrt();
-        let inside_point = Point::new([0.5 + radius - eps, 0.5]);
-        let outside_point = Point::new([0.5 + radius + eps, 0.5]);
+        let inside_point = Point::from_validated_coords([0.5 + radius - eps, 0.5]);
+        let outside_point = Point::from_validated_coords([0.5 + radius + eps, 0.5]);
 
         assert_eq!(
             robust_insphere(&triangle, &inside_point).unwrap(),
@@ -881,16 +871,16 @@ mod tests {
         // and exact-sign arithmetic (Stage 2) must resolve the classification.
         let eps = 2f64.powi(-50);
         let tetra = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0]),
         ];
         // Circumcenter = (0.5, 0.5, 0.5), circumradius = sqrt(0.75).
         // Place test points along the +x direction from the circumcenter.
         let radius = 0.75_f64.sqrt();
-        let inside_point = Point::new([0.5 + radius - eps, 0.5, 0.5]);
-        let outside_point = Point::new([0.5 + radius + eps, 0.5, 0.5]);
+        let inside_point = Point::from_validated_coords([0.5 + radius - eps, 0.5, 0.5]);
+        let outside_point = Point::from_validated_coords([0.5 + radius + eps, 0.5, 0.5]);
 
         assert_eq!(
             robust_insphere(&tetra, &inside_point).unwrap(),
@@ -912,15 +902,16 @@ mod tests {
         let base = 1.0e154;
         let delta = 1.0e140;
         let simplex = vec![
-            Point::new([base, base, base]),
-            Point::new([base + delta, base, base]),
-            Point::new([base, base + delta, base]),
-            Point::new([base, base, base + delta]),
+            Point::from_validated_coords([base, base, base]),
+            Point::from_validated_coords([base + delta, base, base]),
+            Point::from_validated_coords([base, base + delta, base]),
+            Point::from_validated_coords([base, base, base + delta]),
         ];
         let inside_coord = 0.25_f64.mul_add(delta, base);
         let outside_coord = 2.0_f64.mul_add(delta, base);
-        let inside_point = Point::new([inside_coord, inside_coord, inside_coord]);
-        let outside_point = Point::new([outside_coord, outside_coord, outside_coord]);
+        let inside_point = Point::from_validated_coords([inside_coord, inside_coord, inside_coord]);
+        let outside_point =
+            Point::from_validated_coords([outside_coord, outside_coord, outside_coord]);
 
         assert_eq!(
             relative_exact_insphere(&simplex, &inside_point).unwrap(),
@@ -943,12 +934,12 @@ mod tests {
     #[test]
     fn test_robust_insphere_errors_when_relative_squared_norm_overflows() {
         let simplex = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0]),
         ];
-        let far_point = Point::new([1.0e155, 0.0, 0.0]);
+        let far_point = Point::from_validated_coords([1.0e155, 0.0, 0.0]);
 
         let error = robust_insphere(&simplex, &far_point).unwrap_err();
         assert!(
@@ -961,14 +952,14 @@ mod tests {
     fn test_degenerate_case_handling() {
         // Create nearly coplanar points
         let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.5, 0.5, 1e-15]), // Very slightly off-plane
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.5, 0.5, 1e-15]), // Very slightly off-plane
         ];
 
         // Should handle gracefully
-        let test_point = Point::new([0.25, 0.25, 1e-16]);
+        let test_point = Point::from_validated_coords([0.25, 0.25, 1e-16]);
         let result = robust_insphere(&points, &test_point);
         assert!(result.is_ok());
     }
@@ -980,26 +971,26 @@ mod tests {
     #[test]
     fn test_verify_insphere_consistency_comprehensive() {
         let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0]),
         ];
 
         // Test exact matches - all should be consistent
         let test_cases = [
             (
-                Point::new([0.25, 0.25, 0.25]),
+                Point::from_validated_coords([0.25, 0.25, 0.25]),
                 InSphere::INSIDE,
                 "inside point",
             ),
             (
-                Point::new([2.0, 2.0, 2.0]),
+                Point::from_validated_coords([2.0, 2.0, 2.0]),
                 InSphere::OUTSIDE,
                 "outside point",
             ),
             (
-                Point::new([0.5, 0.5, 0.5]),
+                Point::from_validated_coords([0.5, 0.5, 0.5]),
                 InSphere::BOUNDARY,
                 "boundary point",
             ),
@@ -1013,7 +1004,7 @@ mod tests {
         }
 
         // Test that BOUNDARY results are always considered consistent
-        let boundary_test_point = Point::new([0.3, 0.3, 0.3]);
+        let boundary_test_point = Point::from_validated_coords([0.3, 0.3, 0.3]);
         for expected_result in [InSphere::INSIDE, InSphere::OUTSIDE, InSphere::BOUNDARY] {
             if expected_result == InSphere::BOUNDARY {
                 assert!(
@@ -1025,11 +1016,11 @@ mod tests {
 
         // Test different dimensions
         let triangle_2d = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([2.0, 0.0]),
-            Point::new([1.0, 2.0]),
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([2.0, 0.0]),
+            Point::from_validated_coords([1.0, 2.0]),
         ];
-        let test_2d = Point::new([1.0, 0.5]);
+        let test_2d = Point::from_validated_coords([1.0, 0.5]);
         assert!(
             verify_insphere_consistency(&triangle_2d, &test_2d, InSphere::BOUNDARY).is_consistent()
         );
@@ -1038,22 +1029,22 @@ mod tests {
         let edge_cases = [
             (
                 vec![
-                    Point::new([1e-10, 0.0, 0.0]),
-                    Point::new([0.0, 1e-10, 0.0]),
-                    Point::new([0.0, 0.0, 1e-10]),
-                    Point::new([1e-10, 1e-10, 1e-10]),
+                    Point::from_validated_coords([1e-10, 0.0, 0.0]),
+                    Point::from_validated_coords([0.0, 1e-10, 0.0]),
+                    Point::from_validated_coords([0.0, 0.0, 1e-10]),
+                    Point::from_validated_coords([1e-10, 1e-10, 1e-10]),
                 ],
-                Point::new([5e-11, 5e-11, 5e-11]),
+                Point::from_validated_coords([5e-11, 5e-11, 5e-11]),
                 "small coordinates",
             ),
             (
                 vec![
-                    Point::new([1e6, 0.0, 0.0]),
-                    Point::new([0.0, 1e6, 0.0]),
-                    Point::new([0.0, 0.0, 1e6]),
-                    Point::new([1e6, 1e6, 1e6]),
+                    Point::from_validated_coords([1e6, 0.0, 0.0]),
+                    Point::from_validated_coords([0.0, 1e6, 0.0]),
+                    Point::from_validated_coords([0.0, 0.0, 1e6]),
+                    Point::from_validated_coords([1e6, 1e6, 1e6]),
                 ],
-                Point::new([5e5, 5e5, 5e5]),
+                Point::from_validated_coords([5e5, 5e5, 5e5]),
                 "large coordinates",
             ),
         ];
@@ -1066,34 +1057,28 @@ mod tests {
             );
         }
 
+        assert!(Point::<3>::try_new([f64::NAN, 0.0, 0.0]).is_err());
+
         // Test error conditions that should return Unverifiable
         let error_cases = [
             // Invalid simplex size
             (
-                vec![Point::new([0.0, 0.0, 0.0]), Point::new([1.0, 0.0, 0.0])],
-                Point::new([0.5, 0.0, 0.0]),
-                "too few points",
-            ),
-            // Non-finite coordinates
-            (
                 vec![
-                    Point::new([f64::NAN, 0.0, 0.0]),
-                    Point::new([1.0, 0.0, 0.0]),
-                    Point::new([0.0, 1.0, 0.0]),
-                    Point::new([0.0, 0.0, 1.0]),
+                    Point::from_validated_coords([0.0, 0.0, 0.0]),
+                    Point::from_validated_coords([1.0, 0.0, 0.0]),
                 ],
-                Point::new([0.1, 0.1, 0.1]),
-                "NaN coordinates",
+                Point::from_validated_coords([0.5, 0.0, 0.0]),
+                "too few points",
             ),
             // Degenerate simplex
             (
                 vec![
-                    Point::new([0.0, 0.0, 0.0]),
-                    Point::new([1.0, 0.0, 0.0]),
-                    Point::new([2.0, 0.0, 0.0]),
-                    Point::new([3.0, 0.0, 0.0]),
+                    Point::from_validated_coords([0.0, 0.0, 0.0]),
+                    Point::from_validated_coords([1.0, 0.0, 0.0]),
+                    Point::from_validated_coords([2.0, 0.0, 0.0]),
+                    Point::from_validated_coords([3.0, 0.0, 0.0]),
                 ],
-                Point::new([1.5, 0.0, 0.0]),
+                Point::from_validated_coords([1.5, 0.0, 0.0]),
                 "collinear points",
             ),
         ];
@@ -1139,7 +1124,7 @@ mod tests {
     const PERIODIC_IMAGE_JITTER_UNITS: i64 = 64;
     const PERIODIC_FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
     const PERIODIC_FNV_PRIME: u64 = 0x0100_0000_01b3;
-    type PeriodicWitness3d = ([Point<f64, 3>; 4], Point<f64, 3>, InSphere, InSphere);
+    type PeriodicWitness3d = ([Point<3>; 4], Point<3>, InSphere, InSphere);
 
     fn periodic_builder_perturb_units(canon_idx: usize, axis: usize) -> i64 {
         let mut h = PERIODIC_FNV_OFFSET_BASIS;
@@ -1165,28 +1150,26 @@ mod tests {
         i64::try_from(h % span).expect("residue fits in i64") - PERIODIC_IMAGE_JITTER_UNITS
     }
 
-    fn periodic_3d_canonical_points() -> Vec<Point<f64, 3>> {
+    fn periodic_3d_canonical_points() -> Vec<Point<3>> {
         vec![
-            Point::new([0.1_f64, 0.2, 0.3]),
-            Point::new([0.4, 0.7, 0.1]),
-            Point::new([0.7, 0.3, 0.8]),
-            Point::new([0.2, 0.9, 0.5]),
-            Point::new([0.8, 0.6, 0.2]),
-            Point::new([0.5, 0.1, 0.7]),
-            Point::new([0.3, 0.5, 0.9]),
-            Point::new([0.6, 0.8, 0.4]),
-            Point::new([0.9, 0.2, 0.6]),
-            Point::new([0.0, 0.4, 0.1]),
-            Point::new([0.15, 0.65, 0.45]),
-            Point::new([0.75, 0.15, 0.85]),
-            Point::new([0.45, 0.55, 0.25]),
-            Point::new([0.85, 0.45, 0.65]),
+            Point::from_validated_coords([0.1_f64, 0.2, 0.3]),
+            Point::from_validated_coords([0.4, 0.7, 0.1]),
+            Point::from_validated_coords([0.7, 0.3, 0.8]),
+            Point::from_validated_coords([0.2, 0.9, 0.5]),
+            Point::from_validated_coords([0.8, 0.6, 0.2]),
+            Point::from_validated_coords([0.5, 0.1, 0.7]),
+            Point::from_validated_coords([0.3, 0.5, 0.9]),
+            Point::from_validated_coords([0.6, 0.8, 0.4]),
+            Point::from_validated_coords([0.9, 0.2, 0.6]),
+            Point::from_validated_coords([0.0, 0.4, 0.1]),
+            Point::from_validated_coords([0.15, 0.65, 0.45]),
+            Point::from_validated_coords([0.75, 0.15, 0.85]),
+            Point::from_validated_coords([0.45, 0.55, 0.25]),
+            Point::from_validated_coords([0.85, 0.45, 0.65]),
         ]
     }
 
-    fn periodic_3d_builder_style_expansion(
-        canonical_points: &[Point<f64, 3>],
-    ) -> Vec<Point<f64, 3>> {
+    fn periodic_3d_builder_style_expansion(canonical_points: &[Point<3>]) -> Vec<Point<3>> {
         let canonical_f64: Vec<[f64; 3]> = canonical_points
             .iter()
             .enumerate()
@@ -1239,7 +1222,7 @@ mod tests {
                     };
                     image_coords[axis] = quantized[axis] + shift + jitter;
                 }
-                expanded.push(Point::new(image_coords));
+                expanded.push(Point::from_validated_coords(image_coords));
             }
         }
 
@@ -1247,7 +1230,7 @@ mod tests {
     }
 
     fn find_periodic_3d_inconsistency_witness(
-        expanded: &[Point<f64, 3>],
+        expanded: &[Point<3>],
         seed: u64,
         sample_budget: usize,
     ) -> Option<PeriodicWitness3d> {
@@ -1313,11 +1296,11 @@ mod tests {
 
         // Test 2D - Valid triangle
         let triangle_2d = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.5, 1.0]),
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+            Point::from_validated_coords([0.5, 1.0]),
         ];
-        let test_2d = Point::new([0.5, 0.3]);
+        let test_2d = Point::from_validated_coords([0.5, 0.3]);
         assert!(
             robust_insphere(&triangle_2d, &test_2d).is_ok(),
             "2D insphere should work"
@@ -1329,12 +1312,12 @@ mod tests {
 
         // Test 3D - Valid tetrahedron
         let tetrahedron_3d = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0]),
         ];
-        let test_3d = Point::new([0.25, 0.25, 0.25]);
+        let test_3d = Point::from_validated_coords([0.25, 0.25, 0.25]);
         assert!(
             robust_insphere(&tetrahedron_3d, &test_3d).is_ok(),
             "3D insphere should work"
@@ -1346,13 +1329,13 @@ mod tests {
 
         // Test 4D - Valid hypersimplex
         let simplex_4d = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0]),
         ];
-        let test_4d = Point::new([0.2, 0.2, 0.2, 0.2]);
+        let test_4d = Point::from_validated_coords([0.2, 0.2, 0.2, 0.2]);
         assert!(
             robust_insphere(&simplex_4d, &test_4d).is_ok(),
             "4D insphere should work"
@@ -1364,14 +1347,14 @@ mod tests {
 
         // Test 5D - Valid hypersimplex
         let simplex_5d = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 1.0]),
         ];
-        let test_5d = Point::new([0.15, 0.15, 0.15, 0.15, 0.15]);
+        let test_5d = Point::from_validated_coords([0.15, 0.15, 0.15, 0.15, 0.15]);
         assert!(
             robust_insphere(&simplex_5d, &test_5d).is_ok(),
             "5D insphere should work"
@@ -1383,7 +1366,7 @@ mod tests {
 
         // Test error cases - wrong number of points for each dimension
         // 2D error case - too few points
-        let too_few_2d = vec![Point::new([0.0, 0.0])];
+        let too_few_2d = vec![Point::from_validated_coords([0.0, 0.0])];
         let insphere_2d_err = robust_insphere(&too_few_2d, &test_2d);
         let orientation_2d_err = robust_orientation(&too_few_2d);
         assert!(
@@ -1392,7 +1375,10 @@ mod tests {
         );
 
         // 3D error case - too few points
-        let too_few_3d = vec![Point::new([0.0, 0.0, 0.0]), Point::new([1.0, 0.0, 0.0])];
+        let too_few_3d = vec![
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+        ];
         let insphere_3d_err = robust_insphere(&too_few_3d, &test_3d);
         let orientation_3d_err = robust_orientation(&too_few_3d);
         assert!(
@@ -1402,9 +1388,9 @@ mod tests {
 
         // 4D error case - too few points
         let too_few_4d = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0]),
         ];
         let insphere_4d_err = robust_insphere(&too_few_4d, &test_4d);
         assert!(insphere_4d_err.is_err(), "4D should fail with 3 points");
@@ -1415,13 +1401,13 @@ mod tests {
         // Near-degenerate configuration that exercises robust exact-sign paths.
 
         let nearly_coplanar_points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.5, 1.0, 0.0]),
-            Point::new([0.5, 0.5, 1e-16]), // Extremely close to coplanar
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.5, 1.0, 0.0]),
+            Point::from_validated_coords([0.5, 0.5, 1e-16]), // Extremely close to coplanar
         ];
 
-        let boundary_test_point = Point::new([0.5, 0.5, 5e-17]);
+        let boundary_test_point = Point::from_validated_coords([0.5, 0.5, 5e-17]);
 
         let result = robust_insphere(&nearly_coplanar_points, &boundary_test_point);
         assert!(result.is_ok());
@@ -1542,22 +1528,22 @@ mod tests {
 
         // Test 1: 2D - Degenerate triangle (nearly collinear)
         let triangle_2d = vec![
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.5, 1e-15]), // Nearly collinear
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+            Point::from_validated_coords([0.5, 1e-15]), // Nearly collinear
         ];
-        let test_2d = Point::new([0.5, 1e-16]);
+        let test_2d = Point::from_validated_coords([0.5, 1e-16]);
         let result_2d = robust_insphere(&triangle_2d, &test_2d);
         assert!(result_2d.is_ok(), "2D tie-breaking should work");
 
         // Test 2: 3D - Coplanar points (forces SoS tie-breaking)
         let coplanar_3d = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.5, 0.5, 0.0]), // All z = 0
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.5, 0.5, 0.0]), // All z = 0
         ];
-        let test_3d = Point::new([0.25, 0.25, 0.0]);
+        let test_3d = Point::from_validated_coords([0.25, 0.25, 0.0]);
         let result_3d = robust_insphere(&coplanar_3d, &test_3d);
         assert!(
             result_3d.is_ok(),
@@ -1566,26 +1552,26 @@ mod tests {
 
         // Test 3: 4D - Nearly degenerate hypersimplex
         let simplex_4d = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0]),
-            Point::new([1e-14, 1e-14, 1e-14, 1.0]), // Nearly in 3D subspace
+            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0]),
+            Point::from_validated_coords([1e-14, 1e-14, 1e-14, 1.0]), // Nearly in 3D subspace
         ];
-        let test_4d = Point::new([0.2, 0.2, 0.2, 1e-15]);
+        let test_4d = Point::from_validated_coords([0.2, 0.2, 0.2, 1e-15]);
         let result_4d = robust_insphere(&simplex_4d, &test_4d);
         assert!(result_4d.is_ok(), "4D tie-breaking should work");
 
         // Test 4: 5D - Degenerate case
         let simplex_5d = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0, 0.0]),
-            Point::new([1e-12, 1e-12, 1e-12, 1e-12, 1.0]), // Nearly in 4D subspace
+            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0, 0.0]),
+            Point::from_validated_coords([1e-12, 1e-12, 1e-12, 1e-12, 1.0]), // Nearly in 4D subspace
         ];
-        let test_5d = Point::new([0.1, 0.1, 0.1, 0.1, 1e-13]);
+        let test_5d = Point::from_validated_coords([0.1, 0.1, 0.1, 0.1, 1e-13]);
         let result_5d = robust_insphere(&simplex_5d, &test_5d);
         assert!(result_5d.is_ok(), "5D tie-breaking should work");
 
@@ -1601,23 +1587,23 @@ mod tests {
             // Very small coordinates
             (
                 vec![
-                    Point::new([1e-100, 0.0, 0.0]),
-                    Point::new([0.0, 1e-100, 0.0]),
-                    Point::new([0.0, 0.0, 1e-100]),
-                    Point::new([1e-101, 1e-101, 1e-101]),
+                    Point::from_validated_coords([1e-100, 0.0, 0.0]),
+                    Point::from_validated_coords([0.0, 1e-100, 0.0]),
+                    Point::from_validated_coords([0.0, 0.0, 1e-100]),
+                    Point::from_validated_coords([1e-101, 1e-101, 1e-101]),
                 ],
-                Point::new([5e-102, 5e-102, 5e-102]),
+                Point::from_validated_coords([5e-102, 5e-102, 5e-102]),
                 "tiny coordinates",
             ),
             // Very large coordinates
             (
                 vec![
-                    Point::new([1e50, 0.0, 0.0]),
-                    Point::new([0.0, 1e50, 0.0]),
-                    Point::new([0.0, 0.0, 1e50]),
-                    Point::new([1e49, 1e49, 1e49]),
+                    Point::from_validated_coords([1e50, 0.0, 0.0]),
+                    Point::from_validated_coords([0.0, 1e50, 0.0]),
+                    Point::from_validated_coords([0.0, 0.0, 1e50]),
+                    Point::from_validated_coords([1e49, 1e49, 1e49]),
                 ],
-                Point::new([5e48, 5e48, 5e48]),
+                Point::from_validated_coords([5e48, 5e48, 5e48]),
                 "huge coordinates",
             ),
         ];
@@ -1629,13 +1615,13 @@ mod tests {
 
         // Test geometric meaning preservation
         let regular_tetrahedron = vec![
-            Point::new([1.0, 1.0, 1.0]),
-            Point::new([1.0, -1.0, -1.0]),
-            Point::new([-1.0, 1.0, -1.0]),
-            Point::new([-1.0, -1.0, 1.0]),
+            Point::from_validated_coords([1.0, 1.0, 1.0]),
+            Point::from_validated_coords([1.0, -1.0, -1.0]),
+            Point::from_validated_coords([-1.0, 1.0, -1.0]),
+            Point::from_validated_coords([-1.0, -1.0, 1.0]),
         ];
-        let clearly_inside = Point::new([0.0, 0.0, 0.0]);
-        let clearly_outside = Point::new([5.0, 5.0, 5.0]);
+        let clearly_inside = Point::from_validated_coords([0.0, 0.0, 0.0]);
+        let clearly_outside = Point::from_validated_coords([5.0, 5.0, 5.0]);
 
         assert_eq!(
             robust_insphere(&regular_tetrahedron, &clearly_inside).unwrap(),
@@ -1655,14 +1641,14 @@ mod tests {
 
         // Create points where the test point has identical coordinates to a simplex point
         let identical_points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.5, 1.0, 0.0]),
-            Point::new([0.5, 0.5, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.5, 1.0, 0.0]),
+            Point::from_validated_coords([0.5, 0.5, 1.0]),
         ];
 
         // Test point identical to first simplex point
-        let identical_test = Point::new([0.0, 0.0, 0.0]);
+        let identical_test = Point::from_validated_coords([0.0, 0.0, 0.0]);
 
         // This should exercise the deterministic tie-breaking logic
         let result = robust_insphere(&identical_points, &identical_test);
@@ -1670,19 +1656,19 @@ mod tests {
 
         // Create a case where coordinates are lexicographically ordered
         let ordered_points = vec![
-            Point::new([1.0, 2.0, 3.0]),
-            Point::new([4.0, 5.0, 6.0]),
-            Point::new([7.0, 8.0, 9.0]),
-            Point::new([10.0, 11.0, 12.0]),
+            Point::from_validated_coords([1.0, 2.0, 3.0]),
+            Point::from_validated_coords([4.0, 5.0, 6.0]),
+            Point::from_validated_coords([7.0, 8.0, 9.0]),
+            Point::from_validated_coords([10.0, 11.0, 12.0]),
         ];
 
         // Test point that's lexicographically smaller
-        let smaller_test = Point::new([0.0, 1.0, 2.0]);
+        let smaller_test = Point::from_validated_coords([0.0, 1.0, 2.0]);
         let result_smaller = robust_insphere(&ordered_points, &smaller_test);
         assert!(result_smaller.is_ok());
 
         // Test point that's lexicographically larger
-        let larger_test = Point::new([15.0, 16.0, 17.0]);
+        let larger_test = Point::from_validated_coords([15.0, 16.0, 17.0]);
         let result_larger = robust_insphere(&ordered_points, &larger_test);
         assert!(result_larger.is_ok());
     }
@@ -1697,13 +1683,13 @@ mod tests {
 
         // Use points that are challenging for numerical precision
         let challenging_points = vec![
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
-            Point::new([1e-10, 1e-10, 1e-10]), // Very close to origin but not exactly
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0]),
+            Point::from_validated_coords([1e-10, 1e-10, 1e-10]), // Very close to origin but not exactly
         ];
 
-        let test_point = Point::new([0.5, 0.5, 0.5]);
+        let test_point = Point::from_validated_coords([0.5, 0.5, 0.5]);
 
         // The function should still return a valid result even with challenging input
         let result = robust_insphere(&challenging_points, &test_point);
@@ -1723,13 +1709,13 @@ mod tests {
         // the exact-sign insphere path with no configuration.
 
         let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0]),
         ];
 
-        let test_point = Point::new([0.25, 0.25, 0.25]);
+        let test_point = Point::from_validated_coords([0.25, 0.25, 0.25]);
 
         let result = robust_insphere(&points, &test_point);
         assert!(
@@ -1739,13 +1725,13 @@ mod tests {
 
         // Test with a more realistic scenario: very ill-conditioned matrix
         let ill_conditioned_points = vec![
-            Point::new([1e-15, 0.0, 0.0]),
-            Point::new([0.0, 1e15, 0.0]),
-            Point::new([0.0, 0.0, 1e-8]),
-            Point::new([1e8, 1e-12, 1e4]),
+            Point::from_validated_coords([1e-15, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1e15, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1e-8]),
+            Point::from_validated_coords([1e8, 1e-12, 1e4]),
         ];
 
-        let ill_test_point = Point::new([1e-10, 1e10, 1e-5]);
+        let ill_test_point = Point::from_validated_coords([1e-10, 1e10, 1e-5]);
 
         // Should still get a result even with ill-conditioned input
         let ill_result = robust_insphere(&ill_conditioned_points, &ill_test_point);
@@ -1759,12 +1745,12 @@ mod tests {
 
         // 3D: all-zero coordinates
         let zero_points = [
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
         ];
-        let zero_test = Point::new([0.0, 0.0, 0.0]);
+        let zero_test = Point::from_validated_coords([0.0, 0.0, 0.0]);
 
         let all_finite_insphere_3d = with_la_stack_matrix!(5, |matrix| {
             for (i, point) in zero_points.iter().enumerate() {
@@ -1802,11 +1788,11 @@ mod tests {
 
         // 2D: very large coordinates should remain finite (avoid overflow to infinity)
         let large_points = [
-            Point::new([1e100, 0.0]),
-            Point::new([0.0, 1e100]),
-            Point::new([1e100, 1e100]),
+            Point::from_validated_coords([1e100, 0.0]),
+            Point::from_validated_coords([0.0, 1e100]),
+            Point::from_validated_coords([1e100, 1e100]),
         ];
-        let large_test = Point::new([5e99, 5e99]);
+        let large_test = Point::from_validated_coords([5e99, 5e99]);
 
         let all_finite_insphere_2d = with_la_stack_matrix!(4, |matrix| {
             for (i, point) in large_points.iter().enumerate() {
@@ -1837,21 +1823,21 @@ mod tests {
         // robust_insphere falls through to the SoS fallback (Strategy 3).
         // SoS cofactor minors are 6×6 (within the 7-dim limit), so this
         // succeeds where the full matrix dispatch does not.
-        let simplex: Vec<Point<f64, 6>> = vec![
-            Point::new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
+        let simplex: Vec<Point<6>> = vec![
+            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
         ];
 
         // Exactly cospherical point: (1,1,0,…,0) lies on the circumsphere
         // of the standard 6-simplex (circumcenter = (1/2,…,1/2),
         // circumradius² = 3/2, |(1,1,0,…,0) - c|² = 3/2).
         // insphere_distance returns BOUNDARY, forcing the SoS path.
-        let cospherical = Point::new([1.0, 1.0, 0.0, 0.0, 0.0, 0.0]);
+        let cospherical = Point::from_validated_coords([1.0, 1.0, 0.0, 0.0, 0.0, 0.0]);
         let result = robust_insphere(&simplex, &cospherical).unwrap();
         assert!(
             result == InSphere::INSIDE || result == InSphere::OUTSIDE,

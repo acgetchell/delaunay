@@ -8,7 +8,6 @@
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::operations::DelaunayInsertionState;
 use crate::core::triangulation::Triangulation;
-use crate::geometry::kernel::Kernel;
 
 /// Delaunay triangulation with incremental insertion support.
 ///
@@ -53,15 +52,15 @@ use crate::geometry::kernel::Kernel;
 ///
 /// ```rust
 /// use delaunay::prelude::construction::{
-///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
 /// };
 ///
 /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
@@ -70,7 +69,7 @@ use crate::geometry::kernel::Kernel;
 /// # }
 /// ```
 #[derive(Clone, Debug)]
-pub struct DelaunayTriangulation<K: Kernel<D>, U, V, const D: usize> {
+pub struct DelaunayTriangulation<K, U, V, const D: usize> {
     /// The underlying generic triangulation.
     pub(crate) tri: Triangulation<K, U, V, D>,
     /// Ephemeral insertion/repair state (hint caching + repair scheduling).
@@ -82,5 +81,5 @@ pub struct DelaunayTriangulation<K: Kernel<D>, U, V, const D: usize> {
     /// Query paths validate returned vertex keys against the live TDS, so the
     /// cache can survive transactional rollbacks even if they leave behind stale
     /// keys from an insertion that did not commit.
-    pub(crate) spatial_index: Option<HashGridIndex<K::Scalar, D>>,
+    pub(crate) spatial_index: Option<HashGridIndex<D>>,
 }

@@ -30,7 +30,7 @@ macro_rules! gen_orientation_construction_and_tamper_props {
                 #[test]
                 fn [<prop_orientation_coherent_after_construction_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|points| Vertex::from_points(&points))
                 ) {
@@ -54,7 +54,7 @@ macro_rules! gen_orientation_construction_and_tamper_props {
                 #[test]
                 fn [<prop_orientation_tamper_detected_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|points| Vertex::from_points(&points))
                 ) {
@@ -79,22 +79,30 @@ macro_rules! gen_orientation_construction_and_tamper_props {
                         first_simplex_vertices.swap(0, 1);
 
                         let tampered_json = serde_json::to_string(&serialized).unwrap();
-                        let tampered_tds: Tds<f64, (), (), $dim> =
-                            serde_json::from_str(&tampered_json).unwrap();
-
-                        prop_assert!(
-                            !tampered_tds.is_coherently_oriented(),
-                            "{}D: tampered triangulation should not remain coherently oriented",
-                            $dim
-                        );
-                        prop_assert!(
-                            matches!(
-                                tampered_tds.is_valid(),
-                                Err(TdsError::OrientationViolation { .. })
-                            ),
-                            "{}D: tampered triangulation should fail with OrientationViolation",
-                            $dim
-                        );
+                        match serde_json::from_str::<Tds<(), (), $dim>>(&tampered_json) {
+                            Ok(tampered_tds) => {
+                                prop_assert!(
+                                    !tampered_tds.is_coherently_oriented(),
+                                    "{}D: tampered triangulation should not remain coherently oriented",
+                                    $dim
+                                );
+                                prop_assert!(
+                                    matches!(
+                                        tampered_tds.is_valid(),
+                                        Err(TdsError::OrientationViolation { .. })
+                                    ),
+                                    "{}D: tampered triangulation should fail with OrientationViolation",
+                                    $dim
+                                );
+                            }
+                            Err(error) => {
+                                prop_assert!(
+                                    error.to_string().contains("Orientation invariant violated"),
+                                    "{}D: tampered triangulation should be rejected for orientation, got {error}",
+                                    $dim
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -111,7 +119,7 @@ macro_rules! gen_orientation_incremental_props {
                 #[test]
                 fn [<prop_orientation_coherent_after_each_successful_insert_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|points| Vertex::from_points(&points))
                 ) {

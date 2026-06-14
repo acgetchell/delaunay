@@ -587,7 +587,7 @@ Canonical set extraction functions for comparing triangulation topology:
 
 ```rust
 use delaunay::prelude::query::{
-    extract_vertex_coordinate_set,    // HashSet<Point<T, D>>
+    extract_vertex_coordinate_set,    // HashSet<Point<D>>
     extract_edge_set,                  // HashSet<(u128, u128)>
     extract_facet_identifier_set,      // Result<HashSet<u64>, FacetError>
     extract_hull_facet_set,            // HashSet<u64>

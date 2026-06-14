@@ -14,7 +14,7 @@ use crate::core::traits::data_type::DataType;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::InSphere;
 use crate::geometry::robust_predicates::robust_insphere;
-use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
+use crate::geometry::traits::coordinate::CoordinateConversionError;
 use smallvec::SmallVec;
 use thiserror::Error;
 
@@ -60,7 +60,7 @@ pub enum DelaunayValidationError {
     },
     /// Numeric predicate failure during Delaunay validation.
     #[error(
-        "Numeric predicate failure while validating Delaunay property for simplex {simplex_key:?}, vertex {vertex_key:?}: {source}"
+        "Numeric predicate failure while validating Delaunay property for simplex {simplex_key:?} against vertex {vertex_key:?}: {source}"
     )]
     NumericPredicateError {
         /// The key of the simplex whose circumsphere was being tested.
@@ -95,9 +95,9 @@ pub enum DelaunayValidationError {
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0]),
-///     vertex!([1.0, 0.0]),
-///     vertex!([0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
@@ -188,13 +188,12 @@ pub struct DelaunayViolationDetail {
 /// Returns `Ok(None)` if the simplex satisfies the Delaunay property,
 /// `Ok(Some(simplex_key))` if it violates (has an external vertex inside its circumsphere),
 /// or `Err(...)` if validation fails due to structural or numeric issues.
-fn validate_simplex_delaunay<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn validate_simplex_delaunay<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
-    simplex_vertex_points: &mut SmallVec<[Point<T, D>; 8]>,
+    simplex_vertex_points: &mut SmallVec<[Point<D>; 8]>,
 ) -> Result<Option<SimplexKey>, DelaunayValidationError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -205,13 +204,12 @@ where
 }
 
 /// Finds one external vertex that witnesses a simplex's Delaunay violation.
-fn first_delaunay_violation_witness<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn first_delaunay_violation_witness<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
-    simplex_vertex_points: &mut SmallVec<[Point<T, D>; 8]>,
+    simplex_vertex_points: &mut SmallVec<[Point<D>; 8]>,
 ) -> Result<Option<VertexKey>, DelaunayValidationError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -280,8 +278,7 @@ where
                         let Some(a_neighbors) = simplex.neighbor_keys() else {
                             break 'artifact false;
                         };
-                        let mut b_points: SmallVec<[Point<T, D>; 8]> =
-                            SmallVec::with_capacity(D + 1);
+                        let mut b_points: SmallVec<[Point<D>; 8]> = SmallVec::with_capacity(D + 1);
                         for (k, neighbor_opt) in a_neighbors.enumerate() {
                             let Some(b_key) = neighbor_opt else {
                                 continue;
@@ -360,16 +357,15 @@ where
 /// This performs the expensive geometric check but intentionally does **not** run
 /// `tds.is_valid()` up front. Callers that want cumulative validation should run
 /// lower-layer checks separately.
-pub(crate) fn is_delaunay_property_only<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub(crate) fn is_delaunay_property_only<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
 ) -> Result<(), DelaunayValidationError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
     // Reusable buffer to minimize allocations
-    let mut simplex_vertex_points: SmallVec<[Point<T, D>; 8]> = SmallVec::with_capacity(D + 1);
+    let mut simplex_vertex_points: SmallVec<[Point<D>; 8]> = SmallVec::with_capacity(D + 1);
 
     // Check each simplex using the shared validation helper
     for simplex_key in tds.simplex_keys() {
@@ -426,10 +422,10 @@ where
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 ///
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -441,17 +437,16 @@ where
 /// # Ok(())
 /// # }
 /// ```
-pub fn find_delaunay_violations<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub fn find_delaunay_violations<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplices_to_check: Option<&[SimplexKey]>,
 ) -> Result<ViolationBuffer, DelaunayValidationError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
     let mut violating_simplices = ViolationBuffer::new();
-    let mut simplex_vertex_points: SmallVec<[Point<T, D>; 8]> = SmallVec::with_capacity(D + 1);
+    let mut simplex_vertex_points: SmallVec<[Point<D>; 8]> = SmallVec::with_capacity(D + 1);
 
     #[cfg(any(test, debug_assertions))]
     if let Some(keys) = simplices_to_check {
@@ -541,10 +536,10 @@ where
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
@@ -555,12 +550,11 @@ where
 /// ```
 #[cfg(any(test, feature = "diagnostics"))]
 #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
-pub fn delaunay_violation_report<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub fn delaunay_violation_report<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplices_to_check: Option<&[SimplexKey]>,
 ) -> Result<DelaunayViolationReport, DelaunayValidationError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -582,12 +576,11 @@ where
 
 /// Builds the compact detail record for a violating simplex that still exists in the TDS.
 #[cfg(any(test, feature = "diagnostics"))]
-fn build_violation_detail<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn build_violation_detail<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
 ) -> Option<DelaunayViolationDetail>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -608,16 +601,15 @@ where
 
 /// Finds one external vertex that witnesses a simplex's Delaunay violation, if available.
 #[cfg(any(test, feature = "diagnostics"))]
-fn first_offending_vertex<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn first_offending_vertex<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
 ) -> Option<VertexKey>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    let mut simplex_vertex_points: SmallVec<[Point<T, D>; 8]> = SmallVec::with_capacity(D + 1);
+    let mut simplex_vertex_points: SmallVec<[Point<D>; 8]> = SmallVec::with_capacity(D + 1);
     first_delaunay_violation_witness(tds, simplex_key, &mut simplex_vertex_points)
         .ok()
         .flatten()
@@ -642,7 +634,7 @@ where
 /// use delaunay::prelude::tds::Tds;
 /// use delaunay::prelude::diagnostics::debug_print_first_delaunay_violation;
 ///
-/// let tds: Tds<f64, (), (), 3> = Tds::empty();
+/// let tds: Tds<(), (), 3> = Tds::empty();
 /// debug_print_first_delaunay_violation(&tds, None);
 /// ```
 #[cfg(any(test, feature = "diagnostics"))]
@@ -651,11 +643,10 @@ where
     clippy::too_many_lines,
     reason = "Debug-only helper with intentionally verbose logging"
 )]
-pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub fn debug_print_first_delaunay_violation<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplices_subset: Option<&[SimplexKey]>,
 ) where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -803,17 +794,11 @@ mod tests {
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
     use crate::core::simplex::{NeighborSlot, Simplex};
     use crate::core::triangulation::Triangulation;
-    use crate::core::util::make_uuid;
-    use crate::core::vertex::Vertex;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::point::Point;
-    use crate::geometry::traits::coordinate::{
-        Coordinate, CoordinateConversionError, InvalidCoordinateValue,
-    };
+    use crate::geometry::traits::coordinate::{CoordinateConversionError, InvalidCoordinateValue};
     use crate::triangulation::DelaunayTriangulation;
     use std::assert_matches;
-
-    use crate::vertex;
 
     #[test]
     fn delaunay_validator_reports_no_violations_for_simple_tetrahedron() {
@@ -821,10 +806,10 @@ mod tests {
         println!("Testing Delaunay validator and debug helper on a simple 3D tetrahedron");
 
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
@@ -859,19 +844,35 @@ mod tests {
         });
     }
 
-    fn build_non_delaunay_quad_2d() -> (Tds<f64, (), (), 2>, SimplexKey, SimplexKey) {
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+    fn build_non_delaunay_quad_2d() -> (Tds<(), (), 2>, SimplexKey, SimplexKey) {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let d = tds.insert_vertex_with_mapping(vertex!([0.8, 0.8])).unwrap();
+        let a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
+        let d = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.8, 0.8]).unwrap(),
+            )
+            .unwrap();
 
         let simplex_1 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, c], None).unwrap())
             .unwrap();
         let simplex_2 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, c, d], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, c, d], None).unwrap())
             .unwrap();
 
         tds.assign_incident_simplices().unwrap();
@@ -883,18 +884,34 @@ mod tests {
     #[test]
     fn delaunay_validator_reports_violation_for_non_delaunay_quad_2d() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let d = tds.insert_vertex_with_mapping(vertex!([0.8, 0.8])).unwrap();
+        let a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
+        let d = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.8, 0.8]).unwrap(),
+            )
+            .unwrap();
 
         let simplex_1 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, c], None).unwrap())
             .unwrap();
         let simplex_2 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, c, d], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, c, d], None).unwrap())
             .unwrap();
         tds.assign_incident_simplices().unwrap();
 
@@ -909,18 +926,34 @@ mod tests {
     #[test]
     fn find_delaunay_violations_subset_skips_missing_simplices() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let d = tds.insert_vertex_with_mapping(vertex!([0.8, 0.8])).unwrap();
+        let a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
+        let d = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.8, 0.8]).unwrap(),
+            )
+            .unwrap();
 
         let simplex_1 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, c], None).unwrap())
             .unwrap();
         let _simplex_2 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, c, d], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, c, d], None).unwrap())
             .unwrap();
         tds.assign_incident_simplices().unwrap();
 
@@ -933,7 +966,7 @@ mod tests {
     #[test]
     fn delaunay_validation_handles_empty_tds() {
         init_tracing();
-        let tds: Tds<f64, (), (), 2> = Tds::empty();
+        let tds: Tds<(), (), 2> = Tds::empty();
 
         assert!(is_delaunay_property_only(&tds).is_ok());
         let violations = find_delaunay_violations(&tds, None).unwrap();
@@ -959,31 +992,34 @@ mod tests {
     }
 
     #[test]
-    fn delaunay_property_only_handles_non_finite_vertex_without_error() {
+    fn delaunay_property_only_rejects_non_finite_vertex_at_point_boundary() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-
-        tds.insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
+        let a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
             .unwrap();
 
-        let invalid_uuid = make_uuid();
-        let invalid_vk = tds
-            .insert_vertex_with_mapping(Vertex::new_with_uuid(
-                Point::new([f64::NAN, 0.0]),
-                invalid_uuid,
-                None,
-            ))
+        tds.insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, c], None).unwrap())
             .unwrap();
 
-        tds.remove_vertex(invalid_vk).unwrap();
+        assert!(Point::<2>::try_new([f64::NAN, 0.0]).is_err());
 
         assert!(
             is_delaunay_property_only(&tds).is_ok(),
-            "delaunay_property_only_handles_non_finite_vertex_without_error should skip non-finite vertices before validation"
+            "delaunay_property_only should remain valid when non-finite vertices are rejected before insertion"
         );
     }
 
@@ -1021,10 +1057,10 @@ mod tests {
     fn delaunay_violation_report_summarizes_valid_tds() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
@@ -1069,13 +1105,25 @@ mod tests {
 
     #[test]
     fn delaunay_violation_detail_preserves_neighbor_slot_state() {
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
         let simplex_key = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, c], None).unwrap())
             .unwrap();
         tds.assign_neighbors().unwrap();
 
@@ -1119,10 +1167,10 @@ mod tests {
     fn delaunay_property_only_reports_triangulation_state_on_missing_vertex() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let mut tds =
@@ -1154,9 +1202,9 @@ mod tests {
     fn is_delaunay_property_only_reports_invalid_simplex() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
 
         let mut tds =

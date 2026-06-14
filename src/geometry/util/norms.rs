@@ -5,34 +5,6 @@
 
 #![forbid(unsafe_code)]
 
-use super::conversions::{safe_scalar_from_f64, safe_scalar_to_f64};
-use crate::geometry::traits::coordinate::CoordinateScalar;
-use num_traits::Float;
-
-/// Compute 2D hypot using numerically stable scaled algorithm.
-///
-/// This is used as a fallback when standard library hypot conversion fails.
-/// It implements the same scaling approach used in the general hypot algorithm.
-///
-/// # Arguments
-///
-/// * `x` - First coordinate
-/// * `y` - Second coordinate
-///
-/// # Returns
-///
-/// The computed hypot value using scaled computation
-pub(in crate::geometry::util) fn scaled_hypot_2d<T: CoordinateScalar>(x: T, y: T) -> T {
-    let max_abs = Float::abs(x).max(Float::abs(y));
-    if max_abs == T::zero() {
-        return T::zero();
-    }
-    // Use scaled computation for numerical stability
-    let x_scaled = x / max_abs;
-    let y_scaled = y / max_abs;
-    max_abs * Float::sqrt(x_scaled.mul_add(x_scaled, y_scaled * y_scaled))
-}
-
 /// Helper function to compute squared norm using generic arithmetic on T.
 ///
 /// This function computes the sum of squares of coordinates using generic
@@ -66,11 +38,9 @@ pub(in crate::geometry::util) fn scaled_hypot_2d<T: CoordinateScalar>(x: T, y: T
 /// let norm_sq_4d = squared_norm(&coords_4d);
 /// assert_eq!(norm_sq_4d, 4.0); // 1² + 1² + 1² + 1² = 4
 /// ```
-pub fn squared_norm<T, const D: usize>(coords: &[T; D]) -> T
-where
-    T: CoordinateScalar,
-{
-    coords.iter().fold(T::zero(), |acc, &x| x.mul_add(x, acc))
+#[must_use]
+pub fn squared_norm<const D: usize>(coords: &[f64; D]) -> f64 {
+    coords.iter().fold(0.0, |acc, &x| x.mul_add(x, acc))
 }
 
 /// Compute the d-dimensional hypot (Euclidean norm) of a coordinate array.
@@ -112,50 +82,35 @@ where
 /// let distance_4d = hypot(&[1.0, 1.0, 1.0, 1.0]);
 /// assert_eq!(distance_4d, 2.0);
 /// ```
-pub fn hypot<T, const D: usize>(coords: &[T; D]) -> T
-where
-    T: CoordinateScalar,
-{
+#[must_use]
+pub fn hypot<const D: usize>(coords: &[f64; D]) -> f64 {
     match D {
-        0 => T::zero(),
-        1 => Float::abs(coords[0]),
+        0 => 0.0,
+        1 => coords[0].abs(),
         2 => {
-            // Use standard library hypot for optimal 2D performance and stability
-            // Use safe conversion with proper error handling
-            // If conversion fails, fall back to general algorithm
-            if let (Ok(a_f64), Ok(b_f64)) =
-                (safe_scalar_to_f64(coords[0]), safe_scalar_to_f64(coords[1]))
-            {
-                let result_f64 = a_f64.hypot(b_f64);
-                safe_scalar_from_f64(result_f64).unwrap_or_else(|_| {
-                    // Fall back to scaled algorithm if conversion back fails
-                    scaled_hypot_2d(coords[0], coords[1])
-                })
-            } else {
-                // Fall back to scaled algorithm if conversion fails
-                scaled_hypot_2d(coords[0], coords[1])
-            }
+            // Use standard library hypot for optimal 2D performance and stability.
+            coords[0].hypot(coords[1])
         }
         _ => {
             // For higher dimensions, implement generalized hypot
             // Find the maximum absolute value to avoid overflow/underflow
             let max_abs = coords
                 .iter()
-                .map(|&x| Float::abs(x))
-                .fold(T::zero(), |acc, x| if x > acc { x } else { acc });
+                .map(|&x| x.abs())
+                .fold(0.0, |acc, x| if x > acc { x } else { acc });
 
-            if max_abs == T::zero() {
-                return T::zero();
+            if max_abs == 0.0 {
+                return 0.0;
             }
 
             // Scale all coordinates by max_abs and compute sum of squares
-            let sum_of_scaled_squares = coords.iter().fold(T::zero(), |acc, &x| {
+            let sum_of_scaled_squares = coords.iter().fold(0.0, |acc, &x| {
                 let scaled = x / max_abs;
                 scaled.mul_add(scaled, acc)
             });
 
             // Result is max_abs * sqrt(sum_of_scaled_squares)
-            max_abs * Float::sqrt(sum_of_scaled_squares)
+            max_abs * sum_of_scaled_squares.sqrt()
         }
     }
 }
@@ -209,7 +164,7 @@ mod tests {
     #[test]
     fn test_hypot_edge_cases() {
         // Test 0D case
-        let distance_0d = hypot::<f64, 0>(&[]);
+        let distance_0d = hypot::<0>(&[]);
         assert_relative_eq!(distance_0d, 0.0, epsilon = 1e-10);
 
         // Test 1D case
@@ -223,51 +178,6 @@ mod tests {
         let distance_large = hypot(&[1e200, 1e200]);
         assert!(distance_large.is_finite());
         assert!(distance_large > 0.0);
-    }
-
-    #[test]
-    fn test_scaled_hypot_2d() {
-        // Test our fallback scaled hypot implementation
-        let result = scaled_hypot_2d(3.0, 4.0);
-        assert_relative_eq!(result, 5.0, epsilon = 1e-10);
-
-        // Test with zero values
-        let zero_result = scaled_hypot_2d(0.0, 0.0);
-        assert_relative_eq!(zero_result, 0.0, epsilon = 1e-10);
-
-        // Test with negative values
-        let neg_result = scaled_hypot_2d(-3.0, 4.0);
-        assert_relative_eq!(neg_result, 5.0, epsilon = 1e-10);
-
-        // Test with very large values to check scaling behavior
-        let large_result = scaled_hypot_2d(1e10, 1e10);
-        let expected = (2.0_f64).sqrt() * 1e10;
-        assert_relative_eq!(large_result, expected, epsilon = 1e-5);
-    }
-
-    #[test]
-    fn test_scaled_hypot_2d_edge_cases() {
-        // Test with zeros
-        let result = scaled_hypot_2d(0.0, 0.0);
-        assert_relative_eq!(result, 0.0);
-
-        // Test with one zero
-        let result = scaled_hypot_2d(0.0, 5.0);
-        assert_relative_eq!(result, 5.0);
-
-        // Test with standard case
-        let result = scaled_hypot_2d(3.0, 4.0);
-        assert_relative_eq!(result, 5.0, epsilon = 1e-10);
-
-        // Test with negative values
-        let result = scaled_hypot_2d(-3.0, -4.0);
-        assert_relative_eq!(result, 5.0, epsilon = 1e-10);
-
-        // Test with very large values (avoid overflow)
-        let large_val = 1e100;
-        let result = scaled_hypot_2d(large_val, large_val);
-        assert!(result.is_finite());
-        assert!(result > 0.0);
     }
 
     #[test]

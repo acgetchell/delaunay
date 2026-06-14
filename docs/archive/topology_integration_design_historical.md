@@ -662,9 +662,9 @@ mod euler_tests {
     fn test_2d_triangle_euler_characteristic() {
         // Single triangle: V=3, E=3, F=1 → χ = 3-3+1 = 1
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.5, 1.0]),
+            delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+            delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+            delaunay::prelude::Vertex::<(), _>::try_new([0.5, 1.0])?,
         ];
 
         let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
@@ -677,10 +677,10 @@ mod euler_tests {
         // Note: χ here is for the full simplicial complex (a 3-ball), not just the boundary.
         // Single tetrahedron: V=4, E=6, F=4, C=1 → χ = 4-6+4-1 = 1
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+            delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+            delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+            delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
         ];
 
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
@@ -691,11 +691,11 @@ mod euler_tests {
     #[test]
     fn test_4d_simplex_euler_characteristic() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 0.0, 1.0]),
+            delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0])?,
+            delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0])?,
+            delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0])?,
+            delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0])?,
+            delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0])?,
         ];
 
         let tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices).unwrap();
@@ -720,10 +720,10 @@ mod topology_validation_tests {
     #[test]
     fn test_planar_topology_validation_success() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+            delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+            delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+            delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
         ];
 
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
@@ -736,10 +736,10 @@ mod topology_validation_tests {
     #[test]
     fn test_topology_summary() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+            delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+            delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+            delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
         ];
 
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
@@ -776,7 +776,7 @@ mod random_topology_tests {
             )
         ) {
             let vertex_vec: Vec<_> = vertices.into_iter()
-                .map(|coords| vertex!(coords))
+                .map(|coords| delaunay::prelude::Vertex::<(), _>::try_new(coords)?)
                 .collect();
 
             if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertex_vec) {
@@ -796,7 +796,7 @@ mod random_topology_tests {
             )
         ) {
             let vertex_vec: Vec<_> = vertices.into_iter()
-                .map(|coords| vertex!(coords))
+                .map(|coords| delaunay::prelude::Vertex::<(), _>::try_new(coords)?)
                 .collect();
 
             if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertex_vec) {
@@ -837,10 +837,10 @@ fn test_topology_debug_analysis() -> Result<(), TdsConstructionError> {
 
 fn test_2d_topology_debug() -> Result<(), TdsConstructionError> {
     let vertices = vec![
-        vertex!([0.0, 0.0]),
-        vertex!([1.0, 0.0]),
-        vertex!([0.5, 1.0]),
-        vertex!([0.2, 0.3]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 1.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.3])?,
     ];
 
     let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices)?;
@@ -1605,9 +1605,9 @@ fn gather_boundary_facet_info(
 fn test_2d_single_triangle_euler() {
     // V=3, E=3, F=1 → χ = 3-3+1 = 1
     let vertices = vec![
-        vertex!([0.0, 0.0]),
-        vertex!([1.0, 0.0]),
-        vertex!([0.5, 1.0]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 1.0])?,
     ];
     let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
 
@@ -1621,10 +1621,10 @@ fn test_2d_single_triangle_euler() {
 fn test_2d_two_triangles_euler() {
     // Two triangles sharing an edge
     let vertices = vec![
-        vertex!([0.0, 0.0]),
-        vertex!([1.0, 0.0]),
-        vertex!([0.5, 1.0]),
-        vertex!([0.5, -1.0]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 1.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.5, -1.0])?,
     ];
     let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
 
@@ -1641,10 +1641,10 @@ fn test_2d_two_triangles_euler() {
 fn test_3d_tetrahedron_euler() {
     // Single tetrahedron: V=4, E=6, F=4, C=1 → χ = 4-6+4-1 = 1
     let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     ];
     let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 
@@ -1656,11 +1656,11 @@ fn test_3d_tetrahedron_euler() {
 #[test]
 fn test_3d_with_interior_vertex() {
     let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
-        vertex!([0.25, 0.25, 0.25]), // Interior
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.25, 0.25, 0.25])?, // Interior
     ];
     let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 
@@ -1677,11 +1677,11 @@ fn test_4d_simplex_euler() {
     // V=5, E=10, F=10, Tet=5, Cell=1
     // χ = 5 - 10 + 10 - 5 + 1 = 1
     let vertices = vec![
-        vertex!([0.0, 0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 0.0, 1.0]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0])?,
     ];
     let tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices).unwrap();
 
@@ -1704,7 +1704,7 @@ fn test_empty_triangulation_euler() {
 
 #[test]
 fn test_single_vertex_euler() {
-    let vertices = vec![vertex!([0.0, 0.0, 0.0])];
+    let vertices = vec![delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?];
     // This may fail to create a valid triangulation
     // Document expected behavior
 }
@@ -1724,7 +1724,7 @@ proptest! {
         )
     ) {
         let vertices: Vec<_> = points.into_iter()
-            .map(|p| vertex!(p))
+            .map(|p| delaunay::prelude::Vertex::<(), _>::try_new(p)?)
             .collect();
 
         if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices) {
@@ -1741,7 +1741,7 @@ proptest! {
         )
     ) {
         let vertices: Vec<_> = points.into_iter()
-            .map(|p| vertex!(p))
+            .map(|p| delaunay::prelude::Vertex::<(), _>::try_new(p)?)
             .collect();
 
         if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
@@ -1758,10 +1758,10 @@ proptest! {
 #[test]
 fn test_boundary_report_includes_euler() {
     let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     ];
     let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
 

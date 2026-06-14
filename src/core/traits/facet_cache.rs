@@ -9,7 +9,6 @@ use crate::core::{
     collections::FacetToSimplicesMap,
     tds::{Tds, TdsError},
 };
-use crate::geometry::traits::coordinate::CoordinateScalar;
 use arc_swap::ArcSwapOption;
 use std::sync::{
     Arc,
@@ -36,11 +35,9 @@ use std::sync::{
 /// use delaunay::prelude::tds::FacetCacheProvider;
 /// use delaunay::prelude::tds::Tds;
 /// use delaunay::prelude::collections::FacetToSimplicesMap;
-/// use delaunay::prelude::geometry::CoordinateScalar;
 /// use delaunay::prelude::DataType;
 /// use std::sync::Arc;
 /// use std::sync::atomic::{AtomicU64, Ordering};
-/// use serde::de::DeserializeOwned;
 /// use arc_swap::ArcSwapOption;
 ///
 /// struct MyAlgorithm {
@@ -57,9 +54,8 @@ use std::sync::{
 ///     }
 /// }
 ///
-/// impl<T, U, V, const D: usize> FacetCacheProvider<T, U, V, D> for MyAlgorithm
+/// impl<U, V, const D: usize> FacetCacheProvider<U, V, D> for MyAlgorithm
 /// where
-///     T: CoordinateScalar,
 ///     U: DataType,
 ///     V: DataType,
 /// {
@@ -72,9 +68,8 @@ use std::sync::{
 ///     }
 /// }
 /// ```
-pub trait FacetCacheProvider<T, U, V, const D: usize>
+pub trait FacetCacheProvider<U, V, const D: usize>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -112,7 +107,7 @@ where
     /// (e.g., missing vertex keys) that prevents building a complete facet map.
     fn try_build_cache_with_rcu(
         &self,
-        tds: &Tds<T, U, V, D>,
+        tds: &Tds<U, V, D>,
     ) -> Result<Option<Arc<FacetToSimplicesMap>>, TdsError> {
         // We memoize the built cache outside the RCU closure to avoid recomputation
         // if RCU needs to retry due to concurrent updates.
@@ -195,10 +190,10 @@ where
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
@@ -218,7 +213,7 @@ where
     /// ```
     fn try_get_or_build_facet_cache(
         &self,
-        tds: &Tds<T, U, V, D>,
+        tds: &Tds<U, V, D>,
     ) -> Result<Arc<FacetToSimplicesMap>, TdsError> {
         let mut current_generation = tds.generation();
 
@@ -323,10 +318,10 @@ where
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
@@ -355,7 +350,6 @@ mod tests {
     use crate::core::tds::Tds;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::triangulation::DelaunayTriangulation;
-    use crate::vertex;
     use std::sync::Arc;
     use std::sync::Barrier;
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -377,7 +371,7 @@ mod tests {
         }
     }
 
-    impl FacetCacheProvider<f64, (), (), 3> for TestCacheProvider {
+    impl FacetCacheProvider<(), (), 3> for TestCacheProvider {
         fn facet_cache(&self) -> &ArcSwapOption<FacetToSimplicesMap> {
             &self.facet_to_simplices_cache
         }
@@ -390,10 +384,10 @@ mod tests {
     /// Create a simple test triangulation for testing
     fn create_test_triangulation() -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         DelaunayTriangulation::new(&vertices).expect("Failed to create test triangulation")
     }
@@ -476,7 +470,7 @@ mod tests {
 
         // Modify triangulation by adding a new vertex - this will bump the generation
         // Use an interior vertex away from the circumcenter to avoid degenerate insertion cases
-        let new_vertex = vertex!([0.2, 0.2, 0.2]);
+        let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2]).unwrap();
         dt.insert(new_vertex).expect("Failed to add vertex");
 
         // Verify generation was incremented
@@ -783,9 +777,9 @@ mod tests {
         // Perform multiple operations to increment generation
         // Each operation should bump the generation counter
         let operations = [
-            vertex!([0.2, 0.2, 0.2]),
-            vertex!([0.3, 0.3, 0.3]),
-            vertex!([0.4, 0.4, 0.4]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.3, 0.3]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.4, 0.4, 0.4]).unwrap(),
         ];
 
         for vertex in operations {
@@ -840,7 +834,7 @@ mod tests {
         let provider = TestCacheProvider::new();
 
         // Create an empty triangulation
-        let tds: Tds<f64, (), (), 3> = Tds::empty();
+        let tds: Tds<(), (), 3> = Tds::empty();
 
         // Should handle empty triangulation gracefully
         let cache = provider.try_get_or_build_facet_cache(&tds).unwrap();
@@ -1020,7 +1014,7 @@ mod tests {
 
         // Modify triangulation by adding a new vertex - this will bump the generation
         // Use an interior vertex away from the circumcenter to avoid degenerate insertion cases
-        let new_vertex = vertex!([0.2, 0.2, 0.2]);
+        let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2]).unwrap();
         dt.insert(new_vertex).expect("Failed to add vertex");
 
         // Verify generation was incremented
@@ -1156,9 +1150,9 @@ mod tests {
         // Modify triangulation multiple times rapidly with unique coordinates
         let test_vertices = [
             // Interior point away from circumcenter to reduce degeneracy
-            vertex!([0.2, 0.2, 0.2]),
-            vertex!([0.3, 0.3, 0.1]), // Another interior point
-            vertex!([0.2, 0.1, 0.3]), // Third interior point
+            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.3, 0.1]).unwrap(), // Another interior point
+            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.1, 0.3]).unwrap(), // Third interior point
         ];
         for vertex in test_vertices {
             dt.insert(vertex).expect("Failed to add vertex");
@@ -1226,7 +1220,7 @@ mod tests {
 
         // Add vertex - size should change
         // Use an interior vertex away from circumcenter to avoid degenerate insertion cases
-        dt.insert(vertex!([0.2, 0.2, 0.2]))
+        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2]).unwrap())
             .expect("Failed to add vertex");
         let cache3 = provider.try_get_or_build_facet_cache(dt.tds()).unwrap();
         // Size might be different after adding a vertex (more simplices = more facets)

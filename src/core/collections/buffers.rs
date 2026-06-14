@@ -217,7 +217,7 @@ pub type SimplexVertexUuidBuffer = SmallBuffer<Uuid, MAX_PRACTICAL_DIMENSION_SIZ
 
 /// Buffer for periodic lattice offsets aligned with a simplex's vertex slots.
 ///
-/// Periodic simplices store one offset per simplex vertex, so the inline capacity
+/// Periodic simplices store one offset per vertex slot so the inline capacity
 /// matches [`SimplexVertexKeyBuffer`] and avoids a heap allocation for supported
 /// small-to-medium dimensions.
 pub type PeriodicOffsetBuffer<const D: usize> = SmallBuffer<[i8; D], MAX_PRACTICAL_DIMENSION_SIZE>;

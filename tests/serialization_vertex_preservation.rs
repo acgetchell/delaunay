@@ -23,14 +23,14 @@ use std::collections::HashSet;
 fn test_vertex_preservation_with_duplicates_3d() {
     // Create vertices with duplicate coordinates but different data
     let points = vec![
-        Point::new([0.0, 0.0, 0.0]),
-        Point::new([1.0, 0.0, 0.0]),
-        Point::new([0.0, 1.0, 0.0]),
-        Point::new([0.0, 0.0, 1.0]),
+        Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         // Duplicate coordinate
-        Point::new([0.0, 0.0, 0.0]),
+        Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
     ];
-    let vertices = Vertex::<f64, (), 3>::from_points(&points);
+    let vertices = Vertex::<(), 3>::from_points(&points);
 
     let input_coords: HashSet<_> = vertices.iter().map(|v| *v.point()).collect();
     println!("Input vertices: {}", vertices.len());
@@ -64,8 +64,7 @@ fn test_vertex_preservation_with_duplicates_3d() {
     println!("JSON size: {} bytes", json.len());
 
     // Deserialize
-    let deserialized: Tds<f64, (), (), 3> =
-        serde_json::from_str(&json).expect("Deserialization failed");
+    let deserialized: Tds<(), (), 3> = serde_json::from_str(&json).expect("Deserialization failed");
 
     let deser_vertex_count = deserialized.vertices().count();
     let deser_coords = extract_vertex_coordinate_set(&deserialized);
@@ -89,13 +88,13 @@ fn test_vertex_preservation_with_duplicates_3d() {
 #[test]
 fn test_vertex_preservation_without_duplicates_3d() {
     let points = vec![
-        Point::new([0.0, 0.0, 0.0]),
-        Point::new([1.0, 0.0, 0.0]),
-        Point::new([0.0, 1.0, 0.0]),
-        Point::new([0.0, 0.0, 1.0]),
-        Point::new([0.5, 0.5, 0.5]),
+        Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
+        Point::try_new([0.5, 0.5, 0.5]).expect("finite point coordinates"),
     ];
-    let vertices = Vertex::<f64, (), 3>::from_points(&points);
+    let vertices = Vertex::<(), 3>::from_points(&points);
 
     println!("Input vertices (no duplicates): {}", vertices.len());
 
@@ -112,8 +111,7 @@ fn test_vertex_preservation_without_duplicates_3d() {
     let before_coords = extract_vertex_coordinate_set(tds);
 
     let json = serde_json::to_string(&tds).expect("Serialization failed");
-    let deserialized: Tds<f64, (), (), 3> =
-        serde_json::from_str(&json).expect("Deserialization failed");
+    let deserialized: Tds<(), (), 3> = serde_json::from_str(&json).expect("Deserialization failed");
 
     let deser_vertex_count = deserialized.vertices().count();
     let after_coords = extract_vertex_coordinate_set(&deserialized);
@@ -139,12 +137,12 @@ fn test_vertex_preservation_many_duplicates_3d() {
     // Use a stable interior point for this stress test. The previous choice
     // ([0.5, 0.5, 0.5]) can trigger insertion-order retry logic where shuffled
     // attempts frequently pick duplicate coordinates for the initial simplex.
-    let base_point = Point::new([0.25, 0.25, 0.25]);
+    let base_point = Point::try_new([0.25, 0.25, 0.25]).expect("finite point coordinates");
     let mut points = vec![
-        Point::new([0.0, 0.0, 0.0]),
-        Point::new([1.0, 0.0, 0.0]),
-        Point::new([0.0, 1.0, 0.0]),
-        Point::new([0.0, 0.0, 1.0]),
+        Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
     ];
 
     // Add 10 vertices with the same coordinate
@@ -152,7 +150,7 @@ fn test_vertex_preservation_many_duplicates_3d() {
         points.push(base_point);
     }
 
-    let vertices = Vertex::<f64, (), 3>::from_points(&points);
+    let vertices = Vertex::<(), 3>::from_points(&points);
 
     println!("Input vertices (with many duplicates): {}", vertices.len());
     let unique_coords: HashSet<_> = vertices.iter().map(|v| *v.point()).collect();
@@ -177,8 +175,7 @@ fn test_vertex_preservation_many_duplicates_3d() {
     let before_coords = extract_vertex_coordinate_set(tds);
 
     let json = serde_json::to_string(&tds).expect("Serialization failed");
-    let deserialized: Tds<f64, (), (), 3> =
-        serde_json::from_str(&json).expect("Deserialization failed");
+    let deserialized: Tds<(), (), 3> = serde_json::from_str(&json).expect("Deserialization failed");
 
     let deser_vertex_count = deserialized.vertices().count();
     let after_coords = extract_vertex_coordinate_set(&deserialized);
@@ -199,12 +196,12 @@ fn test_vertex_preservation_many_duplicates_3d() {
 #[test]
 fn test_vertex_coordinate_preservation_3d() {
     let points = vec![
-        Point::new([0.0, 0.0, 0.0]),
-        Point::new([1.0, 0.0, 0.0]),
-        Point::new([0.0, 1.0, 0.0]),
-        Point::new([0.0, 0.0, 1.0]),
+        Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
     ];
-    let vertices = Vertex::<f64, (), 3>::from_points(&points);
+    let vertices = Vertex::<(), 3>::from_points(&points);
 
     let dt = DelaunayTriangulation::<_, (), (), 3>::new_with_topology_guarantee(
         &vertices,
@@ -217,8 +214,7 @@ fn test_vertex_coordinate_preservation_3d() {
     let original_coords = extract_vertex_coordinate_set(tds);
 
     let json = serde_json::to_string(&tds).expect("Serialization failed");
-    let deserialized: Tds<f64, (), (), 3> =
-        serde_json::from_str(&json).expect("Deserialization failed");
+    let deserialized: Tds<(), (), 3> = serde_json::from_str(&json).expect("Deserialization failed");
 
     // Extract deserialized vertex coordinates
     let deserialized_coords = extract_vertex_coordinate_set(&deserialized);

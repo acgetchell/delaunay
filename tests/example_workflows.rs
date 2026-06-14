@@ -3,19 +3,19 @@
 //! Integration tests for workflows demonstrated by runnable examples.
 
 use delaunay::prelude::construction::{
-    DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
+    DelaunayTriangulation, DelaunayTriangulationConstructionError,
 };
-use delaunay::prelude::query::{ConvexHull, Coordinate, Point, QueryError};
+use delaunay::prelude::query::{ConvexHull, Point, QueryError};
 
 #[test]
 fn triangulation_and_hull_workflow_remains_valid() -> Result<(), WorkflowTestError> {
     let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
-        vertex!([0.35, 0.25, 0.20]),
-        vertex!([0.20, 0.60, 0.25]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.35, 0.25, 0.20]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.20, 0.60, 0.25]).unwrap(),
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
@@ -31,8 +31,8 @@ fn triangulation_and_hull_workflow_remains_valid() -> Result<(), WorkflowTestErr
     hull.validate(dt.as_triangulation())?;
     assert_eq!(hull.number_of_facets(), boundary_facets.len());
 
-    let inside = Point::new([0.25, 0.25, 0.25]);
-    let outside = Point::new([2.0, 2.0, 2.0]);
+    let inside = Point::try_new([0.25, 0.25, 0.25]).expect("finite point coordinates");
+    let outside = Point::try_new([2.0, 2.0, 2.0]).expect("finite point coordinates");
 
     assert!(!hull.is_point_outside(&inside, dt.as_triangulation())?);
     assert!(hull.is_point_outside(&outside, dt.as_triangulation())?);

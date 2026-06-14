@@ -18,10 +18,10 @@
 //! # }
 //! # fn main() -> Result<(), ExampleError> {
 //! let vertices = vec![
-//!     vertex!([0.0, 0.0, 0.0]),
-//!     vertex!([1.0, 0.0, 0.0]),
-//!     vertex!([0.0, 1.0, 0.0]),
-//!     vertex!([0.0, 0.0, 1.0]),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 //! ];
 //! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
@@ -214,9 +214,9 @@ pub enum TopologyClassification {
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0]),
-///     vertex!([1.0, 0.0]),
-///     vertex!([0.5, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
@@ -231,9 +231,7 @@ pub enum TopologyClassification {
 /// # Errors
 ///
 /// Returns [`TopologyError::FacetMapBuild`] if simplex enumeration fails.
-pub fn count_simplices<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
-) -> Result<FVector, TopologyError> {
+pub fn count_simplices<U, V, const D: usize>(tds: &Tds<U, V, D>) -> Result<FVector, TopologyError> {
     // Handle empty triangulation without building any facet map.
     let mut by_dim = vec![0usize; D + 1];
     by_dim[0] = tds.number_of_vertices();
@@ -253,8 +251,8 @@ pub fn count_simplices<T, U, V, const D: usize>(
     ))
 }
 
-pub(crate) fn count_simplices_with_facet_to_simplices_map<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub(crate) fn count_simplices_with_facet_to_simplices_map<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     facet_to_simplices: &FacetToSimplicesMap,
 ) -> FVector {
     let mut by_dim = vec![0usize; D + 1];
@@ -468,10 +466,10 @@ fn insert_simplices_of_size(
 /// # fn main() -> Result<(), ExampleError> {
 /// // 3D tetrahedron - boundary is S² (sphere)
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
@@ -486,8 +484,8 @@ fn insert_simplices_of_size(
 ///
 /// Returns [`TopologyError::BoundaryFacetEnumeration`] or
 /// [`TopologyError::BoundaryFacetSimplexAccess`] if boundary enumeration fails.
-pub fn count_boundary_simplices<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub fn count_boundary_simplices<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
 ) -> Result<FVector, TopologyError> {
     // Get boundary facets
     let boundary_facets: Vec<_> = tds
@@ -643,9 +641,9 @@ pub(crate) fn triangulated_surface_euler_characteristic(
         vertices.insert(b);
         vertices.insert(c);
 
-        edges.insert(EdgeKey::new(a, b));
-        edges.insert(EdgeKey::new(b, c));
-        edges.insert(EdgeKey::new(c, a));
+        edges.insert(EdgeKey::from_validated_endpoints(a, b));
+        edges.insert(EdgeKey::from_validated_endpoints(b, c));
+        edges.insert(EdgeKey::from_validated_endpoints(c, a));
     }
 
     let counts = FVector {
@@ -672,7 +670,11 @@ pub(crate) fn triangulated_surface_boundary_component_count(
         let b = tri[1];
         let c = tri[2];
 
-        for e in [EdgeKey::new(a, b), EdgeKey::new(b, c), EdgeKey::new(c, a)] {
+        for e in [
+            EdgeKey::from_validated_endpoints(a, b),
+            EdgeKey::from_validated_endpoints(b, c),
+            EdgeKey::from_validated_endpoints(c, a),
+        ] {
             *edge_counts.entry(e).or_insert(0) += 1;
         }
     }
@@ -755,10 +757,10 @@ pub(crate) fn triangulated_surface_boundary_component_count(
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
@@ -771,8 +773,8 @@ pub(crate) fn triangulated_surface_boundary_component_count(
 /// # Errors
 ///
 /// Returns [`TopologyError::BoundaryFacetCount`] if boundary detection fails.
-pub fn classify_triangulation<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub fn classify_triangulation<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
 ) -> Result<TopologyClassification, TopologyError> {
     let num_simplices = tds.number_of_simplices();
 
@@ -844,7 +846,6 @@ mod tests {
     use super::*;
 
     use crate::core::simplex::Simplex;
-    use crate::vertex;
     use slotmap::{KeyData, SlotMap};
 
     #[test]
@@ -1082,27 +1083,51 @@ mod tests {
         );
     }
 
-    fn build_closed_2d_surface_tds() -> Tds<f64, (), (), 2> {
+    fn build_closed_2d_surface_tds() -> Tds<(), (), 2> {
         // Build the boundary of a tetrahedron as a 2D simplicial complex (a closed S^2):
         // 4 triangles on 4 vertices, with every edge shared by exactly 2 triangles.
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            )
+            .unwrap();
 
         let _ = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
+            )
             .unwrap();
         let _ = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v3], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v3], None).unwrap(),
+            )
             .unwrap();
         let _ = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v2, v3], None).unwrap(),
+            )
             .unwrap();
         let _ = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v1, v2, v3], None).unwrap(),
+            )
             .unwrap();
 
         tds

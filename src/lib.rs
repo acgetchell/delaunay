@@ -100,16 +100,16 @@
 //!
 //! ```rust
 //! use delaunay::prelude::construction::{
-//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
 //! };
 //! use delaunay::prelude::insertion::InsertionError;
 //!
 //! # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
-//!     vertex!([0.0, 0.0, 0.0]),
-//!     vertex!([1.0, 0.0, 0.0]),
-//!     vertex!([0.0, 1.0, 0.0]),
-//!     vertex!([0.0, 0.0, 1.0]),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 //! ];
 //! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
@@ -133,16 +133,15 @@
 //! ```rust
 //! use delaunay::prelude::construction::{
 //!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
-//!     vertex,
 //! };
 //! use delaunay::prelude::validation::ValidationPolicy;
 //!
 //! # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
-//!     vertex!([0.0, 0.0, 0.0]),
-//!     vertex!([1.0, 0.0, 0.0]),
-//!     vertex!([0.0, 1.0, 0.0]),
-//!     vertex!([0.0, 0.0, 1.0]),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 //! ];
 //! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
@@ -162,15 +161,15 @@
 //!
 //! ```rust
 //! use delaunay::prelude::construction::{
-//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
 //! };
 //! use delaunay::prelude::insertion::InsertionError;
 //!
 //! # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
-//!     vertex!([0.0, 0.0]),
-//!     vertex!([1.0, 0.0]),
-//!     vertex!([0.0, 1.0]),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
 //! ];
 //! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
@@ -178,7 +177,7 @@
 //! let before_simplices = dt.number_of_simplices();
 //!
 //! // Duplicate coordinates are rejected.
-//! let result = dt.insert(vertex!([0.0, 0.0]));
+//! let result = dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"));
 //! std::assert_matches!(result, Err(InsertionError::DuplicateCoordinates { .. }));
 //!
 //! // On error, the triangulation is unchanged.
@@ -272,7 +271,7 @@
 //!
 //! ```rust
 //! use delaunay::prelude::construction::{
-//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
 //! };
 //! use delaunay::prelude::insertion::InsertionError;
 //! use delaunay::prelude::validation::{ValidationConfigurationError, ValidationPolicy};
@@ -288,10 +287,10 @@
 //! # }
 //! # fn main() -> Result<(), ExampleError> {
 //! let vertices = vec![
-//!     vertex!([0.0, 0.0, 0.0]),
-//!     vertex!([1.0, 0.0, 0.0]),
-//!     vertex!([0.0, 1.0, 0.0]),
-//!     vertex!([0.0, 0.0, 1.0]),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 //! ];
 //! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
@@ -300,7 +299,7 @@
 //! dt.try_set_validation_policy(ValidationPolicy::ExplicitOnly)?;
 //!
 //! // Do incremental work...
-//! dt.insert(vertex!([0.2, 0.2, 0.2]))?;
+//! dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.2, 0.2]).expect("finite vertex coordinates")).expect("finite vertex coordinates");
 //!
 //! // ...then explicitly validate the topology layer when you need a certificate.
 //! assert!(dt.as_triangulation().validate().is_ok());
@@ -333,15 +332,15 @@
 //!
 //! ```rust
 //! use delaunay::prelude::construction::{
-//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
 //! };
 //!
 //! # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
-//!     vertex!([0.0, 0.0, 0.0]),
-//!     vertex!([1.0, 0.0, 0.0]),
-//!     vertex!([0.0, 1.0, 0.0]),
-//!     vertex!([0.0, 0.0, 1.0]),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 //! ];
 //! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
@@ -354,15 +353,15 @@
 //!
 //! ```rust
 //! use delaunay::prelude::construction::{
-//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
 //! };
 //!
 //! # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
-//!     vertex!([0.0, 0.0, 0.0]),
-//!     vertex!([1.0, 0.0, 0.0]),
-//!     vertex!([0.0, 1.0, 0.0]),
-//!     vertex!([0.0, 0.0, 1.0]),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 //! ];
 //! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
@@ -734,7 +733,7 @@ pub mod validation;
 pub use crate::builder::DelaunayTriangulationBuilder;
 pub use crate::construction::{
     ConstructionOptions, ConstructionSkipSample, ConstructionSlowInsertionSample,
-    ConstructionStatistics, DedupPolicy, DelaunayConstructionFailure,
+    ConstructionStatistics, DedupPolicy, DedupTolerance, DelaunayConstructionFailure,
     DelaunayConstructionRepairPhase, DelaunayTriangulationConstructionError,
     DelaunayTriangulationConstructionErrorWithStatistics, InitialSimplexStrategy,
     InsertionOrderStrategy, RetryPolicy,
@@ -796,7 +795,7 @@ pub use crate::validation::DelaunayTriangulationValidationError;
 ///
 /// ```rust
 /// use delaunay::prelude::construction::{
-///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
 /// };
 /// use delaunay::prelude::topology::validation;
 ///
@@ -809,10 +808,10 @@ pub use crate::validation::DelaunayTriangulationValidationError;
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
@@ -827,6 +826,7 @@ pub mod topology {
     pub mod traits {
         pub(crate) mod global_topology_model;
         pub mod topological_space;
+        pub use global_topology_model::GlobalTopologyModelError;
         pub use topological_space::*;
     }
     /// Topological invariants and their computation
@@ -928,7 +928,7 @@ pub mod collections {
 /// ```rust
 /// use delaunay::tds::Tds;
 ///
-/// let tds: Tds<f64, (), (), 2> = Tds::empty();
+/// let tds: Tds<(), (), 2> = Tds::empty();
 ///
 /// assert_eq!(tds.number_of_vertices(), 0);
 /// assert_eq!(tds.number_of_simplices(), 0);
@@ -966,14 +966,17 @@ pub mod tds {
 /// use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, Point};
 /// use delaunay::tds::Tds;
 ///
-/// let tds: Tds<f64, (), (), 2> = Tds::empty();
+/// # fn main() -> Result<(), delaunay::prelude::geometry::CoordinateConversionError> {
+/// let tds: Tds<(), (), 2> = Tds::empty();
 /// let kernel = AdaptiveKernel::new();
-/// let point = Point::new([0.0, 0.0]);
+/// let point = Point::try_from([0.0, 0.0])?;
 ///
 /// std::assert_matches!(
 ///     locate(&tds, &kernel, &point, None),
 ///     Err(LocateError::EmptyTriangulation)
 /// );
+/// # Ok(())
+/// # }
 /// ```
 pub mod algorithms {
     #[cfg(any(feature = "diagnostics", all(test, debug_assertions)))]
@@ -1028,8 +1031,8 @@ pub mod query {
     pub use crate::geometry::traits::coordinate::Coordinate;
     pub use crate::geometry::{insphere, insphere_distance, insphere_lifted};
     pub use crate::tds::{
-        AdjacencyIndex, AdjacencyIndexBuildError, EdgeKey, FacetView, Simplex, SimplexKey, Vertex,
-        VertexKey,
+        AdjacencyIndex, AdjacencyIndexBuildError, EdgeKey, EdgeKeyError, FacetView, Simplex,
+        SimplexKey, Vertex, VertexKey,
     };
     pub use crate::{DelaunayTriangulation, Triangulation};
 }
@@ -1045,11 +1048,11 @@ pub mod prelude {
     pub use crate::tds::*;
     pub use crate::{
         ConstructionOptions, ConstructionSkipSample, ConstructionSlowInsertionSample,
-        ConstructionStatistics, DedupPolicy, DelaunayCheckPolicy, DelaunayConstructionFailure,
-        DelaunayConstructionRepairPhase, DelaunayRepairHeuristicConfig,
-        DelaunayRepairHeuristicSeeds, DelaunayRepairOperation, DelaunayRepairOutcome,
-        DelaunayRepairPolicy, DelaunayTriangulation, DelaunayTriangulationBuilder,
-        DelaunayTriangulationConstructionError,
+        ConstructionStatistics, DedupPolicy, DedupTolerance, DelaunayCheckPolicy,
+        DelaunayConstructionFailure, DelaunayConstructionRepairPhase,
+        DelaunayRepairHeuristicConfig, DelaunayRepairHeuristicSeeds, DelaunayRepairOperation,
+        DelaunayRepairOutcome, DelaunayRepairPolicy, DelaunayTriangulation,
+        DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
         DelaunayTriangulationConstructionErrorWithStatistics, DelaunayTriangulationValidationError,
         DuplicateDetectionMetrics, InitialSimplexStrategy, InsertionOrderStrategy, InsertionResult,
         PlManifoldRepairError, PlManifoldRepairStats, RepairDecision, RepairSkipReason,
@@ -1107,6 +1110,7 @@ pub mod prelude {
         DelaunayRepairVerificationContext, FlipContextError, FlipEdgeAdjacencyError, FlipError,
         FlipMutationError, FlipNeighborWiringError, FlipPredicateError, FlipPredicateOperation,
         FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder,
+        TriangleHandleError,
     };
 
     // Re-export commonly used collection types from the public collections facade.
@@ -1133,14 +1137,14 @@ pub mod prelude {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
     /// };
     ///
     /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let triangulation = DelaunayTriangulationBuilder::new(&vertices)
     ///     .build::<()>()?;
@@ -1159,24 +1163,23 @@ pub mod prelude {
         };
         pub use crate::construction::{
             ConstructionOptions, ConstructionSkipSample, ConstructionSlowInsertionSample,
-            ConstructionStatistics, DedupPolicy, DelaunayConstructionFailure,
+            ConstructionStatistics, DedupPolicy, DedupTolerance, DelaunayConstructionFailure,
             DelaunayConstructionRepairPhase, DelaunayTriangulationConstructionError,
             DelaunayTriangulationConstructionErrorWithStatistics, InitialSimplexStrategy,
             InsertionOrderStrategy, RetryPolicy,
         };
+        pub use crate::core::util::DeduplicationError;
         pub use crate::geometry::coordinate_range::{
             CoordinateRangeBound, CoordinateRangeError, CoordinateRangeOrdering,
             InvalidCoordinateValue,
         };
+        pub use crate::geometry::traits::coordinate::CoordinateValidationError;
         pub use crate::geometry::util::{InvalidPositiveScalar, RandomPointGenerationError};
         pub use crate::repair::DelaunayRepairPolicy;
-        pub use crate::tds::{
-            SimplexValidationError, Vertex, VertexBuilder, VertexBuilderError,
-            VertexValidationError,
-        };
+        pub use crate::tds::{SimplexValidationError, Vertex, VertexValidationError};
         pub use crate::topology::traits::{
-            GlobalTopology, TopologyKind, ToroidalConstructionMode, ToroidalDomain,
-            ToroidalDomainError,
+            GlobalTopology, GlobalTopologyModelError, TopologyKind, ToroidalConstructionMode,
+            ToroidalDomain, ToroidalDomainError,
         };
         pub use crate::validation::DelaunayTriangulationValidationError;
         pub use crate::{
@@ -1184,8 +1187,6 @@ pub mod prelude {
             SpatialIndexConstructionFailure, TopologyGuarantee, Triangulation,
             TriangulationConstructionError,
         };
-        // Convenience macro (commonly used in docs/examples).
-        pub use crate::vertex;
     }
 
     /// Generic triangulation construction, validation, query, and local repair.
@@ -1200,14 +1201,14 @@ pub mod prelude {
     ///
     /// ```rust
     /// use delaunay::prelude::triangulation::{
-    ///     FastKernel, Triangulation, TriangulationConstructionError, vertex,
+    ///     FastKernel, Triangulation, TriangulationConstructionError, Vertex,
     /// };
     ///
     /// # fn main() -> Result<(), TriangulationConstructionError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let tds = Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices)?;
     ///
@@ -1224,23 +1225,20 @@ pub mod prelude {
         pub use crate::geometry::point::Point;
         pub use crate::query::{
             AdjacencyIndex, AdjacencyIndexBuildError, BoundaryAnalysis, DataCopy, DataDebug,
-            DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType, EdgeKey, FacetView,
-            QueryError,
+            DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType, EdgeKey,
+            EdgeKeyError, FacetView, QueryError,
         };
         pub use crate::tds::{
             FacetHandle, InvariantError, InvariantErrorSummary, InvariantErrorSummaryDetail,
             InvariantErrorSummaryKind, NeighborSlot, Simplex, SimplexKey, Tds,
             TdsConstructionError, TdsError, TdsErrorKind, TdsMutationError,
-            TriangulationValidationErrorKind, Vertex, VertexBuilder, VertexBuilderError, VertexKey,
+            TriangulationValidationErrorKind, Vertex, VertexKey,
         };
         pub use crate::{
             InsertionError, SpatialIndexConstructionFailure, TopologyGuarantee, Triangulation,
             TriangulationConstructionError, TriangulationValidationError,
             ValidationConfigurationError, ValidationPolicy,
         };
-
-        // Convenience macro for generic triangulation examples and tests.
-        pub use crate::vertex;
     }
 
     /// Bistellar (Pachner) flips for explicit triangulation editing.
@@ -1260,12 +1258,10 @@ pub mod prelude {
             FlipEdgeAdjacencyError, FlipError, FlipInfo, FlipMutationError,
             FlipNeighborWiringError, FlipPredicateError, FlipPredicateOperation,
             FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RidgeHandle, TriangleHandle,
+            TriangleHandleError,
         };
         pub use crate::flips::{BistellarMove, ConstK};
-        pub use crate::tds::{EdgeKey, FacetHandle, SimplexKey, VertexKey};
-
-        // Convenience macro (commonly used in docs/examples).
-        pub use crate::vertex;
+        pub use crate::tds::{EdgeKey, EdgeKeyError, FacetHandle, SimplexKey, VertexKey};
     }
 
     /// Incremental insertion building blocks and diagnostics.
@@ -1314,7 +1310,8 @@ pub mod prelude {
             DelaunayRepairVerificationContext, FlipContextError, FlipEdgeAdjacencyError, FlipError,
             FlipMutationError, FlipNeighborWiringError, FlipPredicateError, FlipPredicateOperation,
             FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder,
-            verify_delaunay_for_triangulation, verify_delaunay_via_flip_predicates,
+            TriangleHandleError, verify_delaunay_for_triangulation,
+            verify_delaunay_via_flip_predicates,
         };
         pub use crate::repair::{
             DelaunayCheckPolicy, DelaunayRepairHeuristicConfig, DelaunayRepairHeuristicSeeds,
@@ -1334,14 +1331,11 @@ pub mod prelude {
     ///
     /// Self-contained: a single `use delaunay::prelude::delaunayize::*`
     /// import brings in [`DelaunayTriangulationBuilder`], [`DelaunayTriangulation`],
-    /// [`vertex!`], and all delaunayize-specific types.
+    /// [`DelaunayTriangulation`], and all delaunayize-specific types.
     pub mod delaunayize {
         pub use crate::delaunayize::*;
         pub use crate::{DelaunayTriangulation, DelaunayTriangulationBuilder};
         pub use crate::{PlManifoldRepairError, PlManifoldRepairStats};
-
-        // Convenience macro (commonly used in docs/examples).
-        pub use crate::vertex;
     }
 
     /// Validation scheduling helpers for construction diagnostics.
@@ -1409,7 +1403,7 @@ pub mod prelude {
     /// ```rust
     /// use delaunay::prelude::tds::Tds;
     ///
-    /// let tds: Tds<f64, (), (), 2> = Tds::empty();
+    /// let tds: Tds<(), (), 2> = Tds::empty();
     ///
     /// assert_eq!(tds.number_of_vertices(), 0);
     /// assert_eq!(tds.number_of_simplices(), 0);
@@ -1445,9 +1439,9 @@ pub mod prelude {
             },
             traits::coordinate::{
                 Coordinate, CoordinateConversionError, CoordinateConversionValue,
-                CoordinateIdentity, CoordinateRepresentation, CoordinateScalar,
-                CoordinateValidationError, CoordinateValues, DEFAULT_TOLERANCE_F64,
-                DegenerateSimplexReason, FiniteCheck, FiniteCoordinateValue, HashCoordinate,
+                CoordinateIdentity, CoordinateRepresentation, CoordinateValidationError,
+                CoordinateValues, DEFAULT_TOLERANCE_F64, DegenerateSimplexReason,
+                F64_MANTISSA_DIGITS, FiniteCheck, FiniteCoordinateValue, HashCoordinate,
                 OrderedCmp, OrderedEq,
             },
             util::{
@@ -1470,14 +1464,17 @@ pub mod prelude {
     /// use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, Point};
     /// use delaunay::prelude::tds::Tds;
     ///
-    /// let tds: Tds<f64, (), (), 2> = Tds::empty();
+    /// # fn main() -> Result<(), delaunay::prelude::geometry::CoordinateConversionError> {
+    /// let tds: Tds<(), (), 2> = Tds::empty();
     /// let kernel = AdaptiveKernel::new();
-    /// let point = Point::new([0.0, 0.0]);
+    /// let point = Point::try_from([0.0, 0.0])?;
     ///
     /// std::assert_matches!(
     ///     locate(&tds, &kernel, &point, None),
     ///     Err(LocateError::EmptyTriangulation)
     /// );
+    /// # Ok(())
+    /// # }
     /// ```
     pub mod algorithms {
         pub use crate::algorithms::{
@@ -1550,7 +1547,7 @@ pub mod prelude {
     pub mod query {
         // Core read-only traversal / adjacency
         pub use crate::tds::{
-            AdjacencyIndex, AdjacencyIndexBuildError, EdgeKey, SimplexKey, VertexKey,
+            AdjacencyIndex, AdjacencyIndexBuildError, EdgeKey, EdgeKeyError, SimplexKey, VertexKey,
         };
         pub use crate::{DelaunayTriangulation, Triangulation};
 
@@ -1581,9 +1578,6 @@ pub mod prelude {
 
         // Instrumentation helpers (no-op unless features enable extra tracking)
         pub use crate::query::measure_with_result;
-
-        // Fixture construction macro used by query doctests, examples, and benchmarks.
-        pub use crate::vertex;
     }
 
     /// Focused exports for generating fixture data in doctests, integration tests,
@@ -1602,7 +1596,7 @@ pub mod prelude {
     ///
     /// # fn main() -> Result<(), CoordinateRangeError> {
     /// let range = CoordinateRange::try_new(0.0_f64, 1.0)?;
-    /// let points: Vec<Point<f64, 3>> =
+    /// let points: Vec<Point<3>> =
     ///     generate_random_points_in_range_seeded(4, range, 42);
     ///
     /// assert_eq!(points.len(), 4);
@@ -1672,8 +1666,8 @@ pub mod prelude {
                 validate_ridge_links_for_simplices, validate_vertex_links,
             };
             pub use crate::topology::traits::{
-                GlobalTopology, TopologicalSpace, TopologyError, TopologyKind,
-                ToroidalConstructionMode,
+                GlobalTopology, GlobalTopologyModelError, TopologicalSpace, TopologyError,
+                TopologyKind, ToroidalConstructionMode,
             };
         }
 
@@ -1681,14 +1675,11 @@ pub mod prelude {
         pub mod spaces {
             pub use crate::topology::spaces::*;
             pub use crate::topology::traits::{
-                GlobalTopology, TopologicalSpace, TopologyError, TopologyKind,
-                ToroidalConstructionMode, ToroidalDomain, ToroidalDomainError,
+                GlobalTopology, GlobalTopologyModelError, TopologicalSpace, TopologyError,
+                TopologyKind, ToroidalConstructionMode, ToroidalDomain, ToroidalDomainError,
             };
         }
     }
-
-    // Convenience macros
-    pub use crate::vertex;
 }
 
 /// The function `is_normal` checks that structs implement `auto` traits.
@@ -1729,7 +1720,6 @@ mod tests {
             verify_delaunay_for_triangulation, verify_delaunay_via_flip_predicates,
         },
         prelude::*,
-        vertex,
     };
     use std::assert_matches;
 
@@ -1742,22 +1732,22 @@ mod tests {
 
     #[test]
     fn normal_types() {
-        assert!(is_normal::<Point<f64, 3>>());
-        assert!(is_normal::<Vertex<f64, (), 3>>());
-        assert!(is_normal::<Simplex<f64, (), (), 4>>());
-        assert!(is_normal::<Tds<f64, (), (), 4>>());
+        assert!(is_normal::<Point<3>>());
+        assert!(is_normal::<Vertex<(), 3>>());
+        assert!(is_normal::<Simplex<(), 4>>());
+        assert!(is_normal::<Tds<(), (), 4>>());
         assert!(is_normal::<Triangulation<FastKernel<f64>, (), (), 3>>());
         assert!(is_normal::<DelaunayTriangulation<FastKernel<f64>, (), (), 3>>());
-        assert!(is_normal::<ConvexHull<FastKernel<f64>, (), (), 3>>());
+        assert!(is_normal::<ConvexHull<(), (), 3>>());
         assert!(is_normal::<EdgeKey>());
         assert!(is_normal::<AdjacencyIndex>());
         assert!(is_normal::<DelaunayizeConfig>());
-        assert!(is_normal::<DelaunayizeOutcome<f64, (), (), 3>>());
+        assert!(is_normal::<DelaunayizeOutcome<(), (), 3>>());
         assert!(is_normal::<DelaunayizeError>());
         assert!(is_normal::<DelaunayRepairError>());
         assert!(is_normal::<DelaunayRepairStats>());
         assert!(is_normal::<PlManifoldRepairError>());
-        assert!(is_normal::<PlManifoldRepairStats<f64, (), (), 3>>());
+        assert!(is_normal::<PlManifoldRepairStats<(), (), 3>>());
         assert!(is_normal::<SimplexValidationError>());
         assert!(is_normal::<DelaunayTriangulationConstructionError>());
     }
@@ -1836,9 +1826,9 @@ mod tests {
     #[test]
     fn prelude_repair_exports() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt: RepairDelaunayTriangulation<_, (), (), 2> =
             RepairDelaunayTriangulation::new(&vertices).unwrap();
@@ -1879,9 +1869,9 @@ mod tests {
     fn prelude_quality_exports() {
         // Test that quality functions are accessible from prelude
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -1905,9 +1895,9 @@ mod tests {
 
         // Test 2D orientation predicate
         let triangle = [
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0]),
         ];
 
         let fast_orientation = fast_kernel.orientation(&triangle).unwrap();
@@ -1921,9 +1911,9 @@ mod tests {
 
         // Test collinear detection
         let collinear = [
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([2.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+            Point::from_validated_coords([2.0, 0.0]),
         ];
         assert_eq!(
             fast_kernel.orientation(&collinear).unwrap(),
@@ -1932,11 +1922,11 @@ mod tests {
         );
 
         // Test in_sphere predicate
-        let inside_point = Point::new([0.25, 0.25]);
+        let inside_point = Point::from_validated_coords([0.25, 0.25]);
         let result = fast_kernel.in_sphere(&triangle, &inside_point).unwrap();
         assert_eq!(result, 1, "Point should be inside circumcircle");
 
-        let outside_point = Point::new([2.0, 2.0]);
+        let outside_point = Point::from_validated_coords([2.0, 2.0]);
         let result = fast_kernel.in_sphere(&triangle, &outside_point).unwrap();
         assert_eq!(result, -1, "Point should be outside circumcircle");
     }
@@ -1945,21 +1935,21 @@ mod tests {
     fn test_prelude_core_types() {
         // Test that core types are accessible and work from prelude
         // Point construction
-        let p1 = Point::new([0.0, 0.0, 0.0]);
-        let p2 = Point::new([1.0, 0.0, 0.0]);
+        let p1 = Point::from_validated_coords([0.0, 0.0, 0.0]);
+        let p2 = Point::from_validated_coords([1.0, 0.0, 0.0]);
         assert_ne!(p1, p2);
 
-        // Vertex construction via macro and builder
-        let v1: Vertex<f64, (), 3> = vertex!([0.0, 0.0, 0.0]);
-        let v2: Vertex<f64, (), 3> = vertex!([1.0, 0.0, 0.0]);
+        // Vertex construction via the fallible smart constructor.
+        let v1: Vertex<(), 3> = Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap();
+        let v2: Vertex<(), 3> = Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap();
         assert_ne!(v1.point(), v2.point());
 
         // DelaunayTriangulation construction
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -1983,16 +1973,16 @@ mod tests {
     fn test_prelude_point_location() {
         // Test that point location algorithms are accessible
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
         // Test locate function with kernel
         let kernel = FastKernel::<f64>::new();
-        let query_point = Point::new([0.3, 0.3]);
+        let query_point = Point::from_validated_coords([0.3, 0.3]);
         let result = locate(dt.tds(), &kernel, &query_point, None);
         assert!(result.is_ok());
 
@@ -2006,7 +1996,7 @@ mod tests {
         }
 
         // Test outside point
-        let outside_point = Point::new([10.0, 10.0]);
+        let outside_point = Point::from_validated_coords([10.0, 10.0]);
         let result = locate(dt.tds(), &kernel, &outside_point, None);
         assert!(result.is_ok());
     }
@@ -2014,16 +2004,16 @@ mod tests {
     #[test]
     fn test_prelude_geometry_types() {
         // Test Point with Coordinate trait
-        let p = Point::new([1.0_f64, 2.0_f64, 3.0_f64]);
+        let p = Point::from_validated_coords([1.0_f64, 2.0_f64, 3.0_f64]);
         assert!((p.coords()[0] - 1.0_f64).abs() < f64::EPSILON);
         assert!((p.coords()[1] - 2.0_f64).abs() < f64::EPSILON);
         assert!((p.coords()[2] - 3.0_f64).abs() < f64::EPSILON);
 
         // Test predicates are accessible
         let triangle = [
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0]),
         ];
 
         // simplex_orientation is exported from predicates
@@ -2031,7 +2021,7 @@ mod tests {
         assert_ne!(orientation, Orientation::DEGENERATE);
 
         // Test insphere predicate
-        let test_point = Point::new([0.25, 0.25]);
+        let test_point = Point::from_validated_coords([0.25, 0.25]);
         let result = insphere(&triangle, test_point).unwrap();
         assert_eq!(result, InSphere::INSIDE);
     }
@@ -2040,10 +2030,10 @@ mod tests {
     fn test_prelude_convex_hull() {
         // Test that convex hull operations are accessible
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -2053,13 +2043,13 @@ mod tests {
         assert_eq!(hull.number_of_facets(), 4); // Tetrahedron has 4 faces
 
         // Test point visibility
-        let outside_point = Point::new([2.0, 2.0, 2.0]);
+        let outside_point = Point::from_validated_coords([2.0, 2.0, 2.0]);
         let is_outside = hull
             .is_point_outside(&outside_point, dt.as_triangulation())
             .unwrap();
         assert!(is_outside);
 
-        let inside_point = Point::new([0.25, 0.25, 0.25]);
+        let inside_point = Point::from_validated_coords([0.25, 0.25, 0.25]);
         let is_outside = hull
             .is_point_outside(&inside_point, dt.as_triangulation())
             .unwrap();

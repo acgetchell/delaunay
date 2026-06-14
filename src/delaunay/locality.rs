@@ -26,8 +26,8 @@ pub struct LocalConflictSeedSimplices {
 /// Adds live, deduplicated candidate simplices to a pending local repair frontier.
 ///
 /// Returns the number of simplices newly appended to `pending_seed_simplices`.
-pub fn accumulate_live_simplex_seeds<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub fn accumulate_live_simplex_seeds<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     candidate_seed_simplices: &[SimplexKey],
     pending_seed_simplices: &mut Vec<SimplexKey>,
     pending_seen: &mut FastHashSet<SimplexKey>,
@@ -49,8 +49,8 @@ where
 /// Adds live, deduplicated candidate simplices to a compact repair seed buffer.
 ///
 /// Returns the number of simplices newly appended to `seed_simplices`.
-pub fn append_live_unique_simplex_seeds<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub fn append_live_unique_simplex_seeds<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     candidate_seed_simplices: &[SimplexKey],
     seed_simplices: &mut SimplexKeyBuffer,
 ) -> usize
@@ -76,8 +76,8 @@ where
 }
 
 /// Retains only live, deduplicated simplices in a pending local repair frontier.
-pub fn retain_live_simplex_seeds<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub fn retain_live_simplex_seeds<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     seed_simplices: &mut Vec<SimplexKey>,
     seen: &mut FastHashSet<SimplexKey>,
 ) where
@@ -135,13 +135,13 @@ pub fn replace_simplices_and_record_removed(
 /// entire triangulation. If no circumsphere conflict is found, the terminal simplex
 /// itself is still a useful local seed.
 pub fn collect_local_exterior_conflict_seed_simplices<K, U, V, const D: usize>(
-    tds: &Tds<K::Scalar, U, V, D>,
+    tds: &Tds<U, V, D>,
     kernel: &K,
-    point: &Point<K::Scalar, D>,
+    point: &Point<D>,
     terminal_simplex: SimplexKey,
 ) -> Result<LocalConflictSeedSimplices, ConflictError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -173,17 +173,15 @@ mod tests {
     use crate::core::triangulation::Triangulation;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::point::Point;
-    use crate::geometry::traits::coordinate::Coordinate;
     use crate::triangulation::DelaunayTriangulation;
-    use crate::vertex;
     use slotmap::KeyData;
 
     fn simplex_triangulation_3d() -> Triangulation<FastKernel<f64>, (), (), 3> {
         let vertices = [
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
@@ -193,11 +191,11 @@ mod tests {
     #[test]
     fn accumulate_live_simplex_seeds_dedupes_and_ignores_stale() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-            vertex!([1.0, 1.0]),
-            vertex!([0.5, 0.5]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -247,11 +245,11 @@ mod tests {
     #[test]
     fn append_live_unique_simplex_seeds_dedupes_and_ignores_stale() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-            vertex!([1.0, 1.0]),
-            vertex!([0.5, 0.5]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -286,11 +284,11 @@ mod tests {
     #[test]
     fn retain_live_simplex_seeds_filters_stale_and_dedupes() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-            vertex!([1.0, 1.0]),
-            vertex!([0.5, 0.5]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -374,7 +372,7 @@ mod tests {
         let result = collect_local_exterior_conflict_seed_simplices(
             &tri.tds,
             &FastKernel::new(),
-            &Point::new([2.0, 2.0, 2.0]),
+            &Point::from_validated_coords([2.0, 2.0, 2.0]),
             terminal_simplex,
         )
         .unwrap();
@@ -393,7 +391,7 @@ mod tests {
         let result = collect_local_exterior_conflict_seed_simplices(
             &tri.tds,
             &FastKernel::new(),
-            &Point::new([0.5, 0.5, 0.5]),
+            &Point::from_validated_coords([0.5, 0.5, 0.5]),
             terminal_simplex,
         )
         .unwrap();

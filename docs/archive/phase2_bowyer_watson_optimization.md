@@ -305,7 +305,7 @@ fn test_cache_invalidation_on_tds_operations() {
     let initial_gen = algorithm.cached_generation().load(Ordering::Acquire);
 
     // Test vertex insertion
-    let vertex = vertex![1.0, 2.0, 3.0];
+    let vertex = Vertex::<(), _>::try_new([1.0, 2.0, 3.0])?;
     tds.add_vertex(vertex);
     assert_ne!(algorithm.cached_generation().load(Ordering::Acquire), initial_gen);
 

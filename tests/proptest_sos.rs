@@ -24,7 +24,6 @@
 
 use delaunay::geometry::point::Point;
 use delaunay::geometry::sos::{sos_insphere_sign, sos_orientation_sign};
-use delaunay::geometry::traits::coordinate::Coordinate;
 use proptest::prelude::*;
 
 // =============================================================================
@@ -39,7 +38,7 @@ use proptest::prelude::*;
     clippy::float_cmp,
     reason = "coordinates are integer-derived f64 values, so exact equality is intentional"
 )]
-fn points_all_distinct<const D: usize>(points: &[Point<f64, D>]) -> bool {
+fn points_all_distinct<const D: usize>(points: &[Point<D>]) -> bool {
     (0..points.len())
         .all(|i| ((i + 1)..points.len()).all(|j| points[i].coords() != points[j].coords()))
 }
@@ -89,14 +88,14 @@ macro_rules! gen_sos_tests {
                         ($dim + 1)..=($dim + 1),
                     ),
                 ) {
-                    let points: Vec<Point<f64, $dim>> = raw
+                    let points: Vec<Point<$dim>> = raw
                         .iter()
                         .map(|arr| {
                             // Last coordinate forced to 0 → co-hyperplanar.
                             let coords: [f64; $dim] = std::array::from_fn(|i| {
                                 if i < $dim - 1 { f64::from(arr[i]) } else { 0.0 }
                             });
-                            Point::new(coords)
+                            Point::try_new(coords).expect("finite point coordinates")
                         })
                         .collect();
                     // In 2D only one coordinate varies (the last is forced
@@ -117,13 +116,13 @@ macro_rules! gen_sos_tests {
                         ($dim + 1)..=($dim + 1),
                     ),
                 ) {
-                    let points: Vec<Point<f64, $dim>> = raw
+                    let points: Vec<Point<$dim>> = raw
                         .iter()
                         .map(|arr| {
                             let coords: [f64; $dim] = std::array::from_fn(|i| {
                                 if i < $dim - 1 { f64::from(arr[i]) } else { 0.0 }
                             });
-                            Point::new(coords)
+                            Point::try_new(coords).expect("finite point coordinates")
                         })
                         .collect();
                     prop_assume!(points_all_distinct(&points));
@@ -149,25 +148,25 @@ macro_rules! gen_sos_tests {
                     ),
                     offset in $uniform(small_int()),
                 ) {
-                    let points: Vec<Point<f64, $dim>> = raw
+                    let points: Vec<Point<$dim>> = raw
                         .iter()
                         .map(|arr| {
                             let coords: [f64; $dim] = std::array::from_fn(|i| {
                                 if i < $dim - 1 { f64::from(arr[i]) } else { 0.0 }
                             });
-                            Point::new(coords)
+                            Point::try_new(coords).expect("finite point coordinates")
                         })
                         .collect();
                     prop_assume!(points_all_distinct(&points));
 
                     let s1 = sos_orientation_sign(&points).unwrap();
-                    let translated: Vec<Point<f64, $dim>> = points
+                    let translated: Vec<Point<$dim>> = points
                         .iter()
                         .map(|p| {
                             let coords: [f64; $dim] = std::array::from_fn(|i| {
                                 p.coords()[i] + f64::from(offset[i])
                             });
-                            Point::new(coords)
+                            Point::try_new(coords).expect("finite point coordinates")
                         })
                         .collect();
                     let s2 = sos_orientation_sign(&translated).unwrap();
@@ -191,18 +190,18 @@ macro_rules! gen_sos_tests {
                     let sides_f64: [f64; $dim] = std::array::from_fn(|i| f64::from(sides[i]));
 
                     // Simplex: origin corner + D axis-aligned neighbours.
-                    let mut simplex: Vec<Point<f64, $dim>> = Vec::with_capacity($dim + 1);
-                    simplex.push(Point::new(base_f64));
+                    let mut simplex: Vec<Point<$dim>> = Vec::with_capacity($dim + 1);
+                    simplex.push(Point::try_new(base_f64).expect("finite point coordinates"));
                     for axis in 0..$dim {
                         let mut p = base_f64;
                         p[axis] += sides_f64[axis];
-                        simplex.push(Point::new(p));
+                        simplex.push(Point::try_new(p).expect("finite point coordinates"));
                     }
 
                     // Test point: diagonally opposite corner (on the circumsphere).
-                    let test = Point::new(
+                    let test = Point::try_new(
                         std::array::from_fn(|i| base_f64[i] + sides_f64[i]),
-                    );
+                    ).expect("finite point coordinates");
                     let sign = sos_insphere_sign(&simplex, &test).unwrap();
                     prop_assert!(sign == 1 || sign == -1,
                         "SoS insphere must return ±1 in {}D, got {}", $dim, sign);
@@ -217,17 +216,17 @@ macro_rules! gen_sos_tests {
                     let base_f64: [f64; $dim] = std::array::from_fn(|i| f64::from(base[i]));
                     let sides_f64: [f64; $dim] = std::array::from_fn(|i| f64::from(sides[i]));
 
-                    let mut simplex: Vec<Point<f64, $dim>> = Vec::with_capacity($dim + 1);
-                    simplex.push(Point::new(base_f64));
+                    let mut simplex: Vec<Point<$dim>> = Vec::with_capacity($dim + 1);
+                    simplex.push(Point::try_new(base_f64).expect("finite point coordinates"));
                     for axis in 0..$dim {
                         let mut p = base_f64;
                         p[axis] += sides_f64[axis];
-                        simplex.push(Point::new(p));
+                        simplex.push(Point::try_new(p).expect("finite point coordinates"));
                     }
 
-                    let test = Point::new(
+                    let test = Point::try_new(
                         std::array::from_fn(|i| base_f64[i] + sides_f64[i]),
-                    );
+                    ).expect("finite point coordinates");
                     let s1 = sos_insphere_sign(&simplex, &test).unwrap();
                     let s2 = sos_insphere_sign(&simplex, &test).unwrap();
                     prop_assert_eq!(s1, s2,
@@ -244,7 +243,7 @@ macro_rules! gen_sos_tests {
                 #[test]
                 fn [<prop_sos_orientation_robust_ $dim d>](
                     points in prop::collection::vec(
-                        $uniform(finite_coord()).prop_map(Point::new),
+                        $uniform(finite_coord()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         ($dim + 1)..=($dim + 1),
                     ),
                 ) {
@@ -256,10 +255,10 @@ macro_rules! gen_sos_tests {
                 #[test]
                 fn [<prop_sos_insphere_robust_ $dim d>](
                     simplex in prop::collection::vec(
-                        $uniform(finite_coord()).prop_map(Point::new),
+                        $uniform(finite_coord()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         ($dim + 1)..=($dim + 1),
                     ),
-                    test in $uniform(finite_coord()).prop_map(Point::new),
+                    test in $uniform(finite_coord()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                 ) {
                     let sign = sos_insphere_sign(&simplex, &test).unwrap();
                     prop_assert!(sign == 1 || sign == -1);
@@ -283,7 +282,7 @@ proptest! {
     #[test]
     fn prop_sos_orientation_rejects_wrong_count(
         points in prop::collection::vec(
-            prop::array::uniform2(finite_coord()).prop_map(Point::new),
+            prop::array::uniform2(finite_coord()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
             0..2_usize,
         ),
     ) {

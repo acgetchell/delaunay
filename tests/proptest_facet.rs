@@ -37,7 +37,7 @@ macro_rules! test_facet_properties {
                 #[test]
                 fn [<prop_facet_has_correct_vertex_count_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
@@ -49,7 +49,7 @@ macro_rules! test_facet_properties {
                         for simplex_key in tds.simplex_keys() {
                             // Each simplex has D+1 facets (one opposite each vertex)
                             for facet_index in 0..=($dim as u8) {
-                                if let Ok(facet) = FacetView::new(&tds, simplex_key, facet_index) {
+                                if let Ok(facet) = FacetView::try_new(&tds, simplex_key, facet_index) {
                                     if let Ok(facet_vertices) = facet.vertices() {
                                         let vertex_count = facet_vertices.count();
                                         prop_assert_eq!(
@@ -71,7 +71,7 @@ macro_rules! test_facet_properties {
                 #[test]
                 fn [<prop_facet_vertex_count_less_than_simplex_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
@@ -89,7 +89,7 @@ macro_rules! test_facet_properties {
                             let simplex_vertex_count = simplex.vertices().len();
 
                             for facet_index in 0..=($dim as u8) {
-                                if let Ok(facet) = FacetView::new(&tds, simplex_key, facet_index) {
+                                if let Ok(facet) = FacetView::try_new(&tds, simplex_key, facet_index) {
                                     if let Ok(facet_vertices) = facet.vertices() {
                                         let facet_vertex_count = facet_vertices.count();
                                         prop_assert_eq!(
@@ -110,7 +110,7 @@ macro_rules! test_facet_properties {
                 #[test]
                 fn [<prop_simplex_has_valid_facets_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
@@ -124,7 +124,7 @@ macro_rules! test_facet_properties {
                             for facet_index in 0..=($dim as u8) {
                                 // Each facet should be constructible
                                 prop_assert!(
-                                    FacetView::new(&tds, simplex_key, facet_index).is_ok(),
+                                    FacetView::try_new(&tds, simplex_key, facet_index).is_ok(),
                                     "{}D facet {} of simplex should be valid",
                                     $dim,
                                     facet_index
@@ -139,7 +139,7 @@ macro_rules! test_facet_properties {
                 #[test]
                 fn [<prop_simplex_facet_count_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
@@ -151,7 +151,7 @@ macro_rules! test_facet_properties {
                         for simplex_key in tds.simplex_keys() {
                             let mut facet_count = 0;
                             for facet_index in 0..=($dim as u8) {
-                                if FacetView::new(&tds, simplex_key, facet_index).is_ok() {
+                                if FacetView::try_new(&tds, simplex_key, facet_index).is_ok() {
                                     facet_count += 1;
                                 }
                             }
@@ -186,7 +186,7 @@ macro_rules! test_facet_multiplicity {
                 #[test]
                 fn [<prop_facet_multiplicity_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
