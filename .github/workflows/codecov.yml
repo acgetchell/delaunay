@@ -161,7 +161,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         if: ${{ success() && hashFiles('coverage/cobertura.xml') != '' }}
-        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6.0.1
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: coverage/cobertura.xml
           flags: unittests
@@ -172,7 +172,7 @@ jobs:
 
       - name: Upload test results to Codecov
         if: ${{ success() && hashFiles('target/nextest/ci/test-results/junit.xml') != '' }}
-        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6.0.1
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: target/nextest/ci/test-results/junit.xml
           flags: unittests
