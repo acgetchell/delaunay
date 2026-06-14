@@ -1,7 +1,7 @@
 //! Generic triangulation construction helpers.
 //!
 //! This module owns the generic construction vocabulary for
-//! [`Triangulation`](crate::core::triangulation::Triangulation)
+//! [`Triangulation`](crate::prelude::triangulation::Triangulation)
 //! and the initial-simplex bootstrap used before incremental insertion takes
 //! over. Mutation-heavy insertion and repair orchestration remain implemented
 //! with the triangulation type until they can be split into narrower modules.
@@ -23,7 +23,6 @@ use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::CoordinateValues;
 use crate::validation::DelaunayTriangulationValidationError;
-use num_traits::NumCast;
 use thiserror::Error;
 
 /// Errors that can occur during triangulation construction.
@@ -32,13 +31,13 @@ use thiserror::Error;
 ///
 /// ```rust
 /// use delaunay::prelude::triangulation::{
-///     FastKernel, Triangulation, TriangulationConstructionError, vertex,
+///     FastKernel, Triangulation, TriangulationConstructionError,
 /// };
 ///
 /// let vertices = vec![
-///     vertex!([0.0, 0.0]),
-///     vertex!([1.0, 0.0]),
-///     vertex!([0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let result: Result<_, TriangulationConstructionError> =
 ///     Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices);
@@ -201,8 +200,7 @@ pub enum TriangulationConstructionError {
 
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
 where
-    K: Kernel<D>,
-    K::Scalar: NumCast,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -235,12 +233,12 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::{FastKernel, Triangulation, vertex};
+    /// use delaunay::prelude::triangulation::{FastKernel, Triangulation};
     ///
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let tds = Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices)?;
     /// assert_eq!(tds.number_of_vertices(), 3);
@@ -249,8 +247,8 @@ where
     /// # Ok::<(), delaunay::prelude::triangulation::TriangulationConstructionError>(())
     /// ```
     pub fn build_initial_simplex(
-        vertices: &[Vertex<K::Scalar, U, D>],
-    ) -> Result<Tds<K::Scalar, U, V, D>, TriangulationConstructionError> {
+        vertices: &[Vertex<U, D>],
+    ) -> Result<Tds<U, V, D>, TriangulationConstructionError> {
         if vertices.len() != D + 1 {
             return Err(TriangulationConstructionError::InsufficientVertices {
                 dimension: D,
@@ -273,7 +271,7 @@ where
             })?;
         }
 
-        let points: SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+        let points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
             vertices.iter().map(|v| *v.point()).collect();
 
         let exact_orientation = robust_orientation(&points[..]).map_err(|e| {
@@ -326,7 +324,7 @@ where
             }
         }
 
-        let simplex = Simplex::new(vertex_keys, None).map_err(|e| {
+        let simplex = Simplex::try_new(vertex_keys).map_err(|e| {
             TriangulationConstructionError::FailedToCreateSimplex {
                 message: format!("Failed to create initial simplex: {e}"),
             }
@@ -347,12 +345,9 @@ where
 mod tests {
     use super::*;
     use crate::core::simplex::NeighborSlot;
-    use crate::core::vertex::VertexBuilder;
     use crate::geometry::kernel::FastKernel;
-    use crate::geometry::traits::coordinate::Coordinate;
-    use crate::vertex;
+    use crate::geometry::traits::coordinate::{CoordinateValidationError, InvalidCoordinateValue};
     use std::assert_matches;
-    use uuid::Uuid;
 
     #[test]
     fn internal_inconsistency_display() {
@@ -371,8 +366,8 @@ mod tests {
             pastey::paste! {
                 #[test]
                 fn [<build_initial_simplex_ $dim d>]() {
-                    let vertices: Vec<Vertex<f64, (), $dim>> = vec![
-                        $(vertex!($simplex_coords)),+
+                    let vertices: Vec<Vertex<(), $dim>> = vec![
+                        $(crate::core::vertex::Vertex::<(), _>::try_new($simplex_coords).unwrap()),+
                     ];
 
                     let expected_vertices = vertices.len();
@@ -437,7 +432,10 @@ mod tests {
 
     #[test]
     fn build_initial_simplex_insufficient_vertices() {
-        let vertices = vec![vertex!([0.0, 0.0, 0.0]), vertex!([1.0, 0.0, 0.0])];
+        let vertices = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+        ];
 
         let result = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices);
 
@@ -450,10 +448,10 @@ mod tests {
     #[test]
     fn build_initial_simplex_too_many_vertices() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-            vertex!([0.5, 0.5]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
         ];
 
         let result = Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices);
@@ -464,43 +462,23 @@ mod tests {
         );
     }
 
-    fn invalid_initial_simplex_vertices<const D: usize>() -> Vec<Vertex<f64, (), D>> {
-        let mut vertices = Vec::with_capacity(D + 1);
-        vertices.push(vertex!([0.0_f64; D]));
-
-        let mut invalid_coords = [0.0_f64; D];
-        invalid_coords[0] = 1.0;
-        invalid_coords[1] = f64::NAN;
-        vertices.push(Vertex::new_with_uuid(
-            Point::new(invalid_coords),
-            Uuid::new_v4(),
-            None,
-        ));
-
-        for axis in 1..D {
-            let mut coords = [0.0_f64; D];
-            coords[axis] = 1.0;
-            vertices.push(vertex!(coords));
-        }
-
-        vertices
-    }
-
-    macro_rules! test_build_initial_simplex_rejects_invalid_vertex_dimensions {
+    macro_rules! test_build_initial_simplex_rejects_non_finite_vertex_coordinate_dimensions {
         ($($dim:expr),+ $(,)?) => {
             pastey::paste! {
                 $(
                     #[test]
-                    fn [<build_initial_simplex_rejects_invalid_vertex_ $dim d>]() {
-                        let vertices = invalid_initial_simplex_vertices::<$dim>();
-
-                        let result = Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices);
+                    fn [<build_initial_simplex_rejects_non_finite_vertex_coordinate_ $dim d>]() {
+                        let mut invalid_coords = [0.0_f64; $dim];
+                        invalid_coords[0] = 1.0;
+                        invalid_coords[1] = f64::NAN;
 
                         assert_matches!(
-                            result,
-                            Err(TriangulationConstructionError::Tds(
-                                TdsConstructionError::ValidationError(TdsError::InvalidVertex { .. })
-                            ))
+                            Point::<$dim>::try_new(invalid_coords),
+                            Err(CoordinateValidationError::InvalidCoordinate {
+                                coordinate_index: 1,
+                                coordinate_value: InvalidCoordinateValue::Nan,
+                                dimension: $dim,
+                            })
                         );
                     }
                 )+
@@ -508,25 +486,13 @@ mod tests {
         };
     }
 
-    test_build_initial_simplex_rejects_invalid_vertex_dimensions!(2, 3, 4, 5);
+    test_build_initial_simplex_rejects_non_finite_vertex_coordinate_dimensions!(2, 3, 4, 5);
 
     #[test]
     fn build_initial_simplex_with_user_data() {
-        let v1 = VertexBuilder::default()
-            .point(Point::new([0.0, 0.0]))
-            .data(42_usize)
-            .build()
-            .unwrap();
-        let v2 = VertexBuilder::default()
-            .point(Point::new([1.0, 0.0]))
-            .data(43_usize)
-            .build()
-            .unwrap();
-        let v3 = VertexBuilder::default()
-            .point(Point::new([0.0, 1.0]))
-            .data(44_usize)
-            .build()
-            .unwrap();
+        let v1 = Vertex::try_new_with_data([0.0, 0.0], 42_usize).unwrap();
+        let v2 = Vertex::try_new_with_data([1.0, 0.0], 43_usize).unwrap();
+        let v3 = Vertex::try_new_with_data([0.0, 1.0], 44_usize).unwrap();
 
         let vertices = vec![v1, v2, v3];
         let tds = Triangulation::<FastKernel<f64>, usize, (), 2>::build_initial_simplex(&vertices)
@@ -549,9 +515,9 @@ mod tests {
     #[test]
     fn build_initial_simplex_rejects_collinear_2d() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([2.0, 0.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
         ];
 
         let result = Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices);
@@ -565,10 +531,10 @@ mod tests {
     #[test]
     fn build_initial_simplex_rejects_coplanar_3d() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.5, 0.5, 0.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.0]).unwrap(),
         ];
 
         let result = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices);

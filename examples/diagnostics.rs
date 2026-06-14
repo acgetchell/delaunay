@@ -21,12 +21,9 @@ use delaunay::prelude::diagnostics::{
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::flips::*;
 #[cfg(feature = "diagnostics")]
-use delaunay::prelude::geometry::AdaptiveKernel;
+use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateConversionError};
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::validation::DelaunayTriangulationValidationError;
-#[cfg(feature = "diagnostics")]
-use delaunay::vertex;
-
 #[cfg(feature = "diagnostics")]
 #[derive(Debug, thiserror::Error)]
 enum DiagnosticsExampleError {
@@ -34,6 +31,8 @@ enum DiagnosticsExampleError {
     Construction(#[from] DelaunayTriangulationConstructionError),
     #[error(transparent)]
     DelaunayValidation(#[from] DelaunayValidationError),
+    #[error(transparent)]
+    CoordinateConversion(#[from] CoordinateConversionError),
     #[error("expected at least one public k=2 flip to produce a Delaunay violation")]
     NoDelaunayViolatingFlip,
 }
@@ -71,10 +70,10 @@ fn init_tracing() {
 #[cfg(feature = "diagnostics")]
 fn report_valid_triangulation() -> Result<(), DiagnosticsExampleError> {
     let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     ];
     let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
 
@@ -119,13 +118,13 @@ fn report_non_delaunay_triangulation() -> Result<(), DiagnosticsExampleError> {
 fn build_non_delaunay_triangulation_2d()
 -> Result<DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2>, DiagnosticsExampleError> {
     let vertices = vec![
-        vertex!([0.0, 0.0]),
-        vertex!([4.0, 0.0]),
-        vertex!([4.0, 4.0]),
-        vertex!([0.0, 4.0]),
-        vertex!([2.0, 2.0]),
-        vertex!([1.0, 1.0]),
-        vertex!([3.0, 1.0]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([4.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([4.0, 4.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 4.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 2.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([3.0, 1.0])?,
     ];
     let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices)?;
 

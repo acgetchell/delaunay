@@ -42,13 +42,13 @@ macro_rules! test_minimal_simplex_hull {
                     let mut points = Vec::new();
 
                     // Origin
-                    points.push(Point::new([0.0f64; $dim]));
+                    points.push(Point::try_new([0.0f64; $dim]).expect("finite point coordinates"));
 
                     // D more points along coordinate axes
                     for i in 0..$dim {
                         let mut coords = [0.0f64; $dim];
                         coords[i] = base_scale;
-                        points.push(Point::new(coords));
+                        points.push(Point::try_new(coords).expect("finite point coordinates"));
                     }
 
                     let vertices = Vertex::from_points(&points);
@@ -84,7 +84,7 @@ macro_rules! test_convex_hull_properties {
                 #[test]
                 fn [<prop_hull_construction_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
@@ -129,7 +129,7 @@ macro_rules! test_convex_hull_properties {
                 #[test]
                 fn [<prop_hull_facet_bounds_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
@@ -179,10 +179,10 @@ macro_rules! test_convex_hull_properties {
                 #[test]
                 fn [<prop_hull_staleness_detection_ $dim d>](
                     initial_vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v)),
-                    new_point in prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new)
+                    new_point in prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates"))
                 ) {
                     if let Ok(mut dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
                         &initial_vertices,
@@ -239,7 +239,7 @@ macro_rules! test_convex_hull_properties {
                 #[test]
                 fn [<prop_hull_vertices_subset_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
@@ -281,7 +281,7 @@ macro_rules! test_convex_hull_properties {
                 #[test]
                 fn [<prop_hull_reconstruction_consistency_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {

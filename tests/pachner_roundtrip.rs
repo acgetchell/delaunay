@@ -3,7 +3,7 @@
 //! Public API roundtrip tests for Pachner/bistellar flips.
 
 use delaunay::prelude::construction::{
-    ConstructionOptions, DelaunayTriangulation, InsertionOrderStrategy, TopologyGuarantee, vertex,
+    ConstructionOptions, DelaunayTriangulation, InsertionOrderStrategy, TopologyGuarantee,
 };
 use delaunay::prelude::flips::{
     BistellarFlips, EdgeKey, FacetHandle, RidgeHandle, SimplexKey, TriangleHandle, VertexKey,
@@ -61,7 +61,7 @@ fn public_pachner_roundtrips_preserve_stable_4d_topology() {
 fn build_stable_dt_4d() -> Dt4 {
     let vertices = STABLE_POINTS_4D
         .iter()
-        .map(|coords| vertex!(*coords))
+        .map(|coords| delaunay::prelude::Vertex::<(), _>::try_new(*coords).unwrap())
         .collect::<Vec<_>>();
     let options =
         ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
@@ -138,7 +138,8 @@ fn simplex_centroid(dt: &Dt4, simplex_key: SimplexKey) -> [f64; 4] {
 
 fn roundtrip_k1(dt: &mut Dt4) {
     let simplex_key = first_simplex(dt);
-    let new_vertex = vertex!(simplex_centroid(dt, simplex_key));
+    let new_vertex =
+        delaunay::prelude::Vertex::<(), _>::try_new(simplex_centroid(dt, simplex_key)).unwrap();
     let new_uuid = new_vertex.uuid();
     dt.flip_k1_insert(simplex_key, new_vertex)
         .expect("k=1 insert should succeed on stable 4D fixture");
@@ -192,7 +193,7 @@ fn roundtrip_k2(dt: &mut Dt4, facet: FacetHandle) {
 
 fn inserted_edge(vertices: &[VertexKey]) -> EdgeKey {
     match vertices {
-        [a, b] => EdgeKey::new(*a, *b),
+        [a, b] => EdgeKey::try_new(*a, *b).expect("k=2 flip should report a real inserted edge"),
         _ => panic!("k=2 flip should report an inserted edge"),
     }
 }
@@ -236,7 +237,8 @@ fn roundtrip_k3(dt: &mut Dt4, ridge: RidgeHandle) {
 
 fn inserted_triangle(vertices: &[VertexKey]) -> TriangleHandle {
     match vertices {
-        [a, b, c] => TriangleHandle::new(*a, *b, *c),
+        [a, b, c] => TriangleHandle::try_new(*a, *b, *c)
+            .expect("k=3 flip should report a valid inserted triangle"),
         _ => panic!("k=3 flip should report an inserted triangle"),
     }
 }

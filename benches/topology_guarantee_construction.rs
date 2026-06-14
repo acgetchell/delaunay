@@ -3,7 +3,7 @@
 //! Benchmark: construction cost vs topology guarantee (2D–5D)
 //!
 //! This benchmark compares `TopologyGuarantee::Pseudomanifold`, `TopologyGuarantee::PLManifold`
-//! (incremental: ridge-link during insertion, vertex-link at completion), and
+//! (incremental: ridge-link during insertion-link at completion), and
 //! `TopologyGuarantee::PLManifoldStrict` (vertex-link after every insertion) for Delaunay
 //! triangulation construction.
 //!
@@ -20,7 +20,6 @@ use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::CoordinateRange;
 use delaunay::prelude::repair::DelaunayRepairPolicy;
 use delaunay::prelude::validation::ValidationPolicy;
-use delaunay::vertex;
 use std::hint::black_box;
 use std::time::Duration;
 
@@ -56,8 +55,16 @@ fn bench_dimension<const D: usize>(
         // Deterministic input per (dimension, count).
         let seed = seed_base ^ (n_points as u64).wrapping_mul(SEED_SALT);
         let points =
-            generate_random_points_in_range_seeded::<f64, D>(n_points, benchmark_bounds(), seed);
-        let vertices = points.into_iter().map(|p| vertex!(p)).collect::<Vec<_>>();
+            generate_random_points_in_range_seeded::<D>(n_points, benchmark_bounds(), seed);
+        let vertices = points
+            .into_iter()
+            .map(|p| {
+                bench_result(
+                    delaunay::prelude::Vertex::<(), _>::try_new(p.into()),
+                    "finite benchmark vertex coordinates",
+                )
+            })
+            .collect::<Vec<_>>();
 
         group.bench_with_input(
             BenchmarkId::new("pseudomanifold", n_points),

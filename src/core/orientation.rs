@@ -15,12 +15,11 @@ use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
-use crate::geometry::traits::coordinate::Coordinate;
 use crate::topology::traits::global_topology_model::GlobalTopologyModel;
 
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
 {
     /// Collect simplex points for orientation evaluation.
     ///
@@ -29,9 +28,9 @@ where
     fn collect_simplex_points_for_orientation(
         &self,
         simplex_key: SimplexKey,
-        simplex: &Simplex<K::Scalar, U, V, D>,
+        simplex: &Simplex<V, D>,
         purpose: &str,
-    ) -> Result<SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>, TdsError> {
+    ) -> Result<SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>, TdsError> {
         let topology_model = self.global_topology.model();
         let periodic_offsets = simplex.periodic_vertex_offsets();
         if let Some(offsets) = periodic_offsets {
@@ -60,7 +59,7 @@ where
             }
         }
 
-        let mut points: SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+        let mut points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
             SmallBuffer::with_capacity(simplex.number_of_vertices());
 
         for (vertex_idx, &vertex_key) in simplex.vertices().iter().enumerate() {
@@ -83,7 +82,14 @@ where
                     ),
                 })?;
 
-            points.push(Point::new(lifted_coords));
+            let lifted_point =
+                Point::try_new(lifted_coords).map_err(|source| TdsError::InconsistentDataStructure {
+                    message: format!(
+                        "Lifted coordinates for vertex key {vertex_key:?} at slot {vertex_idx} in simplex {:?} (key {simplex_key:?}) during {purpose} violated point invariants: {source}",
+                        simplex.uuid(),
+                    ),
+                })?;
+            points.push(lifted_point);
         }
 
         Ok(points)
@@ -96,7 +102,7 @@ where
     pub(crate) fn evaluate_simplex_orientation_for_context(
         &self,
         simplex_key: SimplexKey,
-        simplex: &Simplex<K::Scalar, U, V, D>,
+        simplex: &Simplex<V, D>,
         purpose: &str,
         predicate_failure_prefix: &str,
     ) -> Result<i32, TdsError> {
@@ -510,7 +516,6 @@ mod tests {
     use crate::topology::traits::topological_space::{
         GlobalTopology, ToroidalConstructionMode, ToroidalDomainError,
     };
-    use crate::vertex;
     use std::assert_matches;
 
     /// Regression test: a negatively oriented but topologically valid simplex
@@ -518,9 +523,9 @@ mod tests {
     #[test]
     fn negative_oriented_simplex_topology_only() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
@@ -543,10 +548,10 @@ mod tests {
     #[test]
     fn local_geometric_orientation_validation_errors_on_missing_scope_simplex() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
@@ -567,9 +572,9 @@ mod tests {
     #[test]
     fn is_valid_rejects_negative_geometric_simplex_orientation() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let mut tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
@@ -591,9 +596,9 @@ mod tests {
     #[test]
     fn validate_geometric_simplex_orientation_returns_enriched_error_on_negative() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let mut tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
@@ -619,9 +624,9 @@ mod tests {
     #[test]
     fn simplices_require_positive_orientation_promotion_detects_negative_without_mutating() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let mut tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
@@ -645,9 +650,9 @@ mod tests {
     #[test]
     fn simplices_require_positive_orientation_promotion_false_for_positive_without_mutating() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
@@ -668,9 +673,9 @@ mod tests {
     #[test]
     fn periodic_geometric_orientation_validation_uses_lifted_coordinates() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([0.8, 0.0]),
-            vertex!([0.0, 0.8]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.8, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.8]).unwrap(),
         ];
         let mut tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
@@ -704,9 +709,9 @@ mod tests {
     #[test]
     fn periodic_geometric_orientation_validation_requires_toroidal_metadata() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([0.8, 0.0]),
-            vertex!([0.0, 0.8]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.8, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.8]).unwrap(),
         ];
         let mut tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
@@ -729,9 +734,9 @@ mod tests {
     #[test]
     fn periodic_geometric_orientation_validation_rejects_offset_count_mismatch() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([0.8, 0.0]),
-            vertex!([0.0, 0.8]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.8, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.8]).unwrap(),
         ];
         let mut tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();

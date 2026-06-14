@@ -40,8 +40,7 @@ use crate::geometry::robust_predicates::{
 };
 use crate::geometry::sos::{sos_insphere_sign, sos_orientation_sign};
 use crate::geometry::traits::coordinate::{
-    Coordinate, CoordinateConversionError, CoordinateConversionValue, CoordinateScalar,
-    DegenerateSimplexReason,
+    CoordinateConversionError, CoordinateConversionValue, DegenerateSimplexReason,
 };
 use crate::geometry::util::safe_coords_to_f64;
 use core::marker::PhantomData;
@@ -73,15 +72,15 @@ const fn insphere_to_i32(result: InSphere) -> i32 {
 ///
 /// // Test orientation of a 2D triangle
 /// let points = [
-///     Point::new([0.0, 0.0]),
-///     Point::new([1.0, 0.0]),
-///     Point::new([0.5, 1.0]),
+///     Point::try_from([0.0, 0.0])?,
+///     Point::try_from([1.0, 0.0])?,
+///     Point::try_from([0.5, 1.0])?,
 /// ];
 /// let orientation = kernel.orientation(&points)?;
 /// assert!(orientation != 0); // Not degenerate
 ///
 /// // Test if point is inside circumcircle
-/// let test_point = Point::new([0.5, 0.3]);
+/// let test_point = Point::try_from([0.5, 0.3])?;
 /// let result = kernel.in_sphere(&points, &test_point)?;
 /// assert_eq!(result, 1); // Inside
 /// # Ok(())
@@ -91,7 +90,7 @@ pub trait Kernel<const D: usize>: Clone {
     /// The scalar type used for coordinates.
     ///
     /// The currently supported caller-visible scalar is `f64`.
-    type Scalar: CoordinateScalar;
+    type Scalar;
 
     /// Compute the orientation of a simplex.
     ///
@@ -133,20 +132,17 @@ pub trait Kernel<const D: usize>: Clone {
     ///
     /// // 3D tetrahedron
     /// let points = [
-    ///     Point::new([0.0, 0.0, 0.0]),
-    ///     Point::new([1.0, 0.0, 0.0]),
-    ///     Point::new([0.0, 1.0, 0.0]),
-    ///     Point::new([0.0, 0.0, 1.0]),
+    ///     Point::try_from([0.0, 0.0, 0.0])?,
+    ///     Point::try_from([1.0, 0.0, 0.0])?,
+    ///     Point::try_from([0.0, 1.0, 0.0])?,
+    ///     Point::try_from([0.0, 0.0, 1.0])?,
     /// ];
     /// let orientation = kernel.orientation(&points)?;
     /// assert!(orientation == -1 || orientation == 1); // Non-degenerate
     /// # Ok(())
     /// # }
     /// ```
-    fn orientation(
-        &self,
-        points: &[Point<Self::Scalar, D>],
-    ) -> Result<i32, CoordinateConversionError>;
+    fn orientation(&self, points: &[Point<D>]) -> Result<i32, CoordinateConversionError>;
 
     /// Test if a point is inside, on, or outside the circumsphere of a simplex.
     ///
@@ -187,26 +183,26 @@ pub trait Kernel<const D: usize>: Clone {
     ///
     /// // 3D tetrahedron
     /// let simplex = [
-    ///     Point::new([0.0, 0.0, 0.0]),
-    ///     Point::new([1.0, 0.0, 0.0]),
-    ///     Point::new([0.0, 1.0, 0.0]),
-    ///     Point::new([0.0, 0.0, 1.0]),
+    ///     Point::try_from([0.0, 0.0, 0.0])?,
+    ///     Point::try_from([1.0, 0.0, 0.0])?,
+    ///     Point::try_from([0.0, 1.0, 0.0])?,
+    ///     Point::try_from([0.0, 0.0, 1.0])?,
     /// ];
     ///
     /// // Point inside the circumsphere
-    /// let inside = Point::new([0.25, 0.25, 0.25]);
+    /// let inside = Point::try_from([0.25, 0.25, 0.25])?;
     /// assert_eq!(kernel.in_sphere(&simplex, &inside)?, 1);
     ///
     /// // Point outside the circumsphere
-    /// let outside = Point::new([2.0, 2.0, 2.0]);
+    /// let outside = Point::try_from([2.0, 2.0, 2.0])?;
     /// assert_eq!(kernel.in_sphere(&simplex, &outside)?, -1);
     /// # Ok(())
     /// # }
     /// ```
     fn in_sphere(
         &self,
-        simplex_points: &[Point<Self::Scalar, D>],
-        test_point: &Point<Self::Scalar, D>,
+        simplex_points: &[Point<D>],
+        test_point: &Point<D>,
     ) -> Result<i32, CoordinateConversionError>;
 
     /// Test circumsphere containment when the simplex is already known to have
@@ -242,22 +238,22 @@ pub trait Kernel<const D: usize>: Clone {
     /// # fn main() -> Result<(), CoordinateConversionError> {
     /// let kernel = FastKernel::<f64>::new();
     /// let simplex = [
-    ///     Point::new([0.0, 0.0]),
-    ///     Point::new([1.0, 0.0]),
-    ///     Point::new([0.0, 1.0]),
+    ///     Point::try_from([0.0, 0.0])?,
+    ///     Point::try_from([1.0, 0.0])?,
+    ///     Point::try_from([0.0, 1.0])?,
     /// ];
     ///
     /// assert_eq!(kernel.orientation(&simplex)?, 1);
     ///
-    /// let inside = Point::new([0.25, 0.25]);
+    /// let inside = Point::try_from([0.25, 0.25])?;
     /// assert_eq!(kernel.in_sphere_positive_oriented(&simplex, &inside)?, 1);
     /// # Ok(())
     /// # }
     /// ```
     fn in_sphere_positive_oriented(
         &self,
-        simplex_points: &[Point<Self::Scalar, D>],
-        test_point: &Point<Self::Scalar, D>,
+        simplex_points: &[Point<D>],
+        test_point: &Point<D>,
     ) -> Result<i32, CoordinateConversionError> {
         self.in_sphere(simplex_points, test_point)
     }
@@ -322,8 +318,8 @@ pub trait ExactPredicates<const D: usize>: Kernel<D> {}
 macro_rules! impl_exact_predicates_for_supported_dims {
     ($($dim:literal),* $(,)?) => {
         $(
-            impl<T: CoordinateScalar> ExactPredicates<$dim> for RobustKernel<T> {}
-            impl<T: CoordinateScalar> ExactPredicates<$dim> for AdaptiveKernel<T> {}
+            impl ExactPredicates<$dim> for RobustKernel<f64> {}
+            impl ExactPredicates<$dim> for AdaptiveKernel<f64> {}
         )*
     };
 }
@@ -368,9 +364,9 @@ impl_exact_predicates_for_supported_dims!(0, 1, 2, 3, 4, 5);
 ///
 /// // Test with a 2D triangle
 /// let points = [
-///     Point::new([0.0, 0.0]),
-///     Point::new([1.0, 0.0]),
-///     Point::new([0.0, 1.0]),
+///     Point::try_from([0.0, 0.0])?,
+///     Point::try_from([1.0, 0.0])?,
+///     Point::try_from([0.0, 1.0])?,
 /// ];
 ///
 /// // Check orientation
@@ -378,7 +374,7 @@ impl_exact_predicates_for_supported_dims!(0, 1, 2, 3, 4, 5);
 /// assert!(orientation != 0);
 ///
 /// // Test insphere predicate
-/// let test_point = Point::new([0.25, 0.25]);
+/// let test_point = Point::try_from([0.25, 0.25])?;
 /// let result = kernel.in_sphere(&points, &test_point)?;
 /// assert_eq!(result, 1); // Inside circumcircle
 /// # Ok(())
@@ -407,16 +403,10 @@ impl<T> FastKernel<T> {
     }
 }
 
-impl<T, const D: usize> Kernel<D> for FastKernel<T>
-where
-    T: CoordinateScalar,
-{
-    type Scalar = T;
+impl<const D: usize> Kernel<D> for FastKernel<f64> {
+    type Scalar = f64;
 
-    fn orientation(
-        &self,
-        points: &[Point<Self::Scalar, D>],
-    ) -> Result<i32, CoordinateConversionError> {
+    fn orientation(&self, points: &[Point<D>]) -> Result<i32, CoordinateConversionError> {
         let result = simplex_orientation(points)?;
         Ok(match result {
             Orientation::NEGATIVE => -1,
@@ -427,8 +417,8 @@ where
 
     fn in_sphere(
         &self,
-        simplex_points: &[Point<Self::Scalar, D>],
-        test_point: &Point<Self::Scalar, D>,
+        simplex_points: &[Point<D>],
+        test_point: &Point<D>,
     ) -> Result<i32, CoordinateConversionError> {
         // Use insphere_lifted for optimal performance (5.3x faster in 3D)
         let result = insphere_lifted(simplex_points, *test_point).map_err(|e| {
@@ -463,8 +453,8 @@ where
 
     fn in_sphere_positive_oriented(
         &self,
-        simplex_points: &[Point<Self::Scalar, D>],
-        test_point: &Point<Self::Scalar, D>,
+        simplex_points: &[Point<D>],
+        test_point: &Point<D>,
     ) -> Result<i32, CoordinateConversionError> {
         let result = robust_insphere_positive_oriented(simplex_points, test_point)?;
         Ok(insphere_to_i32(result))
@@ -500,16 +490,16 @@ where
 /// let kernel = RobustKernel::<f64>::new();
 ///
 /// let points = [
-///     Point::new([0.0, 0.0, 0.0]),
-///     Point::new([1.0, 0.0, 0.0]),
-///     Point::new([0.0, 1.0, 0.0]),
-///     Point::new([0.0, 0.0, 1.0]),
+///     Point::try_from([0.0, 0.0, 0.0])?,
+///     Point::try_from([1.0, 0.0, 0.0])?,
+///     Point::try_from([0.0, 1.0, 0.0])?,
+///     Point::try_from([0.0, 0.0, 1.0])?,
 /// ];
 ///
 /// let orientation = kernel.orientation(&points)?;
 /// assert!(orientation != 0); // Non-degenerate
 ///
-/// let test_point = Point::new([0.25, 0.25, 0.25]);
+/// let test_point = Point::try_from([0.25, 0.25, 0.25])?;
 /// let result = kernel.in_sphere(&points, &test_point)?;
 /// assert_eq!(result, 1); // Inside circumsphere
 /// # Ok(())
@@ -538,16 +528,10 @@ impl<T> RobustKernel<T> {
     }
 }
 
-impl<T, const D: usize> Kernel<D> for RobustKernel<T>
-where
-    T: CoordinateScalar,
-{
-    type Scalar = T;
+impl<const D: usize> Kernel<D> for RobustKernel<f64> {
+    type Scalar = f64;
 
-    fn orientation(
-        &self,
-        points: &[Point<Self::Scalar, D>],
-    ) -> Result<i32, CoordinateConversionError> {
+    fn orientation(&self, points: &[Point<D>]) -> Result<i32, CoordinateConversionError> {
         let result = robust_orientation(points)?;
         Ok(match result {
             Orientation::NEGATIVE => -1,
@@ -558,8 +542,8 @@ where
 
     fn in_sphere(
         &self,
-        simplex_points: &[Point<Self::Scalar, D>],
-        test_point: &Point<Self::Scalar, D>,
+        simplex_points: &[Point<D>],
+        test_point: &Point<D>,
     ) -> Result<i32, CoordinateConversionError> {
         let result = robust_insphere(simplex_points, test_point)?;
         Ok(insphere_to_i32(result))
@@ -567,8 +551,8 @@ where
 
     fn in_sphere_positive_oriented(
         &self,
-        simplex_points: &[Point<Self::Scalar, D>],
-        test_point: &Point<Self::Scalar, D>,
+        simplex_points: &[Point<D>],
+        test_point: &Point<D>,
     ) -> Result<i32, CoordinateConversionError> {
         let result = robust_insphere_positive_oriented(simplex_points, test_point)?;
         Ok(insphere_to_i32(result))
@@ -620,9 +604,9 @@ where
 ///
 /// // Collinear points get a deterministic SoS sign (never 0)
 /// let collinear = [
-///     Point::new([0.0, 0.0]),
-///     Point::new([1.0, 0.0]),
-///     Point::new([2.0, 0.0]),
+///     Point::try_from([0.0, 0.0])?,
+///     Point::try_from([1.0, 0.0])?,
+///     Point::try_from([2.0, 0.0])?,
 /// ];
 /// let orientation = kernel.orientation(&collinear)?;
 /// assert!(orientation == 1 || orientation == -1); // SoS: always non-zero
@@ -652,16 +636,10 @@ impl<T> AdaptiveKernel<T> {
     }
 }
 
-impl<T, const D: usize> Kernel<D> for AdaptiveKernel<T>
-where
-    T: CoordinateScalar,
-{
-    type Scalar = T;
+impl<const D: usize> Kernel<D> for AdaptiveKernel<f64> {
+    type Scalar = f64;
 
-    fn orientation(
-        &self,
-        points: &[Point<Self::Scalar, D>],
-    ) -> Result<i32, CoordinateConversionError> {
+    fn orientation(&self, points: &[Point<D>]) -> Result<i32, CoordinateConversionError> {
         if points.len() != D + 1 {
             return Err(CoordinateConversionError::InvalidSimplexPointCount {
                 actual: points.len(),
@@ -682,10 +660,12 @@ where
 
         // Layer 3: SoS tie-breaking for truly degenerate orientation.
         // Same pattern as in_sphere() — convert to f64 points for SoS.
-        let mut f64_points: SmallBuffer<Point<f64, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+        let mut f64_points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
             SmallBuffer::with_capacity(points.len());
         for point in points {
-            f64_points.push(Point::new(safe_coords_to_f64(point.coords())?));
+            f64_points.push(Point::from_validated_coords(safe_coords_to_f64(
+                point.coords(),
+            )?));
         }
 
         // SoS guarantees a non-zero sign for distinct points.  If SoS
@@ -698,8 +678,8 @@ where
 
     fn in_sphere(
         &self,
-        simplex_points: &[Point<Self::Scalar, D>],
-        test_point: &Point<Self::Scalar, D>,
+        simplex_points: &[Point<D>],
+        test_point: &Point<D>,
     ) -> Result<i32, CoordinateConversionError> {
         if simplex_points.len() != D + 1 {
             return Err(CoordinateConversionError::InvalidSimplexPointCount {
@@ -719,12 +699,14 @@ where
         }
 
         // At least one predicate needs SoS → convert to f64 points.
-        let mut f64_simplex: SmallBuffer<Point<f64, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+        let mut f64_simplex: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
             SmallBuffer::with_capacity(simplex_points.len());
         for point in simplex_points {
-            f64_simplex.push(Point::new(safe_coords_to_f64(point.coords())?));
+            f64_simplex.push(Point::from_validated_coords(safe_coords_to_f64(
+                point.coords(),
+            )?));
         }
-        let f64_test = Point::new(safe_coords_to_f64(test_point.coords())?);
+        let f64_test = Point::from_validated_coords(safe_coords_to_f64(test_point.coords())?);
 
         // Resolve orientation factor.
         let orient_factor: i32 = if rel_orient_sign != 0 {
@@ -753,8 +735,8 @@ where
 
     fn in_sphere_positive_oriented(
         &self,
-        simplex_points: &[Point<Self::Scalar, D>],
-        test_point: &Point<Self::Scalar, D>,
+        simplex_points: &[Point<D>],
+        test_point: &Point<D>,
     ) -> Result<i32, CoordinateConversionError> {
         if simplex_points.len() != D + 1 {
             return Err(CoordinateConversionError::InvalidSimplexPointCount {
@@ -769,12 +751,14 @@ where
         let insphere_effective = if determinant_sign != 0 {
             determinant_sign
         } else {
-            let mut f64_simplex: SmallBuffer<Point<f64, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+            let mut f64_simplex: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
                 SmallBuffer::with_capacity(simplex_points.len());
             for point in simplex_points {
-                f64_simplex.push(Point::new(safe_coords_to_f64(point.coords())?));
+                f64_simplex.push(Point::from_validated_coords(safe_coords_to_f64(
+                    point.coords(),
+                )?));
             }
-            let f64_test = Point::new(safe_coords_to_f64(test_point.coords())?);
+            let f64_test = Point::from_validated_coords(safe_coords_to_f64(test_point.coords())?);
             sos_insphere_sign(&f64_simplex, &f64_test)?
         };
 
@@ -786,69 +770,68 @@ where
 mod tests {
     use super::*;
     use crate::geometry::point::Point;
-    use crate::geometry::traits::coordinate::Coordinate;
 
     // =========================================================================
     // GENERIC HELPER FUNCTIONS
     // =========================================================================
 
     /// Standard D-simplex: origin + D unit vectors (non-degenerate).
-    fn standard_simplex<const D: usize>() -> Vec<Point<f64, D>> {
+    fn standard_simplex<const D: usize>() -> Vec<Point<D>> {
         let mut points = Vec::with_capacity(D + 1);
-        points.push(Point::new([0.0; D]));
+        points.push(Point::from_validated_coords([0.0; D]));
         for i in 0..D {
             let mut coords = [0.0; D];
             coords[i] = 1.0;
-            points.push(Point::new(coords));
+            points.push(Point::from_validated_coords(coords));
         }
         points
     }
 
     /// Degenerate D-simplex: all points have last coordinate = 0.
-    fn degenerate_simplex<const D: usize>() -> Vec<Point<f64, D>> {
+    fn degenerate_simplex<const D: usize>() -> Vec<Point<D>> {
         let mut points = Vec::with_capacity(D + 1);
-        points.push(Point::new([0.0; D]));
+        points.push(Point::from_validated_coords([0.0; D]));
         for i in 0..D.saturating_sub(1) {
             let mut coords = [0.0; D];
             coords[i] = 1.0;
-            points.push(Point::new(coords));
+            points.push(Point::from_validated_coords(coords));
         }
         let mut bary = [0.0; D];
         for c in bary.iter_mut().take(D.saturating_sub(1)) {
             *c = 0.5;
         }
-        points.push(Point::new(bary));
+        points.push(Point::from_validated_coords(bary));
         points
     }
 
     /// Point clearly inside the circumsphere of the standard simplex.
-    fn inside_point<const D: usize>() -> Point<f64, D> {
-        Point::new([0.1; D])
+    fn inside_point<const D: usize>() -> Point<D> {
+        Point::from_validated_coords([0.1; D])
     }
 
     /// Point clearly outside the circumsphere of the standard simplex.
-    fn outside_point<const D: usize>() -> Point<f64, D> {
-        Point::new([2.0; D])
+    fn outside_point<const D: usize>() -> Point<D> {
+        Point::from_validated_coords([2.0; D])
     }
 
     /// Co-spherical test point: (1,1,…,1) lies on the circumsphere of the
     /// standard simplex for all D ≥ 2.
-    fn cospherical_test<const D: usize>() -> Point<f64, D> {
-        Point::new([1.0; D])
+    fn cospherical_test<const D: usize>() -> Point<D> {
+        Point::from_validated_coords([1.0; D])
     }
 
     /// Test point off the degenerate hyperplane (last coord nonzero).
-    fn off_plane_test<const D: usize>() -> Point<f64, D> {
+    fn off_plane_test<const D: usize>() -> Point<D> {
         let mut coords = [0.0; D];
         coords[D - 1] = 1.0;
-        Point::new(coords)
+        Point::from_validated_coords(coords)
     }
 
     /// Test point in the degenerate hyperplane but far from the simplex.
-    fn coplanar_far_test<const D: usize>() -> Point<f64, D> {
+    fn coplanar_far_test<const D: usize>() -> Point<D> {
         let mut coords = [0.0; D];
         coords[0] = 3.0;
-        Point::new(coords)
+        Point::from_validated_coords(coords)
     }
 
     // =========================================================================
@@ -919,9 +902,9 @@ mod tests {
 
         // Three collinear points on diagonal
         let collinear = [
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 1.0]),
-            Point::new([2.0, 2.0]),
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 1.0]),
+            Point::from_validated_coords([2.0, 2.0]),
         ];
 
         let orientation = kernel.orientation(&collinear).unwrap();
@@ -937,9 +920,9 @@ mod tests {
 
         // Nearly collinear points (small perturbation)
         let nearly_collinear = [
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([2.0, 1e-10]), // Tiny deviation from collinearity
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+            Point::from_validated_coords([2.0, 1e-10]), // Tiny deviation from collinearity
         ];
 
         let orientation = kernel.orientation(&nearly_collinear).unwrap();
@@ -954,9 +937,9 @@ mod tests {
 
         // Triangle with large coordinates
         let large_triangle = [
-            Point::new([1e6, 1e6]),
-            Point::new([1e6 + 1.0, 1e6]),
-            Point::new([1e6, 1e6 + 1.0]),
+            Point::from_validated_coords([1e6, 1e6]),
+            Point::from_validated_coords([1e6 + 1.0, 1e6]),
+            Point::from_validated_coords([1e6, 1e6 + 1.0]),
         ];
 
         let orientation = kernel.orientation(&large_triangle).unwrap();
@@ -972,9 +955,9 @@ mod tests {
 
         // Very small but valid triangle
         let small_triangle = [
-            Point::new([0.0, 0.0]),
-            Point::new([1e-6, 0.0]),
-            Point::new([0.0, 1e-6]),
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1e-6, 0.0]),
+            Point::from_validated_coords([0.0, 1e-6]),
         ];
 
         let orientation = kernel.orientation(&small_triangle).unwrap();
@@ -995,9 +978,11 @@ mod tests {
     fn test_fast_kernel_in_sphere_insufficient_vertices() {
         // Exercises the SimplexValidationError::InsufficientVertices mapping.
         let kernel = FastKernel::<f64>::new();
-        let simplex: [Point<f64, 3>; 2] =
-            [Point::new([0.0, 0.0, 0.0]), Point::new([1.0, 0.0, 0.0])];
-        let test_point = Point::new([0.5, 0.5, 0.5]);
+        let simplex: [Point<3>; 2] = [
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+        ];
+        let test_point = Point::from_validated_coords([0.5, 0.5, 0.5]);
         let result = kernel.in_sphere(&simplex, &test_point);
         assert_eq!(
             result,
@@ -1014,12 +999,12 @@ mod tests {
         // Exercises the SimplexValidationError::DegenerateSimplex mapping.
         let kernel = FastKernel::<f64>::new();
         let simplex = [
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([1.0, 1.0, 0.0]), // Coplanar — degenerate
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([1.0, 1.0, 0.0]), // Coplanar — degenerate
         ];
-        let test_point = Point::new([0.5, 0.5, 0.5]);
+        let test_point = Point::from_validated_coords([0.5, 0.5, 0.5]);
         let result = kernel.in_sphere(&simplex, &test_point);
         assert_eq!(
             result,
@@ -1034,15 +1019,15 @@ mod tests {
     fn test_robust_kernel_positive_oriented_insphere_boundary_maps_to_zero() {
         let kernel = RobustKernel::<f64>::new();
         let simplex = [
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0]),
         ];
 
         assert_eq!(kernel.orientation(&simplex).unwrap(), 1);
         assert_eq!(
             kernel
-                .in_sphere_positive_oriented(&simplex, &Point::new([1.0, 1.0]))
+                .in_sphere_positive_oriented(&simplex, &Point::from_validated_coords([1.0, 1.0]))
                 .unwrap(),
             0
         );
@@ -1051,10 +1036,13 @@ mod tests {
     #[test]
     fn test_robust_kernel_positive_oriented_insphere_wrong_arity_errors() {
         let kernel = RobustKernel::<f64>::new();
-        let simplex: [Point<f64, 2>; 2] = [Point::new([0.0, 0.0]), Point::new([1.0, 0.0])];
+        let simplex: [Point<2>; 2] = [
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+        ];
 
         let err = kernel
-            .in_sphere_positive_oriented(&simplex, &Point::new([0.25, 0.25]))
+            .in_sphere_positive_oriented(&simplex, &Point::from_validated_coords([0.25, 0.25]))
             .unwrap_err();
 
         assert_eq!(
@@ -1270,11 +1258,17 @@ mod tests {
     #[test]
     fn test_adaptive_kernel_wrong_point_count() {
         let kernel = AdaptiveKernel::<f64>::new();
-        let points = [Point::new([0.0, 0.0]), Point::new([1.0, 0.0])];
+        let points = [
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+        ];
         assert!(kernel.orientation(&points).is_err());
 
-        let simplex = [Point::new([0.0, 0.0]), Point::new([1.0, 0.0])];
-        let test = Point::new([0.5, 0.5]);
+        let simplex = [
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+        ];
+        let test = Point::from_validated_coords([0.5, 0.5]);
         assert!(kernel.in_sphere(&simplex, &test).is_err());
     }
 
@@ -1292,8 +1286,8 @@ mod tests {
                 #[test]
                 fn [<test_adaptive_sos_identical_points_ $dim d>]() {
                     let kernel = AdaptiveKernel::<f64>::new();
-                    let points: Vec<Point<f64, $dim>> =
-                        vec![Point::new([0.42; $dim]); $dim + 1];
+                    let points: Vec<Point<$dim>> =
+                        vec![Point::from_validated_coords([0.42; $dim]); $dim + 1];
                     let result = kernel.orientation(&points).unwrap();
                     assert_eq!(
                         result, 0,

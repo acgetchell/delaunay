@@ -6,15 +6,18 @@
 //! - Simplex neighborhood traversal via [`DelaunayTriangulation::simplex_neighbors`]
 //! - Building and validating the opt-in [`AdjacencyIndex`]
 
+use delaunay::prelude::DelaunayTriangulationConstructionError;
 use delaunay::prelude::TopologyGuarantee;
+use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::query::*;
-use delaunay::prelude::{DelaunayTriangulationConstructionError, construction::vertex};
 use std::collections::HashSet;
 
 #[derive(Debug, thiserror::Error)]
 enum PublicTopologyApiTestError {
     #[error(transparent)]
     Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    CoordinateConversion(#[from] CoordinateConversionError),
     #[error(transparent)]
     AdjacencyIndex(#[from] AdjacencyIndexBuildError),
     #[error("single tetrahedron triangulation has no vertices")]
@@ -31,10 +34,10 @@ enum PublicTopologyApiTestError {
 fn edges_and_incident_edges_on_single_tetrahedron() -> Result<(), PublicTopologyApiTestError> {
     // Single tetrahedron: 4 vertices, 1 simplex, 6 unique edges.
     let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 3> =
@@ -104,12 +107,12 @@ fn adjacency_index_on_double_tetrahedron() -> Result<(), PublicTopologyApiTestEr
     // Two tetrahedra sharing a triangular facet.
     let vertices: Vec<_> = vec![
         // Shared triangle
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([2.0, 0.0, 0.0]),
-        vertex!([1.0, 2.0, 0.0]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0, 0.0])?,
         // Two apices
-        vertex!([1.0, 0.7, 1.5]),
-        vertex!([1.0, 0.7, -1.5]),
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.7, 1.5])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.7, -1.5])?,
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 3> =

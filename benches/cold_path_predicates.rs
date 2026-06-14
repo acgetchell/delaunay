@@ -45,6 +45,10 @@ use std::hint::black_box;
 pub mod bench_utils;
 use bench_utils::{abort_benchmark, bench_result};
 
+fn finite_point<const D: usize>(coords: [f64; D]) -> Point<D> {
+    Point::try_new(coords).unwrap_or_else(|_| std::process::abort())
+}
+
 fn coordinate_range(min: f64, max: f64, context: &'static str) -> CoordinateRange<f64> {
     bench_result(CoordinateRange::try_new(min, max), context)
 }
@@ -61,13 +65,13 @@ const HOT_QUERIES: usize = 10_000;
 const NEAR_BOUNDARY_QUERIES: usize = 1_000;
 
 /// Standard D-dimensional simplex: origin + unit basis vectors.
-fn standard_simplex<const D: usize>() -> Vec<Point<f64, D>> {
+fn standard_simplex<const D: usize>() -> Vec<Point<D>> {
     let mut pts = Vec::with_capacity(D + 1);
-    pts.push(Point::new([0.0; D]));
+    pts.push(finite_point([0.0; D]));
     for i in 0..D {
         let mut coords = [0.0; D];
         coords[i] = 1.0;
-        pts.push(Point::new(coords));
+        pts.push(finite_point(coords));
     }
     pts
 }
@@ -76,7 +80,7 @@ fn standard_simplex<const D: usize>() -> Vec<Point<f64, D>> {
 ///
 /// Uses the range `[-10, 10]` against a unit simplex so that the Shewchuk
 /// errbound comfortably resolves the sign in Stage 1.
-fn hot_queries<const D: usize>() -> Vec<Point<f64, D>> {
+fn hot_queries<const D: usize>() -> Vec<Point<D>> {
     generate_random_points_in_range_seeded(
         HOT_QUERIES,
         coordinate_range(-10.0, 10.0, "hot-path query bounds must be valid"),
@@ -88,7 +92,7 @@ fn hot_queries<const D: usize>() -> Vec<Point<f64, D>> {
 ///
 /// Uses a narrow range centered on the standard simplex so many queries land
 /// within the Stage-1 errbound window and spill into Stage 2.
-fn near_boundary_queries<const D: usize>() -> Vec<Point<f64, D>> {
+fn near_boundary_queries<const D: usize>() -> Vec<Point<D>> {
     // Centered near the circumsphere radius of the standard simplex (~0.5 for
     // the D = 3 unit case); the exact value is unimportant — we just want a
     // high rate of errbound-ambiguous inputs.
@@ -100,7 +104,7 @@ fn near_boundary_queries<const D: usize>() -> Vec<Point<f64, D>> {
 }
 
 /// Run `insphere` across `queries` against `simplex`, black-boxing each result.
-fn run_insphere<const D: usize>(simplex: &[Point<f64, D>], queries: &[Point<f64, D>]) {
+fn run_insphere<const D: usize>(simplex: &[Point<D>], queries: &[Point<D>]) {
     for q in queries {
         let result = match insphere(black_box(simplex), black_box(*q)) {
             Ok(value) => value,
@@ -111,7 +115,7 @@ fn run_insphere<const D: usize>(simplex: &[Point<f64, D>], queries: &[Point<f64,
 }
 
 /// Run `insphere_lifted` across `queries` against `simplex`, black-boxing each result.
-fn run_insphere_lifted<const D: usize>(simplex: &[Point<f64, D>], queries: &[Point<f64, D>]) {
+fn run_insphere_lifted<const D: usize>(simplex: &[Point<D>], queries: &[Point<D>]) {
     for q in queries {
         let result = match insphere_lifted(black_box(simplex), black_box(*q)) {
             Ok(value) => value,

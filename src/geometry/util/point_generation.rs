@@ -11,10 +11,7 @@ use crate::geometry::coordinate_range::{
     CoordinateRange, CoordinateRangeError, InvalidCoordinateValue,
 };
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{
-    Coordinate, CoordinateConversionError, CoordinateScalar,
-};
-use rand::distr::uniform::SampleUniform;
+use crate::geometry::traits::coordinate::CoordinateConversionError;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 use std::{any::type_name, env, num::NonZeroUsize};
@@ -270,48 +267,43 @@ fn max_grid_bytes_safety_cap() -> usize {
 ///
 /// # fn main() -> Result<(), RandomPointGenerationError> {
 /// // 100 points -> side length 100, i.e. [-50, 50].
-/// let bounds = scaled_bounds_by_point_count::<f64>(100)?;
+/// let bounds = scaled_bounds_by_point_count(100)?;
 /// assert_eq!(bounds.bounds(), (-50.0, 50.0));
 /// # Ok(())
 /// # }
 /// ```
-pub fn scaled_bounds_by_point_count<T: CoordinateScalar>(
+pub fn scaled_bounds_by_point_count(
     n_points: usize,
-) -> Result<CoordinateRange<T>, RandomPointGenerationError<T>> {
+) -> Result<CoordinateRange<f64>, RandomPointGenerationError> {
     let side_len = n_points.max(1);
-    let side = safe_usize_to_scalar::<T>(side_len).map_err(|source| {
+    let side = safe_usize_to_scalar(side_len).map_err(|source| {
         RandomPointGenerationError::CoordinateConversionFailed {
             value: side_len,
-            target_type: type_name::<T>(),
+            target_type: type_name::<f64>(),
             source,
         }
     })?;
 
-    let half = side / (T::one() + T::one());
+    let half = side / 2.0;
     Ok(CoordinateRange::from_validated_bounds(-half, half))
 }
 
 /// Samples one point from an already-validated coordinate range.
-fn sample_point_in_range<T, R, const D: usize>(
-    range: CoordinateRange<T>,
-    rng: &mut R,
-) -> Point<T, D>
+fn sample_point_in_range<R, const D: usize>(range: CoordinateRange<f64>, rng: &mut R) -> Point<D>
 where
-    T: CoordinateScalar + SampleUniform,
     R: rand::Rng + ?Sized,
 {
-    let coords = [T::zero(); D].map(|_| rng.random_range(range.min()..range.max()));
-    Point::new(coords)
+    let coords = [0.0; D].map(|_| rng.random_range(range.min()..range.max()));
+    Point::from_validated_coords(coords)
 }
 
 /// Generates points from an already-validated coordinate range.
-fn generate_random_points_in_range_with_rng<T, R, const D: usize>(
+fn generate_random_points_in_range_with_rng<R, const D: usize>(
     n_points: usize,
-    range: CoordinateRange<T>,
+    range: CoordinateRange<f64>,
     rng: &mut R,
-) -> Vec<Point<T, D>>
+) -> Vec<Point<D>>
 where
-    T: CoordinateScalar + SampleUniform,
     R: rand::Rng + ?Sized,
 {
     let mut points = Vec::with_capacity(n_points);
@@ -328,11 +320,11 @@ where
 /// Non-positive finite distances intentionally disable the spacing constraint,
 /// while positive distances carry a [`PositiveScalar`] proof into the sampler.
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum PoissonSpacing<T> {
+enum PoissonSpacing {
     /// No minimum-distance constraint should be enforced.
     Disabled,
     /// A finite, positive minimum distance.
-    Minimum(PositiveScalar<T>),
+    Minimum(PositiveScalar),
 }
 
 /// Scalar proven to be finite and strictly positive.
@@ -341,21 +333,21 @@ enum PoissonSpacing<T> {
 /// ball-radius error contracts so sampling code can consume positive values
 /// without repeating raw scalar validation.
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct PositiveScalar<T>(T);
+struct PositiveScalar(f64);
 
-impl<T: CoordinateScalar> PositiveScalar<T> {
+impl PositiveScalar {
     /// Parses a raw scalar into a finite positive scalar proof.
     ///
     /// The returned [`InvalidPositiveScalar`] is embedded directly in public
     /// [`RandomPointGenerationError`] variants by the caller.
-    fn try_new(value: T) -> Result<Self, InvalidPositiveScalar<T>> {
+    fn try_new(value: f64) -> Result<Self, InvalidPositiveScalar> {
         if !value.is_finite() {
             return Err(InvalidPositiveScalar::NonFinite {
                 value: InvalidCoordinateValue::from_debug(&value),
             });
         }
 
-        if value <= T::zero() {
+        if value <= 0.0 {
             Err(InvalidPositiveScalar::NonPositive { value })
         } else {
             Ok(Self(value))
@@ -363,7 +355,7 @@ impl<T: CoordinateScalar> PositiveScalar<T> {
     }
 
     /// Returns the proven finite positive scalar.
-    const fn get(self) -> T {
+    const fn get(self) -> f64 {
         self.0
     }
 
@@ -371,22 +363,22 @@ impl<T: CoordinateScalar> PositiveScalar<T> {
     ///
     /// The positive-radius proof guarantees `-radius < radius`, making the
     /// internal [`CoordinateRange`] construction infallible.
-    fn symmetric_range(self) -> CoordinateRange<T> {
+    fn symmetric_range(self) -> CoordinateRange<f64> {
         let radius = self.get();
         CoordinateRange::from_validated_bounds(-radius, radius)
     }
 }
 
-impl<T: CoordinateScalar> PoissonSpacing<T> {
+impl PoissonSpacing {
     /// Parses raw Poisson disk spacing before the sampler starts.
-    fn try_new(min_distance: T) -> Result<Self, RandomPointGenerationError<T>> {
+    fn try_new(min_distance: f64) -> Result<Self, RandomPointGenerationError> {
         if !min_distance.is_finite() {
             return Err(RandomPointGenerationError::InvalidMinimumDistance {
                 distance: InvalidCoordinateValue::from_debug(&min_distance),
             });
         }
 
-        if min_distance <= T::zero() {
+        if min_distance <= 0.0 {
             Ok(Self::Disabled)
         } else {
             Ok(Self::Minimum(PositiveScalar(min_distance)))
@@ -448,27 +440,27 @@ const fn ball_max_attempts(n_points: usize, dimension: usize) -> usize {
 ///
 /// # fn main() -> Result<(), RandomPointGenerationError> {
 /// // Generate 100 random 2D points with coordinates in [-10.0, 10.0]
-/// let points_2d = try_generate_random_points::<f64, 2>(100, (-10.0, 10.0))?;
+/// let points_2d = try_generate_random_points::<2>(100, (-10.0, 10.0))?;
 /// assert_eq!(points_2d.len(), 100);
 ///
 /// // Generate 3D points with coordinates in [0.0, 1.0] (unit cube)
-/// let points_3d = try_generate_random_points::<f64, 3>(50, (0.0, 1.0))?;
+/// let points_3d = try_generate_random_points::<3>(50, (0.0, 1.0))?;
 /// assert_eq!(points_3d.len(), 50);
 ///
 /// // Generate 4D points centered around origin
-/// let points_4d = try_generate_random_points::<f64, 4>(25, (-1.0, 1.0))?;
+/// let points_4d = try_generate_random_points::<4>(25, (-1.0, 1.0))?;
 /// assert_eq!(points_4d.len(), 25);
 ///
 /// // Error handling
-/// let result = try_generate_random_points::<f64, 2>(100, (10.0, -10.0));
+/// let result = try_generate_random_points::<2>(100, (10.0, -10.0));
 /// assert!(result.is_err()); // Invalid range
 /// # Ok(())
 /// # }
 /// ```
-pub fn try_generate_random_points<T: CoordinateScalar + SampleUniform, const D: usize>(
+pub fn try_generate_random_points<const D: usize>(
     n_points: usize,
-    range: (T, T),
-) -> Result<Vec<Point<T, D>>, RandomPointGenerationError<T>> {
+    range: (f64, f64),
+) -> Result<Vec<Point<D>>, RandomPointGenerationError> {
     #[cfg(debug_assertions)]
     if env::var_os("DELAUNAY_DEBUG_UNUSED_IMPORTS").is_some() {
         tracing::debug!(
@@ -508,15 +500,16 @@ pub fn try_generate_random_points<T: CoordinateScalar + SampleUniform, const D: 
 ///
 /// # fn main() -> Result<(), CoordinateRangeError> {
 /// let range = CoordinateRange::try_new(-1.0_f64, 1.0)?;
-/// let points = generate_random_points_in_range::<f64, 2>(8, range);
+/// let points = generate_random_points_in_range::<2>(8, range);
 /// assert_eq!(points.len(), 8);
 /// # Ok(())
 /// # }
 /// ```
-pub fn generate_random_points_in_range<T: CoordinateScalar + SampleUniform, const D: usize>(
+#[must_use]
+pub fn generate_random_points_in_range<const D: usize>(
     n_points: usize,
-    range: CoordinateRange<T>,
-) -> Vec<Point<T, D>> {
+    range: CoordinateRange<f64>,
+) -> Vec<Point<D>> {
     let mut rng = rand::rng();
     generate_random_points_in_range_with_rng(n_points, range, &mut rng)
 }
@@ -551,27 +544,27 @@ pub fn generate_random_points_in_range<T: CoordinateScalar + SampleUniform, cons
 ///
 /// # fn main() -> Result<(), RandomPointGenerationError> {
 /// // Generate reproducible random points
-/// let points1 = try_generate_random_points_seeded::<f64, 3>(100, (-5.0, 5.0), 42)?;
-/// let points2 = try_generate_random_points_seeded::<f64, 3>(100, (-5.0, 5.0), 42)?;
+/// let points1 = try_generate_random_points_seeded::<3>(100, (-5.0, 5.0), 42)?;
+/// let points2 = try_generate_random_points_seeded::<3>(100, (-5.0, 5.0), 42)?;
 /// assert_eq!(points1, points2); // Same seed produces identical results
 ///
 /// // Different seeds produce different results
-/// let points3 = try_generate_random_points_seeded::<f64, 3>(100, (-5.0, 5.0), 123)?;
+/// let points3 = try_generate_random_points_seeded::<3>(100, (-5.0, 5.0), 123)?;
 /// assert_ne!(points1, points3);
 ///
 /// // Common ranges - unit cube [0,1]
-/// let unit_points = try_generate_random_points_seeded::<f64, 3>(50, (0.0, 1.0), 42)?;
+/// let unit_points = try_generate_random_points_seeded::<3>(50, (0.0, 1.0), 42)?;
 ///
 /// // Centered around origin [-1,1]
-/// let centered_points = try_generate_random_points_seeded::<f64, 3>(50, (-1.0, 1.0), 42)?;
+/// let centered_points = try_generate_random_points_seeded::<3>(50, (-1.0, 1.0), 42)?;
 /// # Ok(())
 /// # }
 /// ```
-pub fn try_generate_random_points_seeded<T: CoordinateScalar + SampleUniform, const D: usize>(
+pub fn try_generate_random_points_seeded<const D: usize>(
     n_points: usize,
-    range: (T, T),
+    range: (f64, f64),
     seed: u64,
-) -> Result<Vec<Point<T, D>>, RandomPointGenerationError<T>> {
+) -> Result<Vec<Point<D>>, RandomPointGenerationError> {
     #[cfg(debug_assertions)]
     if env::var_os("DELAUNAY_DEBUG_UNUSED_IMPORTS").is_some() {
         tracing::debug!(
@@ -611,20 +604,18 @@ pub fn try_generate_random_points_seeded<T: CoordinateScalar + SampleUniform, co
 ///
 /// # fn main() -> Result<(), CoordinateRangeError> {
 /// let range = CoordinateRange::try_new(0.0_f64, 1.0)?;
-/// let points_a = generate_random_points_in_range_seeded::<f64, 3>(4, range, 42);
-/// let points_b = generate_random_points_in_range_seeded::<f64, 3>(4, range, 42);
+/// let points_a = generate_random_points_in_range_seeded::<3>(4, range, 42);
+/// let points_b = generate_random_points_in_range_seeded::<3>(4, range, 42);
 /// assert_eq!(points_a, points_b);
 /// # Ok(())
 /// # }
 /// ```
-pub fn generate_random_points_in_range_seeded<
-    T: CoordinateScalar + SampleUniform,
-    const D: usize,
->(
+#[must_use]
+pub fn generate_random_points_in_range_seeded<const D: usize>(
     n_points: usize,
-    range: CoordinateRange<T>,
+    range: CoordinateRange<f64>,
     seed: u64,
-) -> Vec<Point<T, D>> {
+) -> Vec<Point<D>> {
     let mut rng = StdRng::seed_from_u64(seed);
     generate_random_points_in_range_with_rng(n_points, range, &mut rng)
 }
@@ -658,23 +649,23 @@ pub fn generate_random_points_in_range_seeded<
 ///
 /// # fn main() -> Result<(), RandomPointGenerationError> {
 /// // Generate 100 random 2D points in [0,1) × [0,2)
-/// let points = generate_random_points_periodic::<f64, 2>(100, [1.0, 2.0], 42)?;
+/// let points = generate_random_points_periodic::<2>(100, [1.0, 2.0], 42)?;
 /// assert_eq!(points.len(), 100);
 ///
 /// // Reproducible generation
-/// let points1 = generate_random_points_periodic::<f64, 3>(50, [1.0, 1.0, 1.0], 123)?;
-/// let points2 = generate_random_points_periodic::<f64, 3>(50, [1.0, 1.0, 1.0], 123)?;
+/// let points1 = generate_random_points_periodic::<3>(50, [1.0, 1.0, 1.0], 123)?;
+/// let points2 = generate_random_points_periodic::<3>(50, [1.0, 1.0, 1.0], 123)?;
 /// assert_eq!(points1, points2);
 /// # Ok(())
 /// # }
 /// ```
-pub fn generate_random_points_periodic<T: CoordinateScalar + SampleUniform, const D: usize>(
+pub fn generate_random_points_periodic<const D: usize>(
     n_points: usize,
-    domain: [T; D],
+    domain: [f64; D],
     seed: u64,
-) -> Result<Vec<Point<T, D>>, RandomPointGenerationError<T>> {
+) -> Result<Vec<Point<D>>, RandomPointGenerationError> {
     // Parse domain periods before sampling so later code consumes only positive periods.
-    let mut periods = [PositiveScalar(T::one()); D];
+    let mut periods = [PositiveScalar(1.0); D];
     for (axis, period) in domain.into_iter().enumerate() {
         periods[axis] = PositiveScalar::try_new(period)
             .map_err(|reason| RandomPointGenerationError::InvalidPeriodicDomain { axis, reason })?;
@@ -684,8 +675,8 @@ pub fn generate_random_points_periodic<T: CoordinateScalar + SampleUniform, cons
     let mut points = Vec::with_capacity(n_points);
 
     for _ in 0..n_points {
-        let coords = core::array::from_fn(|axis| rng.random_range(T::zero()..periods[axis].get()));
-        points.push(Point::new(coords));
+        let coords = core::array::from_fn(|axis| rng.random_range(0.0..periods[axis].get()));
+        points.push(Point::from_validated_coords(coords));
     }
 
     Ok(points)
@@ -695,13 +686,12 @@ pub fn generate_random_points_periodic<T: CoordinateScalar + SampleUniform, cons
 ///
 /// Both seeded and unseeded public ball generators delegate here so radius
 /// parsing and rejection-sampling behavior stay identical across entry points.
-fn generate_random_points_in_ball_with_rng<T, R, const D: usize>(
+fn generate_random_points_in_ball_with_rng<R, const D: usize>(
     n_points: usize,
-    radius: T,
+    radius: f64,
     rng: &mut R,
-) -> Result<Vec<Point<T, D>>, RandomPointGenerationError<T>>
+) -> Result<Vec<Point<D>>, RandomPointGenerationError>
 where
-    T: CoordinateScalar + SampleUniform,
     R: rand::Rng + ?Sized,
 {
     generate_random_points_in_ball_with_rng_and_budget(
@@ -713,14 +703,13 @@ where
 }
 
 /// Generates ball samples through an injected RNG with an explicit attempt budget.
-fn generate_random_points_in_ball_with_rng_and_budget<T, R, const D: usize>(
+fn generate_random_points_in_ball_with_rng_and_budget<R, const D: usize>(
     n_points: usize,
-    radius: T,
+    radius: f64,
     rng: &mut R,
     max_attempts: usize,
-) -> Result<Vec<Point<T, D>>, RandomPointGenerationError<T>>
+) -> Result<Vec<Point<D>>, RandomPointGenerationError>
 where
-    T: CoordinateScalar + SampleUniform,
     R: rand::Rng + ?Sized,
 {
     let radius = PositiveScalar::try_new(radius)
@@ -734,7 +723,7 @@ where
     let bounds = radius.symmetric_range();
     let radius = radius.get();
     let radius_sq = radius * radius;
-    if !radius_sq.is_finite_generic() {
+    if !radius_sq.is_finite() {
         return Err(RandomPointGenerationError::InvalidBallRadiusSquared {
             value: InvalidCoordinateValue::from_debug(&radius_sq),
         });
@@ -745,10 +734,10 @@ where
 
     while points.len() < n_points && attempts < max_attempts {
         attempts += 1;
-        let coords = [T::zero(); D].map(|_| rng.random_range(bounds.min()..bounds.max()));
-        let norm_sq = coords.iter().fold(T::zero(), |acc, &c| acc + c * c);
+        let coords = [0.0; D].map(|_| rng.random_range(bounds.min()..bounds.max()));
+        let norm_sq = coords.iter().fold(0.0, |acc, &c| c.mul_add(c, acc));
         if norm_sq <= radius_sq {
-            points.push(Point::new(coords));
+            points.push(Point::from_validated_coords(coords));
         }
     }
 
@@ -799,15 +788,15 @@ where
 ///
 /// # fn main() -> Result<(), RandomPointGenerationError> {
 /// // Generate 100 random 4D points in a radius-10 ball.
-/// let points = generate_random_points_in_ball::<f64, 4>(100, 10.0)?;
+/// let points = generate_random_points_in_ball::<4>(100, 10.0)?;
 /// assert_eq!(points.len(), 100);
 /// # Ok(())
 /// # }
 /// ```
-pub fn generate_random_points_in_ball<T: CoordinateScalar + SampleUniform, const D: usize>(
+pub fn generate_random_points_in_ball<const D: usize>(
     n_points: usize,
-    radius: T,
-) -> Result<Vec<Point<T, D>>, RandomPointGenerationError<T>> {
+    radius: f64,
+) -> Result<Vec<Point<D>>, RandomPointGenerationError> {
     let mut rng = rand::rng();
     generate_random_points_in_ball_with_rng(n_points, radius, &mut rng)
 }
@@ -839,20 +828,17 @@ pub fn generate_random_points_in_ball<T: CoordinateScalar + SampleUniform, const
 /// };
 ///
 /// # fn main() -> Result<(), RandomPointGenerationError> {
-/// let points1 = generate_random_points_in_ball_seeded::<f64, 4>(10, 1.0, 42)?;
-/// let points2 = generate_random_points_in_ball_seeded::<f64, 4>(10, 1.0, 42)?;
+/// let points1 = generate_random_points_in_ball_seeded::<4>(10, 1.0, 42)?;
+/// let points2 = generate_random_points_in_ball_seeded::<4>(10, 1.0, 42)?;
 /// assert_eq!(points1, points2);
 /// # Ok(())
 /// # }
 /// ```
-pub fn generate_random_points_in_ball_seeded<
-    T: CoordinateScalar + SampleUniform,
-    const D: usize,
->(
+pub fn generate_random_points_in_ball_seeded<const D: usize>(
     n_points: usize,
-    radius: T,
+    radius: f64,
     seed: u64,
-) -> Result<Vec<Point<T, D>>, RandomPointGenerationError<T>> {
+) -> Result<Vec<Point<D>>, RandomPointGenerationError> {
     let mut rng = StdRng::seed_from_u64(seed);
     generate_random_points_in_ball_with_rng(n_points, radius, &mut rng)
 }
@@ -918,24 +904,24 @@ pub fn generate_random_points_in_ball_seeded<
 /// };
 ///
 /// // Generate 2D grid: 4x4 = 16 points with unit spacing
-/// let grid_2d = generate_grid_points::<f64, 2>(four, 1.0, [0.0, 0.0])?;
+/// let grid_2d = generate_grid_points::<2>(four, 1.0, [0.0, 0.0])?;
 /// assert_eq!(grid_2d.len(), 16);
 ///
 /// // Generate 3D grid: 3x3x3 = 27 points with spacing 2.0
-/// let grid_3d = generate_grid_points::<f64, 3>(three, 2.0, [0.0, 0.0, 0.0])?;
+/// let grid_3d = generate_grid_points::<3>(three, 2.0, [0.0, 0.0, 0.0])?;
 /// assert_eq!(grid_3d.len(), 27);
 ///
 /// // Generate 4D grid centered at origin
-/// let grid_4d = generate_grid_points::<f64, 4>(two, 1.0, [-0.5, -0.5, -0.5, -0.5])?;
+/// let grid_4d = generate_grid_points::<4>(two, 1.0, [-0.5, -0.5, -0.5, -0.5])?;
 /// assert_eq!(grid_4d.len(), 16); // 2^4 = 16 points
 /// # Ok(())
 /// # }
 /// ```
-pub fn generate_grid_points<T: CoordinateScalar, const D: usize>(
+pub fn generate_grid_points<const D: usize>(
     points_per_dim: NonZeroUsize,
-    spacing: T,
-    offset: [T; D],
-) -> Result<Vec<Point<T, D>>, RandomPointGenerationError<T>> {
+    spacing: f64,
+    offset: [f64; D],
+) -> Result<Vec<Point<D>>, RandomPointGenerationError> {
     let points_per_dim = points_per_dim.get();
 
     let spacing = PositiveScalar::try_new(spacing)
@@ -943,7 +929,7 @@ pub fn generate_grid_points<T: CoordinateScalar, const D: usize>(
         .get();
 
     for (axis, coordinate) in offset.iter().enumerate() {
-        if !coordinate.is_finite_generic() {
+        if !coordinate.is_finite() {
             return Err(RandomPointGenerationError::InvalidGridOffset {
                 axis,
                 value: InvalidCoordinateValue::from_debug(coordinate),
@@ -963,7 +949,7 @@ pub fn generate_grid_points<T: CoordinateScalar, const D: usize>(
     }
 
     // Dimension/type-aware memory cap: total_points * D * size_of::<T>()
-    let per_point_bytes = D.saturating_mul(core::mem::size_of::<T>());
+    let per_point_bytes = D.saturating_mul(core::mem::size_of::<f64>());
     let total_bytes = total_points.saturating_mul(per_point_bytes);
     let cap = max_grid_bytes_safety_cap();
     if total_bytes > cap {
@@ -978,18 +964,18 @@ pub fn generate_grid_points<T: CoordinateScalar, const D: usize>(
     // This avoids O(N) memory allocation for intermediate index vectors
     let mut idx = [0usize; D];
     for _ in 0..total_points {
-        let mut coords = [T::zero(); D];
+        let mut coords = [0.0; D];
         for d in 0..D {
-            let index_as_scalar = grid_index_as_scalar::<T, D>(&idx, d, points_per_dim)?;
-            coords[d] = offset[d] + index_as_scalar * spacing;
-            if !coords[d].is_finite_generic() {
+            let index_as_scalar = grid_index_as_scalar::<D>(&idx, d, points_per_dim)?;
+            coords[d] = index_as_scalar.mul_add(spacing, offset[d]);
+            if !coords[d].is_finite() {
                 return Err(RandomPointGenerationError::InvalidGeneratedGridCoordinate {
                     axis: d,
                     value: InvalidCoordinateValue::from_debug(&coords[d]),
                 });
             }
         }
-        points.push(Point::new(coords));
+        points.push(Point::from_validated_coords(coords));
 
         // Increment mixed-radix counter
         for d in (0..D).rev() {
@@ -1008,15 +994,15 @@ pub fn generate_grid_points<T: CoordinateScalar, const D: usize>(
 ///
 /// This keeps [`generate_grid_points`] from silently rounding large grid indices
 /// when a scalar type cannot represent every `usize` exactly.
-fn grid_index_as_scalar<T: CoordinateScalar, const D: usize>(
+fn grid_index_as_scalar<const D: usize>(
     idx: &[usize; D],
     coordinate_index: usize,
     _points_per_dim: usize,
-) -> Result<T, RandomPointGenerationError<T>> {
-    safe_usize_to_scalar::<T>(idx[coordinate_index]).map_err(|source| {
+) -> Result<f64, RandomPointGenerationError> {
+    safe_usize_to_scalar(idx[coordinate_index]).map_err(|source| {
         RandomPointGenerationError::CoordinateConversionFailed {
             value: idx[coordinate_index],
-            target_type: type_name::<T>(),
+            target_type: type_name::<f64>(),
             source,
         }
     })
@@ -1070,20 +1056,20 @@ fn grid_index_as_scalar<T: CoordinateScalar, const D: usize>(
 ///
 /// # fn main() -> Result<(), RandomPointGenerationError> {
 /// // Generate ~100 2D points with minimum distance 0.1 in unit square
-/// let poisson_2d = try_generate_poisson_points::<f64, 2>(100, (0.0, 1.0), 0.1, 42)?;
+/// let poisson_2d = try_generate_poisson_points::<2>(100, (0.0, 1.0), 0.1, 42)?;
 /// // Actual count may be less than 100 due to spacing constraints
 ///
 /// // Generate 3D points in a cube
-/// let poisson_3d = try_generate_poisson_points::<f64, 3>(50, (-1.0, 1.0), 0.2, 123)?;
+/// let poisson_3d = try_generate_poisson_points::<3>(50, (-1.0, 1.0), 0.2, 123)?;
 /// # Ok(())
 /// # }
 /// ```
-pub fn try_generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usize>(
+pub fn try_generate_poisson_points<const D: usize>(
     n_points: usize,
-    bounds: (T, T),
-    min_distance: T,
+    bounds: (f64, f64),
+    min_distance: f64,
     seed: u64,
-) -> Result<Vec<Point<T, D>>, RandomPointGenerationError<T>> {
+) -> Result<Vec<Point<D>>, RandomPointGenerationError> {
     let bounds = CoordinateRange::try_from(bounds)?;
 
     generate_poisson_points_in_range(n_points, bounds, min_distance, seed)
@@ -1121,17 +1107,17 @@ pub fn try_generate_poisson_points<T: CoordinateScalar + SampleUniform, const D:
 ///
 /// # fn main() -> Result<(), RandomPointGenerationError> {
 /// let range = CoordinateRange::try_new(0.0_f64, 1.0)?;
-/// let points = generate_poisson_points_in_range::<f64, 2>(16, range, 0.1, 42)?;
+/// let points = generate_poisson_points_in_range::<2>(16, range, 0.1, 42)?;
 /// assert!(!points.is_empty());
 /// # Ok(())
 /// # }
 /// ```
-pub fn generate_poisson_points_in_range<T: CoordinateScalar + SampleUniform, const D: usize>(
+pub fn generate_poisson_points_in_range<const D: usize>(
     n_points: usize,
-    bounds: CoordinateRange<T>,
-    min_distance: T,
+    bounds: CoordinateRange<f64>,
+    min_distance: f64,
     seed: u64,
-) -> Result<Vec<Point<T, D>>, RandomPointGenerationError<T>> {
+) -> Result<Vec<Point<D>>, RandomPointGenerationError> {
     let spacing = PoissonSpacing::try_new(min_distance)?;
 
     if n_points == 0 {
@@ -1150,7 +1136,7 @@ pub fn generate_poisson_points_in_range<T: CoordinateScalar + SampleUniform, con
     };
     let min_distance = min_distance.get();
 
-    let mut points: Vec<Point<T, D>> = Vec::new();
+    let mut points: Vec<Point<D>> = Vec::new();
 
     // Simple Poisson disk sampling: rejection method
     // Scale max attempts with dimension since higher dimensions make spacing harder
@@ -1167,12 +1153,12 @@ pub fn generate_poisson_points_in_range<T: CoordinateScalar + SampleUniform, con
 
         // Check distance to all existing points
         let mut valid = true;
-        let candidate_coords: [T; D] = *candidate.coords();
+        let candidate_coords: [f64; D] = *candidate.coords();
         for existing_point in &points {
-            let existing_coords: [T; D] = *existing_point.coords();
+            let existing_coords: [f64; D] = *existing_point.coords();
 
             // Calculate distance using hypot for numerical stability
-            let mut diff_coords = [T::zero(); D];
+            let mut diff_coords = [0.0; D];
             for i in 0..D {
                 diff_coords[i] = candidate_coords[i] - existing_coords[i];
             }
@@ -1218,7 +1204,7 @@ mod tests {
     }
 
     fn assert_invalid_coordinate_range<const D: usize>(
-        result: &Result<Vec<Point<f64, D>>, RandomPointGenerationError<f64>>,
+        result: &Result<Vec<Point<D>>, RandomPointGenerationError<f64>>,
         expected_ordering: CoordinateRangeOrdering,
         expected_min: f64,
         expected_max: f64,
@@ -1329,20 +1315,20 @@ mod tests {
     #[test]
     fn test_generate_random_points_rejects_nonfinite_tuple_bounds() {
         assert_matches!(
-            try_generate_random_points::<f64, 2>(4, (f64::NAN, 1.0)),
+            try_generate_random_points::<2>(4, (f64::NAN, 1.0)),
             Err(RandomPointGenerationError::InvalidCoordinateRange {
                 source: CoordinateRangeError::NonFiniteBound { bound, value }
             }) if bound == CoordinateRangeBound::Minimum && value == InvalidCoordinateValue::Nan
         );
         assert_matches!(
-            try_generate_random_points_seeded::<f64, 2>(4, (0.0, f64::INFINITY), 42),
+            try_generate_random_points_seeded::<2>(4, (0.0, f64::INFINITY), 42),
             Err(RandomPointGenerationError::InvalidCoordinateRange {
                 source: CoordinateRangeError::NonFiniteBound { bound, value }
             }) if bound == CoordinateRangeBound::Maximum
                 && value == InvalidCoordinateValue::PositiveInfinity
         );
         assert_matches!(
-            try_generate_poisson_points::<f64, 2>(4, (f64::NEG_INFINITY, 1.0), 0.1, 42),
+            try_generate_poisson_points::<2>(4, (f64::NEG_INFINITY, 1.0), 0.1, 42),
             Err(RandomPointGenerationError::InvalidCoordinateRange {
                 source: CoordinateRangeError::NonFiniteBound { bound, value }
             }) if bound == CoordinateRangeBound::Minimum
@@ -1354,7 +1340,7 @@ mod tests {
     fn test_range_based_generators_use_validated_bounds() {
         let range = CoordinateRange::try_new(-1.0_f64, 1.0).unwrap();
 
-        let points = generate_random_points_in_range::<f64, 3>(8, range);
+        let points = generate_random_points_in_range::<3>(8, range);
         assert_eq!(points.len(), 8);
         for point in points {
             for &coord in point.coords() {
@@ -1362,8 +1348,8 @@ mod tests {
             }
         }
 
-        let seeded_a = generate_random_points_in_range_seeded::<f64, 3>(8, range, 42);
-        let seeded_b = generate_random_points_in_range_seeded::<f64, 3>(8, range, 42);
+        let seeded_a = generate_random_points_in_range_seeded::<3>(8, range, 42);
+        let seeded_b = generate_random_points_in_range_seeded::<3>(8, range, 42);
         assert_eq!(seeded_a, seeded_b);
         for point in seeded_a {
             for &coord in point.coords() {
@@ -1371,24 +1357,23 @@ mod tests {
             }
         }
 
-        let empty = generate_random_points_in_range::<f64, 3>(0, range);
+        let empty = generate_random_points_in_range::<3>(0, range);
         assert!(empty.is_empty());
 
-        let seeded_empty = generate_random_points_in_range_seeded::<f64, 3>(0, range, 42);
+        let seeded_empty = generate_random_points_in_range_seeded::<3>(0, range, 42);
         assert!(seeded_empty.is_empty());
 
-        let poisson = generate_poisson_points_in_range::<f64, 2>(8, range, 0.1, 42).unwrap();
+        let poisson = generate_poisson_points_in_range::<2>(8, range, 0.1, 42).unwrap();
         assert!(!poisson.is_empty());
 
         let unconstrained_poisson =
-            generate_poisson_points_in_range::<f64, 2>(8, range, 0.0, 42).unwrap();
+            generate_poisson_points_in_range::<2>(8, range, 0.0, 42).unwrap();
         assert_eq!(unconstrained_poisson.len(), 8);
 
-        let empty_poisson = generate_poisson_points_in_range::<f64, 2>(0, range, 0.1, 42).unwrap();
+        let empty_poisson = generate_poisson_points_in_range::<2>(0, range, 0.1, 42).unwrap();
         assert!(empty_poisson.is_empty());
 
-        let invalid_empty_poisson =
-            generate_poisson_points_in_range::<f64, 2>(0, range, f64::NAN, 42);
+        let invalid_empty_poisson = generate_poisson_points_in_range::<2>(0, range, f64::NAN, 42);
         assert_matches!(
             invalid_empty_poisson,
             Err(RandomPointGenerationError::InvalidMinimumDistance { distance })
@@ -1398,11 +1383,11 @@ mod tests {
 
     #[test]
     fn test_scaled_bounds_by_point_count_returns_validated_range() {
-        let hundred = scaled_bounds_by_point_count::<f64>(100).unwrap();
+        let hundred = scaled_bounds_by_point_count(100).unwrap();
         assert_relative_eq!(hundred.min(), -50.0, epsilon = f64::EPSILON);
         assert_relative_eq!(hundred.max(), 50.0, epsilon = f64::EPSILON);
 
-        let empty = scaled_bounds_by_point_count::<f64>(0).unwrap();
+        let empty = scaled_bounds_by_point_count(0).unwrap();
         assert_relative_eq!(empty.min(), -0.5, epsilon = f64::EPSILON);
         assert_relative_eq!(empty.max(), 0.5, epsilon = f64::EPSILON);
     }
@@ -1485,7 +1470,7 @@ mod tests {
     #[test]
     fn test_generate_random_points_2d() {
         // Test 2D random point generation
-        let points = try_generate_random_points::<f64, 2>(100, (-10.0, 10.0)).unwrap();
+        let points = try_generate_random_points::<2>(100, (-10.0, 10.0)).unwrap();
 
         assert_eq!(points.len(), 100);
 
@@ -1500,7 +1485,7 @@ mod tests {
     #[test]
     fn test_generate_random_points_3d() {
         // Test 3D random point generation
-        let points = try_generate_random_points::<f64, 3>(75, (0.0, 5.0)).unwrap();
+        let points = try_generate_random_points::<3>(75, (0.0, 5.0)).unwrap();
 
         assert_eq!(points.len(), 75);
 
@@ -1515,7 +1500,7 @@ mod tests {
     #[test]
     fn test_generate_random_points_4d() {
         // Test 4D random point generation
-        let points = try_generate_random_points::<f64, 4>(50, (-2.0, 2.0)).unwrap();
+        let points = try_generate_random_points::<4>(50, (-2.0, 2.0)).unwrap();
 
         assert_eq!(points.len(), 50);
 
@@ -1530,7 +1515,7 @@ mod tests {
     #[test]
     fn test_generate_random_points_5d() {
         // Test 5D random point generation
-        let points = try_generate_random_points::<f64, 5>(25, (-1.0, 1.0)).unwrap();
+        let points = try_generate_random_points::<5>(25, (-1.0, 1.0)).unwrap();
 
         assert_eq!(points.len(), 25);
 
@@ -1547,23 +1532,23 @@ mod tests {
         // Test invalid range (non-increasing bounds) across all dimensions
 
         // 2D
-        let result = try_generate_random_points::<f64, 2>(100, (10.0, -10.0));
+        let result = try_generate_random_points::<2>(100, (10.0, -10.0));
         assert_invalid_coordinate_range(&result, CoordinateRangeOrdering::Decreasing, 10.0, -10.0);
 
         // 3D
-        let result = try_generate_random_points::<f64, 3>(50, (5.0, 5.0));
+        let result = try_generate_random_points::<3>(50, (5.0, 5.0));
         assert_invalid_coordinate_range(&result, CoordinateRangeOrdering::Equal, 5.0, 5.0);
 
         // 4D
-        let result = try_generate_random_points::<f64, 4>(25, (1.0, 0.5));
+        let result = try_generate_random_points::<4>(25, (1.0, 0.5));
         assert_invalid_coordinate_range(&result, CoordinateRangeOrdering::Decreasing, 1.0, 0.5);
 
         // 5D
-        let result = try_generate_random_points::<f64, 5>(10, (2.0, 2.0));
+        let result = try_generate_random_points::<5>(10, (2.0, 2.0));
         assert_invalid_coordinate_range(&result, CoordinateRangeOrdering::Equal, 2.0, 2.0);
 
         // Test valid edge case - very small range
-        let points = try_generate_random_points::<f64, 2>(10, (0.0, 0.001)).unwrap();
+        let points = try_generate_random_points::<2>(10, (0.0, 0.001)).unwrap();
         assert_eq!(points.len(), 10);
         for point in points {
             for &coord in point.coords() {
@@ -1575,16 +1560,16 @@ mod tests {
     #[test]
     fn test_generate_random_points_zero_points() {
         // Test generating zero points across all dimensions
-        let points_2d = try_generate_random_points::<f64, 2>(0, (-1.0, 1.0)).unwrap();
+        let points_2d = try_generate_random_points::<2>(0, (-1.0, 1.0)).unwrap();
         assert_eq!(points_2d.len(), 0);
 
-        let points_3d = try_generate_random_points::<f64, 3>(0, (-1.0, 1.0)).unwrap();
+        let points_3d = try_generate_random_points::<3>(0, (-1.0, 1.0)).unwrap();
         assert_eq!(points_3d.len(), 0);
 
-        let points_4d = try_generate_random_points::<f64, 4>(0, (-1.0, 1.0)).unwrap();
+        let points_4d = try_generate_random_points::<4>(0, (-1.0, 1.0)).unwrap();
         assert_eq!(points_4d.len(), 0);
 
-        let points_5d = try_generate_random_points::<f64, 5>(0, (-1.0, 1.0)).unwrap();
+        let points_5d = try_generate_random_points::<5>(0, (-1.0, 1.0)).unwrap();
         assert_eq!(points_5d.len(), 0);
     }
 
@@ -1592,8 +1577,8 @@ mod tests {
     fn test_generate_random_points_seeded_2d() {
         // Test seeded 2D generation reproducibility
         let seed = 42_u64;
-        let points1 = try_generate_random_points_seeded::<f64, 2>(50, (-5.0, 5.0), seed).unwrap();
-        let points2 = try_generate_random_points_seeded::<f64, 2>(50, (-5.0, 5.0), seed).unwrap();
+        let points1 = try_generate_random_points_seeded::<2>(50, (-5.0, 5.0), seed).unwrap();
+        let points2 = try_generate_random_points_seeded::<2>(50, (-5.0, 5.0), seed).unwrap();
 
         assert_eq!(points1.len(), points2.len());
 
@@ -1612,8 +1597,8 @@ mod tests {
     fn test_generate_random_points_seeded_3d() {
         // Test seeded 3D generation reproducibility
         let seed = 123_u64;
-        let points1 = try_generate_random_points_seeded::<f64, 3>(40, (0.0, 10.0), seed).unwrap();
-        let points2 = try_generate_random_points_seeded::<f64, 3>(40, (0.0, 10.0), seed).unwrap();
+        let points1 = try_generate_random_points_seeded::<3>(40, (0.0, 10.0), seed).unwrap();
+        let points2 = try_generate_random_points_seeded::<3>(40, (0.0, 10.0), seed).unwrap();
 
         assert_eq!(points1.len(), points2.len());
 
@@ -1631,8 +1616,8 @@ mod tests {
     fn test_generate_random_points_seeded_4d() {
         // Test seeded 4D generation reproducibility
         let seed = 789_u64;
-        let points1 = try_generate_random_points_seeded::<f64, 4>(30, (-2.5, 2.5), seed).unwrap();
-        let points2 = try_generate_random_points_seeded::<f64, 4>(30, (-2.5, 2.5), seed).unwrap();
+        let points1 = try_generate_random_points_seeded::<4>(30, (-2.5, 2.5), seed).unwrap();
+        let points2 = try_generate_random_points_seeded::<4>(30, (-2.5, 2.5), seed).unwrap();
 
         assert_eq!(points1.len(), points2.len());
 
@@ -1650,8 +1635,8 @@ mod tests {
     fn test_generate_random_points_seeded_5d() {
         // Test seeded 5D generation reproducibility
         let seed = 456_u64;
-        let points1 = try_generate_random_points_seeded::<f64, 5>(20, (-1.0, 3.0), seed).unwrap();
-        let points2 = try_generate_random_points_seeded::<f64, 5>(20, (-1.0, 3.0), seed).unwrap();
+        let points1 = try_generate_random_points_seeded::<5>(20, (-1.0, 3.0), seed).unwrap();
+        let points2 = try_generate_random_points_seeded::<5>(20, (-1.0, 3.0), seed).unwrap();
 
         assert_eq!(points1.len(), points2.len());
 
@@ -1670,32 +1655,28 @@ mod tests {
         // Test that different seeds produce different results across all dimensions
 
         // 2D
-        let points1_2d = try_generate_random_points_seeded::<f64, 2>(50, (0.0, 1.0), 42).unwrap();
-        let points2_2d = try_generate_random_points_seeded::<f64, 2>(50, (0.0, 1.0), 123).unwrap();
+        let points1_2d = try_generate_random_points_seeded::<2>(50, (0.0, 1.0), 42).unwrap();
+        let points2_2d = try_generate_random_points_seeded::<2>(50, (0.0, 1.0), 123).unwrap();
         assert_ne!(points1_2d, points2_2d);
 
         // 3D
-        let points1_3d = try_generate_random_points_seeded::<f64, 3>(30, (-5.0, 5.0), 42).unwrap();
-        let points2_3d = try_generate_random_points_seeded::<f64, 3>(30, (-5.0, 5.0), 999).unwrap();
+        let points1_3d = try_generate_random_points_seeded::<3>(30, (-5.0, 5.0), 42).unwrap();
+        let points2_3d = try_generate_random_points_seeded::<3>(30, (-5.0, 5.0), 999).unwrap();
         assert_ne!(points1_3d, points2_3d);
 
         // 4D
-        let points1_4d =
-            try_generate_random_points_seeded::<f64, 4>(25, (-1.0, 1.0), 1337).unwrap();
-        let points2_4d =
-            try_generate_random_points_seeded::<f64, 4>(25, (-1.0, 1.0), 7331).unwrap();
+        let points1_4d = try_generate_random_points_seeded::<4>(25, (-1.0, 1.0), 1337).unwrap();
+        let points2_4d = try_generate_random_points_seeded::<4>(25, (-1.0, 1.0), 7331).unwrap();
         assert_ne!(points1_4d, points2_4d);
 
         // 5D
-        let points1_5d =
-            try_generate_random_points_seeded::<f64, 5>(15, (0.0, 10.0), 2021).unwrap();
-        let points2_5d =
-            try_generate_random_points_seeded::<f64, 5>(15, (0.0, 10.0), 2024).unwrap();
+        let points1_5d = try_generate_random_points_seeded::<5>(15, (0.0, 10.0), 2021).unwrap();
+        let points2_5d = try_generate_random_points_seeded::<5>(15, (0.0, 10.0), 2024).unwrap();
         assert_ne!(points1_5d, points2_5d);
     }
     #[test]
     fn test_generate_random_points_periodic_2d_in_domain() {
-        let points = generate_random_points_periodic::<f64, 2>(100, [1.0, 2.0], 42).unwrap();
+        let points = generate_random_points_periodic::<2>(100, [1.0, 2.0], 42).unwrap();
         assert_eq!(points.len(), 100);
 
         for point in &points {
@@ -1707,14 +1688,14 @@ mod tests {
 
     #[test]
     fn test_generate_random_points_periodic_seeded_reproducible() {
-        let points1 = generate_random_points_periodic::<f64, 3>(50, [1.0, 1.0, 1.0], 123).unwrap();
-        let points2 = generate_random_points_periodic::<f64, 3>(50, [1.0, 1.0, 1.0], 123).unwrap();
+        let points1 = generate_random_points_periodic::<3>(50, [1.0, 1.0, 1.0], 123).unwrap();
+        let points2 = generate_random_points_periodic::<3>(50, [1.0, 1.0, 1.0], 123).unwrap();
         assert_eq!(points1, points2);
     }
 
     #[test]
     fn test_generate_random_points_periodic_invalid_domain() {
-        let zero_period = generate_random_points_periodic::<f64, 2>(10, [1.0, 0.0], 7);
+        let zero_period = generate_random_points_periodic::<2>(10, [1.0, 0.0], 7);
         let Err(RandomPointGenerationError::InvalidPeriodicDomain {
             axis,
             reason: InvalidPositiveScalar::NonPositive { value },
@@ -1725,7 +1706,7 @@ mod tests {
         assert_eq!(axis, 1);
         assert_relative_eq!(value, 0.0, epsilon = f64::EPSILON);
 
-        let negative_period = generate_random_points_periodic::<f64, 2>(10, [1.0, -2.0], 7);
+        let negative_period = generate_random_points_periodic::<2>(10, [1.0, -2.0], 7);
         let Err(RandomPointGenerationError::InvalidPeriodicDomain {
             axis,
             reason: InvalidPositiveScalar::NonPositive { value },
@@ -1736,7 +1717,7 @@ mod tests {
         assert_eq!(axis, 1);
         assert_relative_eq!(value, -2.0, epsilon = f64::EPSILON);
 
-        let nan_period = generate_random_points_periodic::<f64, 2>(10, [1.0, f64::NAN], 7);
+        let nan_period = generate_random_points_periodic::<2>(10, [1.0, f64::NAN], 7);
         assert_matches!(
             nan_period,
             Err(RandomPointGenerationError::InvalidPeriodicDomain {
@@ -1745,8 +1726,7 @@ mod tests {
             }) if axis == 1 && value == InvalidCoordinateValue::Nan
         );
 
-        let infinite_period =
-            generate_random_points_periodic::<f64, 2>(10, [1.0, f64::INFINITY], 7);
+        let infinite_period = generate_random_points_periodic::<2>(10, [1.0, f64::INFINITY], 7);
         assert_matches!(
             infinite_period,
             Err(RandomPointGenerationError::InvalidPeriodicDomain {
@@ -1758,7 +1738,7 @@ mod tests {
 
     #[test]
     fn test_generate_random_points_periodic_zero_points() {
-        let points = generate_random_points_periodic::<f64, 4>(0, [1.0, 2.0, 3.0, 4.0], 9).unwrap();
+        let points = generate_random_points_periodic::<4>(0, [1.0, 2.0, 3.0, 4.0], 9).unwrap();
         assert!(points.is_empty());
     }
 
@@ -1769,7 +1749,7 @@ mod tests {
     #[test]
     fn test_generate_random_points_in_ball_4d() {
         let radius = 3.0_f64;
-        let points = generate_random_points_in_ball::<f64, 4>(200, radius).unwrap();
+        let points = generate_random_points_in_ball::<4>(200, radius).unwrap();
         assert_eq!(points.len(), 200);
 
         let radius_sq = radius * radius;
@@ -1786,21 +1766,21 @@ mod tests {
 
     #[test]
     fn test_generate_random_points_in_ball_seeded_reproducible_4d() {
-        let points1 = generate_random_points_in_ball_seeded::<f64, 4>(50, 2.5, 42).unwrap();
-        let points2 = generate_random_points_in_ball_seeded::<f64, 4>(50, 2.5, 42).unwrap();
+        let points1 = generate_random_points_in_ball_seeded::<4>(50, 2.5, 42).unwrap();
+        let points2 = generate_random_points_in_ball_seeded::<4>(50, 2.5, 42).unwrap();
         assert_eq!(points1, points2);
     }
 
     #[test]
     fn test_generate_random_points_in_ball_seeded_different_seeds_4d() {
-        let points1 = generate_random_points_in_ball_seeded::<f64, 4>(50, 2.5, 42).unwrap();
-        let points2 = generate_random_points_in_ball_seeded::<f64, 4>(50, 2.5, 123).unwrap();
+        let points1 = generate_random_points_in_ball_seeded::<4>(50, 2.5, 42).unwrap();
+        let points2 = generate_random_points_in_ball_seeded::<4>(50, 2.5, 123).unwrap();
         assert_ne!(points1, points2);
     }
 
     #[test]
     fn test_generate_random_points_in_ball_rejects_zero_radius() {
-        let result = generate_random_points_in_ball::<f64, 4>(10, 0.0);
+        let result = generate_random_points_in_ball::<4>(10, 0.0);
         let Err(RandomPointGenerationError::InvalidBallRadius {
             reason: InvalidPositiveScalar::NonPositive { value },
         }) = result
@@ -1812,7 +1792,7 @@ mod tests {
 
     #[test]
     fn test_generate_random_points_in_ball_rejects_negative_radius() {
-        let result = generate_random_points_in_ball::<f64, 4>(10, -1.0);
+        let result = generate_random_points_in_ball::<4>(10, -1.0);
         let Err(RandomPointGenerationError::InvalidBallRadius {
             reason: InvalidPositiveScalar::NonPositive { value },
         }) = result
@@ -1824,19 +1804,19 @@ mod tests {
 
     #[test]
     fn test_generate_random_points_in_ball_zero_points() {
-        let points = generate_random_points_in_ball::<f64, 4>(0, 1.0).unwrap();
+        let points = generate_random_points_in_ball::<4>(0, 1.0).unwrap();
         assert!(points.is_empty());
     }
 
     #[test]
     fn test_generate_random_points_in_ball_seeded_zero_points() {
-        let points = generate_random_points_in_ball_seeded::<f64, 4>(0, 1.0, 7).unwrap();
+        let points = generate_random_points_in_ball_seeded::<4>(0, 1.0, 7).unwrap();
         assert!(points.is_empty());
     }
 
     #[test]
     fn test_generate_random_points_in_ball_rejects_nan_radius() {
-        let result = generate_random_points_in_ball::<f64, 4>(10, f64::NAN);
+        let result = generate_random_points_in_ball::<4>(10, f64::NAN);
         assert_matches!(
             result,
             Err(RandomPointGenerationError::InvalidBallRadius {
@@ -1847,7 +1827,7 @@ mod tests {
 
     #[test]
     fn test_generate_random_points_in_ball_rejects_infinite_radius() {
-        let result = generate_random_points_in_ball::<f64, 4>(10, f64::INFINITY);
+        let result = generate_random_points_in_ball::<4>(10, f64::INFINITY);
         assert_matches!(
             result,
             Err(RandomPointGenerationError::InvalidBallRadius {
@@ -1858,7 +1838,7 @@ mod tests {
 
     #[test]
     fn test_generate_random_points_in_ball_rejects_overflowing_radius_squared() {
-        let result = generate_random_points_in_ball::<f64, 2>(1, f64::MAX);
+        let result = generate_random_points_in_ball::<2>(1, f64::MAX);
         assert_matches!(
             result,
             Err(RandomPointGenerationError::InvalidBallRadiusSquared { value })
@@ -1869,7 +1849,7 @@ mod tests {
     #[test]
     fn test_generate_random_points_in_ball_seeded_in_ball_constraints_4d() {
         let radius = 1.25;
-        let points = generate_random_points_in_ball_seeded::<f64, 4>(100, radius, 99).unwrap();
+        let points = generate_random_points_in_ball_seeded::<4>(100, radius, 99).unwrap();
         assert_eq!(points.len(), 100);
 
         let radius_sq = radius * radius;
@@ -1888,7 +1868,7 @@ mod tests {
     fn test_generate_random_points_in_ball_returns_typed_error_when_budget_exhausts() {
         let mut rng = StdRng::seed_from_u64(42);
         let result =
-            generate_random_points_in_ball_with_rng_and_budget::<f64, _, 2>(1, 1.0, &mut rng, 0);
+            generate_random_points_in_ball_with_rng_and_budget::<_, 2>(1, 1.0, &mut rng, 0);
 
         let Err(RandomPointGenerationError::BallSamplingFailed {
             requested_points,
@@ -1910,8 +1890,8 @@ mod tests {
     #[test]
     fn test_generate_random_points_in_ball_seeded_same_seed_is_deterministic_4d() {
         // This is a small smoke test that ensures deterministic output for fixed seed.
-        let points1 = generate_random_points_in_ball_seeded::<f64, 4>(10, 1.0, 0xBEEF).unwrap();
-        let points2 = generate_random_points_in_ball_seeded::<f64, 4>(10, 1.0, 0xBEEF).unwrap();
+        let points1 = generate_random_points_in_ball_seeded::<4>(10, 1.0, 0xBEEF).unwrap();
+        let points2 = generate_random_points_in_ball_seeded::<4>(10, 1.0, 0xBEEF).unwrap();
         assert_eq!(points1, points2);
     }
 
@@ -1920,7 +1900,7 @@ mod tests {
         // Test that points cover the range reasonably well across all dimensions
 
         // 2D coverage test
-        let points_2d = try_generate_random_points::<f64, 2>(500, (0.0, 10.0)).unwrap();
+        let points_2d = try_generate_random_points::<2>(500, (0.0, 10.0)).unwrap();
         let mut min_2d = [f64::INFINITY; 2];
         let mut max_2d = [f64::NEG_INFINITY; 2];
 
@@ -1945,7 +1925,7 @@ mod tests {
         }
 
         // 5D coverage test (smaller sample)
-        let points_5d = try_generate_random_points::<f64, 5>(200, (-5.0, 5.0)).unwrap();
+        let points_5d = try_generate_random_points::<5>(200, (-5.0, 5.0)).unwrap();
         let mut min_5d = [f64::INFINITY; 5];
         let mut max_5d = [f64::NEG_INFINITY; 5];
 
@@ -1975,10 +1955,10 @@ mod tests {
         // Test common useful ranges across dimensions
 
         // Unit cube [0,1] for all dimensions
-        let unit_2d = try_generate_random_points::<f64, 2>(50, (0.0, 1.0)).unwrap();
-        let unit_3d = try_generate_random_points::<f64, 3>(50, (0.0, 1.0)).unwrap();
-        let unit_4d = try_generate_random_points::<f64, 4>(50, (0.0, 1.0)).unwrap();
-        let unit_5d = try_generate_random_points::<f64, 5>(50, (0.0, 1.0)).unwrap();
+        let unit_2d = try_generate_random_points::<2>(50, (0.0, 1.0)).unwrap();
+        let unit_3d = try_generate_random_points::<3>(50, (0.0, 1.0)).unwrap();
+        let unit_4d = try_generate_random_points::<4>(50, (0.0, 1.0)).unwrap();
+        let unit_5d = try_generate_random_points::<5>(50, (0.0, 1.0)).unwrap();
 
         assert_eq!(unit_2d.len(), 50);
         assert_eq!(unit_3d.len(), 50);
@@ -1986,10 +1966,10 @@ mod tests {
         assert_eq!(unit_5d.len(), 50);
 
         // Centered cube [-1,1] for all dimensions
-        let centered_2d = try_generate_random_points::<f64, 2>(30, (-1.0, 1.0)).unwrap();
-        let centered_3d = try_generate_random_points::<f64, 3>(30, (-1.0, 1.0)).unwrap();
-        let centered_4d = try_generate_random_points::<f64, 4>(30, (-1.0, 1.0)).unwrap();
-        let centered_5d = try_generate_random_points::<f64, 5>(30, (-1.0, 1.0)).unwrap();
+        let centered_2d = try_generate_random_points::<2>(30, (-1.0, 1.0)).unwrap();
+        let centered_3d = try_generate_random_points::<3>(30, (-1.0, 1.0)).unwrap();
+        let centered_4d = try_generate_random_points::<4>(30, (-1.0, 1.0)).unwrap();
+        let centered_5d = try_generate_random_points::<5>(30, (-1.0, 1.0)).unwrap();
 
         assert_eq!(centered_2d.len(), 30);
         assert_eq!(centered_3d.len(), 30);
@@ -2012,7 +1992,7 @@ mod tests {
     #[test]
     fn test_generate_grid_points_2d() {
         // Test 2D grid generation
-        let grid = generate_grid_points::<f64, 2>(nonzero(3), 1.0, [0.0, 0.0]).unwrap();
+        let grid = generate_grid_points::<2>(nonzero(3), 1.0, [0.0, 0.0]).unwrap();
 
         assert_eq!(grid.len(), 9); // 3^2 = 9 points
 
@@ -2045,7 +2025,7 @@ mod tests {
     #[test]
     fn test_generate_grid_points_3d() {
         // Test 3D grid generation
-        let grid = generate_grid_points::<f64, 3>(nonzero(2), 2.0, [1.0, 1.0, 1.0]).unwrap();
+        let grid = generate_grid_points::<3>(nonzero(2), 2.0, [1.0, 1.0, 1.0]).unwrap();
 
         assert_eq!(grid.len(), 8); // 2^3 = 8 points
 
@@ -2061,8 +2041,7 @@ mod tests {
     #[test]
     fn test_generate_grid_points_4d() {
         // Test 4D grid generation
-        let grid =
-            generate_grid_points::<f64, 4>(nonzero(2), 0.5, [-0.5, -0.5, -0.5, -0.5]).unwrap();
+        let grid = generate_grid_points::<4>(nonzero(2), 0.5, [-0.5, -0.5, -0.5, -0.5]).unwrap();
 
         assert_eq!(grid.len(), 16); // 2^4 = 16 points
 
@@ -2078,8 +2057,7 @@ mod tests {
     #[test]
     fn test_generate_grid_points_5d() {
         // Test 5D grid generation
-        let grid =
-            generate_grid_points::<f64, 5>(nonzero(2), 1.0, [0.0, 0.0, 0.0, 0.0, 0.0]).unwrap();
+        let grid = generate_grid_points::<5>(nonzero(2), 1.0, [0.0, 0.0, 0.0, 0.0, 0.0]).unwrap();
 
         assert_eq!(grid.len(), 32); // 2^5 = 32 points
 
@@ -2095,7 +2073,7 @@ mod tests {
     #[test]
     fn test_generate_grid_points_edge_cases() {
         // Test single point grid
-        let grid = generate_grid_points::<f64, 3>(nonzero(1), 1.0, [0.0, 0.0, 0.0]).unwrap();
+        let grid = generate_grid_points::<3>(nonzero(1), 1.0, [0.0, 0.0, 0.0]).unwrap();
         assert_eq!(grid.len(), 1);
         let coords = *grid[0].coords();
         // Use approx for floating point comparison
@@ -2103,7 +2081,7 @@ mod tests {
             assert!((actual - expected).abs() < 1e-15);
         }
 
-        let zero_spacing = generate_grid_points::<f64, 2>(nonzero(2), 0.0, [5.0, 5.0]);
+        let zero_spacing = generate_grid_points::<2>(nonzero(2), 0.0, [5.0, 5.0]);
         let Err(RandomPointGenerationError::InvalidGridSpacing {
             reason: InvalidPositiveScalar::NonPositive { value },
         }) = zero_spacing
@@ -2112,7 +2090,7 @@ mod tests {
         };
         assert_relative_eq!(value, 0.0, epsilon = f64::EPSILON);
 
-        let negative_spacing = generate_grid_points::<f64, 2>(nonzero(2), -1.0, [5.0, 5.0]);
+        let negative_spacing = generate_grid_points::<2>(nonzero(2), -1.0, [5.0, 5.0]);
         let Err(RandomPointGenerationError::InvalidGridSpacing {
             reason: InvalidPositiveScalar::NonPositive { value },
         }) = negative_spacing
@@ -2127,7 +2105,7 @@ mod tests {
         // Zero points per dimension cannot cross the typed API boundary.
         assert_eq!(NonZeroUsize::new(0), None);
 
-        let nan_spacing = generate_grid_points::<f64, 2>(nonzero(2), f64::NAN, [0.0, 0.0]);
+        let nan_spacing = generate_grid_points::<2>(nonzero(2), f64::NAN, [0.0, 0.0]);
         assert_matches!(
             nan_spacing,
             Err(RandomPointGenerationError::InvalidGridSpacing {
@@ -2135,8 +2113,7 @@ mod tests {
             }) if value == InvalidCoordinateValue::Nan
         );
 
-        let infinite_offset =
-            generate_grid_points::<f64, 3>(nonzero(2), 1.0, [0.0, f64::INFINITY, 0.0]);
+        let infinite_offset = generate_grid_points::<3>(nonzero(2), 1.0, [0.0, f64::INFINITY, 0.0]);
         assert_matches!(
             infinite_offset,
             Err(RandomPointGenerationError::InvalidGridOffset { axis, value })
@@ -2144,7 +2121,7 @@ mod tests {
         );
 
         // Test safety cap for excessive points (prevents OOM)
-        let result = generate_grid_points::<f64, 3>(nonzero(1000), 1.0, [0.0, 0.0, 0.0]);
+        let result = generate_grid_points::<3>(nonzero(1000), 1.0, [0.0, 0.0, 0.0]);
         assert_matches!(
             result,
             Err(RandomPointGenerationError::GridAllocationTooLarge {
@@ -2156,7 +2133,7 @@ mod tests {
 
     #[test]
     fn test_generate_grid_points_rejects_non_finite_generated_coordinate() {
-        let result = generate_grid_points::<f64, 1>(nonzero(2), f64::MAX, [f64::MAX]);
+        let result = generate_grid_points::<1>(nonzero(2), f64::MAX, [f64::MAX]);
 
         assert_matches!(
             result,
@@ -2174,7 +2151,7 @@ mod tests {
         let spacing = 0.1; // This would require 10^64 points which overflows usize
         let points_per_dim = 10;
 
-        let result = generate_grid_points::<f64, LARGE_D>(nonzero(points_per_dim), spacing, offset);
+        let result = generate_grid_points::<LARGE_D>(nonzero(points_per_dim), spacing, offset);
         assert_matches!(
             result,
             Err(RandomPointGenerationError::GridSizeOverflow {
@@ -2188,8 +2165,7 @@ mod tests {
     fn test_generate_grid_points_index_conversion_failure() {
         let first_inexact_f64_index = (1_usize << f64::MANTISSA_DIGITS) + 1;
         let idx = [first_inexact_f64_index];
-        let result =
-            grid_index_as_scalar::<f64, 1>(&idx, 0, first_inexact_f64_index.saturating_add(1));
+        let result = grid_index_as_scalar::<1>(&idx, 0, first_inexact_f64_index.saturating_add(1));
 
         assert_matches!(
             result,
@@ -2218,7 +2194,7 @@ mod tests {
     #[test]
     fn test_generate_poisson_points_2d() {
         // Test 2D Poisson disk sampling
-        let points = try_generate_poisson_points::<f64, 2>(50, (0.0, 10.0), 0.5, 42).unwrap();
+        let points = try_generate_poisson_points::<2>(50, (0.0, 10.0), 0.5, 42).unwrap();
 
         // Should generate some points (exact count depends on spacing constraints)
         assert!(!points.is_empty());
@@ -2251,7 +2227,7 @@ mod tests {
     #[test]
     fn test_generate_poisson_points_3d() {
         // Test 3D Poisson disk sampling
-        let points = try_generate_poisson_points::<f64, 3>(30, (-1.0, 1.0), 0.2, 123).unwrap();
+        let points = try_generate_poisson_points::<3>(30, (-1.0, 1.0), 0.2, 123).unwrap();
 
         assert!(!points.is_empty());
 
@@ -2284,7 +2260,7 @@ mod tests {
     #[test]
     fn test_generate_poisson_points_4d() {
         // Test 4D Poisson disk sampling
-        let points = try_generate_poisson_points::<f64, 4>(15, (0.0, 5.0), 0.5, 333).unwrap();
+        let points = try_generate_poisson_points::<4>(15, (0.0, 5.0), 0.5, 333).unwrap();
 
         assert!(!points.is_empty());
 
@@ -2317,7 +2293,7 @@ mod tests {
     #[test]
     fn test_generate_poisson_points_5d() {
         // Test 5D Poisson disk sampling
-        let points = try_generate_poisson_points::<f64, 5>(10, (-2.0, 2.0), 0.4, 777).unwrap();
+        let points = try_generate_poisson_points::<5>(10, (-2.0, 2.0), 0.4, 777).unwrap();
 
         assert!(!points.is_empty());
 
@@ -2351,8 +2327,8 @@ mod tests {
     #[test]
     fn test_generate_poisson_points_reproducible() {
         // Test that same seed produces same results
-        let points1 = try_generate_poisson_points::<f64, 2>(25, (0.0, 5.0), 0.3, 456).unwrap();
-        let points2 = try_generate_poisson_points::<f64, 2>(25, (0.0, 5.0), 0.3, 456).unwrap();
+        let points1 = try_generate_poisson_points::<2>(25, (0.0, 5.0), 0.3, 456).unwrap();
+        let points2 = try_generate_poisson_points::<2>(25, (0.0, 5.0), 0.3, 456).unwrap();
 
         assert_eq!(points1.len(), points2.len());
 
@@ -2366,26 +2342,25 @@ mod tests {
         }
 
         // Different seeds should produce different results
-        let points3 = try_generate_poisson_points::<f64, 2>(25, (0.0, 5.0), 0.3, 789).unwrap();
+        let points3 = try_generate_poisson_points::<2>(25, (0.0, 5.0), 0.3, 789).unwrap();
         assert_ne!(points1, points3);
     }
 
     #[test]
     fn test_generate_poisson_points_error_handling() {
         // Test invalid range
-        let result = try_generate_poisson_points::<f64, 2>(50, (10.0, 5.0), 0.1, 42);
+        let result = try_generate_poisson_points::<2>(50, (10.0, 5.0), 0.1, 42);
         assert_invalid_coordinate_range(&result, CoordinateRangeOrdering::Decreasing, 10.0, 5.0);
 
         // Test non-finite minimum distance rejects at the public boundary.
-        let nan_distance = try_generate_poisson_points::<f64, 2>(0, (0.0, 1.0), f64::NAN, 42);
+        let nan_distance = try_generate_poisson_points::<2>(0, (0.0, 1.0), f64::NAN, 42);
         assert_matches!(
             nan_distance,
             Err(RandomPointGenerationError::InvalidMinimumDistance { distance })
                 if distance == InvalidCoordinateValue::Nan
         );
 
-        let infinite_distance =
-            try_generate_poisson_points::<f64, 2>(50, (0.0, 1.0), f64::INFINITY, 42);
+        let infinite_distance = try_generate_poisson_points::<2>(50, (0.0, 1.0), f64::INFINITY, 42);
         assert_matches!(
             infinite_distance,
             Err(RandomPointGenerationError::InvalidMinimumDistance { distance })
@@ -2393,7 +2368,7 @@ mod tests {
         );
 
         // Test minimum distance too large for bounds (should produce few/no points)
-        let result = try_generate_poisson_points::<f64, 2>(100, (0.0, 1.0), 10.0, 42);
+        let result = try_generate_poisson_points::<2>(100, (0.0, 1.0), 10.0, 42);
         match result {
             Ok(points) => {
                 // Should produce very few points or fail
@@ -2406,11 +2381,11 @@ mod tests {
         }
 
         // Test zero distance optimization (should return exact count without spacing checks)
-        let points = try_generate_poisson_points::<f64, 2>(100, (0.0, 10.0), 0.0, 42).unwrap();
+        let points = try_generate_poisson_points::<2>(100, (0.0, 10.0), 0.0, 42).unwrap();
         assert_eq!(points.len(), 100); // Should get exactly the requested number
 
         // Test negative distance optimization (should return exact count without spacing checks)
-        let points = try_generate_poisson_points::<f64, 2>(50, (0.0, 10.0), -1.0, 42).unwrap();
+        let points = try_generate_poisson_points::<2>(50, (0.0, 10.0), -1.0, 42).unwrap();
         assert_eq!(points.len(), 50); // Should get exactly the requested number
     }
 
@@ -2421,40 +2396,40 @@ mod tests {
     #[test]
     fn test_generate_random_points_invalid_range() {
         // Test invalid range (non-increasing bounds)
-        let result = try_generate_random_points::<f64, 2>(100, (10.0, 5.0));
+        let result = try_generate_random_points::<2>(100, (10.0, 5.0));
         assert_matches!(
             result,
             Err(RandomPointGenerationError::InvalidCoordinateRange { .. })
         );
 
         // Test equal min and max
-        let result = try_generate_random_points::<f64, 2>(100, (5.0, 5.0));
+        let result = try_generate_random_points::<2>(100, (5.0, 5.0));
         assert_matches!(
             result,
             Err(RandomPointGenerationError::InvalidCoordinateRange { .. })
         );
 
         // Test valid range
-        let points = try_generate_random_points::<f64, 2>(10, (0.0, 1.0)).unwrap();
+        let points = try_generate_random_points::<2>(10, (0.0, 1.0)).unwrap();
         assert_eq!(points.len(), 10);
     }
 
     #[test]
     fn test_generate_random_points_seeded_invalid_range() {
         // Test invalid range with seed
-        let result = try_generate_random_points_seeded::<f64, 3>(50, (100.0, 10.0), 42);
+        let result = try_generate_random_points_seeded::<3>(50, (100.0, 10.0), 42);
         assert_matches!(
             result,
             Err(RandomPointGenerationError::InvalidCoordinateRange { .. })
         );
 
         // Test valid range produces consistent results
-        let points1 = try_generate_random_points_seeded::<f64, 3>(5, (0.0, 1.0), 42).unwrap();
-        let points2 = try_generate_random_points_seeded::<f64, 3>(5, (0.0, 1.0), 42).unwrap();
+        let points1 = try_generate_random_points_seeded::<3>(5, (0.0, 1.0), 42).unwrap();
+        let points2 = try_generate_random_points_seeded::<3>(5, (0.0, 1.0), 42).unwrap();
         assert_eq!(points1, points2);
 
         // Different seeds produce different results
-        let points3 = try_generate_random_points_seeded::<f64, 3>(5, (0.0, 1.0), 123).unwrap();
+        let points3 = try_generate_random_points_seeded::<3>(5, (0.0, 1.0), 123).unwrap();
         assert_ne!(points1, points3);
     }
 
@@ -2462,11 +2437,11 @@ mod tests {
     fn test_generate_grid_points_overflow_detection_edge_cases() {
         // Test cases that would cause potential memory issues in grid point calculation
         // Generate small grid to test the function works
-        let points = generate_grid_points::<f64, 2>(nonzero(10), 0.1, [0.0, 0.0]).unwrap();
+        let points = generate_grid_points::<2>(nonzero(10), 0.1, [0.0, 0.0]).unwrap();
         assert!(!points.is_empty());
 
         // Test very fine spacing which would generate lots of points
-        let result = generate_grid_points::<f64, 2>(nonzero(1000), 0.0001, [0.0, 0.0]);
+        let result = generate_grid_points::<2>(nonzero(1000), 0.0001, [0.0, 0.0]);
         // Should either succeed or fail gracefully
         if let Ok(points) = result {
             assert!(!points.is_empty());
@@ -2477,21 +2452,21 @@ mod tests {
     #[test]
     fn test_generate_poisson_points_edge_cases() {
         // Test very small spacing with valid number of points
-        let result = try_generate_poisson_points::<f64, 2>(100, (0.0, 1.0), 0.001, 42);
+        let result = try_generate_poisson_points::<2>(100, (0.0, 1.0), 0.001, 42);
         if let Ok(points) = result {
             assert!(!points.is_empty());
         }
         // May fail due to too many points
 
         // Test with zero points (should succeed with empty result)
-        let result = try_generate_poisson_points::<f64, 2>(0, (0.0, 1.0), 0.1, 42);
+        let result = try_generate_poisson_points::<2>(0, (0.0, 1.0), 0.1, 42);
         if let Ok(points) = result {
             assert!(points.is_empty());
         }
         // Also acceptable if Err
 
         // Test very large spacing (should work but produce fewer points)
-        let result = try_generate_poisson_points::<f64, 2>(10, (0.0, 1.0), 2.0, 42);
+        let result = try_generate_poisson_points::<2>(10, (0.0, 1.0), 2.0, 42);
         if let Ok(points) = result {
             assert!(points.len() <= 10);
         }

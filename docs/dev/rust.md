@@ -604,7 +604,7 @@ Example:
 /// # Examples
 ///
 /// ```rust
-/// # use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+/// # use delaunay::prelude::construction::{DelaunayTriangulation};
 /// # use delaunay::prelude::insertion::InsertionError;
 /// # fn main() -> Result<(), InsertionError> {
 /// let mut triangulation = DelaunayTriangulation::<_, _, _, 2>::default();

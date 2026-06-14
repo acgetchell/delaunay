@@ -1,8 +1,7 @@
 //! Internal behavior models for [`GlobalTopology`] metadata.
 //!
 //! Public APIs continue to expose [`GlobalTopology`] as runtime metadata. This module provides
-//! scalar-generic behavior models used by core triangulation/build paths to avoid ad-hoc topology
-//! branching.
+//! behavior models used by core triangulation/build paths to avoid ad-hoc topology branching.
 //!
 //! # Overview
 //!
@@ -20,14 +19,12 @@
 
 #![forbid(unsafe_code)]
 
-use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::topology::traits::topological_space::{
     GlobalTopology, TopologyKind, ToroidalConstructionMode, ToroidalDomain, ToroidalDomainError,
 };
-use num_traits::NumCast;
 use thiserror::Error;
 
-/// Errors emitted by [`GlobalTopologyModel`] behavior calls.
+/// Errors emitted by topology model behavior calls.
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum GlobalTopologyModelError {
@@ -38,15 +35,6 @@ pub enum GlobalTopologyModelError {
         axis: usize,
         /// Invalid period value.
         period: f64,
-    },
-
-    /// A coordinate could not be converted to/from `f64` during canonicalization/lifting.
-    #[error("Failed scalar conversion while processing axis {axis} with value {value:?}")]
-    ScalarConversion {
-        /// Axis index where conversion failed.
-        axis: usize,
-        /// Source value that failed to convert.
-        value: f64,
     },
 
     /// A coordinate is non-finite and cannot be canonicalized.
@@ -104,14 +92,10 @@ pub trait GlobalTopologyModel<const D: usize> {
     ///   domain periods are invalid.
     /// - [`GlobalTopologyModelError::NonFiniteCoordinate`] when a coordinate is
     ///   `NaN` or infinite.
-    /// - [`GlobalTopologyModelError::ScalarConversion`] when scalar
-    ///   conversion to/from `f64` fails.
-    fn canonicalize_point_in_place<T>(
+    fn canonicalize_point_in_place(
         &self,
-        coords: &mut [T; D],
-    ) -> Result<(), GlobalTopologyModelError>
-    where
-        T: CoordinateScalar;
+        coords: &mut [f64; D],
+    ) -> Result<(), GlobalTopologyModelError>;
 
     /// Lifts coordinates for orientation predicates.
     ///
@@ -125,15 +109,13 @@ pub trait GlobalTopologyModel<const D: usize> {
     ///   are supplied for non-periodic models.
     /// - [`GlobalTopologyModelError::InvalidToroidalPeriod`] when toroidal
     ///   domain periods are invalid.
-    /// - [`GlobalTopologyModelError::ScalarConversion`] when scalar
-    ///   conversion fails during lifting.
-    fn lift_for_orientation<T>(
+    /// - [`GlobalTopologyModelError::NonFiniteCoordinate`] when an input or
+    ///   lifted coordinate is `NaN` or infinite.
+    fn lift_for_orientation(
         &self,
-        coords: [T; D],
+        coords: [f64; D],
         periodic_offset: Option<[i8; D]>,
-    ) -> Result<[T; D], GlobalTopologyModelError>
-    where
-        T: CoordinateScalar;
+    ) -> Result<[f64; D], GlobalTopologyModelError>;
 
     /// Returns the periodic domain when relevant.
     ///
@@ -177,24 +159,18 @@ impl<const D: usize> GlobalTopologyModel<D> for EuclideanModel {
         true
     }
 
-    fn canonicalize_point_in_place<T>(
+    fn canonicalize_point_in_place(
         &self,
-        _coords: &mut [T; D],
-    ) -> Result<(), GlobalTopologyModelError>
-    where
-        T: CoordinateScalar,
-    {
+        _coords: &mut [f64; D],
+    ) -> Result<(), GlobalTopologyModelError> {
         Ok(())
     }
 
-    fn lift_for_orientation<T>(
+    fn lift_for_orientation(
         &self,
-        coords: [T; D],
+        coords: [f64; D],
         periodic_offset: Option<[i8; D]>,
-    ) -> Result<[T; D], GlobalTopologyModelError>
-    where
-        T: CoordinateScalar,
-    {
+    ) -> Result<[f64; D], GlobalTopologyModelError> {
         if periodic_offset.is_some() {
             return Err(GlobalTopologyModelError::PeriodicOffsetsUnsupported {
                 kind: TopologyKind::Euclidean,
@@ -245,51 +221,26 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
         false
     }
 
-    fn canonicalize_point_in_place<T>(
+    fn canonicalize_point_in_place(
         &self,
-        coords: &mut [T; D],
-    ) -> Result<(), GlobalTopologyModelError>
-    where
-        T: CoordinateScalar,
-    {
+        coords: &mut [f64; D],
+    ) -> Result<(), GlobalTopologyModelError> {
         for (axis, coord_ref) in coords.iter_mut().enumerate() {
             let period = self.domain.periods()[axis];
-            let Some(coord) = coord_ref.to_f64() else {
-                let value = if coord_ref.is_nan() {
-                    f64::NAN
-                } else if coord_ref.is_infinite() {
-                    if coord_ref.is_sign_negative() {
-                        f64::NEG_INFINITY
-                    } else {
-                        f64::INFINITY
-                    }
-                } else {
-                    f64::NAN
-                };
-                return Err(GlobalTopologyModelError::ScalarConversion { axis, value });
-            };
+            let coord = *coord_ref;
             if !coord.is_finite() {
                 return Err(GlobalTopologyModelError::NonFiniteCoordinate { axis, value: coord });
             }
-            let wrapped = coord.rem_euclid(period);
-            *coord_ref = <T as NumCast>::from(wrapped).ok_or(
-                GlobalTopologyModelError::ScalarConversion {
-                    axis,
-                    value: wrapped,
-                },
-            )?;
+            *coord_ref = coord.rem_euclid(period);
         }
         Ok(())
     }
 
-    fn lift_for_orientation<T>(
+    fn lift_for_orientation(
         &self,
-        mut coords: [T; D],
+        mut coords: [f64; D],
         periodic_offset: Option<[i8; D]>,
-    ) -> Result<[T; D], GlobalTopologyModelError>
-    where
-        T: CoordinateScalar,
-    {
+    ) -> Result<[f64; D], GlobalTopologyModelError> {
         // Canonicalized toroidal mode intentionally accepts optional periodic offsets but
         // does not apply them. This differs from `EuclideanModel`, which treats any
         // provided periodic offset as unsupported and returns an error.
@@ -301,35 +252,21 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
         };
 
         // Validate finiteness before performing arithmetic
-        for (axis, coord_ref) in coords.iter().enumerate() {
-            let Some(coord_f64) = coord_ref.to_f64() else {
-                return Err(GlobalTopologyModelError::ScalarConversion {
-                    axis,
-                    value: f64::NAN,
-                });
-            };
-            if !coord_f64.is_finite() {
-                return Err(GlobalTopologyModelError::NonFiniteCoordinate {
-                    axis,
-                    value: coord_f64,
-                });
+        for (axis, coord) in coords.iter().copied().enumerate() {
+            if !coord.is_finite() {
+                return Err(GlobalTopologyModelError::NonFiniteCoordinate { axis, value: coord });
             }
         }
         for axis in 0..D {
             let period = self.domain.periods()[axis];
-            let period_scalar =
-                <T as NumCast>::from(period).ok_or(GlobalTopologyModelError::ScalarConversion {
+            let lifted = f64::from(offset[axis]).mul_add(period, coords[axis]);
+            if !lifted.is_finite() {
+                return Err(GlobalTopologyModelError::NonFiniteCoordinate {
                     axis,
-                    value: period,
-                })?;
-            let offset_value = <f64 as From<i8>>::from(offset[axis]);
-            let offset_scalar = <T as NumCast>::from(offset[axis]).ok_or(
-                GlobalTopologyModelError::ScalarConversion {
-                    axis,
-                    value: offset_value,
-                },
-            )?;
-            coords[axis] += offset_scalar * period_scalar;
+                    value: lifted,
+                });
+            }
+            coords[axis] = lifted;
         }
         Ok(coords)
     }
@@ -360,25 +297,19 @@ impl<const D: usize> GlobalTopologyModel<D> for SphericalModel {
         false
     }
 
-    fn canonicalize_point_in_place<T>(
+    fn canonicalize_point_in_place(
         &self,
-        _coords: &mut [T; D],
-    ) -> Result<(), GlobalTopologyModelError>
-    where
-        T: CoordinateScalar,
-    {
+        _coords: &mut [f64; D],
+    ) -> Result<(), GlobalTopologyModelError> {
         // Scaffold: full sphere-constrained projection will be expanded in #188.
         Ok(())
     }
 
-    fn lift_for_orientation<T>(
+    fn lift_for_orientation(
         &self,
-        coords: [T; D],
+        coords: [f64; D],
         periodic_offset: Option<[i8; D]>,
-    ) -> Result<[T; D], GlobalTopologyModelError>
-    where
-        T: CoordinateScalar,
-    {
+    ) -> Result<[f64; D], GlobalTopologyModelError> {
         if periodic_offset.is_some() {
             return Err(GlobalTopologyModelError::PeriodicOffsetsUnsupported {
                 kind: TopologyKind::Spherical,
@@ -401,25 +332,19 @@ impl<const D: usize> GlobalTopologyModel<D> for HyperbolicModel {
         false
     }
 
-    fn canonicalize_point_in_place<T>(
+    fn canonicalize_point_in_place(
         &self,
-        _coords: &mut [T; D],
-    ) -> Result<(), GlobalTopologyModelError>
-    where
-        T: CoordinateScalar,
-    {
+        _coords: &mut [f64; D],
+    ) -> Result<(), GlobalTopologyModelError> {
         // Scaffold: full model-constrained projection is future work.
         Ok(())
     }
 
-    fn lift_for_orientation<T>(
+    fn lift_for_orientation(
         &self,
-        coords: [T; D],
+        coords: [f64; D],
         periodic_offset: Option<[i8; D]>,
-    ) -> Result<[T; D], GlobalTopologyModelError>
-    where
-        T: CoordinateScalar,
-    {
+    ) -> Result<[f64; D], GlobalTopologyModelError> {
         if periodic_offset.is_some() {
             return Err(GlobalTopologyModelError::PeriodicOffsetsUnsupported {
                 kind: TopologyKind::Hyperbolic,
@@ -506,13 +431,10 @@ impl<const D: usize> GlobalTopologyModel<D> for GlobalTopologyModelAdapter<D> {
         }
     }
 
-    fn canonicalize_point_in_place<T>(
+    fn canonicalize_point_in_place(
         &self,
-        coords: &mut [T; D],
-    ) -> Result<(), GlobalTopologyModelError>
-    where
-        T: CoordinateScalar,
-    {
+        coords: &mut [f64; D],
+    ) -> Result<(), GlobalTopologyModelError> {
         match self {
             Self::Euclidean(model) => {
                 GlobalTopologyModel::<D>::canonicalize_point_in_place(model, coords)
@@ -529,14 +451,11 @@ impl<const D: usize> GlobalTopologyModel<D> for GlobalTopologyModelAdapter<D> {
         }
     }
 
-    fn lift_for_orientation<T>(
+    fn lift_for_orientation(
         &self,
-        coords: [T; D],
+        coords: [f64; D],
         periodic_offset: Option<[i8; D]>,
-    ) -> Result<[T; D], GlobalTopologyModelError>
-    where
-        T: CoordinateScalar,
-    {
+    ) -> Result<[f64; D], GlobalTopologyModelError> {
         match self {
             Self::Euclidean(model) => {
                 GlobalTopologyModel::<D>::lift_for_orientation(model, coords, periodic_offset)
@@ -679,6 +598,22 @@ mod tests {
             err,
             GlobalTopologyModelError::NonFiniteCoordinate { axis: 0, value }
                 if value.is_nan()
+        );
+    }
+
+    #[test]
+    fn toroidal_model_lift_rejects_overflowed_lifted_coordinates() {
+        let model = toroidal_model::<2>(
+            [f64::MAX, 3.0],
+            ToroidalConstructionMode::PeriodicImagePoint,
+        );
+        let err = model
+            .lift_for_orientation([f64::MAX, 0.5_f64], Some([1, 0]))
+            .unwrap_err();
+        assert_matches!(
+            err,
+            GlobalTopologyModelError::NonFiniteCoordinate { axis: 0, value }
+                if value.is_infinite() && value.is_sign_positive()
         );
     }
 
@@ -1369,13 +1304,10 @@ mod tests {
     }
 
     #[test]
-    fn scalar_conversion_error_includes_axis_context() {
-        // This test verifies the error structure for scalar conversion failures.
-        // In practice, conversion failures are rare with f64, but the error
-        // variant exists for completeness and custom scalar types.
-        let err = GlobalTopologyModelError::ScalarConversion {
+    fn non_finite_coordinate_error_includes_axis_context() {
+        let err = GlobalTopologyModelError::NonFiniteCoordinate {
             axis: 2,
-            value: 1.5e308_f64,
+            value: f64::INFINITY,
         };
 
         let err_str = err.to_string();
@@ -1384,13 +1316,13 @@ mod tests {
             "Error should mention axis: {err_str}"
         );
         assert!(
-            err_str.contains("1.5e308") || err_str.contains("value"),
+            err_str.contains("inf") || err_str.contains("value"),
             "Error should include problematic value: {err_str}"
         );
     }
 
     // =========================================================================
-    // Trait bounds and scalar tests
+    // f64 coordinate behavior tests
     // =========================================================================
 
     #[test]

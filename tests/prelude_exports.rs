@@ -24,18 +24,21 @@ use delaunay::prelude::collections::{
 use delaunay::prelude::construction::{
     CavityFillingError, CavityRepairStage, ConstructionOptions, ConstructionSkipSample,
     ConstructionSlowInsertionSample, CoordinateRangeError as ConstructionCoordinateRangeError,
-    CoordinateRangeOrdering as ConstructionCoordinateRangeOrdering, DelaunayConstructionFailure,
-    DelaunayRepairPolicy, DelaunayTriangulation, DelaunayTriangulationConstructionError,
+    CoordinateRangeOrdering as ConstructionCoordinateRangeOrdering,
+    CoordinateValidationError as ConstructionCoordinateValidationError, DedupPolicy,
+    DedupTolerance, DeduplicationError, DelaunayConstructionFailure, DelaunayRepairPolicy,
+    DelaunayTriangulation, DelaunayTriangulationConstructionError,
     DelaunayTriangulationValidationError as ConstructionDelaunayTriangulationValidationError,
     ExplicitConstructionError, ExplicitDelaunayValidationError,
     ExplicitDelaunayValidationErrorKind, ExplicitDelaunayValidationSourceKind,
     ExplicitInsertionError, ExplicitInsertionErrorKind, ExplicitInvariantError,
-    ExplicitInvariantErrorKind, ExplicitTdsError, ExplicitTdsErrorKind, InsertionOrderStrategy,
+    ExplicitInvariantErrorKind, ExplicitTdsError, ExplicitTdsErrorKind,
+    GlobalTopologyModelError as ConstructionGlobalTopologyModelError, InsertionOrderStrategy,
     InvalidCoordinateValue as ConstructionInvalidCoordinateValue,
     InvalidPositiveScalar as ConstructionInvalidPositiveScalar, RandomPointGenerationError,
     SimplexValidationError,
     SpatialIndexConstructionFailure as ConstructionSpatialIndexConstructionFailure,
-    TopologyGuarantee, ToroidalDomain as ConstructionToroidalDomain, Vertex, vertex,
+    TopologyGuarantee, ToroidalDomain as ConstructionToroidalDomain, Vertex,
 };
 use delaunay::prelude::delaunayize::{
     DelaunayTriangulationBuilder as DelaunayizeDelaunayTriangulationBuilder, DelaunayizeConfig,
@@ -55,7 +58,7 @@ use delaunay::prelude::generators::{
     try_generate_random_points_seeded,
 };
 #[cfg(feature = "diagnostics")]
-use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate};
+use delaunay::prelude::geometry::AdaptiveKernel;
 use delaunay::prelude::geometry::{
     ArrayConversionFailureReason, CircumcenterError, CircumcenterFailureReason,
     CoordinateConversionError, CoordinateConversionValue, DegenerateGeometry, DegenerateMeasure,
@@ -88,7 +91,8 @@ use delaunay::prelude::tds::{
     FacetError, InvariantErrorSummaryDetail, NeighborSlot, TdsError, TdsErrorKind, VertexKey,
 };
 use delaunay::prelude::topology::spaces::{
-    GlobalTopology, ToroidalConstructionMode, ToroidalDomain, ToroidalDomainError,
+    GlobalTopology, GlobalTopologyModelError, TopologyKind, ToroidalConstructionMode,
+    ToroidalDomain, ToroidalDomainError,
 };
 use delaunay::prelude::topology::validation::{
     GlobalTopology as TopologyValidationGlobalTopology, ManifoldError, RidgeVertices,
@@ -102,7 +106,7 @@ use delaunay::prelude::triangulation::{
     Triangulation as GenericTriangulation,
     TriangulationConstructionError as GenericTriangulationConstructionError,
     ValidationConfigurationError as TriangulationValidationConfigurationError,
-    ValidationPolicy as TriangulationValidationPolicy, vertex as triangulation_vertex,
+    ValidationPolicy as TriangulationValidationPolicy,
 };
 use delaunay::prelude::validation::{
     TopologyGuarantee as FocusedValidationTopologyGuarantee, ValidationCadence,
@@ -118,6 +122,8 @@ enum RootApiExportTestError {
     #[error(transparent)]
     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
     #[error(transparent)]
+    CoordinateConversion(#[from] delaunay::geometry::CoordinateConversionError),
+    #[error(transparent)]
     Validation(#[from] delaunay::DelaunayTriangulationValidationError),
     #[error(transparent)]
     DelaunayRepair(#[from] delaunay::flips::DelaunayRepairError),
@@ -129,6 +135,8 @@ enum RootApiExportTestError {
 enum PreludeExportTestError {
     #[error(transparent)]
     CoordinateRange(#[from] CoordinateRangeError),
+    #[error(transparent)]
+    CoordinateConversion(#[from] CoordinateConversionError),
     #[error(transparent)]
     RandomPointGeneration(#[from] RandomPointGenerationError),
     #[error(transparent)]
@@ -152,15 +160,105 @@ enum PreludeExportTestError {
 }
 
 /// Proves the focused flips prelude exports the trait bound expected by benchmarks.
-const fn assert_bistellar_flips(_: &impl BistellarFlips<3, Scalar = f64, VertexData = ()>) {}
+const fn assert_bistellar_flips(_: &impl BistellarFlips<3, VertexData = ()>) {}
 
 /// Proves the root flips module exports the same public trait bound.
-const fn assert_root_bistellar_flips(
-    _: &impl delaunay::flips::BistellarFlips<3, Scalar = f64, VertexData = ()>,
-) {
+const fn assert_root_bistellar_flips(_: &impl delaunay::flips::BistellarFlips<3, VertexData = ()>) {
 }
 
 const fn assert_send_sync_unpin<T: Send + Sync + Unpin>() {}
+
+#[test]
+fn construction_prelude_covers_dedup_policy() {
+    assert_eq!(
+        DedupTolerance::try_new(-1.0),
+        Err(DeduplicationError::NegativeEpsilon)
+    );
+    let dedup_policy = DedupPolicy::epsilon(DedupTolerance::try_new(0.0).unwrap());
+    assert_matches!(dedup_policy, DedupPolicy::Epsilon { .. });
+}
+
+#[test]
+fn construction_prelude_covers_typed_construction_failure_variants() {
+    assert_matches!(
+        DelaunayConstructionFailure::GeometricDegeneracy {
+            message: "synthetic".to_string(),
+        },
+        DelaunayConstructionFailure::GeometricDegeneracy { .. }
+    );
+    let unsupported_periodic_dimension =
+        DelaunayConstructionFailure::UnsupportedPeriodicDimension {
+            dimension: 4,
+            max_validated_dimension: 3,
+            tracking_issue: 416,
+        };
+    assert_matches!(
+        unsupported_periodic_dimension,
+        DelaunayConstructionFailure::UnsupportedPeriodicDimension {
+            dimension: 4,
+            max_validated_dimension: 3,
+            tracking_issue: 416,
+        }
+    );
+    let topology_model_failure = DelaunayConstructionFailure::TopologyModelConfiguration {
+        source: ConstructionGlobalTopologyModelError::PeriodicOffsetsUnsupported {
+            kind: TopologyKind::Euclidean,
+        },
+    };
+    assert_matches!(
+        topology_model_failure,
+        DelaunayConstructionFailure::TopologyModelConfiguration {
+            source: ConstructionGlobalTopologyModelError::PeriodicOffsetsUnsupported {
+                kind: TopologyKind::Euclidean,
+            },
+        }
+    );
+    let vertex_canonicalization_failure = DelaunayConstructionFailure::VertexCanonicalization {
+        vertex_index: 2,
+        source: GlobalTopologyModelError::NonFiniteCoordinate {
+            axis: 1,
+            value: f64::INFINITY,
+        },
+    };
+    assert_matches!(
+        vertex_canonicalization_failure,
+        DelaunayConstructionFailure::VertexCanonicalization {
+            vertex_index: 2,
+            source: GlobalTopologyModelError::NonFiniteCoordinate {
+                axis: 1,
+                value,
+            },
+        } if value.is_infinite()
+    );
+    let canonicalized_point_failure = DelaunayConstructionFailure::CanonicalizedPointValidation {
+        vertex_index: 3,
+        source: ConstructionCoordinateValidationError::InvalidCoordinate {
+            dimension: 2,
+            coordinate_index: 0,
+            coordinate_value: ConstructionInvalidCoordinateValue::Nan,
+        },
+    };
+    assert_matches!(
+        canonicalized_point_failure,
+        DelaunayConstructionFailure::CanonicalizedPointValidation {
+            vertex_index: 3,
+            source: ConstructionCoordinateValidationError::InvalidCoordinate {
+                dimension: 2,
+                coordinate_index: 0,
+                coordinate_value: ConstructionInvalidCoordinateValue::Nan,
+            },
+        }
+    );
+    let cavity_failure = DelaunayConstructionFailure::InsertionCavityFilling {
+        source: CavityFillingError::EmptyFanTriangulation,
+    };
+    assert_matches!(
+        cavity_failure,
+        DelaunayConstructionFailure::InsertionCavityFilling {
+            source: CavityFillingError::EmptyFanTriangulation,
+        }
+    );
+}
 
 #[test]
 fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestError> {
@@ -180,15 +278,15 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
     };
 
     let vertices = vec![
-        delaunay::vertex!([0.0, 0.0, 0.0]),
-        delaunay::vertex!([1.0, 0.0, 0.0]),
-        delaunay::vertex!([0.0, 1.0, 0.0]),
-        delaunay::vertex!([0.0, 0.0, 1.0]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     ];
 
     let options: ConstructionOptions =
         ConstructionModuleOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
-    let builder: BuilderModuleBuilder<'_, f64, (), 3> =
+    let builder: BuilderModuleBuilder<'_, (), 3> =
         DelaunayTriangulationBuilder::new(&vertices).construction_options(options);
     let mut dt: DelaunayTriangulation<_, (), (), 3> = builder.build::<()>()?;
 
@@ -227,14 +325,13 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
 
 #[test]
 fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
-    let _generated_points: Vec<Point<f64, 2>> =
-        try_generate_random_points_seeded(3, (0.0, 1.0), 42)?;
+    let _generated_points: Vec<Point<2>> = try_generate_random_points_seeded(3, (0.0, 1.0), 42)?;
 
-    let vertices: Vec<Vertex<f64, (), 3>> = vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
+    let vertices: Vec<Vertex<(), 3>> = vec![
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     ];
     let options =
         ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
@@ -250,39 +347,10 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     dt.validate().unwrap();
     assert_bistellar_flips(&dt);
 
-    let mut empty_tds: InsertionTds<f64, (), (), 2> = InsertionTds::empty();
+    let mut empty_tds: InsertionTds<(), (), 2> = InsertionTds::empty();
     assert_eq!(
         repair_neighbor_pointers_local(&mut empty_tds, &[], None)?,
         0
-    );
-    assert_matches!(
-        DelaunayConstructionFailure::GeometricDegeneracy {
-            message: "synthetic".to_string(),
-        },
-        DelaunayConstructionFailure::GeometricDegeneracy { .. }
-    );
-    let unsupported_periodic_dimension =
-        DelaunayConstructionFailure::UnsupportedPeriodicDimension {
-            dimension: 4,
-            max_validated_dimension: 3,
-            tracking_issue: 416,
-        };
-    assert_matches!(
-        unsupported_periodic_dimension,
-        DelaunayConstructionFailure::UnsupportedPeriodicDimension {
-            dimension: 4,
-            max_validated_dimension: 3,
-            tracking_issue: 416,
-        }
-    );
-    let cavity_failure = DelaunayConstructionFailure::InsertionCavityFilling {
-        source: CavityFillingError::EmptyFanTriangulation,
-    };
-    assert_matches!(
-        cavity_failure,
-        DelaunayConstructionFailure::InsertionCavityFilling {
-            source: CavityFillingError::EmptyFanTriangulation,
-        }
     );
     assert_eq!(
         CavityRepairStage::PrimaryInsertion.to_string(),
@@ -441,9 +509,9 @@ fn geometry_prelude_covers_typed_error_variants() {
 #[test]
 fn generator_prelude_covers_validated_coordinate_ranges() -> Result<(), PreludeExportTestError> {
     let generated_range = CoordinateRange::try_new(0.0_f64, 1.0)?;
-    let range_points: Vec<Point<f64, 2>> =
+    let range_points: Vec<Point<2>> =
         generate_random_points_in_range_seeded(3, generated_range, 42);
-    let grid_points: Vec<Point<f64, 2>> = generate_grid_points(NonZeroUsize::MIN, 1.0, [0.0, 0.0])?;
+    let grid_points: Vec<Point<2>> = generate_grid_points(NonZeroUsize::MIN, 1.0, [0.0, 0.0])?;
     let builder = RandomTriangulationBuilder::try_new(NonZeroUsize::MIN, (-1.0_f64, 1.0))?
         .seed(7)
         .insertion_order(InsertionOrderStrategy::Input);
@@ -553,53 +621,71 @@ fn validation_prelude_covers_configuration_error() {
     );
 }
 
-fn simplex_prelude_vertices<const D: usize>(origin: f64, scale: f64) -> Vec<Vertex<f64, (), D>> {
+fn simplex_prelude_vertices<const D: usize>(origin: f64, scale: f64) -> Vec<Vertex<(), D>> {
     let mut vertices = Vec::with_capacity(D + 1);
-    vertices.push(vertex!([origin; D]));
+    vertices.push(
+        delaunay::prelude::Vertex::<(), _>::try_new([origin; D])
+            .expect("finite simplex origin should construct"),
+    );
 
     for axis in 0..D {
         let mut coords = [origin; D];
         coords[axis] = origin + scale;
-        vertices.push(vertex!(coords));
+        vertices.push(
+            delaunay::prelude::Vertex::<(), _>::try_new(coords)
+                .expect("finite simplex axis vertex should construct"),
+        );
     }
 
     vertices
 }
 
-fn cospherical_prelude_vertices<const D: usize>() -> Vec<Vertex<f64, (), D>> {
+fn cospherical_prelude_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
     let mut vertices = Vec::with_capacity(D + 2);
 
     for axis in 0..D {
         let mut coords = [0.0; D];
         coords[axis] = 1.0;
-        vertices.push(vertex!(coords));
+        vertices.push(
+            delaunay::prelude::Vertex::<(), _>::try_new(coords)
+                .expect("finite cospherical axis vertex should construct"),
+        );
     }
 
     let mut negative_first_axis = [0.0; D];
     negative_first_axis[0] = -1.0;
-    vertices.push(vertex!(negative_first_axis));
+    vertices.push(
+        delaunay::prelude::Vertex::<(), _>::try_new(negative_first_axis)
+            .expect("finite cospherical negative first-axis vertex should construct"),
+    );
 
     let mut negative_second_axis = [0.0; D];
     negative_second_axis[1] = -1.0;
-    vertices.push(vertex!(negative_second_axis));
+    vertices.push(
+        delaunay::prelude::Vertex::<(), _>::try_new(negative_second_axis)
+            .expect("finite cospherical negative second-axis vertex should construct"),
+    );
 
     vertices
 }
 
-fn degenerate_prelude_vertices<const D: usize>() -> Vec<Vertex<f64, (), D>> {
+fn degenerate_prelude_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
     let mut vertices = Vec::with_capacity(D + 1);
     let mut coordinate = 0.0;
     for _ in 0..=D {
         let mut coords = [0.0; D];
         coords[0] = coordinate;
-        vertices.push(vertex!(coords));
+        vertices.push(
+            delaunay::prelude::Vertex::<(), _>::try_new(coords)
+                .expect("finite degenerate fixture vertex should construct"),
+        );
         coordinate += 1.0;
     }
     vertices
 }
 
 fn assert_single_simplex_ridge_star<const D: usize>(
-    vertices: &[Vertex<f64, (), D>],
+    vertices: &[Vertex<(), D>],
 ) -> Result<(), PreludeExportTestError> {
     let dt = DelaunayTriangulation::new(vertices)?;
     let ridge = RidgeVertices::<D>::try_from_vertices(dt.tds().vertex_keys().take(D - 1))?;
@@ -694,9 +780,12 @@ fn topology_spaces_prelude_covers_toroidal_domain_api() -> Result<(), PreludeExp
 fn triangulation_prelude_covers_generic_layer() -> Result<(), GenericTriangulationConstructionError>
 {
     let vertices = vec![
-        triangulation_vertex!([0.0, 0.0]),
-        triangulation_vertex!([1.0, 0.0]),
-        triangulation_vertex!([0.0, 1.0]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])
+            .expect("finite 2D vertex should construct"),
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])
+            .expect("finite 2D vertex should construct"),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])
+            .expect("finite 2D vertex should construct"),
     ];
     let tds =
         GenericTriangulation::<TriangulationFastKernel<f64>, (), (), 2>::build_initial_simplex(
@@ -791,11 +880,11 @@ fn construction_prelude_covers_random_point_generation_failure_variant() {
 
 #[test]
 fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError> {
-    let vertices: Vec<Vertex<f64, (), 3>> = vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
+    let vertices: Vec<Vertex<(), 3>> = vec![
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     ];
     let mut dt = DelaunayizeDelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
@@ -844,7 +933,7 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
 
     let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
     assert!(!outcome.used_fallback_rebuild);
-    let _typed_outcome: DelaunayizeOutcome<f64, (), (), 3> = outcome;
+    let _typed_outcome: DelaunayizeOutcome<(), (), 3> = outcome;
     let _typed_error: Option<DelaunayizeError> = None;
     Ok(())
 }
@@ -852,7 +941,7 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
 #[cfg(feature = "diagnostics")]
 #[test]
 fn diagnostics_prelude_covers_opt_in_helpers() -> Result<(), PreludeExportTestError> {
-    let tds: Tds<f64, (), (), 2> = Tds::empty();
+    let tds: Tds<(), (), 2> = Tds::empty();
     debug_print_first_delaunay_violation(&tds, None);
     let report = delaunay_violation_report(&tds, None)?;
     let _typed_report: DelaunayViolationReport = report;
@@ -860,7 +949,7 @@ fn diagnostics_prelude_covers_opt_in_helpers() -> Result<(), PreludeExportTestEr
     assert!(DiagnosticNeighborSlot::Boundary.is_boundary());
 
     let kernel = AdaptiveKernel::new();
-    let point = Point::new([0.0, 0.0]);
+    let point = Point::try_new([0.0, 0.0]).expect("finite point coordinates");
     let conflict_simplices = SimplexKeyBuffer::new();
     assert_eq!(
         verify_conflict_region_completeness(&tds, &kernel, &point, &conflict_simplices),

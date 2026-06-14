@@ -540,7 +540,7 @@ Update the existing `vertex_keys()` method documentation to include migration gu
 /// // Iterate over vertices
 /// for &vkey in cell.vertex_keys() {
 ///     let vertex = &tds.vertices()[vkey];
-///     println!("Vertex at: {:?}", vertex.point());
+///     println!("Vertex at: {:?}".point());
 /// }
 /// ```
 ///
@@ -672,11 +672,11 @@ Replace the existing method:
 ///
 /// ```rust,ignore
 /// let vertex = &tds.vertices()[some_vkey];
-/// if cell.contains_vertex(vertex, &tds) {
+/// if cell.contains_vertex(&tds) {
 ///     println!("Cell contains this vertex");
 /// }
 /// ```
-pub fn contains_vertex(&self, vertex: &Vertex<T, U, D>, tds: &Tds<T, U, V, D>) -> bool {
+pub fn contains_vertex(&self: &Vertex<T, U, D>, tds: &Tds<T, U, V, D>) -> bool {
     let target_uuid = vertex.uuid();
     self.vertex_keys
         .iter()
@@ -1291,10 +1291,10 @@ mod tests {
     // Helper to create test TDS
     fn create_test_tds_3d() -> Tds<f64, Option<()>, Option<()>, 3> {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+            delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+            delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+            delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
         ];
         Tds::new(&vertices).unwrap()
     }
@@ -1480,7 +1480,7 @@ Add Phase 3A entry:
 ```rust
 let cell = cell!(vec![v1, v2, v3, v4], data);
 for vertex in cell.vertices() {
-    println!("At: {:?}", vertex.point());
+    println!("At: {:?}".point());
 }
 ```
 
@@ -1492,7 +1492,7 @@ let cell_key = tds.cells().iter().next().unwrap().0;
 let cell = &tds.cells()[cell_key];
 for &vkey in cell.vertex_keys() {
     let vertex = &tds.vertices()[vkey];
-    println!("At: {:?}", vertex.point());
+    println!("At: {:?}".point());
 }
 ```
 

@@ -44,7 +44,7 @@ fn benchmark_bounds() -> CoordinateRange<f64> {
 struct CloneSource<const D: usize> {
     vertex_count: usize,
     simplex_count: usize,
-    tds: Tds<f64, (), (), D>,
+    tds: Tds<(), (), D>,
 }
 
 /// Derive a deterministic, dimension-specific seed for one benchmark case.
@@ -58,15 +58,9 @@ fn seed_for_case<const D: usize>(requested_vertices: usize, seed_base: u64) -> u
 }
 
 /// Generate a reproducible vertex set for one clone-cost benchmark fixture.
-fn generate_vertices<const D: usize>(
-    requested_vertices: usize,
-    seed: u64,
-) -> Vec<Vertex<f64, (), D>> {
-    let points = generate_random_points_in_range_seeded::<f64, D>(
-        requested_vertices,
-        benchmark_bounds(),
-        seed,
-    );
+fn generate_vertices<const D: usize>(requested_vertices: usize, seed: u64) -> Vec<Vertex<(), D>> {
+    let points =
+        generate_random_points_in_range_seeded::<D>(requested_vertices, benchmark_bounds(), seed);
     Vertex::from_points(&points)
 }
 

@@ -123,15 +123,15 @@ kernel, use the explicit-kernel constructors:
 
 ```rust
 use delaunay::prelude::geometry::RobustKernel;
-use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::construction::{DelaunayTriangulation};
 
 let kernel = RobustKernel::<f64>::new();
 
 let vertices = vec![
-    vertex!([0.0, 0.0, 0.0]),
-    vertex!([1.0, 0.0, 0.0]),
-    vertex!([0.0, 1.0, 0.0]),
-    vertex!([0.0, 0.0, 1.0]),
+    delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
 ];
 
 let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
@@ -202,13 +202,13 @@ cases involve cavity/topology failures rather than predicate degeneracies.
 Use `insert_best_effort_with_statistics()` to observe this behavior:
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::construction::{DelaunayTriangulation};
 use delaunay::prelude::insertion::InsertionOutcome;
 
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 
 let (outcome, stats) = dt
-    .insert_best_effort_with_statistics(vertex!([0.5, 0.5, 0.5]))
+    .insert_best_effort_with_statistics(delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.5])?)
     .unwrap();
 
 if stats.used_perturbation() {
@@ -362,8 +362,8 @@ active regardless of this setting.
 - `DedupPolicy::Exact`: additionally apply `dedup_vertices_exact` before
   construction. This is a performance optimisation for inputs with many exact
   duplicates — it avoids paying per-vertex insertion overhead for each one.
-- `DedupPolicy::Epsilon(value)`: additionally apply `dedup_vertices_epsilon`
-  with the given tolerance before construction.
+- `DedupPolicy::try_epsilon(value)`: additionally apply
+  `dedup_vertices_epsilon` with the parsed tolerance before construction.
 
 The default (`Off`) is recommended because Hilbert dedup is free (zero extra cost)
 and per-insertion checks handle any remaining cases.
@@ -391,8 +391,7 @@ and per-insertion checks handle any remaining cases.
 - If you see retryable insertion errors, frequent perturbation retries, or skipped vertices,
   preprocess your input (dedup / rescale if appropriate).
 - Treat `InsertionOutcome::Skipped { .. }` from the best-effort API as an expected outcome on
-  pathological data; decide at the application level whether to drop the vertex,
-  perturb/rescale your point set, or re-run with a different kernel.
+  pathological data; decide at the application level whether to drop the perturb/rescale your point set, or re-run with a different kernel.
 
 ## Current limitations
 

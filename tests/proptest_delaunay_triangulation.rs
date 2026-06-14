@@ -34,11 +34,10 @@
 use delaunay::geometry::kernel::{AdaptiveKernel, RobustKernel};
 use delaunay::prelude::construction::{
     ConstructionOptions, DedupPolicy, DelaunayRepairPolicy, DelaunayTriangulation,
-    TopologyGuarantee, Vertex, vertex,
+    TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::geometry::*;
-use delaunay::prelude::insertion::{InsertionError, InsertionOutcome};
-use delaunay::prelude::tds::TdsError;
+use delaunay::prelude::insertion::InsertionOutcome;
 use delaunay::prelude::validation::ValidationPolicy;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
@@ -100,30 +99,32 @@ fn non_finite_coordinate() -> impl Strategy<Value = f64> {
 }
 
 /// Strategy for generating 2D vertices
-fn vertex_2d() -> impl Strategy<Value = Point<f64, 2>> {
-    prop::array::uniform2(finite_coordinate()).prop_map(Point::new)
+fn vertex_2d() -> impl Strategy<Value = Point<2>> {
+    prop::array::uniform2(finite_coordinate())
+        .prop_map(|coords| Point::try_new(coords).expect("finite point coordinates"))
 }
 
 /// Strategy for generating 3D vertices
-fn vertex_3d() -> impl Strategy<Value = Point<f64, 3>> {
-    prop::array::uniform3(finite_coordinate()).prop_map(Point::new)
+fn vertex_3d() -> impl Strategy<Value = Point<3>> {
+    prop::array::uniform3(finite_coordinate())
+        .prop_map(|coords| Point::try_new(coords).expect("finite point coordinates"))
 }
 
 /// Strategy for generating 4D vertices
-fn vertex_4d() -> impl Strategy<Value = Point<f64, 4>> {
-    prop::array::uniform4(finite_coordinate()).prop_map(Point::new)
+fn vertex_4d() -> impl Strategy<Value = Point<4>> {
+    prop::array::uniform4(finite_coordinate())
+        .prop_map(|coords| Point::try_new(coords).expect("finite point coordinates"))
 }
 
 /// Strategy for generating 5D vertices
-fn vertex_5d() -> impl Strategy<Value = Point<f64, 5>> {
-    prop::array::uniform5(finite_coordinate()).prop_map(Point::new)
+fn vertex_5d() -> impl Strategy<Value = Point<5>> {
+    prop::array::uniform5(finite_coordinate())
+        .prop_map(|coords| Point::try_new(coords).expect("finite point coordinates"))
 }
 
 /* Deduplicate helpers to avoid pathological degeneracies in property tests */
-fn dedup_vertices_by_coords<const D: usize>(
-    vertices: Vec<Vertex<f64, (), D>>,
-) -> Vec<Vertex<f64, (), D>> {
-    let mut unique: Vec<Vertex<f64, (), D>> = Vec::with_capacity(vertices.len());
+fn dedup_vertices_by_coords<const D: usize>(vertices: Vec<Vertex<(), D>>) -> Vec<Vertex<(), D>> {
+    let mut unique: Vec<Vertex<(), D>> = Vec::with_capacity(vertices.len());
     'outer: for v in vertices {
         let vc = *v.point().coords();
         for u in &unique {
@@ -149,9 +150,7 @@ fn dedup_vertices_by_coords<const D: usize>(
 /// keep it as defense-in-depth in case the generators change.
 ///
 /// Returns `true` iff **no** coordinate hyperplane contains `>= D` input vertices.
-fn has_no_coordinate_hyperplane_degeneracy<const D: usize>(
-    vertices: &[Vertex<f64, (), D>],
-) -> bool {
+fn has_no_coordinate_hyperplane_degeneracy<const D: usize>(vertices: &[Vertex<(), D>]) -> bool {
     let mut axis_counts = [0usize; D];
 
     for v in vertices {
@@ -176,7 +175,7 @@ fn has_no_coordinate_hyperplane_degeneracy<const D: usize>(
 /// - This property is specifically scoped to the “standard incremental path” where we want
 ///   insertion-order invariance for **validation Levels 1–3** (elements + structure + topology),
 ///   leaving degenerate/perturbation behavior to dedicated suites.
-fn has_no_nearly_coplanar_tetrahedra_3d(vertices: &[Vertex<f64, (), 3>]) -> bool {
+fn has_no_nearly_coplanar_tetrahedra_3d(vertices: &[Vertex<(), 3>]) -> bool {
     // Relative threshold: volume6 scales with L^3, so compare against scale^3.
     // Intentionally loose: we only want to drop “shrink-pathological” nearly-coplanar cases,
     // not typical random inputs.
@@ -252,7 +251,7 @@ fn has_no_nearly_coplanar_tetrahedra_3d(vertices: &[Vertex<f64, (), 3>]) -> bool
 ///   the chosen triangulation.
 /// - This property is intentionally scoped to a slice of 3D space where we expect insertion-order
 ///   invariance for **validation Levels 1–3** without depending on perturbation heuristics.
-fn has_no_cospherical_5_tuples_3d(vertices: &[Vertex<f64, (), 3>]) -> bool {
+fn has_no_cospherical_5_tuples_3d(vertices: &[Vertex<(), 3>]) -> bool {
     const MAX_N: usize = 15;
 
     let n = vertices.len();
@@ -367,17 +366,17 @@ macro_rules! prop_assert_levels_1_to_3_valid {
 /// Rectangle corners are exactly cocircular, so randomized insertion orders
 /// exercise the `OnSuspicion` validation cadence on an adversarial boundary
 /// between valid Delaunay triangulations.
-fn rectangle_corners_2d(origin: [i32; 2], side_lengths: [i32; 2]) -> Vec<Point<f64, 2>> {
+fn rectangle_corners_2d(origin: [i32; 2], side_lengths: [i32; 2]) -> Vec<Point<2>> {
     let x0 = f64::from(origin[0]);
     let y0 = f64::from(origin[1]);
     let x1 = x0 + f64::from(side_lengths[0]);
     let y1 = y0 + f64::from(side_lengths[1]);
 
     vec![
-        Point::new([x0, y0]),
-        Point::new([x1, y0]),
-        Point::new([x0, y1]),
-        Point::new([x1, y1]),
+        Point::try_new([x0, y0]).expect("finite point coordinates"),
+        Point::try_new([x1, y0]).expect("finite point coordinates"),
+        Point::try_new([x0, y1]).expect("finite point coordinates"),
+        Point::try_new([x1, y1]).expect("finite point coordinates"),
     ]
 }
 
@@ -385,7 +384,7 @@ fn rectangle_corners_2d(origin: [i32; 2], side_lengths: [i32; 2]) -> Vec<Point<f
 ///
 /// Cuboid corners are exactly cospherical. This keeps the property focused on
 /// topology and Delaunay validation under degenerate but finite inputs.
-fn cuboid_corners_3d(origin: [i32; 3], side_lengths: [i32; 3]) -> Vec<Point<f64, 3>> {
+fn cuboid_corners_3d(origin: [i32; 3], side_lengths: [i32; 3]) -> Vec<Point<3>> {
     let x0 = f64::from(origin[0]);
     let y0 = f64::from(origin[1]);
     let z0 = f64::from(origin[2]);
@@ -394,19 +393,19 @@ fn cuboid_corners_3d(origin: [i32; 3], side_lengths: [i32; 3]) -> Vec<Point<f64,
     let z1 = z0 + f64::from(side_lengths[2]);
 
     vec![
-        Point::new([x0, y0, z0]),
-        Point::new([x1, y0, z0]),
-        Point::new([x0, y1, z0]),
-        Point::new([x0, y0, z1]),
-        Point::new([x1, y1, z0]),
-        Point::new([x1, y0, z1]),
-        Point::new([x0, y1, z1]),
-        Point::new([x1, y1, z1]),
+        Point::try_new([x0, y0, z0]).expect("finite point coordinates"),
+        Point::try_new([x1, y0, z0]).expect("finite point coordinates"),
+        Point::try_new([x0, y1, z0]).expect("finite point coordinates"),
+        Point::try_new([x0, y0, z1]).expect("finite point coordinates"),
+        Point::try_new([x1, y1, z0]).expect("finite point coordinates"),
+        Point::try_new([x1, y0, z1]).expect("finite point coordinates"),
+        Point::try_new([x0, y1, z1]).expect("finite point coordinates"),
+        Point::try_new([x1, y1, z1]).expect("finite point coordinates"),
     ]
 }
 
 /// Shuffle points with a deterministic seed supplied by proptest.
-fn shuffle_points<const D: usize>(mut points: Vec<Point<f64, D>>, seed: u64) -> Vec<Point<f64, D>> {
+fn shuffle_points<const D: usize>(mut points: Vec<Point<D>>, seed: u64) -> Vec<Point<D>> {
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
     points.shuffle(&mut rng);
     points
@@ -416,14 +415,16 @@ fn shuffle_points<const D: usize>(mut points: Vec<Point<f64, D>>, seed: u64) -> 
 /// validation succeeds after each attempted insertion and at the end of the
 /// sequence.
 fn assert_on_suspicion_sequence_valid<const D: usize>(
-    points: Vec<Point<f64, D>>,
+    points: Vec<Point<D>>,
 ) -> Result<(), TestCaseError> {
     let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
         DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
     dt.set_validation_policy(ValidationPolicy::OnSuspicion);
 
     for (idx, point) in points.into_iter().enumerate() {
-        let result = dt.insert_best_effort_with_statistics(vertex!(point));
+        let result = dt.insert_best_effort_with_statistics(
+            delaunay::prelude::Vertex::<(), _>::try_new(point.into()).unwrap(),
+        );
 
         if dt.number_of_simplices() > 0 {
             let validation = dt.validate();
@@ -450,32 +451,22 @@ fn assert_on_suspicion_sequence_valid<const D: usize>(
     Ok(())
 }
 
-/// Return `true` when insertion rejected a vertex through the typed invalid-vertex path.
-const fn rejected_invalid_vertex<T>(result: &Result<T, InsertionError>) -> bool {
-    matches!(
-        result,
-        Err(InsertionError::TopologyValidation(
-            TdsError::InvalidVertex { .. }
-        ))
-    )
-}
-
 /// Build a fixed non-degenerate unit simplex for non-finite insertion tests.
-fn unit_simplex_vertices<const D: usize>() -> Vec<Vertex<f64, (), D>> {
+fn unit_simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
     let mut points = Vec::with_capacity(D + 1);
-    points.push(Point::new([0.0; D]));
+    points.push(Point::try_new([0.0; D]).expect("finite point coordinates"));
 
     for axis in 0..D {
         let mut coords = [0.0; D];
         coords[axis] = 1.0;
-        points.push(Point::new(coords));
+        points.push(Point::try_new(coords).expect("finite point coordinates"));
     }
 
     Vertex::from_points(&points)
 }
 
-/// Build a point with one non-finite coordinate and finite filler elsewhere.
-fn non_finite_point<const D: usize>(axis: usize, value: f64) -> Point<f64, D> {
+/// Build coordinate input with one non-finite coordinate and finite filler elsewhere.
+fn non_finite_coords<const D: usize>(axis: usize, value: f64) -> [f64; D] {
     let mut coords = [0.25; D];
     for (idx, coord) in coords.iter_mut().enumerate() {
         if idx % 2 == 1 {
@@ -483,22 +474,38 @@ fn non_finite_point<const D: usize>(axis: usize, value: f64) -> Point<f64, D> {
         }
     }
     coords[axis] = value;
-    Point::new(coords)
+    coords
 }
 
-/// Assert non-finite insertions fail explicitly and leave topology fully valid.
-fn assert_non_finite_insert_rejected_and_preserves_validity<const D: usize>(
-    initial_vertices: &[Vertex<f64, (), D>],
-    point: Point<f64, D>,
+const fn invalid_coordinate_value(value: f64) -> InvalidCoordinateValue {
+    if value.is_nan() {
+        InvalidCoordinateValue::Nan
+    } else if value.is_sign_positive() {
+        InvalidCoordinateValue::PositiveInfinity
+    } else {
+        InvalidCoordinateValue::NegativeInfinity
+    }
+}
+
+/// Assert non-finite public coordinates are rejected before insertion can mutate topology.
+fn assert_non_finite_point_rejected_and_preserves_validity<const D: usize>(
+    initial_vertices: &[Vertex<(), D>],
+    coords: [f64; D],
+    axis: usize,
+    value: f64,
 ) -> Result<(), TestCaseError> {
-    let mut empty: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
+    prop_assert_eq!(
+        Point::<D>::try_new(coords),
+        Err(CoordinateValidationError::InvalidCoordinate {
+            coordinate_index: axis,
+            coordinate_value: invalid_coordinate_value(value),
+            dimension: D,
+        })
+    );
+
+    let empty: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
         DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
-    let empty_result = empty.insert_with_statistics(vertex!(point));
-    prop_assert!(
-        rejected_invalid_vertex(&empty_result),
-        "{D}D empty insertion should reject non-finite coordinates as an invalid vertex, got {empty_result:?}"
-    );
     prop_assert_eq!(empty.number_of_vertices(), 0);
     prop_assert_eq!(empty.number_of_simplices(), 0);
     let empty_validation = empty.validate();
@@ -508,24 +515,18 @@ fn assert_non_finite_insert_rejected_and_preserves_validity<const D: usize>(
         empty_validation.err()
     );
 
-    let mut dt =
-        DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), D>::new_with_topology_guarantee(
-            initial_vertices,
-            TopologyGuarantee::PLManifold,
-        )
-        .map_err(|err| {
-            TestCaseError::fail(format!(
-                "{D}D finite initial simplex construction failed: {err:?}"
-            ))
-        })?;
+    let dt = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), D>::new_with_topology_guarantee(
+        initial_vertices,
+        TopologyGuarantee::PLManifold,
+    )
+    .map_err(|err| {
+        TestCaseError::fail(format!(
+            "{D}D finite initial simplex construction failed: {err:?}"
+        ))
+    })?;
     let vertex_count = dt.number_of_vertices();
     let simplex_count = dt.number_of_simplices();
 
-    let result = dt.insert_with_statistics(vertex!(point));
-    prop_assert!(
-        rejected_invalid_vertex(&result),
-        "{D}D constructed insertion should reject non-finite coordinates as an invalid vertex, got {result:?}"
-    );
     prop_assert_eq!(dt.number_of_vertices(), vertex_count);
     prop_assert_eq!(dt.number_of_simplices(), simplex_count);
 
@@ -554,7 +555,7 @@ enum InsertionOrder3dRunStatus {
 
 fn insert_vertices_3d_no_retry_or_skip(
     dt: &mut DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>,
-    vertices: &[Vertex<f64, (), 3>],
+    vertices: &[Vertex<(), 3>],
 ) -> InsertionOrder3dRunStatus {
     for (idx, v) in vertices.iter().enumerate() {
         let result = dt.insert_best_effort_with_statistics(*v);
@@ -585,51 +586,60 @@ fn insert_vertices_3d_no_retry_or_skip(
 #[test]
 fn regression_insertion_order_3d_case_001() {
     let points = vec![
-        Point::new([
+        Point::try_new([
             -44.945_005_120_296_535,
             99.756_651_886_055_48,
             -42.335_053_700_056_505,
-        ]),
-        Point::new([
+        ])
+        .expect("finite point coordinates"),
+        Point::try_new([
             73.700_964_567_587_9,
             -63.612_148_894_577_96,
             74.105_780_529_266_97,
-        ]),
-        Point::new([
+        ])
+        .expect("finite point coordinates"),
+        Point::try_new([
             17.617_609_442_986_858,
             82.105_819_037_825_37,
             96.704_584_226_450_41,
-        ]),
-        Point::new([
+        ])
+        .expect("finite point coordinates"),
+        Point::try_new([
             -84.890_821_270_170_35,
             -81.870_190_740_455_77,
             -15.370_417_803_763_095,
-        ]),
-        Point::new([
+        ])
+        .expect("finite point coordinates"),
+        Point::try_new([
             91.801_310_819_317_69,
             -59.048_589_230_347_44,
             32.595_036_426_462_01,
-        ]),
-        Point::new([
+        ])
+        .expect("finite point coordinates"),
+        Point::try_new([
             71.577_209_178_042_41,
             67.758_811_346_527_74,
             -13.549_441_576_893_503,
-        ]),
-        Point::new([
+        ])
+        .expect("finite point coordinates"),
+        Point::try_new([
             13.014_109_789_682_385,
             -44.307_776_868_547_734,
             12.429_638_278_179_98,
-        ]),
-        Point::new([
+        ])
+        .expect("finite point coordinates"),
+        Point::try_new([
             56.289_801_257_128_175,
             8.701_429_811_815_13,
             -74.980_558_102_554_71,
-        ]),
-        Point::new([
+        ])
+        .expect("finite point coordinates"),
+        Point::try_new([
             -94.434_209_076_643_74,
             -18.606_000_110_184_25,
             4.127_801_687_310_058,
-        ]),
+        ])
+        .expect("finite point coordinates"),
     ];
     let vertices = Vertex::from_points(&points);
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
@@ -676,7 +686,9 @@ macro_rules! gen_incremental_insertion_validity {
                     // generator changes.
                     prop_assume!(has_no_coordinate_hyperplane_degeneracy(&initial_vertices));
 
-                    let additional_vertex = vertex!(additional_point);
+                    let additional_vertex =
+                        delaunay::prelude::Vertex::<(), _>::try_new(additional_point.into())
+                            .unwrap();
 
                     // Avoid duplicate insertion cases here; duplicate-handling is tested in dedicated suites.
                     let add_coords = *additional_vertex.point().coords();
@@ -743,7 +755,8 @@ proptest! {
         prop_assume!(has_no_nearly_coplanar_tetrahedra_3d(&initial_vertices));
         prop_assume!(has_no_cospherical_5_tuples_3d(&initial_vertices));
 
-        let additional_vertex = vertex!(additional_point);
+        let additional_vertex =
+            delaunay::prelude::Vertex::<(), _>::try_new(additional_point.into()).unwrap();
 
         // Avoid duplicate insertion cases here; duplicate-handling is tested in dedicated suites.
         let add_coords = *additional_vertex.point().coords();
@@ -832,15 +845,20 @@ macro_rules! gen_non_finite_insert_rejection_tests {
             proptest! {
                 $(
                     #[test]
-                    fn [<prop_non_finite_insert_returns_error_and_preserves_topology_ $dim d>](
+                    fn [<prop_non_finite_point_rejected_before_insert_preserves_topology_ $dim d>](
                         value in non_finite_coordinate(),
                         axis in 0usize..$dim,
                     ) {
                         init_tracing();
                         let vertices = unit_simplex_vertices::<$dim>();
-                        let point = non_finite_point::<$dim>(axis, value);
+                        let coords = non_finite_coords::<$dim>(axis, value);
 
-                        assert_non_finite_insert_rejected_and_preserves_validity(&vertices, point)?;
+                        assert_non_finite_point_rejected_and_preserves_validity(
+                            &vertices,
+                            coords,
+                            axis,
+                            value,
+                        )?;
                     }
                 )+
             }
@@ -865,7 +883,7 @@ macro_rules! gen_duplicate_coords_test {
                 #[test]
                 fn [<prop_duplicate_coordinates_rejected_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min..=$max
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
@@ -1093,7 +1111,7 @@ macro_rules! gen_high_dim_delaunay_smoke {
                         $dim
                     );
 
-                    let mut cloud_points: Vec<Point<f64, $dim>> =
+                    let mut cloud_points: Vec<Point<$dim>> =
                         vertices.iter().map(|v| *v.point()).collect();
                     if cloud_points.len() >= 2 {
                         cloud_points.push(cloud_points[0]);
@@ -1101,12 +1119,12 @@ macro_rules! gen_high_dim_delaunay_smoke {
                         for coord in &mut jittered {
                             *coord += 1e-7;
                         }
-                        cloud_points.push(Point::new(jittered));
+                        cloud_points.push(Point::try_new(jittered).expect("finite point coordinates"));
                     }
 
                     let cloud_vertices = Vertex::from_points(&cloud_points);
                     let options = ConstructionOptions::default()
-                        .with_dedup_policy(DedupPolicy::Epsilon { tolerance: 1e-6 });
+                        .with_dedup_policy(DedupPolicy::try_epsilon(1e-6).unwrap());
                     let cloud_dt = match DelaunayTriangulation::<_, (), (), $dim>::new_with_options(
                         &cloud_vertices,
                         options,
@@ -1247,7 +1265,7 @@ macro_rules! gen_insertion_order_robustness_test {
                 #[test]
                 fn [<prop_insertion_order_robustness_ $dim d>](
                     points in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|pts| dedup_vertices_by_coords::<$dim>(Vertex::from_points(&pts)))
                 ) {
@@ -1396,7 +1414,8 @@ fn prop_insertion_order_robustness_3d() {
     let mut runner = TestRunner::new(config);
 
     let strategy = prop::collection::vec(
-        prop::array::uniform3(finite_coordinate()).prop_map(Point::new),
+        prop::array::uniform3(finite_coordinate())
+            .prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
         6..=10,
     )
     .prop_map(|pts| dedup_vertices_by_coords::<3>(Vertex::from_points(&pts)));
@@ -1889,7 +1908,7 @@ gen_insertion_order_robustness_high_dim!(5, 7, 12, #[cfg(feature = "slow-tests")
 
 /// Count unique coordinate tuples using bitwise equality.
 /// Used to ensure at least D+1 distinct points before attempting triangulation.
-fn count_unique_coords_by_bits<const D: usize>(pts: &[Point<f64, D>]) -> usize {
+fn count_unique_coords_by_bits<const D: usize>(pts: &[Point<D>]) -> usize {
     let mut set: HashSet<Vec<u64>> = HashSet::with_capacity(pts.len());
     for p in pts {
         let coords = *p.coords();
@@ -1905,9 +1924,9 @@ macro_rules! gen_duplicate_cloud_test {
             /// Generate random point cloud with exact duplicates and near-duplicates (1e-7 jitter).
             /// Tests full construction pipeline with realistic messy inputs.
             $(#[$attr])*
-            fn [<cloud_with_duplicates_ $dim d>]() -> impl Strategy<Value = Vec<Point<f64, $dim>>> {
+            fn [<cloud_with_duplicates_ $dim d>]() -> impl Strategy<Value = Vec<Point<$dim>>> {
                 prop::collection::vec(
-                    prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                    prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                     6..=12,
                 )
                 .prop_map(|mut pts| {
@@ -1921,7 +1940,7 @@ macro_rules! gen_duplicate_cloud_test {
                         for c in &mut coords {
                             *c += 1e-7;
                         }
-                        pts.push(Point::new(coords));
+                        pts.push(Point::try_new(coords).expect("finite point coordinates"));
                     }
                     pts
                 })
@@ -1949,11 +1968,11 @@ macro_rules! gen_duplicate_cloud_test {
                     let unique = count_unique_coords_by_bits(&points);
                     prop_assume!(unique > $min_vertices);
 
-                    let vertices: Vec<Vertex<f64, (), $dim>> = Vertex::from_points(&points);
+                    let vertices: Vec<Vertex<(), $dim>> = Vertex::from_points(&points);
 
                     let build_start = std::time::Instant::now();
                     let options = ConstructionOptions::default()
-                        .with_dedup_policy(DedupPolicy::Epsilon { tolerance: 1e-6 });
+                        .with_dedup_policy(DedupPolicy::try_epsilon(1e-6).unwrap());
                     let dt = DelaunayTriangulation::<_, (), (), $dim>::new_with_options(
                         &vertices,
                         options,

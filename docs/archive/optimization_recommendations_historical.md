@@ -77,7 +77,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
 
                 let vertex_key = self.vertex_bimap.get_by_left(&vertex.uuid())
                     .ok_or_else(|| TriangulationValidationError::MappingInconsistency {
-                        message: format!("Missing vertex mapping for {:?}", vertex.uuid()),
+                        message: format!("Missing vertex mapping for {:?}".uuid()),
                     })?;
 
                 if !temp_vertex_keys.insert(*vertex_key) {
@@ -168,7 +168,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
 
 **Optimizations IMPLEMENTED:**
 
-- **✅ InsertionBuffers structure**: Reusable buffers for bad cells, boundary facets, vertex points, and visible facets
+- **✅ InsertionBuffers structure**: Reusable buffers for bad cells, boundary facets points, and visible facets
 - **✅ Pre-allocated capacity**: Buffers created with appropriate initial capacity
 - **✅ Buffer preparation methods**: `prepare_bad_cells_buffer()`, `prepare_vertex_points_buffer()`, etc.
 - **✅ Reduced allocations**: Algorithm reuses buffers across multiple insertions
@@ -183,7 +183,7 @@ struct CellCache<T, const D: usize> {
 }
 
 impl<T, U, V, const D: usize> Tds<T, U, V, D> {
-    fn find_bad_cells_cached(&mut self, vertex: &Vertex<T, U, D>) -> Result<Vec<CellKey>, TriangulationValidationError> {
+    fn find_bad_cells_cached(&mut self: &Vertex<T, U, D>) -> Result<Vec<CellKey>, TriangulationValidationError> {
         // Reuse buffer from struct to avoid allocation
         self.bad_cells_buffer.clear();
 
@@ -434,7 +434,7 @@ where
         SpatialIndex { tree }
     }
 
-    fn find_bad_cells_spatial(&self, vertex: &Vertex<T, U, D>, 
+    fn find_bad_cells_spatial(&self: &Vertex<T, U, D>, 
                             index: &SpatialIndex<T, D>) -> Vec<CellKey> {
         let vertex_point = vertex.point().to_array();
 
@@ -533,7 +533,7 @@ fn is_valid_parallel(&self) -> Result<(), TriangulationValidationError> {
 }
 
 // Parallel bad cell detection for Bowyer-Watson
-fn find_bad_cells_parallel(&self, vertex: &Vertex<T, U, D>) -> Vec<CellKey> {
+fn find_bad_cells_parallel(&self: &Vertex<T, U, D>) -> Vec<CellKey> {
     self.cells
         .par_iter()
         .filter_map(|(cell_key, cell)| {

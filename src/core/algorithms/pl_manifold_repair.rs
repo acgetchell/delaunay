@@ -2,7 +2,7 @@
 //!
 //! This module implements a `pub(crate)` repair algorithm that attempts to bring
 //! a triangulation closer to satisfying the
-//! [`TopologyGuarantee::PLManifold`](crate::core::validation::TopologyGuarantee::PLManifold)
+//! [`TopologyGuarantee::PLManifold`](crate::prelude::validation::TopologyGuarantee::PLManifold)
 //! invariant by removing simplices that cause codimension-1 facet over-sharing
 //! (facets incident to more than 2 simplices).
 //!
@@ -32,7 +32,6 @@ use crate::core::simplex::Simplex;
 use crate::core::tds::{SimplexKey, Tds, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
-use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::geometry::util::norms::hypot;
 use crate::topology::manifold::validate_facet_degree;
 use num_traits::NumCast;
@@ -79,7 +78,7 @@ impl Default for PlManifoldRepairConfig {
 /// ```rust
 /// use delaunay::prelude::delaunayize::PlManifoldRepairStats;
 ///
-/// let stats = PlManifoldRepairStats::<f64, (), (), 3>::default();
+/// let stats = PlManifoldRepairStats::<(), (), 3>::default();
 /// assert_eq!(stats.iterations, 0);
 /// assert_eq!(stats.simplices_removed, 0);
 /// assert!(stats.removed_simplices.is_empty());
@@ -87,25 +86,22 @@ impl Default for PlManifoldRepairConfig {
 /// assert!(!stats.succeeded);
 /// ```
 #[derive(Debug, Clone)]
-pub struct PlManifoldRepairStats<T, U, V, const D: usize> {
+pub struct PlManifoldRepairStats<U, V, const D: usize> {
     /// Number of repair iterations executed.
     pub iterations: usize,
     /// Total number of simplices removed.
     pub simplices_removed: usize,
     /// Simplices that were removed, preserving user data for callers that need to
     /// migrate or inspect it. Identifiable by [`Simplex::uuid()`].
-    pub removed_simplices: Vec<Simplex<T, U, V, D>>,
+    pub removed_simplices: Vec<Simplex<V, D>>,
     /// Vertices that became isolated after simplex removal and were removed from
     /// the TDS. Identifiable by [`Vertex::uuid()`].
-    pub removed_vertices: Vec<Vertex<T, U, D>>,
+    pub removed_vertices: Vec<Vertex<U, D>>,
     /// Whether the facet-degree invariant was satisfied at termination.
     pub succeeded: bool,
 }
 
-impl<T, U, V, const D: usize> PartialEq for PlManifoldRepairStats<T, U, V, D>
-where
-    T: CoordinateScalar,
-{
+impl<U, V, const D: usize> PartialEq for PlManifoldRepairStats<U, V, D> {
     fn eq(&self, other: &Self) -> bool {
         self.iterations == other.iterations
             && self.simplices_removed == other.simplices_removed
@@ -115,9 +111,9 @@ where
     }
 }
 
-impl<T, U, V, const D: usize> Eq for PlManifoldRepairStats<T, U, V, D> where T: CoordinateScalar {}
+impl<U, V, const D: usize> Eq for PlManifoldRepairStats<U, V, D> {}
 
-impl<T, U, V, const D: usize> Default for PlManifoldRepairStats<T, U, V, D> {
+impl<U, V, const D: usize> Default for PlManifoldRepairStats<U, V, D> {
     fn default() -> Self {
         Self {
             iterations: 0,
@@ -203,12 +199,11 @@ pub enum PlManifoldRepairError {
 /// - The TDS fails structural validation (Levels 1–2).
 /// - The iteration or simplex-removal budget is exhausted.
 /// - A pass finds violations but cannot remove any simplices.
-pub fn repair_facet_oversharing<T, U, V, const D: usize>(
-    tds: &mut Tds<T, U, V, D>,
+pub fn repair_facet_oversharing<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
     config: &PlManifoldRepairConfig,
-) -> Result<PlManifoldRepairStats<T, U, V, D>, PlManifoldRepairError>
+) -> Result<PlManifoldRepairStats<U, V, D>, PlManifoldRepairError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -322,12 +317,8 @@ where
 /// Uses an edge-length aspect-ratio metric (max/min edge) that operates
 /// directly on the `Tds` without requiring a full `Triangulation` or
 /// circumsphere computation.
-fn simplex_quality_score<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
-    simplex_key: SimplexKey,
-) -> f64
+fn simplex_quality_score<U, V, const D: usize>(tds: &Tds<U, V, D>, simplex_key: SimplexKey) -> f64
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -345,13 +336,11 @@ where
                 return f64::MAX;
             };
 
-            let mut diff = [T::zero(); D];
+            let mut diff = [0.0; D];
             for (idx, d) in diff.iter_mut().enumerate() {
                 *d = vi.point().coords()[idx] - vj.point().coords()[idx];
             }
-            let Some(len): Option<f64> = NumCast::from(hypot(&diff)) else {
-                return f64::MAX;
-            };
+            let len = hypot(&diff);
             edge_lengths.push(len);
         }
     }
@@ -382,12 +371,11 @@ where
 ///
 /// Selection order: highest quality score first (worst simplex), then canonicalized
 /// vertex keys (ascending), then simplex UUID (ascending).
-fn pick_worst_simplex<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn pick_worst_simplex<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     handles: &[FacetHandle],
 ) -> Option<SimplexKey>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -438,11 +426,10 @@ where
 /// `stats.removed_vertices` so callers can recover their data.
 ///
 /// Vertices are sorted by UUID before removal for deterministic ordering.
-fn remove_orphaned_vertices<T, U, V, const D: usize>(
-    tds: &mut Tds<T, U, V, D>,
-    stats: &mut PlManifoldRepairStats<T, U, V, D>,
+fn remove_orphaned_vertices<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
+    stats: &mut PlManifoldRepairStats<U, V, D>,
 ) where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -469,7 +456,6 @@ fn remove_orphaned_vertices<T, U, V, const D: usize>(
 mod tests {
     use super::*;
     use crate::triangulation::DelaunayTriangulation;
-    use crate::vertex;
 
     // =============================================================================
     // HELPER FUNCTIONS
@@ -495,8 +481,7 @@ mod tests {
     fn stats_default_does_not_require_data_type_metadata() {
         struct NonDataType(String);
 
-        let stats: PlManifoldRepairStats<f64, String, NonDataType, 3> =
-            PlManifoldRepairStats::default();
+        let stats: PlManifoldRepairStats<String, NonDataType, 3> = PlManifoldRepairStats::default();
 
         assert_eq!(stats.iterations, 0);
         assert!(stats.removed_simplices.is_empty());
@@ -514,10 +499,10 @@ mod tests {
     fn test_already_pl_manifold_is_noop() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -539,10 +524,10 @@ mod tests {
     fn test_budget_exhaustion_zero_iterations() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -565,10 +550,10 @@ mod tests {
     fn test_2d_already_pl_manifold() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-            vertex!([1.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -589,9 +574,9 @@ mod tests {
     fn test_stats_populated_on_success() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -615,14 +600,14 @@ mod tests {
 
     /// Helper: create a TDS with over-shared facets by duplicating a simplex in a
     /// multi-simplex triangulation. Interior facets go from degree 2 to degree 3.
-    fn make_overshared_tds() -> Tds<f64, (), (), 3> {
+    fn make_overshared_tds() -> Tds<(), (), 3> {
         // 5 points
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.5, 0.5, 0.5]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -635,7 +620,7 @@ mod tests {
         // Duplicate the first simplex → its facets go from degree 2 to degree 3.
         let simplex_key = tds.simplex_keys().next().unwrap();
         let vkeys = tds.simplex_vertices(simplex_key).unwrap();
-        let dup_simplex = Simplex::new(vkeys.to_vec(), None).unwrap();
+        let dup_simplex = Simplex::try_new_with_data(vkeys.to_vec(), None).unwrap();
         tds.insert_simplex_bypassing_topology_checks_for_test(dup_simplex)
             .unwrap();
 
@@ -716,10 +701,10 @@ mod tests {
     fn test_simplex_quality_score_finite_and_deterministic() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -758,11 +743,11 @@ mod tests {
     fn test_deterministic_repeated_runs() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.5, 0.5, 0.5]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();

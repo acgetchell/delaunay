@@ -34,10 +34,10 @@ use crate::topology::{
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
@@ -129,9 +129,9 @@ impl TopologyCheckResult {
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0]),
-///     vertex!([1.0, 0.0]),
-///     vertex!([0.5, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
@@ -148,8 +148,8 @@ impl TopologyCheckResult {
 /// # Errors
 ///
 /// Returns [`TopologyError`] if topology validation support data cannot be built.
-pub fn validate_triangulation_euler<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub fn validate_triangulation_euler<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
 ) -> Result<TopologyCheckResult, TopologyError> {
     // Precompute the facet map once and reuse it for both counting and classification.
     //
@@ -167,8 +167,8 @@ pub fn validate_triangulation_euler<T, U, V, const D: usize>(
     ))
 }
 
-pub(crate) fn validate_triangulation_euler_with_facet_to_simplices_map<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub(crate) fn validate_triangulation_euler_with_facet_to_simplices_map<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     facet_to_simplices: &FacetToSimplicesMap,
 ) -> TopologyCheckResult {
     let counts = count_simplices_with_facet_to_simplices_map(tds, facet_to_simplices);

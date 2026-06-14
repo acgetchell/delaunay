@@ -29,10 +29,10 @@ use crate::core::{
 /// # fn main() -> Result<(), ExampleError> {
 /// // Create a simple 3D triangulation (single tetrahedron)
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let dt: DelaunayTriangulation<_, _, _, 3> =
 ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -47,7 +47,7 @@ use crate::core::{
 /// # Ok(())
 /// # }
 /// ```
-pub trait BoundaryAnalysis<T, U, V, const D: usize> {
+pub trait BoundaryAnalysis<U, V, const D: usize> {
     /// Identifies all boundary facets in the triangulation.
     ///
     /// A boundary facet is a facet that belongs to only one simplex, meaning it lies on the
@@ -79,10 +79,10 @@ pub trait BoundaryAnalysis<T, U, V, const D: usize> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt: DelaunayTriangulation<_, _, _, 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -94,7 +94,7 @@ pub trait BoundaryAnalysis<T, U, V, const D: usize> {
     /// # Ok(())
     /// # }
     /// ```
-    fn boundary_facets(&self) -> Result<BoundaryFacetsIter<'_, T, U, V, D>, TdsError>;
+    fn boundary_facets(&self) -> Result<BoundaryFacetsIter<'_, U, V, D>, TdsError>;
 
     /// Checks if a specific facet is a boundary facet.
     ///
@@ -132,10 +132,10 @@ pub trait BoundaryAnalysis<T, U, V, const D: usize> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt: DelaunayTriangulation<_, _, _, 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -151,7 +151,7 @@ pub trait BoundaryAnalysis<T, U, V, const D: usize> {
     /// # Ok(())
     /// # }
     /// ```
-    fn is_boundary_facet(&self, facet: &FacetView<'_, T, U, V, D>) -> Result<bool, TdsError>;
+    fn is_boundary_facet(&self, facet: &FacetView<'_, U, V, D>) -> Result<bool, TdsError>;
 
     /// Checks if a specific facet is a boundary facet using a precomputed facet map.
     ///
@@ -193,10 +193,10 @@ pub trait BoundaryAnalysis<T, U, V, const D: usize> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt: DelaunayTriangulation<_, _, _, 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -217,10 +217,10 @@ pub trait BoundaryAnalysis<T, U, V, const D: usize> {
     /// # }
     /// ```
     ///
-    /// [`build_facet_to_simplices_map`]: crate::core::tds::Tds::build_facet_to_simplices_map
+    /// [`build_facet_to_simplices_map`]: crate::prelude::tds::Tds::build_facet_to_simplices_map
     fn is_boundary_facet_with_map(
         &self,
-        facet: &FacetView<'_, T, U, V, D>,
+        facet: &FacetView<'_, U, V, D>,
         facet_to_simplices: &crate::core::collections::FacetToSimplicesMap,
     ) -> Result<bool, TdsError>;
 
@@ -254,10 +254,10 @@ pub trait BoundaryAnalysis<T, U, V, const D: usize> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt: DelaunayTriangulation<_, _, _, 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;

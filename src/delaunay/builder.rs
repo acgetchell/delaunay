@@ -10,13 +10,13 @@
 //! |---|---|
 //! | Simple Euclidean, default options | [`DelaunayTriangulationBuilder::new`] |
 //! | Custom `ConstructionOptions` or `TopologyGuarantee` | [`DelaunayTriangulationBuilder`] |
-//! | Periodic toroidal quotient (χ = 0) | [`DelaunayTriangulationBuilder`] with [`.toroidal()`](DelaunayTriangulationBuilder::toroidal) |
-//! | Canonicalized toroidal points | [`DelaunayTriangulationBuilder`] with [`.canonicalized_toroidal()`](DelaunayTriangulationBuilder::canonicalized_toroidal) |
+//! | Periodic toroidal quotient (χ = 0) | [`DelaunayTriangulationBuilder`] with [`.try_toroidal()`](DelaunayTriangulationBuilder::try_toroidal) |
+//! | Canonicalized toroidal points | [`DelaunayTriangulationBuilder`] with [`.try_canonicalized_toroidal()`](DelaunayTriangulationBuilder::try_canonicalized_toroidal) |
 //! | Custom kernel (`RobustKernel`, etc.) | [`DelaunayTriangulationBuilder::build_with_kernel`] |
 //!
 //! # Canonicalized vs periodic toroidal construction
 //!
-//! **Periodic image-point (`.toroidal()`, issue #210):** Periodic construction using
+//! **Periodic image-point (`.try_toroidal()`, issue #210):** Periodic construction using
 //! the 3^D image-point method — generating copies of each point shifted by ±L in each
 //! dimension, building the full Euclidean DT on the expanded set, normalizing lifted
 //! simplices, searching a closed quotient candidate subset, and rebuilding quotient
@@ -26,7 +26,7 @@
 //! for routine validation. See `REFERENCES.md`, "Periodic and Toroidal
 //! Triangulations", first entry.
 //!
-//! **Canonicalized (`.canonicalized_toroidal()`):** The builder canonicalizes all input
+//! **Canonicalized (`.try_canonicalized_toroidal()`):** The builder canonicalizes all input
 //! vertices into the fundamental domain `[0, L_i)` before passing them to the standard
 //! Euclidean constructor. The resulting triangulation is a valid Euclidean Delaunay
 //! triangulation of the canonicalized point set; it does **not** identify opposite
@@ -37,13 +37,13 @@
 //! ## Standard Euclidean construction
 //!
 //! ```rust
-//! use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+//! use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
 //!
 //! # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
-//!     vertex!([0.0, 0.0]),
-//!     vertex!([1.0, 0.0]),
-//!     vertex!([0.0, 1.0]),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
 //! ];
 //!
 //! let dt = DelaunayTriangulationBuilder::new(&vertices)
@@ -57,19 +57,20 @@
 //! ## Toroidal construction (canonicalization only)
 //!
 //! ```rust
-//! use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+//! use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
 //!
 //! # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
 //! // Vertices that fall outside [0, 1)² are wrapped before triangulation.
 //! let vertices = vec![
-//!     vertex!([0.2, 0.3]),
-//!     vertex!([1.8, 0.1]),  // x wraps to 0.8
-//!     vertex!([0.5, 0.7]),
-//!     vertex!([-0.4, 0.9]), // x wraps to 0.6
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.3]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([1.8, 0.1]).expect("finite vertex coordinates"),  // x wraps to 0.8
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.7]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([-0.4, 0.9]).expect("finite vertex coordinates"), // x wraps to 0.6
 //! ];
 //!
 //! let dt = DelaunayTriangulationBuilder::new(&vertices)
-//!     .canonicalized_toroidal([1.0, 1.0])
+//!     .try_canonicalized_toroidal([1.0, 1.0])
+//!     .expect("unit toroidal domain is valid")
 //!     .build::<()>()?;
 //!
 //! assert_eq!(dt.number_of_vertices(), 4);
@@ -84,22 +85,23 @@
 //!
 //! ```rust,no_run
 //! use delaunay::prelude::geometry::RobustKernel;
-//! use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+//! use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
 //!
 //! # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
-//!     vertex!([0.1, 0.2]),
-//!     vertex!([0.4, 0.7]),
-//!     vertex!([0.7, 0.3]),
-//!     vertex!([0.2, 0.9]),
-//!     vertex!([0.8, 0.6]),
-//!     vertex!([0.5, 0.1]),
-//!     vertex!([0.3, 0.5]),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.2]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.4, 0.7]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.7, 0.3]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.9]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.8, 0.6]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.1]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.3, 0.5]).expect("finite vertex coordinates"),
 //! ];
 //!
 //! let kernel = RobustKernel::new();
 //! let dt = DelaunayTriangulationBuilder::new(&vertices)
-//!     .toroidal([1.0, 1.0])
+//!     .try_toroidal([1.0, 1.0])
+//!     .expect("unit toroidal domain is valid")
 //!     .build_with_kernel::<_, ()>(&kernel)?;
 //!
 //! assert_eq!(dt.number_of_vertices(), 7);
@@ -112,8 +114,8 @@
 #![forbid(unsafe_code)]
 
 use crate::construction::{
-    ConstructionOptions, DelaunayTriangulationConstructionError, InitialSimplexStrategy,
-    RetryPolicy,
+    ConstructionOptions, DelaunayConstructionFailure, DelaunayTriangulationConstructionError,
+    InitialSimplexStrategy, RetryPolicy,
 };
 use crate::core::algorithms::incremental_insertion::{
     DelaunayRepairErrorKind, InsertionError, InsertionErrorSourceKind,
@@ -136,14 +138,11 @@ use crate::core::validation::TopologyGuarantee;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{AdaptiveKernel, Kernel};
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
 use crate::geometry::util::circumcenter;
 use crate::repair::DelaunayRepairPolicy;
-use crate::topology::traits::global_topology_model::{
-    GlobalTopologyModel, GlobalTopologyModelError,
-};
+use crate::topology::traits::global_topology_model::GlobalTopologyModel;
 use crate::topology::traits::topological_space::{
-    GlobalTopology, TopologyKind, ToroidalConstructionMode, ToroidalDomainError,
+    GlobalTopology, TopologyKind, ToroidalConstructionMode, ToroidalDomain, ToroidalDomainError,
 };
 use crate::triangulation::DelaunayTriangulation;
 use crate::validation::DelaunayTriangulationValidationError;
@@ -468,6 +467,8 @@ pub enum ExplicitInsertionErrorKind {
     MaxSimplicesRemovedExceeded,
     /// Spatial index construction failed.
     SpatialIndexConstruction,
+    /// Perturbation retry produced invalid coordinates.
+    PerturbedCoordinateInvalid,
 }
 
 /// Compact summary of an [`InsertionError`] used by explicit construction.
@@ -537,6 +538,9 @@ impl From<InsertionError> for ExplicitInsertionError {
             }
             InsertionError::SpatialIndexConstruction { .. } => {
                 ExplicitInsertionErrorKind::SpatialIndexConstruction
+            }
+            InsertionError::PerturbedCoordinateInvalid { .. } => {
+                ExplicitInsertionErrorKind::PerturbedCoordinateInvalid
             }
         };
         let source_kind = match &source {
@@ -772,10 +776,15 @@ impl From<DelaunayTriangulationValidationError> for ExplicitDelaunayValidationEr
 /// ```rust
 /// use delaunay::prelude::construction::{
 ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
-///     ExplicitConstructionError, vertex,
+///     ExplicitConstructionError,
 /// };
 ///
-/// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
+/// # fn main() -> Result<(), delaunay::prelude::geometry::CoordinateConversionError> {
+/// let vertices = vec![
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+/// ];
 /// let simplices = vec![vec![0, 1]]; // Wrong arity for 2D (needs 3 vertices)
 ///
 /// std::assert_matches!(
@@ -784,6 +793,8 @@ impl From<DelaunayTriangulationValidationError> for ExplicitDelaunayValidationEr
 ///         ExplicitConstructionError::InvalidSimplexArity { simplex_index: 0, actual: 2, expected: 3 },
 ///     ))
 /// );
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
@@ -922,7 +933,6 @@ pub enum ExplicitConstructionError {
 /// # Type Parameters
 ///
 /// - `'v` — Lifetime of the borrowed vertex slice.
-/// - `T` — Coordinate scalar type (inferred from the vertex slice).
 /// - `U` — Vertex data type (inferred from the vertex slice).
 /// - `D` — Spatial dimension (inferred from the vertex slice).
 ///
@@ -934,15 +944,15 @@ pub enum ExplicitConstructionError {
 ///
 /// ```rust
 /// use delaunay::prelude::construction::{
-///     ConstructionOptions, DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
+///     ConstructionOptions, DelaunayTriangulationBuilder, TopologyGuarantee,
 /// };
 ///
 /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 ///
 /// let dt = DelaunayTriangulationBuilder::new(&vertices)
@@ -954,18 +964,15 @@ pub enum ExplicitConstructionError {
 /// # Ok(())
 /// # }
 /// ```
-pub struct DelaunayTriangulationBuilder<'v, T, U, const D: usize> {
-    vertices: &'v [Vertex<T, U, D>],
-    /// Optional toroidal topology for the construction.
+pub struct DelaunayTriangulationBuilder<'v, U, const D: usize> {
+    vertices: &'v [Vertex<U, D>],
+    /// Topology mode for construction.
     ///
-    /// When set, all input vertices are canonicalized into the fundamental domain
-    /// `[0, L_i)` before the selected toroidal construction mode runs.
-    topology: Option<[f64; D]>,
+    /// Toroidal modes carry a validated domain and determine whether construction
+    /// uses canonicalization-only or periodic image points.
+    topology: BuilderTopology<D>,
     topology_guarantee: TopologyGuarantee,
     construction_options: ConstructionOptions,
-    /// When `true` (set by [`.toroidal()`](Self::toroidal)), the
-    /// periodic image-point algorithm is used instead of the canonicalization-only path.
-    use_image_point_method: bool,
     /// Optional explicit simplex specifications for direct combinatorial construction.
     ///
     /// When set, the builder constructs a triangulation from the given vertices and
@@ -981,72 +988,65 @@ pub struct DelaunayTriangulationBuilder<'v, T, U, const D: usize> {
     global_topology: GlobalTopology<D>,
 }
 
+enum BuilderTopology<const D: usize> {
+    Euclidean,
+    Canonicalized(ToroidalDomain<D>),
+    PeriodicImagePoint(ToroidalDomain<D>),
+}
+
 // =============================================================================
-// SPECIALIZED IMPL — f64 coordinates, any vertex data U
+// BUILDER IMPL — f64 coordinate storage, any vertex data U
 //
-// Pins T=f64 so callers using the default AdaptiveKernel never need explicit
-// type annotations.  U is inferred from the vertex slice.
+// U is inferred from the vertex slice.
 //
-//   let vertices = vec![vertex!([0.0, 0.0]), ...];
+//   let vertices = vec![crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0])?, ...];
 //   let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>();
 //
-//   let typed: [Vertex<f64, i32, 2>; 3] = [vertex!([0.0, 0.0], 1), ...];
+//   let typed: [Vertex<i32, 2>; 3] = [crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 1)?, ...];
 //   let dt = DelaunayTriangulationBuilder::new(&typed).build::<()>();
 //
 // =============================================================================
 
-impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, f64, U, D> {
+impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// Creates a builder for `f64` vertices with any user data type `U`.
     ///
     /// `U` is inferred from the vertex slice — no explicit type annotations needed
     /// for either `U = ()` (the common case) or typed vertex data.
     ///
-    /// For non-`f64` scalar types, use
-    /// [`from_vertices`](Self::from_vertices) in the generic impl.
-    ///
     /// # Examples
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex, vertex,
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
     /// };
     ///
     /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// // No vertex data (U = () inferred)
-    /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
+    /// let vertices = vec![delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"), delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"), delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates")];
     /// let _dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// // Typed vertex data (U = i32 inferred)
-    /// let typed: [Vertex<f64, i32, 2>; 3] = [
-    ///     vertex!([0.0, 0.0], 1i32),
-    ///     vertex!([1.0, 0.0], 2),
-    ///     vertex!([0.0, 1.0], 3),
+    /// let typed: [Vertex<i32, 2>; 3] = [
+    ///     delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 1i32).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0], 2).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0], 3).expect("finite vertex coordinates"),
     /// ];
     /// let _dt = DelaunayTriangulationBuilder::new(&typed).build::<()>()?;
     /// # Ok(())
     /// # }
     /// ```
     #[must_use]
-    pub fn new(vertices: &'v [Vertex<f64, U, D>]) -> Self {
+    pub fn new(vertices: &'v [Vertex<U, D>]) -> Self {
         Self {
             vertices,
-            topology: None,
+            topology: BuilderTopology::Euclidean,
             topology_guarantee: TopologyGuarantee::DEFAULT,
             construction_options: ConstructionOptions::default(),
-            use_image_point_method: false,
             explicit_simplices: None,
             global_topology: GlobalTopology::DEFAULT,
         }
     }
 
-    /// `f64` convenience wrapper for
-    /// [`from_vertices_and_simplices_generic`](Self::from_vertices_and_simplices_generic).
-    ///
-    /// Pins `T = f64` so that callers using the default `AdaptiveKernel` never
-    /// need explicit type annotations. For non-`f64` scalars, use the generic
-    /// [`from_vertices_and_simplices_generic`](Self::from_vertices_and_simplices_generic)
-    /// on the `T: CoordinateScalar` impl block.
-    ///
     /// This is not an unchecked topology wrapper. The deferred
     /// [`build`](Self::build) or [`build_with_kernel`](Self::build_with_kernel)
     /// call accepts only Euclidean explicit connectivity and validates the
@@ -1060,15 +1060,15 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, f64, U, D> {
     /// ```rust
     /// use delaunay::prelude::construction::{
     ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
-    ///     ExplicitConstructionError, vertex,
+    ///     ExplicitConstructionError,
     /// };
     ///
     /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([1.0, 1.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let simplices = vec![vec![0, 1, 2], vec![0, 2, 3]];
     ///
@@ -1090,22 +1090,15 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, f64, U, D> {
     /// ```
     #[must_use]
     pub fn from_vertices_and_simplices(
-        vertices: &'v [Vertex<f64, U, D>],
+        vertices: &'v [Vertex<U, D>],
         simplices: &'v [Vec<usize>],
     ) -> Self {
         Self::from_vertices_and_simplices_generic(vertices, simplices)
     }
-}
-
-// =============================================================================
-// GENERIC IMPL — any scalar T, any vertex data U
-// =============================================================================
-
-impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// Creates a builder from explicit vertex and simplex specifications.
     ///
     /// This constructs a triangulation from the given connectivity without
-    /// Delaunay point insertion. Works with any scalar type `T`.
+    /// Delaunay point insertion.
     ///
     /// The explicit connectivity is still validated when
     /// [`build`](Self::build) or [`build_with_kernel`](Self::build_with_kernel)
@@ -1115,29 +1108,25 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// path for the public `DelaunayTriangulation` wrapper; quotient meshes need
     /// Level 4 handling before they can be accepted.
     ///
-    /// For `f64` coordinates, prefer the convenience wrapper on the
-    /// `f64`-specialised impl which avoids explicit type annotations.
-    ///
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::geometry::{Coordinate, Point};
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, Vertex, VertexBuilder,
+    ///     DelaunayTriangulationBuilder, Vertex,
     /// };
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)]
-    /// #     Vertex(#[from] delaunay::prelude::construction::VertexBuilderError),
-    /// #     #[error(transparent)]
     /// #     Construction(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
-    /// let vertices: Vec<Vertex<f64, (), 2>> = vec![
-    ///     VertexBuilder::default().point(Point::new([0.0, 0.0])).build()?,
-    ///     VertexBuilder::default().point(Point::new([1.0, 0.0])).build()?,
-    ///     VertexBuilder::default().point(Point::new([0.0, 1.0])).build()?,
+    /// let vertices: Vec<Vertex<(), 2>> = vec![
+    ///     Vertex::try_new([0.0, 0.0])?,
+    ///     Vertex::try_new([1.0, 0.0])?,
+    ///     Vertex::try_new([0.0, 1.0])?,
     /// ];
     /// let simplices = vec![vec![0, 1, 2]];
     ///
@@ -1151,18 +1140,12 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// ```
     #[must_use]
     pub fn from_vertices_and_simplices_generic(
-        vertices: &'v [Vertex<T, U, D>],
+        vertices: &'v [Vertex<U, D>],
         simplices: &'v [Vec<usize>],
     ) -> Self {
-        Self {
-            vertices,
-            topology: None,
-            topology_guarantee: TopologyGuarantee::DEFAULT,
-            construction_options: ConstructionOptions::default(),
-            use_image_point_method: false,
-            explicit_simplices: Some(simplices),
-            global_topology: GlobalTopology::DEFAULT,
-        }
+        let mut builder = Self::new(vertices);
+        builder.explicit_simplices = Some(simplices);
+        builder
     }
 
     /// Creates a builder from a vertex slice.
@@ -1174,23 +1157,22 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::geometry::{Coordinate, Point};
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, Vertex, VertexBuilder,
+    ///     DelaunayTriangulationBuilder, Vertex,
     /// };
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)]
-    /// #     Vertex(#[from] delaunay::prelude::construction::VertexBuilderError),
-    /// #     #[error(transparent)]
     /// #     Construction(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
-    /// let vertices: Vec<Vertex<f64, (), 2>> = vec![
-    ///     VertexBuilder::default().point(Point::new([0.0, 0.0])).build()?,
-    ///     VertexBuilder::default().point(Point::new([1.0, 0.0])).build()?,
-    ///     VertexBuilder::default().point(Point::new([0.0, 1.0])).build()?,
+    /// let vertices: Vec<Vertex<(), 2>> = vec![
+    ///     Vertex::try_new([0.0, 0.0])?,
+    ///     Vertex::try_new([1.0, 0.0])?,
+    ///     Vertex::try_new([0.0, 1.0])?,
     /// ];
     ///
     /// let dt = DelaunayTriangulationBuilder::from_vertices(&vertices)
@@ -1201,16 +1183,8 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// # }
     /// ```
     #[must_use]
-    pub fn from_vertices(vertices: &'v [Vertex<T, U, D>]) -> Self {
-        Self {
-            vertices,
-            topology: None,
-            topology_guarantee: TopologyGuarantee::DEFAULT,
-            construction_options: ConstructionOptions::default(),
-            use_image_point_method: false,
-            explicit_simplices: None,
-            global_topology: GlobalTopology::DEFAULT,
-        }
+    pub fn from_vertices(vertices: &'v [Vertex<U, D>]) -> Self {
+        Self::new(vertices)
     }
 
     /// Enables periodic toroidal topology via the image-point method.
@@ -1218,7 +1192,7 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// This is the correctness-first toroidal constructor: it builds a periodic
     /// quotient with rewired neighbor pointers and Euler characteristic χ = 0 for
     /// the validated 2D and compact 3D cases. Use
-    /// [`.canonicalized_toroidal()`](Self::canonicalized_toroidal) only when you
+    /// [`.try_canonicalized_toroidal()`](Self::try_canonicalized_toroidal) only when you
     /// explicitly want the cheaper wrapping-only Euclidean construction.
     ///
     /// # Arguments
@@ -1230,23 +1204,24 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// ```rust,no_run
     /// use delaunay::prelude::geometry::RobustKernel;
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, vertex,
+    ///     DelaunayTriangulationBuilder,
     /// };
     ///
     /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
-    ///     vertex!([0.1, 0.2]),
-    ///     vertex!([0.4, 0.7]),
-    ///     vertex!([0.7, 0.3]),
-    ///     vertex!([0.2, 0.9]),
-    ///     vertex!([0.8, 0.6]),
-    ///     vertex!([0.5, 0.1]),
-    ///     vertex!([0.3, 0.5]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.2]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.4, 0.7]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.7, 0.3]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.9]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.8, 0.6]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.1]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.3, 0.5]).expect("finite vertex coordinates"),
     /// ];
     ///
     /// let kernel = RobustKernel::new();
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
-    ///     .toroidal([1.0, 1.0])
+    ///     .try_toroidal([1.0, 1.0])
+    ///     .expect("unit toroidal domain is valid")
     ///     .build_with_kernel::<_, ()>(&kernel)?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 7);
@@ -1254,10 +1229,53 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ToroidalDomainError`] when any period is non-finite, zero, or
+    /// negative.
+    pub fn try_toroidal(mut self, domain: [f64; D]) -> Result<Self, ToroidalDomainError> {
+        self.topology = BuilderTopology::PeriodicImagePoint(ToroidalDomain::try_new(domain)?);
+        Ok(self)
+    }
+
+    /// Enables periodic toroidal topology from an already-validated domain.
+    ///
+    /// This infallible setter is for callers that already hold a
+    /// [`ToroidalDomain`]. Use [`Self::try_toroidal`] at raw numeric boundaries
+    /// when the periods still need validation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
+    /// use delaunay::prelude::geometry::RobustKernel;
+    /// use delaunay::prelude::topology::spaces::ToroidalDomain;
+    ///
+    /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
+    /// let vertices = vec![
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.2]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.4, 0.7]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.7, 0.3]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.9]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.8, 0.6]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.1]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.3, 0.5]).expect("finite vertex coordinates"),
+    /// ];
+    ///
+    /// let domain = ToroidalDomain::<2>::unit();
+    /// let kernel = RobustKernel::new();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .toroidal(domain)
+    ///     .build_with_kernel::<_, ()>(&kernel)?;
+    ///
+    /// assert_eq!(dt.number_of_vertices(), 7);
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
-    pub const fn toroidal(mut self, domain: [f64; D]) -> Self {
-        self.topology = Some(domain);
-        self.use_image_point_method = true;
+    pub const fn toroidal(mut self, domain: ToroidalDomain<D>) -> Self {
+        self.topology = BuilderTopology::PeriodicImagePoint(domain);
         self
     }
 
@@ -1266,7 +1284,7 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// Input vertices are canonicalized into `[0, L_i)` per dimension before the
     /// triangulation is built. The resulting triangulation is a valid Euclidean
     /// Delaunay triangulation of the wrapped point set; boundary facets are
-    /// **not** rewired. Use [`.toroidal()`](Self::toroidal) for the true
+    /// **not** rewired. Use [`.try_toroidal()`](Self::try_toroidal) for the true
     /// periodic quotient path.
     ///
     /// # Arguments
@@ -1277,19 +1295,62 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, vertex,
+    ///     DelaunayTriangulationBuilder,
     /// };
     ///
     /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
-    ///     vertex!([0.2, 0.3]),
-    ///     vertex!([0.8, 0.1]),
-    ///     vertex!([0.5, 0.7]),
-    ///     vertex!([0.1, 0.9]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.3]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.8, 0.1]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.7]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.9]).expect("finite vertex coordinates"),
     /// ];
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
-    ///     .canonicalized_toroidal([1.0, 1.0])
+    ///     .try_canonicalized_toroidal([1.0, 1.0])
+    ///     .expect("unit toroidal domain is valid")
+    ///     .build::<()>()?;
+    ///
+    /// assert_eq!(dt.number_of_vertices(), 4);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ToroidalDomainError`] when any period is non-finite, zero, or
+    /// negative.
+    pub fn try_canonicalized_toroidal(
+        mut self,
+        domain: [f64; D],
+    ) -> Result<Self, ToroidalDomainError> {
+        self.topology = BuilderTopology::Canonicalized(ToroidalDomain::try_new(domain)?);
+        Ok(self)
+    }
+
+    /// Enables canonicalized toroidal topology from an already-validated domain.
+    ///
+    /// This infallible setter is for callers that already hold a
+    /// [`ToroidalDomain`]. Use [`Self::try_canonicalized_toroidal`] at raw
+    /// numeric boundaries when the periods still need validation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
+    /// use delaunay::prelude::topology::spaces::ToroidalDomain;
+    ///
+    /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
+    /// let vertices = vec![
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.3]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.8, 0.1]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.7]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.9]).expect("finite vertex coordinates"),
+    /// ];
+    ///
+    /// let domain = ToroidalDomain::<2>::unit();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .canonicalized_toroidal(domain)
     ///     .build::<()>()?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 4);
@@ -1297,9 +1358,8 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// # }
     /// ```
     #[must_use]
-    pub const fn canonicalized_toroidal(mut self, domain: [f64; D]) -> Self {
-        self.topology = Some(domain);
-        self.use_image_point_method = false;
+    pub const fn canonicalized_toroidal(mut self, domain: ToroidalDomain<D>) -> Self {
+        self.topology = BuilderTopology::Canonicalized(domain);
         self
     }
 
@@ -1314,14 +1374,14 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
+    ///     DelaunayTriangulationBuilder, TopologyGuarantee,
     /// };
     ///
     /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
@@ -1349,8 +1409,8 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// canonicalization or image-point construction. Explicit non-Euclidean
     /// connectivity is rejected until Level 4 validation supports quotient
     /// topology. For construction-time toroidal processing, use
-    /// [`.toroidal()`](Self::toroidal) or
-    /// [`.canonicalized_toroidal()`](Self::canonicalized_toroidal) instead.
+    /// [`.try_toroidal()`](Self::try_toroidal) or
+    /// [`.try_canonicalized_toroidal()`](Self::try_canonicalized_toroidal) instead.
     ///
     /// Defaults to [`GlobalTopology::Euclidean`].
     ///
@@ -1358,13 +1418,13 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, GlobalTopology, ToroidalConstructionMode, vertex,
+    ///     DelaunayTriangulationBuilder, GlobalTopology, ToroidalConstructionMode,
     /// };
     ///
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let simplices = vec![vec![0, 1, 2]];
     ///
@@ -1393,14 +1453,14 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     ConstructionOptions, DelaunayTriangulationBuilder, InsertionOrderStrategy, vertex,
+    ///     ConstructionOptions, DelaunayTriangulationBuilder, InsertionOrderStrategy,
     /// };
     ///
     /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     ///
     /// let opts = ConstructionOptions::default()
@@ -1421,9 +1481,8 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     }
 }
 
-impl<T, U, const D: usize> DelaunayTriangulationBuilder<'_, T, U, D>
+impl<U, const D: usize> DelaunayTriangulationBuilder<'_, U, D>
 where
-    T: CoordinateScalar,
     U: DataType,
 {
     // -------------------------------------------------------------------------
@@ -1446,52 +1505,24 @@ where
     ///
     /// # Errors
     ///
-    /// Maps [`GlobalTopologyModelError`] to [`DelaunayTriangulationConstructionError`]:
-    /// - [`GlobalTopologyModelError::InvalidToroidalPeriod`] → detailed message with axis and period.
-    /// - Other errors → generic configuration error message.
+    /// Preserves
+    /// [`GlobalTopologyModelError`](crate::topology::traits::GlobalTopologyModelError)
+    /// as
+    /// [`DelaunayConstructionFailure::TopologyModelConfiguration`].
     ///
     /// # Usage
     ///
     /// Called internally by [`build_with_kernel`](Self::build_with_kernel) before
-    /// canonicalization in both `.toroidal()` and `.canonicalized_toroidal()` paths.
+    /// canonicalization in both toroidal construction paths.
     fn validate_topology_model<M>(model: &M) -> Result<(), DelaunayTriangulationConstructionError>
     where
         M: GlobalTopologyModel<D>,
     {
-        model.validate_configuration().map_err(|error| match error {
-            GlobalTopologyModelError::InvalidToroidalPeriod { axis, period } => {
-                TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!(
-                        "Invalid toroidal domain at axis {axis}: period {period:?}; expected finite value > 0",
-                    ),
-                }
-                .into()
-            }
-            other => TriangulationConstructionError::GeometricDegeneracy {
-                message: format!("Invalid topology model configuration: {other}"),
-            }
-            .into(),
+        model.validate_configuration().map_err(|source| {
+            DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::TopologyModelConfiguration { source },
+            )
         })
-    }
-
-    /// Maps raw toroidal-domain parse failures into the builder's public construction error.
-    ///
-    /// This keeps `.toroidal([...])` and `.canonicalized_toroidal([...])` ergonomic while
-    /// preserving the public contract that invalid periods fail during `build()` with the
-    /// same geometric-degeneracy message shape used by topology-model validation.
-    fn invalid_toroidal_domain(
-        error: ToroidalDomainError,
-    ) -> DelaunayTriangulationConstructionError {
-        match error {
-            ToroidalDomainError::InvalidPeriod { axis, period } => {
-                TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!(
-                        "Invalid toroidal domain at axis {axis}: period {period:?}; expected finite value > 0",
-                    ),
-                }
-                .into()
-            }
-        }
     }
 
     /// Derives a periodic facet key from a lifted simplex and maps derivation
@@ -1528,7 +1559,7 @@ where
 
     /// Canonicalizes vertices using a topology behavior model.
     ///
-    /// For each input vertex, calls [`GlobalTopologyModel::canonicalize_point_in_place`] to wrap
+    /// For each input calls [`GlobalTopologyModel::canonicalize_point_in_place`] to wrap
     /// coordinates into the model's fundamental domain (e.g., [0, L) for toroidal topologies).
     /// Preserves vertex UUIDs and data while transforming coordinates.
     ///
@@ -1546,21 +1577,20 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`DelaunayTriangulationConstructionError`] if canonicalization fails for any vertex:
-    /// - Non-finite coordinates (NaN, infinity).
-    /// - Invalid toroidal periods.
-    /// - Scalar conversion failures.
-    ///
-    /// Error messages include the failing vertex index and original coordinates for debugging.
+    /// Returns [`DelaunayTriangulationConstructionError`] if canonicalization
+    /// fails for any vertex. Topology-model failures are reported as
+    /// [`DelaunayConstructionFailure::VertexCanonicalization`]; invalid
+    /// canonicalized coordinates are reported as
+    /// [`DelaunayConstructionFailure::CanonicalizedPointValidation`].
     ///
     /// # Usage
     ///
     /// Called internally by [`build_with_kernel`](Self::build_with_kernel) before delegating
     /// to the underlying triangulation construction.
     fn canonicalize_vertices<M>(
-        vertices: &[Vertex<T, U, D>],
+        vertices: &[Vertex<U, D>],
         model: &M,
-    ) -> Result<Vec<Vertex<T, U, D>>, DelaunayTriangulationConstructionError>
+    ) -> Result<Vec<Vertex<U, D>>, DelaunayTriangulationConstructionError>
     where
         M: GlobalTopologyModel<D>,
     {
@@ -1570,14 +1600,23 @@ where
             let mut canonicalized_coords = *v.point().coords();
             model
                 .canonicalize_point_in_place(&mut canonicalized_coords)
-                .map_err(|error| TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!(
-                        "Failed to canonicalize vertex {idx}: original coords {:?}; reason: {error}",
-                        v.point().coords(),
-                    ),
+                .map_err(|source| {
+                    DelaunayTriangulationConstructionError::Triangulation(
+                        DelaunayConstructionFailure::VertexCanonicalization {
+                            vertex_index: idx,
+                            source,
+                        },
+                    )
                 })?;
 
-            let new_point = Point::new(canonicalized_coords);
+            let new_point = Point::try_new(canonicalized_coords).map_err(|error| {
+                DelaunayTriangulationConstructionError::Triangulation(
+                    DelaunayConstructionFailure::CanonicalizedPointValidation {
+                        vertex_index: idx,
+                        source: error,
+                    },
+                )
+            })?;
             let new_vertex = Vertex::new_with_uuid(new_point, v.uuid(), v.data);
 
             out.push(new_vertex);
@@ -1590,7 +1629,7 @@ where
     // Build methods
     // -------------------------------------------------------------------------
 
-    /// Builds the triangulation using [`AdaptiveKernel<T>`](crate::geometry::kernel::AdaptiveKernel).
+    /// Builds the triangulation using [`AdaptiveKernel<f64>`](crate::geometry::kernel::AdaptiveKernel).
     ///
     /// This is the most common build path. Simplex data type `V` is inferred or
     /// specified at the call site; it is independent of the vertex data type `U`.
@@ -1606,15 +1645,15 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, vertex,
+    ///     DelaunayTriangulationBuilder,
     /// };
     ///
     /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
@@ -1628,7 +1667,7 @@ where
     pub fn build<V>(
         self,
     ) -> Result<
-        DelaunayTriangulation<AdaptiveKernel<T>, U, V, D>,
+        DelaunayTriangulation<AdaptiveKernel<f64>, U, V, D>,
         DelaunayTriangulationConstructionError,
     >
     where
@@ -1660,15 +1699,15 @@ where
     /// ```rust
     /// use delaunay::prelude::geometry::RobustKernel;
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, vertex,
+    ///     DelaunayTriangulationBuilder,
     /// };
     ///
     /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     ///
     /// let kernel = RobustKernel::new();
@@ -1684,12 +1723,12 @@ where
         kernel: &K,
     ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
-        K: Kernel<D, Scalar = T>,
+        K: Kernel<D, Scalar = f64>,
         V: DataType,
     {
         // Explicit-simplices path: bypass Delaunay insertion entirely.
         if let Some(simplices) = self.explicit_simplices {
-            if self.topology.is_some() {
+            if !matches!(self.topology, BuilderTopology::Euclidean) {
                 return Err(ExplicitConstructionError::IncompatibleTopology.into());
             }
             if self.construction_options != ConstructionOptions::default() {
@@ -1704,8 +1743,8 @@ where
             );
         }
 
-        match (self.topology, self.use_image_point_method) {
-            (None, _) => {
+        match self.topology {
+            BuilderTopology::Euclidean => {
                 // Euclidean path: delegate directly.
                 let mut dt = DelaunayTriangulation::with_topology_guarantee_and_options(
                     kernel,
@@ -1716,10 +1755,11 @@ where
                 dt.set_global_topology(self.global_topology);
                 Ok(dt)
             }
-            (Some(space), false) => {
-                let topology =
-                    GlobalTopology::try_toroidal(space, ToroidalConstructionMode::Canonicalized)
-                        .map_err(Self::invalid_toroidal_domain)?;
+            BuilderTopology::Canonicalized(domain) => {
+                let topology = GlobalTopology::Toroidal {
+                    domain,
+                    mode: ToroidalConstructionMode::Canonicalized,
+                };
                 let topology_model = topology.model();
                 Self::validate_topology_model(&topology_model)?;
                 // Canonicalized toroidal construction: canonicalize then delegate.
@@ -1733,12 +1773,11 @@ where
                 dt.set_global_topology(topology);
                 Ok(dt)
             }
-            (Some(space), true) => {
-                let topology = GlobalTopology::try_toroidal(
-                    space,
-                    ToroidalConstructionMode::PeriodicImagePoint,
-                )
-                .map_err(Self::invalid_toroidal_domain)?;
+            BuilderTopology::PeriodicImagePoint(domain) => {
+                let topology = GlobalTopology::Toroidal {
+                    domain,
+                    mode: ToroidalConstructionMode::PeriodicImagePoint,
+                };
                 let topology_model = topology.model();
                 Self::validate_topology_model(&topology_model)?;
                 if !topology_model.supports_periodic_facet_signatures() {
@@ -1820,13 +1859,13 @@ where
     /// 12. Validate the Euclidean Level 4 Delaunay property.
     fn build_explicit<K, V>(
         kernel: &K,
-        vertices: &[Vertex<T, U, D>],
+        vertices: &[Vertex<U, D>],
         simplices: &[Vec<usize>],
         topology_guarantee: TopologyGuarantee,
         global_topology: GlobalTopology<D>,
     ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
-        K: Kernel<D, Scalar = T>,
+        K: Kernel<D, Scalar = f64>,
         V: DataType,
     {
         Self::validate_explicit_simplex_specs(vertices.len(), simplices)?;
@@ -1835,7 +1874,7 @@ where
         let vertex_count = vertices.len();
 
         // --- Build TDS ---
-        let mut tds: Tds<T, U, V, D> = Tds::empty();
+        let mut tds: Tds<U, V, D> = Tds::empty();
 
         // Insert all vertices and build index → VertexKey map.
         let mut index_to_key = Vec::with_capacity(vertex_count);
@@ -1852,7 +1891,7 @@ where
         for (simplex_idx, simplex_spec) in simplices.iter().enumerate() {
             let vertex_keys: Vec<VertexKey> =
                 simplex_spec.iter().map(|&vi| index_to_key[vi]).collect();
-            let simplex = Simplex::new(vertex_keys, None).map_err(|e| {
+            let simplex = Simplex::try_new(vertex_keys).map_err(|e| {
                 ExplicitConstructionError::SimplexCreation {
                     simplex_index: simplex_idx,
                     source: e,
@@ -2004,7 +2043,7 @@ where
         dt: &DelaunayTriangulation<K, U, V, D>,
     ) -> Result<(), DelaunayTriangulationConstructionError>
     where
-        K: Kernel<D, Scalar = T>,
+        K: Kernel<D, Scalar = f64>,
         V: DataType,
     {
         dt.is_valid().map_err(|source| {
@@ -2033,7 +2072,7 @@ where
     ///
     /// **Algorithm** (see module-level doc for periodic image-point details):
     /// 1. Validate: at least `2*D + 1` canonical vertices required.
-    /// 2. Build 3^D-1 image copies of each vertex, shifted by `{-L_i, 0, +L_i}` per axis.
+    /// 2. Build 3^D-1 image copies of each shifted by `{-L_i, 0, +L_i}` per axis.
     ///    Every copy of canonical vertex `v_i` (including the zero-offset canonical copy)
     ///    receives the **same** tiny deterministic per-vertex perturbation `δ_i`.
     /// 3. Build a full Euclidean DT on the expanded set (n * 3^D points).
@@ -2058,13 +2097,13 @@ where
     )]
     fn build_periodic<K, V, M>(
         kernel: &K,
-        canonical_vertices: &[Vertex<T, U, D>],
+        canonical_vertices: &[Vertex<U, D>],
         topology_model: &M,
         topology_guarantee: TopologyGuarantee,
         construction_options: ConstructionOptions,
     ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
-        K: Kernel<D, Scalar = T>,
+        K: Kernel<D, Scalar = f64>,
         V: DataType,
         M: GlobalTopologyModel<D>,
     {
@@ -2164,7 +2203,7 @@ where
 
         let mut image_uuid_to_canonical_with_offset: FastHashMap<Uuid, (Uuid, [i8; D])> =
             FastHashMap::default();
-        let mut expanded: Vec<Vertex<T, U, D>> = Vec::with_capacity(n.saturating_mul(three_pow_d));
+        let mut expanded: Vec<Vertex<U, D>> = Vec::with_capacity(n.saturating_mul(three_pow_d));
         for k in 0..three_pow_d {
             // Per-axis integer offsets {-1, 0, +1}.
             let mut offset = [0i8; D];
@@ -2177,7 +2216,7 @@ where
 
             let is_canonical = k == zero_offset_idx;
             for (canon_idx, v) in canonical_vertices.iter().enumerate() {
-                let mut new_coords = [T::zero(); D];
+                let mut new_coords = [0.0; D];
                 for i in 0..D {
                     let shift_f64 = <f64 as From<i8>>::from(offset[i]) * domain[i];
                     let jitter_f64 = if is_canonical {
@@ -2189,21 +2228,21 @@ where
                             / TWO_POW_52_F64)
                             * domain[i]
                     };
-                    let coord_f64 = canonical_f64[canon_idx][i] + shift_f64 + jitter_f64;
-                    new_coords[i] =
-                        <T as num_traits::NumCast>::from(coord_f64).ok_or_else(|| {
-                            TriangulationConstructionError::GeometricDegeneracy {
-                                message: format!("Overflow on axis {i}: image coord {coord_f64}"),
-                            }
-                        })?;
+                    new_coords[i] = canonical_f64[canon_idx][i] + shift_f64 + jitter_f64;
                 }
-                let new_point = Point::new(new_coords);
+                let new_point = Point::try_new(new_coords).map_err(|error| {
+                    TriangulationConstructionError::GeometricDegeneracy {
+                        message: format!(
+                            "Periodic image coordinates for vertex {canon_idx} image {k} violated point invariants: {error}",
+                        ),
+                    }
+                })?;
                 if is_canonical {
                     image_uuid_to_canonical_with_offset.insert(v.uuid(), (v.uuid(), [0_i8; D]));
                     let canonical_v = Vertex::new_with_uuid(new_point, v.uuid(), v.data);
                     expanded.push(canonical_v);
                 } else {
-                    let image_v: Vertex<T, U, D> = Vertex::from_point(new_point);
+                    let image_v: Vertex<U, D> = Vertex::from_validated_point(new_point);
                     image_uuid_to_canonical_with_offset.insert(image_v.uuid(), (v.uuid(), offset));
                     expanded.push(image_v);
                 }
@@ -2412,7 +2451,7 @@ where
             };
         let simplex_circumcenter_in_fundamental_domain = |simplex_key: SimplexKey| -> Option<bool> {
             let simplex = tds_ref.simplex(simplex_key)?;
-            let mut points: SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+            let mut points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
                 SmallBuffer::with_capacity(D + 1);
             for vk in simplex.vertices() {
                 let vertex = tds_ref.vertex(*vk)?;
@@ -2837,7 +2876,7 @@ where
             };
             let canonical_vertex_keys: Vec<VertexKey> =
                 lifted_vertices.iter().map(|(ck, _)| *ck).collect();
-            let mut simplex = Simplex::new(canonical_vertex_keys, None).map_err(|e| {
+            let mut simplex = Simplex::try_new(canonical_vertex_keys).map_err(|e| {
                 TriangulationConstructionError::GeometricDegeneracy {
                     message: format!("Failed to create quotient periodic simplex: {e}"),
                 }
@@ -3039,18 +3078,17 @@ mod tests {
     };
     use crate::core::util::uuid::UuidValidationError;
     use crate::core::validation::TriangulationValidationError;
-    use crate::core::vertex::VertexBuilder;
     use crate::core::vertex::VertexValidationError;
     use crate::geometry::kernel::RobustKernel;
     use crate::geometry::traits::coordinate::{CoordinateConversionValue, CoordinateValues};
     use crate::repair::DelaunayRepairOperation;
+    use crate::topology::traits::GlobalTopologyModelError;
     use crate::topology::traits::global_topology_model::{
-        EuclideanModel, GlobalTopologyModel, GlobalTopologyModelError, ToroidalModel,
+        EuclideanModel, GlobalTopologyModel, ToroidalModel,
     };
     use crate::topology::traits::topological_space::{
-        GlobalTopology, TopologyKind, ToroidalConstructionMode,
+        GlobalTopology, TopologyKind, ToroidalConstructionMode, ToroidalDomainError,
     };
-    use crate::vertex;
     use approx::assert_relative_eq;
     use slotmap::{Key, KeyData};
     use std::assert_matches;
@@ -3063,28 +3101,14 @@ mod tests {
     }
 
     fn assert_invalid_toroidal_domain_error(
-        err: DelaunayTriangulationConstructionError,
+        err: ToroidalDomainError,
         expected_axis: usize,
-        expected_period_fragment: &str,
+        expected_period: f64,
     ) {
-        let DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::GeometricDegeneracy { message },
-        ) = err
-        else {
-            panic!("expected GeometricDegeneracy mapping, got: {err:?}");
-        };
-
-        assert!(
-            message.contains("Invalid toroidal domain"),
-            "Error message should mention invalid toroidal domain: {message}"
-        );
-        assert!(
-            message.contains(&format!("axis {expected_axis}")),
-            "Error message should mention axis {expected_axis}: {message}"
-        );
-        assert!(
-            message.contains(expected_period_fragment),
-            "Error message should mention period {expected_period_fragment}: {message}"
+        assert_matches!(
+            err,
+            ToroidalDomainError::InvalidPeriod { axis, period }
+                if axis == expected_axis && period.to_bits() == expected_period.to_bits()
         );
     }
 
@@ -3107,24 +3131,18 @@ mod tests {
             })
         }
 
-        fn canonicalize_point_in_place<T>(
+        fn canonicalize_point_in_place(
             &self,
-            _coords: &mut [T; 2],
-        ) -> Result<(), GlobalTopologyModelError>
-        where
-            T: CoordinateScalar,
-        {
+            _coords: &mut [f64; 2],
+        ) -> Result<(), GlobalTopologyModelError> {
             Ok(())
         }
 
-        fn lift_for_orientation<T>(
+        fn lift_for_orientation(
             &self,
-            coords: [T; 2],
+            coords: [f64; 2],
             periodic_offset: Option<[i8; 2]>,
-        ) -> Result<[T; 2], GlobalTopologyModelError>
-        where
-            T: CoordinateScalar,
-        {
+        ) -> Result<[f64; 2], GlobalTopologyModelError> {
             if periodic_offset.is_some() {
                 return Err(GlobalTopologyModelError::PeriodicOffsetsUnsupported {
                     kind: TopologyKind::Euclidean,
@@ -3564,27 +3582,21 @@ mod tests {
             Ok(())
         }
 
-        fn canonicalize_point_in_place<T>(
+        fn canonicalize_point_in_place(
             &self,
-            _coords: &mut [T; 2],
-        ) -> Result<(), GlobalTopologyModelError>
-        where
-            T: CoordinateScalar,
-        {
+            _coords: &mut [f64; 2],
+        ) -> Result<(), GlobalTopologyModelError> {
             Err(GlobalTopologyModelError::NonFiniteCoordinate {
                 axis: 0,
                 value: f64::NAN,
             })
         }
 
-        fn lift_for_orientation<T>(
+        fn lift_for_orientation(
             &self,
-            coords: [T; 2],
+            coords: [f64; 2],
             periodic_offset: Option<[i8; 2]>,
-        ) -> Result<[T; 2], GlobalTopologyModelError>
-        where
-            T: CoordinateScalar,
-        {
+        ) -> Result<[f64; 2], GlobalTopologyModelError> {
             if periodic_offset.is_some() {
                 return Err(GlobalTopologyModelError::PeriodicOffsetsUnsupported {
                     kind: TopologyKind::Euclidean,
@@ -3610,24 +3622,18 @@ mod tests {
             Ok(())
         }
 
-        fn canonicalize_point_in_place<T>(
+        fn canonicalize_point_in_place(
             &self,
-            _coords: &mut [T; 2],
-        ) -> Result<(), GlobalTopologyModelError>
-        where
-            T: CoordinateScalar,
-        {
+            _coords: &mut [f64; 2],
+        ) -> Result<(), GlobalTopologyModelError> {
             Ok(())
         }
 
-        fn lift_for_orientation<T>(
+        fn lift_for_orientation(
             &self,
-            coords: [T; 2],
+            coords: [f64; 2],
             _periodic_offset: Option<[i8; 2]>,
-        ) -> Result<[T; 2], GlobalTopologyModelError>
-        where
-            T: CoordinateScalar,
-        {
+        ) -> Result<[f64; 2], GlobalTopologyModelError> {
             Ok(coords)
         }
 
@@ -3647,9 +3653,9 @@ mod tests {
     #[test]
     fn test_builder_euclidean_2d() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<()>()
@@ -3662,10 +3668,10 @@ mod tests {
     #[test]
     fn test_builder_euclidean_3d() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<()>()
@@ -3677,9 +3683,9 @@ mod tests {
     #[test]
     fn test_builder_topology_guarantee_propagated() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .topology_guarantee(TopologyGuarantee::Pseudomanifold)
@@ -3691,9 +3697,9 @@ mod tests {
     #[test]
     fn test_builder_custom_options_propagated() {
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let opts =
             ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
@@ -3713,13 +3719,14 @@ mod tests {
     #[test]
     fn test_builder_canonicalized_toroidal_canonicalizes_out_of_domain_vertices() {
         let vertices = vec![
-            vertex!([0.2, 0.3]),  // in domain
-            vertex!([1.8, 0.1]),  // x → 0.8
-            vertex!([0.5, 0.7]),  // in domain
-            vertex!([-0.4, 0.9]), // x → 0.6
+            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.3]).unwrap(), // in domain
+            crate::core::vertex::Vertex::<(), _>::try_new([1.8, 0.1]).unwrap(), // x → 0.8
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.7]).unwrap(), // in domain
+            crate::core::vertex::Vertex::<(), _>::try_new([-0.4, 0.9]).unwrap(), // x → 0.6
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .canonicalized_toroidal([1.0, 1.0])
+            .try_canonicalized_toroidal([1.0, 1.0])
+            .unwrap()
             .build::<()>()
             .unwrap();
 
@@ -3736,12 +3743,13 @@ mod tests {
     #[test]
     fn test_builder_canonicalized_toroidal_in_domain_vertices_unchanged() {
         let vertices = vec![
-            vertex!([0.1, 0.2]),
-            vertex!([0.8, 0.3]),
-            vertex!([0.4, 0.9]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.1, 0.2]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.8, 0.3]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.4, 0.9]).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .canonicalized_toroidal([1.0, 1.0])
+            .try_canonicalized_toroidal([1.0, 1.0])
+            .unwrap()
             .build::<()>()
             .unwrap();
 
@@ -3755,13 +3763,14 @@ mod tests {
     #[test]
     fn test_builder_canonicalized_toroidal_build_succeeds_2d() {
         let vertices = vec![
-            vertex!([0.2, 0.3]),
-            vertex!([0.8, 0.1]),
-            vertex!([0.5, 0.7]),
-            vertex!([0.1, 0.9]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.3]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.8, 0.1]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.7]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.1, 0.9]).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .canonicalized_toroidal([1.0, 1.0])
+            .try_canonicalized_toroidal([1.0, 1.0])
+            .unwrap()
             .build::<()>()
             .unwrap();
         assert_eq!(dt.number_of_vertices(), 4);
@@ -3779,13 +3788,14 @@ mod tests {
     #[test]
     fn test_builder_canonicalized_toroidal_build_out_of_domain_input_2d() {
         let vertices = vec![
-            vertex!([2.2, 3.3]),  // → (0.2, 0.3)
-            vertex!([-0.2, 1.1]), // → (0.8, 0.1)
-            vertex!([1.5, 0.7]),  // → (0.5, 0.7)
-            vertex!([-0.9, 2.9]), // → (0.1, 0.9)
+            crate::core::vertex::Vertex::<(), _>::try_new([2.2, 3.3]).unwrap(), // → (0.2, 0.3)
+            crate::core::vertex::Vertex::<(), _>::try_new([-0.2, 1.1]).unwrap(), // → (0.8, 0.1)
+            crate::core::vertex::Vertex::<(), _>::try_new([1.5, 0.7]).unwrap(), // → (0.5, 0.7)
+            crate::core::vertex::Vertex::<(), _>::try_new([-0.9, 2.9]).unwrap(), // → (0.1, 0.9)
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .canonicalized_toroidal([1.0, 1.0])
+            .try_canonicalized_toroidal([1.0, 1.0])
+            .unwrap()
             .build::<()>()
             .unwrap();
         assert_eq!(dt.number_of_vertices(), 4);
@@ -3793,78 +3803,59 @@ mod tests {
         assert!(dt.as_triangulation().validate().is_ok());
     }
 
-    /// A non-finite (NaN) coordinate must cause the canonicalized toroidal build to return an error.
-    /// We create the vertex via `VertexBuilder` + `Point::new` to bypass `try_from`
-    /// validation, which would otherwise panic.
     #[test]
     fn test_builder_canonicalized_toroidal_non_finite_coordinate_is_error() {
-        let vertices = vec![
-            VertexBuilder::<f64, (), 2>::default()
-                .point(Point::new([0.2_f64, 0.3]))
-                .build()
-                .unwrap(),
-            VertexBuilder::<f64, (), 2>::default()
-                .point(Point::new([f64::NAN, 0.1]))
-                .build()
-                .unwrap(),
-            VertexBuilder::<f64, (), 2>::default()
-                .point(Point::new([0.5_f64, 0.7]))
-                .build()
-                .unwrap(),
-        ];
-        let result = DelaunayTriangulationBuilder::new(&vertices)
-            .canonicalized_toroidal([1.0, 1.0])
-            .build::<()>();
-        assert!(result.is_err());
+        assert!(Point::<2>::try_new([f64::NAN, 0.1]).is_err());
     }
 
     #[test]
     fn test_builder_canonicalized_toroidal_invalid_domain_is_error() {
         let vertices = vec![
-            vertex!([0.2, 0.3]),
-            vertex!([0.8, 0.1]),
-            vertex!([0.5, 0.7]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.3]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.8, 0.1]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.7]).unwrap(),
         ];
-        let result = DelaunayTriangulationBuilder::new(&vertices)
-            .canonicalized_toroidal([0.0, 1.0])
-            .build::<()>();
-        let err = result.expect_err("zero period should be rejected");
-        assert_invalid_toroidal_domain_error(err, 0, "0.0");
+        let Err(err) =
+            DelaunayTriangulationBuilder::new(&vertices).try_canonicalized_toroidal([0.0, 1.0])
+        else {
+            panic!("zero period should be rejected");
+        };
+        assert_invalid_toroidal_domain_error(err, 0, 0.0);
     }
 
     #[test]
     fn test_builder_toroidal_invalid_domain_is_error() {
         let vertices = vec![
-            vertex!([0.1, 0.2]),
-            vertex!([0.4, 0.7]),
-            vertex!([0.7, 0.3]),
-            vertex!([0.2, 0.9]),
-            vertex!([0.8, 0.6]),
-            vertex!([0.5, 0.1]),
-            vertex!([0.3, 0.5]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.1, 0.2]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.4, 0.7]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.7, 0.3]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.9]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.8, 0.6]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.1]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.5]).unwrap(),
         ];
-        let result = DelaunayTriangulationBuilder::new(&vertices)
-            .toroidal([1.0, 0.0])
-            .build::<()>();
-        let err = result.expect_err("zero period should be rejected");
-        assert_invalid_toroidal_domain_error(err, 1, "0.0");
+        let Err(err) = DelaunayTriangulationBuilder::new(&vertices).try_toroidal([1.0, 0.0]) else {
+            panic!("zero period should be rejected");
+        };
+        assert_invalid_toroidal_domain_error(err, 1, 0.0);
     }
 
     #[test]
     fn test_builder_toroidal_2d_smoke() {
         let vertices = vec![
-            vertex!([0.1_f64, 0.2]),
-            vertex!([0.4, 0.7]),
-            vertex!([0.7, 0.3]),
-            vertex!([0.2, 0.9]),
-            vertex!([0.8, 0.6]),
-            vertex!([0.5, 0.1]),
-            vertex!([0.3, 0.5]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.1_f64, 0.2]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.4, 0.7]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.7, 0.3]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.9]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.8, 0.6]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.1]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.5]).unwrap(),
         ];
         let n = vertices.len();
         let kernel = RobustKernel::new();
         let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .toroidal([1.0, 1.0])
+            .try_toroidal([1.0, 1.0])
+            .unwrap()
             .build_with_kernel::<_, ()>(&kernel)
             .unwrap();
         assert_eq!(dt.number_of_vertices(), n);
@@ -3881,15 +3872,16 @@ mod tests {
     #[test]
     fn test_builder_canonicalized_toroidal_idempotent_on_canonical_input() {
         let vertices = vec![
-            vertex!([0.1, 0.2]),
-            vertex!([0.8, 0.3]),
-            vertex!([0.4, 0.9]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.1, 0.2]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.8, 0.3]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.4, 0.9]).unwrap(),
         ];
         let dt_euclidean = DelaunayTriangulationBuilder::new(&vertices)
             .build::<()>()
             .unwrap();
         let dt_toroidal = DelaunayTriangulationBuilder::new(&vertices)
-            .canonicalized_toroidal([1.0, 1.0])
+            .try_canonicalized_toroidal([1.0, 1.0])
+            .unwrap()
             .build::<()>()
             .unwrap();
         assert_eq!(
@@ -3910,25 +3902,14 @@ mod tests {
     /// Verify that the data is preserved after canonicalized toroidal wrapping.
     #[test]
     fn test_builder_from_vertices_preserves_vertex_data() {
-        let vertices: Vec<Vertex<f64, i32, 2>> = vec![
-            VertexBuilder::default()
-                .point(Point::new([0.2_f64, 0.3]))
-                .data(1_i32)
-                .build()
-                .unwrap(),
-            VertexBuilder::default()
-                .point(Point::new([1.8_f64, 0.1])) // x → 0.8
-                .data(2_i32)
-                .build()
-                .unwrap(),
-            VertexBuilder::default()
-                .point(Point::new([0.5_f64, 0.7]))
-                .data(3_i32)
-                .build()
-                .unwrap(),
+        let vertices: Vec<Vertex<i32, 2>> = vec![
+            Vertex::try_new_with_data([0.2_f64, 0.3], 1_i32).unwrap(),
+            Vertex::try_new_with_data([1.8_f64, 0.1], 2_i32).unwrap(), // x → 0.8
+            Vertex::try_new_with_data([0.5_f64, 0.7], 3_i32).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .canonicalized_toroidal([1.0, 1.0])
+            .try_canonicalized_toroidal([1.0, 1.0])
+            .unwrap()
             .build::<()>()
             .unwrap();
 
@@ -3950,10 +3931,10 @@ mod tests {
     #[test]
     fn test_builder_with_robust_kernel() {
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let kernel = RobustKernel::<f64>::new();
         let dt = DelaunayTriangulationBuilder::new(&vertices)
@@ -3970,7 +3951,7 @@ mod tests {
     #[test]
     fn test_validate_topology_model_accepts_valid_toroidal() {
         let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
-        let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
+        let result = DelaunayTriangulationBuilder::<(), 2>::validate_topology_model(&model);
         assert!(result.is_ok());
     }
 
@@ -3982,11 +3963,9 @@ mod tests {
             (VertexKey::null(), [0_i8, 1_i8]),
         ];
         let expected = periodic_facet_key_from_lifted_vertices::<2>(&lifted_ordered, 1).unwrap();
-        let derived = DelaunayTriangulationBuilder::<f64, (), 2>::derive_periodic_facet_key(
-            &lifted_ordered,
-            1,
-        )
-        .unwrap();
+        let derived =
+            DelaunayTriangulationBuilder::<(), 2>::derive_periodic_facet_key(&lifted_ordered, 1)
+                .unwrap();
         assert_eq!(derived, expected);
     }
 
@@ -3997,11 +3976,9 @@ mod tests {
             (VertexKey::null(), [0_i8, 0_i8]),
             (VertexKey::null(), [127_i8, 0_i8]),
         ];
-        let err = DelaunayTriangulationBuilder::<f64, (), 2>::derive_periodic_facet_key(
-            &lifted_ordered,
-            1,
-        )
-        .unwrap_err();
+        let err =
+            DelaunayTriangulationBuilder::<(), 2>::derive_periodic_facet_key(&lifted_ordered, 1)
+                .unwrap_err();
         let DelaunayTriangulationConstructionError::Triangulation(
             DelaunayConstructionFailure::GeometricDegeneracy { message },
         ) = err
@@ -4020,71 +3997,41 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_toroidal_domain_maps_zero_period() {
-        let source =
-            ToroidalModel::<2>::try_new([0.0, 3.0], ToroidalConstructionMode::Canonicalized)
-                .unwrap_err();
-        let err = DelaunayTriangulationBuilder::<f64, (), 2>::invalid_toroidal_domain(source);
-        assert_invalid_toroidal_domain_error(err, 0, "0.0");
-    }
-
-    #[test]
-    fn test_invalid_toroidal_domain_maps_negative_period() {
-        let source =
-            ToroidalModel::<3>::try_new([2.0, -1.0, 3.0], ToroidalConstructionMode::Canonicalized)
-                .unwrap_err();
-        let err = DelaunayTriangulationBuilder::<f64, (), 3>::invalid_toroidal_domain(source);
-        assert_invalid_toroidal_domain_error(err, 1, "-1.0");
-    }
-
-    #[test]
-    fn test_invalid_toroidal_domain_maps_infinite_period() {
-        let source = ToroidalModel::<2>::try_new(
-            [f64::INFINITY, 3.0],
-            ToroidalConstructionMode::Canonicalized,
-        )
-        .unwrap_err();
-        let err = DelaunayTriangulationBuilder::<f64, (), 2>::invalid_toroidal_domain(source);
-        assert_invalid_toroidal_domain_error(err, 0, "inf");
-    }
-
-    #[test]
-    fn test_invalid_toroidal_domain_maps_nan_period() {
-        let source =
-            ToroidalModel::<2>::try_new([f64::NAN, 3.0], ToroidalConstructionMode::Canonicalized)
-                .unwrap_err();
-        let err = DelaunayTriangulationBuilder::<f64, (), 2>::invalid_toroidal_domain(source);
-        assert_invalid_toroidal_domain_error(err, 0, "NaN");
-    }
-
-    #[test]
     fn test_validate_topology_model_accepts_euclidean() {
         let model = EuclideanModel;
-        let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
+        let result = DelaunayTriangulationBuilder::<(), 2>::validate_topology_model(&model);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_validate_topology_model_maps_non_period_errors() {
-        let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(
-            &ValidationFailureModel,
-        );
+        let result =
+            DelaunayTriangulationBuilder::<(), 2>::validate_topology_model(&ValidationFailureModel);
         let err = result.expect_err("non-period validation failure should be mapped");
-        let err_str = err.to_string();
-        assert!(err_str.contains("Invalid topology model configuration"));
+        assert_matches!(
+            err,
+            DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::TopologyModelConfiguration {
+                    source: GlobalTopologyModelError::NonFiniteCoordinate {
+                        axis: 0,
+                        value,
+                    },
+                },
+            ) if value.is_nan()
+        );
     }
 
     #[test]
     fn test_canonicalize_vertices_preserves_uuids() {
         let vertices = vec![
-            vertex!([2.5, 3.7]),
-            vertex!([1.8, -0.5]),
-            vertex!([0.5, 0.7]),
+            crate::core::vertex::Vertex::<(), _>::try_new([2.5, 3.7]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.8, -0.5]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.7]).unwrap(),
         ];
         let original_uuids: Vec<_> = vertices.iter().map(Vertex::uuid).collect();
         let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let canonical =
-            DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model)
+            DelaunayTriangulationBuilder::<(), 2>::canonicalize_vertices(&vertices, &model)
                 .unwrap();
 
         assert_eq!(canonical.len(), vertices.len());
@@ -4094,26 +4041,14 @@ mod tests {
 
     #[test]
     fn test_canonicalize_vertices_preserves_data() {
-        let vertices: Vec<Vertex<f64, i32, 2>> = vec![
-            VertexBuilder::default()
-                .point(Point::new([2.5_f64, 3.7]))
-                .data(10_i32)
-                .build()
-                .unwrap(),
-            VertexBuilder::default()
-                .point(Point::new([1.8_f64, -0.5]))
-                .data(20_i32)
-                .build()
-                .unwrap(),
-            VertexBuilder::default()
-                .point(Point::new([0.5_f64, 0.7]))
-                .data(30_i32)
-                .build()
-                .unwrap(),
+        let vertices: Vec<Vertex<i32, 2>> = vec![
+            Vertex::try_new_with_data([2.5_f64, 3.7], 10_i32).unwrap(),
+            Vertex::try_new_with_data([1.8_f64, -0.5], 20_i32).unwrap(),
+            Vertex::try_new_with_data([0.5_f64, 0.7], 30_i32).unwrap(),
         ];
         let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let canonical =
-            DelaunayTriangulationBuilder::<f64, i32, 2>::canonicalize_vertices(&vertices, &model)
+            DelaunayTriangulationBuilder::<i32, 2>::canonicalize_vertices(&vertices, &model)
                 .unwrap();
 
         assert_eq!(canonical.len(), vertices.len());
@@ -4125,13 +4060,13 @@ mod tests {
     #[test]
     fn test_canonicalize_vertices_transforms_coordinates() {
         let vertices = vec![
-            vertex!([2.5, 3.7]),  // → (0.5, 0.7)
-            vertex!([1.8, -0.5]), // → (1.8, 2.5)
-            vertex!([0.3, 0.2]),  // → (0.3, 0.2)
+            crate::core::vertex::Vertex::<(), _>::try_new([2.5, 3.7]).unwrap(), // → (0.5, 0.7)
+            crate::core::vertex::Vertex::<(), _>::try_new([1.8, -0.5]).unwrap(), // → (1.8, 2.5)
+            crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.2]).unwrap(), // → (0.3, 0.2)
         ];
         let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let canonical =
-            DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model)
+            DelaunayTriangulationBuilder::<(), 2>::canonicalize_vertices(&vertices, &model)
                 .unwrap();
 
         assert_eq!(canonical.len(), 3);
@@ -4145,28 +4080,40 @@ mod tests {
 
     #[test]
     fn test_canonicalize_vertices_includes_vertex_context_on_error() {
-        let vertices = vec![vertex!([0.25_f64, 0.75_f64]), vertex!([0.9_f64, 0.1_f64])];
-        let result = DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(
+        let vertices = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.25_f64, 0.75_f64]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.9_f64, 0.1_f64]).unwrap(),
+        ];
+        let result = DelaunayTriangulationBuilder::<(), 2>::canonicalize_vertices(
             &vertices,
             &CanonicalizationFailureModel,
         );
         let err = result.expect_err("canonicalization failure should be reported");
-        let err_str = err.to_string();
-        assert!(err_str.contains("Failed to canonicalize vertex 0"));
-        assert!(err_str.contains("reason"));
+        assert_matches!(
+            err,
+            DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::VertexCanonicalization {
+                    vertex_index: 0,
+                    source: GlobalTopologyModelError::NonFiniteCoordinate {
+                        axis: 0,
+                        value,
+                    },
+                },
+            ) if value.is_nan()
+        );
     }
 
     #[test]
     fn test_build_periodic_requires_periodic_domain() {
         let kernel = AdaptiveKernel::new();
         let canonical_vertices = vec![
-            vertex!([0.1_f64, 0.1_f64]),
-            vertex!([0.9_f64, 0.2_f64]),
-            vertex!([0.2_f64, 0.8_f64]),
-            vertex!([0.7_f64, 0.9_f64]),
-            vertex!([0.5_f64, 0.4_f64]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.1_f64, 0.1_f64]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.9_f64, 0.2_f64]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.2_f64, 0.8_f64]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.7_f64, 0.9_f64]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5_f64, 0.4_f64]).unwrap(),
         ];
-        let result = DelaunayTriangulationBuilder::<f64, (), 2>::build_periodic::<_, (), _>(
+        let result = DelaunayTriangulationBuilder::<(), 2>::build_periodic::<_, (), _>(
             &kernel,
             &canonical_vertices,
             &MissingPeriodicDomainModel,
@@ -4182,13 +4129,13 @@ mod tests {
     #[test]
     fn test_canonicalize_vertices_euclidean_identity() {
         let vertices = vec![
-            vertex!([1.5, 2.5]),
-            vertex!([3.7, 4.2]),
-            vertex!([-1.0, -2.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.5, 2.5]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([3.7, 4.2]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([-1.0, -2.0]).unwrap(),
         ];
         let model = EuclideanModel;
         let canonical =
-            DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model)
+            DelaunayTriangulationBuilder::<(), 2>::canonicalize_vertices(&vertices, &model)
                 .unwrap();
 
         assert_eq!(canonical.len(), vertices.len());
@@ -4200,79 +4147,16 @@ mod tests {
 
     #[test]
     fn test_canonicalize_vertices_propagates_nan_error() {
-        let vertices = vec![
-            VertexBuilder::default()
-                .point(Point::new([0.5_f64, 0.5]))
-                .build()
-                .unwrap(),
-            VertexBuilder::default()
-                .point(Point::new([f64::NAN, 0.5]))
-                .build()
-                .unwrap(),
-            VertexBuilder::default()
-                .point(Point::new([0.3_f64, 0.2]))
-                .build()
-                .unwrap(),
-        ];
-        let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
-        let result =
-            DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model);
-
-        assert!(result.is_err());
-        let err_str = format!("{}", result.unwrap_err());
-        assert!(
-            err_str.contains("Failed to canonicalize vertex"),
-            "Error should mention canonicalization failure: {err_str}"
-        );
-        assert!(
-            err_str.contains("vertex 1"),
-            "Error should mention vertex index: {err_str}"
-        );
+        assert!(Point::<2>::try_new([f64::NAN, 0.5]).is_err());
     }
 
     #[test]
     fn test_canonicalize_vertices_propagates_infinity_error() {
-        let vertices = vec![
-            VertexBuilder::default()
-                .point(Point::new([0.5_f64, 0.5]))
-                .build()
-                .unwrap(),
-            VertexBuilder::default()
-                .point(Point::new([0.3_f64, 0.2]))
-                .build()
-                .unwrap(),
-            VertexBuilder::default()
-                .point(Point::new([f64::INFINITY, 0.5]))
-                .build()
-                .unwrap(),
-        ];
-        let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
-        let result =
-            DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model);
-
-        assert!(result.is_err());
-        let err_str = format!("{}", result.unwrap_err());
-        assert!(err_str.contains("Failed to canonicalize vertex"));
-        assert!(err_str.contains("vertex 2"));
+        assert!(Point::<2>::try_new([f64::INFINITY, 0.5]).is_err());
     }
 
     #[test]
     fn test_canonicalize_vertices_includes_original_coords_in_error() {
-        let vertices = vec![
-            VertexBuilder::default()
-                .point(Point::new([f64::NAN, 1.5_f64]))
-                .build()
-                .unwrap(),
-        ];
-        let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
-        let result =
-            DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model);
-
-        assert!(result.is_err());
-        let err_str = format!("{}", result.unwrap_err());
-        assert!(
-            err_str.contains("original coords"),
-            "Error should mention original coords: {err_str}"
-        );
+        assert!(Point::<2>::try_new([f64::NAN, 1.5]).is_err());
     }
 }

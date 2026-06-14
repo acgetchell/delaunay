@@ -60,7 +60,7 @@
 //! # Debug mode:
 //! # - "cadenced" (default): PLManifold, ridge-link validation during insertion,
 //! #   vertex-link validation at completion
-//! # - "strict": PLManifoldStrict, vertex-link validation after every insertion
+//! # - "strict": PLManifoldStrict-link validation after every insertion
 //! DELAUNAY_LARGE_DEBUG_DEBUG_MODE=cadenced \
 //! # Deterministically shuffle insertion order (incremental mode only)
 //! DELAUNAY_LARGE_DEBUG_SHUFFLE_SEED=123 \
@@ -104,7 +104,7 @@ use delaunay::geometry::util::safe_usize_to_scalar;
 use delaunay::prelude::construction::{
     ConstructionOptions, ConstructionStatistics, DelaunayRepairPolicy, DelaunayTriangulation,
     DelaunayTriangulationConstructionErrorWithStatistics, InitialSimplexStrategy,
-    TopologyGuarantee, Vertex, vertex,
+    TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::diagnostics::ConstructionTelemetry;
 use delaunay::prelude::generators::{
@@ -536,10 +536,10 @@ fn skip_percentage(skipped: usize, total: usize) -> f64 {
         return 0.0;
     }
 
-    let skipped = safe_usize_to_scalar::<f64>(skipped)
+    let skipped = safe_usize_to_scalar(skipped)
         .expect("skipped-vertex count should fit in f64 for debug reporting");
-    let total = safe_usize_to_scalar::<f64>(total)
-        .expect("point count should fit in f64 for debug reporting");
+    let total =
+        safe_usize_to_scalar(total).expect("point count should fit in f64 for debug reporting");
     (skipped / total) * 100.0
 }
 
@@ -1257,25 +1257,28 @@ where
     println!("Generating points...");
     let t_gen = Instant::now();
     let points = match distribution {
-        PointDistribution::Ball => {
-            generate_random_points_in_ball_seeded::<f64, D>(n_points, ball_radius, seed)
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "failed to generate deterministic ball points (radius={ball_radius}): {e}"
-                    )
-                })
-        }
+        PointDistribution::Ball => generate_random_points_in_ball_seeded::<D>(
+            n_points,
+            ball_radius,
+            seed,
+        )
+        .unwrap_or_else(|e| {
+            panic!("failed to generate deterministic ball points (radius={ball_radius}): {e}")
+        }),
         PointDistribution::Box => {
             let range = CoordinateRange::try_new(-box_half_width, box_half_width)
                 .expect("box half-width should define a finite non-empty coordinate range");
-            generate_random_points_in_range_seeded::<f64, D>(n_points, range, seed)
+            generate_random_points_in_range_seeded::<D>(n_points, range, seed)
         }
     };
     println!("Generated {} points in {:?}", points.len(), t_gen.elapsed());
 
     println!("Building vertices...");
     let t_vertices = Instant::now();
-    let mut vertices: Vec<Vertex<f64, (), D>> = points.into_iter().map(|p| vertex!(p)).collect();
+    let mut vertices: Vec<Vertex<(), D>> = points
+        .into_iter()
+        .map(|p| delaunay::prelude::Vertex::<(), _>::try_new(p.into()).unwrap())
+        .collect();
     println!(
         "Built {} vertices in {:?}",
         vertices.len(),
@@ -1687,9 +1690,12 @@ fn test_repair_policy_from_repair_every_maps_cadence() {
 #[test]
 fn regression_issue_228_3d_1000_flip_repair_convergence() {
     let seed = seed_for_case::<3>(42, 1000);
-    let points = generate_random_points_in_ball_seeded::<f64, 3>(1000, 100.0, seed)
+    let points = generate_random_points_in_ball_seeded::<3>(1000, 100.0, seed)
         .expect("point generation should succeed");
-    let vertices: Vec<Vertex<f64, (), 3>> = points.into_iter().map(|p| vertex!(p)).collect();
+    let vertices: Vec<Vertex<(), 3>> = points
+        .into_iter()
+        .map(|p| delaunay::prelude::Vertex::<(), _>::try_new(p.into()).unwrap())
+        .collect();
 
     // Use the default kernel (AdaptiveKernel — exact+SoS predicates) to match the
     // actual regression scenario.  PLManifold enables full orientation validation
@@ -1727,9 +1733,12 @@ fn regression_issue_228_3d_1000_flip_repair_convergence() {
 #[test]
 fn regression_issue_230_4d_100_orientation() {
     let seed = seed_for_case::<4>(42, 100);
-    let points = generate_random_points_in_ball_seeded::<f64, 4>(100, 100.0, seed)
+    let points = generate_random_points_in_ball_seeded::<4>(100, 100.0, seed)
         .expect("point generation should succeed");
-    let vertices: Vec<Vertex<f64, (), 4>> = points.into_iter().map(|p| vertex!(p)).collect();
+    let vertices: Vec<Vertex<(), 4>> = points
+        .into_iter()
+        .map(|p| delaunay::prelude::Vertex::<(), _>::try_new(p.into()).unwrap())
+        .collect();
 
     let kernel = RobustKernel::<f64>::new();
     let (dt, stats) =

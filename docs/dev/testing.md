@@ -215,8 +215,8 @@ asserting results. Dimension-specific point construction, translation, and
 other setup belongs in `const`-generic helper functions:
 
 ```rust
-fn build_degenerate_points<const D: usize>() -> Vec<Point<f64, D>> { … }
-fn translate_point<const D: usize>(p: &Point<f64, D>) -> Point<f64, D> { … }
+fn build_degenerate_points<const D: usize>() -> Vec<Point<D>> { … }
+fn translate_point<const D: usize>(p: &Point<D>) -> Point<D> { … }
 ```
 
 This keeps the macro readable and the helpers independently testable.

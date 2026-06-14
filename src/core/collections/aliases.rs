@@ -57,7 +57,7 @@ pub use uuid::Uuid;
 ///
 /// ```rust,ignore
 /// // Internal use - not exposed in public API
-/// let vertices: StorageMap<VertexKey, Vertex<f64, (), 3>> = StorageMap::with_key();
+/// let vertices: StorageMap<VertexKey, Vertex<(), 3>> = StorageMap::with_key();
 /// ```
 pub type StorageMap<K, V> = DenseSlotMap<K, V>;
 

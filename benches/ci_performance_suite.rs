@@ -48,9 +48,8 @@ use delaunay::prelude::construction::{
 };
 use delaunay::prelude::flips::{FacetHandle, RidgeHandle, SimplexKey};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
-use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, CoordinateRange, Point};
+use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, Point};
 use delaunay::prelude::query::ConvexHull;
-use delaunay::vertex;
 use std::{env, hint::black_box, num::NonZeroUsize, sync::Once};
 #[cfg(feature = "bench-logging")]
 use tracing::warn;
@@ -89,8 +88,12 @@ const CANARY_COUNT_5D: usize = 25;
 const INSERT_BATCH_COUNT_2D_3D: usize = 10;
 const INSERT_BATCH_COUNT_4D: usize = 6;
 const INSERT_BATCH_COUNT_5D: usize = 4;
-type SeedSearchResult<const D: usize> = Option<(u64, Vec<Point<f64, D>>, Vec<Vertex<f64, (), D>>)>;
+type SeedSearchResult<const D: usize> = Option<(u64, Vec<Point<D>>, Vec<Vertex<(), D>>)>;
 type BenchTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
+
+fn finite_point<const D: usize>(coords: [f64; D]) -> Point<D> {
+    Point::try_new(coords).unwrap_or_else(|_| std::process::abort())
+}
 
 fn retry_attempts(value: usize) -> NonZeroUsize {
     let Some(attempts) = NonZeroUsize::new(value) else {
@@ -323,7 +326,7 @@ fn prepare_data<const D: usize>(
     count: usize,
     bounds: CoordinateRange<f64>,
     attempts: NonZeroUsize,
-) -> (u64, Vec<Point<f64, D>>, Vec<Vertex<f64, (), D>>) {
+) -> (u64, Vec<Point<D>>, Vec<Vertex<(), D>>) {
     // Fast path: use the pre-computed seed (single verification construction)
     if let Some(seed) = known_seed(D, count) {
         if let Some(result) = find_seed_vertices::<D>(seed, count, bounds, 1, attempts) {
@@ -401,13 +404,13 @@ fn prepare_inserts<const D: usize>(
     dim_seed: u64,
     count: usize,
     dataset: Dataset,
-) -> Vec<Vertex<f64, (), D>> {
+) -> Vec<Vertex<(), D>> {
     let mut seed = dim_seed.wrapping_add(0x5151_5151);
     if matches!(dataset, Dataset::Adversarial) {
         seed ^= 0xA5A5_A5A5;
     }
     let points = match dataset {
-        Dataset::WellConditioned => generate_random_points_in_range_seeded::<f64, D>(
+        Dataset::WellConditioned => generate_random_points_in_range_seeded::<D>(
             count,
             bench_result(
                 CoordinateRange::try_new(-50.0_f64, 50.0),
@@ -417,7 +420,15 @@ fn prepare_inserts<const D: usize>(
         ),
         Dataset::Adversarial => generate_adv_points::<D>(count, seed),
     };
-    points.iter().map(|point| vertex!(*point)).collect()
+    points
+        .iter()
+        .map(|point| {
+            bench_result(
+                delaunay::prelude::Vertex::<(), _>::try_new((*point).into()),
+                "finite benchmark vertex coordinates",
+            )
+        })
+        .collect()
 }
 
 fn find_seed_vertices<const D: usize>(
@@ -429,9 +440,16 @@ fn find_seed_vertices<const D: usize>(
 ) -> SeedSearchResult<D> {
     for offset in 0..limit {
         let candidate_seed = start_seed.wrapping_add(offset as u64);
-        let points =
-            generate_random_points_in_range_seeded::<f64, D>(count, bounds, candidate_seed);
-        let vertices = points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>();
+        let points = generate_random_points_in_range_seeded::<D>(count, bounds, candidate_seed);
+        let vertices = points
+            .iter()
+            .map(|p| {
+                bench_result(
+                    delaunay::prelude::Vertex::<(), _>::try_new((*p).into()),
+                    "finite benchmark vertex coordinates",
+                )
+            })
+            .collect::<Vec<_>>();
 
         let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
             attempts,
@@ -452,7 +470,15 @@ fn stable_adv_points<const D: usize>(
     attempts: NonZeroUsize,
 ) -> SeedSearchResult<D> {
     let points = generate_adv_points::<D>(count, seed);
-    let vertices = points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>();
+    let vertices = points
+        .iter()
+        .map(|p| {
+            bench_result(
+                delaunay::prelude::Vertex::<(), _>::try_new((*p).into()),
+                "finite benchmark vertex coordinates",
+            )
+        })
+        .collect::<Vec<_>>();
     let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
         attempts,
         base_seed: Some(seed),
@@ -467,7 +493,7 @@ fn prepare_adv_data<const D: usize>(
     dim_seed: u64,
     count: usize,
     attempts: NonZeroUsize,
-) -> (u64, Vec<Point<f64, D>>, Vec<Vertex<f64, (), D>>) {
+) -> (u64, Vec<Point<D>>, Vec<Vertex<(), D>>) {
     if !discover_seeds_enabled()
         && let Some(seed) = known_adv_seed(D, count)
     {
@@ -500,8 +526,8 @@ fn prepare_adv_data<const D: usize>(
     ));
 }
 
-fn generate_adv_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<f64, D>> {
-    let base_points = generate_random_points_in_range_seeded::<f64, D>(
+fn generate_adv_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<D>> {
+    let base_points = generate_random_points_in_range_seeded::<D>(
         count,
         bench_result(
             CoordinateRange::try_new(-1.0_f64, 1.0),
@@ -527,7 +553,7 @@ fn generate_adv_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<f64
                 let perturbation = f64::from((index + axis_number) % 11) * 1.0e-6;
                 *coord = base.mul_add(1.0e3, 1.0e9 + axis_offset + cluster_offset + perturbation);
             }
-            Point::new(coords)
+            finite_point(coords)
         })
         .collect()
 }
@@ -863,7 +889,7 @@ fn seed_search_limit() -> usize {
 /// make the generated release data misleading.
 fn emit_construction_metric<const D: usize>(
     benchmark_id: &str,
-    vertices: &[Vertex<f64, (), D>],
+    vertices: &[Vertex<(), D>],
     options: ConstructionOptions,
 ) {
     let dt = bench_result(
@@ -1145,7 +1171,7 @@ fn bench_hull_case<const D: usize>(
     );
 }
 
-fn exterior_hull_query_point<const D: usize>(dt: &BenchTriangulation<D>) -> Point<f64, D> {
+fn exterior_hull_query_point<const D: usize>(dt: &BenchTriangulation<D>) -> Point<D> {
     let mut mins = [f64::INFINITY; D];
     let mut maxs = [f64::NEG_INFINITY; D];
     let mut has_vertices = false;
@@ -1167,7 +1193,7 @@ fn exterior_hull_query_point<const D: usize>(dt: &BenchTriangulation<D>) -> Poin
         let span = maxs[axis] - mins[axis];
         *coord = maxs[axis] + span.max(1.0);
     }
-    Point::new(coords)
+    finite_point(coords)
 }
 
 fn bench_hull_query_case<const D: usize>(
@@ -1285,7 +1311,7 @@ fn bench_insert_case<const D: usize>(
     dataset: Dataset,
     count: usize,
     base_dt: &BenchTriangulation<D>,
-    insert_vertices: &[Vertex<f64, (), D>],
+    insert_vertices: &[Vertex<(), D>],
 ) {
     group.throughput(Throughput::Elements(count as u64));
     group.bench_function(

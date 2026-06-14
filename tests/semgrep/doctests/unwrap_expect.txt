@@ -13,6 +13,18 @@
 // ok: delaunay.rust.no-unwrap-expect-in-doctests
 /// Prefer `?` to `.expect("message")` in public examples.
 
+// ok: delaunay.rust.no-unwrap-expect-in-doctests
+/// let vertex = delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates");
+
+// ok: delaunay.rust.no-unwrap-expect-in-doctests
+/// let vertex = delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 1).expect("finite vertex coordinates");
+
+// ruleid: delaunay.rust.no-unwrap-expect-in-doctests
+/// let vertex: delaunay::prelude::Vertex<(), 2> = maybe_vertex.expect("finite vertex coordinates");
+
+// ruleid: delaunay.rust.no-unwrap-expect-in-doctests
+/// let vertex = Some(delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])).expect("finite vertex coordinates");
+
 // ruleid: delaunay.rust.no-box-dyn-error-in-doctests
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 

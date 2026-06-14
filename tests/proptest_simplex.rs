@@ -37,7 +37,7 @@ macro_rules! test_simplex_properties {
                 #[test]
                 fn [<prop_simplex_vertices_are_unique_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
@@ -58,7 +58,7 @@ macro_rules! test_simplex_properties {
                 #[test]
                 fn [<prop_simplex_has_correct_vertex_count_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
@@ -77,7 +77,7 @@ macro_rules! test_simplex_properties {
                 #[test]
                 fn [<prop_simplex_neighbor_count_bounded_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
@@ -98,7 +98,7 @@ macro_rules! test_simplex_properties {
                 #[test]
                 fn [<prop_simplex_uuids_are_unique_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
@@ -118,7 +118,7 @@ macro_rules! test_simplex_properties {
                 #[test]
                 fn [<prop_simplices_in_valid_tds_are_valid_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {

@@ -57,7 +57,7 @@ pub enum AdjacencyIndexBuildError {
 /// Immutable adjacency maps for topology traversal.
 ///
 /// This is an *opt-in* structure returned by
-/// [`Triangulation::build_adjacency_index`](crate::core::triangulation::Triangulation::build_adjacency_index).
+/// [`Triangulation::build_adjacency_index`](crate::prelude::triangulation::Triangulation::build_adjacency_index).
 ///
 /// ## Notes
 /// - No sorted-order guarantees are provided for the values.
@@ -79,12 +79,12 @@ pub enum AdjacencyIndexBuildError {
 /// // Two tetrahedra sharing a triangular facet.
 /// let vertices: Vec<_> = vec![
 ///     // Shared triangle
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([2.0, 0.0, 0.0]),
-///     vertex!([1.0, 2.0, 0.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0, 0.0]).expect("finite vertex coordinates"),
 ///     // Two apices
-///     vertex!([1.0, 0.7, 1.5]),
-///     vertex!([1.0, 0.7, -1.5]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.7, 1.5]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.7, -1.5]).expect("finite vertex coordinates"),
 /// ];
 ///
 /// let dt: DelaunayTriangulation<_, (), (), 3> =
@@ -137,12 +137,12 @@ impl AdjacencyIndex {
     /// // Two tetrahedra sharing a triangular facet.
     /// let vertices: Vec<_> = vec![
     ///     // Shared triangle
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([2.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 2.0, 0.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0, 0.0]).expect("finite vertex coordinates"),
     ///     // Two apices
-    ///     vertex!([1.0, 0.7, 1.5]),
-    ///     vertex!([1.0, 0.7, -1.5]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.7, 1.5]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.7, -1.5]).expect("finite vertex coordinates"),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -187,12 +187,12 @@ impl AdjacencyIndex {
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices: Vec<_> = vec![
     /// #     // Shared triangle
-    /// #     vertex!([0.0, 0.0, 0.0]),
-    /// #     vertex!([2.0, 0.0, 0.0]),
-    /// #     vertex!([1.0, 2.0, 0.0]),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0, 0.0]).expect("finite vertex coordinates"),
     /// #     // Two apices
-    /// #     vertex!([1.0, 0.7, 1.5]),
-    /// #     vertex!([1.0, 0.7, -1.5]),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.7, 1.5]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.7, -1.5]).expect("finite vertex coordinates"),
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> =
     /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -231,10 +231,10 @@ impl AdjacencyIndex {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices = vec![
-    /// #     vertex!([0.0, 0.0, 0.0]),
-    /// #     vertex!([1.0, 0.0, 0.0]),
-    /// #     vertex!([0.0, 1.0, 0.0]),
-    /// #     vertex!([0.0, 0.0, 1.0]),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> =
     /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -271,10 +271,10 @@ impl AdjacencyIndex {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices = vec![
-    /// #     vertex!([0.0, 0.0, 0.0]),
-    /// #     vertex!([1.0, 0.0, 0.0]),
-    /// #     vertex!([0.0, 1.0, 0.0]),
-    /// #     vertex!([0.0, 0.0, 1.0]),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> =
     /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -309,12 +309,12 @@ impl AdjacencyIndex {
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices: Vec<_> = vec![
     /// #     // Shared triangle
-    /// #     vertex!([0.0, 0.0, 0.0]),
-    /// #     vertex!([2.0, 0.0, 0.0]),
-    /// #     vertex!([1.0, 2.0, 0.0]),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0, 0.0]).expect("finite vertex coordinates"),
     /// #     // Two apices
-    /// #     vertex!([1.0, 0.7, 1.5]),
-    /// #     vertex!([1.0, 0.7, -1.5]),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.7, 1.5]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.7, -1.5]).expect("finite vertex coordinates"),
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> =
     /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -352,12 +352,12 @@ impl AdjacencyIndex {
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices: Vec<_> = vec![
     /// #     // Shared triangle
-    /// #     vertex!([0.0, 0.0, 0.0]),
-    /// #     vertex!([2.0, 0.0, 0.0]),
-    /// #     vertex!([1.0, 2.0, 0.0]),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0, 0.0]).expect("finite vertex coordinates"),
     /// #     // Two apices
-    /// #     vertex!([1.0, 0.7, 1.5]),
-    /// #     vertex!([1.0, 0.7, -1.5]),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.7, 1.5]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.7, -1.5]).expect("finite vertex coordinates"),
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> =
     /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -395,10 +395,10 @@ impl AdjacencyIndex {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices = vec![
-    /// #     vertex!([0.0, 0.0, 0.0]),
-    /// #     vertex!([1.0, 0.0, 0.0]),
-    /// #     vertex!([0.0, 1.0, 0.0]),
-    /// #     vertex!([0.0, 0.0, 1.0]),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> =
     /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -434,10 +434,10 @@ impl AdjacencyIndex {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices = vec![
-    /// #     vertex!([0.0, 0.0, 0.0]),
-    /// #     vertex!([1.0, 0.0, 0.0]),
-    /// #     vertex!([0.0, 1.0, 0.0]),
-    /// #     vertex!([0.0, 0.0, 1.0]),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> =
     /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -457,7 +457,6 @@ impl AdjacencyIndex {
 mod tests {
     use super::*;
     use crate::DelaunayTriangulation;
-    use crate::vertex;
     use slotmap::SlotMap;
     use std::collections::HashSet;
 
@@ -495,12 +494,12 @@ mod tests {
         // Two tetrahedra sharing a triangular facet.
         let vertices: Vec<_> = vec![
             // Shared triangle
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([2.0, 0.0, 0.0]),
-            vertex!([1.0, 2.0, 0.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 0.0]).unwrap(),
             // Two apices
-            vertex!([1.0, 0.7, 1.5]),
-            vertex!([1.0, 0.7, -1.5]),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.7, 1.5]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.7, -1.5]).unwrap(),
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =

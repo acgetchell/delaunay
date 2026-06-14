@@ -129,8 +129,8 @@ pub enum TopologyKind {
 /// Construction mode metadata for toroidal triangulations.
 ///
 /// This distinguishes between:
-/// - canonicalized builds (`.canonicalized_toroidal(...)`) and
-/// - true periodic quotient builds (`.toroidal(...)`).
+/// - canonicalized builds (`.try_canonicalized_toroidal(...)`) and
+/// - true periodic quotient builds (`.try_toroidal(...)`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToroidalConstructionMode {
     /// Canonicalized toroidal mode: coordinates are wrapped into the fundamental domain
@@ -445,7 +445,7 @@ impl<const D: usize> GlobalTopology<D> {
 /// toroidal, hyperbolic) to enable topology-aware triangulation algorithms.
 ///
 /// The dimension is specified via the associated constant `DIM`, which must
-/// match the dimension of the associated `Tds<T, U, V, D>`. This ensures
+/// match the dimension of the associated `Tds<U, V, D>`. This ensures
 /// type safety and prevents dimension mismatches.
 ///
 /// # Future Use
@@ -472,7 +472,7 @@ pub trait TopologicalSpace {
     /// The dimension of this topological space.
     ///
     /// This must match the dimension `D` of the associated triangulation
-    /// `Tds<T, U, V, D>` to ensure geometric consistency.
+    /// `Tds<U, V, D>` to ensure geometric consistency.
     const DIM: usize;
 
     /// Returns the kind of topological space.

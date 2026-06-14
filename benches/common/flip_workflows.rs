@@ -12,16 +12,16 @@ use delaunay::prelude::construction::{
     InsertionOrderStrategy, TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::flips::{
-    BistellarFlips, EdgeKey, FacetHandle, FlipError, RidgeHandle, SimplexKey, TriangleHandle,
+    BistellarFlips, EdgeKey, EdgeKeyError, FacetHandle, FlipError, RidgeHandle, SimplexKey,
+    TriangleHandle, TriangleHandleError,
 };
-use delaunay::prelude::geometry::{Point, RobustKernel, simplex_volume};
+use delaunay::prelude::geometry::{CoordinateConversionError, Point, RobustKernel, simplex_volume};
 use delaunay::prelude::query::{JaccardComputationError, format_jaccard_report};
 use delaunay::prelude::tds::{InvariantError, TdsError, VertexKey};
 use delaunay::prelude::topology::validation::{
     ManifoldError, RidgeVertices, RidgeVerticesError, ridge_star_simplices,
 };
 use delaunay::prelude::validation::DelaunayTriangulationValidationError;
-use delaunay::vertex;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -48,6 +48,10 @@ pub enum FlipWorkflowError {
         #[source]
         source: Box<DelaunayTriangulationConstructionError>,
     },
+
+    /// Vertex coordinate conversion failed during fixture preparation.
+    #[error(transparent)]
+    CoordinateConversion(#[from] CoordinateConversionError),
 
     /// A simplex key referenced by the workflow was not live.
     #[error("simplex key {simplex_key:?} does not exist")]
@@ -262,6 +266,26 @@ pub enum FlipWorkflowError {
         expected: usize,
     },
 
+    /// A flip reported two inserted edge endpoints that do not form a real edge.
+    #[error("{move_kind} flip reported an invalid inserted edge: {source}")]
+    InvalidInsertedEdge {
+        /// Flip move kind.
+        move_kind: FlipMoveKind,
+        /// Underlying edge-key parsing failure.
+        #[source]
+        source: EdgeKeyError,
+    },
+
+    /// A flip reported three inserted triangle vertices that do not form a real triangle.
+    #[error("{move_kind} flip reported an invalid inserted triangle: {source}")]
+    InvalidInsertedTriangle {
+        /// Flip move kind.
+        move_kind: FlipMoveKind,
+        /// Underlying triangle-handle parsing failure.
+        #[source]
+        source: TriangleHandleError,
+    },
+
     /// A roundtrip produced a triangulation that failed validation.
     #[error("{context} produced invalid triangulation: {source}")]
     InvalidAfterRoundtrip {
@@ -350,6 +374,24 @@ pub enum FlipCandidateError {
         /// Expected inserted vertex count.
         expected: usize,
     },
+    /// A candidate flip reported two inserted edge endpoints that do not form a real edge.
+    #[error("{move_kind} candidate reported an invalid inserted edge: {source}")]
+    InvalidInsertedEdge {
+        /// Candidate move kind.
+        move_kind: FlipMoveKind,
+        /// Underlying edge-key parsing failure.
+        #[source]
+        source: EdgeKeyError,
+    },
+    /// A candidate flip reported three inserted triangle vertices that do not form a real triangle.
+    #[error("{move_kind} candidate reported an invalid inserted triangle: {source}")]
+    InvalidInsertedTriangle {
+        /// Candidate move kind.
+        move_kind: FlipMoveKind,
+        /// Underlying triangle-handle parsing failure.
+        #[source]
+        source: TriangleHandleError,
+    },
     /// Candidate validation failed after the forward flip.
     #[error("{move_kind} candidate produced invalid triangulation: {source}")]
     InvalidAfterForwardFlip {
@@ -375,7 +417,7 @@ pub enum CandidateFilter {
 
 impl CandidateFilter {
     /// Returns whether the candidate support points satisfy this selection policy.
-    fn accepts<const D: usize>(self, points: &[Point<f64, D>]) -> bool {
+    fn accepts<const D: usize>(self, points: &[Point<D>]) -> bool {
         match self {
             Self::Any => true,
             Self::TouchesAdversarialFeature => points
@@ -410,8 +452,8 @@ pub fn build_flip_dt<const D: usize>(
 ) -> FlipWorkflowResult<FlipTriangulation<D>> {
     let vertices = points
         .iter()
-        .map(|coords| vertex!(*coords))
-        .collect::<Vec<Vertex<f64, (), D>>>();
+        .map(|coords| delaunay::prelude::Vertex::<(), _>::try_new(*coords))
+        .collect::<Result<Vec<Vertex<(), D>>, _>>()?;
     let options =
         ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
 
@@ -625,10 +667,19 @@ pub fn flippable_k2_facet<const D: usize>(
                         ));
                         continue;
                     }
-                    let edge = EdgeKey::new(
+                    let edge = match EdgeKey::try_new(
                         info.inserted_face_vertices[0],
                         info.inserted_face_vertices[1],
-                    );
+                    ) {
+                        Ok(edge) => edge,
+                        Err(source) => {
+                            last_error = Some(Box::new(FlipCandidateError::InvalidInsertedEdge {
+                                move_kind: FlipMoveKind::K2,
+                                source,
+                            }));
+                            continue;
+                        }
+                    };
                     if let Err(source) = trial.as_triangulation().validate() {
                         last_error = Some(Box::new(FlipCandidateError::InvalidAfterForwardFlip {
                             move_kind: FlipMoveKind::K2,
@@ -708,11 +759,21 @@ pub fn flippable_k3_ridge<const D: usize>(
                             ));
                             continue;
                         }
-                        let triangle = TriangleHandle::new(
+                        let triangle = match TriangleHandle::try_new(
                             info.inserted_face_vertices[0],
                             info.inserted_face_vertices[1],
                             info.inserted_face_vertices[2],
-                        );
+                        ) {
+                            Ok(triangle) => triangle,
+                            Err(source) => {
+                                last_error =
+                                    Some(Box::new(FlipCandidateError::InvalidInsertedTriangle {
+                                        move_kind: FlipMoveKind::K3,
+                                        source,
+                                    }));
+                                continue;
+                            }
+                        };
                         if let Err(source) = trial.as_triangulation().validate() {
                             last_error =
                                 Some(Box::new(FlipCandidateError::InvalidAfterForwardFlip {
@@ -792,7 +853,8 @@ pub fn roundtrip_k1<const D: usize>(
     dt: &mut FlipTriangulation<D>,
     simplex_key: SimplexKey,
 ) -> FlipWorkflowResult<()> {
-    let new_vertex = vertex!(simplex_centroid(dt, simplex_key)?);
+    let new_vertex =
+        delaunay::prelude::Vertex::<(), _>::try_new(simplex_centroid(dt, simplex_key)?)?;
     let new_uuid = new_vertex.uuid();
     dt.flip_k1_insert(simplex_key, new_vertex)
         .map_err(|source| FlipWorkflowError::FlipFailed {
@@ -840,10 +902,14 @@ pub fn roundtrip_k2<const D: usize>(
             expected: 2,
         });
     }
-    let edge = EdgeKey::new(
+    let edge = EdgeKey::try_new(
         info.inserted_face_vertices[0],
         info.inserted_face_vertices[1],
-    );
+    )
+    .map_err(|source| FlipWorkflowError::InvalidInsertedEdge {
+        move_kind: FlipMoveKind::K2,
+        source,
+    })?;
     dt.flip_k2_inverse_from_edge(edge)
         .map_err(|source| FlipWorkflowError::InverseFlipFailed {
             dimension: D,
@@ -908,11 +974,15 @@ pub fn roundtrip_k3<const D: usize>(
             expected: 3,
         });
     }
-    let triangle = TriangleHandle::new(
+    let triangle = TriangleHandle::try_new(
         info.inserted_face_vertices[0],
         info.inserted_face_vertices[1],
         info.inserted_face_vertices[2],
-    );
+    )
+    .map_err(|source| FlipWorkflowError::InvalidInsertedTriangle {
+        move_kind: FlipMoveKind::K3,
+        source,
+    })?;
     dt.flip_k3_inverse_from_triangle(triangle)
         .map_err(|source| FlipWorkflowError::InverseFlipFailed {
             dimension: D,
@@ -1086,7 +1156,7 @@ fn simplex_centroid<const D: usize>(
 fn simplex_points<const D: usize>(
     dt: &FlipTriangulation<D>,
     simplex_key: SimplexKey,
-) -> FlipWorkflowResult<Vec<Point<f64, D>>> {
+) -> FlipWorkflowResult<Vec<Point<D>>> {
     let simplex = dt
         .tds()
         .simplex(simplex_key)
@@ -1104,7 +1174,7 @@ fn simplex_points<const D: usize>(
 fn facet_support_points<const D: usize>(
     dt: &FlipTriangulation<D>,
     facet: FacetHandle,
-) -> FlipWorkflowResult<Vec<Point<f64, D>>> {
+) -> FlipWorkflowResult<Vec<Point<D>>> {
     let simplex =
         dt.tds()
             .simplex(facet.simplex_key())
@@ -1149,7 +1219,7 @@ fn facet_support_points<const D: usize>(
 fn ridge_support_points<const D: usize>(
     dt: &FlipTriangulation<D>,
     ridge: RidgeHandle,
-) -> FlipWorkflowResult<Vec<Point<f64, D>>> {
+) -> FlipWorkflowResult<Vec<Point<D>>> {
     let simplex =
         dt.tds()
             .simplex(ridge.simplex_key())
@@ -1228,7 +1298,7 @@ fn ridge_star_error(ridge: RidgeHandle, source: ManifoldError) -> FlipWorkflowEr
 fn vertex_points<const D: usize>(
     dt: &FlipTriangulation<D>,
     keys: &[VertexKey],
-) -> FlipWorkflowResult<Vec<Point<f64, D>>> {
+) -> FlipWorkflowResult<Vec<Point<D>>> {
     keys.iter()
         .map(|vertex_key| {
             dt.tds()

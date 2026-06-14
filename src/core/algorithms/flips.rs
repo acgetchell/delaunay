@@ -54,7 +54,7 @@ use crate::geometry::predicates::simplex_orientation;
 use crate::geometry::predicates::{Orientation, simplex_orientation_fast_filter_sign};
 use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::{
-    Coordinate, CoordinateConversionError, CoordinateScalar, CoordinateValues,
+    CoordinateConversionError, CoordinateValidationError, CoordinateValues,
 };
 use crate::topology::traits::global_topology_model::{
     GlobalTopologyModel, GlobalTopologyModelAdapter,
@@ -98,13 +98,13 @@ pub struct BistellarFlipKind {
 }
 /// Run a single flip-repair attempt using k=2 (and k=3 in 3D+).
 fn repair_delaunay_with_flips_k2_k3_attempt<K, U, V, const D: usize>(
-    tds: &mut Tds<K::Scalar, U, V, D>,
+    tds: &mut Tds<U, V, D>,
     kernel: &K,
     seed_simplices: Option<&[SimplexKey]>,
     config: &RepairAttemptConfig,
 ) -> Result<RepairAttemptOutcome, DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -117,14 +117,14 @@ where
     reason = "Repair loop contains inline tracing and queue handling for diagnostics"
 )]
 fn repair_delaunay_with_flips_k2_k3_attempt_timed<K, U, V, const D: usize>(
-    tds: &mut Tds<K::Scalar, U, V, D>,
+    tds: &mut Tds<U, V, D>,
     kernel: &K,
     seed_simplices: Option<&[SimplexKey]>,
     config: &RepairAttemptConfig,
     mut timing: Option<&mut LocalRepairPhaseTiming>,
 ) -> Result<RepairAttemptOutcome, DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -322,8 +322,8 @@ where
 ///
 /// The snapshot lets later diagnostics describe removed simplices even after
 /// their `SimplexKey`s no longer resolve in the TDS.
-fn snapshot_removed_simplex_vertices<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn snapshot_removed_simplex_vertices<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     removed_simplices: &SimplexKeyBuffer,
 ) -> Result<RemovedSimplexVertexSnapshot, FlipError>
 where
@@ -351,8 +351,8 @@ where
     clippy::too_many_lines,
     reason = "Keep flip construction, validation, and wiring together for clarity"
 )]
-fn apply_bistellar_flip_with_k<T, U, V, const D: usize>(
-    tds: &mut Tds<T, U, V, D>,
+fn apply_bistellar_flip_with_k<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
     k_move: usize,
     removed_face_vertices: &[VertexKey],
     inserted_face_vertices: &[VertexKey],
@@ -362,7 +362,6 @@ fn apply_bistellar_flip_with_k<T, U, V, const D: usize>(
     validation_scope: FlipValidationScope,
 ) -> Result<AppliedFlip<D>, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -544,7 +543,7 @@ where
     let mut trial = tds.clone_for_rollback();
 
     for (vertices, periodic_offsets) in new_simplex_vertices.into_iter().zip(new_simplex_offsets) {
-        let mut simplex = Simplex::new(vertices, None)?;
+        let mut simplex = Simplex::try_new(vertices)?;
         if let Some(offsets) = periodic_offsets {
             simplex.set_periodic_vertex_offsets(offsets)?;
         }
@@ -619,8 +618,8 @@ enum FlipValidationScope {
 }
 
 /// Checks the flip cavity after mutation without rescanning the full TDS.
-fn validate_flip_trial_cavity<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn validate_flip_trial_cavity<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     new_simplices: &[SimplexKey],
     external_facets: &[FacetHandle],
     removed_simplices: &[SimplexKey],
@@ -677,8 +676,8 @@ fn push_unique_simplex_key(
 }
 
 /// Ensures affected replacement simplices agree on shared facets and multiplicity.
-fn validate_flip_trial_local_facet_sharing<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn validate_flip_trial_local_facet_sharing<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     affected_simplices: &[SimplexKey],
 ) -> Result<(), TdsValidationFailure>
 where
@@ -746,8 +745,8 @@ where
 }
 
 /// Checks one affected simplex's local references after a flip mutation.
-fn validate_flip_trial_simplex<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn validate_flip_trial_simplex<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
     removed_simplices: &[SimplexKey],
 ) -> Result<(), TdsValidationFailure>
@@ -783,10 +782,10 @@ where
 }
 
 /// Verifies that affected simplices reference existing vertices with valid incidence.
-fn validate_flip_trial_simplex_vertices<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn validate_flip_trial_simplex_vertices<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
-    simplex: &Simplex<T, U, V, D>,
+    simplex: &Simplex<V, D>,
 ) -> Result<(), TdsValidationFailure>
 where
     U: DataType,
@@ -840,10 +839,10 @@ where
 }
 
 /// Verifies affected-simplex neighbor links, mirror facets, and orientation parity.
-fn validate_flip_trial_simplex_neighbors<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn validate_flip_trial_simplex_neighbors<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
-    simplex: &Simplex<T, U, V, D>,
+    simplex: &Simplex<V, D>,
     removed_simplices: &[SimplexKey],
 ) -> Result<(), TdsValidationFailure>
 where
@@ -944,13 +943,7 @@ where
 }
 
 /// Mirrors TDS validation's periodic self-neighbor allowance locally.
-fn simplex_allows_periodic_self_neighbor<T, U, V, const D: usize>(
-    simplex: &Simplex<T, U, V, D>,
-) -> bool
-where
-    U: DataType,
-    V: DataType,
-{
+fn simplex_allows_periodic_self_neighbor<V, const D: usize>(simplex: &Simplex<V, D>) -> bool {
     let Some(offsets) = simplex.periodic_vertex_offsets() else {
         return false;
     };
@@ -958,8 +951,8 @@ where
 }
 
 /// Requires two simplices sharing an affected facet to point back to each other.
-fn validate_flip_trial_mutual_facet_neighbors<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn validate_flip_trial_mutual_facet_neighbors<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     facet_key: u64,
     source_simplex_key: SimplexKey,
     source_facet: usize,
@@ -1006,18 +999,14 @@ where
 }
 
 /// Checks coherent orientation across one locally affected neighbor pair.
-fn validate_flip_trial_neighbor_orientation<T, U, V, const D: usize>(
+fn validate_flip_trial_neighbor_orientation<V, const D: usize>(
     simplex_key: SimplexKey,
-    simplex: &Simplex<T, U, V, D>,
+    simplex: &Simplex<V, D>,
     facet_idx: usize,
     neighbor_key: SimplexKey,
-    neighbor_simplex: &Simplex<T, U, V, D>,
+    neighbor_simplex: &Simplex<V, D>,
     mirror_idx: usize,
-) -> Result<(), TdsValidationFailure>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<(), TdsValidationFailure> {
     let (observed_odd_permutation, expected_odd_permutation, facet_vertex_count, target_count) =
         match flip_trial_neighbor_orientation_parity(
             simplex_key,
@@ -1073,18 +1062,14 @@ where
 }
 
 /// Computes local neighbor-orientation parity, including periodic facet offsets.
-fn flip_trial_neighbor_orientation_parity<T, U, V, const D: usize>(
+fn flip_trial_neighbor_orientation_parity<V, const D: usize>(
     simplex_key: SimplexKey,
-    simplex: &Simplex<T, U, V, D>,
+    simplex: &Simplex<V, D>,
     facet_idx: usize,
     neighbor_key: SimplexKey,
-    neighbor_simplex: &Simplex<T, U, V, D>,
+    neighbor_simplex: &Simplex<V, D>,
     mirror_idx: usize,
-) -> Result<(bool, bool, usize, usize), FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<(bool, bool, usize, usize), FlipError> {
     let expected_odd_permutation = (facet_idx + mirror_idx).is_multiple_of(2);
     if simplex.periodic_vertex_offsets().is_some()
         || neighbor_simplex.periodic_vertex_offsets().is_some()
@@ -1127,8 +1112,8 @@ where
 
 /// Detects replacement simplices that already exist outside the flip cavity so
 /// a flip cannot silently duplicate a simplex.
-fn find_simplex_containing_simplex<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn find_simplex_containing_simplex<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplex_vertices: &[VertexKey],
     removed_simplices: &[SimplexKey],
 ) -> Option<SimplexKey>
@@ -1161,8 +1146,8 @@ where
 }
 
 /// Chooses replacement-simplex parity from the oriented cavity boundary.
-fn orient_replacement_simplices<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn orient_replacement_simplices<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplices: &mut [SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
     periodic_offsets: &mut [Option<PeriodicOffsetBuffer<D>>],
     external_facets: &[FacetHandle],
@@ -1254,8 +1239,8 @@ fn orient_replacement_simplices<T, U, V, const D: usize>(
 }
 
 /// Applies external boundary-facet parity constraints to replacement simplices.
-fn assign_external_replacement_orientation<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn assign_external_replacement_orientation<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplices: &[SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
     periodic_offsets: &[Option<PeriodicOffsetBuffer<D>>],
     external_facets: &[FacetHandle],
@@ -1340,8 +1325,8 @@ fn set_flip_assignment(
 }
 
 /// Builds periodic offsets for replacement simplices in one shared cavity frame.
-fn replacement_simplex_periodic_offsets<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn replacement_simplex_periodic_offsets<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplices: &[SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
     removed_simplices: &[SimplexKey],
     external_facets: &[FacetHandle],
@@ -1398,8 +1383,8 @@ fn replacement_periodic_source_simplices(
 }
 
 /// Returns whether any source simplex carries explicit periodic offsets.
-fn replacement_sources_use_periodic_offsets<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn replacement_sources_use_periodic_offsets<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     source_simplices: &[SimplexKey],
 ) -> Result<bool, FlipError> {
     let mut uses_periodic_offsets = false;
@@ -1416,8 +1401,8 @@ fn replacement_sources_use_periodic_offsets<T, U, V, const D: usize>(
 }
 
 /// Checks whether a vertex already has a periodic representative in any source simplex.
-fn source_simplices_contain_vertex<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn source_simplices_contain_vertex<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     source_simplices: &[SimplexKey],
     vertex_key: VertexKey,
 ) -> Result<bool, FlipError> {
@@ -1433,8 +1418,8 @@ fn source_simplices_contain_vertex<T, U, V, const D: usize>(
 }
 
 /// Places a newly inserted k=1 vertex in the target simplex's local lattice sheet.
-fn new_vertex_periodic_offset_in_frame<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn new_vertex_periodic_offset_in_frame<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     target_simplex_key: SimplexKey,
 ) -> Result<[i8; D], FlipError> {
     let target_simplex = tds
@@ -1578,7 +1563,7 @@ fn facet_orders_coherent_with_periodic_offsets<const D: usize>(
     Ok(observed_odd == expected_odd)
 }
 
-/// Returns facet `(vertex, offset)` identities in simplex-local order.
+/// Returns facet `(offset)` identities in simplex-local order.
 fn facet_order_with_offsets<const D: usize>(
     vertices: &[VertexKey],
     offsets: &[[i8; D]],
@@ -1761,12 +1746,11 @@ fn permutation_odd<Id: PartialEq>(source_order: &[Id], target_order: &[Id]) -> O
 }
 
 /// Ensures Delaunay-repair replacement simplices have positive geometric orientation.
-fn validate_replacement_orientation<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn validate_replacement_orientation<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplices: &[SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
 ) -> Result<(), FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -1794,12 +1778,11 @@ where
 
 /// Scans the whole TDS for ridge diagnostics when local neighbor links are the
 /// thing being investigated.
-fn simplices_containing_vertices<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn simplices_containing_vertices<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     vertices: &[VertexKey],
 ) -> SimplexKeyBuffer
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -1820,14 +1803,13 @@ where
 ///
 /// The local neighbor walk and the global simplex scan are logged side by side
 /// because #204 currently fails in cases where those two views disagree.
-fn debug_ridge_context<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn debug_ridge_context<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     ridge: RidgeHandle,
     reported_multiplicity: Option<usize>,
     diagnostics: &mut RepairDiagnostics,
     last_applied_flip: Option<&LastAppliedFlip>,
 ) where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -1892,13 +1874,12 @@ fn debug_ridge_context<T, U, V, const D: usize>(
 
 /// Formats one incident simplex around a ridge so debug output can distinguish
 /// oversharing from bad local neighbor traversal.
-fn ridge_incident_simplex_summary<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn ridge_incident_simplex_summary<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
     ridge_vertices: &SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
 ) -> String
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -1916,13 +1897,11 @@ where
 
 /// Extracts the neighbors reached by omitting the two vertices opposite the
 /// ridge, which is exactly the adjacency walk used by k=3 context recovery.
-fn ridge_neighbor_simplices_for_simplex<T, U, V, const D: usize>(
-    simplex: &Simplex<T, U, V, D>,
+fn ridge_neighbor_simplices_for_simplex<V, const D: usize>(
+    simplex: &Simplex<V, D>,
     ridge_vertices: &SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
 ) -> SmallBuffer<SimplexKey, 2>
 where
-    T: CoordinateScalar,
-    U: DataType,
     V: DataType,
 {
     let mut ridge_neighbors: SmallBuffer<SimplexKey, 2> = SmallBuffer::new();
@@ -1940,14 +1919,13 @@ where
 
 /// Relates the current bad ridge to the immediately preceding flip so #204
 /// traces can confirm whether repair just created the inconsistent local star.
-fn predecessor_flip_summary<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn predecessor_flip_summary<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     ridge: RidgeHandle,
     global_simplices: &[SimplexKey],
     last_applied_flip: &LastAppliedFlip,
 ) -> String
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -1980,12 +1958,11 @@ where
 
 /// Formats one simplex's current vertex set so predecessor-flip traces can show
 /// the exact simplices that were introduced before a bad ridge appeared.
-fn simplex_vertex_summary<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn simplex_vertex_summary<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
 ) -> String
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -1997,14 +1974,13 @@ where
 
 /// Captures the first unresolved k=2 postcondition site so #204 debugging can
 /// compare the violating facet directly against the last applied repair flip.
-fn debug_postcondition_facet_context<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn debug_postcondition_facet_context<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     facet: FacetHandle,
     context: &FlipContext<D, 2>,
     diagnostics: &mut RepairDiagnostics,
     last_applied_flip: Option<&LastAppliedFlip>,
 ) where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -2046,13 +2022,12 @@ fn debug_postcondition_facet_context<T, U, V, const D: usize>(
 
 /// Formats the two simplices incident to a violating facet so postcondition traces
 /// can see both their full simplex vertices and their opposite vertices.
-fn facet_incident_simplex_summary<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn facet_incident_simplex_summary<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
     facet_vertices: &[VertexKey],
 ) -> String
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -2078,13 +2053,12 @@ where
 /// Relates the first unresolved postcondition facet to the immediately
 /// preceding repair flip so we can tell whether that last move touched the bad
 /// local neighborhood or whether the violation was already present.
-fn postcondition_facet_predecessor_summary<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn postcondition_facet_predecessor_summary<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     incident_simplices: &[SimplexKey],
     last_applied_flip: &LastAppliedFlip,
 ) -> String
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -2127,7 +2101,7 @@ where
 /// Returns a [`FlipError`] if any referenced simplex/vertex is missing or a predicate
 /// evaluation fails.
 fn is_delaunay_violation_k3<K, U, V, const D: usize>(
-    tds: &Tds<K::Scalar, U, V, D>,
+    tds: &Tds<U, V, D>,
     kernel: &K,
     topology_model: &GlobalTopologyModelAdapter<D>,
     context: &FlipContext<D, 3>,
@@ -2135,7 +2109,7 @@ fn is_delaunay_violation_k3<K, U, V, const D: usize>(
     diagnostics: &mut RepairDiagnostics,
 ) -> Result<bool, FlipError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -2159,12 +2133,11 @@ where
 /// Returns a [`FlipError`] if the flip would be degenerate, duplicate an existing simplex,
 /// create non-manifold topology, if predicate evaluation fails, or if underlying TDS
 /// mutations fail.
-pub(crate) fn apply_bistellar_flip<T, U, V, const D: usize, const K_MOVE: usize>(
-    tds: &mut Tds<T, U, V, D>,
+pub(crate) fn apply_bistellar_flip<U, V, const D: usize, const K_MOVE: usize>(
+    tds: &mut Tds<U, V, D>,
     context: &FlipContext<D, K_MOVE>,
 ) -> Result<FlipInfo<D>, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -2188,13 +2161,12 @@ where
 /// Returns a [`FlipError`] if the flip would be degenerate, duplicate an existing simplex,
 /// create non-manifold topology, if predicate evaluation fails, or if underlying TDS
 /// mutations fail.
-pub(crate) fn apply_bistellar_flip_dynamic<T, U, V, const D: usize>(
-    tds: &mut Tds<T, U, V, D>,
+pub(crate) fn apply_bistellar_flip_dynamic<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
     k_move: usize,
     context: &FlipContextDyn<D>,
 ) -> Result<FlipInfo<D>, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -2212,12 +2184,11 @@ where
 }
 
 /// Apply a k=2 Delaunay-repair move with positive replacement geometry.
-fn apply_delaunay_flip_k2<T, U, V, const D: usize>(
-    tds: &mut Tds<T, U, V, D>,
+fn apply_delaunay_flip_k2<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
     context: &FlipContext<D, 2>,
 ) -> Result<AppliedFlip<D>, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -2234,12 +2205,11 @@ where
 }
 
 /// Apply a k=3 Delaunay-repair move with positive replacement geometry.
-fn apply_delaunay_flip_k3<T, U, V, const D: usize>(
-    tds: &mut Tds<T, U, V, D>,
+fn apply_delaunay_flip_k3<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
     context: &FlipContext<D, 3>,
 ) -> Result<AppliedFlip<D>, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -2256,13 +2226,12 @@ where
 }
 
 /// Apply a runtime-k Delaunay-repair move with positive replacement geometry.
-fn apply_delaunay_flip_dynamic<T, U, V, const D: usize>(
-    tds: &mut Tds<T, U, V, D>,
+fn apply_delaunay_flip_dynamic<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
     k_move: usize,
     context: &FlipContextDyn<D>,
 ) -> Result<AppliedFlip<D>, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -2337,8 +2306,8 @@ impl<'a> FlipCycleContext<'a> {
 
 /// Converts repeated flip signatures into typed non-convergence before the
 /// repair loop burns the full budget on a short oscillation.
-fn check_flip_cycle<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn check_flip_cycle<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     context: FlipCycleContext<'_>,
     diagnostics: &mut RepairDiagnostics,
     stats: &DelaunayRepairStats,
@@ -2346,7 +2315,6 @@ fn check_flip_cycle<T, U, V, const D: usize>(
     config: &RepairAttemptConfig,
 ) -> Result<(), DelaunayRepairError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -2393,13 +2361,12 @@ where
 /// Slot swaps can invalidate the original facet index while preserving the facet
 /// vertex set (and therefore its hash key). This helper checks the original
 /// index first, then scans the owning simplex to recover the correct index for `key`.
-fn resolve_facet_handle_for_key<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn resolve_facet_handle_for_key<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     handle: FacetHandle,
     key: u64,
 ) -> Option<FacetHandle>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -2430,13 +2397,12 @@ where
 /// Slot swaps can invalidate the original omit-index pair while preserving the
 /// ridge vertex set (and therefore its hash key). This helper checks the original
 /// pair first, then scans the owning simplex for the pair matching `key`.
-fn resolve_ridge_handle_for_key<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn resolve_ridge_handle_for_key<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     handle: RidgeHandle,
     key: u64,
 ) -> Option<RidgeHandle>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -2894,6 +2860,9 @@ pub enum FlipFailureKind {
     /// Inserted simplex already exists.
     #[error("inserted simplex already exists")]
     InsertedSimplexAlreadyExists,
+    /// Facet iteration failed.
+    #[error("facet iteration")]
+    FacetIteration,
     /// Simplex creation failed.
     #[error("simplex creation")]
     SimplexCreation,
@@ -3304,6 +3273,15 @@ pub enum FlipNeighborWiringError {
         #[source]
         reason: SpatialIndexConstructionFailure,
     },
+    /// Perturbation retry produced invalid coordinates.
+    #[error(
+        "perturbation retry produced invalid coordinates before flip neighbor wiring: {source}"
+    )]
+    PerturbedCoordinateInvalid {
+        /// Structured coordinate validation failure for the perturbed point.
+        #[source]
+        source: CoordinateValidationError,
+    },
 }
 
 impl From<InsertionError> for FlipNeighborWiringError {
@@ -3350,6 +3328,9 @@ impl From<InsertionError> for FlipNeighborWiringError {
             },
             InsertionError::SpatialIndexConstruction { reason } => {
                 Self::SpatialIndexConstruction { reason }
+            }
+            InsertionError::PerturbedCoordinateInvalid { source } => {
+                Self::PerturbedCoordinateInvalid { source }
             }
         }
     }
@@ -3449,6 +3430,18 @@ pub enum FlipTriangleAdjacencyError {
         found_vertices: usize,
         /// Expected occurrence count for each ridge vertex.
         expected_occurrences: usize,
+    },
+}
+
+/// Error returned when constructing a [`TriangleHandle`] from invalid vertices.
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TriangleHandleError {
+    /// At least two triangle vertices refer to the same vertex.
+    #[error("triangle vertices must be distinct, got {vertices:?}")]
+    DuplicateVertices {
+        /// The supplied triangle vertices.
+        vertices: [VertexKey; 3],
     },
 }
 
@@ -3688,6 +3681,13 @@ pub enum FlipError {
         /// A witness simplex key that already contains the inserted simplex.
         existing_simplex: SimplexKey,
     },
+    /// Facet iteration failed while seeding flip or repair work.
+    #[error("Facet iteration failed: {source}")]
+    FacetIteration {
+        /// Structured facet iteration failure.
+        #[source]
+        source: Box<FacetError>,
+    },
     /// Simplex creation failed.
     #[error(transparent)]
     SimplexCreation(#[from] Box<SimplexValidationError>),
@@ -3753,6 +3753,14 @@ impl From<SimplexValidationError> for FlipError {
     }
 }
 
+impl From<FacetError> for FlipError {
+    fn from(source: FacetError) -> Self {
+        Self::FacetIteration {
+            source: Box::new(source),
+        }
+    }
+}
+
 impl From<FlipNeighborWiringError> for FlipError {
     fn from(reason: FlipNeighborWiringError) -> Self {
         Self::NeighborWiring {
@@ -3796,6 +3804,7 @@ impl From<&FlipError> for FlipFailureKind {
             FlipError::DuplicateSimplex => Self::DuplicateSimplex,
             FlipError::NonManifoldFacet => Self::NonManifoldFacet,
             FlipError::InsertedSimplexAlreadyExists { .. } => Self::InsertedSimplexAlreadyExists,
+            FlipError::FacetIteration { .. } => Self::FacetIteration,
             FlipError::SimplexCreation(_) => Self::SimplexCreation,
             FlipError::NeighborWiring { reason } => match reason.as_ref() {
                 FlipNeighborWiringError::TopologyValidation { .. }
@@ -3915,8 +3924,9 @@ pub(crate) struct FlipContextDyn<const D: usize> {
 /// let b = VertexKey::from(KeyData::from_ffi(2));
 /// let c = VertexKey::from(KeyData::from_ffi(3));
 ///
-/// let handle = TriangleHandle::new(b, a, c);
+/// let handle = TriangleHandle::try_new(b, a, c)?;
 /// assert_eq!(handle.vertices().len(), 3);
+/// # Ok::<(), delaunay::prelude::flips::TriangleHandleError>(())
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TriangleHandle {
@@ -3927,7 +3937,6 @@ pub struct TriangleHandle {
 
 impl TriangleHandle {
     /// Create a canonical triangle handle with ordered vertex keys.
-    #[must_use]
     ///
     /// # Examples
     ///
@@ -3940,10 +3949,32 @@ impl TriangleHandle {
     /// let b = VertexKey::from(KeyData::from_ffi(20));
     /// let c = VertexKey::from(KeyData::from_ffi(30));
     ///
-    /// let handle = TriangleHandle::new(a, b, c);
+    /// let handle = TriangleHandle::try_new(a, b, c)?;
     /// assert_eq!(handle.vertices(), [a, b, c]);
+    /// # Ok::<(), delaunay::prelude::flips::TriangleHandleError>(())
     /// ```
-    pub fn new(a: VertexKey, b: VertexKey, c: VertexKey) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TriangleHandleError::DuplicateVertices`] if any two supplied
+    /// vertices are equal.
+    pub fn try_new(a: VertexKey, b: VertexKey, c: VertexKey) -> Result<Self, TriangleHandleError> {
+        if a == b || a == c || b == c {
+            return Err(TriangleHandleError::DuplicateVertices {
+                vertices: [a, b, c],
+            });
+        }
+
+        Ok(Self::from_validated_vertices(a, b, c))
+    }
+
+    /// Creates a canonical triangle handle from vertices already known to be distinct.
+    #[must_use]
+    pub(crate) fn from_validated_vertices(a: VertexKey, b: VertexKey, c: VertexKey) -> Self {
+        debug_assert!(
+            a != b && a != c && b != c,
+            "triangle vertices must be distinct"
+        );
         let mut verts = [a, b, c];
         verts.sort_unstable_by_key(|v| v.data().as_ffi());
         Self {
@@ -3957,6 +3988,14 @@ impl TriangleHandle {
     #[must_use]
     pub const fn vertices(self) -> [VertexKey; 3] {
         [self.v0, self.v1, self.v2]
+    }
+}
+
+impl TryFrom<[VertexKey; 3]> for TriangleHandle {
+    type Error = TriangleHandleError;
+
+    fn try_from([a, b, c]: [VertexKey; 3]) -> Result<Self, Self::Error> {
+        Self::try_new(a, b, c)
     }
 }
 
@@ -4475,6 +4514,12 @@ impl From<FlipError> for DelaunayRepairError {
     }
 }
 
+impl From<FacetError> for DelaunayRepairError {
+    fn from(source: FacetError) -> Self {
+        Self::from(FlipError::from(source))
+    }
+}
+
 impl From<DelaunayRepairError> for FlipNeighborRepairFailure {
     fn from(source: DelaunayRepairError) -> Self {
         match source {
@@ -4522,12 +4567,11 @@ impl From<DelaunayRepairError> for FlipNeighborRepairFailure {
 ///
 /// Returns a [`FlipError`] if the facet is invalid, lies on the boundary, references
 /// missing simplices/vertices, or the adjacency data is inconsistent.
-pub(crate) fn build_k2_flip_context<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub(crate) fn build_k2_flip_context<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     facet: FacetHandle,
 ) -> Result<FlipContext<D, 2>, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -4621,9 +4665,9 @@ where
 
 /// Finds the neighbor slot that points back to a source simplex when reciprocal
 /// neighbor pointers are already available.
-fn back_reference_facet_index<T, U, V, const D: usize>(
+fn back_reference_facet_index<V, const D: usize>(
     source_simplex: SimplexKey,
-    neighbor_simplex: &Simplex<T, U, V, D>,
+    neighbor_simplex: &Simplex<V, D>,
 ) -> Option<usize> {
     neighbor_simplex
         .neighbor_keys()?
@@ -4652,12 +4696,11 @@ fn increment_vertex_count(
 ///
 /// Returns a [`FlipError`] if the edge is invalid, references missing vertices/simplices,
 /// or the adjacency data is inconsistent.
-pub(crate) fn build_k2_flip_context_from_edge<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub(crate) fn build_k2_flip_context_from_edge<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     edge: EdgeKey,
 ) -> Result<FlipContextDyn<D>, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -4741,13 +4784,12 @@ where
     })
 }
 /// Build a forward k=1 flip context from a simplex and inserted vertex.
-fn build_k1_forward_context_from_simplex<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn build_k1_forward_context_from_simplex<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
     inserted_vertex: VertexKey,
 ) -> Result<FlipContext<D, 1>, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -4786,12 +4828,11 @@ where
 ///
 /// Returns a [`FlipError`] if the vertex is missing, its incident simplex count is
 /// not D+1, or the adjacency data is inconsistent.
-pub(crate) fn build_k1_inverse_context<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub(crate) fn build_k1_inverse_context<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     vertex_key: VertexKey,
 ) -> Result<FlipContextDyn<D>, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -4866,13 +4907,10 @@ where
 /// and for geometries whose orientation cannot be certified by the f64 fast
 /// filter, causing callers to use the full orientation-aware predicate instead.
 #[inline]
-fn source_simplex_is_certified_positive<T, const D: usize>(
+fn source_simplex_is_certified_positive<const D: usize>(
     source_simplex: Option<SimplexKey>,
-    points: &[Point<T, D>],
-) -> bool
-where
-    T: CoordinateScalar,
-{
+    points: &[Point<D>],
+) -> bool {
     if source_simplex.is_none() {
         return false;
     }
@@ -4899,7 +4937,7 @@ where
 )]
 /// Evaluate the k=2 facet flip predicate for a local Delaunay violation.
 fn delaunay_violation_k2_for_facet<K, U, V, const D: usize>(
-    tds: &Tds<K::Scalar, U, V, D>,
+    tds: &Tds<U, V, D>,
     kernel: &K,
     topology_model: &GlobalTopologyModelAdapter<D>,
     facet_vertices: &[VertexKey],
@@ -4911,7 +4949,7 @@ fn delaunay_violation_k2_for_facet<K, U, V, const D: usize>(
     diagnostics: &mut RepairDiagnostics,
 ) -> Result<bool, FlipError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -5090,13 +5128,12 @@ where
 /// Builds the replacement simplices from the given removed/inserted face vertices
 /// and checks each with [`robust_orientation`].  Returns `Ok(true)` if any
 /// replacement simplex is degenerate.
-fn flip_would_create_degenerate_simplex<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn flip_would_create_degenerate_simplex<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     removed_face_vertices: &[VertexKey],
     inserted_face_vertices: &[VertexKey],
 ) -> Result<bool, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -5131,12 +5168,11 @@ where
 }
 
 /// Check whether a k=2 flip would create a degenerate simplex.
-fn k2_flip_would_create_degenerate_simplex<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn k2_flip_would_create_degenerate_simplex<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     context: &FlipContext<D, 2>,
 ) -> Result<bool, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -5162,7 +5198,7 @@ where
 /// Returns a [`FlipError`] if any referenced simplex/vertex is missing or a predicate
 /// evaluation fails.
 fn is_delaunay_violation_k2<K, U, V, const D: usize>(
-    tds: &Tds<K::Scalar, U, V, D>,
+    tds: &Tds<U, V, D>,
     kernel: &K,
     topology_model: &GlobalTopologyModelAdapter<D>,
     context: &FlipContext<D, 2>,
@@ -5170,7 +5206,7 @@ fn is_delaunay_violation_k2<K, U, V, const D: usize>(
     diagnostics: &mut RepairDiagnostics,
 ) -> Result<bool, FlipError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -5205,16 +5241,15 @@ where
 /// Returns a [`FlipError`] if the flip would be degenerate, duplicate an existing simplex,
 /// create non-manifold topology, if predicate evaluation fails, or if underlying TDS
 /// mutations fail.
-pub(crate) fn apply_bistellar_flip_k2<T, U, V, const D: usize>(
-    tds: &mut Tds<T, U, V, D>,
+pub(crate) fn apply_bistellar_flip_k2<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
     context: &FlipContext<D, 2>,
 ) -> Result<FlipInfo<D>, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    apply_bistellar_flip::<T, U, V, D, 2>(tds, context)
+    apply_bistellar_flip::<U, V, D, 2>(tds, context)
 }
 
 /// Build flip context for a k=3 (ridge) flip.
@@ -5223,8 +5258,8 @@ where
 ///
 /// Returns a [`FlipError`] if the ridge is invalid, references missing simplices/vertices,
 /// or the adjacency data is inconsistent.
-pub(crate) fn build_k3_flip_context<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub(crate) fn build_k3_flip_context<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     ridge: RidgeHandle,
 ) -> Result<FlipContext<D, 3>, FlipError>
 where
@@ -5235,8 +5270,8 @@ where
 }
 
 /// Builds k=3 repair context only for true three-simplex ridge stars.
-fn build_k3_flip_context_for_repair<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn build_k3_flip_context_for_repair<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     ridge: RidgeHandle,
 ) -> Result<FlipContext<D, 3>, FlipError>
 where
@@ -5247,8 +5282,8 @@ where
 }
 
 /// Builds k=3 flip context while optionally rejecting ridge stars above a caller limit.
-fn build_k3_flip_context_with_star_limit<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn build_k3_flip_context_with_star_limit<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     ridge: RidgeHandle,
     max_simplices: Option<usize>,
 ) -> Result<FlipContext<D, 3>, FlipError>
@@ -5355,12 +5390,11 @@ where
 ///
 /// Returns a [`FlipError`] if the triangle is invalid, references missing vertices/simplices,
 /// or the adjacency data is inconsistent.
-pub(crate) fn build_k3_flip_context_from_triangle<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+pub(crate) fn build_k3_flip_context_from_triangle<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     triangle: TriangleHandle,
 ) -> Result<FlipContextDyn<D>, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -5452,7 +5486,7 @@ where
 )]
 /// Evaluate the k=3 ridge flip predicate for a local Delaunay violation.
 fn delaunay_violation_k3_for_ridge<K, U, V, const D: usize>(
-    tds: &Tds<K::Scalar, U, V, D>,
+    tds: &Tds<U, V, D>,
     kernel: &K,
     topology_model: &GlobalTopologyModelAdapter<D>,
     ridge_vertices: &[VertexKey],
@@ -5463,7 +5497,7 @@ fn delaunay_violation_k3_for_ridge<K, U, V, const D: usize>(
     diagnostics: &mut RepairDiagnostics,
 ) -> Result<bool, FlipError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -5577,16 +5611,15 @@ where
 /// Returns a [`FlipError`] if the flip would be degenerate, duplicate an existing simplex,
 /// create non-manifold topology, if predicate evaluation fails, or if underlying TDS
 /// mutations fail.
-pub(crate) fn apply_bistellar_flip_k3<T, U, V, const D: usize>(
-    tds: &mut Tds<T, U, V, D>,
+pub(crate) fn apply_bistellar_flip_k3<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
     context: &FlipContext<D, 3>,
 ) -> Result<FlipInfo<D>, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    apply_bistellar_flip::<T, U, V, D, 3>(tds, context)
+    apply_bistellar_flip::<U, V, D, 3>(tds, context)
 }
 
 /// Apply a forward k=1 move (simplex split) by inserting a new vertex.
@@ -5595,13 +5628,12 @@ where
 ///
 /// Returns a [`FlipError`] if the simplex is missing, the vertex cannot be inserted,
 /// or the flip would be degenerate.
-pub(crate) fn apply_bistellar_flip_k1<T, U, V, const D: usize>(
-    tds: &mut Tds<T, U, V, D>,
+pub(crate) fn apply_bistellar_flip_k1<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
     simplex_key: SimplexKey,
-    vertex: Vertex<T, U, D>,
+    vertex: Vertex<U, D>,
 ) -> Result<FlipInfo<D>, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -5624,7 +5656,7 @@ where
         }
     };
 
-    let result = apply_bistellar_flip::<T, U, V, D, 1>(tds, &context);
+    let result = apply_bistellar_flip::<U, V, D, 1>(tds, &context);
 
     if result.is_err() {
         let _ = tds.remove_vertex(vertex_key);
@@ -5639,12 +5671,11 @@ where
 /// # Errors
 ///
 /// Returns a [`FlipError`] if the vertex star is invalid or the flip would be degenerate.
-pub(crate) fn apply_bistellar_flip_k1_inverse<T, U, V, const D: usize>(
-    tds: &mut Tds<T, U, V, D>,
+pub(crate) fn apply_bistellar_flip_k1_inverse<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
     vertex_key: VertexKey,
 ) -> Result<FlipInfo<D>, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -5671,13 +5702,13 @@ where
     reason = "Repair loop contains inline tracing and queue handling for diagnostics"
 )]
 fn repair_delaunay_with_flips_k2_attempt<K, U, V, const D: usize>(
-    tds: &mut Tds<K::Scalar, U, V, D>,
+    tds: &mut Tds<U, V, D>,
     kernel: &K,
     seed_simplices: Option<&[SimplexKey]>,
     config: &RepairAttemptConfig,
 ) -> Result<RepairAttemptOutcome, DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -5712,7 +5743,7 @@ where
             )?;
         }
     } else {
-        for facet in AllFacetsIter::new(tds) {
+        for facet in AllFacetsIter::try_new(tds)? {
             let handle = FacetHandle::new(facet.simplex_key(), facet.facet_index());
             enqueue_facet(
                 tds,
@@ -5890,14 +5921,14 @@ where
 /// Returns a [`DelaunayRepairError`] if the repair fails to converge or an underlying
 /// flip operation encounters an unrecoverable error.
 pub(crate) fn repair_delaunay_with_flips_k2_k3<K, U, V, const D: usize>(
-    tds: &mut Tds<K::Scalar, U, V, D>,
+    tds: &mut Tds<U, V, D>,
     kernel: &K,
     seed_simplices: Option<&[SimplexKey]>,
     topology: TopologyGuarantee,
     max_flips_override: Option<usize>,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -5906,13 +5937,13 @@ where
 }
 
 fn run_full_reseed_retry<K, U, V, const D: usize>(
-    tds: &mut Tds<K::Scalar, U, V, D>,
+    tds: &mut Tds<U, V, D>,
     kernel: &K,
     config: &RepairAttemptConfig,
-    snapshot: Tds<K::Scalar, U, V, D>,
+    snapshot: Tds<U, V, D>,
 ) -> Result<DelaunayRepairRun, DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -5951,14 +5982,14 @@ where
 /// Returns a [`DelaunayRepairError`] if the repair fails to converge or an underlying
 /// flip operation encounters an unrecoverable error.
 pub(crate) fn repair_delaunay_with_flips_k2_k3_run<K, U, V, const D: usize>(
-    tds: &mut Tds<K::Scalar, U, V, D>,
+    tds: &mut Tds<U, V, D>,
     kernel: &K,
     seed_simplices: Option<&[SimplexKey]>,
     topology: TopologyGuarantee,
     max_flips_override: Option<usize>,
 ) -> Result<DelaunayRepairRun, DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -6064,13 +6095,13 @@ where
 /// Returns [`DelaunayRepairError::NonConvergent`] if both attempts fail to converge.
 /// Other errors (topology violations, predicate failures) are forwarded as-is.
 pub(crate) fn repair_delaunay_local_single_pass<K, U, V, const D: usize>(
-    tds: &mut Tds<K::Scalar, U, V, D>,
+    tds: &mut Tds<U, V, D>,
     kernel: &K,
     seed_simplices: &[SimplexKey],
     max_flips: usize,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -6083,14 +6114,14 @@ where
     reason = "bounded two-attempt repair keeps rollback, retry, and postcondition timing together"
 )]
 pub(crate) fn repair_delaunay_local_single_pass_timed<K, U, V, const D: usize>(
-    tds: &mut Tds<K::Scalar, U, V, D>,
+    tds: &mut Tds<U, V, D>,
     kernel: &K,
     seed_simplices: &[SimplexKey],
     max_flips: usize,
     mut timing: Option<&mut LocalRepairPhaseTiming>,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -6264,10 +6295,10 @@ where
 ///
 /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 ///
 /// let dt: DelaunayTriangulation<_, (), (), 3> =
@@ -6280,11 +6311,11 @@ where
 /// # }
 /// ```
 pub fn verify_delaunay_via_flip_predicates<K, U, V, const D: usize>(
-    tds: &Tds<K::Scalar, U, V, D>,
+    tds: &Tds<U, V, D>,
     kernel: &K,
 ) -> Result<(), DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -6312,10 +6343,10 @@ where
 ///
 /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 ///
 /// let dt: DelaunayTriangulation<_, (), (), 3> =
@@ -6330,7 +6361,7 @@ pub fn verify_delaunay_for_triangulation<K, U, V, const D: usize>(
     triangulation: &Triangulation<K, U, V, D>,
 ) -> Result<(), DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -6346,12 +6377,12 @@ where
 /// For periodic topologies this evaluates predicates in lifted coordinates using the
 /// per-simplex periodic vertex offsets stored on quotient simplices.
 fn verify_delaunay_with_topology<K, U, V, const D: usize>(
-    tds: &Tds<K::Scalar, U, V, D>,
+    tds: &Tds<U, V, D>,
     kernel: &K,
     global_topology: GlobalTopology<D>,
 ) -> Result<(), DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -6369,13 +6400,13 @@ where
 /// Keeps legacy Euclidean repair checks on the same validation path as the
 /// topology-aware verifier.
 fn verify_repair_postcondition<K, U, V, const D: usize>(
-    tds: &Tds<K::Scalar, U, V, D>,
+    tds: &Tds<U, V, D>,
     kernel: &K,
     seed_simplices: Option<&[SimplexKey]>,
     last_applied_flip: Option<&LastAppliedFlip>,
 ) -> Result<(), DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -6392,13 +6423,13 @@ where
 
 /// Replays local repair postconditions without forcing the full connectivity check.
 fn verify_local_repair_postcondition<K, U, V, const D: usize>(
-    tds: &Tds<K::Scalar, U, V, D>,
+    tds: &Tds<U, V, D>,
     kernel: &K,
     seed_simplices: &[SimplexKey],
     last_applied_flip: Option<&LastAppliedFlip>,
 ) -> Result<(), DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -6439,7 +6470,7 @@ fn verification_failed(
 /// Adapts the public topology enum into the model used for lifted predicate
 /// evaluation.
 fn verify_repair_postcondition_with_topology<K, U, V, const D: usize>(
-    tds: &Tds<K::Scalar, U, V, D>,
+    tds: &Tds<U, V, D>,
     kernel: &K,
     seed_simplices: Option<&[SimplexKey]>,
     global_topology: GlobalTopology<D>,
@@ -6448,7 +6479,7 @@ fn verify_repair_postcondition_with_topology<K, U, V, const D: usize>(
     connectivity: ConnectivityPostcondition,
 ) -> Result<(), DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -6467,7 +6498,7 @@ where
 /// Replays the repair queues without mutating the TDS so postconditions cover
 /// the same local predicates that drive repair.
 fn verify_repair_postcondition_locally<K, U, V, const D: usize>(
-    tds: &Tds<K::Scalar, U, V, D>,
+    tds: &Tds<U, V, D>,
     kernel: &K,
     seed_simplices: Option<&[SimplexKey]>,
     topology_model: &GlobalTopologyModelAdapter<D>,
@@ -6476,7 +6507,7 @@ fn verify_repair_postcondition_locally<K, U, V, const D: usize>(
     connectivity: ConnectivityPostcondition,
 ) -> Result<(), DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -6582,7 +6613,7 @@ fn resolve_postcondition_predicate_failure(
     reason = "Postcondition replay threads topology, diagnostics, and predecessor context explicitly"
 )]
 fn verify_postcondition_k2_facets<K, U, V, const D: usize>(
-    tds: &Tds<K::Scalar, U, V, D>,
+    tds: &Tds<U, V, D>,
     kernel: &K,
     topology_model: &GlobalTopologyModelAdapter<D>,
     queue: &mut VecDeque<(FacetHandle, u64)>,
@@ -6592,7 +6623,7 @@ fn verify_postcondition_k2_facets<K, U, V, const D: usize>(
     last_applied_flip: Option<&LastAppliedFlip>,
 ) -> Result<(), DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -6699,7 +6730,7 @@ where
     reason = "Postcondition replay threads topology, diagnostics, and predecessor context explicitly (matches k=2 signature)"
 )]
 fn verify_postcondition_k3_ridges<K, U, V, const D: usize>(
-    tds: &Tds<K::Scalar, U, V, D>,
+    tds: &Tds<U, V, D>,
     kernel: &K,
     topology_model: &GlobalTopologyModelAdapter<D>,
     queue: &mut VecDeque<(RidgeHandle, u64)>,
@@ -6709,7 +6740,7 @@ fn verify_postcondition_k3_ridges<K, U, V, const D: usize>(
     last_applied_flip: Option<&LastAppliedFlip>,
 ) -> Result<(), DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -6798,7 +6829,7 @@ where
 /// Exercises inverse k=2 predicates after repair because an apparently valid
 /// facet pass can still leave an edge-collapse move applicable.
 fn verify_postcondition_inverse_k2_edges<K, U, V, const D: usize>(
-    tds: &Tds<K::Scalar, U, V, D>,
+    tds: &Tds<U, V, D>,
     kernel: &K,
     topology_model: &GlobalTopologyModelAdapter<D>,
     queue: &mut VecDeque<(EdgeKey, u64)>,
@@ -6807,7 +6838,7 @@ fn verify_postcondition_inverse_k2_edges<K, U, V, const D: usize>(
     mode: PostconditionMode,
 ) -> Result<(), DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -6881,7 +6912,7 @@ where
 /// Exercises inverse k=3 predicates after repair so triangle-collapse moves do
 /// not hide behind forward-only verification.
 fn verify_postcondition_inverse_k3_triangles<K, U, V, const D: usize>(
-    tds: &Tds<K::Scalar, U, V, D>,
+    tds: &Tds<U, V, D>,
     kernel: &K,
     topology_model: &GlobalTopologyModelAdapter<D>,
     queue: &mut VecDeque<(TriangleHandle, u64)>,
@@ -6890,7 +6921,7 @@ fn verify_postcondition_inverse_k3_triangles<K, U, V, const D: usize>(
     mode: PostconditionMode,
 ) -> Result<(), DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -7577,14 +7608,13 @@ impl RepairQueues {
     clippy::too_many_lines,
     reason = "seeding logic mirrors runtime queues and stays as one diagnostic flow"
 )]
-fn seed_repair_queues<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn seed_repair_queues<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     seed_simplices: Option<&[SimplexKey]>,
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
 ) -> Result<bool, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -7657,7 +7687,7 @@ where
             return Ok(true);
         }
     } else {
-        for facet in AllFacetsIter::new(tds) {
+        for facet in AllFacetsIter::try_new(tds)? {
             let handle = FacetHandle::new(facet.simplex_key(), facet.facet_index());
             enqueue_facet(
                 tds,
@@ -7700,14 +7730,13 @@ where
 
 /// Requeues the local neighborhood created by a flip so the repair loop follows
 /// newly exposed violations instead of rescanning the whole triangulation.
-fn enqueue_new_simplices_for_repair<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn enqueue_new_simplices_for_repair<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     new_simplices: &[SimplexKey],
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
 ) -> Result<(), FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -7758,7 +7787,7 @@ where
     reason = "Repair step contains inline tracing and queue handling for diagnostics"
 )]
 fn run_next_ridge_repair_step<K, U, V, const D: usize>(
-    tds: &mut Tds<K::Scalar, U, V, D>,
+    tds: &mut Tds<U, V, D>,
     kernel: &K,
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
@@ -7770,7 +7799,7 @@ fn run_next_ridge_repair_step<K, U, V, const D: usize>(
     touched_simplex_set: &mut FastHashSet<SimplexKey>,
 ) -> Result<bool, DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -7956,7 +7985,7 @@ where
     reason = "Repair step contains inline tracing and queue handling for diagnostics"
 )]
 fn run_next_edge_repair_step<K, U, V, const D: usize>(
-    tds: &mut Tds<K::Scalar, U, V, D>,
+    tds: &mut Tds<U, V, D>,
     kernel: &K,
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
@@ -7968,7 +7997,7 @@ fn run_next_edge_repair_step<K, U, V, const D: usize>(
     touched_simplex_set: &mut FastHashSet<SimplexKey>,
 ) -> Result<bool, DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -8148,7 +8177,7 @@ where
     reason = "Repair step contains inline tracing and queue handling for diagnostics"
 )]
 fn run_next_triangle_repair_step<K, U, V, const D: usize>(
-    tds: &mut Tds<K::Scalar, U, V, D>,
+    tds: &mut Tds<U, V, D>,
     kernel: &K,
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
@@ -8160,7 +8189,7 @@ fn run_next_triangle_repair_step<K, U, V, const D: usize>(
     touched_simplex_set: &mut FastHashSet<SimplexKey>,
 ) -> Result<bool, DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -8331,7 +8360,7 @@ where
     reason = "Repair step contains inline tracing and queue handling for diagnostics"
 )]
 fn run_next_facet_repair_step<K, U, V, const D: usize>(
-    tds: &mut Tds<K::Scalar, U, V, D>,
+    tds: &mut Tds<U, V, D>,
     kernel: &K,
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
@@ -8343,7 +8372,7 @@ fn run_next_facet_repair_step<K, U, V, const D: usize>(
     touched_simplex_set: &mut FastHashSet<SimplexKey>,
 ) -> Result<bool, DelaunayRepairError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -8510,14 +8539,10 @@ where
 
 /// Extracts facet vertices by omitted slot so facet hashing matches the simplex's
 /// current vertex ordering.
-fn facet_vertices_from_simplex<T, U, V, const D: usize>(
-    simplex: &Simplex<T, U, V, D>,
+fn facet_vertices_from_simplex<V, const D: usize>(
+    simplex: &Simplex<V, D>,
     facet_index: usize,
-) -> SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> {
     let mut vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::with_capacity(D + 1);
     for (i, &vkey) in simplex.vertices().iter().enumerate() {
@@ -8530,15 +8555,11 @@ where
 
 /// Extracts ridge vertices by omitted slots so ridge handles remain compact but
 /// can still be converted into stable vertex sets.
-fn ridge_vertices_from_simplex<T, U, V, const D: usize>(
-    simplex: &Simplex<T, U, V, D>,
+fn ridge_vertices_from_simplex<V, const D: usize>(
+    simplex: &Simplex<V, D>,
     omit_a: usize,
     omit_b: usize,
-) -> SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> {
     let mut vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::with_capacity(D + 1);
     for (i, &vkey) in simplex.vertices().iter().enumerate() {
@@ -8551,15 +8572,11 @@ where
 
 /// Finds the two vertices opposite a ridge in one simplex while validating that the
 /// requested ridge is actually incident to that simplex.
-fn simplex_extras_for_ridge<T, U, V, const D: usize>(
+fn simplex_extras_for_ridge<V, const D: usize>(
     simplex_key: SimplexKey,
-    simplex: &Simplex<T, U, V, D>,
+    simplex: &Simplex<V, D>,
     ridge: &SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-) -> Result<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>, FlipError> {
     if !ridge.iter().all(|v| simplex.contains_vertex(*v)) {
         return Err(FlipError::InvalidRidgeAdjacency { simplex_key });
     }
@@ -8592,8 +8609,8 @@ fn missing_opposite_for_simplex(
 /// many incident simplices. Repair uses this to reject non-k=3 edge stars as soon
 /// as they are known to be too large, while public flip construction leaves the
 /// value unset to preserve exact multiplicity diagnostics.
-fn collect_simplices_around_ridge<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn collect_simplices_around_ridge<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     start_simplex: SimplexKey,
     ridge: &SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
     max_simplices: Option<usize>,
@@ -8660,12 +8677,11 @@ where
 }
 
 /// Returns a vertex's Euclidean point without applying topology-frame lifting.
-fn vertex_point<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn vertex_point<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     vertex_key: VertexKey,
-) -> Result<Point<T, D>, FlipError>
+) -> Result<Point<D>, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -8676,11 +8692,11 @@ where
 }
 
 /// Small per-predicate cache for Euclidean vertex coordinates.
-struct EuclideanPointCache<T, const D: usize> {
-    points: SmallBuffer<(VertexKey, Point<T, D>), MAX_PRACTICAL_DIMENSION_SIZE>,
+struct EuclideanPointCache<const D: usize> {
+    points: SmallBuffer<(VertexKey, Point<D>), MAX_PRACTICAL_DIMENSION_SIZE>,
 }
 
-impl<T, const D: usize> EuclideanPointCache<T, D> {
+impl<const D: usize> EuclideanPointCache<D> {
     /// Starts an empty cache for one local predicate evaluation.
     fn new() -> Self {
         Self {
@@ -8689,16 +8705,13 @@ impl<T, const D: usize> EuclideanPointCache<T, D> {
     }
 }
 
-impl<T, const D: usize> EuclideanPointCache<T, D>
-where
-    T: CoordinateScalar,
-{
+impl<const D: usize> EuclideanPointCache<D> {
     /// Returns a cached Euclidean point, loading it from the TDS on first use.
     fn point<U, V>(
         &mut self,
-        tds: &Tds<T, U, V, D>,
+        tds: &Tds<U, V, D>,
         vertex_key: VertexKey,
-    ) -> Result<Point<T, D>, FlipError>
+    ) -> Result<Point<D>, FlipError>
     where
         U: DataType,
         V: DataType,
@@ -8715,14 +8728,14 @@ where
     /// Converts a small vertex-key slice into Euclidean points while sharing cache hits.
     fn points_for_vertices<U, V>(
         &mut self,
-        tds: &Tds<T, U, V, D>,
+        tds: &Tds<U, V, D>,
         vertices: &[VertexKey],
-    ) -> Result<SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>, FlipError>
+    ) -> Result<SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>, FlipError>
     where
         U: DataType,
         V: DataType,
     {
-        let mut points: SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+        let mut points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
             SmallBuffer::with_capacity(vertices.len());
         for &vertex_key in vertices {
             points.push(self.point(tds, vertex_key)?);
@@ -8733,16 +8746,15 @@ where
 
 /// Converts vertex keys to Euclidean points for predicates that do not need a
 /// periodic frame.
-fn vertices_to_points<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn vertices_to_points<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     vertices: &[VertexKey],
-) -> Result<SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>, FlipError>
+) -> Result<SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    let mut points: SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+    let mut points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::with_capacity(vertices.len());
     for &vkey in vertices {
         points.push(vertex_point(tds, vkey)?);
@@ -8752,19 +8764,18 @@ where
 
 /// Builds predicate points in one periodic frame so quotient-simplex coordinates
 /// compare as lifted representatives.
-fn vertices_to_points_with_optional_lift<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn vertices_to_points_with_optional_lift<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     topology_model: &GlobalTopologyModelAdapter<D>,
     vertices: &[VertexKey],
     source_simplex: Option<SimplexKey>,
     source_simplices: &[SimplexKey],
-) -> Result<SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>, FlipError>
+) -> Result<SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    let mut points: SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+    let mut points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::with_capacity(vertices.len());
     for &vkey in vertices {
         points.push(vertex_point_lifted_into_simplex(
@@ -8780,14 +8791,13 @@ where
 
 /// Applies a simplex-local periodic offset when the vertex is already present in
 /// the selected source simplex.
-fn vertex_point_with_optional_lift<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn vertex_point_with_optional_lift<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     topology_model: &GlobalTopologyModelAdapter<D>,
     vertex_key: VertexKey,
     source_simplex: Option<SimplexKey>,
-) -> Result<Point<T, D>, FlipError>
+) -> Result<Point<D>, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -8804,15 +8814,14 @@ where
 
 /// Lifts a vertex into a target simplex's frame, aligning from neighboring source
 /// simplices instead of falling back to bare periodic coordinates.
-fn vertex_point_lifted_into_simplex<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn vertex_point_lifted_into_simplex<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     topology_model: &GlobalTopologyModelAdapter<D>,
     vertex_key: VertexKey,
     target_simplex: Option<SimplexKey>,
     source_simplices: &[SimplexKey],
-) -> Result<Point<T, D>, FlipError>
+) -> Result<Point<D>, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -8830,8 +8839,8 @@ where
 }
 
 /// Aligns a vertex's periodic offset into a target simplex frame.
-fn periodic_offset_lifted_into_simplex<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn periodic_offset_lifted_into_simplex<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     vertex_key: VertexKey,
     target_simplex_key: SimplexKey,
     source_simplices: &[SimplexKey],
@@ -8903,14 +8912,13 @@ fn periodic_offset_lifted_into_simplex<T, U, V, const D: usize>(
 
 /// Centralizes topology-model lifting so missing vertices and non-liftable
 /// offsets become typed flip errors.
-fn lift_vertex_point<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn lift_vertex_point<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     topology_model: &GlobalTopologyModelAdapter<D>,
     vertex_key: VertexKey,
     periodic_offset: Option<[i8; D]>,
-) -> Result<Point<T, D>, FlipError>
+) -> Result<Point<D>, FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -8923,13 +8931,19 @@ where
             vertex_key,
             details: source.to_string(),
         })?;
-    Ok(Point::new(lifted_coords))
+    Point::try_new(lifted_coords).map_err(|source| {
+        FlipPredicateError::PeriodicVertexLift {
+            vertex_key,
+            details: source.to_string(),
+        }
+        .into()
+    })
 }
 
 /// Looks up the offset paired with a vertex slot, preserving the invariant that
 /// periodic offsets are indexed exactly like simplex vertices.
-fn periodic_offset_for_simplex_vertex<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn periodic_offset_for_simplex_vertex<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
     vertex_key: VertexKey,
 ) -> Result<Option<[i8; D]>, FlipError> {
@@ -8946,9 +8960,9 @@ fn periodic_offset_for_simplex_vertex<T, U, V, const D: usize>(
 
 /// Borrows stored periodic offsets, or treats a periodic simplex without explicit
 /// offsets as a zero-offset frame.
-fn periodic_offsets_or_zero_frame<T, U, V, const D: usize>(
+fn periodic_offsets_or_zero_frame<V, const D: usize>(
     simplex_key: SimplexKey,
-    simplex: &Simplex<T, U, V, D>,
+    simplex: &Simplex<V, D>,
 ) -> Result<Cow<'_, [[i8; D]]>, FlipError> {
     let offsets = simplex.periodic_vertex_offsets().map_or_else(
         // The fallback frame is synthesized locally, so `Cow::Owned` keeps the
@@ -8962,9 +8976,9 @@ fn periodic_offsets_or_zero_frame<T, U, V, const D: usize>(
 
 /// Rejects malformed quotient simplices before offset indexing can desynchronize
 /// vertices from their lifted representatives.
-fn validate_periodic_offset_len<T, U, V, const D: usize>(
+fn validate_periodic_offset_len<V, const D: usize>(
     simplex_key: SimplexKey,
-    simplex: &Simplex<T, U, V, D>,
+    simplex: &Simplex<V, D>,
     offsets: &[[i8; D]],
 ) -> Result<(), FlipError> {
     if offsets.len() == simplex.number_of_vertices() {
@@ -8980,9 +8994,9 @@ fn validate_periodic_offset_len<T, U, V, const D: usize>(
 
 /// Finds every common vertex to act as a consistency check when aligning two
 /// periodic simplex frames.
-fn shared_vertex_indices<T, U, V, const D: usize>(
-    target_simplex: &Simplex<T, U, V, D>,
-    source_simplex: &Simplex<T, U, V, D>,
+fn shared_vertex_indices<V, const D: usize>(
+    target_simplex: &Simplex<V, D>,
+    source_simplex: &Simplex<V, D>,
 ) -> SmallBuffer<(usize, usize), MAX_PRACTICAL_DIMENSION_SIZE> {
     let mut shared = SmallBuffer::new();
     for (target_index, &target_vertex) in target_simplex.vertices().iter().enumerate() {
@@ -9019,8 +9033,8 @@ fn align_periodic_offset<const D: usize>(
 
 /// Reuses an existing removed simplex as the predicate frame when the candidate
 /// simplex exactly matches that simplex.
-fn matching_source_simplex<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn matching_source_simplex<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     vertices: &[VertexKey],
     source_simplices: &[SimplexKey],
 ) -> Option<SimplexKey>
@@ -9091,14 +9105,13 @@ fn simplex_signature(vertices: &[VertexKey]) -> u64 {
 
 /// Builds the small topology index needed to reject duplicate simplices and
 /// non-manifold internal facets without repeated global scans.
-fn build_flip_topology_index<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn build_flip_topology_index<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     new_simplex_vertices: &[SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
     removed_simplices: &[SimplexKey],
     inserted_face_vertices: &[VertexKey],
 ) -> FlipTopologyIndex
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -9235,13 +9248,12 @@ where
 
 /// Checks candidate simplices against the topology index before mutation so a flip
 /// cannot introduce two simplices with the same vertex set.
-fn flip_would_duplicate_simplex_any<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn flip_would_duplicate_simplex_any<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     vertices: &[VertexKey],
     topology: &FlipTopologyIndex,
 ) -> bool
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -9336,8 +9348,8 @@ fn flip_would_create_nonmanifold_facets_any(
 
 /// Queues all interior facets of a simplex because k=2 repair is driven by shared
 /// facet predicates.
-fn enqueue_simplex_facets<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn enqueue_simplex_facets<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
     queue: &mut VecDeque<(FacetHandle, u64)>,
     queued: &mut FastHashSet<u64>,
@@ -9345,7 +9357,6 @@ fn enqueue_simplex_facets<T, U, V, const D: usize>(
     stats: &mut DelaunayRepairStats,
 ) -> Result<(), FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -9368,15 +9379,14 @@ where
 
 /// Enqueues a facet by stable vertex hash so stale handles can be resolved after
 /// slot swaps.
-fn enqueue_facet<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn enqueue_facet<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     handle: FacetHandle,
     queue: &mut VecDeque<(FacetHandle, u64)>,
     queued: &mut FastHashSet<u64>,
     handles: &mut FastHashMap<u64, FacetHandle>,
     stats: &mut DelaunayRepairStats,
 ) where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -9408,14 +9418,13 @@ fn enqueue_facet<T, U, V, const D: usize>(
 }
 
 /// Queues simplex edges only in dimensions where inverse k=2 repair is admissible.
-fn enqueue_simplex_edges<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn enqueue_simplex_edges<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
     queue: &mut VecDeque<(EdgeKey, u64)>,
     queued: &mut FastHashSet<u64>,
     stats: &mut DelaunayRepairStats,
 ) where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -9431,7 +9440,7 @@ fn enqueue_simplex_edges<T, U, V, const D: usize>(
     let vertex_count = vertices.len();
     for i in 0..vertex_count {
         for j in (i + 1)..vertex_count {
-            let edge = EdgeKey::new(vertices[i], vertices[j]);
+            let edge = EdgeKey::from_validated_endpoints(vertices[i], vertices[j]);
             enqueue_edge(edge, queue, queued, stats);
         }
     }
@@ -9453,14 +9462,13 @@ fn enqueue_edge(
 
 /// Queues simplex triangles only in dimensions where inverse k=3 repair is
 /// admissible.
-fn enqueue_simplex_triangles<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn enqueue_simplex_triangles<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
     queue: &mut VecDeque<(TriangleHandle, u64)>,
     queued: &mut FastHashSet<u64>,
     stats: &mut DelaunayRepairStats,
 ) where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -9477,7 +9485,8 @@ fn enqueue_simplex_triangles<T, U, V, const D: usize>(
     for i in 0..vertex_count {
         for j in (i + 1)..vertex_count {
             for k in (j + 1)..vertex_count {
-                let triangle = TriangleHandle::new(vertices[i], vertices[j], vertices[k]);
+                let triangle =
+                    TriangleHandle::from_validated_vertices(vertices[i], vertices[j], vertices[k]);
                 enqueue_triangle(triangle, queue, queued, stats);
             }
         }
@@ -9502,8 +9511,8 @@ fn enqueue_triangle(
 
 /// Queues all ridges of a simplex because k=3 repair needs codimension-two local
 /// stars.
-fn enqueue_simplex_ridges<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn enqueue_simplex_ridges<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
     queue: &mut VecDeque<(RidgeHandle, u64)>,
     queued: &mut FastHashSet<u64>,
@@ -9511,7 +9520,6 @@ fn enqueue_simplex_ridges<T, U, V, const D: usize>(
     stats: &mut DelaunayRepairStats,
 ) -> Result<(), FlipError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -9550,15 +9558,14 @@ where
 
 /// Enqueues a ridge by stable vertex hash so post-flip slot swaps do not strand
 /// stale ridge handles.
-fn enqueue_ridge<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn enqueue_ridge<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     handle: RidgeHandle,
     queue: &mut VecDeque<(RidgeHandle, u64)>,
     queued: &mut FastHashSet<u64>,
     handles: &mut FastHashMap<u64, RidgeHandle>,
     stats: &mut DelaunayRepairStats,
 ) where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -9604,7 +9611,6 @@ mod tests {
     use crate::geometry::traits::coordinate::CoordinateConversionValue;
     use crate::repair::DelaunayRepairOperation;
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
-    use crate::vertex;
     use approx::assert_relative_eq;
     use proptest::prelude::*;
     use rand::{RngExt, SeedableRng, rngs::StdRng};
@@ -9642,16 +9648,35 @@ mod tests {
         coords
     }
 
+    #[test]
+    fn triangle_handle_rejects_duplicate_vertices() {
+        let a = VertexKey::from(KeyData::from_ffi(1));
+        let b = VertexKey::from(KeyData::from_ffi(2));
+
+        assert_matches!(
+            TriangleHandle::try_new(a, b, a),
+            Err(TriangleHandleError::DuplicateVertices { vertices })
+                if vertices == [a, b, a]
+        );
+    }
+
     /// Inserts the canonical D-simplex fixture shared by replacement-orientation tests.
     fn insert_standard_simplex_vertices<const D: usize>(
-        tds: &mut Tds<f64, (), (), D>,
+        tds: &mut Tds<(), (), D>,
     ) -> Vec<VertexKey> {
         let mut vertices = Vec::with_capacity(D + 1);
-        vertices.push(tds.insert_vertex_with_mapping(vertex!([0.0; D])).unwrap());
+        vertices.push(
+            tds.insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0; D]).unwrap(),
+            )
+            .unwrap(),
+        );
         for axis in 0..D {
             vertices.push(
-                tds.insert_vertex_with_mapping(vertex!(unit_vector::<D>(axis)))
-                    .unwrap(),
+                tds.insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<D>(axis)).unwrap(),
+                )
+                .unwrap(),
             );
         }
         vertices
@@ -9670,7 +9695,7 @@ mod tests {
 
     /// Asserts exact vertex-to-periodic-offset slot pairing independent of simplex orientation.
     fn assert_simplex_offsets_by_vertex<const D: usize>(
-        tds: &Tds<f64, (), (), D>,
+        tds: &Tds<(), (), D>,
         simplex_key: SimplexKey,
         expected_offsets: &[(VertexKey, [i8; D])],
     ) {
@@ -9698,9 +9723,9 @@ mod tests {
     fn test_source_simplex_is_certified_positive_requires_source_and_positive_order() {
         let source_simplex = SimplexKey::from(KeyData::from_ffi(42));
         let positive = [
-            Point::new([0.0, 0.0]),
-            Point::new([1.0, 0.0]),
-            Point::new([0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0]),
         ];
         let negative = [positive[1], positive[0], positive[2]];
 
@@ -9782,10 +9807,10 @@ mod tests {
             pastey::paste! {
                 #[test]
                 fn [<test_snapshot_removed_simplex_vertices_captures_vertices_and_reports_missing_simplex_ $dim d>]() {
-                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
                     let vertices = insert_standard_simplex_vertices::<$dim>(&mut tds);
                     let simplex_key = tds
-                        .insert_simplex_with_mapping(Simplex::new(vertices.clone(), None).unwrap())
+                        .insert_simplex_with_mapping(Simplex::try_new_with_data(vertices.clone(), None).unwrap())
                         .unwrap();
 
                     let removed_simplices: SimplexKeyBuffer = std::iter::once(simplex_key).collect();
@@ -9873,7 +9898,7 @@ mod tests {
     gen_removed_simplex_snapshot_tests!(5);
 
     struct RidgeDiagnosticFixture3d {
-        tds: Tds<f64, (), (), 3>,
+        tds: Tds<(), (), 3>,
         origin_vertex: VertexKey,
         x_axis_vertex: VertexKey,
         y_axis_vertex: VertexKey,
@@ -9885,26 +9910,36 @@ mod tests {
 
     impl RidgeDiagnosticFixture3d {
         fn new() -> Self {
-            let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+            let mut tds: Tds<(), (), 3> = Tds::empty();
             let origin_vertex = tds
-                .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+                )
                 .unwrap();
             let x_axis_vertex = tds
-                .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+                )
                 .unwrap();
             let y_axis_vertex = tds
-                .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+                )
                 .unwrap();
             let upper_apex_vertex = tds
-                .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+                )
                 .unwrap();
             let lower_apex_vertex = tds
-                .insert_vertex_with_mapping(vertex!([0.0, 0.0, -1.0]))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, -1.0]).unwrap(),
+                )
                 .unwrap();
 
             let upper_tetrahedron = tds
                 .insert_simplex_with_mapping(
-                    Simplex::new(
+                    Simplex::try_new_with_data(
                         vec![
                             origin_vertex,
                             x_axis_vertex,
@@ -9918,7 +9953,7 @@ mod tests {
                 .unwrap();
             let lower_neighbor = tds
                 .insert_simplex_with_mapping(
-                    Simplex::new(
+                    Simplex::try_new_with_data(
                         vec![
                             origin_vertex,
                             x_axis_vertex,
@@ -10165,7 +10200,7 @@ mod tests {
     }
 
     fn facet_index_for_edge_2d(
-        tds: &Tds<f64, (), (), 2>,
+        tds: &Tds<(), (), 2>,
         simplex_key: SimplexKey,
         edge_start: VertexKey,
         edge_end: VertexKey,
@@ -10184,7 +10219,7 @@ mod tests {
     }
 
     fn facet_index_for_face_3d(
-        tds: &Tds<f64, (), (), 3>,
+        tds: &Tds<(), (), 3>,
         simplex_key: SimplexKey,
         face_v0: VertexKey,
         face_v1: VertexKey,
@@ -10210,7 +10245,7 @@ mod tests {
     /// Assert that `robust_orientation` returns a non-degenerate sign for
     /// every new-simplex point set that a k=2 flip context would produce.
     fn assert_context_has_nonzero_robust_orientation(
-        tds: &Tds<f64, (), (), 2>,
+        tds: &Tds<(), (), 2>,
         context: &FlipContext<2, 2>,
     ) {
         for &omit in &context.removed_face_vertices {
@@ -10232,13 +10267,27 @@ mod tests {
 
     #[test]
     fn test_resolve_facet_handle_for_key_remaps_after_slot_swap() {
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
 
         let simplex_key = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
+            )
             .unwrap();
         let stale_handle = FacetHandle::new(simplex_key, 0);
         let stable_key = {
@@ -10269,22 +10318,32 @@ mod tests {
 
     #[test]
     fn test_resolve_ridge_handle_for_key_remaps_after_slot_swap() {
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let mut tds: Tds<(), (), 3> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            )
             .unwrap();
 
         let simplex_key = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2, v3], None).unwrap(),
+            )
             .unwrap();
         let stale_handle = RidgeHandle::new(simplex_key, 0, 1);
         let stable_key = {
@@ -10322,32 +10381,53 @@ mod tests {
     #[test]
     fn test_k2_flip_rewires_external_neighbors_across_cavity_boundary() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let v_left_bottom = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v_right_bottom = tds.insert_vertex_with_mapping(vertex!([2.0, 0.0])).unwrap();
-        let v_left_top = tds.insert_vertex_with_mapping(vertex!([0.0, 2.0])).unwrap();
-        let v_right_top = tds.insert_vertex_with_mapping(vertex!([2.0, 2.0])).unwrap();
+        let v_left_bottom = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v_right_bottom = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v_left_top = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 2.0]).unwrap(),
+            )
+            .unwrap();
+        let v_right_top = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 2.0]).unwrap(),
+            )
+            .unwrap();
         let v_external = tds
-            .insert_vertex_with_mapping(vertex!([-1.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([-1.0, 1.0]).unwrap(),
+            )
             .unwrap();
 
         // Flip cavity: two triangles sharing the bottom edge.
         let simplex_cavity_left = tds
             .insert_simplex_with_mapping(
-                Simplex::new(vec![v_left_bottom, v_right_bottom, v_left_top], None).unwrap(),
+                Simplex::try_new_with_data(vec![v_left_bottom, v_right_bottom, v_left_top], None)
+                    .unwrap(),
             )
             .unwrap();
         let simplex_cavity_right = tds
             .insert_simplex_with_mapping(
-                Simplex::new(vec![v_right_bottom, v_left_bottom, v_right_top], None).unwrap(),
+                Simplex::try_new_with_data(vec![v_right_bottom, v_left_bottom, v_right_top], None)
+                    .unwrap(),
             )
             .unwrap();
 
         // External simplex glued along the left edge of the cavity.
         let simplex_external_left = tds
             .insert_simplex_with_mapping(
-                Simplex::new(vec![v_left_bottom, v_left_top, v_external], None).unwrap(),
+                Simplex::try_new_with_data(vec![v_left_bottom, v_left_top, v_external], None)
+                    .unwrap(),
             )
             .unwrap();
 
@@ -10411,16 +10491,38 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "regression test keeps the periodic flip fixture explicit"
+    )]
     fn test_k2_flip_preserves_periodic_external_offsets() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let v_left_bottom = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v_right_bottom = tds.insert_vertex_with_mapping(vertex!([2.0, 0.0])).unwrap();
-        let v_left_top = tds.insert_vertex_with_mapping(vertex!([0.0, 2.0])).unwrap();
-        let v_right_top = tds.insert_vertex_with_mapping(vertex!([2.0, 2.0])).unwrap();
+        let v_left_bottom = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v_right_bottom = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v_left_top = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 2.0]).unwrap(),
+            )
+            .unwrap();
+        let v_right_top = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 2.0]).unwrap(),
+            )
+            .unwrap();
         let v_external = tds
-            .insert_vertex_with_mapping(vertex!([-1.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([-1.0, 1.0]).unwrap(),
+            )
             .unwrap();
 
         let offset_left_bottom = [0_i8, 0_i8];
@@ -10523,11 +10625,11 @@ mod tests {
             pastey::paste! {
                 #[test]
                 fn [<test_orient_replacement_simplices_uses_periodic_external_simplex_ $dim d>]() {
-                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
                     let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
 
                     let offsets = periodic_test_offsets::<$dim>($dim + 1);
-                    let mut external_simplex = Simplex::new(simplex_vertices.clone(), None).unwrap();
+                    let mut external_simplex = Simplex::try_new_with_data(simplex_vertices.clone(), None).unwrap();
                     external_simplex.set_periodic_vertex_offsets(offsets.clone()).unwrap();
                     let external_simplex_key = tds.insert_simplex_with_mapping(external_simplex).unwrap();
 
@@ -10560,11 +10662,11 @@ mod tests {
 
                 #[test]
                 fn [<test_orient_replacement_simplices_rejects_conflicting_periodic_external_offsets_ $dim d>]() {
-                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
                     let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
 
                     let external_offsets = vec![[0_i8; $dim]; $dim + 1];
-                    let mut external_simplex = Simplex::new(simplex_vertices.clone(), None).unwrap();
+                    let mut external_simplex = Simplex::try_new_with_data(simplex_vertices.clone(), None).unwrap();
                     external_simplex
                         .set_periodic_vertex_offsets(external_offsets)
                         .unwrap();
@@ -10601,7 +10703,7 @@ mod tests {
 
                 #[test]
                 fn [<test_orient_replacement_simplices_rejects_periodic_offset_count_mismatch_ $dim d>]() {
-                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
                     let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
                     let mut replacement_simplices = vec![vertex_key_buffer(&simplex_vertices)];
                     let mut replacement_offsets: Vec<Option<PeriodicOffsetBuffer<$dim>>> = Vec::new();
@@ -10631,10 +10733,10 @@ mod tests {
 
                 #[test]
                 fn [<test_orient_replacement_simplices_rejects_missing_replacement_periodic_offsets_ $dim d>]() {
-                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
                     let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
 
-                    let mut external_simplex = Simplex::new(simplex_vertices.clone(), None).unwrap();
+                    let mut external_simplex = Simplex::try_new_with_data(simplex_vertices.clone(), None).unwrap();
                     external_simplex
                         .set_periodic_vertex_offsets(vec![[0_i8; $dim]; $dim + 1])
                         .unwrap();
@@ -10666,10 +10768,10 @@ mod tests {
 
                 #[test]
                 fn [<test_orient_replacement_simplices_rejects_replacement_periodic_offset_length_mismatch_ $dim d>]() {
-                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
                     let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
 
-                    let mut external_simplex = Simplex::new(simplex_vertices.clone(), None).unwrap();
+                    let mut external_simplex = Simplex::try_new_with_data(simplex_vertices.clone(), None).unwrap();
                     external_simplex
                         .set_periodic_vertex_offsets(vec![[0_i8; $dim]; $dim + 1])
                         .unwrap();
@@ -10705,10 +10807,10 @@ mod tests {
 
                 #[test]
                 fn [<test_orient_replacement_simplices_rejects_missing_external_simplex_ $dim d>]() {
-                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
                     let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
                     let external_simplex_key = tds
-                        .insert_simplex_with_mapping(Simplex::new(simplex_vertices.clone(), None).unwrap())
+                        .insert_simplex_with_mapping(Simplex::try_new_with_data(simplex_vertices.clone(), None).unwrap())
                         .unwrap();
                     assert_eq!(tds.remove_simplices_by_keys(&[external_simplex_key]), 1);
 
@@ -10733,11 +10835,11 @@ mod tests {
 
                 #[test]
                 fn [<test_replacement_orientation_helpers_cover_error_paths_ $dim d>]() {
-                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
                     let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
-                    let v_square = tds.insert_vertex_with_mapping(vertex!([1.0; $dim])).unwrap();
+                    let v_square = tds.insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new([1.0; $dim]).unwrap()).unwrap();
                     let v_collinear = tds
-                        .insert_vertex_with_mapping(vertex!(scaled_unit_vector::<$dim>(0, 2.0)))
+                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new(scaled_unit_vector::<$dim>(0, 2.0)).unwrap())
                         .unwrap();
 
                     let source = vertex_key_buffer(&simplex_vertices);
@@ -10839,11 +10941,11 @@ mod tests {
 
                 #[test]
                 fn [<test_orient_replacement_simplices_aligns_external_and_internal_facets_ $dim d>]() {
-                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
                     let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
-                    let v_square = tds.insert_vertex_with_mapping(vertex!([1.0; $dim])).unwrap();
+                    let v_square = tds.insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new([1.0; $dim]).unwrap()).unwrap();
                     let external_simplex_key = tds
-                        .insert_simplex_with_mapping(Simplex::new(simplex_vertices.clone(), None).unwrap())
+                        .insert_simplex_with_mapping(Simplex::try_new_with_data(simplex_vertices.clone(), None).unwrap())
                         .unwrap();
 
                     let mut external_aligned = vec![vertex_key_buffer(&simplex_vertices)];
@@ -10895,10 +10997,10 @@ mod tests {
 
                 #[test]
                 fn [<test_validate_replacement_orientation_rejects_bad_geometry_ $dim d>]() {
-                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
                     let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
                     let v_collinear = tds
-                        .insert_vertex_with_mapping(vertex!(scaled_unit_vector::<$dim>(0, 2.0)))
+                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new(scaled_unit_vector::<$dim>(0, 2.0)).unwrap())
                         .unwrap();
 
                     let mut positive_vertices = simplex_vertices.clone();
@@ -10947,46 +11049,70 @@ mod tests {
     )]
     fn test_k3_flip_rewires_external_neighbors_across_cavity_boundary() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let mut tds: Tds<(), (), 3> = Tds::empty();
 
         // NOTE: keep `v_edge_start` off the plane of (v_cycle_0, v_cycle_1, v_cycle_2)
         // so the post-flip inserted tetrahedra are non-degenerate.
         let v_edge_start = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v_edge_end = tds
-            .insert_vertex_with_mapping(vertex!([2.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
 
         let v_cycle_0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 2.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 2.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v_cycle_1 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 2.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 2.0]).unwrap(),
+            )
             .unwrap();
         let v_cycle_2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 2.0, 2.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 2.0, 2.0]).unwrap(),
+            )
             .unwrap();
 
         let v_external = tds
-            .insert_vertex_with_mapping(vertex!([-1.0, 1.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([-1.0, 1.0, 1.0]).unwrap(),
+            )
             .unwrap();
 
         // Three tetrahedra around the ridge (edge) (v_edge_start, v_edge_end).
         // This is the configuration removed by a k=3 flip (3→2).
         let simplex_around_edge_0 = tds
             .insert_simplex_with_mapping(
-                Simplex::new(vec![v_edge_start, v_edge_end, v_cycle_0, v_cycle_1], None).unwrap(),
+                Simplex::try_new_with_data(
+                    vec![v_edge_start, v_edge_end, v_cycle_0, v_cycle_1],
+                    None,
+                )
+                .unwrap(),
             )
             .unwrap();
         let simplex_around_edge_1 = tds
             .insert_simplex_with_mapping(
-                Simplex::new(vec![v_edge_start, v_edge_end, v_cycle_1, v_cycle_2], None).unwrap(),
+                Simplex::try_new_with_data(
+                    vec![v_edge_start, v_edge_end, v_cycle_1, v_cycle_2],
+                    None,
+                )
+                .unwrap(),
             )
             .unwrap();
         let simplex_around_edge_2 = tds
             .insert_simplex_with_mapping(
-                Simplex::new(vec![v_edge_start, v_edge_end, v_cycle_2, v_cycle_0], None).unwrap(),
+                Simplex::try_new_with_data(
+                    vec![v_edge_start, v_edge_end, v_cycle_2, v_cycle_0],
+                    None,
+                )
+                .unwrap(),
             )
             .unwrap();
 
@@ -10994,7 +11120,11 @@ mod tests {
         // This face must be rewired to a newly inserted tetrahedron after the flip.
         let simplex_external = tds
             .insert_simplex_with_mapping(
-                Simplex::new(vec![v_edge_start, v_cycle_0, v_cycle_1, v_external], None).unwrap(),
+                Simplex::try_new_with_data(
+                    vec![v_edge_start, v_cycle_0, v_cycle_1, v_external],
+                    None,
+                )
+                .unwrap(),
             )
             .unwrap();
 
@@ -11104,10 +11234,10 @@ mod tests {
         let v0 = VertexKey::from(KeyData::from_ffi(101));
         let v1 = VertexKey::from(KeyData::from_ffi(102));
         let v2 = VertexKey::from(KeyData::from_ffi(103));
-        let edge = EdgeKey::new(v0, v1);
+        let edge = EdgeKey::from_validated_endpoints(v0, v1);
         let facet = FacetHandle::new(simplex, 0);
         let ridge = RidgeHandle::new(simplex, 0, 1);
-        let triangle = TriangleHandle::new(v0, v1, v2);
+        let triangle = TriangleHandle::try_new(v0, v1, v2).unwrap();
 
         let first_inserted_sample = InsertedSimplexSkipSample {
             location: RepairSkipLocation::Facet(facet),
@@ -11173,7 +11303,7 @@ mod tests {
         let v2 = VertexKey::from(KeyData::from_ffi(103));
         let facet = FacetHandle::new(simplex, 0);
         let ridge = RidgeHandle::new(simplex, 0, 1);
-        let triangle = TriangleHandle::new(v0, v1, v2);
+        let triangle = TriangleHandle::try_new(v0, v1, v2).unwrap();
 
         let removed_face: VertexKeyList = [v0, v1].into_iter().collect();
         let inserted_face: VertexKeyList = std::iter::once(v2).collect();
@@ -11223,7 +11353,7 @@ mod tests {
         simplex_neighbors: Vec<Vec<Option<Uuid>>>,
     }
 
-    fn snapshot_topology<const D: usize>(tds: &Tds<f64, (), (), D>) -> TopologySnapshot {
+    fn snapshot_topology<const D: usize>(tds: &Tds<(), (), D>) -> TopologySnapshot {
         let mut vertices: Vec<Uuid> = tds.vertices().map(|(_, vertex)| vertex.uuid()).collect();
         vertices.sort();
 
@@ -11250,7 +11380,7 @@ mod tests {
         }
     }
 
-    fn snapshot_neighbors<const D: usize>(tds: &Tds<f64, (), (), D>) -> Vec<Vec<Option<Uuid>>> {
+    fn snapshot_neighbors<const D: usize>(tds: &Tds<(), (), D>) -> Vec<Vec<Option<Uuid>>> {
         let mut simplex_neighbors: Vec<Vec<Option<Uuid>>> = tds
             .simplices()
             .map(|(_, simplex)| {
@@ -11274,7 +11404,7 @@ mod tests {
         simplex_neighbors
     }
 
-    fn snapshot_incidence<const D: usize>(tds: &Tds<f64, (), (), D>) -> Vec<(Uuid, Option<Uuid>)> {
+    fn snapshot_incidence<const D: usize>(tds: &Tds<(), (), D>) -> Vec<(Uuid, Option<Uuid>)> {
         let mut incident_simplices: Vec<(Uuid, Option<Uuid>)> = tds
             .vertices()
             .map(|(_, vertex)| {
@@ -11296,35 +11426,48 @@ mod tests {
     }
 
     fn insert_translated_simplex<const D: usize>(
-        tds: &mut Tds<f64, (), (), D>,
+        tds: &mut Tds<(), (), D>,
         offset: f64,
     ) -> (Vec<VertexKey>, SimplexKey) {
         let mut vertices = Vec::with_capacity(D + 1);
         vertices.push(
-            tds.insert_vertex_with_mapping(vertex!([offset; D]))
-                .unwrap(),
+            tds.insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([offset; D]).unwrap(),
+            )
+            .unwrap(),
         );
 
         for axis in 0..D {
             let mut coords = [offset; D];
             coords[axis] += 1.0;
-            vertices.push(tds.insert_vertex_with_mapping(vertex!(coords)).unwrap());
+            vertices.push(
+                tds.insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap(),
+                )
+                .unwrap(),
+            );
         }
 
         let simplex_key = tds
-            .insert_simplex_with_mapping(Simplex::new(vertices.clone(), None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vertices.clone(), None).unwrap(),
+            )
             .unwrap();
         (vertices, simplex_key)
     }
 
     fn test_flip_trial_validation_rollback_for_dim<const D: usize>() {
-        let mut tds: Tds<f64, (), (), D> = Tds::empty();
+        let mut tds: Tds<(), (), D> = Tds::empty();
         let (_first_vertices, first_simplex) = insert_translated_simplex(&mut tds, 0.0);
         let (_second_vertices, second_simplex) = insert_translated_simplex(&mut tds, 10.0);
         repair_neighbor_pointers(&mut tds).unwrap();
         tds.assign_incident_simplices().unwrap();
 
-        let isolated_vertex = tds.insert_vertex_with_mapping(vertex!([20.0; D])).unwrap();
+        let isolated_vertex = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([20.0; D]).unwrap(),
+            )
+            .unwrap();
         tds.vertex_mut(isolated_vertex)
             .unwrap()
             .set_incident_simplex(Some(second_simplex));
@@ -11332,7 +11475,8 @@ mod tests {
         let before = snapshot_topology(&tds);
         let before_incidence = snapshot_incidence(&tds);
         let denominator = f64::from(u32::try_from(D + 2).unwrap());
-        let new_vertex = vertex!([1.0 / denominator; D]);
+        let new_vertex =
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0 / denominator; D]).unwrap();
 
         let result = apply_bistellar_flip_k1(&mut tds, first_simplex, new_vertex);
         match result {
@@ -11370,12 +11514,26 @@ mod tests {
 
     #[test]
     fn test_flip_trial_validation_rejects_unassigned_neighbor_slot() {
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
         let simplex_key = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
+            )
             .unwrap();
         tds.assign_neighbors().unwrap();
 
@@ -11406,13 +11564,16 @@ mod tests {
         scale: f64,
     ) -> Result<(), TestCaseError> {
         init_tracing();
-        let mut tds: Tds<f64, (), (), D> = Tds::empty();
+        let mut tds: Tds<(), (), D> = Tds::empty();
         let mut shared_vertices = Vec::with_capacity(D);
         for i in 0..D {
             let vertex = tds
-                .insert_vertex_with_mapping(vertex!(translated_scaled_unit_vector::<D>(
-                    i, offset, scale
-                )))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(
+                        translated_scaled_unit_vector::<D>(i, offset, scale),
+                    )
+                    .unwrap(),
+                )
                 .map_err(|err| {
                     TestCaseError::fail(format!("shared vertex insertion failed: {err:?}"))
                 })?;
@@ -11420,24 +11581,30 @@ mod tests {
         }
 
         let opposite_a = tds
-            .insert_vertex_with_mapping(vertex!([offset; D]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([offset; D]).unwrap(),
+            )
             .map_err(|err| TestCaseError::fail(format!("opposite A insertion failed: {err:?}")))?;
         let opposite_b = tds
-            .insert_vertex_with_mapping(vertex!([offset + scale; D]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([offset + scale; D]).unwrap(),
+            )
             .map_err(|err| TestCaseError::fail(format!("opposite B insertion failed: {err:?}")))?;
 
         let mut vertices_with_first_opposite = shared_vertices.clone();
         vertices_with_first_opposite.push(opposite_a);
         let simplex_a = tds
-            .insert_simplex_with_mapping(Simplex::new(vertices_with_first_opposite, None).map_err(
-                |err| TestCaseError::fail(format!("simplex A creation failed: {err:?}")),
-            )?)
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vertices_with_first_opposite, None).map_err(|err| {
+                    TestCaseError::fail(format!("simplex A creation failed: {err:?}"))
+                })?,
+            )
             .map_err(|err| TestCaseError::fail(format!("simplex A insertion failed: {err:?}")))?;
 
         let mut vertices_with_second_opposite = shared_vertices.clone();
         vertices_with_second_opposite.push(opposite_b);
         tds.insert_simplex_with_mapping(
-            Simplex::new(vertices_with_second_opposite, None).map_err(|err| {
+            Simplex::try_new_with_data(vertices_with_second_opposite, None).map_err(|err| {
                 TestCaseError::fail(format!("simplex B creation failed: {err:?}"))
             })?,
         )
@@ -11494,7 +11661,7 @@ mod tests {
         } else {
             let inserted = inserted_face_vertices(&info, 2)?;
             let edge = match inserted.as_slice() {
-                [a, b] => EdgeKey::new(*a, *b),
+                [a, b] => EdgeKey::from_validated_endpoints(*a, *b),
                 _ => {
                     return Err(TestCaseError::fail(
                         "validated k=2 inserted-face arity changed",
@@ -11529,13 +11696,16 @@ mod tests {
         let ridge_vertex_count = D
             .checked_sub(1)
             .ok_or_else(|| TestCaseError::fail("k=3 fixture requires D >= 1"))?;
-        let mut tds: Tds<f64, (), (), D> = Tds::empty();
+        let mut tds: Tds<(), (), D> = Tds::empty();
         let mut ridge_vertices = Vec::with_capacity(ridge_vertex_count);
         for i in 0..ridge_vertex_count {
             let vertex = tds
-                .insert_vertex_with_mapping(vertex!(translated_scaled_unit_vector::<D>(
-                    i, offset, scale
-                )))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(
+                        translated_scaled_unit_vector::<D>(i, offset, scale),
+                    )
+                    .unwrap(),
+                )
                 .map_err(|err| {
                     TestCaseError::fail(format!("ridge vertex insertion failed: {err:?}"))
                 })?;
@@ -11543,33 +11713,43 @@ mod tests {
         }
 
         let a = tds
-            .insert_vertex_with_mapping(vertex!([offset; D]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([offset; D]).unwrap(),
+            )
             .map_err(|err| TestCaseError::fail(format!("opposite A insertion failed: {err:?}")))?;
         let b = tds
-            .insert_vertex_with_mapping(vertex!(translated_scaled_unit_vector::<D>(
-                ridge_vertex_count,
-                offset,
-                scale
-            )))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new(translated_scaled_unit_vector::<D>(
+                    ridge_vertex_count,
+                    offset,
+                    scale,
+                ))
+                .unwrap(),
+            )
             .map_err(|err| TestCaseError::fail(format!("opposite B insertion failed: {err:?}")))?;
         let c = tds
-            .insert_vertex_with_mapping(vertex!(translated_scaled_skewed_point::<D>(offset, scale)))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new(translated_scaled_skewed_point::<D>(
+                    offset, scale,
+                ))
+                .unwrap(),
+            )
             .map_err(|err| TestCaseError::fail(format!("opposite C insertion failed: {err:?}")))?;
 
         let mut first_vertices = ridge_vertices.clone();
         first_vertices.push(a);
         first_vertices.push(b);
         let first_simplex = tds
-            .insert_simplex_with_mapping(Simplex::new(first_vertices, None).map_err(|err| {
-                TestCaseError::fail(format!("simplex A creation failed: {err:?}"))
-            })?)
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(first_vertices, None).map_err(
+                |err| TestCaseError::fail(format!("simplex A creation failed: {err:?}")),
+            )?)
             .map_err(|err| TestCaseError::fail(format!("simplex A insertion failed: {err:?}")))?;
 
         let mut second_vertices = ridge_vertices.clone();
         second_vertices.push(b);
         second_vertices.push(c);
         tds.insert_simplex_with_mapping(
-            Simplex::new(second_vertices, None).map_err(|err| {
+            Simplex::try_new_with_data(second_vertices, None).map_err(|err| {
                 TestCaseError::fail(format!("simplex B creation failed: {err:?}"))
             })?,
         )
@@ -11579,7 +11759,7 @@ mod tests {
         third_vertices.push(c);
         third_vertices.push(a);
         tds.insert_simplex_with_mapping(
-            Simplex::new(third_vertices, None).map_err(|err| {
+            Simplex::try_new_with_data(third_vertices, None).map_err(|err| {
                 TestCaseError::fail(format!("simplex C creation failed: {err:?}"))
             })?,
         )
@@ -11642,7 +11822,9 @@ mod tests {
         } else {
             let inserted = inserted_face_vertices(&info, 3)?;
             let triangle = match inserted.as_slice() {
-                [a, b, c] => TriangleHandle::new(*a, *b, *c),
+                [a, b, c] => TriangleHandle::try_new(*a, *b, *c).map_err(|err| {
+                    TestCaseError::fail(format!("invalid inserted triangle: {err}"))
+                })?,
                 _ => {
                     return Err(TestCaseError::fail(
                         "validated k=3 inserted-face arity changed",
@@ -11738,25 +11920,25 @@ mod tests {
                 #[test]
                 fn [<test_bistellar_k1_roundtrip_ $dim d>]() {
                     init_tracing();
-                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
 
-                    let origin = tds.insert_vertex_with_mapping(vertex!([0.0; $dim])).unwrap();
+                    let origin = tds.insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new([0.0; $dim]).unwrap()).unwrap();
                     let mut vertices = Vec::with_capacity($dim + 1);
                     vertices.push(origin);
                     for i in 0..$dim {
                         let v = tds
-                            .insert_vertex_with_mapping(vertex!(unit_vector::<$dim>(i)))
+                            .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<$dim>(i)).unwrap())
                             .unwrap();
                         vertices.push(v);
                     }
 
                     let simplex_key = tds
-                        .insert_simplex_with_mapping(Simplex::new(vertices, None).unwrap())
+                        .insert_simplex_with_mapping(Simplex::try_new_with_data(vertices, None).unwrap())
                         .unwrap();
 
                     let before = snapshot_topology(&tds);
 
-                    let new_vertex = vertex!([0.1; $dim]);
+                    let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.1; $dim]).unwrap();
                     let new_uuid = new_vertex.uuid();
                     let _info = apply_bistellar_flip_k1(&mut tds, simplex_key, new_vertex)
                         .unwrap();
@@ -11773,27 +11955,27 @@ mod tests {
                 #[test]
                 fn [<test_bistellar_k2_roundtrip_ $dim d>]() {
                     init_tracing();
-                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
                     let mut shared_vertices = Vec::with_capacity($dim);
                     for i in 0..$dim {
                         let v = tds
-                            .insert_vertex_with_mapping(vertex!(unit_vector::<$dim>(i)))
+                            .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<$dim>(i)).unwrap())
                             .unwrap();
                         shared_vertices.push(v);
                     }
 
                     let opposite_a = tds
-                        .insert_vertex_with_mapping(vertex!([0.0; $dim]))
+                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new([0.0; $dim]).unwrap())
                         .unwrap();
                     let opposite_b = tds
-                        .insert_vertex_with_mapping(vertex!([1.0; $dim]))
+                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new([1.0; $dim]).unwrap())
                         .unwrap();
 
                     let mut vertices_with_first_opposite = shared_vertices.clone();
                     vertices_with_first_opposite.push(opposite_a);
                     let simplex_a = tds
                         .insert_simplex_with_mapping(
-                            Simplex::new(vertices_with_first_opposite, None).unwrap(),
+                            Simplex::try_new_with_data(vertices_with_first_opposite, None).unwrap(),
                         )
                         .unwrap();
 
@@ -11801,7 +11983,7 @@ mod tests {
                     vertices_with_second_opposite.push(opposite_b);
                     let _simplex_b = tds
                         .insert_simplex_with_mapping(
-                            Simplex::new(vertices_with_second_opposite, None).unwrap(),
+                            Simplex::try_new_with_data(vertices_with_second_opposite, None).unwrap(),
                         )
                         .unwrap();
 
@@ -11837,7 +12019,7 @@ mod tests {
                         let _info_back =
                             apply_bistellar_flip_k2(&mut tds, &context_back).unwrap();
                     } else {
-                        let edge = EdgeKey::new(opposite_a, opposite_b);
+                        let edge = EdgeKey::from_validated_endpoints(opposite_a, opposite_b);
                         let context_back = build_k2_flip_context_from_edge(&tds, edge).unwrap();
                         let _info_back =
                             apply_bistellar_flip_dynamic(&mut tds, $dim, &context_back)
@@ -11856,44 +12038,44 @@ mod tests {
                 #[test]
                 fn [<test_bistellar_k3_roundtrip_ $dim d>]() {
                     init_tracing();
-                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
                     let mut ridge_vertices = Vec::with_capacity($dim - 1);
                     for i in 0..($dim - 1) {
                         let v = tds
-                            .insert_vertex_with_mapping(vertex!(unit_vector::<$dim>(i)))
+                            .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<$dim>(i)).unwrap())
                             .unwrap();
                         ridge_vertices.push(v);
                     }
 
                     let a = tds
-                        .insert_vertex_with_mapping(vertex!([0.0; $dim]))
+                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new([0.0; $dim]).unwrap())
                         .unwrap();
                     let b = tds
-                        .insert_vertex_with_mapping(vertex!(unit_vector::<$dim>($dim - 1)))
+                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<$dim>($dim - 1)).unwrap())
                         .unwrap();
                     let c = tds
-                        .insert_vertex_with_mapping(vertex!(skewed_point::<$dim>()))
+                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new(skewed_point::<$dim>()).unwrap())
                         .unwrap();
 
                     let mut c1_vertices = ridge_vertices.clone();
                     c1_vertices.push(a);
                     c1_vertices.push(b);
                     let c1 = tds
-                        .insert_simplex_with_mapping(Simplex::new(c1_vertices, None).unwrap())
+                        .insert_simplex_with_mapping(Simplex::try_new_with_data(c1_vertices, None).unwrap())
                         .unwrap();
 
                     let mut c2_vertices = ridge_vertices.clone();
                     c2_vertices.push(b);
                     c2_vertices.push(c);
                     let _c2 = tds
-                        .insert_simplex_with_mapping(Simplex::new(c2_vertices, None).unwrap())
+                        .insert_simplex_with_mapping(Simplex::try_new_with_data(c2_vertices, None).unwrap())
                         .unwrap();
 
                     let mut c3_vertices = ridge_vertices.clone();
                     c3_vertices.push(c);
                     c3_vertices.push(a);
                     let _c3 = tds
-                        .insert_simplex_with_mapping(Simplex::new(c3_vertices, None).unwrap())
+                        .insert_simplex_with_mapping(Simplex::try_new_with_data(c3_vertices, None).unwrap())
                         .unwrap();
 
                     repair_neighbor_pointers(&mut tds).unwrap();
@@ -11935,7 +12117,7 @@ mod tests {
                         let _info_back =
                             apply_bistellar_flip_k2(&mut tds, &context_back).unwrap();
                     } else {
-                        let triangle = TriangleHandle::new(a, b, c);
+                        let triangle = TriangleHandle::try_new(a, b, c).unwrap();
                         let context_back =
                             build_k3_flip_context_from_triangle(&tds, triangle).unwrap();
                         let _info_back = apply_bistellar_flip_dynamic(
@@ -12000,7 +12182,7 @@ mod tests {
 
     fn dynamic_flip_rejects_bad_context_for_dimension<const D: usize>() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), D> = Tds::empty();
+        let mut tds: Tds<(), (), D> = Tds::empty();
         let vertices = (1..=D + 2)
             .map(|index| {
                 synthetic_vertex_key(
@@ -12122,17 +12304,33 @@ mod tests {
     #[test]
     fn test_flip_k2_2d_edge_flip() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
-        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let d = tds.insert_vertex_with_mapping(vertex!([1.0, 0.2])).unwrap();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
+        let d = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.2]).unwrap(),
+            )
+            .unwrap();
 
         let c1 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, c], None).unwrap())
             .unwrap();
         let _c2 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, b, d], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, d], None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -12160,22 +12358,38 @@ mod tests {
     #[test]
     fn test_flip_k2_rejects_duplicate_simplex() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
-        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let d = tds.insert_vertex_with_mapping(vertex!([1.0, 0.2])).unwrap();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
+        let d = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.2]).unwrap(),
+            )
+            .unwrap();
 
         let c1 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, c], None).unwrap())
             .unwrap();
         let _c2 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, b, d], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, d], None).unwrap())
             .unwrap();
 
         // Pre-existing simplex that the flip would recreate (B,C,D)
         let _existing = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![b, c, d], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![b, c, d], None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -12191,47 +12405,67 @@ mod tests {
     #[test]
     fn test_flip_k2_rejects_inserting_existing_edge_in_3d() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let mut tds: Tds<(), (), 3> = Tds::empty();
 
         // Opposite vertices across the shared face.
         let v_a = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v_b = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
 
         // Shared face vertices.
         let v_x = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v_y = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            )
             .unwrap();
         let v_z = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 1.0]).unwrap(),
+            )
             .unwrap();
 
         // Extra vertices for an existing tetrahedron containing the edge (v_a, v_b).
         let v_p = tds
-            .insert_vertex_with_mapping(vertex!([2.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v_q = tds
-            .insert_vertex_with_mapping(vertex!([2.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
 
         // Two tetrahedra sharing face (v_x, v_y, v_z): a k=2 flip across that face would insert edge (v_a, v_b).
         let simplex_a = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_x, v_y, v_z], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v_a, v_x, v_y, v_z], None).unwrap(),
+            )
             .unwrap();
         let _simplex_b = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v_b, v_x, v_y, v_z], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v_b, v_x, v_y, v_z], None).unwrap(),
+            )
             .unwrap();
 
         // Existing tetrahedron that already contains edge (v_a, v_b) but does not contain any of
         // the shared-face vertices (v_x, v_y, v_z).
         let _edge_witness = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_p, v_q], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v_a, v_b, v_p, v_q], None).unwrap(),
+            )
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -12250,23 +12484,49 @@ mod tests {
     #[test]
     fn test_flip_k2_rejects_nonmanifold_internal_facet() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
-        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 0.2])).unwrap();
-        let v_e = tds.insert_vertex_with_mapping(vertex!([2.0, 2.0])).unwrap();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let v_a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v_b = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v_c = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
+        let v_d = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.2]).unwrap(),
+            )
+            .unwrap();
+        let v_e = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 2.0]).unwrap(),
+            )
+            .unwrap();
 
         let c1 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_c], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v_a, v_b, v_c], None).unwrap(),
+            )
             .unwrap();
         let _c2 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_d], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v_a, v_b, v_d], None).unwrap(),
+            )
             .unwrap();
 
         // Existing simplex containing the would-be inserted diagonal (C,D).
         let _cd_external = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v_c, v_d, v_e], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v_c, v_d, v_e], None).unwrap(),
+            )
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -12282,28 +12542,42 @@ mod tests {
     #[test]
     fn test_flip_k2_3d_two_to_three() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let mut tds: Tds<(), (), 3> = Tds::empty();
         let v_a = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v_b = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v_c = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v_d = tds
-            .insert_vertex_with_mapping(vertex!([0.2, 0.2, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 1.0]).unwrap(),
+            )
             .unwrap();
         let v_e = tds
-            .insert_vertex_with_mapping(vertex!([0.3, -0.1, -0.8]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.3, -0.1, -0.8]).unwrap(),
+            )
             .unwrap();
 
         let c1 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_c, v_d], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v_a, v_b, v_c, v_d], None).unwrap(),
+            )
             .unwrap();
         let _c2 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_c, v_e], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v_a, v_b, v_c, v_e], None).unwrap(),
+            )
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -12319,31 +12593,47 @@ mod tests {
     #[test]
     fn test_flip_k3_3d_three_to_two() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let mut tds: Tds<(), (), 3> = Tds::empty();
         let r0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let r1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let a = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            )
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(vertex!([0.2, 0.2, -1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, -1.0]).unwrap(),
+            )
             .unwrap();
 
         let c1 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, a, b], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![r0, r1, a, b], None).unwrap(),
+            )
             .unwrap();
         let _c2 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, b, c], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![r0, r1, b, c], None).unwrap(),
+            )
             .unwrap();
         let _c3 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, c, a], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![r0, r1, c, a], None).unwrap(),
+            )
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -12361,34 +12651,52 @@ mod tests {
     #[test]
     fn test_flip_k3_4d_three_to_three() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 4> = Tds::empty();
+        let mut tds: Tds<(), (), 4> = Tds::empty();
         let r0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let r1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let r2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let a = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
+            )
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(vertex!([0.2, 0.2, 0.2, 0.2]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2]).unwrap(),
+            )
             .unwrap();
 
         let c1 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, a, b], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![r0, r1, r2, a, b], None).unwrap(),
+            )
             .unwrap();
         let _c2 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, b, c], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![r0, r1, r2, b, c], None).unwrap(),
+            )
             .unwrap();
         let _c3 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, c, a], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![r0, r1, r2, c, a], None).unwrap(),
+            )
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -12406,37 +12714,57 @@ mod tests {
     #[test]
     fn test_flip_k3_5d_three_to_four() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 5> = Tds::empty();
+        let mut tds: Tds<(), (), 5> = Tds::empty();
         let r0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let r1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let r2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let r3 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let a = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+            )
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(vertex!([0.2, 0.2, 0.2, 0.2, 0.5]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2, 0.5]).unwrap(),
+            )
             .unwrap();
 
         let c1 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, a, b], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![r0, r1, r2, r3, a, b], None).unwrap(),
+            )
             .unwrap();
         let _c2 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, b, c], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![r0, r1, r2, r3, b, c], None).unwrap(),
+            )
             .unwrap();
         let _c3 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, c, a], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![r0, r1, r2, r3, c, a], None).unwrap(),
+            )
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -12454,12 +12782,24 @@ mod tests {
     #[test]
     fn test_flip_k2_boundary_facet_error_2d() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
-        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
         let simplex = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, c], None).unwrap())
             .unwrap();
 
         let before = snapshot_topology(&tds);
@@ -12472,21 +12812,31 @@ mod tests {
     #[test]
     fn test_flip_k3_invalid_ridge_multiplicity_3d() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let mut tds: Tds<(), (), 3> = Tds::empty();
         let a = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let d = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            )
             .unwrap();
         let simplex = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c, d], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![a, b, c, d], None).unwrap(),
+            )
             .unwrap();
 
         let ridge = RidgeHandle::new(simplex, 0, 1);
@@ -12497,25 +12847,35 @@ mod tests {
     #[test]
     fn test_flip_k3_reports_dangling_ridge_neighbor_3d() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let mut tds: Tds<(), (), 3> = Tds::empty();
         let ridge_start = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let ridge_end = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let first_opposite = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let second_opposite = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            )
             .unwrap();
         let dangling_opposite = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 1.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(),
+            )
             .unwrap();
         let simplex = tds
             .insert_simplex_with_mapping(
-                Simplex::new(
+                Simplex::try_new_with_data(
                     vec![ridge_start, ridge_end, first_opposite, second_opposite],
                     None,
                 )
@@ -12524,7 +12884,7 @@ mod tests {
             .unwrap();
         let dangling_neighbor = tds
             .insert_simplex_with_mapping(
-                Simplex::new(
+                Simplex::try_new_with_data(
                     vec![ridge_start, ridge_end, first_opposite, dangling_opposite],
                     None,
                 )
@@ -12552,31 +12912,45 @@ mod tests {
     #[test]
     fn test_flip_k2_inverse_invalid_edge_multiplicity_4d() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 4> = Tds::empty();
+        let mut tds: Tds<(), (), 4> = Tds::empty();
         let mut shared_vertices = Vec::with_capacity(4);
         for i in 0..4 {
             let v = tds
-                .insert_vertex_with_mapping(vertex!(unit_vector::<4>(i)))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<4>(i)).unwrap(),
+                )
                 .unwrap();
             shared_vertices.push(v);
         }
 
-        let opposite_a = tds.insert_vertex_with_mapping(vertex!([0.0; 4])).unwrap();
-        let opposite_b = tds.insert_vertex_with_mapping(vertex!([1.0; 4])).unwrap();
+        let opposite_a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0; 4]).unwrap(),
+            )
+            .unwrap();
+        let opposite_b = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0; 4]).unwrap(),
+            )
+            .unwrap();
 
         let mut vertices_with_first_opposite = shared_vertices.clone();
         vertices_with_first_opposite.push(opposite_a);
         let _simplex_a = tds
-            .insert_simplex_with_mapping(Simplex::new(vertices_with_first_opposite, None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vertices_with_first_opposite, None).unwrap(),
+            )
             .unwrap();
 
         let mut vertices_with_second_opposite = shared_vertices.clone();
         vertices_with_second_opposite.push(opposite_b);
         let _simplex_b = tds
-            .insert_simplex_with_mapping(Simplex::new(vertices_with_second_opposite, None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vertices_with_second_opposite, None).unwrap(),
+            )
             .unwrap();
 
-        let edge = EdgeKey::new(opposite_a, opposite_b);
+        let edge = EdgeKey::from_validated_endpoints(opposite_a, opposite_b);
         let err = build_k2_flip_context_from_edge(&tds, edge).unwrap_err();
         assert_matches!(err, FlipError::InvalidEdgeMultiplicity { .. });
     }
@@ -12584,21 +12958,29 @@ mod tests {
     #[test]
     fn test_flip_k3_inverse_invalid_triangle_multiplicity_5d() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 5> = Tds::empty();
-        let origin = tds.insert_vertex_with_mapping(vertex!([0.0; 5])).unwrap();
+        let mut tds: Tds<(), (), 5> = Tds::empty();
+        let origin = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0; 5]).unwrap(),
+            )
+            .unwrap();
         let mut vertices = Vec::with_capacity(6);
         vertices.push(origin);
         for i in 0..5 {
             let v = tds
-                .insert_vertex_with_mapping(vertex!(unit_vector::<5>(i)))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<5>(i)).unwrap(),
+                )
                 .unwrap();
             vertices.push(v);
         }
         let _simplex = tds
-            .insert_simplex_with_mapping(Simplex::new(vertices.clone(), None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vertices.clone(), None).unwrap(),
+            )
             .unwrap();
 
-        let triangle = TriangleHandle::new(vertices[0], vertices[1], vertices[2]);
+        let triangle = TriangleHandle::try_new(vertices[0], vertices[1], vertices[2]).unwrap();
         let err = build_k3_flip_context_from_triangle(&tds, triangle).unwrap_err();
         assert_matches!(
             err,
@@ -12612,16 +12994,33 @@ mod tests {
     #[test]
     fn test_flip_k1_degenerate_insert_rejected() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
-        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
         let simplex_key = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, c], None).unwrap())
             .unwrap();
 
         let before = snapshot_topology(&tds);
-        let err = apply_bistellar_flip_k1(&mut tds, simplex_key, vertex!([0.5, 0.0])).unwrap_err();
+        let err = apply_bistellar_flip_k1(
+            &mut tds,
+            simplex_key,
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.0]).unwrap(),
+        )
+        .unwrap_err();
 
         assert_matches!(err, FlipError::DegenerateSimplex);
         assert_eq!(snapshot_topology(&tds), before);
@@ -12631,28 +13030,42 @@ mod tests {
     #[test]
     fn test_dynamic_k2_forward_4d() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 4> = Tds::empty();
+        let mut tds: Tds<(), (), 4> = Tds::empty();
         let mut shared_vertices = Vec::with_capacity(4);
         for i in 0..4 {
             let v = tds
-                .insert_vertex_with_mapping(vertex!(unit_vector::<4>(i)))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<4>(i)).unwrap(),
+                )
                 .unwrap();
             shared_vertices.push(v);
         }
 
-        let opposite_a = tds.insert_vertex_with_mapping(vertex!([0.0; 4])).unwrap();
-        let opposite_b = tds.insert_vertex_with_mapping(vertex!([1.0; 4])).unwrap();
+        let opposite_a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0; 4]).unwrap(),
+            )
+            .unwrap();
+        let opposite_b = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0; 4]).unwrap(),
+            )
+            .unwrap();
 
         let mut vertices_with_first_opposite = shared_vertices.clone();
         vertices_with_first_opposite.push(opposite_a);
         let simplex_a = tds
-            .insert_simplex_with_mapping(Simplex::new(vertices_with_first_opposite, None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vertices_with_first_opposite, None).unwrap(),
+            )
             .unwrap();
 
         let mut vertices_with_second_opposite = shared_vertices.clone();
         vertices_with_second_opposite.push(opposite_b);
         let _simplex_b = tds
-            .insert_simplex_with_mapping(Simplex::new(vertices_with_second_opposite, None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vertices_with_second_opposite, None).unwrap(),
+            )
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -12671,37 +13084,57 @@ mod tests {
     #[test]
     fn test_dynamic_k3_forward_5d() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 5> = Tds::empty();
+        let mut tds: Tds<(), (), 5> = Tds::empty();
         let r0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let r1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let r2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let r3 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let a = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+            )
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(vertex!([0.2, 0.2, 0.2, 0.2, 0.5]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2, 0.5]).unwrap(),
+            )
             .unwrap();
 
         let c1 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, a, b], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![r0, r1, r2, r3, a, b], None).unwrap(),
+            )
             .unwrap();
         let _c2 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, b, c], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![r0, r1, r2, r3, b, c], None).unwrap(),
+            )
             .unwrap();
         let _c3 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, c, a], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![r0, r1, r2, r3, c, a], None).unwrap(),
+            )
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -12731,28 +13164,43 @@ mod tests {
                 out
             };
 
-            let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+            let mut tds: Tds<(), (), 3> = Tds::empty();
             let v_a = tds
-                .insert_vertex_with_mapping(vertex!(jitter([0.0, 0.0, 0.0])))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(jitter([0.0, 0.0, 0.0])).unwrap(),
+                )
                 .unwrap();
             let v_b = tds
-                .insert_vertex_with_mapping(vertex!(jitter([1.0, 0.0, 0.0])))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(jitter([1.0, 0.0, 0.0])).unwrap(),
+                )
                 .unwrap();
             let v_c = tds
-                .insert_vertex_with_mapping(vertex!(jitter([0.0, 1.0, 0.0])))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(jitter([0.0, 1.0, 0.0])).unwrap(),
+                )
                 .unwrap();
             let v_d = tds
-                .insert_vertex_with_mapping(vertex!(jitter([0.2, 0.2, 1.0])))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(jitter([0.2, 0.2, 1.0])).unwrap(),
+                )
                 .unwrap();
             let v_e = tds
-                .insert_vertex_with_mapping(vertex!(jitter([0.3, -0.1, -0.8])))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(jitter([0.3, -0.1, -0.8]))
+                        .unwrap(),
+                )
                 .unwrap();
 
             let c1 = tds
-                .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_c, v_d], None).unwrap())
+                .insert_simplex_with_mapping(
+                    Simplex::try_new_with_data(vec![v_a, v_b, v_c, v_d], None).unwrap(),
+                )
                 .unwrap();
             let _c2 = tds
-                .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_c, v_e], None).unwrap())
+                .insert_simplex_with_mapping(
+                    Simplex::try_new_with_data(vec![v_a, v_b, v_c, v_e], None).unwrap(),
+                )
                 .unwrap();
 
             repair_neighbor_pointers(&mut tds).unwrap();
@@ -12763,7 +13211,7 @@ mod tests {
             let info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
             assert!(tds.is_valid().is_ok());
 
-            let edge = EdgeKey::new(
+            let edge = EdgeKey::from_validated_endpoints(
                 info.inserted_face_vertices[0],
                 info.inserted_face_vertices[1],
             );
@@ -12787,25 +13235,37 @@ mod tests {
 
         let mut tds = None;
         for d_coords in d_candidates {
-            let mut candidate: Tds<f64, (), (), 2> = Tds::empty();
+            let mut candidate: Tds<(), (), 2> = Tds::empty();
             let a = candidate
-                .insert_vertex_with_mapping(vertex!(a_coords))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(a_coords).unwrap(),
+                )
                 .unwrap();
             let b = candidate
-                .insert_vertex_with_mapping(vertex!(b_coords))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(b_coords).unwrap(),
+                )
                 .unwrap();
             let c = candidate
-                .insert_vertex_with_mapping(vertex!(c_coords))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(c_coords).unwrap(),
+                )
                 .unwrap();
             let d = candidate
-                .insert_vertex_with_mapping(vertex!(d_coords))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(d_coords).unwrap(),
+                )
                 .unwrap();
 
             let _c1 = candidate
-                .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
+                .insert_simplex_with_mapping(
+                    Simplex::try_new_with_data(vec![a, b, c], None).unwrap(),
+                )
                 .unwrap();
             let _c2 = candidate
-                .insert_simplex_with_mapping(Simplex::new(vec![a, b, d], None).unwrap())
+                .insert_simplex_with_mapping(
+                    Simplex::try_new_with_data(vec![a, b, d], None).unwrap(),
+                )
                 .unwrap();
 
             repair_neighbor_pointers(&mut candidate).unwrap();
@@ -12842,25 +13302,37 @@ mod tests {
 
         let mut tds = None;
         for d_coords in d_candidates {
-            let mut candidate: Tds<f64, (), (), 2> = Tds::empty();
+            let mut candidate: Tds<(), (), 2> = Tds::empty();
             let a = candidate
-                .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+                )
                 .unwrap();
             let b = candidate
-                .insert_vertex_with_mapping(vertex!([1.0, 1.0]))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+                )
                 .unwrap();
             let c = candidate
-                .insert_vertex_with_mapping(vertex!([1.0, 0.0]))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+                )
                 .unwrap();
             let d = candidate
-                .insert_vertex_with_mapping(vertex!(d_coords))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(d_coords).unwrap(),
+                )
                 .unwrap();
 
             let _c1 = candidate
-                .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
+                .insert_simplex_with_mapping(
+                    Simplex::try_new_with_data(vec![a, b, c], None).unwrap(),
+                )
                 .unwrap();
             let _c2 = candidate
-                .insert_simplex_with_mapping(Simplex::new(vec![a, b, d], None).unwrap())
+                .insert_simplex_with_mapping(
+                    Simplex::try_new_with_data(vec![a, b, d], None).unwrap(),
+                )
                 .unwrap();
 
             repair_neighbor_pointers(&mut candidate).unwrap();
@@ -12914,28 +13386,42 @@ mod tests {
         init_tracing();
         let kernel = AdaptiveKernel::<f64>::new();
 
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let mut tds: Tds<(), (), 3> = Tds::empty();
         let a = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let d = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            )
             .unwrap();
         let e = tds
-            .insert_vertex_with_mapping(vertex!([0.3, 0.3, 0.3]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.3, 0.3]).unwrap(),
+            )
             .unwrap();
 
         let _c1 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c, d], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![a, b, c, d], None).unwrap(),
+            )
             .unwrap();
         let _c2 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c, e], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![a, b, c, e], None).unwrap(),
+            )
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -12978,25 +13464,37 @@ mod tests {
 
         let mut tds = None;
         for d_coords in d_candidates {
-            let mut candidate: Tds<f64, (), (), 2> = Tds::empty();
+            let mut candidate: Tds<(), (), 2> = Tds::empty();
             let a = candidate
-                .insert_vertex_with_mapping(vertex!(a_coords))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(a_coords).unwrap(),
+                )
                 .unwrap();
             let b = candidate
-                .insert_vertex_with_mapping(vertex!(b_coords))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(b_coords).unwrap(),
+                )
                 .unwrap();
             let c = candidate
-                .insert_vertex_with_mapping(vertex!(c_coords))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(c_coords).unwrap(),
+                )
                 .unwrap();
             let d = candidate
-                .insert_vertex_with_mapping(vertex!(d_coords))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(d_coords).unwrap(),
+                )
                 .unwrap();
 
             let _c1 = candidate
-                .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
+                .insert_simplex_with_mapping(
+                    Simplex::try_new_with_data(vec![a, b, c], None).unwrap(),
+                )
                 .unwrap();
             let _c2 = candidate
-                .insert_simplex_with_mapping(Simplex::new(vec![a, b, d], None).unwrap())
+                .insert_simplex_with_mapping(
+                    Simplex::try_new_with_data(vec![a, b, d], None).unwrap(),
+                )
                 .unwrap();
 
             repair_neighbor_pointers(&mut candidate).unwrap();
@@ -13016,7 +13514,7 @@ mod tests {
     #[test]
     fn test_repair_delaunay_with_flips_rejects_unsupported_dimension_1d() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 1> = Tds::empty();
+        let mut tds: Tds<(), (), 1> = Tds::empty();
         let kernel = AdaptiveKernel::<f64>::new();
 
         let result = repair_delaunay_with_flips_k2_k3(
@@ -13040,19 +13538,33 @@ mod tests {
     #[test]
     fn test_flip_k2_robust_kernel_near_degenerate_2d() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
-        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
         let d = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 1e-9]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1e-9]).unwrap(),
+            )
             .unwrap();
 
         let c1 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, c], None).unwrap())
             .unwrap();
         let _c2 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, b, d], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, d], None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -13069,18 +13581,34 @@ mod tests {
     #[test]
     fn test_k2_flip_would_create_degenerate_simplex_degenerate() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
         // a, c, d are collinear on the x-axis → replacement simplex {a,c,d} is degenerate
-        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let b = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let c = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let d = tds.insert_vertex_with_mapping(vertex!([0.5, 0.0])).unwrap();
+        let a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let d = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.0]).unwrap(),
+            )
+            .unwrap();
 
         let c1 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, c], None).unwrap())
             .unwrap();
         let _c2 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, b, d], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, d], None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -13100,17 +13628,33 @@ mod tests {
     #[test]
     fn test_k2_flip_would_create_degenerate_simplex_nondegenerate() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
-        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
+        let d = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            )
+            .unwrap();
 
         let c1 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, c], None).unwrap())
             .unwrap();
         let _c2 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, b, d], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, d], None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -13127,28 +13671,42 @@ mod tests {
     #[test]
     fn test_flip_k4_4d_four_to_two() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 4> = Tds::empty();
+        let mut tds: Tds<(), (), 4> = Tds::empty();
         let mut shared_vertices = Vec::with_capacity(4);
         for i in 0..4 {
             let v = tds
-                .insert_vertex_with_mapping(vertex!(unit_vector::<4>(i)))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<4>(i)).unwrap(),
+                )
                 .unwrap();
             shared_vertices.push(v);
         }
 
-        let opposite_a = tds.insert_vertex_with_mapping(vertex!([0.0; 4])).unwrap();
-        let opposite_b = tds.insert_vertex_with_mapping(vertex!([1.0; 4])).unwrap();
+        let opposite_a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0; 4]).unwrap(),
+            )
+            .unwrap();
+        let opposite_b = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0; 4]).unwrap(),
+            )
+            .unwrap();
 
         let mut vertices_with_first_opposite = shared_vertices.clone();
         vertices_with_first_opposite.push(opposite_a);
         let simplex_a = tds
-            .insert_simplex_with_mapping(Simplex::new(vertices_with_first_opposite, None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vertices_with_first_opposite, None).unwrap(),
+            )
             .unwrap();
 
         let mut vertices_with_second_opposite = shared_vertices.clone();
         vertices_with_second_opposite.push(opposite_b);
         let _simplex_b = tds
-            .insert_simplex_with_mapping(Simplex::new(vertices_with_second_opposite, None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vertices_with_second_opposite, None).unwrap(),
+            )
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -13157,7 +13715,7 @@ mod tests {
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let _info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
 
-        let edge = EdgeKey::new(opposite_a, opposite_b);
+        let edge = EdgeKey::from_validated_endpoints(opposite_a, opposite_b);
         let context_back = build_k2_flip_context_from_edge(&tds, edge).unwrap();
         let info_back = apply_bistellar_flip_dynamic(&mut tds, 4, &context_back).unwrap();
 
@@ -13171,22 +13729,28 @@ mod tests {
     #[test]
     fn test_flip_k5_4d_five_to_one() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 4> = Tds::empty();
-        let origin = tds.insert_vertex_with_mapping(vertex!([0.0; 4])).unwrap();
+        let mut tds: Tds<(), (), 4> = Tds::empty();
+        let origin = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0; 4]).unwrap(),
+            )
+            .unwrap();
         let mut vertices = Vec::with_capacity(5);
         vertices.push(origin);
         for i in 0..4 {
             let v = tds
-                .insert_vertex_with_mapping(vertex!(unit_vector::<4>(i)))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<4>(i)).unwrap(),
+                )
                 .unwrap();
             vertices.push(v);
         }
 
         let simplex_key = tds
-            .insert_simplex_with_mapping(Simplex::new(vertices, None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vertices, None).unwrap())
             .unwrap();
 
-        let new_vertex = vertex!([0.1; 4]);
+        let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.1; 4]).unwrap();
         let new_uuid = new_vertex.uuid();
         let info = apply_bistellar_flip_k1(&mut tds, simplex_key, new_vertex).unwrap();
 
@@ -13206,37 +13770,57 @@ mod tests {
     #[test]
     fn test_flip_k4_5d_four_to_three() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 5> = Tds::empty();
+        let mut tds: Tds<(), (), 5> = Tds::empty();
         let r0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let r1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let r2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let r3 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let a = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+            )
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(vertex!([0.2, 0.2, 0.2, 0.2, 0.5]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2, 0.5]).unwrap(),
+            )
             .unwrap();
 
         let c1 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, a, b], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![r0, r1, r2, r3, a, b], None).unwrap(),
+            )
             .unwrap();
         let _c2 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, b, c], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![r0, r1, r2, r3, b, c], None).unwrap(),
+            )
             .unwrap();
         let _c3 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, c, a], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![r0, r1, r2, r3, c, a], None).unwrap(),
+            )
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -13248,11 +13832,12 @@ mod tests {
         assert_eq!(info.kind.k, 3);
         assert_eq!(info.inserted_face_vertices.len(), 3);
 
-        let triangle = TriangleHandle::new(
+        let triangle = TriangleHandle::try_new(
             info.inserted_face_vertices[0],
             info.inserted_face_vertices[1],
             info.inserted_face_vertices[2],
-        );
+        )
+        .unwrap();
         let context_back = build_k3_flip_context_from_triangle(&tds, triangle).unwrap();
         let info_back = apply_bistellar_flip_dynamic(&mut tds, 4, &context_back).unwrap();
 
@@ -13266,28 +13851,42 @@ mod tests {
     #[test]
     fn test_flip_k5_5d_five_to_two() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 5> = Tds::empty();
+        let mut tds: Tds<(), (), 5> = Tds::empty();
         let mut shared_vertices = Vec::with_capacity(5);
         for i in 0..5 {
             let v = tds
-                .insert_vertex_with_mapping(vertex!(unit_vector::<5>(i)))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<5>(i)).unwrap(),
+                )
                 .unwrap();
             shared_vertices.push(v);
         }
 
-        let opposite_a = tds.insert_vertex_with_mapping(vertex!([0.0; 5])).unwrap();
-        let opposite_b = tds.insert_vertex_with_mapping(vertex!([1.0; 5])).unwrap();
+        let opposite_a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0; 5]).unwrap(),
+            )
+            .unwrap();
+        let opposite_b = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0; 5]).unwrap(),
+            )
+            .unwrap();
 
         let mut vertices_with_first_opposite = shared_vertices.clone();
         vertices_with_first_opposite.push(opposite_a);
         let simplex_a = tds
-            .insert_simplex_with_mapping(Simplex::new(vertices_with_first_opposite, None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vertices_with_first_opposite, None).unwrap(),
+            )
             .unwrap();
 
         let mut vertices_with_second_opposite = shared_vertices.clone();
         vertices_with_second_opposite.push(opposite_b);
         let _simplex_b = tds
-            .insert_simplex_with_mapping(Simplex::new(vertices_with_second_opposite, None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vertices_with_second_opposite, None).unwrap(),
+            )
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -13296,7 +13895,7 @@ mod tests {
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let _info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
 
-        let edge = EdgeKey::new(opposite_a, opposite_b);
+        let edge = EdgeKey::from_validated_endpoints(opposite_a, opposite_b);
         let context_back = build_k2_flip_context_from_edge(&tds, edge).unwrap();
         let info_back = apply_bistellar_flip_dynamic(&mut tds, 5, &context_back).unwrap();
 
@@ -13310,22 +13909,28 @@ mod tests {
     #[test]
     fn test_flip_k6_5d_six_to_one() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 5> = Tds::empty();
-        let origin = tds.insert_vertex_with_mapping(vertex!([0.0; 5])).unwrap();
+        let mut tds: Tds<(), (), 5> = Tds::empty();
+        let origin = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0; 5]).unwrap(),
+            )
+            .unwrap();
         let mut vertices = Vec::with_capacity(6);
         vertices.push(origin);
         for i in 0..5 {
             let v = tds
-                .insert_vertex_with_mapping(vertex!(unit_vector::<5>(i)))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<5>(i)).unwrap(),
+                )
                 .unwrap();
             vertices.push(v);
         }
 
         let simplex_key = tds
-            .insert_simplex_with_mapping(Simplex::new(vertices, None).unwrap())
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vertices, None).unwrap())
             .unwrap();
 
-        let new_vertex = vertex!([0.1; 5]);
+        let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.1; 5]).unwrap();
         let new_uuid = new_vertex.uuid();
         let info = apply_bistellar_flip_k1(&mut tds, simplex_key, new_vertex).unwrap();
 
@@ -13344,16 +13949,28 @@ mod tests {
     #[test]
     fn test_flip_k1_2d_roundtrip() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
-        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-
-        let simplex = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
             .unwrap();
 
-        let new_vertex = vertex!([0.2, 0.2]);
+        let simplex = tds
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, c], None).unwrap())
+            .unwrap();
+
+        let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2]).unwrap();
         let new_uuid = new_vertex.uuid();
         let info = apply_bistellar_flip_k1(&mut tds, simplex, new_vertex).unwrap();
 
@@ -13374,28 +13991,42 @@ mod tests {
     #[test]
     fn test_repair_queue_inverse_k2_smoke_4d() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 4> = Tds::empty();
+        let mut tds: Tds<(), (), 4> = Tds::empty();
         let mut shared_vertices = Vec::with_capacity(4);
         for i in 0..4 {
             let v = tds
-                .insert_vertex_with_mapping(vertex!(unit_vector::<4>(i)))
+                .insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<4>(i)).unwrap(),
+                )
                 .unwrap();
             shared_vertices.push(v);
         }
 
-        let opposite_a = tds.insert_vertex_with_mapping(vertex!([0.0; 4])).unwrap();
-        let opposite_b = tds.insert_vertex_with_mapping(vertex!([1.0; 4])).unwrap();
+        let opposite_a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0; 4]).unwrap(),
+            )
+            .unwrap();
+        let opposite_b = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0; 4]).unwrap(),
+            )
+            .unwrap();
 
         let mut vertices_with_first_opposite = shared_vertices.clone();
         vertices_with_first_opposite.push(opposite_a);
         let simplex_a = tds
-            .insert_simplex_with_mapping(Simplex::new(vertices_with_first_opposite, None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vertices_with_first_opposite, None).unwrap(),
+            )
             .unwrap();
 
         let mut vertices_with_second_opposite = shared_vertices.clone();
         vertices_with_second_opposite.push(opposite_b);
         let _simplex_b = tds
-            .insert_simplex_with_mapping(Simplex::new(vertices_with_second_opposite, None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vertices_with_second_opposite, None).unwrap(),
+            )
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -13421,37 +14052,57 @@ mod tests {
     #[test]
     fn test_repair_queue_inverse_k3_smoke_5d() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 5> = Tds::empty();
+        let mut tds: Tds<(), (), 5> = Tds::empty();
         let r0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let r1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let r2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let r3 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let a = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+            )
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(vertex!([0.2, 0.2, 0.2, 0.2, 0.5]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2, 0.5]).unwrap(),
+            )
             .unwrap();
 
         let c1 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, a, b], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![r0, r1, r2, r3, a, b], None).unwrap(),
+            )
             .unwrap();
         let _c2 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, b, c], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![r0, r1, r2, r3, b, c], None).unwrap(),
+            )
             .unwrap();
         let _c3 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, c, a], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![r0, r1, r2, r3, c, a], None).unwrap(),
+            )
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -14115,7 +14766,7 @@ mod tests {
     }
 
     fn insert_periodic_simplex_with_lifted_vertex<const D: usize>(
-        tds: &mut Tds<f64, (), (), D>,
+        tds: &mut Tds<(), (), D>,
         vertices: Vec<VertexKey>,
         lifted_vertex: VertexKey,
     ) -> SimplexKey {
@@ -14123,31 +14774,31 @@ mod tests {
         if let Some(index) = vertices.iter().position(|&vkey| vkey == lifted_vertex) {
             offsets[index][0] = 1;
         }
-        let mut simplex = Simplex::new(vertices, None).unwrap();
+        let mut simplex = Simplex::try_new_with_data(vertices, None).unwrap();
         simplex.set_periodic_vertex_offsets(offsets).unwrap();
         tds.insert_simplex_with_mapping(simplex).unwrap()
     }
 
     fn insert_periodic_simplex_with_offsets<const D: usize>(
-        tds: &mut Tds<f64, (), (), D>,
+        tds: &mut Tds<(), (), D>,
         vertices: Vec<VertexKey>,
         offsets: Vec<[i8; D]>,
     ) -> SimplexKey {
-        let mut simplex = Simplex::new(vertices, None).unwrap();
+        let mut simplex = Simplex::try_new_with_data(vertices, None).unwrap();
         simplex.set_periodic_vertex_offsets(offsets).unwrap();
         tds.insert_simplex_with_mapping(simplex).unwrap()
     }
 
     fn insert_plain_simplex<const D: usize>(
-        tds: &mut Tds<f64, (), (), D>,
+        tds: &mut Tds<(), (), D>,
         vertices: Vec<VertexKey>,
     ) -> SimplexKey {
-        tds.insert_simplex_with_mapping(Simplex::new(vertices, None).unwrap())
+        tds.insert_simplex_with_mapping(Simplex::try_new_with_data(vertices, None).unwrap())
             .unwrap()
     }
 
     fn periodic_helper_vertices<const D: usize>(
-        tds: &mut Tds<f64, (), (), D>,
+        tds: &mut Tds<(), (), D>,
         count: usize,
     ) -> Vec<VertexKey> {
         (0..count)
@@ -14160,7 +14811,10 @@ mod tests {
                     f64::from(u32::try_from(index + 2).expect("test index fits in u32")),
                     coords[next_index],
                 );
-                tds.insert_vertex_with_mapping(vertex!(coords)).unwrap()
+                tds.insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap(),
+                )
+                .unwrap()
             })
             .collect()
     }
@@ -14170,9 +14824,9 @@ mod tests {
             pastey::paste! {
                 #[test]
                 fn [<test_periodic_lift_helpers_use_simplex_offsets_ $dim d>]() {
-                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
                     let lifted_vertex = tds
-                        .insert_vertex_with_mapping(vertex!(unit_vector::<$dim>(0)))
+                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<$dim>(0)).unwrap())
                         .unwrap();
                     let mut simplex_vertices = Vec::with_capacity($dim + 1);
                     simplex_vertices.push(lifted_vertex);
@@ -14218,12 +14872,12 @@ mod tests {
 
                 #[test]
                 fn [<test_periodic_lift_treats_missing_source_offsets_as_zero_frame_ $dim d>]() {
-                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
                     let shared_vertex = tds
-                        .insert_vertex_with_mapping(vertex!([0.0; $dim]))
+                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new([0.0; $dim]).unwrap())
                         .unwrap();
                     let lifted_vertex = tds
-                        .insert_vertex_with_mapping(vertex!(unit_vector::<$dim>(0)))
+                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<$dim>(0)).unwrap())
                         .unwrap();
 
                     let mut target_vertices = Vec::with_capacity($dim + 1);
@@ -14259,17 +14913,17 @@ mod tests {
 
                 #[test]
                 fn [<test_periodic_lift_rejects_conflicting_shared_translations_ $dim d>]() {
-                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
                     let shared_a = tds
-                        .insert_vertex_with_mapping(vertex!([0.0; $dim]))
+                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new([0.0; $dim]).unwrap())
                         .unwrap();
                     let mut shared_b_coords = [0.0; $dim];
                     shared_b_coords[0] = 0.2;
                     let shared_b = tds
-                        .insert_vertex_with_mapping(vertex!(shared_b_coords))
+                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new(shared_b_coords).unwrap())
                         .unwrap();
                     let lifted_vertex = tds
-                        .insert_vertex_with_mapping(vertex!(unit_vector::<$dim>(0)))
+                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<$dim>(0)).unwrap())
                         .unwrap();
 
                     let mut target_vertices = Vec::with_capacity($dim + 1);
@@ -14329,22 +14983,32 @@ mod tests {
     gen_periodic_lift_helper_tests!(5);
 
     fn periodic_inverse_k2_fixture<const D: usize>() -> (
-        Tds<f64, (), (), D>,
+        Tds<(), (), D>,
         Vec<VertexKey>,
         VertexKey,
         VertexKey,
         SimplexKeyBuffer,
     ) {
-        let mut tds: Tds<f64, (), (), D> = Tds::empty();
+        let mut tds: Tds<(), (), D> = Tds::empty();
         let mut face_vertices = Vec::with_capacity(D);
         for axis in 0..D {
             face_vertices.push(
-                tds.insert_vertex_with_mapping(vertex!(unit_vector::<D>(axis)))
-                    .unwrap(),
+                tds.insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<D>(axis)).unwrap(),
+                )
+                .unwrap(),
             );
         }
-        let opposite_a = tds.insert_vertex_with_mapping(vertex!([0.0; D])).unwrap();
-        let opposite_b = tds.insert_vertex_with_mapping(vertex!([0.25; D])).unwrap();
+        let opposite_a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0; D]).unwrap(),
+            )
+            .unwrap();
+        let opposite_b = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.25; D]).unwrap(),
+            )
+            .unwrap();
 
         let lifted_vertex = face_vertices[0];
         let mut removed_simplices = SimplexKeyBuffer::new();
@@ -14374,25 +15038,35 @@ mod tests {
     }
 
     fn periodic_inverse_k3_fixture<const D: usize>() -> (
-        Tds<f64, (), (), D>,
+        Tds<(), (), D>,
         Vec<VertexKey>,
         Vec<VertexKey>,
         SimplexKeyBuffer,
     ) {
-        let mut tds: Tds<f64, (), (), D> = Tds::empty();
+        let mut tds: Tds<(), (), D> = Tds::empty();
         let mut ridge_vertices = Vec::with_capacity(D - 1);
         for axis in 0..(D - 1) {
             ridge_vertices.push(
-                tds.insert_vertex_with_mapping(vertex!(unit_vector::<D>(axis)))
-                    .unwrap(),
+                tds.insert_vertex_with_mapping(
+                    crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<D>(axis)).unwrap(),
+                )
+                .unwrap(),
             );
         }
-        let a = tds.insert_vertex_with_mapping(vertex!([0.0; D])).unwrap();
+        let a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0; D]).unwrap(),
+            )
+            .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(vertex!(unit_vector::<D>(D - 1)))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<D>(D - 1)).unwrap(),
+            )
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(vertex!(skewed_point::<D>()))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new(skewed_point::<D>()).unwrap(),
+            )
             .unwrap();
         let triangle_vertices = vec![a, b, c];
 
@@ -14605,10 +15279,10 @@ mod tests {
     fn test_repair_run_full_reseed_preserves_mutation_frontier() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-            vertex!([1.0, 0.2]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.2]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -14637,10 +15311,10 @@ mod tests {
     fn test_repair_k2_empty_seed_does_not_full_reseed() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-            vertex!([1.0, 0.2]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.2]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -14668,10 +15342,10 @@ mod tests {
     fn test_repair_queue_k2_local_seed() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-            vertex!([1.0, 0.2]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.2]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();

@@ -37,7 +37,7 @@ fn number_of_boundary_facets_in_map(
 ///
 /// This implementation provides efficient boundary facet identification and analysis
 /// for d-dimensional triangulations using the triangulation data structure.
-impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
+impl<U, V, const D: usize> BoundaryAnalysis<U, V, D> for Tds<U, V, D> {
     /// Identifies all boundary facets in the triangulation.
     ///
     /// A boundary facet is a facet that belongs to only one simplex, meaning it lies on the
@@ -62,7 +62,7 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// # Errors
     ///
     /// Returns a [`TdsError`] (typically
-    /// [`crate::core::facet::FacetError`]) if:
+    /// [`crate::prelude::tds::FacetError`]) if:
     /// - Any boundary facet cannot be created from the simplices
     /// - A facet index is out of bounds (indicates data corruption)
     /// - A referenced simplex is not found in the triangulation (indicates data corruption)
@@ -84,10 +84,10 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a simple 3D triangulation (single tetrahedron)
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
@@ -100,12 +100,12 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// # Ok(())
     /// # }
     /// ```
-    fn boundary_facets(&self) -> Result<BoundaryFacetsIter<'_, T, U, V, D>, TdsError> {
+    fn boundary_facets(&self) -> Result<BoundaryFacetsIter<'_, U, V, D>, TdsError> {
         // Build a map from facet keys to the simplices that contain them
         let facet_to_simplices = self.build_facet_to_simplices_map()?;
 
         // Create the boundary facets iterator
-        Ok(BoundaryFacetsIter::new(self, facet_to_simplices))
+        BoundaryFacetsIter::try_new(self, facet_to_simplices).map_err(TdsError::from)
     }
 
     /// Checks if a specific facet is a boundary facet.
@@ -149,10 +149,10 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
@@ -166,7 +166,7 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// # }
     /// ```
     #[inline]
-    fn is_boundary_facet(&self, facet: &FacetView<'_, T, U, V, D>) -> Result<bool, TdsError> {
+    fn is_boundary_facet(&self, facet: &FacetView<'_, U, V, D>) -> Result<bool, TdsError> {
         let facet_to_simplices = self.build_facet_to_simplices_map()?;
         self.is_boundary_facet_with_map(facet, &facet_to_simplices)
     }
@@ -207,10 +207,10 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
@@ -228,7 +228,7 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     #[inline]
     fn is_boundary_facet_with_map(
         &self,
-        facet: &FacetView<'_, T, U, V, D>,
+        facet: &FacetView<'_, U, V, D>,
         facet_to_simplices: &FacetToSimplicesMap,
     ) -> Result<bool, TdsError> {
         // Use FacetView's key() method which is more efficient
@@ -278,10 +278,10 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
@@ -304,7 +304,7 @@ mod tests {
     use crate::core::query::QueryError;
     use crate::core::tds::{SimplexKey, TdsError};
     use crate::core::vertex::Vertex;
-    use crate::geometry::{point::Point, traits::coordinate::Coordinate};
+    use crate::geometry::point::Point;
     use crate::triangulation::DelaunayTriangulation;
     use std::assert_matches;
 
@@ -323,9 +323,9 @@ mod tests {
         // Test Case 1: 2D triangle - all 3 edges should be boundary facets
         {
             let points = vec![
-                Point::new([0.0, 0.0]),
-                Point::new([1.0, 0.0]),
-                Point::new([0.5, 1.0]),
+                Point::from_validated_coords([0.0, 0.0]),
+                Point::from_validated_coords([1.0, 0.0]),
+                Point::from_validated_coords([0.5, 1.0]),
             ];
             let vertices = Vertex::from_points(&points);
             let dt = DelaunayTriangulation::new(&vertices).unwrap();
@@ -358,10 +358,10 @@ mod tests {
         // Test Case 2: 3D tetrahedron - all 4 faces should be boundary facets
         {
             let points = vec![
-                Point::new([0.0, 0.0, 0.0]),
-                Point::new([1.0, 0.0, 0.0]),
-                Point::new([0.0, 1.0, 0.0]),
-                Point::new([0.0, 0.0, 1.0]),
+                Point::from_validated_coords([0.0, 0.0, 0.0]),
+                Point::from_validated_coords([1.0, 0.0, 0.0]),
+                Point::from_validated_coords([0.0, 1.0, 0.0]),
+                Point::from_validated_coords([0.0, 0.0, 1.0]),
             ];
             let vertices = Vertex::from_points(&points);
             let dt = DelaunayTriangulation::new(&vertices).unwrap();
@@ -394,11 +394,11 @@ mod tests {
         // Test Case 3: 4D simplex - all 5 tetrahedra should be boundary facets
         {
             let points = vec![
-                Point::new([0.0, 0.0, 0.0, 0.0]),
-                Point::new([1.0, 0.0, 0.0, 0.0]),
-                Point::new([0.0, 1.0, 0.0, 0.0]),
-                Point::new([0.0, 0.0, 1.0, 0.0]),
-                Point::new([0.0, 0.0, 0.0, 1.0]),
+                Point::from_validated_coords([0.0, 0.0, 0.0, 0.0]),
+                Point::from_validated_coords([1.0, 0.0, 0.0, 0.0]),
+                Point::from_validated_coords([0.0, 1.0, 0.0, 0.0]),
+                Point::from_validated_coords([0.0, 0.0, 1.0, 0.0]),
+                Point::from_validated_coords([0.0, 0.0, 0.0, 1.0]),
             ];
             let vertices = Vertex::from_points(&points);
             let dt = DelaunayTriangulation::new(&vertices).unwrap();
@@ -464,10 +464,10 @@ mod tests {
         // Test case 1: Basic method delegation and error propagation
         {
             let points = vec![
-                Point::new([0.0, 0.0, 0.0]),
-                Point::new([1.0, 0.0, 0.0]),
-                Point::new([0.0, 1.0, 0.0]),
-                Point::new([0.0, 0.0, 1.0]),
+                Point::from_validated_coords([0.0, 0.0, 0.0]),
+                Point::from_validated_coords([1.0, 0.0, 0.0]),
+                Point::from_validated_coords([0.0, 1.0, 0.0]),
+                Point::from_validated_coords([0.0, 0.0, 1.0]),
             ];
             let vertices = Vertex::from_points(&points);
             let dt = DelaunayTriangulation::new(&vertices).unwrap();
@@ -493,11 +493,11 @@ mod tests {
         // Test case 2: Capacity allocation and vector operations
         {
             let points = vec![
-                Point::new([0.0, 0.0, 0.0]),
-                Point::new([1.0, 0.0, 0.0]),
-                Point::new([0.0, 1.0, 0.0]),
-                Point::new([0.0, 0.0, 1.0]),
-                Point::new([0.5, 0.5, 0.5]), // Interior point
+                Point::from_validated_coords([0.0, 0.0, 0.0]),
+                Point::from_validated_coords([1.0, 0.0, 0.0]),
+                Point::from_validated_coords([0.0, 1.0, 0.0]),
+                Point::from_validated_coords([0.0, 0.0, 1.0]),
+                Point::from_validated_coords([0.5, 0.5, 0.5]), // Interior point
             ];
             let vertices = Vertex::from_points(&points);
             let dt = DelaunayTriangulation::new(&vertices).unwrap();
@@ -581,10 +581,10 @@ mod tests {
 
         // Create a valid triangulation
         let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0]),
         ];
         let vertices = Vertex::from_points(&points);
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
@@ -631,10 +631,10 @@ mod tests {
     #[test]
     fn test_boundary_facet_with_map_rejects_invalid_multiplicity() {
         let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0]),
         ];
         let vertices = Vertex::from_points(&points);
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
@@ -699,10 +699,10 @@ mod tests {
     #[test]
     fn test_boundary_facets_error_propagation_from_build_map() {
         let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0]),
         ];
         let vertices = Vertex::from_points(&points);
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
@@ -734,10 +734,10 @@ mod tests {
         // ensuring the method properly delegates and transforms the result
 
         let points = vec![
-            Point::new([0.0, 0.0, 0.0]),
-            Point::new([1.0, 0.0, 0.0]),
-            Point::new([0.0, 1.0, 0.0]),
-            Point::new([0.0, 0.0, 1.0]),
+            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::from_validated_coords([0.0, 0.0, 1.0]),
         ];
         let vertices = Vertex::from_points(&points);
         let dt = DelaunayTriangulation::new(&vertices).unwrap();

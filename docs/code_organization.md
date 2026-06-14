@@ -468,7 +468,7 @@ paths instead.
   - `hashing.rs` - Stable, deterministic hash primitives
   - `deduplication.rs` - Vertex deduplication utilities
   - `measurement.rs` - Allocation measurement helper (feature-gated)
-  - `facet_utils.rs` - Facet helpers (adjacency, vertex extraction, combination generation)
+  - `facet_utils.rs` - Facet helpers (adjacency extraction, combination generation)
   - `facet_keys.rs` - Facet key derivation and consistency helpers
   - `jaccard.rs` - Set similarity utilities and diagnostics macro
   - `delaunay_validation.rs` - Delaunay property validation helpers (expensive; debug-oriented)
@@ -1006,7 +1006,7 @@ where
 // Advanced implementation block for methods requiring ComplexField
 impl<generics> StructName<generics>
 where
-    T: CoordinateScalar + Clone + ComplexField<generics> + PartialEq + PartialOrd + Sum,
+    T: Clone + ComplexField<generics> + PartialEq + PartialOrd + Sum,
     // additional specialized bounds
 {
     /// Advanced method requiring specialized traits
@@ -1148,7 +1148,7 @@ mod tests {
   - `hashing.rs`: stable, deterministic hash primitives
   - `deduplication.rs`: vertex deduplication utilities
   - `measurement.rs`: allocation measurement helper (feature-gated)
-  - `facet_utils.rs`: facet helpers (adjacency, vertex extraction, combination generation)
+  - `facet_utils.rs`: facet helpers (adjacency extraction, combination generation)
   - `facet_keys.rs`: facet key derivation + facet index consistency helpers
   - `jaccard.rs`: set similarity utilities + diagnostics macro `assert_jaccard_gte!`
   - `delaunay_validation.rs`: Delaunay property validation helpers (expensive; debug-oriented)
@@ -1191,7 +1191,7 @@ surface-level numeric generality.
 Exact arithmetic is already used internally by robust predicate fallbacks. If
 exact coordinates become caller-visible input in a future release, they should be
 introduced as an explicit documented coordinate model/API rather than by
-loosening `CoordinateScalar` to arbitrary numeric types.
+loosening ordinary `f64` APIs to arbitrary numeric types.
 
 #### Testing Patterns
 

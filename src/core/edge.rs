@@ -18,6 +18,19 @@
 
 use crate::core::tds::VertexKey;
 use slotmap::Key;
+use thiserror::Error;
+
+/// Error returned when constructing an [`EdgeKey`] from invalid endpoints.
+#[derive(Copy, Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum EdgeKeyError {
+    /// Both endpoints refer to the same vertex.
+    #[error("Edge endpoints must be distinct, got {endpoint:?} twice")]
+    DuplicateEndpoint {
+        /// The repeated vertex key.
+        endpoint: VertexKey,
+    },
+}
 
 /// Canonical identifier for an (undirected) edge.
 ///
@@ -30,8 +43,9 @@ use slotmap::Key;
 ///
 /// let a = VertexKey::from(KeyData::from_ffi(1));
 /// let b = VertexKey::from(KeyData::from_ffi(2));
-/// let edge = EdgeKey::new(a, b);
+/// let edge = EdgeKey::try_new(a, b)?;
 /// assert_eq!(edge.endpoints(), (edge.v0(), edge.v1()));
+/// # Ok::<(), delaunay::prelude::tds::EdgeKeyError>(())
 /// ```
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct EdgeKey {
@@ -42,36 +56,42 @@ pub struct EdgeKey {
 impl EdgeKey {
     /// Creates a new canonical edge key.
     ///
-    /// The endpoints are reordered so that `v0 <= v1` under the internal key order.
+    /// The endpoints must be distinct and are reordered so that `v0 <= v1` under
+    /// the internal key order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EdgeKeyError::DuplicateEndpoint`] if both endpoints are the same vertex.
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::tds::{EdgeKey, VertexKey};
+    /// use slotmap::KeyData;
     ///
-    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
-    /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 2> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-    /// let tri = dt.as_triangulation();
+    /// let a = VertexKey::from(KeyData::from_ffi(1));
+    /// let b = VertexKey::from(KeyData::from_ffi(2));
     ///
-    /// let mut it = tri.vertices();
-    /// let Some((a, _)) = it.next() else { return Ok(()); };
-    /// let Some((b, _)) = it.next() else { return Ok(()); };
-    ///
-    /// let e1 = EdgeKey::new(a, b);
-    /// let e2 = EdgeKey::new(b, a);
+    /// let e1 = EdgeKey::try_new(a, b)?;
+    /// let e2 = EdgeKey::try_new(b, a)?;
     /// assert_eq!(e1, e2);
     /// assert!(e1.v0() <= e1.v1());
-    /// # Ok(())
-    /// # }
+    /// # Ok::<(), delaunay::prelude::tds::EdgeKeyError>(())
     /// ```
+    pub fn try_new(a: VertexKey, b: VertexKey) -> Result<Self, EdgeKeyError> {
+        if a == b {
+            return Err(EdgeKeyError::DuplicateEndpoint { endpoint: a });
+        }
+
+        Ok(Self::from_validated_endpoints(a, b))
+    }
+
+    /// Creates a canonical edge key from endpoints already known to be distinct.
+    #[inline]
     #[must_use]
-    pub fn new(a: VertexKey, b: VertexKey) -> Self {
+    pub(crate) fn from_validated_endpoints(a: VertexKey, b: VertexKey) -> Self {
+        debug_assert_ne!(a, b, "validated edge endpoints must be distinct");
+
         // Use the raw slotmap key representation for ordering to avoid relying on
         // any higher-level semantic ordering.
         let a_raw = a.data().as_ffi();
@@ -89,28 +109,17 @@ impl EdgeKey {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::tds::{EdgeKey, VertexKey};
+    /// use slotmap::KeyData;
     ///
-    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
-    /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 2> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-    /// let tri = dt.as_triangulation();
+    /// let a = VertexKey::from(KeyData::from_ffi(2));
+    /// let b = VertexKey::from(KeyData::from_ffi(1));
     ///
-    /// let mut it = tri.vertices();
-    /// let Some((a, _)) = it.next() else { return Ok(()); };
-    /// let Some((b, _)) = it.next() else { return Ok(()); };
-    ///
-    /// let e = EdgeKey::new(a, b);
+    /// let e = EdgeKey::try_new(a, b)?;
     /// let v0 = e.v0();
     /// let v1 = e.v1();
     /// assert!(v0 <= v1);
-    /// # Ok(())
-    /// # }
+    /// # Ok::<(), delaunay::prelude::tds::EdgeKeyError>(())
     /// ```
     #[inline]
     #[must_use]
@@ -123,28 +132,17 @@ impl EdgeKey {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::tds::{EdgeKey, VertexKey};
+    /// use slotmap::KeyData;
     ///
-    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
-    /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 2> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-    /// let tri = dt.as_triangulation();
+    /// let a = VertexKey::from(KeyData::from_ffi(1));
+    /// let b = VertexKey::from(KeyData::from_ffi(2));
     ///
-    /// let mut it = tri.vertices();
-    /// let Some((a, _)) = it.next() else { return Ok(()); };
-    /// let Some((b, _)) = it.next() else { return Ok(()); };
-    ///
-    /// let e = EdgeKey::new(a, b);
+    /// let e = EdgeKey::try_new(a, b)?;
     /// let v0 = e.v0();
     /// let v1 = e.v1();
     /// assert!(v0 <= v1);
-    /// # Ok(())
-    /// # }
+    /// # Ok::<(), delaunay::prelude::tds::EdgeKeyError>(())
     /// ```
     #[inline]
     #[must_use]
@@ -157,29 +155,18 @@ impl EdgeKey {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::tds::{EdgeKey, VertexKey};
+    /// use slotmap::KeyData;
     ///
-    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
-    /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 2> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-    /// let tri = dt.as_triangulation();
+    /// let a = VertexKey::from(KeyData::from_ffi(1));
+    /// let b = VertexKey::from(KeyData::from_ffi(2));
     ///
-    /// let mut it = tri.vertices();
-    /// let Some((a, _)) = it.next() else { return Ok(()); };
-    /// let Some((b, _)) = it.next() else { return Ok(()); };
-    ///
-    /// let e = EdgeKey::new(a, b);
+    /// let e = EdgeKey::try_new(a, b)?;
     /// let (v0, v1) = e.endpoints();
     /// assert_eq!(v0, e.v0());
     /// assert_eq!(v1, e.v1());
     /// assert!(v0 <= v1);
-    /// # Ok(())
-    /// # }
+    /// # Ok::<(), delaunay::prelude::tds::EdgeKeyError>(())
     /// ```
     #[inline]
     #[must_use]
@@ -188,10 +175,12 @@ impl EdgeKey {
     }
 }
 
-impl From<(VertexKey, VertexKey)> for EdgeKey {
+impl TryFrom<(VertexKey, VertexKey)> for EdgeKey {
+    type Error = EdgeKeyError;
+
     #[inline]
-    fn from((a, b): (VertexKey, VertexKey)) -> Self {
-        Self::new(a, b)
+    fn try_from((a, b): (VertexKey, VertexKey)) -> Result<Self, Self::Error> {
+        Self::try_new(a, b)
     }
 }
 
@@ -207,8 +196,8 @@ mod tests {
         let a = vertices.insert(());
         let b = vertices.insert(());
 
-        let e1 = EdgeKey::new(a, b);
-        let e2 = EdgeKey::new(b, a);
+        let e1 = EdgeKey::try_new(a, b).unwrap();
+        let e2 = EdgeKey::try_new(b, a).unwrap();
 
         assert_eq!(e1, e2);
 
@@ -222,14 +211,32 @@ mod tests {
         let a = vertices.insert(());
         let b = vertices.insert(());
 
-        let e = EdgeKey::new(b, a);
+        let e = EdgeKey::try_new(b, a).unwrap();
         let (v0, v1) = e.endpoints();
 
         assert_eq!(v0, e.v0());
         assert_eq!(v1, e.v1());
         assert!(v0.data().as_ffi() <= v1.data().as_ffi());
 
-        assert_eq!(EdgeKey::from((a, b)), EdgeKey::new(a, b));
+        assert_eq!(
+            EdgeKey::try_from((a, b)).unwrap(),
+            EdgeKey::try_new(a, b).unwrap()
+        );
+    }
+
+    #[test]
+    fn edge_key_rejects_duplicate_endpoint() {
+        let mut vertices: SlotMap<VertexKey, ()> = SlotMap::with_key();
+        let a = vertices.insert(());
+
+        assert_eq!(
+            EdgeKey::try_new(a, a),
+            Err(EdgeKeyError::DuplicateEndpoint { endpoint: a })
+        );
+        assert_eq!(
+            EdgeKey::try_from((a, a)),
+            Err(EdgeKeyError::DuplicateEndpoint { endpoint: a })
+        );
     }
 
     #[test]
@@ -240,15 +247,15 @@ mod tests {
         let c = vertices.insert(());
 
         let mut hash_set: HashSet<EdgeKey> = HashSet::new();
-        hash_set.insert(EdgeKey::new(a, b));
-        hash_set.insert(EdgeKey::new(b, a));
-        hash_set.insert(EdgeKey::new(a, c));
+        hash_set.insert(EdgeKey::try_new(a, b).unwrap());
+        hash_set.insert(EdgeKey::try_new(b, a).unwrap());
+        hash_set.insert(EdgeKey::try_new(a, c).unwrap());
         assert_eq!(hash_set.len(), 2);
 
         let mut btree_set: BTreeSet<EdgeKey> = BTreeSet::new();
-        btree_set.insert(EdgeKey::new(a, b));
-        btree_set.insert(EdgeKey::new(b, a));
-        btree_set.insert(EdgeKey::new(a, c));
+        btree_set.insert(EdgeKey::try_new(a, b).unwrap());
+        btree_set.insert(EdgeKey::try_new(b, a).unwrap());
+        btree_set.insert(EdgeKey::try_new(a, c).unwrap());
         assert_eq!(btree_set.len(), 2);
     }
 }

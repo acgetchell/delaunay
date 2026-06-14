@@ -13,9 +13,7 @@ use delaunay::prelude::construction::{
     DelaunayTriangulation, TopologyGuarantee, Triangulation, Vertex,
 };
 use delaunay::prelude::flips::BistellarFlips;
-use delaunay::prelude::geometry::{
-    AdaptiveKernel, Coordinate, FastKernel, Kernel, Point, RobustKernel,
-};
+use delaunay::prelude::geometry::{AdaptiveKernel, FastKernel, Kernel, Point, RobustKernel};
 use proptest::prelude::*;
 use std::collections::{BTreeSet, HashMap};
 
@@ -54,14 +52,14 @@ fn near_degenerate_edge_length() -> impl Strategy<Value = f64> {
 fn axis_aligned_simplex_vertices<const D: usize>(
     origin: [f64; D],
     edge_lengths: [f64; D],
-) -> Vec<Vertex<f64, (), D>> {
+) -> Vec<Vertex<(), D>> {
     let mut points = Vec::with_capacity(D + 1);
-    points.push(Point::new(origin));
+    points.push(Point::try_new(origin).expect("finite point coordinates"));
 
     for (axis, edge_length) in edge_lengths.iter().copied().enumerate() {
         let mut coordinates = origin;
         coordinates[axis] += edge_length;
-        points.push(Point::new(coordinates));
+        points.push(Point::try_new(coordinates).expect("finite point coordinates"));
     }
 
     Vertex::from_points(&points)
@@ -71,13 +69,13 @@ fn axis_aligned_simplex_vertices<const D: usize>(
 fn interior_simplex_vertex<const D: usize>(
     origin: [f64; D],
     edge_lengths: [f64; D],
-) -> Vertex<f64, (), D> {
+) -> Vertex<(), D> {
     let denominator = f64::from(u32::try_from(D + 1).expect("test dimension fits in u32"));
     let mut coordinates = origin;
     for (axis, edge_length) in edge_lengths.iter().copied().enumerate() {
         coordinates[axis] += edge_length / denominator;
     }
-    Vertex::from_point(Point::new(coordinates))
+    Vertex::try_new(coordinates).expect("finite point coordinates")
 }
 
 /// Captures the public vertex/simplex incidence needed to check round-trips.

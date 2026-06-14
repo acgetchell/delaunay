@@ -15,14 +15,15 @@ use std::num::NonZeroUsize;
 use std::time::Instant;
 
 use delaunay::prelude::construction::{
-    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError,
-    RetryPolicy, vertex,
+    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError, RetryPolicy,
 };
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
-use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, CoordinateRangeError};
+use delaunay::prelude::geometry::{
+    AdaptiveKernel, CoordinateConversionError, CoordinateRange, CoordinateRangeError,
+    CoordinateValidationError,
+};
 use delaunay::prelude::query::{
-    AdjacencyIndexBuildError, ConvexHull, ConvexHullConstructionError, Coordinate, Point,
-    QueryError,
+    AdjacencyIndexBuildError, ConvexHull, ConvexHullConstructionError, Point, QueryError,
 };
 
 type WorkflowTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
@@ -44,6 +45,10 @@ enum WorkflowExampleError {
     },
     #[error("retry attempt count must be non-zero")]
     ZeroRetryAttempts,
+    #[error(transparent)]
+    CoordinateValidation(#[from] CoordinateValidationError),
+    #[error(transparent)]
+    CoordinateConversion(#[from] CoordinateConversionError),
     #[error("point count {point_count} is too large for centroid normalization")]
     PointCountTooLarge { point_count: usize },
 }
@@ -70,11 +75,11 @@ fn run_case<const D: usize>(
     seed: u64,
     bounds: CoordinateRange<f64>,
 ) -> Result<(), WorkflowExampleError> {
-    let points = generate_random_points_in_range_seeded::<f64, D>(point_count, bounds, seed);
+    let points = generate_random_points_in_range_seeded::<D>(point_count, bounds, seed);
     let vertices = points
         .iter()
-        .map(|point| vertex!(*point))
-        .collect::<Vec<_>>();
+        .map(|point| delaunay::prelude::Vertex::<(), _>::try_new((*point).into()))
+        .collect::<Result<Vec<_>, _>>()?;
     let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
         attempts: retry_attempts()?,
         base_seed: Some(seed),
@@ -96,7 +101,7 @@ fn run_case<const D: usize>(
     println!("  hull facets: {}", hull.number_of_facets());
 
     let inside = centroid_point(&points)?;
-    let outside = Point::new([bounds.max() * 2.5; D]);
+    let outside = Point::try_new([bounds.max() * 2.5; D])?;
 
     println!(
         "  hull query: centroid outside? {}",
@@ -124,9 +129,7 @@ fn retry_attempts() -> Result<NonZeroUsize, WorkflowExampleError> {
     NonZeroUsize::new(6).ok_or(WorkflowExampleError::ZeroRetryAttempts)
 }
 
-fn centroid_point<const D: usize>(
-    points: &[Point<f64, D>],
-) -> Result<Point<f64, D>, WorkflowExampleError> {
+fn centroid_point<const D: usize>(points: &[Point<D>]) -> Result<Point<D>, WorkflowExampleError> {
     let mut coords = [0.0; D];
     for point in points {
         for (coord, value) in coords.iter_mut().zip(point.coords()) {
@@ -143,5 +146,5 @@ fn centroid_point<const D: usize>(
         *coord /= point_count;
     }
 
-    Ok(Point::new(coords))
+    Ok(Point::try_new(coords)?)
 }

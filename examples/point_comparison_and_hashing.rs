@@ -1,348 +1,110 @@
 //! # Point Comparison and Hashing Example
 //!
-//! This example demonstrates the robust comparison and hashing behavior of the Point struct,
-//! with special emphasis on handling of NaN (Not a Number) and infinity values.
+//! Demonstrates finite [`Point`] comparison, hashing, and validation failures for
+//! non-finite input coordinates.
 //!
-//! ## Key Features Demonstrated:
-//!
-//! - **NaN-aware equality**: Unlike IEEE 754 standard where NaN ≠ NaN, our Point implementation
-//!   treats NaN values as equal to themselves for consistent behavior in data structures.
-//! - **Consistent hashing**: Points with identical coordinates (including NaN) produce the same
-//!   hash value, enabling reliable use in `HashMap` and `HashSet`.
-//! - **Mathematical properties**: Equality satisfies reflexivity, symmetry, and transitivity.
-//! - **Special value handling**: Proper comparison of infinity, negative infinity, and zero values.
-//!
-//! Run this example with: `cargo run --example point_comparison_and_hashing`
+//! Run with: `cargo run --example point_comparison_and_hashing`
 
-#![allow(clippy::similar_names)]
-
-use delaunay::prelude::query::*;
+use delaunay::prelude::geometry::{CoordinateValidationError, InvalidCoordinateValue, Point};
 use std::collections::{HashMap, HashSet};
 
-fn main() {
+fn main() -> Result<(), CoordinateValidationError> {
     println!("=== Point Comparison and Hashing Example ===\n");
 
-    // Basic comparison and equality
-    basic_comparison_demo();
+    basic_comparison_demo()?;
+    hashmap_demo()?;
+    hashset_demo()?;
+    validation_demo();
 
-    // NaN handling demonstration
-    nan_comparison_demo();
-
-    // Infinity handling
-    infinity_comparison_demo();
-
-    // HashMap usage with special values
-    hashmap_demo();
-
-    // HashSet behavior
-    hashset_demo();
-
-    // Mathematical properties validation
-    mathematical_properties_demo();
-
-    // Different numeric types
-    numeric_types_demo();
+    Ok(())
 }
 
-/// Demonstrates basic point comparison and equality
-fn basic_comparison_demo() {
-    println!("🔍 Basic Point Comparison");
-    println!("-------------------------");
+fn basic_comparison_demo() -> Result<(), CoordinateValidationError> {
+    println!("Basic point comparison");
+    println!("----------------------");
 
-    let point1 = Point::new([1.0, 2.0, 3.0]);
-    let point2 = Point::new([1.0, 2.0, 3.0]);
-    let point3 = Point::new([1.0, 2.0, 4.0]);
+    let point1 = Point::try_new([1.0, 2.0, 3.0])?;
+    let point2 = Point::try_new([1.0, 2.0, 3.0])?;
+    let point3 = Point::try_new([1.0, 2.0, 4.0])?;
 
     println!("point1 = {:?}", point1.coords());
     println!("point2 = {:?}", point2.coords());
     println!("point3 = {:?}", point3.coords());
-
     println!("point1 == point2: {}", point1 == point2);
     println!("point1 == point3: {}", point1 == point3);
-    println!("point1 != point3: {}", point1 != point3);
-
-    // Demonstrate ordering
     println!("point1 < point3: {}", point1 < point3);
-    println!("point3 > point1: {}", point3 > point1);
-
     println!();
+
+    Ok(())
 }
 
-/// Demonstrates NaN comparison behavior - the key innovation
-fn nan_comparison_demo() {
-    println!("🔥 NaN Comparison Behavior");
+fn hashmap_demo() -> Result<(), CoordinateValidationError> {
+    println!("HashMap with finite points");
     println!("--------------------------");
 
-    // Standard IEEE 754 behavior for comparison
-    let standard_nan1 = f64::NAN;
-    let standard_nan2 = f64::from_bits(standard_nan1.to_bits());
-    let standard_nan_eq = standard_nan1
-        .partial_cmp(&standard_nan2)
-        .is_some_and(std::cmp::Ordering::is_eq);
-    let standard_nan_ne = !standard_nan_eq;
-    println!("Standard IEEE 754: NaN == NaN is {standard_nan_eq}");
-    println!("Standard IEEE 754: NaN != NaN is {standard_nan_ne}");
+    let mut point_map: HashMap<Point<3>, &str> = HashMap::new();
+    let point = Point::try_new([1.0, 2.0, 3.0])?;
+    let same_point = Point::try_new([1.0, 2.0, 3.0])?;
+    let other_point = Point::try_new([2.0, 3.0, 4.0])?;
 
-    println!("\nOur Point implementation:");
-
-    // Create points with NaN values
-    let point_nan1 = Point::new([f64::NAN, 2.0, 3.0]);
-    let point_nan2 = Point::new([f64::NAN, 2.0, 3.0]);
-    let point_normal = Point::new([1.0, 2.0, 3.0]);
-
-    println!(
-        "point_nan1 = [{}, 2.0, 3.0]",
-        if point_nan1.coords()[0].is_nan() {
-            "NaN"
-        } else {
-            "not NaN"
-        }
-    );
-    println!(
-        "point_nan2 = [{}, 2.0, 3.0]",
-        if point_nan2.coords()[0].is_nan() {
-            "NaN"
-        } else {
-            "not NaN"
-        }
-    );
-    println!("point_normal = {:?}", point_normal.coords());
-
-    // Our implementation: NaN points are equal to themselves
-    println!("point_nan1 == point_nan2: {}", point_nan1 == point_nan2);
-    println!("point_nan1 == point_normal: {}", point_nan1 == point_normal);
-
-    // Test reflexivity with NaN (this demonstrates our custom implementation)
-    #[expect(clippy::eq_op)]
-    let reflexivity_result = point_nan1 == point_nan1;
-    println!("point_nan1 == point_nan1: {reflexivity_result}");
-
-    // Different NaN patterns
-    let point_nan_diff1 = Point::new([f64::NAN, 2.0, 3.0]);
-    let point_nan_diff2 = Point::new([1.0, f64::NAN, 3.0]);
-    println!(
-        "Different NaN positions equal: {}",
-        point_nan_diff1 == point_nan_diff2
-    );
-
-    // Multiple ways to create NaN should be equal
-    let nan1 = f64::NAN;
-    let nan2 = f64::NAN; // Use f64::NAN instead of division
-    let nan3 = f64::NAN; // Use f64::NAN instead of subtraction
-
-    let point_nan_variant1 = Point::new([nan1, 1.0]);
-    let point_nan_variant2 = Point::new([nan2, 1.0]);
-    let point_nan_variant3 = Point::new([nan3, 1.0]);
-
-    println!(
-        "Different NaN bit patterns equal: {}",
-        point_nan_variant1 == point_nan_variant2 && point_nan_variant2 == point_nan_variant3
-    );
-
-    println!();
-}
-
-/// Demonstrates infinity value comparison
-fn infinity_comparison_demo() {
-    println!("♾️  Infinity Comparison");
-    println!("----------------------");
-
-    let point_pos_inf1 = Point::new([f64::INFINITY, 2.0]);
-    let point_pos_inf2 = Point::new([f64::INFINITY, 2.0]);
-    let point_neg_inf = Point::new([f64::NEG_INFINITY, 2.0]);
-    let point_normal = Point::new([1.0, 2.0]);
-
-    println!("point_pos_inf1 = [∞, 2.0]");
-    println!("point_pos_inf2 = [∞, 2.0]");
-    println!("point_neg_inf = [-∞, 2.0]");
-    println!("point_normal = {:?}", point_normal.coords());
-
-    println!("∞ == ∞: {}", point_pos_inf1 == point_pos_inf2);
-    println!("∞ == -∞: {}", point_pos_inf1 == point_neg_inf);
-    println!("∞ == normal: {}", point_pos_inf1 == point_normal);
-
-    // Mixed special values
-    let point_mixed = Point::new([f64::NAN, f64::INFINITY, f64::NEG_INFINITY]);
-    let point_mixed2 = Point::new([f64::NAN, f64::INFINITY, f64::NEG_INFINITY]);
-    println!(
-        "Mixed special values equal: {}",
-        point_mixed == point_mixed2
-    );
-
-    println!();
-}
-
-/// Demonstrates `HashMap` usage with points containing special values
-fn hashmap_demo() {
-    println!("🗺️  HashMap with Special Values");
-    println!("-------------------------------");
-
-    let mut point_map: HashMap<Point<f64, 3>, &str> = HashMap::new();
-
-    // Insert points with various special values
-    let point_normal = Point::new([1.0, 2.0, 3.0]);
-    let point_nan = Point::new([f64::NAN, 2.0, 3.0]);
-    let point_inf = Point::new([f64::INFINITY, 2.0, 3.0]);
-    let point_neg_inf = Point::new([f64::NEG_INFINITY, 2.0, 3.0]);
-
-    point_map.insert(point_normal, "normal point");
-    point_map.insert(point_nan, "point with NaN");
-    point_map.insert(point_inf, "point with +∞");
-    point_map.insert(point_neg_inf, "point with -∞");
+    point_map.insert(point, "first point");
+    point_map.insert(other_point, "second point");
 
     println!("HashMap size: {}", point_map.len());
-
-    // Test retrieval with equivalent points
-    let point_normal_copy = Point::new([1.0, 2.0, 3.0]);
-    let point_nan_copy = Point::new([f64::NAN, 2.0, 3.0]);
-
     println!(
-        "Can retrieve normal point: {}",
-        point_map.contains_key(&point_normal_copy)
+        "Can retrieve equivalent key: {}",
+        point_map.contains_key(&same_point)
     );
-    println!(
-        "Can retrieve NaN point: {}",
-        point_map.contains_key(&point_nan_copy)
-    );
-
-    if let Some(value) = point_map.get(&point_nan_copy) {
-        println!("Retrieved value for NaN point: {value}");
-    }
-
-    // Demonstrate that NaN points can be used as keys reliably
-    let mut nan_counter = HashMap::new();
-    for _ in 0..5 {
-        let nan_point = Point::new([f64::NAN, 1.0]);
-        *nan_counter.entry(nan_point).or_insert(0) += 1;
-    }
-    println!(
-        "NaN point appears {} times (should be 5)",
-        nan_counter.values().next().unwrap_or(&0)
-    );
-
     println!();
+
+    Ok(())
 }
 
-/// Demonstrates `HashSet` behavior with special values
-fn hashset_demo() {
-    println!("📦 HashSet with Special Values");
-    println!("------------------------------");
+fn hashset_demo() -> Result<(), CoordinateValidationError> {
+    println!("HashSet duplicate handling");
+    println!("--------------------------");
 
-    let mut point_set: HashSet<Point<f64, 2>> = HashSet::new();
-
-    // Add various points including duplicates with special values
-    let points = vec![
-        Point::new([1.0, 2.0]),
-        Point::new([1.0, 2.0]), // Duplicate normal point
-        Point::new([f64::NAN, 2.0]),
-        Point::new([f64::NAN, 2.0]), // Duplicate NaN point
-        Point::new([f64::INFINITY, 2.0]),
-        Point::new([f64::INFINITY, 2.0]), // Duplicate infinity point
-        Point::new([0.0, -0.0]),          // Zero and negative zero
-        Point::new([-0.0, 0.0]),          // Should be treated as equal
-    ];
-
-    for point in points {
+    let mut point_set: HashSet<Point<2>> = HashSet::new();
+    for point in [
+        Point::try_new([1.0, 2.0])?,
+        Point::try_new([1.0, 2.0])?,
+        Point::try_new([0.0, -0.0])?,
+        Point::try_new([-0.0, 0.0])?,
+        Point::try_new([3.0, 4.0])?,
+    ] {
         point_set.insert(point);
     }
 
-    println!(
-        "HashSet size after inserting duplicates: {}",
-        point_set.len()
-    );
-    println!("Expected size: 4 (normal, NaN, ∞, and ±0.0 treated as the same key)");
-
-    // Test membership
-    let test_nan = Point::new([f64::NAN, 2.0]);
-    let test_inf = Point::new([f64::INFINITY, 2.0]);
-
-    println!(
-        "HashSet contains NaN point: {}",
-        point_set.contains(&test_nan)
-    );
-    println!(
-        "HashSet contains ∞ point: {}",
-        point_set.contains(&test_inf)
-    );
-
+    println!("HashSet size after duplicates: {}", point_set.len());
+    println!("Expected size: 3");
     println!();
+
+    Ok(())
 }
 
-/// Demonstrates mathematical properties of equality
-fn mathematical_properties_demo() {
-    println!("🧮 Mathematical Properties");
-    println!("--------------------------");
+fn validation_demo() {
+    println!("Non-finite input validation");
+    println!("---------------------------");
 
-    let point_a = Point::new([f64::NAN, 2.0, f64::INFINITY]);
-    let point_b = Point::new([f64::NAN, 2.0, f64::INFINITY]);
-    let point_c = Point::new([f64::NAN, 2.0, f64::INFINITY]);
-
-    println!("Testing with points containing NaN and ∞:");
-
-    // Reflexivity: a == a (this demonstrates our custom implementation)
-    #[expect(clippy::eq_op)]
-    let reflexivity_result = point_a == point_a;
-    println!("Reflexivity (a == a): {reflexivity_result}");
-
-    // Symmetry: if a == b, then b == a
-    let symmetry_ab = point_a == point_b;
-    let symmetry_ba = point_b == point_a;
-    println!(
-        "Symmetry (a == b and b == a): {} and {} = {}",
-        symmetry_ab,
-        symmetry_ba,
-        symmetry_ab && symmetry_ba
-    );
-
-    // Transitivity: if a == b and b == c, then a == c
-    let trans_ab = point_a == point_b;
-    let trans_bc = point_b == point_c;
-    let trans_ac = point_a == point_c;
-    println!(
-        "Transitivity (a == b, b == c, a == c): {}, {}, {} = {}",
-        trans_ab,
-        trans_bc,
-        trans_ac,
-        trans_ab && trans_bc && trans_ac
-    );
-
-    println!();
-}
-
-/// Demonstrates numeric-coordinate behavior
-fn numeric_types_demo() {
-    println!("🔢 Numeric Coordinates");
-    println!("----------------------");
-
-    // Integer-like values using f64
-    let point_int_1 = Point::new([10.0, 20.0, 30.0]);
-    let point_int_2 = Point::new([10.0, 20.0, 30.0]);
-    let point_int_3 = Point::new([10.0, 20.0, 31.0]);
-
-    println!("Integer-like points equal: {}", point_int_1 == point_int_2);
-    println!(
-        "Integer-like points different: {}",
-        point_int_1 != point_int_3
-    );
-
-    // Demonstrate HashMap with integer-like points
-    let mut int_map: HashMap<Point<f64, 2>, String> = HashMap::new();
-    int_map.insert(Point::new([1.0, 2.0]), "integer-like point".to_string());
-
-    let lookup_key = Point::new([1.0, 2.0]);
-    println!(
-        "Can retrieve integer-like point: {}",
-        int_map.contains_key(&lookup_key)
-    );
-
-    // Mixed precision floating point
-    println!("\nFloating Point Precision:");
-    let point_precise = Point::new([1.000_000_000_000_000_1_f64, 2.0]);
-    let point_rounded = Point::new([1.0f64, 2.0]);
-    println!(
-        "High precision vs rounded equal: {}",
-        point_precise == point_rounded
-    );
-
-    println!();
+    for (label, result) in [
+        ("NaN", Point::<2>::try_new([f64::NAN, 1.0])),
+        ("+infinity", Point::<2>::try_new([f64::INFINITY, 1.0])),
+        ("-infinity", Point::<2>::try_new([f64::NEG_INFINITY, 1.0])),
+    ] {
+        match result {
+            Ok(point) => println!("{label}: unexpectedly accepted {:?}", point.coords()),
+            Err(CoordinateValidationError::InvalidCoordinate {
+                coordinate_value, ..
+            }) => {
+                let kind = match coordinate_value {
+                    InvalidCoordinateValue::Nan => "NaN",
+                    InvalidCoordinateValue::PositiveInfinity => "+infinity",
+                    InvalidCoordinateValue::NegativeInfinity => "-infinity",
+                    _ => "non-finite value",
+                };
+                println!("{label}: rejected {kind}");
+            }
+            Err(_) => println!("{label}: rejected invalid coordinate"),
+        }
+    }
 }

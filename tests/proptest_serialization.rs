@@ -19,7 +19,7 @@ type DefaultDt<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), 
 
 /// Check if two points are approximately equal (coordinate-wise)
 /// Uses relative epsilon comparison suitable for JSON serialization roundtrips
-fn points_approx_equal<const D: usize>(p1: &Point<f64, D>, p2: &Point<f64, D>) -> bool {
+fn points_approx_equal<const D: usize>(p1: &Point<D>, p2: &Point<D>) -> bool {
     p1.coords()
         .iter()
         .zip(p2.coords().iter())
@@ -49,7 +49,7 @@ macro_rules! test_serialization_properties {
                 #[test]
                 fn [<prop_triangulation_json_roundtrip_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
@@ -61,7 +61,7 @@ macro_rules! test_serialization_properties {
                         let json = serde_json::to_string(&dt).expect("Serialization failed");
 
                         // Deserialize from JSON via try_from_tds
-                        let tds: Tds<f64, (), (), $dim> =
+                        let tds: Tds<(), (), $dim> =
                             serde_json::from_str(&json).expect("Deserialization failed");
                         let deserialized: DefaultDt<$dim> =
                             DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())
@@ -94,7 +94,7 @@ macro_rules! test_serialization_properties {
                 #[test]
                 fn [<prop_deserialized_triangulation_valid_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
@@ -105,7 +105,7 @@ macro_rules! test_serialization_properties {
                         if dt.tds().validate().is_ok() {
                             // Serialize and deserialize via try_from_tds
                             let json = serde_json::to_string(&dt).expect("Serialization failed");
-                            let tds: Tds<f64, (), (), $dim> =
+                            let tds: Tds<(), (), $dim> =
                                 serde_json::from_str(&json).expect("Deserialization failed");
                             let deserialized: DefaultDt<$dim> =
                                 DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())
@@ -127,7 +127,7 @@ macro_rules! test_serialization_properties {
                 #[test]
                 fn [<prop_vertex_coordinates_preserved_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
@@ -148,7 +148,7 @@ macro_rules! test_serialization_properties {
 
                         // Serialize and deserialize via try_from_tds
                         let json = serde_json::to_string(&dt).expect("Serialization failed");
-                        let tds: Tds<f64, (), (), $dim> =
+                        let tds: Tds<(), (), $dim> =
                             serde_json::from_str(&json).expect("Deserialization failed");
                         let deserialized: DefaultDt<$dim> =
                             DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())
@@ -188,7 +188,7 @@ macro_rules! test_serialization_properties {
                 #[test]
                 fn [<prop_neighbor_relationships_preserved_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| Vertex::from_points(&v))
                 ) {
@@ -206,7 +206,7 @@ macro_rules! test_serialization_properties {
 
                         // Serialize and deserialize via try_from_tds
                         let json = serde_json::to_string(&dt).expect("Serialization failed");
-                        let tds: Tds<f64, (), (), $dim> =
+                        let tds: Tds<(), (), $dim> =
                             serde_json::from_str(&json).expect("Deserialization failed");
                         let deserialized: DefaultDt<$dim> =
                             DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())

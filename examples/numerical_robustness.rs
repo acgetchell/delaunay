@@ -11,11 +11,10 @@ use delaunay::prelude::construction::{
     DelaunayTriangulation, DelaunayTriangulationConstructionError,
 };
 use delaunay::prelude::geometry::{
-    AdaptiveKernel, CircumcenterError, Coordinate, CoordinateConversionError, FastKernel, Kernel,
-    Point, RobustKernel, robust_insphere, robust_orientation,
+    AdaptiveKernel, CircumcenterError, CoordinateConversionError, CoordinateValidationError,
+    FastKernel, Kernel, Point, RobustKernel, robust_insphere, robust_orientation,
 };
 use delaunay::prelude::validation::DelaunayTriangulationValidationError;
-use delaunay::vertex;
 
 #[derive(Debug, thiserror::Error)]
 enum NumericalRobustnessExampleError {
@@ -23,6 +22,8 @@ enum NumericalRobustnessExampleError {
     Predicate(#[from] CircumcenterError),
     #[error(transparent)]
     CoordinateConversion(#[from] CoordinateConversionError),
+    #[error(transparent)]
+    CoordinateValidation(#[from] CoordinateValidationError),
     #[error(transparent)]
     Construction(#[from] DelaunayTriangulationConstructionError),
     #[error(transparent)]
@@ -44,9 +45,9 @@ fn main() -> Result<(), NumericalRobustnessExampleError> {
 /// Compares orientation predicate behavior on a degenerate collinear simplex.
 fn compare_orientation_kernels() -> Result<(), NumericalRobustnessExampleError> {
     let collinear = [
-        Point::new([0.0, 0.0]),
-        Point::new([1.0, 1.0]),
-        Point::new([2.0, 2.0]),
+        Point::try_new([0.0, 0.0])?,
+        Point::try_new([1.0, 1.0])?,
+        Point::try_new([2.0, 2.0])?,
     ];
 
     let fast = FastKernel::<f64>::new();
@@ -72,11 +73,11 @@ fn compare_orientation_kernels() -> Result<(), NumericalRobustnessExampleError> 
 /// Compares explicit boundary reporting with adaptive `SoS` tie-breaking.
 fn compare_insphere_boundary_handling() -> Result<(), NumericalRobustnessExampleError> {
     let simplex = [
-        Point::new([0.0, 0.0]),
-        Point::new([1.0, 0.0]),
-        Point::new([0.0, 1.0]),
+        Point::try_new([0.0, 0.0])?,
+        Point::try_new([1.0, 0.0])?,
+        Point::try_new([0.0, 1.0])?,
     ];
-    let boundary_point = Point::new([1.0, 1.0]);
+    let boundary_point = Point::try_new([1.0, 1.0])?;
 
     let robust = RobustKernel::<f64>::new();
     let adaptive = AdaptiveKernel::<f64>::new();
@@ -98,11 +99,11 @@ fn compare_insphere_boundary_handling() -> Result<(), NumericalRobustnessExample
 /// Builds a small triangulation with the default exact adaptive kernel and validates it.
 fn build_with_adaptive_kernel() -> Result<(), NumericalRobustnessExampleError> {
     let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.0, 1.0, 0.0]),
-        vertex!([0.0, 0.0, 1.0]),
-        vertex!([0.25, 0.25, 0.25]),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.25, 0.25, 0.25])?,
     ];
 
     let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> =

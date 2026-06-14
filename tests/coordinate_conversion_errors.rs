@@ -3,140 +3,41 @@
 //! This module tests that functions properly handle coordinate conversion errors
 //! when dealing with extreme values, NaN, infinity, etc.
 
-use std::assert_matches;
-
 use delaunay::prelude::geometry::*;
 
-// =============================================================================
-// GEOMETRIC PREDICATES ERROR TESTS
-// =============================================================================
-
-#[test]
-fn test_insphere_with_nan_coordinates() {
-    // Test 3D insphere with NaN coordinates
-    let points = vec![
-        Point::new([1.0, 0.0, 0.0]),
-        Point::new([0.0, 1.0, 0.0]),
-        Point::new([0.0, 0.0, 1.0]),
-        Point::new([f64::NAN, 0.5, 0.5]), // Point with NaN
-    ];
-    let test_point = Point::new([0.5, 0.5, 0.5]);
-
-    // The function should return an error due to NaN coordinate
-    let result = insphere(&points, test_point);
-
-    match result {
-        Err(CoordinateConversionError::NonFiniteValue { .. }) => {
-            // Expected error type
-        }
-        other => panic!("Expected CoordinateConversionError::NonFiniteValue, got: {other:?}"),
-    }
-}
-
-#[test]
-fn test_insphere_with_infinity_coordinates() {
-    // Test 3D insphere with infinity coordinates
-    let points = vec![
-        Point::new([1.0, 0.0, 0.0]),
-        Point::new([0.0, 1.0, 0.0]),
-        Point::new([0.0, 0.0, 1.0]),
-        Point::new([f64::INFINITY, 0.5, 0.5]), // Point with positive infinity
-    ];
-    let test_point = Point::new([0.5, 0.5, 0.5]);
-
-    // The function should return an error due to infinity coordinate
-    let result = insphere(&points, test_point);
-
-    match result {
-        Err(CoordinateConversionError::NonFiniteValue { .. }) => {
-            // Expected error type
-        }
-        other => panic!("Expected CoordinateConversionError::NonFiniteValue, got: {other:?}"),
-    }
-}
-
-#[test]
-fn test_insphere_2d_with_nan_coordinates() {
-    // Test 2D insphere with NaN coordinates (using 2D triangle)
-    let points = vec![
-        Point::new([0.0, 0.0]),
-        Point::new([1.0, 0.0]),
-        Point::new([f64::NAN, 1.0]), // Point with NaN
-    ];
-    let test_point = Point::new([0.5, 0.5]);
-
-    // The function should return an error due to NaN coordinate
-    let result = insphere(&points, test_point);
-
-    match result {
-        Err(CoordinateConversionError::NonFiniteValue { .. }) => {
-            // Expected error type
-        }
-        other => panic!("Expected CoordinateConversionError::NonFiniteValue, got: {other:?}"),
-    }
-}
-
-#[test]
-fn test_simplex_orientation_with_infinity_coordinates() {
-    // Test simplex orientation with infinity coordinates
-    let points = vec![
-        Point::new([0.0, 0.0]),
-        Point::new([1.0, 0.0]),
-        Point::new([f64::NEG_INFINITY, 1.0]), // Point with negative infinity
-    ];
-
-    // The function should return an error due to infinity coordinate
-    let result = simplex_orientation(&points);
-
-    match result {
-        Err(CoordinateConversionError::NonFiniteValue { .. }) => {
-            // Expected error type
-        }
-        other => panic!("Expected CoordinateConversionError::NonFiniteValue, got: {other:?}"),
-    }
-}
-
-// =============================================================================
-// UTILITY FUNCTIONS ERROR TESTS
-// =============================================================================
-
-#[test]
-fn test_circumcenter_with_nan_coordinates() {
-    // Test circumcenter with NaN coordinates
-    let points = vec![
-        Point::new([0.0, 0.0]),
-        Point::new([1.0, 0.0]),
-        Point::new([f64::NAN, 1.0]), // Point with NaN
-    ];
-
-    // The function should return an error due to NaN coordinate
-    let result = circumcenter(&points);
-
-    assert_matches!(
-        result,
-        Err(CircumcenterError::CoordinateConversion {
-            source: CoordinateConversionError::NonFiniteValue { .. },
+fn assert_invalid_coordinate<const D: usize>(
+    coords: [f64; D],
+    coordinate_index: usize,
+    coordinate_value: InvalidCoordinateValue,
+) {
+    assert_eq!(
+        Point::<D>::try_new(coords),
+        Err(CoordinateValidationError::InvalidCoordinate {
+            coordinate_index,
+            coordinate_value,
+            dimension: D,
         })
     );
 }
 
 #[test]
-fn test_circumradius_with_infinity_coordinates() {
-    // Test circumradius with infinity coordinates
-    let points = vec![
-        Point::new([0.0, 0.0]),
-        Point::new([1.0, 0.0]),
-        Point::new([0.0, f64::INFINITY]), // Point with positive infinity
-    ];
-
-    // The function should return an error due to infinity coordinate
-    let result = circumradius(&points);
-
-    assert_matches!(
-        result,
-        Err(CircumcenterError::CoordinateConversion {
-            source: CoordinateConversionError::NonFiniteValue { .. },
-        })
+fn test_point_try_new_rejects_non_finite_coordinates() {
+    assert_invalid_coordinate([f64::NAN, 0.5, 0.5], 0, InvalidCoordinateValue::Nan);
+    assert_invalid_coordinate(
+        [f64::INFINITY, 0.5, 0.5],
+        0,
+        InvalidCoordinateValue::PositiveInfinity,
+    );
+    assert_invalid_coordinate([f64::NAN, 1.0], 0, InvalidCoordinateValue::Nan);
+    assert_invalid_coordinate(
+        [f64::NEG_INFINITY, 1.0],
+        0,
+        InvalidCoordinateValue::NegativeInfinity,
+    );
+    assert_invalid_coordinate(
+        [0.0, f64::INFINITY],
+        1,
+        InvalidCoordinateValue::PositiveInfinity,
     );
 }
 
@@ -189,105 +90,37 @@ fn test_hypot_with_infinity_values() {
 }
 
 // =============================================================================
-// ROBUST PREDICATES ERROR TESTS
-// =============================================================================
-
-#[test]
-fn test_robust_insphere_with_nan() {
-    // Test robust insphere with NaN coordinates
-    let points = vec![
-        Point::new([1.0, 0.0, 0.0]),
-        Point::new([0.0, 1.0, 0.0]),
-        Point::new([0.0, 0.0, 1.0]),
-        Point::new([f64::NAN, 0.5, 0.5]), // Point with NaN
-    ];
-    let test_point = Point::new([0.5, 0.5, 0.5]);
-
-    let result = robust_insphere(&points, &test_point);
-    assert!(
-        matches!(
-            result,
-            Err(CoordinateConversionError::NonFiniteValue { .. })
-        ),
-        "Expected CoordinateConversionError::NonFiniteValue, got: {result:?}"
-    );
-}
-
-#[test]
-fn test_robust_insphere_with_infinity() {
-    // Test robust insphere with infinity coordinates
-    let points = vec![
-        Point::new([1.0, 0.0, 0.0]),
-        Point::new([0.0, 1.0, 0.0]),
-        Point::new([0.0, 0.0, 1.0]),
-        Point::new([f64::NEG_INFINITY, 0.5, 0.5]), // Point with negative infinity
-    ];
-    let test_point = Point::new([0.5, 0.5, 0.5]);
-
-    let result = robust_insphere(&points, &test_point);
-    assert!(
-        matches!(
-            result,
-            Err(CoordinateConversionError::NonFiniteValue { .. })
-        ),
-        "Expected CoordinateConversionError::NonFiniteValue, got: {result:?}"
-    );
-}
-
-// =============================================================================
 // ERROR MESSAGE VERIFICATION TESTS
 // =============================================================================
 
 #[test]
 fn test_error_message_contains_context() {
     // Test that error messages contain useful context information
-    let points = vec![
-        Point::new([0.0, 0.0]),
-        Point::new([1.0, 0.0]),
-        Point::new([f64::NAN, 1.0]), // Point with NaN at coordinate index 0
-    ];
-
-    let result = circumcenter(&points);
-
-    if let Err(error) = result {
-        let error_msg = error.to_string();
-
-        // Error message should contain useful context
-        assert!(error_msg.contains("NaN") || error_msg.contains("non-finite"));
-
-        // Should identify the problematic value type
-        assert!(error_msg.contains("coordinate") || error_msg.contains("value"));
-    } else {
+    let Err(error) = Point::<2>::try_new([f64::NAN, 1.0]) else {
         panic!("Expected an error, but got Ok");
-    }
+    };
+    let error_msg = error.to_string();
+
+    // Error message should contain useful context
+    assert!(error_msg.contains("NaN") || error_msg.contains("non-finite"));
+
+    // Should identify the problematic value type
+    assert!(error_msg.contains("coordinate") || error_msg.contains("value"));
 }
 
 #[test]
 fn test_infinity_error_message_contains_context() {
-    // Test that infinity error messages contain useful context using insphere_distance
-    // which uses hypot internally and should handle problematic coordinates
-    let points = vec![
-        Point::new([0.0, 0.0]),
-        Point::new([1.0, 0.0]),
-        Point::new([0.0, 1.0]), // Valid triangle
-    ];
-    let test_point = Point::new([f64::INFINITY, 1.0]); // Point with infinity
+    let Err(error) = Point::<2>::try_new([f64::INFINITY, 1.0]) else {
+        panic!("Expected an error, but got Ok");
+    };
+    let error_msg = error.to_string();
 
-    let result = insphere_distance(&points, test_point);
-
-    if let Err(error) = result {
-        let error_msg = error.to_string();
-
-        // Error message should contain useful context about infinity or non-finite values
-        assert!(
-            error_msg.contains("inf")
-                || error_msg.contains("infinite")
-                || error_msg.contains("non-finite")
-        );
-    } else {
-        // For this test, we might get Ok since hypot can handle infinity
-        // In that case, we just verify the function doesn't crash
-    }
+    // Error message should contain useful context about infinity or non-finite values
+    assert!(
+        error_msg.contains("inf")
+            || error_msg.contains("infinite")
+            || error_msg.contains("non-finite")
+    );
 }
 
 // =============================================================================
@@ -299,9 +132,9 @@ fn test_subnormal_values_handling() {
     // Test that subnormal values are handled correctly (should not error)
     let subnormal = f64::MIN_POSITIVE / 2.0;
     let points = vec![
-        Point::new([0.0, 0.0]),
-        Point::new([1.0, 0.0]),
-        Point::new([subnormal, 1.0]), // Subnormal value
+        Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([subnormal, 1.0]).expect("finite point coordinates"), // Subnormal value
     ];
 
     // Subnormal values should be handled without error (they're finite)
@@ -319,9 +152,9 @@ fn test_subnormal_values_handling() {
 fn test_zero_and_negative_zero() {
     // Test that positive and negative zero are handled correctly
     let points = vec![
-        Point::new([0.0, 0.0]),
-        Point::new([1.0, 0.0]),
-        Point::new([-0.0, 1.0]), // Negative zero
+        Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([-0.0, 1.0]).expect("finite point coordinates"), // Negative zero
     ];
 
     // Both positive and negative zero should be processed normally
@@ -341,9 +174,9 @@ fn test_very_large_finite_values() {
     // Use a large value that won't overflow when squared (f64::MAX would become infinity when squared)
     let large_value = 1e100; // Large but safe value
     let points = vec![
-        Point::new([0.0, 0.0]),
-        Point::new([1.0, 0.0]),
-        Point::new([large_value, 1.0]), // Very large but finite value
+        Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([large_value, 1.0]).expect("finite point coordinates"), // Very large but finite value
     ];
 
     // Large finite values should be handled without error as long as they don't overflow in calculations
@@ -364,9 +197,9 @@ fn test_very_large_finite_values() {
 fn test_very_small_finite_values() {
     // Test that very small but finite values are handled correctly
     let points = vec![
-        Point::new([0.0, 0.0]),
-        Point::new([1.0, 0.0]),
-        Point::new([f64::MIN_POSITIVE, 1.0]), // Very small but finite value
+        Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+        Point::try_new([f64::MIN_POSITIVE, 1.0]).expect("finite point coordinates"), // Very small but finite value
     ];
 
     // Small finite values should be handled without error

@@ -31,10 +31,10 @@
 //! # }
 //! # fn main() -> Result<(), ExampleError> {
 //! let vertices = vec![
-//!     vertex!([0.0, 0.0, 0.0]),
-//!     vertex!([1.0, 0.0, 0.0]),
-//!     vertex!([0.0, 1.0, 0.0]),
-//!     vertex!([0.0, 0.0, 1.0]),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 //! ];
 //! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
@@ -69,7 +69,6 @@ use crate::core::tds::{SimplexKey, Tds};
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{ExactPredicates, Kernel};
-use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::repair::DelaunayRepairHeuristicConfig;
 use crate::triangulation::DelaunayTriangulation;
 use thiserror::Error;
@@ -197,10 +196,10 @@ impl Default for DelaunayizeConfig {
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
@@ -212,14 +211,14 @@ impl Default for DelaunayizeConfig {
 /// ```
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub struct DelaunayizeOutcome<T, U, V, const D: usize> {
+pub struct DelaunayizeOutcome<U, V, const D: usize> {
     /// Statistics from the PL-manifold topology repair pass.
     ///
     /// If topology repair fails but fallback rebuild succeeds, these remain the
     /// failed/default repair stats for the repair attempt. Use
     /// [`used_fallback_rebuild`](Self::used_fallback_rebuild) to distinguish
     /// successful rebuild recovery from direct topology repair success.
-    pub topology_repair: PlManifoldRepairStats<T, U, V, D>,
+    pub topology_repair: PlManifoldRepairStats<U, V, D>,
     /// Statistics from the flip-based Delaunay repair pass.
     pub delaunay_repair: DelaunayRepairStats,
     /// Whether the fallback vertex-set rebuild was used.
@@ -377,16 +376,14 @@ enum SimplexDataMatch<V> {
 }
 
 type SimplexDataByVertexUuids<V> = FastHashMap<SimplexVertexUuidBuffer, SimplexDataMatch<V>>;
-type FallbackRebuildState<T, U, V, const D: usize> =
-    (Vec<Vertex<T, U, D>>, SimplexDataByVertexUuids<V>);
+type FallbackRebuildState<U, V, const D: usize> = (Vec<Vertex<U, D>>, SimplexDataByVertexUuids<V>);
 
 /// Captures the fallback rebuild inputs from the current TDS, including typed
 /// failure if any simplex cannot resolve its vertex UUID identity.
-fn snapshot_rebuild_state<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
-) -> Result<FallbackRebuildState<T, U, V, D>, SimplexValidationError>
+fn snapshot_rebuild_state<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+) -> Result<FallbackRebuildState<U, V, D>, SimplexValidationError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -400,8 +397,8 @@ where
 
 /// Hashes simplex payloads by sorted vertex UUIDs so fallback rebuilds can
 /// recover payloads for simplices whose vertex set survives unchanged.
-fn collect_simplex_data<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
+fn collect_simplex_data<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
 ) -> Result<SimplexDataByVertexUuids<V>, SimplexValidationError>
 where
     U: DataType,
@@ -424,9 +421,9 @@ where
 
 /// Builds the order-independent simplex identity used to match original and
 /// rebuilt simplices across fallback reconstruction.
-fn simplex_vertex_uuids<T, U, V, const D: usize>(
-    tds: &Tds<T, U, V, D>,
-    simplex: &Simplex<T, U, V, D>,
+fn simplex_vertex_uuids<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    simplex: &Simplex<V, D>,
 ) -> Result<SimplexVertexUuidBuffer, SimplexValidationError>
 where
     U: DataType,
@@ -446,7 +443,7 @@ fn restore_simplex_data<K, U, V, const D: usize>(
     original_simplex_data: &SimplexDataByVertexUuids<V>,
 ) -> Result<(), SimplexValidationError>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -531,11 +528,11 @@ fn delaunay_rebuild_error(
 /// simplex payloads whose vertex UUID signatures survive the rebuild unchanged.
 fn rebuild_preserving_data<K, U, V, const D: usize>(
     kernel: &K,
-    vertices: &[Vertex<K::Scalar, U, D>],
+    vertices: &[Vertex<U, D>],
     original_simplex_data: &SimplexDataByVertexUuids<V>,
 ) -> Result<DelaunayTriangulation<K, U, V, D>, FallbackRebuildError>
 where
-    K: ExactPredicates<D>,
+    K: ExactPredicates<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -550,7 +547,7 @@ fn run_configured_delaunay_repair<K, U, V, const D: usize>(
     config: DelaunayizeConfig,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
-    K: ExactPredicates<D>,
+    K: ExactPredicates<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -620,10 +617,10 @@ where
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     vertex!([0.0, 0.0, 0.0]),
-///     vertex!([1.0, 0.0, 0.0]),
-///     vertex!([0.0, 1.0, 0.0]),
-///     vertex!([0.0, 0.0, 1.0]),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
 /// ];
 /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
@@ -639,9 +636,9 @@ where
 pub fn delaunayize_by_flips<K, U, V, const D: usize>(
     dt: &mut DelaunayTriangulation<K, U, V, D>,
     config: DelaunayizeConfig,
-) -> Result<DelaunayizeOutcome<K::Scalar, U, V, D>, DelaunayizeError>
+) -> Result<DelaunayizeOutcome<U, V, D>, DelaunayizeError>
 where
-    K: ExactPredicates<D>,
+    K: ExactPredicates<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -758,9 +755,7 @@ mod tests {
     use super::*;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::geometry::point::Point;
-    use crate::geometry::traits::coordinate::Coordinate;
     use crate::tds::VertexKey;
-    use crate::vertex;
     use crate::{DelaunayTriangulationBuilder, TriangulationConstructionError};
     use slotmap::KeyData;
     use std::assert_matches;
@@ -783,13 +778,13 @@ mod tests {
     }
 
     /// Builds the canonical D-simplex vertex set used by fallback rebuild tests.
-    fn unit_simplex_vertices<const D: usize>() -> Vec<Vertex<f64, (), D>> {
+    fn unit_simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
         let mut points = Vec::with_capacity(D + 1);
-        points.push(Point::new([0.0; D]));
+        points.push(Point::from_validated_coords([0.0; D]));
         for axis in 0..D {
             let mut coords = [0.0; D];
             coords[axis] = 1.0;
-            points.push(Point::new(coords));
+            points.push(Point::from_validated_coords(coords));
         }
         Vertex::from_points(&points)
     }
@@ -807,7 +802,7 @@ mod tests {
             dt.tri
                 .tds
                 .insert_simplex_bypassing_topology_checks_for_test(
-                    Simplex::new(duplicate_vertices.clone(), None).unwrap(),
+                    Simplex::try_new_with_data(duplicate_vertices.clone(), None).unwrap(),
                 )
                 .unwrap();
         }
@@ -816,7 +811,7 @@ mod tests {
     /// Forces topology repair to fail on duplicate simplices, then checks fallback rebuild.
     fn assert_topology_repair_fallback_rebuilds_duplicate_simplex<const D: usize>()
     where
-        AdaptiveKernel<f64>: ExactPredicates<D>,
+        AdaptiveKernel<f64>: ExactPredicates<D, Scalar = f64>,
     {
         init_tracing();
         let vertices = unit_simplex_vertices::<D>();
@@ -927,10 +922,10 @@ mod tests {
     fn test_already_delaunay_3d() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -945,10 +940,10 @@ mod tests {
     fn test_already_delaunay_2d() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-            vertex!([1.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -966,11 +961,11 @@ mod tests {
     fn test_outcome_populated_on_success() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.5, 0.5, 0.5]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -987,17 +982,17 @@ mod tests {
 
     #[test]
     fn test_simplex_vertex_uuids_missing_vertex() {
-        let mut tds: Tds<f64, (), i32, 2> = Tds::empty();
+        let mut tds: Tds<(), i32, 2> = Tds::empty();
         let vertex_keys: Vec<_> = [
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ]
         .iter()
         .map(|vertex| tds.insert_vertex_with_mapping(*vertex).unwrap())
         .collect();
         let missing = vertex_keys[0];
-        let simplex = Simplex::new(vertex_keys, Some(7)).unwrap();
+        let simplex = Simplex::try_new_with_data(vertex_keys, Some(7)).unwrap();
         tds.remove_isolated_vertex(missing);
 
         let err = simplex_vertex_uuids(&tds, &simplex).unwrap_err();
@@ -1218,10 +1213,10 @@ mod tests {
     fn test_fallback_enabled_on_valid_triangulation() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -1238,7 +1233,10 @@ mod tests {
     #[test]
     fn delaunay_repair_fallback_rebuilds_after_unsupported_dimension() {
         init_tracing();
-        let vertices = [vertex!([0.0]), vertex!([1.0])];
+        let vertices = [
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
+        ];
         let mut dt: DelaunayTriangulation<_, (), (), 1> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
@@ -1265,10 +1263,10 @@ mod tests {
     fn delaunay_repair_fallback_rebuilds_supported_2d_after_repair_failure() {
         init_tracing();
         let vertices = [
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-            vertex!([1.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -1313,9 +1311,9 @@ mod tests {
     fn test_rebuild_restores_simplex_data() {
         init_tracing();
         let vertices = [
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<i32>()
@@ -1343,18 +1341,18 @@ mod tests {
     fn test_rebuild_drops_ambiguous_data() {
         init_tracing();
         let vertices = [
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
-        let mut tds: Tds<f64, (), i32, 2> = Tds::empty();
+        let mut tds: Tds<(), i32, 2> = Tds::empty();
         let vertex_keys: Vec<_> = vertices
             .iter()
             .map(|vertex| tds.insert_vertex_with_mapping(*vertex).unwrap())
             .collect();
 
-        let duplicate_a = Simplex::new(vertex_keys.clone(), Some(42)).unwrap();
-        let duplicate_b = Simplex::new(vertex_keys, Some(42)).unwrap();
+        let duplicate_a = Simplex::try_new_with_data(vertex_keys.clone(), Some(42)).unwrap();
+        let duplicate_b = Simplex::try_new_with_data(vertex_keys, Some(42)).unwrap();
         tds.insert_simplex_bypassing_topology_checks_for_test(duplicate_a)
             .unwrap();
         tds.insert_simplex_bypassing_topology_checks_for_test(duplicate_b)
@@ -1384,11 +1382,11 @@ mod tests {
     fn test_deterministic_repeated_runs() {
         init_tracing();
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.5, 0.5, 0.5]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
         ];
 
         let config = DelaunayizeConfig::default();

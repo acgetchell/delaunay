@@ -22,11 +22,11 @@ mod allocation_contracts {
     use criterion::{BenchmarkGroup, BenchmarkId, Criterion, measurement::WallTime};
     use delaunay::prelude::algorithms::{LocateResult, locate_with_stats};
     use delaunay::prelude::construction::{
-        ConstructionOptions, DelaunayTriangulation, RetryPolicy, Vertex, vertex,
+        ConstructionOptions, DelaunayTriangulation, RetryPolicy, Vertex,
     };
     use delaunay::prelude::generators::generate_random_points_in_range_seeded;
     use delaunay::prelude::geometry::{
-        AdaptiveKernel, Coordinate, CoordinateRange, FastKernel, Point, simplex_volume,
+        AdaptiveKernel, CoordinateRange, FastKernel, Point, simplex_volume,
     };
     use delaunay::prelude::query::measure_with_result;
     use delaunay::prelude::tds::{SimplexKey, TdsError, VertexKey, facet_key_from_vertices};
@@ -47,6 +47,10 @@ mod allocation_contracts {
     const SAMPLE_SIZE: usize = 32;
 
     type BenchTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
+
+    fn finite_point<const D: usize>(coords: [f64; D]) -> Point<D> {
+        Point::try_new(coords).unwrap_or_else(|_| std::process::abort())
+    }
 
     #[derive(Debug, Error)]
     enum AllocationBenchError {
@@ -77,7 +81,7 @@ mod allocation_contracts {
         dt: BenchTriangulation<D>,
         simplex_key: SimplexKey,
         facet_vertices: [VertexKey; D],
-        query: Point<f64, D>,
+        query: Point<D>,
         simplex_count: usize,
         vertex_count: usize,
     }
@@ -96,10 +100,17 @@ mod allocation_contracts {
         )
     }
 
-    fn canary_vertices<const D: usize>(count: usize, seed: u64) -> Vec<Vertex<f64, (), D>> {
-        let points =
-            generate_random_points_in_range_seeded::<f64, D>(count, benchmark_bounds(), seed);
-        points.into_iter().map(|point| vertex!(point)).collect()
+    fn canary_vertices<const D: usize>(count: usize, seed: u64) -> Vec<Vertex<(), D>> {
+        let points = generate_random_points_in_range_seeded::<D>(count, benchmark_bounds(), seed);
+        points
+            .into_iter()
+            .map(|point| {
+                bench_result(
+                    delaunay::prelude::Vertex::<(), _>::try_new(point.into()),
+                    "finite benchmark vertex coordinates",
+                )
+            })
+            .collect()
     }
 
     fn first_simplex_key<const D: usize>(
@@ -114,7 +125,7 @@ mod allocation_contracts {
     fn simplex_points<const D: usize>(
         dt: &BenchTriangulation<D>,
         simplex_key: SimplexKey,
-    ) -> Result<Vec<Point<f64, D>>, AllocationBenchError> {
+    ) -> Result<Vec<Point<D>>, AllocationBenchError> {
         let tds = dt.tds();
 
         tds.simplex_vertices(simplex_key)?
@@ -176,7 +187,7 @@ mod allocation_contracts {
     fn simplex_barycenter<const D: usize>(
         dt: &BenchTriangulation<D>,
         simplex_key: SimplexKey,
-    ) -> Result<Point<f64, D>, AllocationBenchError> {
+    ) -> Result<Point<D>, AllocationBenchError> {
         let points = simplex_points(dt, simplex_key)?;
         let mut coords = [0.0_f64; D];
         for point in &points {
@@ -194,7 +205,7 @@ mod allocation_contracts {
             *coord *= inv_vertex_count;
         }
 
-        Ok(Point::new(coords))
+        Ok(finite_point(coords))
     }
 
     fn prepare_fixture<const D: usize>(count: usize, seed: u64) -> DimensionFixture<D> {

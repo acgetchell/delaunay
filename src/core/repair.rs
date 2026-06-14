@@ -1,7 +1,7 @@
 //! Local topology repair for generic triangulations.
 //!
 //! This module owns local facet issue detection/repair, stale incident-simplex
-//! repair, and vertex-removal cavity retriangulation for [`Triangulation`](crate::core::triangulation::Triangulation).
+//! repair, and vertex-removal cavity retriangulation for [`Triangulation`](crate::prelude::triangulation::Triangulation).
 
 use crate::core::algorithms::incremental_insertion::{
     CavityFillingError, CavityRepairStage, InsertionError, external_facets_for_boundary,
@@ -20,9 +20,6 @@ use crate::core::triangulation::Triangulation;
 use crate::core::validation::{TriangulationValidationError, insertion_error_to_invariant_error};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::quality::{QualityError, QualitySimplexVerticesError, radius_ratio};
-use crate::geometry::util::safe_scalar_to_f64;
-use core::ops::Div;
-use num_traits::NumCast;
 use std::env;
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
@@ -98,7 +95,7 @@ pub(crate) struct LocalFacetRepairOutcome {
 
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
 where
-    K: Kernel<D>,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -243,8 +240,7 @@ where
 
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
 where
-    K: Kernel<D>,
-    K::Scalar: NumCast,
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -874,7 +870,6 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
-    /// use delaunay::prelude::triangulation::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -886,9 +881,9 @@ where
     /// # fn main() -> Result<(), ExampleError> {
     /// // A single simplex has no over-shared facets.
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
@@ -964,10 +959,7 @@ where
     fn simplices_for_local_facet_issue_repair(
         &self,
         issues: &FacetIssuesMap,
-    ) -> Result<SimplexKeyBuffer, TdsError>
-    where
-        K::Scalar: Div<Output = K::Scalar>,
-    {
+    ) -> Result<SimplexKeyBuffer, TdsError> {
         let mut simplices_to_remove = SimplexKeySet::default();
 
         // For each over-shared facet, select simplices to remove
@@ -987,19 +979,12 @@ where
                 // Propagate quality evaluation errors
                 let ratio = radius_ratio(self, simplex_key)
                     .map_err(|error| quality_error_to_tds_error(simplex_key, error))?;
-                let ratio_f64 =
-                    safe_scalar_to_f64(ratio).map_err(|_| TdsError::InconsistentDataStructure {
-                        message: format!(
-                            "Quality ratio conversion failed for simplex {simplex_key:?}"
-                        ),
-                    })?;
-
-                if ratio_f64.is_finite() {
-                    simplex_qualities.push((simplex_key, ratio_f64, uuid));
+                if ratio.is_finite() {
+                    simplex_qualities.push((simplex_key, ratio, uuid));
                 } else {
                     return Err(TdsError::InconsistentDataStructure {
                         message: format!(
-                            "Non-finite quality ratio {ratio_f64} for simplex {simplex_key:?}"
+                            "Non-finite quality ratio {ratio} for simplex {simplex_key:?}"
                         ),
                     });
                 }
@@ -1077,10 +1062,7 @@ where
         &mut self,
         issues: &FacetIssuesMap,
         max_simplices_removed: usize,
-    ) -> Result<LocalFacetRepairOutcome, InsertionError>
-    where
-        K::Scalar: Div<Output = K::Scalar>,
-    {
+    ) -> Result<LocalFacetRepairOutcome, InsertionError> {
         let to_remove = self
             .simplices_for_local_facet_issue_repair(issues)
             .map_err(InsertionError::TopologyValidation)?;
@@ -1149,7 +1131,7 @@ where
     ///     DelaunayTriangulation, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
     /// };
     /// use delaunay::prelude::insertion::InsertionError;
-    /// use delaunay::prelude::triangulation::{FacetIssuesMap, vertex};
+    /// use delaunay::prelude::triangulation::{FacetIssuesMap};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1161,9 +1143,9 @@ where
     /// # fn main() -> Result<(), ExampleError> {
     /// // Start with a valid 2D simplex.
     /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 2> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1183,10 +1165,7 @@ where
         &mut self,
         issues: &FacetIssuesMap,
         max_simplices_removed: usize,
-    ) -> Result<usize, InsertionError>
-    where
-        K::Scalar: Div<Output = K::Scalar>,
-    {
+    ) -> Result<usize, InsertionError> {
         let tds_snapshot = self.tds.clone_for_rollback();
         let repair_result = (|| -> Result<usize, InsertionError> {
             let outcome =
@@ -1226,7 +1205,6 @@ mod tests {
     use crate::core::tds::Tds;
     use crate::core::vertex::Vertex;
     use crate::geometry::kernel::FastKernel;
-    use crate::vertex;
     use std::assert_matches;
 
     use slotmap::KeyData;
@@ -1243,24 +1221,34 @@ mod tests {
 
         let v0 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v1 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v2 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            )
             .unwrap();
         let v3 = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            )
             .unwrap();
 
         let ck = tri
             .tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2, v3], None).unwrap(),
+            )
             .unwrap();
 
         for vk in [v0, v1, v2, v3] {
@@ -1283,25 +1271,47 @@ mod tests {
         VertexKey,
         VertexKey,
     ) {
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let mut tds: Tds<(), (), 2> = Tds::empty();
 
-        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let v_d = tds
-            .insert_vertex_with_mapping(vertex!([0.0, -1.0]))
+        let v_a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
             .unwrap();
-        let v_e = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+        let v_b = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v_c = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
+        let v_d = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, -1.0]).unwrap(),
+            )
+            .unwrap();
+        let v_e = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            )
+            .unwrap();
 
         let c1 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_c], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v_a, v_b, v_c], None).unwrap(),
+            )
             .unwrap();
         let c2 = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_d], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v_a, v_b, v_d], None).unwrap(),
+            )
             .unwrap();
         let c3 = tds
             .insert_simplex_bypassing_topology_checks_for_test(
-                Simplex::new(vec![v_a, v_b, v_e], None).unwrap(),
+                Simplex::try_new_with_data(vec![v_a, v_b, v_e], None).unwrap(),
             )
             .unwrap();
 
@@ -1331,8 +1341,8 @@ mod tests {
             pastey::paste! {
                 #[test]
                 fn [<test_detect_local_facet_issues_ $dim d>]() {
-                    let vertices: Vec<Vertex<f64, (), $dim>> = vec![
-                        $(vertex!($simplex_coords)),+
+                    let vertices: Vec<Vertex<(), $dim>> = vec![
+                        $(crate::core::vertex::Vertex::<(), _>::try_new($simplex_coords).unwrap()),+
                     ];
 
                     let tds = Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices)
@@ -1368,8 +1378,8 @@ mod tests {
 
                 #[test]
                 fn [<test_repair_local_facet_issues_ $dim d>]() {
-                    let vertices: Vec<Vertex<f64, (), $dim>> = vec![
-                        $(vertex!($simplex_coords)),+
+                    let vertices: Vec<Vertex<(), $dim>> = vec![
+                        $(crate::core::vertex::Vertex::<(), _>::try_new($simplex_coords).unwrap()),+
                     ];
 
                     let tds = Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices)
@@ -1396,9 +1406,9 @@ mod tests {
                 #[test]
                 fn [<test_remove_vertex_neighbor_pointers_ $dim d>]() {
                     // Build triangulation with D+1 simplex vertices + 1 interior point
-                    let vertices: Vec<Vertex<f64, (), $dim>> = {
-                        let mut v = vec![$(vertex!($simplex_coords)),+];
-                        v.push(vertex!($interior_point));
+                    let vertices: Vec<Vertex<(), $dim>> = {
+                        let mut v = vec![$(crate::core::vertex::Vertex::<(), _>::try_new($simplex_coords).unwrap()),+];
+                        v.push(crate::core::vertex::Vertex::<(), _>::try_new($interior_point).unwrap());
                         v
                     };
 
@@ -1615,7 +1625,9 @@ mod tests {
         // Insert a vertex that is NOT referenced by any simplex.
         let iso = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([0.5, 0.5, 0.5]))
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
+            )
             .unwrap();
 
         let result = tri.repair_stale_incident_simplices();
@@ -1641,10 +1653,10 @@ mod tests {
     #[test]
     fn test_detect_local_facet_issues_none_for_valid_triangulation() {
         let vertices = [
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-            vertex!([1.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -1880,10 +1892,10 @@ mod tests {
     fn test_remove_vertex_retriangulates_cavity_2d() {
         // Build 2D triangulation with 4 vertices, remove one, verify valid.
         let vertices = [
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-            vertex!([0.5, 0.5]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -1909,9 +1921,9 @@ mod tests {
         // When we remove a vertex from a single-simplex triangulation,
         // the empty boundary case triggers Tds::remove_vertex fallback.
         let vertices = [
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -1963,10 +1975,10 @@ mod tests {
         // Build 2D triangulation with enough simplices to have interior facets,
         // then artificially create an over-shared facet by duplicating a simplex.
         let vertices = [
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-            vertex!([1.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
@@ -1975,7 +1987,7 @@ mod tests {
         // Add a duplicate simplex with the same vertices as an existing simplex.
         let (_, existing_simplex) = tri.tds.simplices().next().unwrap();
         let vkeys: Vec<_> = existing_simplex.vertices().to_vec();
-        let dup_simplex = Simplex::new(vkeys, None).unwrap();
+        let dup_simplex = Simplex::try_new_with_data(vkeys, None).unwrap();
         let _ = tri
             .tds
             .insert_simplex_bypassing_topology_checks_for_test(dup_simplex)
@@ -2001,11 +2013,7 @@ mod tests {
     }
 
     /// Return the facet index opposite the vertex not on the tested shared edge.
-    fn shared_edge_facet_index(
-        simplex: &Simplex<f64, (), (), 2>,
-        v_a: VertexKey,
-        v_b: VertexKey,
-    ) -> usize {
+    fn shared_edge_facet_index(simplex: &Simplex<(), 2>, v_a: VertexKey, v_b: VertexKey) -> usize {
         simplex
             .vertices()
             .iter()

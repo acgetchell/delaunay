@@ -6,7 +6,6 @@ use crate::core::collections::VertexUuidBuffer;
 use crate::core::facet::{FacetError, FacetView};
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
-use crate::geometry::traits::coordinate::CoordinateScalar;
 
 /// Determines if two facet views are adjacent by comparing their vertices.
 ///
@@ -36,11 +35,11 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 /// use delaunay::prelude::tds::Tds;
 ///
 /// // This is a conceptual example - in practice you would get these from a real TDS
-/// fn example(tds: &Tds<f64, (), (), 3>) -> Result<bool, FacetError> {
+/// fn example(tds: &Tds<(), (), 3>) -> Result<bool, FacetError> {
 ///     let simplex_keys: Vec<_> = tds.simplex_keys().take(2).collect();
 ///     if simplex_keys.len() >= 2 {
-///         let facet1 = FacetView::new(tds, simplex_keys[0], 0)?;
-///         let facet2 = FacetView::new(tds, simplex_keys[1], 0)?;
+///         let facet1 = FacetView::try_new(tds, simplex_keys[0], 0)?;
+///         let facet2 = FacetView::try_new(tds, simplex_keys[1], 0)?;
 ///
 ///         let adjacent = facet_views_are_adjacent(&facet1, &facet2)?;
 ///         match adjacent {
@@ -53,12 +52,11 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 ///     }
 /// }
 /// ```
-pub fn facet_views_are_adjacent<T, U, V, const D: usize>(
-    facet1: &FacetView<'_, T, U, V, D>,
-    facet2: &FacetView<'_, T, U, V, D>,
+pub fn facet_views_are_adjacent<U, V, const D: usize>(
+    facet1: &FacetView<'_, U, V, D>,
+    facet2: &FacetView<'_, U, V, D>,
 ) -> Result<bool, FacetError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -70,11 +68,10 @@ where
 
 /// Canonicalizes facet vertex UUIDs so facet comparison stays allocation-light
 /// while remaining independent of local vertex order.
-fn sorted_facet_vertex_uuids<T, U, V, const D: usize>(
-    facet: &FacetView<'_, T, U, V, D>,
+fn sorted_facet_vertex_uuids<U, V, const D: usize>(
+    facet: &FacetView<'_, U, V, D>,
 ) -> Result<VertexUuidBuffer, FacetError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -119,10 +116,10 @@ where
 /// }
 ///
 /// fn extract_vertices_example(
-///     tds: &Tds<f64, (), (), 3>,
+///     tds: &Tds<(), (), 3>,
 /// ) -> Result<(), ExampleError> {
 ///     let simplex_key = tds.simplex_keys().next().ok_or(ExampleError::MissingSimplex)?;
-///     let facet_view = FacetView::new(tds, simplex_key, 0)?;
+///     let facet_view = FacetView::try_new(tds, simplex_key, 0)?;
 ///     
 ///     // Extract owned vertices
 ///     let vertices = facet_view_to_vertices(&facet_view)?;
@@ -136,11 +133,10 @@ where
 /// - Time Complexity: O(D) where D is the dimension (number of vertices in facet)
 /// - Space Complexity: O(D) for the returned vector
 /// - Uses `Copy` semantics so this is as efficient as possible for owned vertices
-pub fn facet_view_to_vertices<T, U, V, const D: usize>(
-    facet_view: &FacetView<'_, T, U, V, D>,
-) -> Result<Vec<Vertex<T, U, D>>, FacetError>
+pub fn facet_view_to_vertices<U, V, const D: usize>(
+    facet_view: &FacetView<'_, U, V, D>,
+) -> Result<Vec<Vertex<U, D>>, FacetError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -158,12 +154,11 @@ where
 /// * `k` - The size of each combination.
 ///
 #[cfg(test)]
-fn generate_combinations<T, U, const D: usize>(
-    vertices: &[Vertex<T, U, D>],
+fn generate_combinations<U, const D: usize>(
+    vertices: &[Vertex<U, D>],
     k: usize,
-) -> Vec<Vec<Vertex<T, U, D>>>
+) -> Vec<Vec<Vertex<U, D>>>
 where
-    T: CoordinateScalar,
     U: DataType,
 {
     let mut combinations = Vec::new();
@@ -216,17 +211,16 @@ mod tests {
 
     use crate::core::collections::FastHashSet;
     use crate::triangulation::DelaunayTriangulation;
-    use crate::vertex;
     use std::time::Instant;
 
     #[test]
     fn test_generate_combinations_comprehensive() {
         // Test basic functionality with 4 vertices
-        let vertices: Vec<Vertex<f64, (), 1>> = vec![
-            vertex!([0.0]),
-            vertex!([1.0]),
-            vertex!([2.0]),
-            vertex!([3.0]),
+        let vertices: Vec<Vertex<(), 1>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([2.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([3.0]).unwrap(),
         ];
 
         // Combinations of 2 from 4 - should be C(4,2) = 6
@@ -285,18 +279,21 @@ mod tests {
         );
 
         // Test with different size - 3 vertices, choose 2
-        let small_vertices: Vec<Vertex<f64, (), 1>> =
-            vec![vertex!([1.0]), vertex!([2.0]), vertex!([3.0])];
+        let small_vertices: Vec<Vertex<(), 1>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([2.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([3.0]).unwrap(),
+        ];
         let combinations_small = generate_combinations(&small_vertices, 2);
         assert_eq!(combinations_small.len(), 3, "C(3,2) should equal 3");
 
         // Test larger case - 5 vertices, choose 3 to exercise inner loops
-        let large_vertices: Vec<Vertex<f64, (), 1>> = vec![
-            vertex!([1.0]),
-            vertex!([2.0]),
-            vertex!([3.0]),
-            vertex!([4.0]),
-            vertex!([5.0]),
+        let large_vertices: Vec<Vertex<(), 1>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([2.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([3.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([4.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([5.0]).unwrap(),
         ];
         let combinations_large = generate_combinations(&large_vertices, 3);
         assert_eq!(combinations_large.len(), 10, "C(5,3) should equal 10");
@@ -320,7 +317,7 @@ mod tests {
         );
 
         // Test empty input edge cases
-        let empty_vertices: Vec<Vertex<f64, (), 1>> = vec![];
+        let empty_vertices: Vec<Vertex<(), 1>> = vec![];
         let combinations_empty_k1 = generate_combinations(&empty_vertices, 1);
         assert!(
             combinations_empty_k1.is_empty(),
@@ -346,13 +343,13 @@ mod tests {
 
         // Create two tetrahedra that share 3 vertices (forming a shared triangular face)
         let shared_vertices = vec![
-            vertex!([0.0, 0.0, 0.0]), // v0
-            vertex!([1.0, 0.0, 0.0]), // v1
-            vertex!([0.5, 1.0, 0.0]), // v2
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(), // v0
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(), // v1
+            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 1.0, 0.0]).unwrap(), // v2
         ];
 
-        let vertex_a = vertex!([0.5, 0.5, 1.0]); // Above the shared triangle
-        let vertex_b = vertex!([0.5, 0.5, -1.0]); // Below the shared triangle
+        let vertex_a = crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 1.0]).unwrap(); // Above the shared triangle
+        let vertex_b = crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, -1.0]).unwrap(); // Below the shared triangle
 
         // Tetrahedron 1: shared triangle + vertex_a
         let mut vertices1 = shared_vertices.clone();
@@ -377,8 +374,8 @@ mod tests {
 
         for facet_idx1 in 0..4 {
             for facet_idx2 in 0..4 {
-                let fv1 = FacetView::new(tds1, simplex1_key, facet_idx1).unwrap();
-                let fv2 = FacetView::new(tds2, simplex2_key, facet_idx2).unwrap();
+                let fv1 = FacetView::try_new(tds1, simplex1_key, facet_idx1).unwrap();
+                let fv2 = FacetView::try_new(tds2, simplex2_key, facet_idx2).unwrap();
                 if facet_views_are_adjacent(&fv1, &fv2).unwrap() {
                     found_adjacent = true;
                     facet_view1_adj = Some(fv1);
@@ -403,8 +400,8 @@ mod tests {
         let mut found_non_adjacent = false;
         for facet_idx1 in 0..4 {
             for facet_idx2 in 0..4 {
-                let fv1 = FacetView::new(tds1, simplex1_key, facet_idx1).unwrap();
-                let fv2 = FacetView::new(tds2, simplex2_key, facet_idx2).unwrap();
+                let fv1 = FacetView::try_new(tds1, simplex1_key, facet_idx1).unwrap();
+                let fv2 = FacetView::try_new(tds2, simplex2_key, facet_idx2).unwrap();
                 if !facet_views_are_adjacent(&fv1, &fv2).unwrap() {
                     found_non_adjacent = true;
                     break;
@@ -438,12 +435,12 @@ mod tests {
 
         // Create two 2D triangles that share an edge (2 vertices)
         let shared_edge = vec![
-            vertex!([0.0, 0.0]), // v0
-            vertex!([1.0, 0.0]), // v1
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(), // v0
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(), // v1
         ];
 
-        let vertex_c = vertex!([0.5, 1.0]); // Above the shared edge
-        let vertex_d = vertex!([0.5, -1.0]); // Below the shared edge
+        let vertex_c = crate::core::vertex::Vertex::<(), _>::try_new([0.5, 1.0]).unwrap(); // Above the shared edge
+        let vertex_d = crate::core::vertex::Vertex::<(), _>::try_new([0.5, -1.0]).unwrap(); // Below the shared edge
 
         // Triangle 1: shared edge + vertex_c
         let mut vertices1 = shared_edge.clone();
@@ -466,8 +463,8 @@ mod tests {
         let mut found_adjacent = false;
         for facet_idx1 in 0..3 {
             for facet_idx2 in 0..3 {
-                let facet_view1 = FacetView::new(tds1, simplex1_key, facet_idx1).unwrap();
-                let facet_view2 = FacetView::new(tds2, simplex2_key, facet_idx2).unwrap();
+                let facet_view1 = FacetView::try_new(tds1, simplex1_key, facet_idx1).unwrap();
+                let facet_view2 = FacetView::try_new(tds2, simplex2_key, facet_idx2).unwrap();
                 if facet_views_are_adjacent(&facet_view1, &facet_view2).unwrap() {
                     found_adjacent = true;
                     break;
@@ -493,9 +490,9 @@ mod tests {
         // In 1D, simplices are edges and facets are vertices (0D)
         // Two edges sharing a vertex have adjacent facets
 
-        let shared_vertex = vertex!([0.0]);
-        let vertex_left = vertex!([-1.0]);
-        let vertex_right = vertex!([1.0]);
+        let shared_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap();
+        let vertex_left = crate::core::vertex::Vertex::<(), _>::try_new([-1.0]).unwrap();
+        let vertex_right = crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap();
 
         // Edge 1: shared_vertex to vertex_left
         let vertices1 = vec![shared_vertex, vertex_left];
@@ -511,14 +508,14 @@ mod tests {
         let simplex2_key = tds2.simplex_keys().next().unwrap();
 
         // In 1D, the facets are the individual vertices (0D)
-        // Both edges contain the shared vertex, so find which facet pairs are adjacent
+        // Both edges contain the shared so find which facet pairs are adjacent
         let mut found_adjacent = false;
         let mut found_non_adjacent = false;
 
         for facet_idx1 in 0..2 {
             for facet_idx2 in 0..2 {
-                let fv1 = FacetView::new(tds1, simplex1_key, facet_idx1).unwrap();
-                let fv2 = FacetView::new(tds2, simplex2_key, facet_idx2).unwrap();
+                let fv1 = FacetView::try_new(tds1, simplex1_key, facet_idx1).unwrap();
+                let fv2 = FacetView::try_new(tds2, simplex2_key, facet_idx2).unwrap();
                 if facet_views_are_adjacent(&fv1, &fv2).unwrap() {
                     found_adjacent = true;
                 } else {
@@ -548,10 +545,10 @@ mod tests {
 
         // Test with minimal triangulation (single tetrahedron)
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
@@ -559,10 +556,10 @@ mod tests {
         let simplex_key = tds.simplex_keys().next().unwrap();
 
         // All facets of the same tetrahedron should be different from each other
-        let facet0 = FacetView::new(tds, simplex_key, 0).unwrap();
-        let facet1 = FacetView::new(tds, simplex_key, 1).unwrap();
-        let facet2 = FacetView::new(tds, simplex_key, 2).unwrap();
-        let facet3 = FacetView::new(tds, simplex_key, 3).unwrap();
+        let facet0 = FacetView::try_new(tds, simplex_key, 0).unwrap();
+        let facet1 = FacetView::try_new(tds, simplex_key, 1).unwrap();
+        let facet2 = FacetView::try_new(tds, simplex_key, 2).unwrap();
+        let facet3 = FacetView::try_new(tds, simplex_key, 3).unwrap();
 
         // Each facet should be adjacent to itself
         assert!(facet_views_are_adjacent(&facet0, &facet0).unwrap());
@@ -588,18 +585,18 @@ mod tests {
 
         // Create a moderately complex case to test performance
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([2.0, 0.0, 0.0]),
-            vertex!([1.0, 2.0, 0.0]),
-            vertex!([1.0, 1.0, 2.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 2.0]).unwrap(),
         ];
 
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let tds = &dt.as_triangulation().tds;
         let simplex_key = tds.simplex_keys().next().unwrap();
 
-        let facet1 = FacetView::new(tds, simplex_key, 0).unwrap();
-        let facet2 = FacetView::new(tds, simplex_key, 1).unwrap();
+        let facet1 = FacetView::try_new(tds, simplex_key, 0).unwrap();
+        let facet2 = FacetView::try_new(tds, simplex_key, 1).unwrap();
 
         // Run the adjacency check many times to measure performance
         let start = Instant::now();
@@ -627,17 +624,17 @@ mod tests {
 
         // Create vertices with different coordinates to ensure different UUIDs
         let vertices1 = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let vertices2 = vec![
-            vertex!([10.0, 10.0, 10.0]),
-            vertex!([11.0, 10.0, 10.0]),
-            vertex!([10.0, 11.0, 10.0]),
-            vertex!([10.0, 10.0, 11.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([10.0, 10.0, 10.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([11.0, 10.0, 10.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([10.0, 11.0, 10.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([10.0, 10.0, 11.0]).unwrap(),
         ];
 
         let dt1 = DelaunayTriangulation::new(&vertices1).unwrap();
@@ -648,8 +645,8 @@ mod tests {
         let simplex1_key = tds1.simplex_keys().next().unwrap();
         let simplex2_key = tds2.simplex_keys().next().unwrap();
 
-        let facet1 = FacetView::new(tds1, simplex1_key, 0).unwrap();
-        let facet2 = FacetView::new(tds2, simplex2_key, 0).unwrap();
+        let facet1 = FacetView::try_new(tds1, simplex1_key, 0).unwrap();
+        let facet2 = FacetView::try_new(tds2, simplex2_key, 0).unwrap();
 
         // Facets from completely different geometries should not be adjacent
         assert!(
@@ -666,10 +663,10 @@ mod tests {
 
         // Create identical geometry in separate TDS instances
         let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let dt1 = DelaunayTriangulation::new(&vertices).unwrap();
@@ -680,8 +677,8 @@ mod tests {
         let simplex1_key = tds1.simplex_keys().next().unwrap();
         let simplex2_key = tds2.simplex_keys().next().unwrap();
 
-        let facet1 = FacetView::new(tds1, simplex1_key, 0).unwrap();
-        let facet2 = FacetView::new(tds2, simplex2_key, 0).unwrap();
+        let facet1 = FacetView::try_new(tds1, simplex1_key, 0).unwrap();
+        let facet2 = FacetView::try_new(tds2, simplex2_key, 0).unwrap();
 
         // Check if the UUID generation is deterministic based on coordinates
         let facet1_vertex_uuids: FastHashSet<_> = facet1
@@ -727,14 +724,16 @@ mod tests {
 
         // Create two 4D simplices (5-vertices each) that share a 3D facet (4 vertices)
         let shared_tetrahedron = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0]), // v0
-            vertex!([1.0, 0.0, 0.0, 0.0]), // v1
-            vertex!([0.0, 1.0, 0.0, 0.0]), // v2
-            vertex!([0.0, 0.0, 1.0, 0.0]), // v3
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(), // v0
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(), // v1
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(), // v2
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(), // v3
         ];
 
-        let vertex_e = vertex!([0.25, 0.25, 0.25, 1.0]); // Above in 4th dimension
-        let vertex_f = vertex!([0.25, 0.25, 0.25, -1.0]); // Below in 4th dimension
+        let vertex_e =
+            crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.25, 0.25, 1.0]).unwrap(); // Above in 4th dimension
+        let vertex_f =
+            crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.25, 0.25, -1.0]).unwrap(); // Below in 4th dimension
 
         // 4D Simplex 1: shared tetrahedron + vertex_e
         let mut vertices1 = shared_tetrahedron.clone();
@@ -758,8 +757,8 @@ mod tests {
 
         for facet_idx1 in 0..5 {
             for facet_idx2 in 0..5 {
-                let fv1 = FacetView::new(tds1, simplex1_key, facet_idx1).unwrap();
-                let fv2 = FacetView::new(tds2, simplex2_key, facet_idx2).unwrap();
+                let fv1 = FacetView::try_new(tds1, simplex1_key, facet_idx1).unwrap();
+                let fv2 = FacetView::try_new(tds2, simplex2_key, facet_idx2).unwrap();
                 if facet_views_are_adjacent(&fv1, &fv2).unwrap() {
                     found_adjacent = true;
                 } else {
@@ -787,15 +786,17 @@ mod tests {
 
         // Create two 5D simplices (6-vertices each) that share a 4D facet (5 vertices)
         let shared_4d_simplex = vec![
-            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]), // v0
-            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]), // v1
-            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]), // v2
-            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]), // v3
-            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]), // v4
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(), // v0
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(), // v1
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(), // v2
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(), // v3
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(), // v4
         ];
 
-        let vertex_g = vertex!([0.2, 0.2, 0.2, 0.2, 1.0]); // Above in 5th dimension
-        let vertex_h = vertex!([0.2, 0.2, 0.2, 0.2, -1.0]); // Below in 5th dimension
+        let vertex_g =
+            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2, 1.0]).unwrap(); // Above in 5th dimension
+        let vertex_h =
+            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2, -1.0]).unwrap(); // Below in 5th dimension
 
         // 5D Simplex 1: shared 4D simplex + vertex_g
         let mut vertices1 = shared_4d_simplex.clone();
@@ -819,8 +820,8 @@ mod tests {
 
         for facet_idx1 in 0..6 {
             for facet_idx2 in 0..6 {
-                let fv1 = FacetView::new(tds1, simplex1_key, facet_idx1).unwrap();
-                let fv2 = FacetView::new(tds2, simplex2_key, facet_idx2).unwrap();
+                let fv1 = FacetView::try_new(tds1, simplex1_key, facet_idx1).unwrap();
+                let fv2 = FacetView::try_new(tds2, simplex2_key, facet_idx2).unwrap();
                 if facet_views_are_adjacent(&fv1, &fv2).unwrap() {
                     found_adjacent = true;
                 } else {

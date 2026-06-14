@@ -71,6 +71,291 @@ pub fn public_panic_bypass() {
     panic!("public APIs should return typed errors instead");
 }
 
+// ruleid: delaunay.rust.no-legacy-coordinate-generic-api
+type LegacyPoint = Point<f64, 3>;
+
+// ok: delaunay.rust.no-legacy-coordinate-generic-api
+type CurrentPoint = Point<3>;
+
+// ruleid: delaunay.rust.no-legacy-coordinate-generic-api
+type LegacyVertex = Vertex<f64, (), 3>;
+
+// ok: delaunay.rust.no-legacy-coordinate-generic-api
+type CurrentVertex = Vertex<(), 3>;
+
+// ok: delaunay.rust.no-legacy-coordinate-generic-api
+type TuplePayloadVertex = Vertex<(i32, i32), 2>;
+
+// ruleid: delaunay.rust.no-legacy-coordinate-generic-api
+type LegacyTds = Tds<f64, (), (), 3>;
+
+// ok: delaunay.rust.no-legacy-coordinate-generic-api
+type CurrentTds = Tds<(), (), 3>;
+
+// ruleid: delaunay.rust.no-legacy-coordinate-generic-api
+type LegacyConvexHull = ConvexHull<AdaptiveKernel<f64>, (), (), 3>;
+
+// ok: delaunay.rust.no-legacy-coordinate-generic-api
+type CurrentConvexHull = ConvexHull<(), (), 3>;
+
+// ruleid: delaunay.rust.no-legacy-coordinate-generic-api
+type LegacyConvexHull3D = ConvexHull3D<AdaptiveKernel<f64>, (), ()>;
+
+// ok: delaunay.rust.no-legacy-coordinate-generic-api
+type CurrentConvexHull3D = ConvexHull3D<(), ()>;
+
+// ruleid: delaunay.rust.no-legacy-coordinate-generic-api
+type LegacyBuilder<'v> = DelaunayTriangulationBuilder<'v, f64, (), 3>;
+
+// ok: delaunay.rust.no-legacy-coordinate-generic-api
+type CurrentBuilder<'v> = DelaunayTriangulationBuilder<'v, (), 3>;
+
+pub fn legacy_point_constructor() {
+    // ruleid: delaunay.rust.no-legacy-coordinate-generic-api
+    let _point = Point::new([1.0, 2.0, 3.0]);
+}
+
+pub fn current_point_constructor() {
+    // ok: delaunay.rust.no-legacy-coordinate-generic-api
+    let _point = Point::try_new([1.0, 2.0, 3.0]);
+}
+
+// ruleid: delaunay.rust.no-raw-point-coordinate-storage
+pub struct Point<const D: usize> {
+    coords: [f64; D],
+}
+
+// ok: delaunay.rust.no-raw-point-coordinate-storage
+pub struct StrongPoint<const D: usize> {
+    coords: ValidatedCoordinates<D>,
+}
+
+// ruleid: delaunay.rust.no-coordinate-scalar-trait
+pub trait CoordinateScalar: Copy {}
+
+// ok: delaunay.rust.no-coordinate-scalar-trait
+pub struct ValidatedCoordinates<const D: usize> {
+    values: [f64; D],
+}
+
+pub fn vertex_macro_bad() {
+    // ruleid: delaunay.rust.no-vertex-macro
+    let _vertex = vertex![1.0, 2.0, 3.0];
+}
+
+pub fn vertex_try_new_ok() {
+    // ok: delaunay.rust.no-vertex-macro
+    let _vertex = Vertex::<(), 3>::try_new([1.0, 2.0, 3.0]);
+}
+
+pub fn vertex_empty_bad() {
+    // ruleid: delaunay.rust.no-vertex-empty-constructor
+    let _vertex = Vertex::<(), 3>::empty();
+}
+
+pub fn vertex_try_new_replaces_empty_ok() {
+    // ok: delaunay.rust.no-vertex-empty-constructor
+    let _vertex = Vertex::<(), 3>::try_new([0.0, 0.0, 0.0]);
+}
+
+pub fn deserialize_simplex_vertex_keys_bad<M>(mut map: M)
+where
+    M: MapAccess<'static>,
+{
+    // ruleid: delaunay.rust.no-slotmap-key-topology-deserialization
+    let _vertices = map.next_value::<Vec<VertexKey>>();
+}
+
+pub fn deserialize_simplex_vertex_key_buffer_bad<M>(mut map: M)
+where
+    M: MapAccess<'static>,
+{
+    // ruleid: delaunay.rust.no-slotmap-key-topology-deserialization
+    let _vertices = map.next_value::<SimplexVertexKeyBuffer>();
+}
+
+pub fn deserialize_simplex_neighbor_keys_bad<M>(mut map: M)
+where
+    M: MapAccess<'static>,
+{
+    // ruleid: delaunay.rust.no-slotmap-key-topology-deserialization
+    let _neighbors = map.next_value::<NeighborBuffer<Option<SimplexKey>>>();
+}
+
+pub fn deserialize_simplex_vertex_uuids_ok<M>(mut map: M)
+where
+    M: MapAccess<'static>,
+{
+    // ok: delaunay.rust.no-slotmap-key-topology-deserialization
+    let _vertices = map.next_value::<Vec<Uuid>>();
+}
+
+pub fn deserialize_simplex_neighbor_uuids_ok<M>(mut map: M)
+where
+    M: MapAccess<'static>,
+{
+    // ok: delaunay.rust.no-slotmap-key-topology-deserialization
+    let _neighbors = map.next_value::<Vec<Option<Uuid>>>();
+}
+
+pub fn serialize_simplex_vertex_keys_bad<S>(mut state: S)
+where
+    S: SerializeStruct,
+{
+    // ruleid: delaunay.rust.no-simplex-slotmap-key-serialization
+    let _ = state.serialize_field("vertices", &self.vertex_keys);
+}
+
+pub fn serialize_simplex_neighbors_bad<S>(mut state: S)
+where
+    S: SerializeStruct,
+{
+    // ruleid: delaunay.rust.no-simplex-slotmap-key-serialization
+    let _ = state.serialize_field("neighbors", &self.neighbors);
+}
+
+pub fn serialize_simplex_uuid_ok<S>(mut state: S)
+where
+    S: SerializeStruct,
+{
+    // ok: delaunay.rust.no-simplex-slotmap-key-serialization
+    let _ = state.serialize_field("uuid", &self.uuid);
+}
+
+pub fn serialize_tds_uuid_relationships_ok<S>(mut state: S)
+where
+    S: SerializeStruct,
+{
+    // ok: delaunay.rust.no-simplex-slotmap-key-serialization
+    let _ = state.serialize_field("simplex_vertices", &simplex_vertices);
+}
+
+pub fn serialize_tds_vertices_storage_bad<S>(mut state: S, tds: TdsFixture)
+where
+    S: SerializeStruct,
+{
+    // ruleid: delaunay.rust.no-tds-storage-map-serde
+    let _ = state.serialize_field("vertices", &tds.vertices);
+}
+
+pub fn serialize_tds_simplices_storage_bad<S>(mut state: S, tds: TdsFixture)
+where
+    S: SerializeStruct,
+{
+    // ruleid: delaunay.rust.no-tds-storage-map-serde
+    let _ = state.serialize_field("simplices", &tds.simplices);
+}
+
+pub fn deserialize_tds_vertices_storage_bad() {
+    // ruleid: delaunay.rust.no-tds-storage-map-serde
+    let _vertices: Option<StorageMap<VertexKey, Vertex<(), 3>>> = None;
+}
+
+pub fn deserialize_tds_simplices_storage_bad() {
+    // ruleid: delaunay.rust.no-tds-storage-map-serde
+    let _simplices: Option<StorageMap<SimplexKey, SerializedSimplex<()>>> = None;
+}
+
+pub fn rebuild_tds_simplices_storage_bad(
+    // ruleid: delaunay.rust.no-tds-storage-map-serde
+    serialized_simplices: StorageMap<SimplexKey, SerializedSimplex<()>>,
+) {
+    let _ = serialized_simplices;
+}
+
+pub fn serialize_tds_uuid_records_ok<S>(mut state: S)
+where
+    S: SerializeStruct,
+{
+    let vertices: Vec<_> = self.vertices.values().collect();
+    let simplices: Vec<_> = self.simplices.values().collect();
+
+    // ok: delaunay.rust.no-tds-storage-map-serde
+    let _ = state.serialize_field("vertices", &vertices);
+    // ok: delaunay.rust.no-tds-storage-map-serde
+    let _ = state.serialize_field("simplices", &simplices);
+}
+
+pub fn simplex_new_constructor_bad(vertex_keys: Vec<VertexKey>) {
+    // ruleid: delaunay.rust.no-simplex-new-constructor
+    let _simplex = Simplex::new(vertex_keys, None);
+}
+
+pub fn simplex_try_new_constructor_ok(vertex_keys: Vec<VertexKey>) {
+    // ok: delaunay.rust.no-simplex-new-constructor
+    let _simplex = Simplex::try_new(vertex_keys);
+}
+
+pub fn simplex_try_new_with_data_constructor_ok(vertex_keys: Vec<VertexKey>) {
+    // ok: delaunay.rust.no-simplex-new-constructor
+    let _simplex = Simplex::try_new_with_data(vertex_keys, Some(()));
+}
+
+pub fn facet_new_constructors_bad<TdsType, SimplexKeyType>(
+    tds: &TdsType,
+    simplex_key: SimplexKeyType,
+    facet_map: FacetToSimplicesMap,
+) {
+    // ruleid: delaunay.rust.no-facet-new-constructors
+    let _facet = FacetView::new(tds, simplex_key, 0);
+    // ruleid: delaunay.rust.no-facet-new-constructors
+    let _all_facets = AllFacetsIter::new(tds);
+    // ruleid: delaunay.rust.no-facet-new-constructors
+    let _boundary_facets = BoundaryFacetsIter::new(tds, facet_map);
+}
+
+pub fn facet_try_new_constructors_ok<TdsType, SimplexKeyType>(
+    tds: &TdsType,
+    simplex_key: SimplexKeyType,
+    facet_map: FacetToSimplicesMap,
+) {
+    // ok: delaunay.rust.no-facet-new-constructors
+    let _facet = FacetView::try_new(tds, simplex_key, 0);
+    // ok: delaunay.rust.no-facet-new-constructors
+    let _all_facets = AllFacetsIter::try_new(tds);
+    // ok: delaunay.rust.no-facet-new-constructors
+    let _boundary_facets = BoundaryFacetsIter::try_new(tds, facet_map);
+}
+
+pub fn facet_handle_new_constructor_stays_ok(simplex_key: SimplexKey) {
+    // ok: delaunay.rust.no-facet-new-constructors
+    let _handle = FacetHandle::new(simplex_key, 0);
+}
+
+pub fn edgekey_new_constructor_bad(a: VertexKey, b: VertexKey) {
+    // ruleid: delaunay.rust.no-edgekey-new-constructor
+    let _edge = EdgeKey::new(a, b);
+}
+
+pub fn edgekey_try_new_constructor_ok(a: VertexKey, b: VertexKey) {
+    // ok: delaunay.rust.no-edgekey-new-constructor
+    let _edge = EdgeKey::try_new(a, b);
+}
+
+impl PublicVertexUuidConstructorFixture {
+    // ruleid: delaunay.rust.no-public-vertex-new-with-uuid
+    pub const fn new_with_uuid(point: Point<3>, uuid: Uuid, data: Option<()>) -> Self {
+        Self { point, uuid, data }
+    }
+}
+
+impl CratePrivateVertexUuidConstructorFixture {
+    // ok: delaunay.rust.no-public-vertex-new-with-uuid
+    pub(crate) const fn new_with_uuid(point: Point<3>, uuid: Uuid, data: Option<()>) -> Self {
+        Self { point, uuid, data }
+    }
+
+    // ok: delaunay.rust.no-public-vertex-new-with-uuid
+    pub fn try_new_with_uuid(
+        point: Point<3>,
+        uuid: Uuid,
+        data: Option<()>,
+    ) -> Result<Self, VertexValidationError> {
+        validate_uuid(&uuid)?;
+        Ok(Self { point, uuid, data })
+    }
+}
+
 fn private_documented_invariant(value: Option<u8>) -> u8 {
     // ok: delaunay.rust.no-production-unwrap-panic
     // ruleid: delaunay.rust.no-public-surface-unwrap-panic, delaunay.rust.no-unwrap-expect-in-benches-examples

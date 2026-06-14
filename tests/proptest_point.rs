@@ -6,7 +6,7 @@
 //! - Equality reflexivity, symmetry, and transitivity
 //! - Serialization/deserialization roundtrips
 //! - Coordinate extraction consistency
-//! - NaN handling determinism
+//! - Non-finite coordinate rejection and scalar special-value determinism
 
 use delaunay::prelude::geometry::*;
 use proptest::prelude::*;
@@ -25,23 +25,27 @@ fn finite_f64() -> impl Strategy<Value = f64> {
 }
 
 /// Strategy for generating 2D points with finite coordinates
-fn point_2d() -> impl Strategy<Value = Point<f64, 2>> {
-    prop::array::uniform2(finite_f64()).prop_map(Point::new)
+fn point_2d() -> impl Strategy<Value = Point<2>> {
+    prop::array::uniform2(finite_f64())
+        .prop_map(|coords| Point::try_new(coords).expect("finite point coordinates"))
 }
 
 /// Strategy for generating 3D points with finite coordinates
-fn point_3d() -> impl Strategy<Value = Point<f64, 3>> {
-    prop::array::uniform3(finite_f64()).prop_map(Point::new)
+fn point_3d() -> impl Strategy<Value = Point<3>> {
+    prop::array::uniform3(finite_f64())
+        .prop_map(|coords| Point::try_new(coords).expect("finite point coordinates"))
 }
 
 /// Strategy for generating 4D points with finite coordinates
-fn point_4d() -> impl Strategy<Value = Point<f64, 4>> {
-    prop::array::uniform4(finite_f64()).prop_map(Point::new)
+fn point_4d() -> impl Strategy<Value = Point<4>> {
+    prop::array::uniform4(finite_f64())
+        .prop_map(|coords| Point::try_new(coords).expect("finite point coordinates"))
 }
 
 /// Strategy for generating 5D points with finite coordinates
-fn point_5d() -> impl Strategy<Value = Point<f64, 5>> {
-    prop::array::uniform5(finite_f64()).prop_map(Point::new)
+fn point_5d() -> impl Strategy<Value = Point<5>> {
+    prop::array::uniform5(finite_f64())
+        .prop_map(|coords| Point::try_new(coords).expect("finite point coordinates"))
 }
 
 /// Helper function to compute hash of a point
@@ -60,8 +64,8 @@ macro_rules! gen_equal_points_equal_hashes {
             proptest! {
                 #[test]
                 fn [<prop_equal_points_equal_hashes_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
-                    let p1 = Point::new(coords);
-                    let p2 = Point::new(coords);
+                    let p1 = Point::try_new(coords).expect("finite point coordinates");
+                    let p2 = Point::try_new(coords).expect("finite point coordinates");
                     prop_assert_eq!(p1, p2);
                     prop_assert_eq!(hash_point(&p1), hash_point(&p2));
                 }
@@ -89,8 +93,8 @@ macro_rules! gen_equality_symmetric {
             proptest! {
                 #[test]
                 fn [<prop_equality_symmetric_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
-                    let p1 = Point::new(coords);
-                    let p2 = Point::new(coords);
+                    let p1 = Point::try_new(coords).expect("finite point coordinates");
+                    let p2 = Point::try_new(coords).expect("finite point coordinates");
                     prop_assert_eq!(p1, p2);
                     prop_assert_eq!(p2, p1);
                 }
@@ -105,9 +109,9 @@ macro_rules! gen_equality_transitive {
             proptest! {
                 #[test]
                 fn [<prop_equality_transitive_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
-                    let p1 = Point::new(coords);
-                    let p2 = Point::new(coords);
-                    let p3 = Point::new(coords);
+                    let p1 = Point::try_new(coords).expect("finite point coordinates");
+                    let p2 = Point::try_new(coords).expect("finite point coordinates");
+                    let p3 = Point::try_new(coords).expect("finite point coordinates");
                     prop_assert_eq!(p1, p2);
                     prop_assert_eq!(p2, p3);
                     prop_assert_eq!(p1, p3);
@@ -152,7 +156,7 @@ macro_rules! gen_coordinate_roundtrip {
             proptest! {
                 #[test]
                 fn [<prop_coordinate_roundtrip_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
-                    let point = Point::new(coords);
+                    let point = Point::try_new(coords).expect("finite point coordinates");
                     for (i, &coord) in coords.iter().enumerate() {
                         prop_assert!(approx::relative_eq!(point.coords()[i], coord, epsilon = 1e-10));
                     }
@@ -168,7 +172,7 @@ macro_rules! gen_into_conversion_matches_coords {
             proptest! {
                 #[test]
                 fn [<prop_into_conversion_matches_coords_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
-                    let point = Point::new(coords);
+                    let point = Point::try_new(coords).expect("finite point coordinates");
                     let extracted: [f64; $dim] = point.into();
                     for i in 0..$dim {
                         prop_assert!(approx::relative_eq!(extracted[i], point.coords()[i], epsilon = 1e-10));
@@ -186,7 +190,7 @@ macro_rules! gen_get_method_consistency {
             proptest! {
                 #[test]
                 fn [<prop_get_method_consistency_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
-                    let point = Point::new(coords);
+                    let point = Point::try_new(coords).expect("finite point coordinates");
                     for (i, &coord) in coords.iter().enumerate() {
                         prop_assert_eq!(point.get(i), Some(coord));
                     }
@@ -204,7 +208,7 @@ macro_rules! gen_finite_coordinates_validate {
             proptest! {
                 #[test]
                 fn [<prop_finite_coordinates_validate_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
-                    let point = Point::new(coords);
+                    let point = Point::try_new(coords).expect("finite point coordinates");
                     prop_assert!(point.validate().is_ok());
                 }
             }
@@ -220,12 +224,24 @@ macro_rules! gen_infinite_coordinates_fail_validation {
                 fn [<prop_infinite_coordinates_fail_validation_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
                     let mut arr = coords;
                     arr[0] = f64::INFINITY;
-                    let point = Point::new(arr);
-                    prop_assert!(point.validate().is_err());
+                    prop_assert_eq!(
+                        Point::<$dim>::try_new(arr),
+                        Err(CoordinateValidationError::InvalidCoordinate {
+                            coordinate_index: 0,
+                            coordinate_value: InvalidCoordinateValue::PositiveInfinity,
+                            dimension: $dim,
+                        })
+                    );
                     let mut arr2 = coords;
                     arr2[0] = f64::NEG_INFINITY;
-                    let point_neg = Point::new(arr2);
-                    prop_assert!(point_neg.validate().is_err());
+                    prop_assert_eq!(
+                        Point::<$dim>::try_new(arr2),
+                        Err(CoordinateValidationError::InvalidCoordinate {
+                            coordinate_index: 0,
+                            coordinate_value: InvalidCoordinateValue::NegativeInfinity,
+                            dimension: $dim,
+                        })
+                    );
                 }
             }
         }
@@ -240,8 +256,14 @@ macro_rules! gen_nan_coordinates_fail_validation {
                 fn [<prop_nan_coordinates_fail_validation_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
                     let mut arr = coords;
                     arr[0] = f64::NAN;
-                    let point = Point::new(arr);
-                    prop_assert!(point.validate().is_err());
+                    prop_assert_eq!(
+                        Point::<$dim>::try_new(arr),
+                        Err(CoordinateValidationError::InvalidCoordinate {
+                            coordinate_index: 0,
+                            coordinate_value: InvalidCoordinateValue::Nan,
+                            dimension: $dim,
+                        })
+                    );
                 }
             }
         }
@@ -254,8 +276,8 @@ macro_rules! gen_ordering_equal_consistency {
             proptest! {
                 #[test]
                 fn [<prop_ordering_consistent_with_equality_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
-                    let p1 = Point::new(coords);
-                    let p2 = Point::new(coords);
+                    let p1 = Point::try_new(coords).expect("finite point coordinates");
+                    let p2 = Point::try_new(coords).expect("finite point coordinates");
                     if p1 == p2 {
                         prop_assert_eq!(p1.partial_cmp(&p2), Some(std::cmp::Ordering::Equal));
                     }
@@ -306,19 +328,20 @@ macro_rules! gen_nan_handling_consistency {
                 fn [<prop_nan_handling_consistency_ $dim d>](finite_coord in finite_f64()) {
                     let mut arr = [finite_coord; $dim];
                     arr[0] = f64::NAN;
-                    let p = Point::new(arr);
-                    prop_assert_eq!(p, p);
-                    let h1 = hash_point(&p); let h2 = hash_point(&p);
-                    prop_assert_eq!(h1, h2);
+                    prop_assert!(Point::<$dim>::try_new(arr).is_err());
+                    prop_assert!(f64::NAN.ordered_eq(&f64::NAN));
+
+                    let mut hasher1 = FxHasher::default();
+                    let mut hasher2 = FxHasher::default();
+                    f64::NAN.hash_scalar(&mut hasher1);
+                    f64::NAN.hash_scalar(&mut hasher2);
+                    prop_assert_eq!(hasher1.finish(), hasher2.finish());
                 }
                 #[test]
                 fn [<prop_multiple_nan_points_equal_ $dim d>](finite_coord in finite_f64()) {
                     let mut arr = [finite_coord; $dim];
                     arr[0] = f64::NAN;
-                    let p1 = Point::new(arr);
-                    let p2 = Point::new(arr);
-                    prop_assert_eq!(p1, p2);
-                    prop_assert_eq!(hash_point(&p1), hash_point(&p2));
+                    prop_assert_eq!(Point::<$dim>::try_new(arr), Point::<$dim>::try_new(arr));
                 }
             }
         }

@@ -5,11 +5,9 @@
 
 #![forbid(unsafe_code)]
 
-use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::topology::traits::topological_space::{
     TopologicalSpace, TopologyKind, ToroidalDomain, ToroidalDomainError,
 };
-use num_traits::NumCast;
 
 /// Represents toroidal topological space with periodic boundaries.
 ///
@@ -145,25 +143,23 @@ impl<const D: usize> ToroidalSpace<D> {
     /// let space = ToroidalSpace::<2>::try_new([1.0, 2.0])?;
     ///
     /// // Positive out-of-range
-    /// assert_eq!(space.wrap_coord::<f64>(0, 1.7), Some(0.7));
+    /// assert_eq!(space.wrap_coord(0, 1.7), Some(0.7));
     ///
     /// // Negative wraps to positive
-    /// assert_eq!(space.wrap_coord::<f64>(1, -0.5), Some(1.5));
+    /// assert_eq!(space.wrap_coord(1, -0.5), Some(1.5));
     ///
     /// // Out-of-range axis returns None
-    /// assert_eq!(space.wrap_coord::<f64>(5, 0.3), None);
+    /// assert_eq!(space.wrap_coord(5, 0.3), None);
     /// # Ok(())
     /// # }
     /// ```
     #[must_use]
-    pub fn wrap_coord<T: CoordinateScalar>(&self, axis: usize, value: T) -> Option<T> {
+    pub fn wrap_coord(&self, axis: usize, value: f64) -> Option<f64> {
         let period = self.domain.period(axis)?;
-        let v_f64 = value.to_f64()?;
-        if !v_f64.is_finite() {
+        if !value.is_finite() {
             return None;
         }
-        let wrapped = v_f64.rem_euclid(period);
-        <T as NumCast>::from(wrapped)
+        Some(value.rem_euclid(period))
     }
 }
 
@@ -323,7 +319,7 @@ mod tests {
     #[test]
     fn test_wrap_coord_positive_out_of_range() {
         let space = ToroidalSpace::<2>::try_new([1.0, 2.0]).unwrap();
-        let wrapped = space.wrap_coord::<f64>(0, 1.7);
+        let wrapped = space.wrap_coord(0, 1.7);
         assert!(wrapped.is_some());
         assert_relative_eq!(wrapped.unwrap(), 0.7);
     }
@@ -332,7 +328,7 @@ mod tests {
     fn test_wrap_coord_negative() {
         let space = ToroidalSpace::<2>::try_new([1.0, 2.0]).unwrap();
         // -0.5 rem_euclid 2.0 = 1.5
-        let wrapped = space.wrap_coord::<f64>(1, -0.5);
+        let wrapped = space.wrap_coord(1, -0.5);
         assert!(wrapped.is_some());
         assert_relative_eq!(wrapped.unwrap(), 1.5);
     }
@@ -340,7 +336,7 @@ mod tests {
     #[test]
     fn test_wrap_coord_in_range_unchanged() {
         let space = ToroidalSpace::<2>::unit();
-        let wrapped = space.wrap_coord::<f64>(0, 0.3);
+        let wrapped = space.wrap_coord(0, 0.3);
         assert!(wrapped.is_some());
         assert_relative_eq!(wrapped.unwrap(), 0.3);
     }
@@ -349,7 +345,7 @@ mod tests {
     fn test_wrap_coord_boundary() {
         let space = ToroidalSpace::<2>::unit();
         // Exactly at period boundary wraps to 0
-        let wrapped = space.wrap_coord::<f64>(0, 1.0);
+        let wrapped = space.wrap_coord(0, 1.0);
         assert!(wrapped.is_some());
         assert_relative_eq!(wrapped.unwrap(), 0.0);
     }
@@ -357,13 +353,13 @@ mod tests {
     #[test]
     fn test_wrap_coord_out_of_range_axis() {
         let space = ToroidalSpace::<2>::unit();
-        assert!(space.wrap_coord::<f64>(5, 0.3).is_none());
+        assert!(space.wrap_coord(5, 0.3).is_none());
     }
 
     #[test]
     fn test_wrap_coord_f64() {
         let space = ToroidalSpace::<2>::unit();
-        let wrapped = space.wrap_coord::<f64>(0, 1.5);
+        let wrapped = space.wrap_coord(0, 1.5);
         assert!(wrapped.is_some());
         assert_relative_eq!(wrapped.unwrap(), 0.5, epsilon = 1e-12);
     }
@@ -371,8 +367,8 @@ mod tests {
     #[test]
     fn test_wrap_coord_non_finite() {
         let space = ToroidalSpace::<2>::unit();
-        assert!(space.wrap_coord::<f64>(0, f64::NAN).is_none());
-        assert!(space.wrap_coord::<f64>(0, f64::INFINITY).is_none());
+        assert!(space.wrap_coord(0, f64::NAN).is_none());
+        assert!(space.wrap_coord(0, f64::INFINITY).is_none());
     }
 
     #[test]
