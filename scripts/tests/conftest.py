@@ -21,7 +21,7 @@ if str(_scripts) not in sys.path:
 
 
 @pytest.fixture
-def temp_chdir() -> Callable[[os.PathLike | str], AbstractContextManager[None]]:
+def temp_chdir() -> Callable[[os.PathLike[str] | str], AbstractContextManager[None]]:
     """
     Pytest fixture for temporarily changing working directory.
 
@@ -37,7 +37,7 @@ def temp_chdir() -> Callable[[os.PathLike | str], AbstractContextManager[None]]:
     """
 
     @contextmanager
-    def _temp_chdir_context(path: os.PathLike | str) -> Iterator[None]:
+    def _temp_chdir_context(path: os.PathLike[str] | str) -> Iterator[None]:
         """Context manager for temporarily changing working directory."""
         original_cwd = Path.cwd()
         target = Path(path)

@@ -54,13 +54,15 @@ The useful updates ported in this pass are:
   which is still shared across the repositories.
 - CI command-runner, Markdown, and spelling tool pins now track the newer
   sibling-repository versions used by `causal-triangulations` and `la-stack`:
-  `just` 1.52.0, `rumdl` 0.2.14, and `typos-cli` 1.47.2. The `rumdl` bump keeps
+  `just` 1.52.0, `rumdl` 0.2.17, and `typos-cli` 1.47.2. The `rumdl` bump keeps
   Delaunay on the sibling repository's current Markdown linter release after
   local `just check` exposed the older 0.2.10 pin as stale.
-- uv-managed Python support-tool pins now match `causal-triangulations` exactly
-  for the shared dev tools: `ruff` 0.15.14, `semgrep` 1.164.0, and `ty` 0.0.40.
-  Delaunay previously used lower-bound specifiers for those tools, which allowed
-  local and CI environments to drift away from the reviewed sibling baseline.
+- uv-managed Python support-tool pins now use exact reviewed versions for the
+  shared dev tools: `ruff` 0.15.17, `semgrep` 1.166.0, and `ty` 0.0.49.
+  Semgrep is intentionally ahead of the older sibling baseline so its transitive
+  dependency graph stays on the current reviewed toolchain baseline. Delaunay
+  previously used lower-bound specifiers for those tools, which allowed local
+  and CI environments to drift away from that reviewed baseline.
 - Local just helpers now version-check the pinned `just`, `cargo-nextest`,
   `taplo-cli`, `dprint`, `rumdl`, `typos-cli`, and `zizmor` tools instead of
   accepting any installed version. Delaunay does not currently pin or invoke
