@@ -13,6 +13,9 @@
 //!   [Bowyer-Watson algorithm](https://en.wikipedia.org/wiki/Bowyer–Watson_algorithm)
 //! - **On-demand Creation**: Facets are generated dynamically as needed rather than stored persistently in the TDS
 //! - **Memory Efficient**: Stores only references and keys, accessing data on-demand from the TDS
+//! - **Runtime-local Identity**: Facet handles and views contain slotmap keys and are not durable
+//!   interchange identifiers. Serialize a full [`Tds`] snapshot when topology must cross an I/O
+//!   boundary.
 //!
 //! # Fundamental Invariant
 //!
@@ -226,6 +229,8 @@ pub enum FacetError {
 ///
 /// This provides a more readable and maintainable alternative to raw tuples throughout
 /// the codebase. Facet handles are used to reference facets without storing full vertex data.
+/// They are storage-local runtime handles: the embedded [`SimplexKey`] is regenerated when a
+/// [`Tds`] is hydrated from a snapshot and must not be persisted as durable topology identity.
 ///
 /// # Components
 ///
@@ -239,6 +244,11 @@ pub enum FacetError {
 /// - Facet visibility testing
 /// - Cavity computation in Bowyer-Watson algorithm
 /// - Any operation requiring lightweight facet references
+///
+/// Use [`FacetHandle::try_new`] for raw simplex-key/index inputs from callers, then
+/// [`FacetHandle::view`] when borrowed facet access is needed. The crate-internal `from_validated`
+/// constructor is reserved for code paths that have already proven the simplex key is live and the
+/// facet index is in range.
 ///
 /// # Example
 ///
@@ -271,7 +281,7 @@ pub enum FacetError {
 /// let handle = FacetHandle::try_new(dt.tds(), simplex_key, 0)?;
 ///
 /// // Use it to create a FacetView
-/// let facet = FacetView::try_new(dt.tds(), handle.simplex_key(), handle.facet_index())?;
+/// let facet = handle.view(dt.tds())?;
 /// # let _ = facet;
 /// # Ok(())
 /// # }
@@ -425,6 +435,55 @@ impl FacetHandle {
     pub const fn facet_index(&self) -> u8 {
         self.facet_index
     }
+
+    /// Creates a borrowed [`FacetView`] for this handle in a live TDS.
+    ///
+    /// The handle stores only runtime-local slotmap identity. This method rechecks that the
+    /// simplex key still resolves in `tds` and that the facet index is still in range before
+    /// returning a view with borrowed accessors.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FacetError::SimplexNotFoundInTriangulation`] if this handle's simplex key
+    /// is not present in `tds`, or [`FacetError::InvalidFacetIndex`] if this handle's facet
+    /// index is outside the simplex facet range.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::tds::FacetHandle;
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = [
+    ///     Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let Some((simplex_key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    /// let handle = FacetHandle::try_new(dt.tds(), simplex_key, 0)?;
+    /// let view = handle.view(dt.tds())?;
+    ///
+    /// assert_eq!(view.handle(), handle);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn view<U, V, const D: usize>(
+        self,
+        tds: &Tds<U, V, D>,
+    ) -> Result<FacetView<'_, U, V, D>, FacetError> {
+        FacetView::try_new(tds, self.simplex_key, self.facet_index)
+    }
 }
 
 // =============================================================================
@@ -439,6 +498,11 @@ impl FacetHandle {
 /// `FacetView` represents a facet (d-1 dimensional face) of a d-dimensional simplex
 /// without storing any data directly. Instead, it maintains references to the TDS
 /// and uses keys to access data on-demand.
+///
+/// Like [`FacetHandle`], this is a live view over one in-memory [`Tds`]. It is appropriate for
+/// traversal, validation, and local algorithms, but it is not a persistence format. A
+/// deserialized TDS receives fresh slotmap keys, so stored facet views or handles from another
+/// process or snapshot cannot be reused.
 ///
 /// # Memory Efficiency
 ///
@@ -516,6 +580,46 @@ impl<'tds, U, V, const D: usize> FacetView<'tds, U, V, D> {
     #[must_use]
     pub const fn tds(&self) -> &'tds Tds<U, V, D> {
         self.tds
+    }
+
+    /// Returns the copyable runtime handle represented by this view.
+    ///
+    /// This is infallible because a [`FacetView`] is constructed only after proving that the
+    /// simplex key and facet index are valid for the borrowed TDS.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::tds::FacetHandle;
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = [
+    ///     Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let Some((simplex_key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    /// let handle = FacetHandle::try_new(dt.tds(), simplex_key, 0)?;
+    /// let view = handle.view(dt.tds())?;
+    ///
+    /// assert_eq!(view.handle(), handle);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub const fn handle(&self) -> FacetHandle {
+        FacetHandle::from_validated(self.simplex_key, self.facet_index)
     }
 }
 
@@ -1464,6 +1568,36 @@ mod tests {
         let facet = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
         assert_eq!(facet.simplex_key(), simplex_key);
         assert_eq!(facet.facet_index(), 0);
+    }
+
+    #[test]
+    fn facet_handle_view_roundtrip() {
+        let vertices = vec![
+            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let simplex_key = dt.simplices().next().unwrap().0;
+
+        let handle = FacetHandle::try_new(dt.tds(), simplex_key, 1).unwrap();
+        let view = handle.view(dt.tds()).unwrap();
+
+        assert_eq!(view.simplex_key(), simplex_key);
+        assert_eq!(view.facet_index(), 1);
+        assert_eq!(view.handle(), handle);
+    }
+
+    #[test]
+    fn facet_handle_view_revalidates_against_tds() {
+        let tds: Tds<(), (), 3> = Tds::empty();
+        let handle = FacetHandle::from_validated(SimplexKey::default(), 0);
+
+        assert_matches!(
+            handle.view(&tds),
+            Err(FacetError::SimplexNotFoundInTriangulation)
+        );
     }
 
     #[test]

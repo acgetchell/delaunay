@@ -30,9 +30,9 @@ use super::{
 };
 use crate::core::{
     collections::{
-        FastHashMap, FastHashSet, NeighborBuffer, PeriodicOffsetBuffer, SimplexVertexUuidBuffer,
-        StorageMap, UuidToSimplexKeyMap, UuidToVertexKeyMap, fast_hash_map_with_capacity,
-        fast_hash_set_with_capacity,
+        Entry, FastHashMap, FastHashSet, NeighborBuffer, PeriodicOffsetBuffer,
+        SimplexVertexUuidBuffer, StorageMap, UuidToSimplexKeyMap, UuidToVertexKeyMap,
+        fast_hash_map_with_capacity, fast_hash_set_with_capacity,
     },
     simplex::{Simplex, SimplexValidationError},
     traits::{DataDeserialize, DataSerialize},
@@ -231,10 +231,105 @@ enum TdsSnapshotError {
 struct RawTdsSnapshot<U, V, const D: usize> {
     vertices: Vec<Vertex<U, D>>,
     simplices: Vec<RawSnapshotSimplex<V>>,
+    #[serde(deserialize_with = "deserialize_simplex_vertices_no_duplicates")]
     simplex_vertices: FastHashMap<Uuid, Vec<Uuid>>,
+    #[serde(deserialize_with = "deserialize_simplex_neighbors_no_duplicates")]
     simplex_neighbors: FastHashMap<Uuid, Vec<Option<Uuid>>>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_simplex_vertex_offsets_no_duplicates"
+    )]
     simplex_vertex_offsets: FastHashMap<Uuid, Vec<Vec<i8>>>,
+}
+
+fn deserialize_simplex_vertices_no_duplicates<'de, De>(
+    deserializer: De,
+) -> Result<FastHashMap<Uuid, Vec<Uuid>>, De::Error>
+where
+    De: Deserializer<'de>,
+{
+    deserialize_uuid_map_no_duplicates("simplex_vertices", deserializer)
+}
+
+fn deserialize_simplex_neighbors_no_duplicates<'de, De>(
+    deserializer: De,
+) -> Result<FastHashMap<Uuid, Vec<Option<Uuid>>>, De::Error>
+where
+    De: Deserializer<'de>,
+{
+    deserialize_uuid_map_no_duplicates("simplex_neighbors", deserializer)
+}
+
+fn deserialize_simplex_vertex_offsets_no_duplicates<'de, De>(
+    deserializer: De,
+) -> Result<FastHashMap<Uuid, Vec<Vec<i8>>>, De::Error>
+where
+    De: Deserializer<'de>,
+{
+    deserialize_uuid_map_no_duplicates("simplex_vertex_offsets", deserializer)
+}
+
+/// Deserializes a UUID relationship map while rejecting duplicate simplex keys.
+///
+/// This protects the public [`Tds`] deserialization contract: untrusted snapshot
+/// input must not be able to rely on codec-level "last key wins" behavior to
+/// replace vertex, neighbor, or periodic-offset relationships silently.
+fn deserialize_uuid_map_no_duplicates<'de, De, T>(
+    field_name: &'static str,
+    deserializer: De,
+) -> Result<FastHashMap<Uuid, T>, De::Error>
+where
+    De: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    struct UuidMapVisitor<T> {
+        field_name: &'static str,
+        _phantom: PhantomData<T>,
+    }
+
+    impl<'de, T> Visitor<'de> for UuidMapVisitor<T>
+    where
+        T: Deserialize<'de>,
+    {
+        type Value = FastHashMap<Uuid, T>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            write!(
+                formatter,
+                "a UUID-keyed TDS snapshot `{}` relationship map",
+                self.field_name
+            )
+        }
+
+        fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+        where
+            A: MapAccess<'de>,
+        {
+            let mut values = fast_hash_map_with_capacity(map.size_hint().unwrap_or(0));
+
+            while let Some((simplex_uuid, value)) = map.next_entry::<Uuid, T>()? {
+                match values.entry(simplex_uuid) {
+                    Entry::Occupied(entry) => {
+                        return Err(de::Error::custom(format!(
+                            "duplicate simplex UUID key `{}` in TDS snapshot `{}` relationship map",
+                            entry.key(),
+                            self.field_name
+                        )));
+                    }
+                    Entry::Vacant(entry) => {
+                        entry.insert(value);
+                    }
+                }
+            }
+
+            Ok(values)
+        }
+    }
+
+    deserializer.deserialize_map(UuidMapVisitor {
+        field_name,
+        _phantom: PhantomData,
+    })
 }
 
 /// Raw snapshot simplex record used by [`RawTdsSnapshot`].
@@ -469,15 +564,17 @@ impl<const D: usize> SnapshotPeriodicOffsetSlots<D> {
     }
 }
 
-impl<V, const D: usize> TdsSnapshotSimplex<V, D> {
-    /// Builds a validated snapshot simplex from a live runtime simplex.
-    fn from_simplex<U>(
-        tds: &Tds<U, V, D>,
-        simplex: &Simplex<V, D>,
-    ) -> Result<Self, TdsSnapshotError>
-    where
-        V: Copy,
-    {
+impl<SnapshotData, const D: usize> TdsSnapshotSimplex<SnapshotData, D> {
+    /// Builds validated UUID relationships around caller-selected snapshot payload data.
+    ///
+    /// The relationship checks are identical for owned and borrowed payloads, so
+    /// this helper lets [`Tds`] serialization borrow `U`/`V` data while tests can
+    /// still build owned raw snapshots for mutation.
+    fn from_simplex_with_data<U, RuntimeData>(
+        tds: &Tds<U, RuntimeData, D>,
+        simplex: &Simplex<RuntimeData, D>,
+        data: Option<SnapshotData>,
+    ) -> Result<Self, TdsSnapshotError> {
         let simplex_uuid = simplex.uuid();
         let vertex_uuids = simplex.vertex_uuids(tds).map_err(|source| {
             TdsSnapshotError::SimplexVertexUuidResolutionFailed {
@@ -511,7 +608,7 @@ impl<V, const D: usize> TdsSnapshotSimplex<V, D> {
 
         Ok(Self {
             uuid: simplex_uuid,
-            data: simplex.data,
+            data,
             neighbor_uuids,
             vertex_uuids,
             periodic_vertex_offsets,
@@ -520,7 +617,7 @@ impl<V, const D: usize> TdsSnapshotSimplex<V, D> {
 
     /// Converts this validated simplex relationship record back into the raw
     /// simplex record and raw relationship maps used by the interchange shape.
-    fn into_raw_parts(self) -> RawSnapshotSimplexParts<V> {
+    fn into_raw_parts(self) -> RawSnapshotSimplexParts<SnapshotData> {
         let raw_simplex = RawSnapshotSimplex {
             uuid: self.uuid,
             data: self.data,
@@ -564,10 +661,7 @@ where
     where
         De: Deserializer<'de>,
     {
-        struct SnapshotSimplexVisitor<V>
-        where
-            V: DataDeserialize,
-        {
+        struct SnapshotSimplexVisitor<V> {
             _phantom: PhantomData<V>,
         }
 
@@ -586,7 +680,7 @@ where
                 A: MapAccess<'de>,
             {
                 let mut uuid = None;
-                let mut data = None;
+                let mut data: Option<V> = None;
 
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
@@ -619,10 +713,7 @@ where
                 validate_uuid(&uuid)
                     .map_err(|source| de::Error::custom(format!("invalid uuid: {source}")))?;
 
-                Ok(RawSnapshotSimplex {
-                    uuid,
-                    data: data.flatten(),
-                })
+                Ok(RawSnapshotSimplex { uuid, data })
             }
         }
 
@@ -703,8 +794,12 @@ impl<U, V, const D: usize> RawTdsSnapshot<U, V, D> {
 }
 
 impl<U, V, const D: usize> TdsSnapshot<U, V, D> {
-    /// Converts a valid live key-based TDS into a validated durable UUID snapshot.
-    fn from_tds(tds: &Tds<U, V, D>) -> Result<Self, TdsSnapshotError>
+    /// Converts a valid live key-based TDS into an owned snapshot for mutation tests.
+    ///
+    /// Production serialization uses the borrowed `from_tds` path below so non-`Copy`
+    /// payloads can still cross the public [`Tds`] codec boundary.
+    #[cfg(test)]
+    fn from_tds_owned(tds: &Tds<U, V, D>) -> Result<Self, TdsSnapshotError>
     where
         U: Copy,
         V: Copy,
@@ -718,7 +813,9 @@ impl<U, V, const D: usize> TdsSnapshot<U, V, D> {
             .collect();
         let simplices = tds
             .simplices()
-            .map(|(_simplex_key, simplex)| TdsSnapshotSimplex::from_simplex(tds, simplex))
+            .map(|(_simplex_key, simplex)| {
+                TdsSnapshotSimplex::from_simplex_with_data(tds, simplex, simplex.data)
+            })
             .collect::<Result<Vec<_>, TdsSnapshotError>>()?;
 
         Ok(Self {
@@ -782,6 +879,39 @@ impl<U, V, const D: usize> TdsSnapshot<U, V, D> {
             .map_err(|source| TdsSnapshotError::ValidationFailed { source })?;
 
         Ok(tds)
+    }
+}
+
+impl<'a, U, V, const D: usize> TdsSnapshot<&'a U, &'a V, D> {
+    /// Converts a valid live key-based TDS into a borrowed durable UUID snapshot.
+    ///
+    /// This is the production serialization path for [`Tds`]. It validates the
+    /// live topology, stores UUID relationships, and borrows payload data so
+    /// callers only need [`DataSerialize`] rather than `Copy`.
+    fn from_tds(tds: &'a Tds<U, V, D>) -> Result<Self, TdsSnapshotError> {
+        tds.validate()
+            .map_err(|source| TdsSnapshotError::SourceValidationFailed { source })?;
+
+        let vertices = tds
+            .vertices()
+            .map(|(_vertex_key, vertex)| {
+                let mut snapshot_vertex =
+                    Vertex::new_with_uuid(*vertex.point(), vertex.uuid(), vertex.data());
+                snapshot_vertex.set_incident_simplex(vertex.incident_simplex());
+                snapshot_vertex
+            })
+            .collect();
+        let simplices = tds
+            .simplices()
+            .map(|(_simplex_key, simplex)| {
+                TdsSnapshotSimplex::from_simplex_with_data(tds, simplex, simplex.data())
+            })
+            .collect::<Result<Vec<_>, TdsSnapshotError>>()?;
+
+        Ok(Self {
+            vertices,
+            simplices,
+        })
     }
 }
 
@@ -1040,8 +1170,8 @@ fn assign_neighbors<V, const D: usize>(
 
 impl<U, V, const D: usize> Serialize for Tds<U, V, D>
 where
-    U: Copy + DataSerialize,
-    V: Copy + DataSerialize,
+    U: DataSerialize,
+    V: DataSerialize,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -1124,9 +1254,76 @@ mod tests {
         U: Copy,
         V: Copy,
     {
-        TdsSnapshot::from_tds(tds)
+        TdsSnapshot::from_tds_owned(tds)
             .expect("TDS should snapshot")
             .into_raw()
+    }
+
+    #[derive(Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+    struct NonCopyPayload {
+        label: String,
+    }
+
+    /// Builds raw snapshot JSON with a duplicated object key in one relationship map.
+    ///
+    /// `serde_json::Value` cannot represent duplicate object keys, so this helper
+    /// constructs the JSON text needed to exercise duplicate-key deserialization.
+    fn snapshot_json_with_duplicate_relationship_key(field: &str) -> String {
+        let verts = initial_simplex_vertices_3d();
+        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let snapshot = raw_snapshot_from_tds(dt.tds());
+        let simplex_uuid = snapshot
+            .simplices
+            .first()
+            .expect("snapshot should contain a simplex")
+            .uuid;
+
+        let duplicate_value = match field {
+            "simplex_vertices" => serde_json::to_string(
+                snapshot
+                    .simplex_vertices
+                    .get(&simplex_uuid)
+                    .expect("snapshot should contain simplex vertex UUIDs"),
+            ),
+            "simplex_neighbors" => serde_json::to_string(
+                snapshot
+                    .simplex_neighbors
+                    .get(&simplex_uuid)
+                    .expect("snapshot should contain simplex neighbor UUIDs"),
+            ),
+            "simplex_vertex_offsets" => serde_json::to_string(&[[0_i8; 3]; 4]),
+            _ => panic!("unknown relationship map field {field}"),
+        }
+        .expect("duplicate relationship value should serialize");
+        let duplicate_map =
+            format!(r#"{{"{simplex_uuid}":{duplicate_value},"{simplex_uuid}":{duplicate_value}}}"#);
+
+        let vertices =
+            serde_json::to_string(&snapshot.vertices).expect("snapshot vertices should serialize");
+        let simplices = serde_json::to_string(&snapshot.simplices)
+            .expect("snapshot simplices should serialize");
+        let simplex_vertices = if field == "simplex_vertices" {
+            duplicate_map.clone()
+        } else {
+            serde_json::to_string(&snapshot.simplex_vertices)
+                .expect("simplex_vertices should serialize")
+        };
+        let simplex_neighbors = if field == "simplex_neighbors" {
+            duplicate_map.clone()
+        } else {
+            serde_json::to_string(&snapshot.simplex_neighbors)
+                .expect("simplex_neighbors should serialize")
+        };
+        let simplex_vertex_offsets = if field == "simplex_vertex_offsets" {
+            duplicate_map
+        } else {
+            serde_json::to_string(&snapshot.simplex_vertex_offsets)
+                .expect("simplex_vertex_offsets should serialize")
+        };
+
+        format!(
+            r#"{{"vertices":{vertices},"simplices":{simplices},"simplex_vertices":{simplex_vertices},"simplex_neighbors":{simplex_neighbors},"simplex_vertex_offsets":{simplex_vertex_offsets}}}"#
+        )
     }
 
     fn serialized_records<'a>(json: &'a serde_json::Value, field: &str) -> &'a [serde_json::Value] {
@@ -1287,6 +1484,86 @@ mod tests {
                 .contains("unknown snapshot simplex field `unexpected`"),
             "unexpected error for unknown snapshot simplex field: {err}"
         );
+    }
+
+    #[test]
+    fn test_raw_snapshot_simplex_rejects_duplicate_fields() {
+        let uuid = Uuid::new_v4();
+        let duplicate_uuid = Uuid::new_v4();
+        let duplicate_uuid_json = format!(r#"{{"uuid":"{uuid}","uuid":"{duplicate_uuid}"}}"#);
+
+        let err = serde_json::from_str::<RawSnapshotSimplex<()>>(&duplicate_uuid_json)
+            .expect_err("duplicate raw simplex UUID fields should be rejected");
+        assert!(
+            err.to_string().contains("duplicate field `uuid`"),
+            "unexpected error for duplicate raw simplex UUID field: {err}"
+        );
+
+        let duplicate_data_json = format!(r#"{{"uuid":"{uuid}","data":null,"data":null}}"#);
+
+        let err = serde_json::from_str::<RawSnapshotSimplex<()>>(&duplicate_data_json)
+            .expect_err("duplicate raw simplex data fields should be rejected");
+        assert!(
+            err.to_string().contains("duplicate field `data`"),
+            "unexpected error for duplicate raw simplex data field: {err}"
+        );
+    }
+
+    #[test]
+    fn test_raw_snapshot_simplex_preserves_explicit_null_payload() {
+        let uuid = Uuid::new_v4();
+        let explicit_null_json = format!(r#"{{"uuid":"{uuid}","data":null}}"#);
+        let raw = serde_json::from_str::<RawSnapshotSimplex<Option<i32>>>(&explicit_null_json)
+            .expect("explicit null payload should deserialize");
+
+        assert_eq!(raw.data, Some(None));
+
+        let missing_data_json = format!(r#"{{"uuid":"{uuid}"}}"#);
+        let raw = serde_json::from_str::<RawSnapshotSimplex<Option<i32>>>(&missing_data_json)
+            .expect("missing payload should deserialize");
+
+        assert_eq!(raw.data, None);
+    }
+
+    #[test]
+    fn test_tds_snapshot_deserialize_rejects_duplicate_relationship_map_keys() {
+        for field in [
+            "simplex_vertices",
+            "simplex_neighbors",
+            "simplex_vertex_offsets",
+        ] {
+            let json = snapshot_json_with_duplicate_relationship_key(field);
+            let err = serde_json::from_str::<RawTdsSnapshot<(), (), 3>>(&json)
+                .expect_err("duplicate relationship map keys should be rejected");
+            let message = err.to_string();
+
+            assert!(
+                message.contains("duplicate simplex UUID key"),
+                "unexpected error for duplicate {field} key: {err}"
+            );
+            assert!(
+                message.contains(field),
+                "duplicate relationship map error should identify {field}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_raw_snapshot_simplex_rejects_storage_local_fields() {
+        let uuid = Uuid::new_v4();
+
+        for field in ["vertices", "neighbors", "periodic_vertex_offsets"] {
+            let err = serde_json::from_value::<RawSnapshotSimplex<()>>(serde_json::json!({
+                "uuid": uuid,
+                field: [],
+            }))
+            .expect_err("storage-local raw simplex fields should be rejected");
+
+            assert!(
+                err.to_string().contains("storage-local simplex state"),
+                "unexpected error for storage-local raw simplex field {field}: {err}"
+            );
+        }
     }
 
     #[test]
@@ -1539,6 +1816,44 @@ mod tests {
     }
 
     #[test]
+    fn test_tds_snapshot_error_preserves_unknown_relationship_map_simplex_uuids() {
+        let verts = initial_simplex_vertices_3d();
+        let dt = DelaunayTriangulation::new(&verts).unwrap();
+
+        let mut snapshot = raw_snapshot_from_tds(dt.tds());
+        let unknown_neighbor_simplex_uuid = Uuid::new_v4();
+        snapshot
+            .simplex_neighbors
+            .insert(unknown_neighbor_simplex_uuid, vec![None, None, None, None]);
+
+        let err = snapshot
+            .parse()
+            .expect_err("unknown simplex neighbor mapping should be rejected");
+
+        assert_matches!(
+            err,
+            TdsSnapshotError::UnknownSimplexNeighborMapping { simplex_uuid }
+                if simplex_uuid == unknown_neighbor_simplex_uuid
+        );
+
+        let mut snapshot = raw_snapshot_from_tds(dt.tds());
+        let unknown_offset_simplex_uuid = Uuid::new_v4();
+        snapshot
+            .simplex_vertex_offsets
+            .insert(unknown_offset_simplex_uuid, vec![vec![0_i8, 0_i8, 0_i8]; 4]);
+
+        let err = snapshot
+            .parse()
+            .expect_err("unknown simplex offset mapping should be rejected");
+
+        assert_matches!(
+            err,
+            TdsSnapshotError::UnknownSimplexOffsetMapping { simplex_uuid }
+                if simplex_uuid == unknown_offset_simplex_uuid
+        );
+    }
+
+    #[test]
     fn test_tds_snapshot_deserialize_rejects_invalid_simplex_vertex_uuid_mappings() {
         let verts = initial_simplex_vertices_3d();
         let dt = DelaunayTriangulation::new(&verts).unwrap();
@@ -1691,6 +2006,76 @@ mod tests {
 
         assert_eq!(vertex_data, vec![Some(10), Some(20), Some(30)]);
         assert_eq!(simplex_data, vec![Some(99)]);
+    }
+
+    #[test]
+    fn test_tds_snapshot_serializes_non_copy_payload_data() {
+        let mut tds: Tds<NonCopyPayload, NonCopyPayload, 2> = Tds::empty();
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                Vertex::<_, _>::try_new_with_data(
+                    [0.0, 0.0],
+                    NonCopyPayload {
+                        label: "v0".to_owned(),
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                Vertex::<_, _>::try_new_with_data(
+                    [1.0, 0.0],
+                    NonCopyPayload {
+                        label: "v1".to_owned(),
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(
+                Vertex::<_, _>::try_new_with_data(
+                    [0.0, 1.0],
+                    NonCopyPayload {
+                        label: "v2".to_owned(),
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let simplex = Simplex::try_new_with_data(
+            vec![v0, v1, v2],
+            Some(NonCopyPayload {
+                label: "simplex".to_owned(),
+            }),
+        )
+        .unwrap();
+
+        tds.insert_simplex_with_mapping(simplex).unwrap();
+        tds.construction_state = TriangulationConstructionState::Constructed;
+        tds.assign_neighbors().unwrap();
+        tds.assign_incident_simplices().unwrap();
+
+        let json = serde_json::to_string(&tds).expect("TDS snapshot should serialize");
+        let restored: Tds<NonCopyPayload, NonCopyPayload, 2> =
+            serde_json::from_str(&json).expect("TDS snapshot should deserialize");
+
+        restored.validate().expect("restored TDS should be valid");
+        let mut vertex_data = restored
+            .vertices()
+            .filter_map(|(_vertex_key, vertex)| vertex.data().map(|payload| payload.label.as_str()))
+            .collect::<Vec<_>>();
+        vertex_data.sort_unstable();
+        let simplex_data = restored
+            .simplices()
+            .filter_map(|(_simplex_key, simplex)| {
+                simplex.data().map(|payload| payload.label.as_str())
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(vertex_data, vec!["v0", "v1", "v2"]);
+        assert_eq!(simplex_data, vec!["simplex"]);
     }
 
     #[test]

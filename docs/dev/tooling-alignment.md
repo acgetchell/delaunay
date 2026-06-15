@@ -160,6 +160,15 @@ The useful updates ported in this pass are:
   during normal repository scans because those fixtures contain deliberate
   violations; `just semgrep-test` remains the comparison path for proving the
   rules still catch the fixture cases.
+- Repository-owned Semgrep now hardens the #454 TDS persistence boundary with
+  orthogonal topology-snapshot rules: snapshot-shaped records may not store
+  runtime slotmap keys or topology handles, `RawTdsSnapshot` UUID relationship
+  maps must keep duplicate-key-rejecting deserializers, snapshot proof/raw
+  internals must remain private, `Tds` serialization must flow through
+  `TdsSnapshot::from_tds`, and path-qualified serde impls for runtime handles
+  are blocked alongside unqualified impls. These rules complement the existing
+  constructor and direct-storage serde guards without making the validated
+  snapshot representation public API.
 - `.github/workflows/rust-clippy.yml` now matches the hardened SARIF pipeline:
   `set -euo pipefail`, `clippy::cargo`, and guarded upload that skips missing
   SARIF files and forked pull-request uploads.

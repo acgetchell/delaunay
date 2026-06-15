@@ -585,7 +585,7 @@ rules:
     message: "Use try_new for fallible facet handles, views, and iterators so validation and dimension-capacity errors are explicit."
     metadata:
       category: correctness
-      tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/454"
       rationale: >-
         FacetHandle and FacetView validate simplex presence and facet index
         bounds, while facet iterators can fail when the dimension exceeds the
@@ -631,7 +631,7 @@ rules:
     message: "Use EdgeKey::try_new with a live TDS for raw endpoints, or the crate-private validated constructor after edge incidence is already proven."
     metadata:
       category: correctness
-      tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/454"
       rationale: >-
         An EdgeKey must identify a real edge in a live TDS, so public raw
         endpoint construction needs to reject duplicate, missing, or non-incident
@@ -651,7 +651,7 @@ rules:
     message: "Pass a live TDS to EdgeKey::try_new so the edge can be proven to exist."
     metadata:
       category: correctness
-      tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/454"
       rationale: >-
         EdgeKey::try_new must parse raw endpoint keys against live topology.
         A two-argument call can only check distinctness and cannot prove that the
@@ -663,6 +663,31 @@ rules:
         - "/benches/**/*.rs"
         - "/examples/**/*.rs"
     pattern-regex: '\bEdgeKey\s*::\s*try_new\s*\(\s*[^,\n()]+,\s*[^,\n()]+\s*\)'
+
+  - id: delaunay.rust.no-runtime-topology-handle-serde
+    languages:
+      - generic
+    severity: WARNING
+    message: "Do not serialize runtime topology handles/views; serialize TDS UUID snapshots and rebuild fresh slotmap keys."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/454"
+      rationale: >-
+        FacetHandle, FacetView, and EdgeKey contain storage-local slotmap keys or
+        references into one live TDS. They are useful for in-memory traversal and
+        algorithms, but they are not durable interchange identifiers. Persistence
+        must flow through UUID-keyed TDS snapshots instead.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/examples/**/*.rs"
+    pattern-either:
+      - pattern-regex: '(?s)#\s*\[\s*derive\s*\([^)]*\bSerialize\b[^)]*\)\s*\]\s*[^;{]*\bstruct\s+(?:FacetHandle|FacetView|EdgeKey)\b'
+      - pattern-regex: '(?s)#\s*\[\s*derive\s*\([^)]*\bDeserialize\b[^)]*\)\s*\]\s*[^;{]*\bstruct\s+(?:FacetHandle|FacetView|EdgeKey)\b'
+      - pattern-regex: '\bimpl(?:\s*<[^>]*>)?\s+(?:serde\s*::\s*)?Serialize\s+for\s+(?:(?:crate|self|super)\s*::\s*)?(?:(?:tds|core\s*::\s*(?:facet|edge))\s*::\s*)?(?:FacetHandle|FacetView|EdgeKey)\b' # yamllint disable-line rule:line-length
+      - pattern-regex: '\bimpl(?:\s*<[^>]*>)?\s+(?:serde\s*::\s*)?Deserialize(?:\s*<[^>]*>)?\s+for\s+(?:(?:crate|self|super)\s*::\s*)?(?:(?:tds|core\s*::\s*(?:facet|edge))\s*::\s*)?(?:FacetHandle|FacetView|EdgeKey)\b' # yamllint disable-line rule:line-length
 
   - id: delaunay.rust.no-tds-storage-map-serde
     languages:
@@ -684,6 +709,86 @@ rules:
       - pattern-regex: '\bserialize_field\s*\(\s*"(?:vertices|simplices)"\s*,\s*&(?:self|tds)\.(?:vertices|simplices)\b'
       - pattern-regex: '\bOption\s*<\s*StorageMap\s*<\s*(?:VertexKey|SimplexKey)\b'
       - pattern-regex: '\b(?:serialized|snapshot)_simplices\s*:\s*StorageMap\s*<\s*SimplexKey\b'
+
+  - id: delaunay.rust.no-runtime-topology-keys-in-snapshot-records
+    languages:
+      - generic
+    severity: WARNING
+    message: "Snapshot/serialized topology records must store UUID relationships, not runtime slotmap keys or topology handles."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/454"
+      rationale: >-
+        Snapshot-shaped records cross persistence and codec boundaries. Storing
+        VertexKey, SimplexKey, FacetHandle, FacetView, or EdgeKey there would
+        smuggle process-local slotmap identity into durable data instead of
+        rebuilding fresh keys from stable UUID relationships.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-regex: '(?s)\bstruct\s+(?:Raw)?[A-Za-z0-9_]*(?:Snapshot|Serialized)[A-Za-z0-9_]*\s*(?:<[^>{}]*>)?\s*\{[^{}]*(?:\b(?:VertexKey|SimplexKey|FacetHandle|FacetView|EdgeKey)\b|Vec\s*<\s*(?:Option\s*<\s*)?(?:VertexKey|SimplexKey)\b|NeighborBuffer\s*<\s*(?:Option\s*<\s*)?SimplexKey\b|SmallBuffer\s*<\s*(?:VertexKey|SimplexKey|FacetHandle|EdgeKey)\b)[^{}]*\}' # yamllint disable-line rule:line-length
+
+  - id: delaunay.rust.raw-tds-snapshot-uuid-maps-require-duplicate-key-deserializers
+    languages:
+      - generic
+    severity: WARNING
+    message: "RawTdsSnapshot UUID relationship maps must use duplicate-key-rejecting custom deserializers."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/454"
+      rationale: >-
+        JSON and some other object-like codecs can otherwise accept duplicate
+        UUID keys with last-key-wins semantics. Raw snapshot relationship maps
+        must reject duplicate simplex UUIDs before validation and hydration.
+    paths:
+      include:
+        - "/src/core/tds_snapshot.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-either:
+      - pattern-regex: '(?m)(?<!    #\[serde\(deserialize_with = "deserialize_simplex_vertices_no_duplicates"\)\]\n)^\s*simplex_vertices\s*:\s*FastHashMap\s*<\s*Uuid\s*,' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?m)(?<!    #\[serde\(deserialize_with = "deserialize_simplex_neighbors_no_duplicates"\)\]\n)^\s*simplex_neighbors\s*:\s*FastHashMap\s*<\s*Uuid\s*,' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?m)(?<!    #\[serde\(\n        default,\n        deserialize_with = "deserialize_simplex_vertex_offsets_no_duplicates"\n    \)\]\n)^\s*simplex_vertex_offsets\s*:\s*FastHashMap\s*<\s*Uuid\s*,' # yamllint disable-line rule:line-length
+
+  - id: delaunay.rust.no-public-tds-snapshot-internals
+    languages:
+      - generic
+    severity: WARNING
+    message: "Keep TDS snapshot internals private; expose persistence through Tds Serialize/Deserialize instead."
+    metadata:
+      category: api
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/454"
+      rationale: >-
+        RawTdsSnapshot and TdsSnapshot are private parse-don't-validate stages.
+        Making them public would stabilize an implementation detail and invite
+        callers to bypass the validated Tds hydration boundary.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-either:
+      - pattern-regex: '^\s*pub\s+(?:struct|enum)\s+(?:RawTdsSnapshot|RawSnapshotSimplex|TdsSnapshot|TdsSnapshotError|TdsSnapshotSimplex)\b'
+      - pattern-regex: '^\s*pub\s+mod\s+tds_snapshot\b'
+      - pattern-regex: '^\s*pub\s+use\s+.*\btds_snapshot\b'
+
+  - id: delaunay.rust.tds-serialize-must-use-snapshot
+    languages:
+      - generic
+    severity: WARNING
+    message: "Tds serialization must go through TdsSnapshot::from_tds, not direct slotmap storage fields."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/454"
+      rationale: >-
+        The Tds Serialize implementation is the public persistence boundary. It
+        must validate the live topology, convert slotmap-local keys into UUID
+        relationships, and serialize the raw snapshot image rather than exposing
+        StorageMap internals.
+    paths:
+      include:
+        - "/src/core/tds_snapshot.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-regex: '(?s)impl[^{}]*\bSerialize\s+for\s+Tds\b[^{}]*\{(?:(?!TdsSnapshot::from_tds).)*\b(?:self|tds)\.(?:vertices|simplices|uuid_to_vertex_key|uuid_to_simplex_key)\b' # yamllint disable-line rule:line-length
 
   - id: delaunay.rust.public-error-enums-non-exhaustive
     languages:

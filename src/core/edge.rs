@@ -48,6 +48,11 @@ pub enum EdgeKeyError {
 
 /// Canonical identifier for an (undirected) edge.
 ///
+/// `EdgeKey` is a runtime topology key, not durable identity. It stores canonicalized
+/// storage-local [`VertexKey`] endpoints, so it is valid only for the live [`Tds`] whose
+/// endpoints were checked by [`EdgeKey::try_new`]. Persist or compare edges across I/O
+/// boundaries with stable vertex UUIDs instead.
+///
 /// # Examples
 ///
 /// ```rust
