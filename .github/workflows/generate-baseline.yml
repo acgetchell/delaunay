@@ -83,10 +83,6 @@ jobs:
           ref="${TARGET_REF:?benchmark-utils determine-ref did not produce ref_name}"
           disallowed_ref_re='^(refs/pull/|refs/merge-requests/|refs/changes/|pull/)'
           trusted_tag_re='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
-          trusted_owner_prefix='((codex|copilot|cursor)/)?'
-          trusted_type_prefix='(fix|feat|feature|perf|doc|docs|test|refactor|ci|build|chore|style|release)'
-          trusted_branch_re="^${trusted_owner_prefix}(main|${trusted_type_prefix}/[A-Za-z0-9][A-Za-z0-9._/-]*)$"
-
           if [[ "$ref" =~ $disallowed_ref_re ]]; then
             echo "❌ Ref namespace not allowed for baseline generation: $ref" >&2
             exit 1
@@ -95,20 +91,22 @@ jobs:
             echo "❌ Raw ref namespace not allowed for baseline generation: $ref" >&2
             exit 1
           fi
-          if [[ "$ref" == "main" || "$ref" =~ $trusted_tag_re || "$ref" =~ $trusted_branch_re ]]; then
+          if [[ "$ref" == "main" || "$ref" =~ $trusted_tag_re ]]; then
             echo "✅ Baseline checkout ref allowed: $ref"
           else
-            echo "❌ Ref is not in the trusted baseline allow-list: $ref" >&2
+            echo "❌ Ref is not in the trusted baseline allow-list (main or semver tags only): $ref" >&2
             exit 1
           fi
 
-      - name: Checkout target ref (code under test)
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-          ref: ${{ steps.ref_info.outputs.ref_name }}
-          path: bench-target
+      - name: Materialize target ref (code under test)
+        env:
+          BASELINE_REF: ${{ steps.ref_info.outputs.ref_name }}
+        run: |
+          set -euo pipefail
+
+          git rev-parse --verify "${BASELINE_REF}^{commit}"
+          git clone --no-checkout . bench-target
+          git -C bench-target checkout --detach "${BASELINE_REF}^{commit}"
 
       - name: Install target Rust toolchain
         env:

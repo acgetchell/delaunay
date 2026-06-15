@@ -176,6 +176,14 @@ The useful updates ported in this pass are:
   workflow used by causal-triangulations, pinned to this repository's current
   uv version. It complements the Codacy Opengrep workflow by uploading
   Semgrep-native SARIF and failing the workflow on repository-rule findings.
+- GitHub CodeQL and SARIF upload workflows keep `github/codeql-action` pinned to
+  the peeled commit for the documented `v4.36.2` tag so zizmor can verify the
+  hash/comment pair instead of treating the broad `v4` comment as ambiguous.
+- `.github/workflows/generate-baseline.yml` no longer checks out arbitrary
+  validated branch names with `actions/checkout`. The manual baseline workflow
+  accepts only `main` and semver tags, then materializes the target tree from the
+  existing full-history checkout so benchmark code runs without a user-controlled
+  checkout action ref or persisted credentials.
 - `.github/workflows/codacy.yml` defensively filters Codacy Opengrep SARIF to
   repository-owned `delaunay.*` rule IDs before uploading to GitHub Code
   Scanning. Codacy's default maintainability patterns can still run in Codacy,
