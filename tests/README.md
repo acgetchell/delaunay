@@ -731,7 +731,7 @@ assert_jaccard_gte!(
 
 **Currently using Jaccard similarity:**
 
-- ✅ `serialization_vertex_preservation.rs` - 4 tests with vertex coordinate comparison
+- ✅ `serialization_vertex_preservation.rs` - 3 tests with vertex coordinate comparison
 - ✅ `proptest_convex_hull.rs` - 24 property tests (2D-5D) with hull facet topology comparison
 - ✅ `proptest_triangulation.rs` - 4 neighbor symmetry tests (2D-5D) with enhanced failure diagnostics
   - Strict invariants maintained (no relaxation)

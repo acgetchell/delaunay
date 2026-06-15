@@ -97,14 +97,3 @@ pub type SimplexSecondaryMap<V> = SparseSecondaryMap<SimplexKey, V>;
 /// # }
 /// ```
 pub type VertexSecondaryMap<V> = SparseSecondaryMap<VertexKey, V>;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_secondary_maps_compile_and_instantiate() {
-        let _simplex_aux: SimplexSecondaryMap<bool> = SimplexSecondaryMap::new();
-        let _vertex_aux: VertexSecondaryMap<usize> = VertexSecondaryMap::new();
-    }
-}

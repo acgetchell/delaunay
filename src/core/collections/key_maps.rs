@@ -306,21 +306,4 @@ mod tests {
         assert_eq!(simplex_map.len(), 1);
         assert_eq!(vertex_map.len(), 1);
     }
-
-    #[test]
-    fn test_key_based_types_compile_and_instantiate() {
-        let _simplex_set: SimplexKeySet = SimplexKeySet::default();
-        let _vertex_set: VertexKeySet = VertexKeySet::default();
-        let _simplex_map: KeyBasedSimplexMap<i32> = KeyBasedSimplexMap::default();
-        let _vertex_map: KeyBasedVertexMap<String> = KeyBasedVertexMap::default();
-
-        // Basic operations should work
-        let simplex_set: SimplexKeySet = SimplexKeySet::default();
-        assert!(simplex_set.is_empty());
-        assert_eq!(simplex_set.len(), 0);
-
-        let simplex_map: KeyBasedSimplexMap<f64> = KeyBasedSimplexMap::default();
-        assert!(simplex_map.is_empty());
-        assert_eq!(simplex_map.len(), 0);
-    }
 }

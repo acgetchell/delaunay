@@ -92,7 +92,8 @@ use delaunay::prelude::repair::{
 use delaunay::prelude::tds::Tds;
 use delaunay::prelude::tds::{
     AllFacetsIter as TdsAllFacetsIter, BoundaryFacetsIter as TdsBoundaryFacetsIter, FacetError,
-    InvariantErrorSummaryDetail, NeighborSlot, TdsError, TdsErrorKind, VertexKey,
+    FacetHandle, FacetView, InvariantErrorSummaryDetail, NeighborSlot, TdsError, TdsErrorKind,
+    VertexKey,
 };
 use delaunay::prelude::topology::spaces::{
     GlobalTopology, GlobalTopologyModelError, TopologyKind, ToroidalConstructionMode,
@@ -162,6 +163,8 @@ enum PreludeExportTestError {
     Manifold(#[from] ManifoldError),
     #[error(transparent)]
     Query(#[from] QueryError),
+    #[error(transparent)]
+    Facet(#[from] FacetError),
     #[error(transparent)]
     RidgeVertices(#[from] RidgeVerticesError),
     #[error(transparent)]
@@ -357,6 +360,13 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     let _query_prelude_all_facets: QueryAllFacetsIter<'_, (), (), 3> = dt.facets()?;
     let _query_prelude_boundary_facets: QueryBoundaryFacetsIter<'_, (), (), 3> =
         dt.boundary_facets()?;
+    let (simplex_key, _simplex) = dt
+        .simplices()
+        .next()
+        .expect("constructed tetrahedron should contain a simplex");
+    let facet_handle = FacetHandle::try_new(dt.tds(), simplex_key, 0)?;
+    let facet_view: FacetView<'_, (), (), 3> = facet_handle.view(dt.tds())?;
+    assert_eq!(facet_view.handle(), facet_handle);
     let boundary_facet_count = dt.boundary_facets()?.try_fold(0_usize, |count, facet| {
         facet
             .map(|_| count + 1)

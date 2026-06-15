@@ -18,6 +18,18 @@ use delaunay::prelude::query::extract_vertex_coordinate_set;
 use delaunay::prelude::tds::Tds;
 use std::collections::HashSet;
 
+#[cfg(feature = "diagnostics")]
+macro_rules! diag_debug {
+    ($($arg:tt)*) => {
+        tracing::debug!($($arg)*);
+    };
+}
+
+#[cfg(not(feature = "diagnostics"))]
+macro_rules! diag_debug {
+    ($($arg:tt)*) => {};
+}
+
 /// Test vertex preservation with duplicate coordinates
 #[test]
 fn test_vertex_preservation_with_duplicates_3d() {
@@ -33,8 +45,11 @@ fn test_vertex_preservation_with_duplicates_3d() {
     let vertices = Vertex::<(), 3>::from_points(&points);
 
     let input_coords: HashSet<_> = vertices.iter().map(|v| *v.point()).collect();
-    println!("Input vertices: {}", vertices.len());
-    println!("Unique input coordinates: {}", input_coords.len());
+    diag_debug!(
+        input_vertices = vertices.len(),
+        unique_input_coordinates = input_coords.len(),
+        "vertex preservation input"
+    );
 
     // Construct triangulation - duplicates should be skipped
     let dt = DelaunayTriangulation::<_, (), (), 3>::new_with_topology_guarantee(
@@ -46,10 +61,10 @@ fn test_vertex_preservation_with_duplicates_3d() {
 
     let tds_vertex_count = tds.vertices().count();
     let tds_coords = extract_vertex_coordinate_set(tds);
-    println!("Vertices after Tds construction: {tds_vertex_count}");
-    println!(
-        "Unique coordinates after Tds construction: {}",
-        tds_coords.len()
+    diag_debug!(
+        tds_vertex_count,
+        unique_tds_coordinates = tds_coords.len(),
+        "vertex preservation after construction"
     );
 
     // Verify duplicates were skipped (should match unique coordinate count)
@@ -61,14 +76,19 @@ fn test_vertex_preservation_with_duplicates_3d() {
 
     // Serialize
     let json = serde_json::to_string(&tds).expect("Serialization failed");
-    println!("JSON size: {} bytes", json.len());
+    diag_debug!(json_bytes = json.len(), "serialized TDS size");
 
     // Deserialize
     let deserialized: Tds<(), (), 3> = serde_json::from_str(&json).expect("Deserialization failed");
 
     let deser_vertex_count = deserialized.vertices().count();
     let deser_coords = extract_vertex_coordinate_set(&deserialized);
-    println!("Vertices after deserialization: {deser_vertex_count}");
+    diag_debug!(
+        deser_vertex_count,
+        unique_deserialized_coordinates = deser_coords.len(),
+        "vertex preservation after deserialization"
+    );
+    assert_eq!(deser_vertex_count, tds_vertex_count);
 
     // Verify coordinate preservation using Jaccard similarity (≥ 0.99 threshold)
     // This accounts for potential floating-point precision differences in JSON serialization
@@ -77,10 +97,6 @@ fn test_vertex_preservation_with_duplicates_3d() {
         &deser_coords,
         0.99,
         "Vertex coordinate preservation via serialization (3D with duplicates)"
-    );
-
-    println!(
-        "\n✅ Duplicate skipped, serialization preserved all unique vertices (Jaccard ≥ 0.99)"
     );
 }
 
@@ -96,8 +112,6 @@ fn test_vertex_preservation_without_duplicates_3d() {
     ];
     let vertices = Vertex::<(), 3>::from_points(&points);
 
-    println!("Input vertices (no duplicates): {}", vertices.len());
-
     let dt = DelaunayTriangulation::<_, (), (), 3>::new_with_topology_guarantee(
         &vertices,
         TopologyGuarantee::PLManifold,
@@ -105,7 +119,11 @@ fn test_vertex_preservation_without_duplicates_3d() {
     .expect("Tds construction failed");
     let tds = dt.tds();
     let tds_vertex_count = tds.vertices().count();
-    println!("Vertices after Tds construction: {tds_vertex_count}");
+    diag_debug!(
+        input_vertices = vertices.len(),
+        tds_vertex_count,
+        "vertex preservation baseline after construction"
+    );
 
     // Extract vertex coordinate sets for Jaccard comparison
     let before_coords = extract_vertex_coordinate_set(tds);
@@ -115,7 +133,12 @@ fn test_vertex_preservation_without_duplicates_3d() {
 
     let deser_vertex_count = deserialized.vertices().count();
     let after_coords = extract_vertex_coordinate_set(&deserialized);
-    println!("Vertices after deserialization: {deser_vertex_count}");
+    diag_debug!(
+        deser_vertex_count,
+        unique_deserialized_coordinates = after_coords.len(),
+        "vertex preservation baseline after deserialization"
+    );
+    assert_eq!(deser_vertex_count, tds_vertex_count);
 
     // Note: Robust triangulation may discard some input vertices as unsalvageable
     // even when there are no exact coordinate duplicates. We treat the constructed
@@ -127,8 +150,6 @@ fn test_vertex_preservation_without_duplicates_3d() {
         0.99,
         "Vertex coordinate preservation via serialization (3D without duplicates)"
     );
-
-    println!("✅ All vertices preserved through construction and serialization (Jaccard ≥ 0.99)");
 }
 
 /// Test with many duplicates to stress-test behavior
@@ -152,10 +173,13 @@ fn test_vertex_preservation_many_duplicates_3d() {
 
     let vertices = Vertex::<(), 3>::from_points(&points);
 
-    println!("Input vertices (with many duplicates): {}", vertices.len());
     let unique_coords: HashSet<_> = vertices.iter().map(|v| *v.point()).collect();
     let unique_coords_len = unique_coords.len();
-    println!("Unique coordinates: {unique_coords_len}");
+    diag_debug!(
+        input_vertices = vertices.len(),
+        unique_input_coordinates = unique_coords_len,
+        "many-duplicate vertex preservation input"
+    );
 
     // Use Input ordering to avoid Hilbert dedup collapsing duplicates before the initial simplex
     let opts = ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
@@ -163,7 +187,10 @@ fn test_vertex_preservation_many_duplicates_3d() {
         .expect("Tds construction succeeded");
     let tds = dt.tds();
     let tds_vertex_count = tds.vertices().count();
-    println!("Vertices after Tds construction: {tds_vertex_count}");
+    diag_debug!(
+        tds_vertex_count,
+        "many-duplicate vertex preservation after construction"
+    );
 
     // Verify duplicates were skipped (should match unique coordinate count)
     assert_eq!(
@@ -179,7 +206,12 @@ fn test_vertex_preservation_many_duplicates_3d() {
 
     let deser_vertex_count = deserialized.vertices().count();
     let after_coords = extract_vertex_coordinate_set(&deserialized);
-    println!("Vertices after deserialization: {deser_vertex_count}");
+    diag_debug!(
+        deser_vertex_count,
+        unique_deserialized_coordinates = after_coords.len(),
+        "many-duplicate vertex preservation after deserialization"
+    );
+    assert_eq!(deser_vertex_count, tds_vertex_count);
 
     // Use Jaccard similarity to verify serialization preserves vertices
     assert_jaccard_gte!(
@@ -188,45 +220,4 @@ fn test_vertex_preservation_many_duplicates_3d() {
         0.99,
         "Vertex coordinate preservation via serialization (3D with many duplicates)"
     );
-
-    println!("✅ Duplicates skipped, serialization preserved all unique vertices (Jaccard ≥ 0.99)");
-}
-
-/// Test to verify exact vertex coordinate preservation (not just count)
-#[test]
-fn test_vertex_coordinate_preservation_3d() {
-    let points = vec![
-        Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
-        Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
-        Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
-        Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
-    ];
-    let vertices = Vertex::<(), 3>::from_points(&points);
-
-    let dt = DelaunayTriangulation::<_, (), (), 3>::new_with_topology_guarantee(
-        &vertices,
-        TopologyGuarantee::PLManifold,
-    )
-    .expect("Tds construction failed");
-    let tds = dt.tds();
-
-    // Extract original vertex coordinates using canonical extraction
-    let original_coords = extract_vertex_coordinate_set(tds);
-
-    let json = serde_json::to_string(&tds).expect("Serialization failed");
-    let deserialized: Tds<(), (), 3> = serde_json::from_str(&json).expect("Deserialization failed");
-
-    // Extract deserialized vertex coordinates
-    let deserialized_coords = extract_vertex_coordinate_set(&deserialized);
-
-    // Verify coordinate preservation using Jaccard similarity
-    // Use high threshold (0.99) to ensure nearly exact preservation
-    assert_jaccard_gte!(
-        &original_coords,
-        &deserialized_coords,
-        0.99,
-        "Exact vertex coordinate preservation via serialization (3D baseline)"
-    );
-
-    println!("✅ Vertex coordinates preserved with high fidelity (Jaccard ≥ 0.99)");
 }
