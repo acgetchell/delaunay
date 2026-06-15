@@ -12,7 +12,7 @@
 //! - **Neighbor Tracking**: Maintains references to neighboring simplices
 //! - **Optional Data Storage**: Supports attaching arbitrary user data of type `V`
 //! - **Serialization Support**: Manual serde for `uuid` and `data`; vertex/neighbor keys are
-//!   omitted and reconstructed during TDS (de)serialization
+//!   omitted from standalone simplex records and stored as UUID relationships in TDS snapshots
 //!
 //! # Examples
 //!
@@ -341,7 +341,8 @@ pub struct Simplex<V, const D: usize> {
     /// - `neighbors[2]` is opposite `vertices[2]` (shares vertices 0, 1, 3)
     /// - `neighbors[3]` is opposite `vertices[3]` (shares vertices 0, 1, 2)
     ///
-    /// Note: Not serialized — neighbors are reconstructed during deserialization by the TDS.
+    /// Note: Not serialized by standalone simplex records. TDS snapshots store
+    /// neighbor relationships separately as simplex UUIDs.
     /// Access via `neighbor_slots()` or `neighbors()`. Mutation goes through TDS-owned helpers.
     neighbors: Option<NeighborBuffer<NeighborSlot>>,
 
@@ -352,7 +353,8 @@ pub struct Simplex<V, const D: usize> {
     ///
     /// When present, this buffer is aligned with `vertices` by index:
     /// `periodic_vertex_offsets[i]` corresponds to `vertices[i]`.
-    /// Offsets are omitted from serialization and are reconstructed by periodic builders.
+    /// Standalone simplex records omit offsets. TDS snapshots store them
+    /// separately in `simplex_vertex_offsets` and restore them during hydration.
     pub(crate) periodic_vertex_offsets: Option<PeriodicOffsetBuffer<D>>,
 }
 
@@ -394,18 +396,17 @@ where
 // DESERIALIZATION IMPLEMENTATION
 // =============================================================================
 
-/// Raw serialized simplex record used by `Tds` deserialization.
+/// Raw standalone simplex record used only to reject direct simplex deserialization.
 ///
-/// TDS serialization carries simplex-to-vertex relationships separately as
-/// vertex UUIDs. This DTO intentionally does not construct a `Simplex`; the TDS
-/// deserializer resolves those UUIDs to live vertex keys and then calls
-/// `Simplex::try_new_with_uuid`.
-pub(crate) struct SerializedSimplex<V> {
-    pub(crate) uuid: Uuid,
-    pub(crate) data: Option<V>,
+/// TDS snapshots carry simplex-to-vertex and simplex-to-neighbor relationships
+/// separately as UUIDs. This raw record intentionally does not construct a `Simplex`;
+/// callers must deserialize the containing TDS snapshot instead.
+struct StandaloneSimplexRecord<V> {
+    uuid: Uuid,
+    data: Option<V>,
 }
 
-impl<'de, V> Deserialize<'de> for SerializedSimplex<V>
+impl<'de, V> Deserialize<'de> for StandaloneSimplexRecord<V>
 where
     V: DataDeserialize,
 {
@@ -413,24 +414,24 @@ where
     where
         De: Deserializer<'de>,
     {
-        struct SerializedSimplexVisitor<V>
+        struct StandaloneSimplexVisitor<V>
         where
             V: DataDeserialize,
         {
             _phantom: PhantomData<V>,
         }
 
-        impl<'de, V> Visitor<'de> for SerializedSimplexVisitor<V>
+        impl<'de, V> Visitor<'de> for StandaloneSimplexVisitor<V>
         where
             V: DataDeserialize,
         {
-            type Value = SerializedSimplex<V>;
+            type Value = StandaloneSimplexRecord<V>;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a serialized Simplex record")
+                formatter.write_str("a standalone Simplex record")
             }
 
-            fn visit_map<A>(self, mut map: A) -> Result<SerializedSimplex<V>, A::Error>
+            fn visit_map<A>(self, mut map: A) -> Result<StandaloneSimplexRecord<V>, A::Error>
             where
                 A: MapAccess<'de>,
             {
@@ -466,7 +467,7 @@ where
                 validate_uuid(&uuid)
                     .map_err(|e| de::Error::custom(format!("invalid uuid: {e}")))?;
 
-                Ok(SerializedSimplex {
+                Ok(StandaloneSimplexRecord {
                     uuid,
                     data: data.flatten(),
                 })
@@ -475,9 +476,9 @@ where
 
         const FIELDS: &[&str] = &["uuid", "data", "vertices"];
         deserializer.deserialize_struct(
-            "SerializedSimplex",
+            "StandaloneSimplex",
             FIELDS,
-            SerializedSimplexVisitor {
+            StandaloneSimplexVisitor {
                 _phantom: PhantomData,
             },
         )
@@ -519,9 +520,11 @@ where
             where
                 A: MapAccess<'de>,
             {
-                let _record = SerializedSimplex::<V>::deserialize(
-                    de::value::MapAccessDeserializer::new(map),
-                )?;
+                let StandaloneSimplexRecord { uuid, data } =
+                    StandaloneSimplexRecord::<V>::deserialize(
+                        de::value::MapAccessDeserializer::new(map),
+                    )?;
+                let _ = (uuid, data);
                 Err(de::Error::custom(
                     "standalone Simplex deserialization is unsupported; deserialize Tds so simplex vertex UUIDs can be resolved to live keys",
                 ))
@@ -3332,7 +3335,7 @@ mod tests {
     fn simplex_serialization_data_field_handling() {
         // Comprehensive test for data field serialization behavior
 
-        // Test 1: Minimal simplex record is valid only as a TDS reconstruction DTO.
+        // Test 1: Minimal simplex record is valid only as a TDS reconstruction record.
         let minimal_valid_json = r#"{"uuid": "550e8400-e29b-41d4-a716-446655440000"}"#;
         let result: Result<Simplex<(), 3>, _> = serde_json::from_str(minimal_valid_json);
         let err = result.expect_err("minimal standalone simplex record should fail");
@@ -4165,7 +4168,7 @@ mod tests {
         let err = serde_json::from_str::<Simplex<i32, 3>>(json).unwrap_err();
         assert!(err.to_string().contains("invalid uuid"));
 
-        // Unknown fields are ignored by the raw DTO parser, then rejected at the standalone boundary.
+        // Unknown fields are ignored by the raw record parser, then rejected at the standalone boundary.
         let uuid = uuid::Uuid::new_v4();
         let json = format!("{{\"uuid\":\"{uuid}\",\"data\":5,\"extra\":[1,2,3]}}");
         let err = serde_json::from_str::<Simplex<i32, 3>>(&json).unwrap_err();

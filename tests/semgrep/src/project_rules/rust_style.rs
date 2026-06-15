@@ -295,14 +295,14 @@ pub fn deserialize_tds_vertices_storage_bad() {
 
 pub fn deserialize_tds_simplices_storage_bad() {
     // ruleid: delaunay.rust.no-tds-storage-map-serde
-    let _simplices: Option<StorageMap<SimplexKey, SerializedSimplex<()>>> = None;
+    let _simplices: Option<StorageMap<SimplexKey, RawSnapshotSimplex<()>>> = None;
 }
 
 pub fn rebuild_tds_simplices_storage_bad(
     // ruleid: delaunay.rust.no-tds-storage-map-serde
-    serialized_simplices: StorageMap<SimplexKey, SerializedSimplex<()>>,
+    snapshot_simplices: StorageMap<SimplexKey, RawSnapshotSimplex<()>>,
 ) {
-    let _ = serialized_simplices;
+    let _ = snapshot_simplices;
 }
 
 pub fn serialize_tds_uuid_records_ok<S>(mut state: S)
@@ -316,6 +316,19 @@ where
     let _ = state.serialize_field("vertices", &vertices);
     // ok: delaunay.rust.no-tds-storage-map-serde
     let _ = state.serialize_field("simplices", &simplices);
+}
+
+pub fn snapshot_uuid_relationships_ok<S>(mut state: S)
+where
+    S: SerializeStruct,
+{
+    let simplex_vertices: FastHashMap<Uuid, Vec<Uuid>> = FastHashMap::default();
+    let simplex_neighbors: FastHashMap<Uuid, Vec<Option<Uuid>>> = FastHashMap::default();
+
+    // ok: delaunay.rust.no-tds-storage-map-serde
+    let _ = state.serialize_field("simplex_vertices", &simplex_vertices);
+    // ok: delaunay.rust.no-tds-storage-map-serde
+    let _ = state.serialize_field("simplex_neighbors", &simplex_neighbors);
 }
 
 pub fn simplex_new_constructor_bad(vertex_keys: Vec<VertexKey>) {

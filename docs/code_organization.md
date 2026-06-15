@@ -209,6 +209,7 @@ delaunay/
 │   │   ├── repair.rs
 │   │   ├── simplex.rs
 │   │   ├── tds.rs
+│   │   ├── tds_snapshot.rs
 │   │   ├── triangulation.rs
 │   │   ├── validation.rs
 │   │   └── vertex.rs
@@ -443,6 +444,8 @@ paths instead.
 **`src/core/`** - Triangulation data structures and algorithms:
 
 - `tds.rs` - Main `Tds` struct
+- `tds_snapshot.rs` - TDS persistence boundary: raw codec records parse into a validated UUID snapshot before hydration
+  allocates fresh slotmap keys, preserving vertex and simplex payload data without serializing storage-local handles
 - `triangulation.rs` - Generic Triangulation layer with kernel
 - `construction.rs` - Generic triangulation construction helpers and initial-simplex setup
 - `insertion.rs` - Generic transactional insertion, duplicate detection, and insertion telemetry

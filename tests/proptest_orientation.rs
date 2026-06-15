@@ -2,7 +2,7 @@
 //!
 //! This module adds focused orientation coverage for:
 //! - successful construction (`tds.is_coherently_oriented() == true`)
-//! - orientation tamper detection (`OrientationViolation`)
+//! - orientation tamper detection (`OrientationViolation` or earlier neighbor-consistency rejection)
 //! - incremental insertion coherence after each successful insertion
 //!
 //! Tests are generated for dimensions 2D-5D (with 4D/5D ignored in regular
@@ -46,10 +46,12 @@ macro_rules! gen_orientation_construction_and_tamper_props {
                     }
                 }
 
-                /// Property: swapping one simplex's vertex order should violate coherent orientation.
+                /// Property: swapping one simplex's vertex order should violate TDS structure.
                 ///
                 /// Tampering is done through serialized `simplex_vertices` so deserialization rebuilds
-                /// neighbors/incidence normally while preserving the orientation corruption.
+                /// incidence while preserving the corrupted UUID topology. Depending on the generated
+                /// triangulation, preserving serialized neighbor UUIDs may expose neighbor inconsistency
+                /// before the orientation check runs.
                 $(#[$attr])*
                 #[test]
                 fn [<prop_orientation_tamper_detected_ $dim d>](
@@ -89,16 +91,21 @@ macro_rules! gen_orientation_construction_and_tamper_props {
                                 prop_assert!(
                                     matches!(
                                         tampered_tds.is_valid(),
-                                        Err(TdsError::OrientationViolation { .. })
+                                        Err(
+                                            TdsError::OrientationViolation { .. }
+                                                | TdsError::InvalidNeighbors { .. }
+                                        )
                                     ),
-                                    "{}D: tampered triangulation should fail with OrientationViolation",
+                                    "{}D: tampered triangulation should fail structural TDS validation",
                                     $dim
                                 );
                             }
                             Err(error) => {
+                                let message = error.to_string();
                                 prop_assert!(
-                                    error.to_string().contains("Orientation invariant violated"),
-                                    "{}D: tampered triangulation should be rejected for orientation, got {error}",
+                                    message.contains("Orientation invariant violated")
+                                        || message.contains("Invalid neighbor relationships"),
+                                    "{}D: tampered triangulation should be rejected by structural TDS validation, got {error}",
                                     $dim
                                 );
                             }

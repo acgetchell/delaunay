@@ -527,7 +527,7 @@ rules:
     message: "Do not deserialize topology relationships from slotmap keys; deserialize UUIDs and resolve them inside Tds reconstruction."
     metadata:
       category: correctness
-      tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/454"
       rationale: >-
         VertexKey and SimplexKey values are storage-local slotmap keys. Serialized
         topology must use stable vertex and simplex UUIDs, then resolve those UUIDs
@@ -544,10 +544,10 @@ rules:
     languages:
       - generic
     severity: WARNING
-    message: "Do not serialize Simplex slotmap-key fields; serialize simplex UUIDs plus Tds-level vertex UUID relationships instead."
+    message: "Do not serialize Simplex slotmap-key fields; serialize simplex UUIDs plus Tds-level vertex/neighbor UUID relationships instead."
     metadata:
       category: correctness
-      tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/454"
       rationale: >-
         Simplex vertex and neighbor slots contain VertexKey and SimplexKey values,
         which are storage-local handles. The wire format must carry UUIDs so it
@@ -668,10 +668,10 @@ rules:
     languages:
       - generic
     severity: WARNING
-    message: "Do not serialize or deserialize TDS StorageMap/DenseSlotMap storage; use UUID-keyed DTO records and rebuild fresh slotmap keys."
+    message: "Do not serialize or deserialize TDS StorageMap/DenseSlotMap storage; use UUID-keyed snapshot records and rebuild fresh slotmap keys."
     metadata:
       category: correctness
-      tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/454"
       rationale: >-
         DenseSlotMap/StorageMap layouts and generated keys are process-local storage
         details. TDS persistence must serialize stable vertex/simplex UUID records
@@ -683,7 +683,7 @@ rules:
     pattern-either:
       - pattern-regex: '\bserialize_field\s*\(\s*"(?:vertices|simplices)"\s*,\s*&(?:self|tds)\.(?:vertices|simplices)\b'
       - pattern-regex: '\bOption\s*<\s*StorageMap\s*<\s*(?:VertexKey|SimplexKey)\b'
-      - pattern-regex: '\bserialized_simplices\s*:\s*StorageMap\s*<\s*SimplexKey\b'
+      - pattern-regex: '\b(?:serialized|snapshot)_simplices\s*:\s*StorageMap\s*<\s*SimplexKey\b'
 
   - id: delaunay.rust.public-error-enums-non-exhaustive
     languages:
