@@ -34,10 +34,10 @@ from benchmark_utils import (
     _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE,
     _CI_PERFORMANCE_SUITE_METRICS_FILE,
     _CI_PERFORMANCE_SUITE_RUN_METADATA_FILE,
+    BENCHMARK_BUILD_FLAVOR,
     DEFAULT_REGRESSION_THRESHOLD,
     DEV_MODE_BENCH_ARGS,
     MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE,
-    TRUSTED_BENCH_CARGO_MODE,
     WORKTREE_VS_REF_COMPARISON_RESULTS_TEMPLATE,
     BaselineArtifactMetadata,
     BaselineFetchOptions,
@@ -943,7 +943,7 @@ Time: [1.0, 1.0, 1.0] µs
             assert mock_cargo.call_count >= 1
             args = mock_cargo.call_args[0][0]
             assert "--quiet" not in args  # Changed: --quiet flag should NOT be present
-            assert args[:5] == ["bench", "--profile", TRUSTED_BENCH_CARGO_MODE, "--bench", "ci_performance_suite"]
+            assert args[:5] == ["bench", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench", "ci_performance_suite"]
             if dev_mode:
                 for arg in DEV_MODE_BENCH_ARGS:
                     assert arg in args
@@ -1220,7 +1220,7 @@ Time: [1.0, 1.0, 1.0] µs
             baseline_content = f"""Date: 2023-12-15 10:30:00 UTC
 Git commit: abc123
 Sampling mode: dev
-Cargo profile: {TRUSTED_BENCH_CARGO_MODE}
+Cargo profile: {BENCHMARK_BUILD_FLAVOR}
 Criterion sample size: 10
 Criterion measurement time: 2
 Criterion warm-up time: 1
@@ -1240,7 +1240,7 @@ Criterion warm-up time: 1
 
         assert "Sampling configuration differs from baseline" in warning
         assert "sampling mode: baseline=Unknown, current=full" in warning
-        assert f"Cargo profile: baseline=Unknown, current={TRUSTED_BENCH_CARGO_MODE}" in warning
+        assert f"Cargo profile: baseline=Unknown, current={BENCHMARK_BUILD_FLAVOR}" in warning
         assert "Criterion sample size: baseline=Unknown, current=criterion-default" in warning
         assert "Criterion measurement time: baseline=Unknown, current=criterion-default" in warning
         assert "Criterion warm-up time: baseline=Unknown, current=criterion-default" in warning
@@ -1275,11 +1275,11 @@ class TestBaselineGenerator:
             assert success is True
             calls = [call.args[0] for call in mock_cargo.call_args_list]
             assert calls[0] == ["clean"]
-            assert calls[1] == ["bench", "--profile", TRUSTED_BENCH_CARGO_MODE, "--bench", "ci_performance_suite"]
+            assert calls[1] == ["bench", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench", "ci_performance_suite"]
             mock_git.assert_called_once()
             content = output_file.read_text(encoding="utf-8")
             assert "Sampling mode: full" in content
-            assert f"Cargo profile: {TRUSTED_BENCH_CARGO_MODE}" in content
+            assert f"Cargo profile: {BENCHMARK_BUILD_FLAVOR}" in content
             assert "Criterion sample size: criterion-default" in content
 
     @patch("benchmark_utils.get_git_commit_hash", return_value="abc123")
@@ -1301,14 +1301,14 @@ class TestBaselineGenerator:
             assert success is True
             mock_cargo.assert_called_once()
             args = mock_cargo.call_args.args[0]
-            assert args[:5] == ["bench", "--profile", TRUSTED_BENCH_CARGO_MODE, "--bench", "ci_performance_suite"]
+            assert args[:5] == ["bench", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench", "ci_performance_suite"]
             assert "--" in args
             for arg in DEV_MODE_BENCH_ARGS:
                 assert arg in args
             mock_git.assert_called_once()
             content = output_file.read_text(encoding="utf-8")
             assert "Sampling mode: dev" in content
-            assert f"Cargo profile: {TRUSTED_BENCH_CARGO_MODE}" in content
+            assert f"Cargo profile: {BENCHMARK_BUILD_FLAVOR}" in content
             assert "Criterion sample size: 10" in content
 
     @patch("benchmark_utils.get_git_commit_hash", return_value="abc123")
@@ -3118,7 +3118,7 @@ class TestPerformanceSummaryGenerator:
         parser = create_argument_parser()
         args = parser.parse_args(["generate-summary", "--run-benchmarks"])
 
-        assert args.profile == TRUSTED_BENCH_CARGO_MODE
+        assert args.profile == BENCHMARK_BUILD_FLAVOR
 
     @patch("benchmark_utils.run_git_command")
     def test_get_current_version_prefers_cargo_package_version(self, mock_git_command) -> None:
@@ -3516,7 +3516,7 @@ Benchmark completed."""
             assert args[:5] == [
                 "bench",
                 "--profile",
-                TRUSTED_BENCH_CARGO_MODE,
+                BENCHMARK_BUILD_FLAVOR,
                 "--bench",
                 "circumsphere_containment",
             ]
@@ -3574,7 +3574,7 @@ Benchmark completed.""",
             assert args[:5] == [
                 "bench",
                 "--profile",
-                TRUSTED_BENCH_CARGO_MODE,
+                BENCHMARK_BUILD_FLAVOR,
                 "--bench",
                 "circumsphere_containment",
             ]
@@ -3614,7 +3614,7 @@ Benchmark completed.""",
             assert args[:5] == [
                 "bench",
                 "--profile",
-                TRUSTED_BENCH_CARGO_MODE,
+                BENCHMARK_BUILD_FLAVOR,
                 "--bench",
                 "ci_performance_suite",
             ]
@@ -3627,7 +3627,7 @@ Benchmark completed.""",
             }
             metadata_path = project_root / "target" / "criterion" / _CI_PERFORMANCE_SUITE_RUN_METADATA_FILE
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-            assert metadata["cargo_profile"] == TRUSTED_BENCH_CARGO_MODE
+            assert metadata["cargo_profile"] == BENCHMARK_BUILD_FLAVOR
             assert metadata["sampling_mode"] == "full"
             assert "completed_at" in metadata
 
@@ -3778,9 +3778,9 @@ Benchmark completed.""",
 
             assert success is True
             # When run_benchmarks=True without an explicit profile, generate_summary
-            # must default to TRUSTED_BENCH_CARGO_MODE.
-            mock_run_ci_suite.assert_called_once_with(cargo_profile=TRUSTED_BENCH_CARGO_MODE)
-            mock_run_benchmarks.assert_called_once_with(cargo_profile=TRUSTED_BENCH_CARGO_MODE)
+            # must default to BENCHMARK_BUILD_FLAVOR.
+            mock_run_ci_suite.assert_called_once_with(cargo_profile=BENCHMARK_BUILD_FLAVOR)
+            mock_run_benchmarks.assert_called_once_with(cargo_profile=BENCHMARK_BUILD_FLAVOR)
             assert output_file.exists()
 
     @patch("benchmark_utils.PerformanceSummaryGenerator._run_circumsphere_benchmarks")

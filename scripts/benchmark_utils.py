@@ -141,7 +141,7 @@ _RECOVERABLE_CLI_ERRORS: tuple[type[BaseException], ...] = (
 
 # Trusted benchmark commands use this Cargo profile so local, CI, and release
 # numbers are generated with the same ThinLTO/codegen-units settings.
-TRUSTED_BENCH_CARGO_MODE = "perf"
+BENCHMARK_BUILD_FLAVOR = "perf"
 
 CI_PERFORMANCE_SUITE_GROUPS = {
     "construction": (
@@ -613,7 +613,7 @@ def _sampling_metadata(dev_mode: bool) -> dict[str, str]:
     if not dev_mode:
         return {
             "sampling_mode": "full",
-            "cargo_profile": TRUSTED_BENCH_CARGO_MODE,
+            "cargo_profile": BENCHMARK_BUILD_FLAVOR,
             "criterion_args": "default",
             "criterion_sample_size": "criterion-default",
             "criterion_measurement_time": "criterion-default",
@@ -622,7 +622,7 @@ def _sampling_metadata(dev_mode: bool) -> dict[str, str]:
 
     return {
         "sampling_mode": "dev",
-        "cargo_profile": TRUSTED_BENCH_CARGO_MODE,
+        "cargo_profile": BENCHMARK_BUILD_FLAVOR,
         "criterion_args": " ".join(DEV_MODE_BENCH_ARGS),
         "criterion_sample_size": _criterion_arg_value(DEV_MODE_BENCH_ARGS, "--sample-size"),
         "criterion_measurement_time": _criterion_arg_value(DEV_MODE_BENCH_ARGS, "--measurement-time"),
@@ -677,7 +677,7 @@ class PerformanceSummaryGenerator:
             generator_name: Name of the tool generating the summary (for attribution)
             cargo_profile: Optional Cargo profile for fresh benchmark runs.  When
                 ``run_benchmarks`` is True and no profile is specified, defaults
-                to :data:`TRUSTED_BENCH_CARGO_MODE` so fresh runs match baseline
+                to :data:`BENCHMARK_BUILD_FLAVOR` so fresh runs match baseline
                 and comparison measurements.
             strict: Fail instead of rendering from existing or fallback data
                 when fresh benchmark execution is requested and any benchmark
@@ -698,7 +698,7 @@ class PerformanceSummaryGenerator:
                 # Default fresh runs to the trusted perf profile so numbers are
                 # comparable with baseline/compare output.
                 if cargo_profile is None:
-                    cargo_profile = TRUSTED_BENCH_CARGO_MODE
+                    cargo_profile = BENCHMARK_BUILD_FLAVOR
                 ci_success = self._run_ci_performance_suite(cargo_profile=cargo_profile)
                 circumsphere_success, accuracy_data = self._run_circumsphere_benchmarks(cargo_profile=cargo_profile)
                 if circumsphere_success:
@@ -902,7 +902,7 @@ class PerformanceSummaryGenerator:
 
         Args:
             cargo_profile: Cargo profile for the fresh run.  Defaults to
-                :data:`TRUSTED_BENCH_CARGO_MODE` so every fresh benchmark run
+                :data:`BENCHMARK_BUILD_FLAVOR` so every fresh benchmark run
                 goes through the same ThinLTO/codegen-units settings used
                 by baseline generation and comparison.
 
@@ -912,7 +912,7 @@ class PerformanceSummaryGenerator:
         try:
             print("🔄 Running circumsphere containment benchmarks...")
 
-            profile = cargo_profile if cargo_profile is not None else TRUSTED_BENCH_CARGO_MODE
+            profile = cargo_profile if cargo_profile is not None else BENCHMARK_BUILD_FLAVOR
             cargo_args = ["bench", "--profile", profile, "--bench", "circumsphere_containment", "--", *DEV_MODE_BENCH_ARGS]
 
             # Run the circumsphere benchmark with reduced sample size for speed
@@ -939,7 +939,7 @@ class PerformanceSummaryGenerator:
 
         Args:
             cargo_profile: Cargo profile for the fresh run. Defaults to
-                :data:`TRUSTED_BENCH_CARGO_MODE` so summary, baseline, and
+                :data:`BENCHMARK_BUILD_FLAVOR` so summary, baseline, and
                 comparison measurements use the same optimized profile.
             use_dev_mode: When true, pass reduced Criterion sampling arguments
                 for local development feedback. Full sampling is used by
@@ -951,7 +951,7 @@ class PerformanceSummaryGenerator:
         try:
             print("🔄 Running ci_performance_suite benchmarks...")
 
-            profile = cargo_profile if cargo_profile is not None else TRUSTED_BENCH_CARGO_MODE
+            profile = cargo_profile if cargo_profile is not None else BENCHMARK_BUILD_FLAVOR
             cargo_args = ["bench", "--profile", profile, "--bench", "ci_performance_suite"]
             if use_dev_mode:
                 cargo_args.extend(["--", *DEV_MODE_BENCH_ARGS])
@@ -1368,7 +1368,7 @@ class PerformanceSummaryGenerator:
                 [
                     "⚠️ No `ci_performance_suite` Criterion results available. Run:",
                     "```bash",
-                    f"cargo bench --profile {TRUSTED_BENCH_CARGO_MODE} --bench ci_performance_suite",
+                    f"cargo bench --profile {BENCHMARK_BUILD_FLAVOR} --bench ci_performance_suite",
                     "```",
                     "",
                 ],
@@ -1425,7 +1425,7 @@ class PerformanceSummaryGenerator:
                 "",
                 "⚠️ No benchmark results available. Run benchmarks first:",
                 "```bash",
-                f"uv run benchmark-utils generate-summary --run-benchmarks --profile {TRUSTED_BENCH_CARGO_MODE}",
+                f"uv run benchmark-utils generate-summary --run-benchmarks --profile {BENCHMARK_BUILD_FLAVOR}",
                 "```",
                 "",
             ]
@@ -1934,7 +1934,7 @@ class PerformanceSummaryGenerator:
             "uv run benchmark-utils generate-summary",
             "",
             "# Run fresh perf-profile public API and circumsphere benchmarks",
-            f"uv run benchmark-utils generate-summary --run-benchmarks --profile {TRUSTED_BENCH_CARGO_MODE}",
+            f"uv run benchmark-utils generate-summary --run-benchmarks --profile {BENCHMARK_BUILD_FLAVOR}",
             "",
             "# Package existing ci_performance_suite Criterion results for release-asset comparisons",
             "uv run benchmark-utils write-baseline --ref vX.Y.Z --output baseline_results.txt",
@@ -2268,7 +2268,7 @@ class BaselineGenerator:
                     [
                         "bench",
                         "--profile",
-                        TRUSTED_BENCH_CARGO_MODE,
+                        BENCHMARK_BUILD_FLAVOR,
                         "--bench",
                         "ci_performance_suite",
                         "--",
@@ -2280,7 +2280,7 @@ class BaselineGenerator:
                 )
             else:
                 result = run_cargo_command(
-                    ["bench", "--profile", TRUSTED_BENCH_CARGO_MODE, "--bench", "ci_performance_suite"],
+                    ["bench", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench", "ci_performance_suite"],
                     cwd=self.project_root,
                     timeout=bench_timeout,
                     capture_output=True,
@@ -2845,7 +2845,7 @@ class PerformanceComparator:
                     [
                         "bench",
                         "--profile",
-                        TRUSTED_BENCH_CARGO_MODE,
+                        BENCHMARK_BUILD_FLAVOR,
                         "--bench",
                         "ci_performance_suite",
                         "--",
@@ -2857,7 +2857,7 @@ class PerformanceComparator:
                 )
             else:
                 result = run_cargo_command(
-                    ["bench", "--profile", TRUSTED_BENCH_CARGO_MODE, "--bench", "ci_performance_suite"],
+                    ["bench", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench", "ci_performance_suite"],
                     cwd=self.project_root,
                     timeout=bench_timeout,
                     capture_output=True,
@@ -4338,7 +4338,7 @@ def _add_dev_arg(parser: argparse.ArgumentParser, *, help_text: str | None = Non
     parser.add_argument(
         "--dev",
         action="store_true",
-        help=help_text or f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_CARGO_MODE} Cargo profile",
+        help=help_text or f"Use faster Criterion settings while retaining the {BENCHMARK_BUILD_FLAVOR} Cargo profile",
     )
 
 
@@ -4569,8 +4569,8 @@ def _add_performance_summary_subcommands(subparsers: "argparse._SubParsersAction
     )
     perf_summary_parser.add_argument(
         "--profile",
-        default=TRUSTED_BENCH_CARGO_MODE,
-        help=f"Cargo profile to use when --run-benchmarks is set (default: {TRUSTED_BENCH_CARGO_MODE})",
+        default=BENCHMARK_BUILD_FLAVOR,
+        help=f"Cargo profile to use when --run-benchmarks is set (default: {BENCHMARK_BUILD_FLAVOR})",
     )
     perf_summary_parser.add_argument(
         "--strict",
