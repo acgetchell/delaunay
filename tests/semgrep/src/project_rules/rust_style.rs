@@ -79,8 +79,13 @@ pub fn raw_simplex_frontier_vec_fixture(
     let mut touched_simplices: Vec<SimplexKey> = Vec::new();
     // ruleid: delaunay.rust.prefer-simplex-key-buffer-for-local-frontiers
     let conflict_preview: Vec<SimplexKey> = pending_seed_simplices.iter().copied().collect();
+    // ruleid: delaunay.rust.prefer-simplex-key-buffer-for-local-frontiers
+    let mut pending_repair_simplices = Vec::new();
+    // ruleid: delaunay.rust.prefer-simplex-key-buffer-for-local-frontiers
+    let removed_simplices = Vec::with_capacity(4);
 
     touched_simplices.extend(conflict_preview);
+    pending_repair_simplices.extend(removed_simplices);
 }
 
 pub fn simplex_frontier_buffer_fixture(pending_seed_simplices: &mut SimplexKeyBuffer) {

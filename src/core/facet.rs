@@ -1145,7 +1145,7 @@ impl<'tds, U, V, const D: usize> Iterator for AllFacetsIter<'tds, U, V, D> {
                                 facet_count: simplex.number_of_vertices(),
                             };
                         } else {
-                            self.state = AllFacetsIterState::PendingSimplex;
+                            return Some(Err(FacetError::SimplexNotFoundInTriangulation));
                         }
                     } else {
                         self.state = AllFacetsIterState::Exhausted;
@@ -1869,6 +1869,16 @@ mod tests {
                 facet_count: 257,
             }))
         );
+    }
+
+    #[test]
+    fn all_facets_iter_stays_exhausted_after_completion() {
+        let tds = tetrahedron_tds();
+        let mut iter = tds.facets().unwrap();
+
+        while iter.next().transpose().unwrap().is_some() {}
+
+        assert!(iter.next().is_none());
     }
 
     #[test]

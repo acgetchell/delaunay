@@ -172,7 +172,7 @@ rules:
         - "/src/**/*.rs"
         - "/tests/semgrep/src/project_rules/**/*.rs"
     pattern-regex: >-
-      \b(?:(?:(?:pending|repair|seed|soft_fail|touched|affected|frontier|sample)_[A-Za-z0-9_]*|conflict_preview|(?:new|removed)_simplices)\s*:\s*(?:&\s*mut\s*)?Vec\s*<\s*SimplexKey\s*>|let\s+(?:mut\s+)?(?:(?:pending|repair|seed|soft_fail|touched|affected|frontier|sample)_[A-Za-z0-9_]*|conflict_preview|(?:new|removed)_simplices)\s*=\s*Vec\s*::\s*<\s*SimplexKey\s*>\s*::\s*(?:new|with_capacity)\s*\()
+      \b(?:(?:(?:pending|repair|seed|soft_fail|touched|affected|frontier|sample)_[A-Za-z0-9_]*|conflict_preview|(?:new|removed)_simplices)\s*:\s*(?:&\s*mut\s*)?Vec\s*<\s*SimplexKey\s*>|let\s+(?:mut\s+)?(?:(?:pending|repair|seed|soft_fail|touched|affected|frontier|sample)_[A-Za-z0-9_]*|conflict_preview|(?:new|removed)_simplices)\s*=\s*Vec\s*::\s*(?:(?:<\s*SimplexKey\s*>\s*::\s*)?)(?:new|with_capacity)\s*\()
 
   - id: delaunay.rust.no-silent-conversion-fallbacks
     languages:

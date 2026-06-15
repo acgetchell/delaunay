@@ -488,8 +488,58 @@ mod tests {
             );
         }
 
+        // Test Case 5: 5D simplex - all 6 facets should be boundary facets
+        {
+            let points = vec![
+                Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0]),
+                Point::from_validated_coords([1.0, 0.0, 0.0, 0.0, 0.0]),
+                Point::from_validated_coords([0.0, 1.0, 0.0, 0.0, 0.0]),
+                Point::from_validated_coords([0.0, 0.0, 1.0, 0.0, 0.0]),
+                Point::from_validated_coords([0.0, 0.0, 0.0, 1.0, 0.0]),
+                Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 1.0]),
+            ];
+            let vertices = Vertex::from_points(&points);
+            let dt = DelaunayTriangulation::new(&vertices).unwrap();
+
+            assert_eq!(
+                dt.number_of_simplices(),
+                1,
+                "5D simplex should have 1 simplex"
+            );
+            assert_eq!(dt.dim(), 5, "Should be 5-dimensional");
+
+            let boundary_count = dt
+                .boundary_facets()
+                .unwrap()
+                .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+                .unwrap();
+            assert_eq!(
+                boundary_count, 6,
+                "5D simplex should have 6 boundary facets"
+            );
+
+            let facet_to_simplices = dt
+                .tds()
+                .build_facet_to_simplices_map()
+                .expect("Should build facet map");
+            let confirmed_boundary = dt
+                .boundary_facets()
+                .unwrap()
+                .filter(|f| {
+                    let f = f.as_ref().expect("valid boundary facet");
+                    dt.tds()
+                        .is_boundary_facet_with_map(f, &facet_to_simplices)
+                        .expect("Should not fail for valid facets")
+                })
+                .count();
+            assert_eq!(
+                confirmed_boundary, 6,
+                "All 5D simplex facets should be boundary facets"
+            );
+        }
+
         println!(
-            "✓ Single simplex boundary analysis works correctly in 2D, 3D, 4D, and empty cases"
+            "✓ Single simplex boundary analysis works correctly in 2D, 3D, 4D, 5D, and empty cases"
         );
     }
 

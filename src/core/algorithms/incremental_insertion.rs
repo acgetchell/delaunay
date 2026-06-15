@@ -3719,16 +3719,7 @@ where
                 || facet.facet_index() != edge_facet.facet_index()
         });
 
-        if boundary_facets.len() != 2 {
-            return Err(InsertionError::HullExtension {
-                reason: HullExtensionReason::InvalidPatch {
-                    details: format!(
-                        "2D boundary edge split expected 2 facets, got {}",
-                        boundary_facets.len()
-                    ),
-                },
-            });
-        }
+        validate_boundary_edge_split_facet_count(boundary_facets.len())?;
 
         let external_facets =
             external_facets_for_boundary(tds, &conflict_simplices, &boundary_facets)?;
@@ -3759,11 +3750,16 @@ where
 
     #[cfg(debug_assertions)]
     if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
-        let total_boundary = tds.boundary_facets().map_or(0, |mut facets| {
-            facets
-                .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
-                .unwrap_or(0)
-        });
+        let total_boundary = tds
+            .boundary_facets()
+            .map_err(|e| InsertionError::HullExtension {
+                reason: HullExtensionReason::Tds(e),
+            })
+            .and_then(|mut facets| {
+                facets
+                    .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+                    .map_err(boundary_facet_iteration_error)
+            })?;
         tracing::debug!(
             point = ?point,
             visible_facets = visible_facets.len(),
@@ -3822,6 +3818,18 @@ fn invalid_boundary_facet_index(facet_index: u8, facet_count: usize) -> Insertio
     hull_extension_tds_error(FacetError::InvalidFacetIndex {
         index: facet_index,
         facet_count,
+    })
+}
+
+fn validate_boundary_edge_split_facet_count(facet_count: usize) -> Result<(), InsertionError> {
+    if facet_count == 2 {
+        return Ok(());
+    }
+
+    Err(InsertionError::HullExtension {
+        reason: HullExtensionReason::InvalidPatch {
+            details: format!("2D boundary edge split expected 2 facets, got {facet_count}"),
+        },
     })
 }
 
@@ -6065,6 +6073,55 @@ mod tests {
         );
     }
 
+    #[test]
+    fn hull_extension_error_helpers_preserve_typed_sources() {
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
+        let vertex_key = VertexKey::from(KeyData::from_ffi(2));
+
+        assert_matches!(
+            missing_boundary_simplex(simplex_key, "facet lookup"),
+            InsertionError::HullExtension {
+                reason: HullExtensionReason::Tds(TdsError::SimplexNotFound {
+                    simplex_key: found_simplex_key,
+                    context,
+                }),
+            } if found_simplex_key == simplex_key && context == "facet lookup"
+        );
+
+        assert_matches!(
+            missing_boundary_vertex(vertex_key, simplex_key, "visible boundary facet"),
+            InsertionError::HullExtension {
+                reason: HullExtensionReason::Tds(TdsError::VertexNotFound {
+                    vertex_key: found_vertex_key,
+                    context,
+                }),
+            } if found_vertex_key == vertex_key
+                && context.starts_with("visible boundary facet")
+                && context.contains(&format!("{simplex_key:?}"))
+        );
+
+        assert_matches!(
+            invalid_boundary_facet_index(3, 2),
+            InsertionError::HullExtension {
+                reason: HullExtensionReason::Tds(TdsError::FacetError(
+                    FacetError::InvalidFacetIndex {
+                        index: 3,
+                        facet_count: 2,
+                    }
+                )),
+            }
+        );
+
+        assert_matches!(
+            boundary_facet_iteration_error(FacetError::InsideVertexNotFound),
+            InsertionError::HullExtension {
+                reason: HullExtensionReason::Tds(TdsError::FacetError(
+                    FacetError::InsideVertexNotFound
+                )),
+            }
+        );
+    }
+
     // repair_neighbor_pointers tests
 
     /// Macro to generate `repair_neighbor_pointers` tests for different dimensions
@@ -6519,6 +6576,19 @@ mod tests {
     }
 
     #[test]
+    fn test_boundary_edge_split_invalid_boundary_count_is_retryable_invalid_patch() {
+        let err = validate_boundary_edge_split_facet_count(1).unwrap_err();
+
+        assert!(err.is_retryable());
+        assert_matches!(
+            err,
+            InsertionError::HullExtension {
+                reason: HullExtensionReason::InvalidPatch { details },
+            } if details == "2D boundary edge split expected 2 facets, got 1"
+        );
+    }
+
+    #[test]
     fn test_find_boundary_edge_split_facet_on_segment_2d() {
         let vertices = vec![
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
@@ -6530,6 +6600,27 @@ mod tests {
 
         let facet = find_boundary_edge_split_facet(dt.tds(), &point).unwrap();
         assert!(facet.is_some());
+    }
+
+    #[test]
+    fn test_find_boundary_edge_split_facet_hull_vertex_is_retryable_invalid_patch() {
+        let vertices = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        ];
+        let dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
+        let point = Point::from_validated_coords([0.0, 0.0]);
+
+        let err = find_boundary_edge_split_facet(dt.tds(), &point).unwrap_err();
+
+        assert!(err.is_retryable());
+        assert_matches!(
+            err,
+            InsertionError::HullExtension {
+                reason: HullExtensionReason::InvalidPatch { details },
+            } if details == "2D boundary edge split matched multiple facets"
+        );
     }
 
     #[test]
