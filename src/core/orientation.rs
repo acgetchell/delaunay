@@ -298,7 +298,7 @@ where
             return Ok(());
         }
 
-        let simplex_keys: SimplexKeyBuffer = self.tds.simplex_keys().collect();
+        let simplex_keys: Vec<SimplexKey> = self.tds.simplex_keys().collect();
         let mut flipped_any = false;
         for simplex_key in simplex_keys {
             let Some(simplex) = self.tds.simplex_mut(simplex_key) else {

@@ -3104,7 +3104,7 @@ where
 
     // Expand once through existing pointers.  This keeps the repair local while
     // including the surviving simplices whose facets may now match a repaired seed.
-    let seed_snapshot: Vec<SimplexKey> = affected_simplices.iter().copied().collect();
+    let seed_snapshot: SimplexKeyBuffer = affected_simplices.iter().copied().collect();
     for simplex_key in seed_snapshot {
         let Some(simplex) = tds.simplex(simplex_key) else {
             continue;
@@ -3306,7 +3306,7 @@ where
 {
     type FacetIncidents = SmallBuffer<(SimplexKey, u8), 2>;
 
-    let simplex_keys: Vec<SimplexKey> = tds.simplices().map(|(key, _)| key).collect();
+    let simplex_keys: SimplexKeyBuffer = tds.simplices().map(|(key, _)| key).collect();
 
     #[cfg(debug_assertions)]
     tracing::trace!(
@@ -3464,7 +3464,7 @@ where
     V: DataType,
 {
     // Sample a few simplices and try walking through their neighbor graph.
-    let sample_simplices: Vec<SimplexKey> = tds.simplices().map(|(key, _)| key).take(10).collect();
+    let sample_simplices: SimplexKeyBuffer = tds.simplices().map(|(key, _)| key).take(10).collect();
     let max_simplices = tds.number_of_simplices();
 
     for &start_simplex in &sample_simplices {
@@ -3531,7 +3531,7 @@ where
     U: DataType,
     V: DataType,
 {
-    let sample_simplices: Vec<SimplexKey> = sample_simplices.iter().copied().take(10).collect();
+    let sample_simplices: SimplexKeyBuffer = sample_simplices.iter().copied().take(10).collect();
     let max_simplices = tds.number_of_simplices();
 
     for &start_simplex in &sample_simplices {
@@ -3721,8 +3721,8 @@ where
 
         if boundary_facets.len() != 2 {
             return Err(InsertionError::HullExtension {
-                reason: HullExtensionReason::Other {
-                    message: format!(
+                reason: HullExtensionReason::InvalidPatch {
+                    details: format!(
                         "2D boundary edge split expected 2 facets, got {}",
                         boundary_facets.len()
                     ),
@@ -3759,7 +3759,11 @@ where
 
     #[cfg(debug_assertions)]
     if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
-        let total_boundary = tds.boundary_facets().map_or(0, Iterator::count);
+        let total_boundary = tds.boundary_facets().map_or(0, |mut facets| {
+            facets
+                .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+                .unwrap_or(0)
+        });
         tracing::debug!(
             point = ?point,
             visible_facets = visible_facets.len(),
@@ -3786,6 +3790,41 @@ where
     Ok(new_simplices)
 }
 
+fn hull_extension_tds_error(source: impl Into<TdsError>) -> InsertionError {
+    InsertionError::HullExtension {
+        reason: HullExtensionReason::Tds(source.into()),
+    }
+}
+
+fn boundary_facet_iteration_error(source: FacetError) -> InsertionError {
+    hull_extension_tds_error(source)
+}
+
+fn missing_boundary_simplex(simplex_key: SimplexKey, context: &'static str) -> InsertionError {
+    hull_extension_tds_error(TdsError::SimplexNotFound {
+        simplex_key,
+        context: context.to_string(),
+    })
+}
+
+fn missing_boundary_vertex(
+    vertex_key: VertexKey,
+    simplex_key: SimplexKey,
+    context: &'static str,
+) -> InsertionError {
+    hull_extension_tds_error(TdsError::VertexNotFound {
+        vertex_key,
+        context: format!("{context} {simplex_key:?}"),
+    })
+}
+
+fn invalid_boundary_facet_index(facet_index: u8, facet_count: usize) -> InsertionError {
+    hull_extension_tds_error(FacetError::InvalidFacetIndex {
+        index: facet_index,
+        facet_count,
+    })
+}
+
 fn find_boundary_edge_split_facet<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     point: &Point<D>,
@@ -3808,27 +3847,20 @@ where
         })?;
 
     for facet_view in boundary_facets {
+        let facet_view = facet_view.map_err(boundary_facet_iteration_error)?;
         let simplex_key = facet_view.simplex_key();
         let facet_index = facet_view.facet_index();
-        let simplex = tds
-            .simplex(simplex_key)
-            .ok_or_else(|| InsertionError::HullExtension {
-                reason: HullExtensionReason::Other {
-                    message: format!("Boundary facet simplex {simplex_key:?} not found"),
-                },
-            })?;
+        let simplex = tds.simplex(simplex_key).ok_or_else(|| {
+            missing_boundary_simplex(simplex_key, "2D boundary edge split facet lookup")
+        })?;
 
         let mut edge_points = SmallBuffer::<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
         let mut opposite_point: Option<Point<D>> = None;
 
         for (i, &vkey) in simplex.vertices().iter().enumerate() {
-            let vertex = tds
-                .vertex(vkey)
-                .ok_or_else(|| InsertionError::HullExtension {
-                    reason: HullExtensionReason::Other {
-                        message: format!("Vertex {vkey:?} not found in TDS"),
-                    },
-                })?;
+            let vertex = tds.vertex(vkey).ok_or_else(|| {
+                missing_boundary_vertex(vkey, simplex_key, "2D boundary edge split facet")
+            })?;
             if i == usize::from(facet_index) {
                 opposite_point = Some(*vertex.point());
             } else {
@@ -3840,13 +3872,8 @@ where
             continue;
         }
 
-        let opposite_point = opposite_point.ok_or_else(|| InsertionError::HullExtension {
-            reason: HullExtensionReason::Other {
-                message: format!(
-                    "Opposite vertex missing for facet {facet_index} in simplex {simplex_key:?}"
-                ),
-            },
-        })?;
+        let opposite_point = opposite_point
+            .ok_or_else(|| invalid_boundary_facet_index(facet_index, simplex.vertices().len()))?;
 
         let mut simplex_points = SmallBuffer::<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
         simplex_points.extend(edge_points.iter().copied());
@@ -3903,15 +3930,14 @@ where
             && p[1] <= max_y + tol;
 
         if on_segment {
-            let handle = FacetHandle::from_validated(simplex_key, facet_index);
             if match_facet.is_some() {
                 return Err(InsertionError::HullExtension {
-                    reason: HullExtensionReason::Other {
-                        message: "2D boundary edge split matched multiple facets".to_string(),
+                    reason: HullExtensionReason::InvalidPatch {
+                        details: "2D boundary edge split matched multiple facets".to_string(),
                     },
                 });
             }
-            match_facet = Some(handle);
+            match_facet = Some(FacetHandle::from_validated(simplex_key, facet_index));
         }
     }
 
@@ -3996,6 +4022,7 @@ where
 
     // Test each boundary facet for visibility
     for facet_view in boundary_facets {
+        let facet_view = facet_view.map_err(boundary_facet_iteration_error)?;
         #[cfg(debug_assertions)]
         if track_orientations {
             boundary_facets_count += 1;
@@ -4004,26 +4031,18 @@ where
         let facet_index = facet_view.facet_index();
 
         // Get the simplex and its vertices
-        let simplex = tds
-            .simplex(simplex_key)
-            .ok_or_else(|| InsertionError::HullExtension {
-                reason: HullExtensionReason::Other {
-                    message: format!("Boundary facet simplex {simplex_key:?} not found"),
-                },
-            })?;
+        let simplex = tds.simplex(simplex_key).ok_or_else(|| {
+            missing_boundary_simplex(simplex_key, "visible boundary facet lookup")
+        })?;
 
         // Collect points for the simplex in canonical order: facet vertices + opposite vertex.
         let mut simplex_points = SmallBuffer::<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
         let mut opposite_point: Option<Point<D>> = None;
 
         for (i, &vkey) in simplex.vertices().iter().enumerate() {
-            let vertex = tds
-                .vertex(vkey)
-                .ok_or_else(|| InsertionError::HullExtension {
-                    reason: HullExtensionReason::Other {
-                        message: format!("Vertex {vkey:?} not found in TDS"),
-                    },
-                })?;
+            let vertex = tds.vertex(vkey).ok_or_else(|| {
+                missing_boundary_vertex(vkey, simplex_key, "visible boundary facet")
+            })?;
             if i == usize::from(facet_index) {
                 opposite_point = Some(*vertex.point());
             } else {
@@ -4031,13 +4050,8 @@ where
             }
         }
 
-        let opposite_point = opposite_point.ok_or_else(|| InsertionError::HullExtension {
-            reason: HullExtensionReason::Other {
-                message: format!(
-                    "Opposite vertex missing for facet {facet_index} in simplex {simplex_key:?}"
-                ),
-            },
-        })?;
+        let opposite_point = opposite_point
+            .ok_or_else(|| invalid_boundary_facet_index(facet_index, simplex.vertices().len()))?;
 
         // Append opposite vertex in canonical order.
         simplex_points.push(opposite_point);

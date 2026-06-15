@@ -491,7 +491,8 @@ pub fn count_boundary_simplices<U, V, const D: usize>(
     let boundary_facets: Vec<_> = tds
         .boundary_facets()
         .map_err(|source| TopologyError::BoundaryFacetEnumeration { source })?
-        .collect();
+        .map(|facet| facet.map_err(|source| TopologyError::BoundaryFacetSimplexAccess { source }))
+        .collect::<Result<Vec<_>, _>>()?;
 
     if boundary_facets.is_empty() {
         // No boundary - return zero counts for (D-1)-dimensional complex

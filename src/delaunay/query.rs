@@ -397,7 +397,8 @@ where
     ///
     /// # Returns
     ///
-    /// An iterator yielding `FacetView` objects for boundary facets only.
+    /// An iterator yielding `Result<FacetView, FacetError>` items for boundary
+    /// facets only.
     ///
     /// # Examples
     ///
@@ -410,6 +411,8 @@ where
     /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Query(#[from] delaunay::query::QueryError),
+    /// #     #[error(transparent)]
+    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
@@ -420,7 +423,9 @@ where
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
-    /// let boundary_count = dt.boundary_facets()?.count();
+    /// let boundary_count = dt
+    ///     .boundary_facets()?
+    ///     .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
     /// assert_eq!(boundary_count, 4); // All facets are on boundary
     /// # Ok(())
     /// # }
@@ -431,6 +436,8 @@ where
     /// Returns [`QueryError::TriangulationCorrupted`] if facet-map construction
     /// detects invalid simplex or facet bookkeeping. The variant preserves the
     /// lower-level [`TdsError`](crate::tds::TdsError) for diagnostics.
+    /// Individual iterator items return [`FacetError`](crate::prelude::tds::FacetError)
+    /// if a boundary facet cannot be created or keyed from the simplices.
     pub fn boundary_facets(&self) -> Result<BoundaryFacetsIter<'_, U, V, D>, QueryError> {
         self.tri.boundary_facets()
     }
@@ -799,12 +806,14 @@ where
     ///
     /// # Returns
     ///
-    /// An iterator yielding `FacetView` objects for all facets.
+    /// An iterator yielding `Result<FacetView, FacetError>` items for all facets.
     ///
     /// # Errors
     ///
     /// Returns [`QueryError::TriangulationCorrupted`] if the facet iterator cannot
-    /// represent facet indices for this dimension.
+    /// represent facet indices for this dimension. Individual iterator items
+    /// return [`FacetError`](crate::prelude::tds::FacetError) if a facet view
+    /// cannot be constructed from the current TDS state.
     ///
     /// # Examples
     ///
@@ -819,6 +828,8 @@ where
     /// #     Construction(#[from] DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Query(#[from] delaunay::query::QueryError),
+    /// #     #[error(transparent)]
+    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
@@ -829,7 +840,9 @@ where
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
-    /// let facet_count = dt.facets()?.count();
+    /// let facet_count = dt
+    ///     .facets()?
+    ///     .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
     /// assert_eq!(facet_count, 4); // Tetrahedron has 4 facets
     /// # Ok(())
     /// # }
@@ -1313,7 +1326,13 @@ mod tests {
                 spatial_index: None,
             };
 
-        assert_eq!(dt.boundary_facets().unwrap().count(), 0);
+        assert_eq!(
+            dt.boundary_facets()
+                .unwrap()
+                .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+                .unwrap(),
+            0
+        );
     }
 
     #[test]

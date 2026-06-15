@@ -56,6 +56,43 @@ pub fn deep_crate_path_fixture() {
     let _buffer = crate::core::collections::SimplexKeyBuffer::new();
 }
 
+pub struct RawSimplexSeedFrontier {
+    // ruleid: delaunay.rust.prefer-simplex-key-buffer-for-local-frontiers
+    seed_simplices: Vec<SimplexKey>,
+}
+
+pub struct BufferedSimplexSeedFrontier {
+    // ok: delaunay.rust.prefer-simplex-key-buffer-for-local-frontiers
+    seed_simplices: SimplexKeyBuffer,
+}
+
+pub struct ConflictErrorPayloadFixture {
+    // ok: delaunay.rust.prefer-simplex-key-buffer-for-local-frontiers
+    extra_simplices: Vec<SimplexKey>,
+}
+
+pub fn raw_simplex_frontier_vec_fixture(
+    // ruleid: delaunay.rust.prefer-simplex-key-buffer-for-local-frontiers
+    pending_seed_simplices: &mut Vec<SimplexKey>,
+) {
+    // ruleid: delaunay.rust.prefer-simplex-key-buffer-for-local-frontiers
+    let mut touched_simplices: Vec<SimplexKey> = Vec::new();
+    // ruleid: delaunay.rust.prefer-simplex-key-buffer-for-local-frontiers
+    let conflict_preview: Vec<SimplexKey> = pending_seed_simplices.iter().copied().collect();
+
+    touched_simplices.extend(conflict_preview);
+}
+
+pub fn simplex_frontier_buffer_fixture(pending_seed_simplices: &mut SimplexKeyBuffer) {
+    // ok: delaunay.rust.prefer-simplex-key-buffer-for-local-frontiers
+    let mut touched_simplices = SimplexKeyBuffer::new();
+    // ok: delaunay.rust.prefer-simplex-key-buffer-for-local-frontiers
+    let all_simplices: Vec<SimplexKey> = Vec::new();
+
+    touched_simplices.extend(pending_seed_simplices.iter().copied());
+    let _ = all_simplices;
+}
+
 pub fn public_unwrap_bypass(value: Option<u8>) -> u8 {
     // ruleid: delaunay.rust.no-production-unwrap-panic, delaunay.rust.no-public-surface-unwrap-panic, delaunay.rust.no-unwrap-expect-in-benches-examples
     value.unwrap()

@@ -1031,8 +1031,8 @@ pub mod query {
     pub use crate::geometry::traits::coordinate::Coordinate;
     pub use crate::geometry::{insphere, insphere_distance, insphere_lifted};
     pub use crate::tds::{
-        AdjacencyIndex, AdjacencyIndexBuildError, EdgeKey, EdgeKeyError, FacetView, Simplex,
-        SimplexKey, Vertex, VertexKey,
+        AdjacencyIndex, AdjacencyIndexBuildError, AllFacetsIter, BoundaryFacetsIter, EdgeKey,
+        EdgeKeyError, FacetView, Simplex, SimplexKey, Vertex, VertexKey,
     };
     pub use crate::{DelaunayTriangulation, Triangulation};
 }
@@ -1224,9 +1224,9 @@ pub mod prelude {
         };
         pub use crate::geometry::point::Point;
         pub use crate::query::{
-            AdjacencyIndex, AdjacencyIndexBuildError, BoundaryAnalysis, DataCopy, DataDebug,
-            DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType, EdgeKey,
-            EdgeKeyError, FacetView, QueryError,
+            AdjacencyIndex, AdjacencyIndexBuildError, AllFacetsIter, BoundaryAnalysis,
+            BoundaryFacetsIter, DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde,
+            DataSerialize, DataType, EdgeKey, EdgeKeyError, FacetView, QueryError,
         };
         pub use crate::tds::{
             FacetHandle, InvariantError, InvariantErrorSummary, InvariantErrorSummaryDetail,
@@ -1558,8 +1558,9 @@ pub mod prelude {
         };
         pub use crate::geometry::traits::coordinate::Coordinate;
         pub use crate::query::{
-            BoundaryAnalysis, DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde,
-            DataSerialize, DataType, FacetView, QueryError, Simplex, Vertex,
+            AllFacetsIter, BoundaryAnalysis, BoundaryFacetsIter, DataCopy, DataDebug,
+            DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType, FacetView,
+            QueryError, Simplex, Vertex,
         };
 
         // Read-only predicates (useful in benchmarks / lightweight geometry checks)

@@ -335,6 +335,12 @@ The following previously deferred checks are now repository-owned Semgrep rules:
   no longer matched, while focused root modules such as `delaunay::flips::*`
   still trigger guidance toward the orthogonal prelude modules in public
   samples.
+- `delaunay.rust.prefer-simplex-key-buffer-for-local-frontiers` keeps local
+  repair/topology simplex-key frontiers on `SimplexKeyBuffer` instead of raw
+  `Vec<SimplexKey>`. The rule is intentionally name-based and heuristic:
+  unbounded full-TDS snapshots, public/error payloads, serialization
+  boundaries, and other deliberately heap-backed collections should remain
+  `Vec`.
 
 ## Public Sample Error Handling
 

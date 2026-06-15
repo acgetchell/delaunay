@@ -29,7 +29,7 @@ pub struct LocalConflictSeedSimplices {
 pub fn accumulate_live_simplex_seeds<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     candidate_seed_simplices: &[SimplexKey],
-    pending_seed_simplices: &mut Vec<SimplexKey>,
+    pending_seed_simplices: &mut SimplexKeyBuffer,
     pending_seen: &mut FastHashSet<SimplexKey>,
 ) -> usize
 where
@@ -78,7 +78,7 @@ where
 /// Retains only live, deduplicated simplices in a pending local repair frontier.
 pub fn retain_live_simplex_seeds<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
-    seed_simplices: &mut Vec<SimplexKey>,
+    seed_simplices: &mut SimplexKeyBuffer,
     seen: &mut FastHashSet<SimplexKey>,
 ) where
     U: DataType,
@@ -91,7 +91,7 @@ pub fn retain_live_simplex_seeds<U, V, const D: usize>(
 
 /// Clears a local repair frontier and its deduplication set together.
 pub fn clear_simplex_seed_set(
-    seed_simplices: &mut Vec<SimplexKey>,
+    seed_simplices: &mut SimplexKeyBuffer,
     seen: &mut FastHashSet<SimplexKey>,
 ) {
     seed_simplices.clear();
@@ -207,7 +207,8 @@ mod tests {
         );
 
         let stale_simplex = SimplexKey::from(KeyData::from_ffi(999_999));
-        let mut pending_seed_simplices = vec![all_simplices[0]];
+        let mut pending_seed_simplices = SimplexKeyBuffer::new();
+        pending_seed_simplices.push(all_simplices[0]);
         let mut pending_seen: FastHashSet<SimplexKey> =
             pending_seed_simplices.iter().copied().collect();
         let added = accumulate_live_simplex_seeds(
@@ -224,7 +225,7 @@ mod tests {
 
         assert_eq!(added, 1);
         assert_eq!(
-            pending_seed_simplices,
+            pending_seed_simplices.iter().copied().collect::<Vec<_>>(),
             vec![all_simplices[0], all_simplices[1]]
         );
         assert!(!pending_seed_simplices.contains(&stale_simplex));
@@ -237,7 +238,7 @@ mod tests {
         );
         assert_eq!(added_again, 0);
         assert_eq!(
-            pending_seed_simplices,
+            pending_seed_simplices.iter().copied().collect::<Vec<_>>(),
             vec![all_simplices[0], all_simplices[1]]
         );
     }
@@ -300,23 +301,28 @@ mod tests {
         );
 
         let stale_simplex = SimplexKey::from(KeyData::from_ffi(999_999));
-        let mut seed_simplices = vec![
+        let mut seed_simplices = SimplexKeyBuffer::new();
+        seed_simplices.extend([
             all_simplices[0],
             stale_simplex,
             all_simplices[1],
             all_simplices[0],
-        ];
+        ]);
         let mut seen = FastHashSet::default();
         retain_live_simplex_seeds(dt.tds(), &mut seed_simplices, &mut seen);
 
-        assert_eq!(seed_simplices, vec![all_simplices[0], all_simplices[1]]);
+        assert_eq!(
+            seed_simplices.iter().copied().collect::<Vec<_>>(),
+            vec![all_simplices[0], all_simplices[1]]
+        );
         assert_eq!(seen.len(), 2);
     }
 
     #[test]
     fn clear_simplex_seed_set_clears_both_collections() {
         let stale_simplex = SimplexKey::from(KeyData::from_ffi(999_999));
-        let mut seed_simplices = vec![stale_simplex];
+        let mut seed_simplices = SimplexKeyBuffer::new();
+        seed_simplices.push(stale_simplex);
         let mut seen = FastHashSet::default();
         seen.insert(stale_simplex);
 

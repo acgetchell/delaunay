@@ -66,9 +66,12 @@ benchmark-harness compile errors rather than publishing benchmark data.
 the release-mode large-scale harness. It runs the same 2D-5D cases as
 `just debug-large-scale-{2,3,4,5}d` with their local defaults, caps each test
 runtime at 60 seconds by default, and reports all failing dimensions before
-exiting. This is useful while iterating, but it is not a Criterion comparison
-and should not be treated as published benchmark data. Run it before pushing
-Rust or benchmark changes to catch obvious local performance drift early.
+exiting. At the end it also prints a compact 2D-5D summary table with the
+reported insertion wall time, total wall time, and pass/fail status so you do
+not have to scroll through the full nextest output. This is useful while
+iterating, but it is not a Criterion comparison and should not be treated as
+published benchmark data. Run it before pushing Rust or benchmark changes to
+catch obvious local performance drift early.
 
 For ordinary Rust or benchmark pushes, use the quick smoke guard with the usual
 correctness checks:

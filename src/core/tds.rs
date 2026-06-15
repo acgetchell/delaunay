@@ -1873,7 +1873,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         &self,
         simplex_key: SimplexKey,
         vertices: &[VertexKey],
-    ) -> Result<Vec<(Uuid, [i8; D])>, TdsError> {
+    ) -> Result<SimplexUuidSortKey<D>, TdsError> {
         let simplex = self
             .simplices
             .get(simplex_key)
@@ -1893,7 +1893,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             });
         }
 
-        let mut vertex_uuid_offsets: Vec<(Uuid, [i8; D])> = Vec::with_capacity(vertices.len());
+        let mut vertex_uuid_offsets = SimplexUuidSortKey::<D>::new();
         for (vertex_idx, &vertex_key) in vertices.iter().enumerate() {
             let vertex = self
                 .vertices
@@ -2380,6 +2380,12 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # }
     /// ```
     pub fn simplex_keys(&self) -> impl Iterator<Item = SimplexKey> + '_ {
+        self.simplices.keys()
+    }
+
+    /// Returns the concrete simplex-key iterator for internal iterator structs
+    /// that need to store traversal state without allocating a key snapshot.
+    pub(crate) fn simplex_key_iter(&self) -> slotmap::dense::Keys<'_, SimplexKey, Simplex<V, D>> {
         self.simplices.keys()
     }
 
@@ -3064,7 +3070,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     fn candidate_periodic_vertex_uuid_offsets(
         &self,
         simplex: &Simplex<V, D>,
-    ) -> Result<Vec<(Uuid, [i8; D])>, TdsError> {
+    ) -> Result<SimplexUuidSortKey<D>, TdsError> {
         let vertices = simplex.vertices();
         let periodic_offsets = simplex.periodic_vertex_offsets();
         if let Some(offsets) = periodic_offsets
@@ -3080,7 +3086,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             });
         }
 
-        let mut vertex_uuid_offsets = Vec::with_capacity(vertices.len());
+        let mut vertex_uuid_offsets = SimplexUuidSortKey::<D>::new();
         for (vertex_idx, &vertex_key) in vertices.iter().enumerate() {
             let vertex = self
                 .vertices
@@ -5957,7 +5963,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     fn validate_no_duplicate_simplices(&self) -> Result<(), TdsError> {
         // Include periodic per-vertex offsets in the duplicate key so periodic quotient simplices
         // with identical vertex sets but distinct lattice offsets are not collapsed.
-        let mut unique_simplices: FastHashMap<Vec<(Uuid, [i8; D])>, SimplexKey> =
+        let mut unique_simplices: FastHashMap<SimplexUuidSortKey<D>, SimplexKey> =
             fast_hash_map_with_capacity(self.simplices.len());
         let mut duplicates = Vec::new();
 
@@ -5967,7 +5973,6 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                 self.build_periodic_vertex_uuid_offsets(simplex_key, &vertices)?;
 
             if let Some(existing_simplex_key) = unique_simplices.get(&vertex_uuid_offsets) {
-                // Convert to Vec only for error message payload
                 duplicates.push((
                     simplex_key,
                     *existing_simplex_key,
@@ -7271,7 +7276,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 // TRAIT IMPLEMENTATIONS
 // =============================================================================
 
-type SimplexUuidSortKey<const D: usize> = Vec<(Uuid, [i8; D])>;
+type SimplexUuidSortKey<const D: usize> =
+    SmallBuffer<(Uuid, [i8; D]), MAX_PRACTICAL_DIMENSION_SIZE>;
 type SimplexUuidSortEntry<'a, V, const D: usize> = (SimplexUuidSortKey<D>, &'a Simplex<V, D>);
 
 /// Builds stable simplex sort keys once so equality does not hide dangling
@@ -7293,7 +7299,7 @@ where
                 return None;
             }
 
-            let mut ids = Vec::with_capacity(simplex.number_of_vertices());
+            let mut ids = SimplexUuidSortKey::<D>::new();
             for (idx, &vkey) in simplex.vertices().iter().enumerate() {
                 let uuid = tds.vertex(vkey).map(Vertex::uuid)?;
                 let offset = offsets.map_or([0_i8; D], |offsets| offsets[idx]);

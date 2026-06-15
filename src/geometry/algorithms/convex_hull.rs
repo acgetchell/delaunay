@@ -1056,9 +1056,17 @@ where
         // These can be used to reconstruct FacetViews when needed
         let hull_facets: Vec<_> = hull_facets_iter
             .map(|facet_view| {
-                FacetHandle::from_validated(facet_view.simplex_key(), facet_view.facet_index())
+                let facet_view = facet_view.map_err(|source| {
+                    ConvexHullConstructionError::BoundaryFacetExtractionFailed {
+                        source: source.into(),
+                    }
+                })?;
+                Ok::<_, ConvexHullConstructionError>(FacetHandle::from_validated(
+                    facet_view.simplex_key(),
+                    facet_view.facet_index(),
+                ))
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
 
         // Additional validation: ensure we have at least one boundary facet
         if hull_facets.is_empty() {
