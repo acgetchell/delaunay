@@ -535,6 +535,7 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
 
     status=0
     failures=()
+    summaries=()
 
     run_case() {
         local dimension="$1"
@@ -542,6 +543,8 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
         local n_env="$3"
         local n_points="$4"
         local progress_every="$5"
+        local log_file
+        log_file="$(mktemp "${TMPDIR:-/tmp}/delaunay-large-scale-${dimension}.XXXXXX")"
 
         echo ""
         echo "▶ ${dimension}: ${test_name} (${n_points} vertices, ${max_secs}s cap)"
@@ -550,20 +553,39 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
             DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS="$max_secs" \
             "$n_env=$n_points" \
             DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=1 \
-            cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug "$test_name" -- --exact --nocapture; then
+            cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug "$test_name" -- --exact --nocapture 2>&1 | tee "$log_file"; then
             echo "✅ ${dimension} completed within the ${max_secs}s test-runtime cap"
+            case_status="PASS"
         else
             local code=$?
             echo "❌ ${dimension} failed or exceeded the ${max_secs}s test-runtime cap (exit ${code})"
             failures+=("$dimension")
             status=1
+            case_status="FAIL"
         fi
+
+        local insertion_time total_time
+        insertion_time="$(awk -F': ' '/Insertion wall time:/ { value=$2 } END { print value }' "$log_file")"
+        total_time="$(awk -F': ' '/Total wall time:/ { value=$2 } END { print value }' "$log_file")"
+        [[ -n "$insertion_time" ]] || insertion_time="n/a"
+        [[ -n "$total_time" ]] || total_time="n/a"
+        summaries+=("$dimension|$n_points|$insertion_time|$total_time|$case_status")
+        rm -f "$log_file"
     }
 
     run_case "2D" "debug_large_scale_2d" "DELAUNAY_LARGE_DEBUG_N_2D" "36000" "2000"
     run_case "3D" "debug_large_scale_3d" "DELAUNAY_LARGE_DEBUG_N_3D" "7500" "500"
     run_case "4D" "debug_large_scale_4d" "DELAUNAY_LARGE_DEBUG_N_4D" "800" "100"
     run_case "5D" "debug_large_scale_5d" "DELAUNAY_LARGE_DEBUG_N_5D" "140" "20"
+
+    echo ""
+    echo "Large-scale smoke summary:"
+    printf '%-4s %10s %18s %18s %8s\n' "Dim" "Vertices" "Insertion wall" "Total wall" "Status"
+    printf '%-4s %10s %18s %18s %8s\n' "----" "--------" "--------------" "----------" "------"
+    for row in "${summaries[@]}"; do
+        IFS='|' read -r dimension n_points insertion_time total_time case_status <<< "$row"
+        printf '%-4s %10s %18s %18s %8s\n' "$dimension" "$n_points" "$insertion_time" "$total_time" "$case_status"
+    done
 
     if (( ${#failures[@]} > 0 )); then
         echo ""

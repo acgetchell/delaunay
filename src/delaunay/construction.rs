@@ -56,7 +56,8 @@ use crate::core::algorithms::incremental_insertion::{
 use crate::core::algorithms::locate::{ConflictError, LocateError};
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::collections::{
-    FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SecureHashMap, SmallBuffer,
+    FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SecureHashMap, SimplexKeyBuffer,
+    SmallBuffer,
 };
 use crate::core::construction::TriangulationConstructionError;
 use crate::core::insertion::record_duplicate_detection_metrics;
@@ -2989,8 +2990,8 @@ where
             stats.record_insertion(&simplex_stats);
         }
 
-        let mut soft_fail_seeds: Vec<SimplexKey> = Vec::new();
-        let mut pending_repair_seeds: Vec<SimplexKey> = Vec::new();
+        let mut soft_fail_seeds = SimplexKeyBuffer::new();
+        let mut pending_repair_seeds = SimplexKeyBuffer::new();
         let insert_loop_started = Instant::now();
         let insert_result = dt.insert_remaining_vertices_seeded(
             vertices,
@@ -3105,8 +3106,8 @@ where
         let original_repair_policy = dt.insertion_state.delaunay_repair_policy;
         dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
         dt.insertion_state.use_global_repair_fallback = use_global_repair_fallback;
-        let mut soft_fail_seeds: Vec<SimplexKey> = Vec::new();
-        let mut pending_repair_seeds: Vec<SimplexKey> = Vec::new();
+        let mut soft_fail_seeds = SimplexKeyBuffer::new();
+        let mut pending_repair_seeds = SimplexKeyBuffer::new();
         dt.insert_remaining_vertices_seeded(
             vertices,
             perturbation_seed,
@@ -3181,9 +3182,9 @@ where
         &mut self,
         index: usize,
         trigger: BatchLocalRepairTrigger,
-        pending_seed_simplices: &mut Vec<SimplexKey>,
+        pending_seed_simplices: &mut SimplexKeyBuffer,
         pending_seen: &mut FastHashSet<SimplexKey>,
-        soft_fail_seeds: &mut Vec<SimplexKey>,
+        soft_fail_seeds: &mut SimplexKeyBuffer,
         mut construction_telemetry: Option<&mut ConstructionTelemetry>,
     ) -> Result<(), DelaunayTriangulationConstructionError> {
         retain_live_simplex_seeds(&self.tri.tds, pending_seed_simplices, pending_seen);
@@ -3312,8 +3313,8 @@ where
         grid_cell_size: Option<f64>,
         batch_repair_policy: DelaunayRepairPolicy,
         construction_stats: Option<&mut ConstructionStatistics>,
-        pending_repair_seeds: &mut Vec<SimplexKey>,
-        soft_fail_seeds: &mut Vec<SimplexKey>,
+        pending_repair_seeds: &mut SimplexKeyBuffer,
+        soft_fail_seeds: &mut SimplexKeyBuffer,
     ) -> Result<(), DelaunayTriangulationConstructionError> {
         let mut grid_index: Option<HashGridIndex<D>> = match grid_cell_size {
             Some(cell_size) => Some(hash_grid_from_validated_cell_size(cell_size)?),
@@ -3801,7 +3802,7 @@ where
         self.insertion_state.delaunay_repair_policy = original_repair_policy;
 
         let has_simplices = self.tri.tds.number_of_simplices() > 0;
-        let mut completion_seed_simplices = Vec::new();
+        let mut completion_seed_simplices = SimplexKeyBuffer::new();
         let mut completion_seen = FastHashSet::default();
         for &simplex_key in pending_repair_seeds.iter().chain(soft_fail_seeds.iter()) {
             if self.tri.tds.contains_simplex(simplex_key) && completion_seen.insert(simplex_key) {

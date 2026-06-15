@@ -24,7 +24,14 @@ fn triangulation_and_hull_workflow_remains_valid() -> Result<(), WorkflowTestErr
     let index = dt.build_adjacency_index()?;
     assert!(index.number_of_edges() > 0);
 
-    let boundary_facets: Vec<_> = dt.boundary_facets()?.collect();
+    let boundary_facets: Vec<_> = dt
+        .boundary_facets()?
+        .map(|facet| {
+            facet.map_err(|source| QueryError::TriangulationCorrupted {
+                source: source.into(),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     assert!(!boundary_facets.is_empty());
 
     let hull = ConvexHull::from_triangulation(dt.as_triangulation())?;

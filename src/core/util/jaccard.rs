@@ -384,6 +384,7 @@ where
             })?;
 
     for facet_view in boundary_facets {
+        let facet_view = facet_view?;
         // Use the existing FacetView::key() method
         let facet_id = facet_view.key()?;
         facet_ids.insert(facet_id);

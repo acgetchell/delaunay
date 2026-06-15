@@ -569,14 +569,6 @@ where
             return Ok(());
         }
 
-        let validate_simplices = |simplices: &[SimplexKey]| {
-            if simplices.is_empty() {
-                return Ok(());
-            }
-            validate_ridge_links_for_simplices(&self.tri.tds, simplices)
-                .map_err(ridge_link_repair_validation_error)
-        };
-
         if !run.touched_simplices.is_empty() {
             if run.used_full_reseed && env::var_os("DELAUNAY_REPAIR_TRACE").is_some() {
                 tracing::debug!(
@@ -584,11 +576,15 @@ where
                     run.touched_simplices.len()
                 );
             }
-            return validate_simplices(&run.touched_simplices);
+            return validate_ridge_links_for_simplices(
+                &self.tri.tds,
+                run.touched_simplices.iter().copied(),
+            )
+            .map_err(ridge_link_repair_validation_error);
         }
 
-        let validation_simplices: Vec<SimplexKey> = self.tri.tds.simplex_keys().collect();
-        validate_simplices(&validation_simplices)
+        validate_ridge_links_for_simplices(&self.tri.tds, self.tri.tds.simplex_keys())
+            .map_err(ridge_link_repair_validation_error)
     }
 
     /// Merge the inserted vertex star with any simplices that cavity reduction touched and
@@ -597,9 +593,9 @@ where
         &self,
         vertex_key: VertexKey,
         extra_seed_simplices: &[SimplexKey],
-    ) -> Vec<SimplexKey> {
+    ) -> SimplexKeyBuffer {
         let mut seen: FastHashSet<SimplexKey> = FastHashSet::default();
-        let mut seed_simplices = Vec::new();
+        let mut seed_simplices = SimplexKeyBuffer::new();
 
         // Keep the inserted vertex star first because it is the hottest local region and
         // the best chance of fixing ordinary post-insertion violations cheaply.

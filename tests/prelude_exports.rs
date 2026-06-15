@@ -77,7 +77,10 @@ use delaunay::prelude::ordering::{
     hilbert_sorted_indices_in_range, try_hilbert_index, try_hilbert_quantize,
     try_hilbert_sort_by_stable, try_hilbert_sort_by_unstable, try_hilbert_sorted_indices,
 };
-use delaunay::prelude::query::{ConvexHull, QueryError};
+use delaunay::prelude::query::{
+    AllFacetsIter as QueryAllFacetsIter, BoundaryFacetsIter as QueryBoundaryFacetsIter, ConvexHull,
+    QueryError,
+};
 use delaunay::prelude::repair::{
     DelaunayCheckPolicy, DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairOperation,
     DelaunayRepairOutcome, DelaunayRepairStats, DelaunayRepairVerificationContext,
@@ -88,7 +91,8 @@ use delaunay::prelude::repair::{
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::tds::Tds;
 use delaunay::prelude::tds::{
-    FacetError, InvariantErrorSummaryDetail, NeighborSlot, TdsError, TdsErrorKind, VertexKey,
+    AllFacetsIter as TdsAllFacetsIter, BoundaryFacetsIter as TdsBoundaryFacetsIter, FacetError,
+    InvariantErrorSummaryDetail, NeighborSlot, TdsError, TdsErrorKind, VertexKey,
 };
 use delaunay::prelude::topology::spaces::{
     GlobalTopology, GlobalTopologyModelError, TopologyKind, ToroidalConstructionMode,
@@ -99,6 +103,8 @@ use delaunay::prelude::topology::validation::{
     RidgeVerticesError, ridge_star_simplices,
 };
 use delaunay::prelude::triangulation::{
+    AllFacetsIter as TriangulationAllFacetsIter,
+    BoundaryFacetsIter as TriangulationBoundaryFacetsIter,
     FacetIssuesMap as TriangulationFacetIssuesMap, FastKernel as TriangulationFastKernel,
     InsertionError as TriangulationInsertionError, QueryError as TriangulationQueryError,
     SpatialIndexConstructionFailure as GenericSpatialIndexConstructionFailure,
@@ -116,6 +122,9 @@ use delaunay::prelude::validation::{
 use delaunay::prelude::{
     CoordinateRange as RootCoordinateRange, SecureHashMap, SecureHashSet,
     ValidationConfigurationError as RootValidationConfigurationError,
+};
+use delaunay::query::{
+    AllFacetsIter as QueryFacadeAllFacetsIter, BoundaryFacetsIter as QueryFacadeBoundaryFacetsIter,
 };
 #[derive(Debug, thiserror::Error)]
 enum RootApiExportTestError {
@@ -342,12 +351,27 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     let dt = DelaunayTriangulation::new_with_options(&vertices, options)?;
 
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
-    assert!(dt.boundary_facets()?.count() > 0);
+    let _query_facade_all_facets: QueryFacadeAllFacetsIter<'_, (), (), 3> = dt.facets()?;
+    let _query_facade_boundary_facets: QueryFacadeBoundaryFacetsIter<'_, (), (), 3> =
+        dt.boundary_facets()?;
+    let _query_prelude_all_facets: QueryAllFacetsIter<'_, (), (), 3> = dt.facets()?;
+    let _query_prelude_boundary_facets: QueryBoundaryFacetsIter<'_, (), (), 3> =
+        dt.boundary_facets()?;
+    let boundary_facet_count = dt.boundary_facets()?.try_fold(0_usize, |count, facet| {
+        facet
+            .map(|_| count + 1)
+            .map_err(|source| QueryError::TriangulationCorrupted {
+                source: source.into(),
+            })
+    })?;
+    assert!(boundary_facet_count > 0);
     let _hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
     dt.validate().unwrap();
     assert_bistellar_flips(&dt);
 
     let mut empty_tds: InsertionTds<(), (), 2> = InsertionTds::empty();
+    let _tds_all_facets: TdsAllFacetsIter<'_, (), (), 2> = empty_tds.facets().unwrap();
+    let _tds_boundary_facets: Option<TdsBoundaryFacetsIter<'static, (), (), 2>> = None;
     assert_eq!(
         repair_neighbor_pointers_local(&mut empty_tds, &[], None)?,
         0
@@ -799,13 +823,23 @@ fn triangulation_prelude_covers_generic_layer() -> Result<(), GenericTriangulati
     tri.set_topology_guarantee(TriangulationTopologyGuarantee::Pseudomanifold);
     tri.set_validation_policy(TriangulationValidationPolicy::Never);
     tri.validate().unwrap();
+    let _triangulation_all_facets: TriangulationAllFacetsIter<'_, (), (), 2> =
+        tri.facets().unwrap();
+    let _triangulation_boundary_facets: TriangulationBoundaryFacetsIter<'_, (), (), 2> =
+        tri.boundary_facets().unwrap();
 
     let empty_issues = TriangulationFacetIssuesMap::default();
     let removed = tri
         .repair_local_facet_issues(&empty_issues, 0)
         .expect("empty issue set should not fail generic local repair");
     assert_eq!(removed, 0);
-    assert_eq!(tri.boundary_facets().unwrap().count(), 0);
+    assert_eq!(
+        tri.boundary_facets()
+            .unwrap()
+            .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+            .unwrap(),
+        0
+    );
 
     assert_send_sync_unpin::<TriangulationInsertionError>();
     assert_send_sync_unpin::<TriangulationQueryError>();

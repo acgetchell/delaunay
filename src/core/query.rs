@@ -39,6 +39,8 @@ static VERTEX_TO_SIMPLICES_SPILL_EVENTS: AtomicU64 = AtomicU64::new(0);
 /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
 /// #     #[error(transparent)]
 /// #     Query(#[from] delaunay::query::QueryError),
+/// #     #[error(transparent)]
+/// #     Facet(#[from] delaunay::prelude::tds::FacetError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
@@ -49,7 +51,10 @@ static VERTEX_TO_SIMPLICES_SPILL_EVENTS: AtomicU64 = AtomicU64::new(0);
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
-/// let boundary_count = dt.as_triangulation().boundary_facets()?.count();
+/// let boundary_count = dt
+///     .as_triangulation()
+///     .boundary_facets()?
+///     .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
 /// assert_eq!(boundary_count, 4);
 /// # Ok(())
 /// # }
@@ -240,17 +245,20 @@ where
     /// Returns an iterator over all facets in the triangulation.
     ///
     /// This provides efficient access to all facets without pre-allocating a vector.
-    /// Each facet is represented as a lightweight `FacetView` that references the
+    /// Each successful facet is a lightweight `FacetView` that references the
     /// underlying triangulation data.
     ///
     /// # Returns
     ///
-    /// An iterator yielding `FacetView` objects for all facets in the triangulation.
+    /// An iterator yielding `Result<FacetView, FacetError>` items for all facets
+    /// in the triangulation.
     ///
     /// # Errors
     ///
     /// Returns [`QueryError::TriangulationCorrupted`] if the facet iterator cannot
-    /// represent facet indices for this dimension.
+    /// represent facet indices for this dimension. Individual iterator items
+    /// return [`FacetError`](crate::prelude::tds::FacetError) if a facet view
+    /// cannot be constructed from the current TDS state.
     ///
     /// # Examples
     ///
@@ -263,6 +271,8 @@ where
     /// #     Construction(#[from] DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Query(#[from] delaunay::query::QueryError),
+    /// #     #[error(transparent)]
+    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
@@ -274,14 +284,17 @@ where
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// // Iterate over all facets
-    /// let facet_count = dt.as_triangulation().facets()?.count();
+    /// let facet_count = dt
+    ///     .as_triangulation()
+    ///     .facets()?
+    ///     .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
     /// assert_eq!(facet_count, 4); // Tetrahedron has 4 facets
     /// # Ok(())
     /// # }
     /// ```
     pub fn facets(&self) -> Result<AllFacetsIter<'_, U, V, D>, QueryError> {
-        AllFacetsIter::try_new(&self.tds)
-            .map_err(TdsError::from)
+        self.tds
+            .facets()
             .map_err(|source| QueryError::TriangulationCorrupted { source })
     }
 
@@ -292,7 +305,8 @@ where
     ///
     /// # Returns
     ///
-    /// An iterator yielding `FacetView` objects for boundary facets only.
+    /// An iterator yielding `Result<FacetView, FacetError>` items for boundary
+    /// facets only.
     ///
     /// # Examples
     ///
@@ -305,6 +319,8 @@ where
     /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Query(#[from] delaunay::query::QueryError),
+    /// #     #[error(transparent)]
+    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
@@ -315,7 +331,10 @@ where
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
-    /// let boundary_count = dt.as_triangulation().boundary_facets()?.count();
+    /// let boundary_count = dt
+    ///     .as_triangulation()
+    ///     .boundary_facets()?
+    ///     .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
     /// assert_eq!(boundary_count, 4); // All facets are on boundary
     /// # Ok(())
     /// # }
@@ -326,6 +345,8 @@ where
     /// Returns [`QueryError::TriangulationCorrupted`] if facet-map construction
     /// detects invalid simplex or facet bookkeeping. The variant preserves the
     /// underlying [`TdsError`] so callers can inspect the structural failure.
+    /// Individual iterator items return [`FacetError`](crate::prelude::tds::FacetError)
+    /// if a boundary facet cannot be created or keyed from the simplices.
     pub fn boundary_facets(&self) -> Result<BoundaryFacetsIter<'_, U, V, D>, QueryError> {
         let facet_map = self
             .tds
@@ -801,8 +822,22 @@ mod tests {
                     assert_eq!(empty.dim(), -1);
                     assert_eq!(empty.simplices().count(), 0);
                     assert_eq!(empty.vertices().count(), 0);
-                    assert_eq!(empty.facets().unwrap().count(), 0);
-                    assert_eq!(empty.boundary_facets().unwrap().count(), 0);
+                    assert_eq!(
+                        empty
+                            .facets()
+                            .unwrap()
+                            .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+                            .unwrap(),
+                        0
+                    );
+                    assert_eq!(
+                        empty
+                            .boundary_facets()
+                            .unwrap()
+                            .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+                            .unwrap(),
+                        0
+                    );
 
                     let vertices = vec![
                         $(crate::core::vertex::Vertex::<(), _>::try_new($simplex_coords).unwrap()),+
@@ -822,8 +857,20 @@ mod tests {
                     assert_eq!(tri.dim(), $dim as i32);
                     assert_eq!(tri.simplices().count(), 1);
                     assert_eq!(tri.vertices().count(), expected_vertex_count);
-                    assert_eq!(tri.facets().unwrap().count(), expected_vertex_count);
-                    assert_eq!(tri.boundary_facets().unwrap().count(), expected_vertex_count);
+                    assert_eq!(
+                        tri.facets()
+                            .unwrap()
+                            .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+                            .unwrap(),
+                        expected_vertex_count
+                    );
+                    assert_eq!(
+                        tri.boundary_facets()
+                            .unwrap()
+                            .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+                            .unwrap(),
+                        expected_vertex_count
+                    );
                 }
             }
         };
@@ -1269,8 +1316,15 @@ mod tests {
         assert_eq!(edges_collected.len(), edge_count);
         assert!(edge_count >= 6);
 
-        assert!(tri.facets().unwrap().next().is_some());
-        assert!(tri.boundary_facets().unwrap().next().is_some());
+        assert!(tri.facets().unwrap().next().transpose().unwrap().is_some());
+        assert!(
+            tri.boundary_facets()
+                .unwrap()
+                .next()
+                .transpose()
+                .unwrap()
+                .is_some()
+        );
 
         let (simplex_key, _) = tri.simplices().next().unwrap();
         let simplex_vertices = tri.simplex_vertices(simplex_key).unwrap();

@@ -32,7 +32,7 @@ use delaunay::prelude::geometry::{
 };
 use delaunay::prelude::insertion::InsertionError;
 use delaunay::prelude::validation::DelaunayTriangulationValidationError;
-use delaunay::prelude::{EdgeKeyError, TdsError, VertexKey};
+use delaunay::prelude::{EdgeKeyError, FacetError, TdsError, VertexKey};
 
 type ExampleResult<T = ()> = Result<T, TopologyEditingExampleError>;
 
@@ -48,6 +48,8 @@ enum TopologyEditingExampleError {
     Flip(#[from] FlipError),
     #[error(transparent)]
     Edge(#[from] EdgeKeyError),
+    #[error(transparent)]
+    Facet(#[from] FacetError),
     #[error(transparent)]
     Tds(#[from] TdsError),
     #[error(transparent)]
@@ -262,7 +264,7 @@ fn edit_api_2d_k2() -> ExampleResult {
 
     // Find an interior edge to flip
     let facet =
-        find_interior_facet_2d(&dt).ok_or(TopologyEditingExampleError::NoInteriorFacet {
+        find_interior_facet_2d(&dt)?.ok_or(TopologyEditingExampleError::NoInteriorFacet {
             demo: "2D k=2 demo",
         })?;
 
@@ -462,7 +464,7 @@ fn edit_api_3d_k2() -> ExampleResult {
     print_stats_3d(&dt);
 
     // Find an interior facet to flip
-    if let Some(facet) = find_interior_facet_3d(&dt) {
+    if let Some(facet) = find_interior_facet_3d(&dt)? {
         match dt.flip_k2(facet) {
             Ok(flip_info) => {
                 println!("\nApplied k=2 flip:");
@@ -534,7 +536,7 @@ fn edit_api_3d_k3() -> ExampleResult {
     print_stats_3d(&dt);
 
     // Try to find and flip a ridge
-    if let Some(ridge) = find_flippable_ridge_3d(&dt) {
+    if let Some(ridge) = find_flippable_ridge_3d(&dt)? {
         match dt.flip_k3(ridge) {
             Ok(flip_info) => {
                 println!("\n✓ k=3 flip succeeded:");
@@ -577,7 +579,7 @@ fn print_stats_3d<K: Kernel<3, Scalar = f64>>(dt: &DelaunayTriangulation<K, (), 
 
 fn find_interior_facet_2d<K: Kernel<2, Scalar = f64>>(
     dt: &DelaunayTriangulation<K, (), (), 2>,
-) -> Option<FacetHandle> {
+) -> ExampleResult<Option<FacetHandle>> {
     for (simplex_key, simplex) in dt.simplices() {
         if let Some(neighbors) = simplex.neighbors() {
             for (facet_idx, neighbor) in neighbors.enumerate() {
@@ -585,17 +587,21 @@ fn find_interior_facet_2d<K: Kernel<2, Scalar = f64>>(
                     let Ok(facet_idx) = u8::try_from(facet_idx) else {
                         continue;
                     };
-                    return FacetHandle::try_new(dt.tds(), simplex_key, facet_idx).ok();
+                    return Ok(Some(FacetHandle::try_new(
+                        dt.tds(),
+                        simplex_key,
+                        facet_idx,
+                    )?));
                 }
             }
         }
     }
-    None
+    Ok(None)
 }
 
 fn find_interior_facet_3d<K: Kernel<3, Scalar = f64>>(
     dt: &DelaunayTriangulation<K, (), (), 3>,
-) -> Option<FacetHandle> {
+) -> ExampleResult<Option<FacetHandle>> {
     for (simplex_key, simplex) in dt.simplices() {
         if let Some(neighbors) = simplex.neighbors() {
             for (facet_idx, neighbor) in neighbors.enumerate() {
@@ -603,17 +609,21 @@ fn find_interior_facet_3d<K: Kernel<3, Scalar = f64>>(
                     let Ok(facet_idx) = u8::try_from(facet_idx) else {
                         continue;
                     };
-                    return FacetHandle::try_new(dt.tds(), simplex_key, facet_idx).ok();
+                    return Ok(Some(FacetHandle::try_new(
+                        dt.tds(),
+                        simplex_key,
+                        facet_idx,
+                    )?));
                 }
             }
         }
     }
-    None
+    Ok(None)
 }
 
 fn find_flippable_ridge_3d<K: Kernel<3, Scalar = f64>>(
     dt: &DelaunayTriangulation<K, (), (), 3>,
-) -> Option<RidgeHandle> {
+) -> ExampleResult<Option<RidgeHandle>> {
     // Try to find any ridge (edge in 3D shared by multiple tetrahedra)
     for (simplex_key, simplex) in dt.simplices() {
         let vertex_count = simplex.number_of_vertices();
@@ -628,14 +638,12 @@ fn find_flippable_ridge_3d<K: Kernel<3, Scalar = f64>>(
             let Ok(omit_b) = u8::try_from(i + 1) else {
                 continue;
             };
-            let Ok(ridge) = RidgeHandle::try_new(dt.tds(), simplex_key, omit_a, omit_b) else {
-                continue;
-            };
+            let ridge = RidgeHandle::try_new(dt.tds(), simplex_key, omit_a, omit_b)?;
 
             // Just return the first one we find
             // (In practice, you'd want to check if it's actually flippable)
-            return Some(ridge);
+            return Ok(Some(ridge));
         }
     }
-    None
+    Ok(None)
 }

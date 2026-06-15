@@ -220,7 +220,7 @@ fn log_cavity_reduction_event<F>(
         return;
     }
 
-    let conflict_preview: Vec<SimplexKey> = conflict_simplices.iter().copied().take(12).collect();
+    let conflict_preview: SimplexKeyBuffer = conflict_simplices.iter().copied().take(12).collect();
     let event = event();
     tracing::debug!(
         target: "delaunay::cavity_reduction",
@@ -1362,9 +1362,9 @@ where
                             iterations,
                             conflict_simplices,
                             || {
-                                let added: Vec<SimplexKey> =
-                                    simplices_to_add.iter().copied().collect();
-                                format!("disconnected_boundary_expand add_simplices={added:?}")
+                                format!(
+                                    "disconnected_boundary_expand add_simplices={simplices_to_add:?}"
+                                )
                             },
                         );
                         conflict_simplices.extend(simplices_to_add);

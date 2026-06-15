@@ -50,8 +50,11 @@ fn bench_boundary_facets_micro(c: &mut Criterion) {
 
     for &requested_vertices in BOUNDARY_COUNTS_3D {
         let dt = boundary_triangulation_3d(requested_vertices);
-        let boundary_count =
-            bench_result(dt.boundary_facets(), "boundary facets should be available").count();
+        let boundary_count = bench_result(
+            bench_result(dt.boundary_facets(), "boundary facets should be available")
+                .try_fold(0_usize, |count, facet| facet.map(|_| count + 1)),
+            "boundary facets should be valid",
+        );
         group.throughput(Throughput::Elements(bench_result(
             u64::try_from(boundary_count),
             "boundary facet count fits in u64",
@@ -62,17 +65,20 @@ fn bench_boundary_facets_micro(c: &mut Criterion) {
             &dt,
             |b, dt| {
                 b.iter(|| {
-                    black_box(
+                    black_box(bench_result(
                         bench_result(dt.boundary_facets(), "boundary facets should be available")
-                            .count(),
-                    );
+                            .try_fold(0_usize, |count, facet| facet.map(|_| count + 1)),
+                        "boundary facets should be valid",
+                    ));
                 });
             },
         );
 
-        let boundary_facets =
+        let boundary_facets = bench_result(
             bench_result(dt.boundary_facets(), "boundary facets should be available")
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, _>>(),
+            "boundary facets should be valid",
+        );
         group.bench_with_input(
             BenchmarkId::new("is_boundary_facet_3d", requested_vertices),
             &(&dt, boundary_facets),

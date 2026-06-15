@@ -1330,19 +1330,21 @@ fn build_ridge_star_map<U, V, const D: usize>(
 
 fn build_ridge_star_map_for_simplices<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
-    simplices: &[SimplexKey],
+    simplices: impl IntoIterator<Item = SimplexKey>,
 ) -> Result<FastHashMap<u64, RidgeStar>, ManifoldError> {
     if D < 2 {
         return Ok(FastHashMap::default());
     }
 
-    if simplices.is_empty() {
-        return Ok(FastHashMap::default());
-    }
+    let simplices = simplices.into_iter();
+    let (lower_bound, upper_bound) = simplices.size_hint();
+    let estimated_simplex_count = upper_bound.unwrap_or(lower_bound);
 
     // Each D-simplex has C(D+1, 2) ridges (omit two vertices).
     let ridges_per_simplex = (D + 1).saturating_mul(D) / 2;
-    let estimated_unique_ridges = simplices.len().saturating_mul(ridges_per_simplex).max(1);
+    let estimated_unique_ridges = estimated_simplex_count
+        .saturating_mul(ridges_per_simplex)
+        .max(1);
 
     // Build a set of ridges touched by the specified simplices.
     // For periodic simplices we store both lifted vertices (for ridge identity and
@@ -1356,7 +1358,7 @@ fn build_ridge_star_map_for_simplices<U, V, const D: usize>(
     let mut ridge_vertices_lifted: LiftedVertexBuffer =
         LiftedVertexBuffer::with_capacity(D.saturating_sub(1));
 
-    for &simplex_key in simplices {
+    for simplex_key in simplices {
         if !tds.contains_simplex(simplex_key) {
             continue;
         }
@@ -1672,20 +1674,16 @@ pub fn validate_ridge_links<U, V, const D: usize>(tds: &Tds<U, V, D>) -> Result<
 /// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices)?;
 /// let simplices: SimplexKeyBuffer = tds.simplices().map(|(k, _)| k).collect();
 ///
-/// validate_ridge_links_for_simplices(&tds, &simplices)?;
+/// validate_ridge_links_for_simplices(&tds, simplices.iter().copied())?;
 /// # Ok(())
 /// # }
 /// ```
 pub fn validate_ridge_links_for_simplices<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
-    simplices: &[SimplexKey],
+    simplices: impl IntoIterator<Item = SimplexKey>,
 ) -> Result<(), ManifoldError> {
     // Ridge links are only meaningful for D>=2.
     if D < 2 {
-        return Ok(());
-    }
-
-    if simplices.is_empty() {
         return Ok(());
     }
 
@@ -3872,7 +3870,7 @@ mod tests {
         let tds: Tds<(), (), 1> = Tds::empty();
         let simplex_key = SimplexKey::from(KeyData::from_ffi(0));
 
-        let map = build_ridge_star_map_for_simplices(&tds, &[simplex_key]).unwrap();
+        let map = build_ridge_star_map_for_simplices(&tds, [simplex_key]).unwrap();
         assert!(map.is_empty());
     }
 
@@ -3906,7 +3904,8 @@ mod tests {
             )
             .unwrap();
 
-        let map = build_ridge_star_map_for_simplices(&tds, &[]).unwrap();
+        let map =
+            build_ridge_star_map_for_simplices(&tds, std::iter::empty::<SimplexKey>()).unwrap();
         assert!(map.is_empty());
     }
 
@@ -3918,7 +3917,7 @@ mod tests {
         // Include a missing simplex key to ensure it is skipped, not treated as an error.
         let missing = SimplexKey::from(KeyData::from_ffi(u64::MAX));
 
-        let map = build_ridge_star_map_for_simplices(&tds, &[c1, missing]).unwrap();
+        let map = build_ridge_star_map_for_simplices(&tds, [c1, missing]).unwrap();
 
         // In 3D, ridges are edges: a tetrahedron has C(4,2) = 6 edges.
         assert_eq!(map.len(), 6);
@@ -3959,7 +3958,7 @@ mod tests {
     fn test_build_ridge_star_map_for_simplices_3d_two_simplices_includes_union_of_ridges() {
         let (tds, [v0, v1, v2, v3, v4], [c1, c2]) = build_two_tetrahedra_sharing_facet_tds_3d();
 
-        let map = build_ridge_star_map_for_simplices(&tds, &[c1, c2]).unwrap();
+        let map = build_ridge_star_map_for_simplices(&tds, [c1, c2]).unwrap();
 
         // Each tetrahedron has 6 edges and they share 3 edges on the shared facet => 6+6-3=9.
         assert_eq!(map.len(), 9);
@@ -3992,7 +3991,7 @@ mod tests {
         let (tds, v0, incident, _nonincident) = build_wedge_two_spheres_share_vertex_tds_2d();
 
         // In 2D, ridges are vertices. A single triangle touches 3 ridges.
-        let map = build_ridge_star_map_for_simplices(&tds, &[incident]).unwrap();
+        let map = build_ridge_star_map_for_simplices(&tds, [incident]).unwrap();
         assert_eq!(map.len(), 3);
 
         // The shared vertex v0 should have a star consisting of 6 incident triangles (3 from each sphere).
@@ -4040,7 +4039,7 @@ mod tests {
             simplex.push_vertex_key(v1);
         }
 
-        match build_ridge_star_map_for_simplices(&tds, &[simplex_key]) {
+        match build_ridge_star_map_for_simplices(&tds, [simplex_key]) {
             Err(ManifoldError::Tds(TdsError::DimensionMismatch {
                 expected: 3,
                 actual: 2,
@@ -4065,10 +4064,10 @@ mod tests {
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
 
         let simplices: Vec<SimplexKey> = tds.simplices().map(|(k, _)| k).collect();
-        validate_ridge_links_for_simplices(&tds, &simplices).unwrap();
+        validate_ridge_links_for_simplices(&tds, simplices.iter().copied()).unwrap();
 
         // And it should be a no-op on empty simplex lists.
-        validate_ridge_links_for_simplices(&tds, &[]).unwrap();
+        validate_ridge_links_for_simplices(&tds, std::iter::empty::<SimplexKey>()).unwrap();
     }
 
     #[test]
@@ -4077,7 +4076,7 @@ mod tests {
         let tds: Tds<(), (), 3> = Tds::empty();
         let missing = SimplexKey::from(KeyData::from_ffi(u64::MAX));
 
-        assert!(validate_ridge_links_for_simplices(&tds, &[missing]).is_ok());
+        assert!(validate_ridge_links_for_simplices(&tds, [missing]).is_ok());
     }
 
     #[test]
@@ -4099,7 +4098,7 @@ mod tests {
             .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![v0, v1], None).unwrap())
             .unwrap();
 
-        assert!(validate_ridge_links_for_simplices(&tds, &[c01]).is_ok());
+        assert!(validate_ridge_links_for_simplices(&tds, [c01]).is_ok());
     }
 
     #[test]
@@ -4108,7 +4107,7 @@ mod tests {
 
         let expected_ridge_key = facet_key_from_vertices(&[v0]);
 
-        match validate_ridge_links_for_simplices(&tds, &[incident]) {
+        match validate_ridge_links_for_simplices(&tds, [incident]) {
             Err(ManifoldError::RidgeLinkNotManifold {
                 ridge_key,
                 link_vertex_count,
@@ -4135,7 +4134,7 @@ mod tests {
         let (tds, _v0, _incident, nonincident) = build_wedge_two_spheres_share_vertex_tds_2d();
 
         // Validate a triangle that does NOT touch the shared vertex; this should not detect the wedge.
-        assert!(validate_ridge_links_for_simplices(&tds, &[nonincident]).is_ok());
+        assert!(validate_ridge_links_for_simplices(&tds, [nonincident]).is_ok());
     }
 
     fn build_cone_on_torus_tds() -> (Tds<(), (), 3>, VertexKey) {
@@ -4463,7 +4462,7 @@ mod tests {
             .unwrap();
         let c2 = tds.insert_simplex_with_mapping(simplex2).unwrap();
 
-        let map = build_ridge_star_map_for_simplices(&tds, &[c1, c2]).unwrap();
+        let map = build_ridge_star_map_for_simplices(&tds, [c1, c2]).unwrap();
 
         // In 2D, ridges have D-1 = 1 vertex. Single-vertex ridges are identified
         // modulo global periodic translation, so v0@base and v0@[1,0] represent
@@ -4605,7 +4604,7 @@ mod tests {
             .unwrap();
         let c2 = tds.insert_simplex_with_mapping(simplex2).unwrap();
 
-        match validate_ridge_links_for_simplices(&tds, &[c1, c2]) {
+        match validate_ridge_links_for_simplices(&tds, [c1, c2]) {
             Err(ManifoldError::RidgeLinkNotManifold { .. }) => {}
             other => panic!("Expected RidgeLinkNotManifold, got {other:?}"),
         }

@@ -789,6 +789,8 @@ fn facet_measure_gram_matrix<const D: usize>(
 /// #     #[error(transparent)]
 /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
 /// #     #[error(transparent)]
+/// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+/// #     #[error(transparent)]
 /// #     SurfaceMeasure(#[from] delaunay::prelude::geometry::SurfaceMeasureError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
@@ -803,7 +805,7 @@ fn facet_measure_gram_matrix<const D: usize>(
 /// let tds = dt.tds();
 ///
 /// // Get boundary facets as FacetViews
-/// let boundary_facets = tds.boundary_facets()?.collect::<Vec<_>>();
+/// let boundary_facets = tds.boundary_facets()?.collect::<Result<Vec<_>, _>>()?;
 ///
 /// // Calculate surface area
 /// let surface_area = surface_measure(&boundary_facets)?;
@@ -1608,7 +1610,12 @@ mod tests {
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let boundary_facets: Vec<_> = dt.tds().boundary_facets().unwrap().collect();
+        let boundary_facets: Vec<_> = dt
+            .tds()
+            .boundary_facets()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
 
         // Find the facet opposite to v4 (contains vertices v1, v2, v3)
         let tarfacet = boundary_facets
@@ -1652,7 +1659,12 @@ mod tests {
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let boundary_facets: Vec<_> = dt.tds().boundary_facets().unwrap().collect();
+        let boundary_facets: Vec<_> = dt
+            .tds()
+            .boundary_facets()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
 
         // Take first two boundary facets for testing
         let facet1 = boundary_facets[0];
@@ -1962,7 +1974,12 @@ mod tests {
         ];
         let dt1: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices1).unwrap();
-        let boundary_facets1: Vec<_> = dt1.tds().boundary_facets().unwrap().collect();
+        let boundary_facets1: Vec<_> = dt1
+            .tds()
+            .boundary_facets()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
 
         // Find the facet opposite to v4 (triangle with v1, v2, v3) - area = 0.5
         let small_facet = boundary_facets1
@@ -1994,7 +2011,12 @@ mod tests {
         ];
         let dt2: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices2).unwrap();
-        let boundary_facets2: Vec<_> = dt2.tds().boundary_facets().unwrap().collect();
+        let boundary_facets2: Vec<_> = dt2
+            .tds()
+            .boundary_facets()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
 
         // Find the facet opposite to v8 (triangle with v5, v6, v7) - area = 24.0
         let large_facet = boundary_facets2
@@ -2040,7 +2062,12 @@ mod tests {
 
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let boundary_facets: Vec<_> = dt.tds().boundary_facets().unwrap().collect();
+        let boundary_facets: Vec<_> = dt
+            .tds()
+            .boundary_facets()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
 
         // In 2D, boundary facets are edges
         let total_perimeter = surface_measure(&boundary_facets).unwrap();
@@ -2064,7 +2091,12 @@ mod tests {
 
         let dt: DelaunayTriangulation<_, (), (), 4> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let boundary_facets: Vec<_> = dt.tds().boundary_facets().unwrap().collect();
+        let boundary_facets: Vec<_> = dt
+            .tds()
+            .boundary_facets()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
 
         let total_surface = surface_measure(&boundary_facets).unwrap();
 
@@ -2095,7 +2127,12 @@ mod tests {
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let boundary_facets: Vec<_> = dt.tds().boundary_facets().unwrap().collect();
+        let boundary_facets: Vec<_> = dt
+            .tds()
+            .boundary_facets()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
 
         // Test with valid facets - should work
         let result = surface_measure(&boundary_facets[0..1]);
@@ -2156,7 +2193,12 @@ mod tests {
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let boundary_facets: Vec<_> = dt.tds().boundary_facets().unwrap().collect();
+        let boundary_facets: Vec<_> = dt
+            .tds()
+            .boundary_facets()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
 
         // Tetrahedron has exactly 4 boundary facets
         assert_eq!(

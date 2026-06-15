@@ -1431,7 +1431,7 @@ where
         validate_local_pseudomanifold_for_simplices(&self.tds, simplices)?;
 
         if self.topology_guarantee.requires_ridge_links() {
-            validate_ridge_links_for_simplices(&self.tds, simplices)?;
+            validate_ridge_links_for_simplices(&self.tds, simplices.iter().copied())?;
         }
 
         self.validate_geometric_simplex_orientation_for_simplices(simplices)?;

@@ -57,15 +57,19 @@ impl<U, V, const D: usize> BoundaryAnalysis<U, V, D> for Tds<U, V, D> {
     /// # Returns
     ///
     /// A `Result<BoundaryFacetsIter<'_, U, V, D>, TdsError>` containing an iterator over boundary facets.
-    /// The iterator yields facets lazily without pre-allocating vectors, providing better performance.
+    /// The iterator yields `Result<FacetView, FacetError>` items lazily without pre-allocating vectors,
+    /// providing better performance while still surfacing corrupted facet views during iteration.
     ///
     /// # Errors
     ///
     /// Returns a [`TdsError`] (typically
     /// [`crate::prelude::tds::FacetError`]) if:
-    /// - Any boundary facet cannot be created from the simplices
+    /// - The boundary-facet iterator cannot be constructed
     /// - A facet index is out of bounds (indicates data corruption)
     /// - A referenced simplex is not found in the triangulation (indicates data corruption)
+    ///
+    /// Individual iterator items return [`FacetError`] if a boundary facet cannot
+    /// be created or keyed from the simplices.
     ///
     /// # Examples
     ///
@@ -80,6 +84,8 @@ impl<U, V, const D: usize> BoundaryAnalysis<U, V, D> for Tds<U, V, D> {
     /// #     Query(#[from] delaunay::query::QueryError),
     /// #     #[error(transparent)]
     /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
+    /// #     #[error(transparent)]
+    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a simple 3D triangulation (single tetrahedron)
@@ -92,10 +98,16 @@ impl<U, V, const D: usize> BoundaryAnalysis<U, V, D> for Tds<U, V, D> {
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// // High-level API returns `QueryError` if the underlying TDS is corrupted.
-    /// assert_eq!(dt.boundary_facets()?.count(), 4);
+    /// let high_level_count = dt
+    ///     .boundary_facets()?
+    ///     .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
+    /// assert_eq!(high_level_count, 4);
     ///
     /// // TDS-level API (fallible): returns `TdsError` on corruption.
-    /// let count = dt.tds().boundary_facets()?.count();
+    /// let count = dt
+    ///     .tds()
+    ///     .boundary_facets()?
+    ///     .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
     /// assert_eq!(count, 4);
     /// # Ok(())
     /// # }
@@ -146,6 +158,8 @@ impl<U, V, const D: usize> BoundaryAnalysis<U, V, D> for Tds<U, V, D> {
     /// #     Query(#[from] delaunay::query::QueryError),
     /// #     #[error(transparent)]
     /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
+    /// #     #[error(transparent)]
+    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
@@ -157,7 +171,7 @@ impl<U, V, const D: usize> BoundaryAnalysis<U, V, D> for Tds<U, V, D> {
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// // Get boundary facets using the new iterator API
-    /// let Some(first_facet) = dt.boundary_facets()?.next() else {
+    /// let Some(first_facet) = dt.boundary_facets()?.next().transpose()? else {
     ///     return Ok(());
     /// };
     /// // In a single tetrahedron, all facets are boundary facets
@@ -204,6 +218,8 @@ impl<U, V, const D: usize> BoundaryAnalysis<U, V, D> for Tds<U, V, D> {
     /// #     Query(#[from] delaunay::query::QueryError),
     /// #     #[error(transparent)]
     /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
+    /// #     #[error(transparent)]
+    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
@@ -219,6 +235,7 @@ impl<U, V, const D: usize> BoundaryAnalysis<U, V, D> for Tds<U, V, D> {
     ///
     /// // Check boundary facets efficiently using the iterator API
     /// for facet in dt.boundary_facets()? {
+    ///     let facet = facet?;
     ///     let is_boundary = dt.tds().is_boundary_facet_with_map(&facet, &facet_to_simplices)?;
     ///     println!("Facet is boundary: {is_boundary}");
     /// }
@@ -337,7 +354,11 @@ mod tests {
             );
             assert_eq!(dt.dim(), 2, "Should be 2-dimensional");
 
-            let boundary_count = dt.boundary_facets().unwrap().count();
+            let boundary_count = dt
+                .boundary_facets()
+                .unwrap()
+                .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+                .unwrap();
             assert_eq!(
                 boundary_count, 3,
                 "2D triangle should have 3 boundary facets"
@@ -349,6 +370,7 @@ mod tests {
                 .build_facet_to_simplices_map()
                 .expect("Should build facet map");
             assert!(dt.boundary_facets().unwrap().all(|f| {
+                let f = f.expect("valid boundary facet");
                 dt.tds()
                     .is_boundary_facet_with_map(&f, &facet_to_simplices)
                     .expect("Should not fail for valid facets")
@@ -373,7 +395,11 @@ mod tests {
             );
             assert_eq!(dt.dim(), 3, "Should be 3-dimensional");
 
-            let boundary_count = dt.boundary_facets().unwrap().count();
+            let boundary_count = dt
+                .boundary_facets()
+                .unwrap()
+                .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+                .unwrap();
             assert_eq!(
                 boundary_count, 4,
                 "3D tetrahedron should have 4 boundary facets"
@@ -385,6 +411,7 @@ mod tests {
                 .build_facet_to_simplices_map()
                 .expect("Should build facet map");
             assert!(dt.boundary_facets().unwrap().all(|f| {
+                let f = f.expect("valid boundary facet");
                 dt.tds()
                     .is_boundary_facet_with_map(&f, &facet_to_simplices)
                     .expect("Should not fail for valid facets")
@@ -410,7 +437,11 @@ mod tests {
             );
             assert_eq!(dt.dim(), 4, "Should be 4-dimensional");
 
-            let boundary_count = dt.boundary_facets().unwrap().count();
+            let boundary_count = dt
+                .boundary_facets()
+                .unwrap()
+                .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+                .unwrap();
             assert_eq!(
                 boundary_count, 5,
                 "4D simplex should have 5 boundary facets"
@@ -425,6 +456,7 @@ mod tests {
                 .boundary_facets()
                 .unwrap()
                 .filter(|f| {
+                    let f = f.as_ref().expect("valid boundary facet");
                     dt.tds()
                         .is_boundary_facet_with_map(f, &facet_to_simplices)
                         .expect("Should not fail for valid facets")
@@ -445,15 +477,69 @@ mod tests {
                 "Empty triangulation should have no simplices"
             );
 
-            let boundary_count = dt.boundary_facets().unwrap().count();
+            let boundary_count = dt
+                .boundary_facets()
+                .unwrap()
+                .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+                .unwrap();
             assert_eq!(
                 boundary_count, 0,
                 "Empty triangulation should have no boundary facets"
             );
         }
 
+        // Test Case 5: 5D simplex - all 6 facets should be boundary facets
+        {
+            let points = vec![
+                Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0]),
+                Point::from_validated_coords([1.0, 0.0, 0.0, 0.0, 0.0]),
+                Point::from_validated_coords([0.0, 1.0, 0.0, 0.0, 0.0]),
+                Point::from_validated_coords([0.0, 0.0, 1.0, 0.0, 0.0]),
+                Point::from_validated_coords([0.0, 0.0, 0.0, 1.0, 0.0]),
+                Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 1.0]),
+            ];
+            let vertices = Vertex::from_points(&points);
+            let dt = DelaunayTriangulation::new(&vertices).unwrap();
+
+            assert_eq!(
+                dt.number_of_simplices(),
+                1,
+                "5D simplex should have 1 simplex"
+            );
+            assert_eq!(dt.dim(), 5, "Should be 5-dimensional");
+
+            let boundary_count = dt
+                .boundary_facets()
+                .unwrap()
+                .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+                .unwrap();
+            assert_eq!(
+                boundary_count, 6,
+                "5D simplex should have 6 boundary facets"
+            );
+
+            let facet_to_simplices = dt
+                .tds()
+                .build_facet_to_simplices_map()
+                .expect("Should build facet map");
+            let confirmed_boundary = dt
+                .boundary_facets()
+                .unwrap()
+                .filter(|f| {
+                    let f = f.as_ref().expect("valid boundary facet");
+                    dt.tds()
+                        .is_boundary_facet_with_map(f, &facet_to_simplices)
+                        .expect("Should not fail for valid facets")
+                })
+                .count();
+            assert_eq!(
+                confirmed_boundary, 6,
+                "All 5D simplex facets should be boundary facets"
+            );
+        }
+
         println!(
-            "✓ Single simplex boundary analysis works correctly in 2D, 3D, 4D, and empty cases"
+            "✓ Single simplex boundary analysis works correctly in 2D, 3D, 4D, 5D, and empty cases"
         );
     }
 
@@ -473,7 +559,11 @@ mod tests {
             let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
             // Test boundary_facets() normal path
-            let boundary_count = dt.boundary_facets().unwrap().count();
+            let boundary_count = dt
+                .boundary_facets()
+                .unwrap()
+                .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+                .unwrap();
             assert_eq!(
                 boundary_count, 4,
                 "Single tetrahedron has 4 boundary facets"
@@ -481,6 +571,7 @@ mod tests {
 
             // Test is_boundary_facet() delegation (builds facet map internally)
             if let Some(facet) = dt.boundary_facets().unwrap().next() {
+                let facet = facet.unwrap();
                 let result = dt.tds().is_boundary_facet(&facet);
                 assert!(result.is_ok(), "Should not error on valid facet");
                 assert!(
@@ -509,7 +600,11 @@ mod tests {
             );
 
             // Exercise capacity allocation, cache initialization, and vector push operations
-            let boundary_count = dt.boundary_facets().unwrap().count();
+            let boundary_count = dt
+                .boundary_facets()
+                .unwrap()
+                .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+                .unwrap();
             assert!(boundary_count > 0, "Should have boundary facets");
             assert!(
                 boundary_count >= 4,
@@ -599,6 +694,7 @@ mod tests {
         let mut boundary_count = 0;
 
         for boundary_facet in dt.boundary_facets().unwrap() {
+            let boundary_facet = boundary_facet.unwrap();
             let is_boundary = dt
                 .tds()
                 .is_boundary_facet_with_map(&boundary_facet, &facet_to_simplices)
@@ -618,7 +714,11 @@ mod tests {
         );
 
         // Verify consistency
-        let reported_count = dt.boundary_facets().unwrap().count();
+        let reported_count = dt
+            .boundary_facets()
+            .unwrap()
+            .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+            .unwrap();
         assert_eq!(
             boundary_count, reported_count,
             "Boundary facet count should be consistent"
@@ -638,7 +738,7 @@ mod tests {
         ];
         let vertices = Vertex::from_points(&points);
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let facet = dt.boundary_facets().unwrap().next().unwrap();
+        let facet = dt.boundary_facets().unwrap().next().unwrap().unwrap();
         let facet_key = facet.key().unwrap();
 
         let mut facet_to_simplices = dt.tds().build_facet_to_simplices_map().unwrap();
@@ -743,7 +843,11 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
         // Test both methods return consistent results
-        let boundary_facets_count = dt.boundary_facets().unwrap().count();
+        let boundary_facets_count = dt
+            .boundary_facets()
+            .unwrap()
+            .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+            .unwrap();
         let boundary_count = dt
             .tds()
             .number_of_boundary_facets()

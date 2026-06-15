@@ -547,7 +547,7 @@ fn log_first_ridge_fan_dump<U, V, const D: usize>(
     }
     participating_indices.extend(info.extra_facets.iter().copied());
 
-    let conflict_preview: Vec<SimplexKey> = conflict_simplices.iter().copied().take(16).collect();
+    let conflict_preview: SimplexKeyBuffer = conflict_simplices.iter().copied().take(16).collect();
     let ridge_vertices = format_vertex_refs(tds, info.ridge_vertices.as_slice());
 
     let participating_facets: Vec<String> = participating_indices

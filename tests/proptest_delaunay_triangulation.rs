@@ -664,9 +664,15 @@ fn regression_insertion_order_3d_case_001() {
 // =============================================================================
 
 macro_rules! gen_incremental_insertion_validity {
-    ($dim:literal, $min:literal, $max:literal $(, #[$attr:meta])*) => {
+    ($dim:literal, $min:literal, $max:literal $(, cases = $cases:literal)? $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
+                $(
+                    #![proptest_config(Config {
+                        cases: $cases,
+                        ..Config::default()
+                    })]
+                )?
                 $(#[$attr])*
                 #[test]
                 fn [<prop_incremental_insertion_maintains_validity_ $dim d>](
@@ -804,7 +810,7 @@ proptest! {
     }
 }
 gen_incremental_insertion_validity!(4, 5, 7);
-gen_incremental_insertion_validity!(5, 6, 8);
+gen_incremental_insertion_validity!(5, 6, 8, cases = 12);
 
 proptest! {
     #![proptest_config(Config {

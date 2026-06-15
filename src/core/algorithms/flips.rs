@@ -5801,6 +5801,7 @@ where
         }
     } else {
         for facet in AllFacetsIter::try_new(tds)? {
+            let facet = facet?;
             let handle = FacetHandle::from_validated(facet.simplex_key(), facet.facet_index());
             enqueue_facet(
                 tds,
@@ -7722,7 +7723,7 @@ where
             stats.max_queue_len = stats.max_queue_len.max(queues.total_len());
         }
         if repair_trace_enabled() {
-            let seed_sample: Vec<SimplexKey> = seeds.iter().copied().take(8).collect();
+            let seed_sample: SimplexKeyBuffer = seeds.iter().copied().take(8).collect();
             tracing::debug!(
                 "[repair] seed_repair_queues: seeds={} present={} missing={}",
                 seeds.len(),
@@ -7745,6 +7746,7 @@ where
         }
     } else {
         for facet in AllFacetsIter::try_new(tds)? {
+            let facet = facet?;
             let handle = FacetHandle::from_validated(facet.simplex_key(), facet.facet_index());
             enqueue_facet(
                 tds,
@@ -14093,7 +14095,7 @@ mod tests {
         let info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
 
         let kernel = AdaptiveKernel::<f64>::new();
-        let seed_simplices: Vec<SimplexKey> = info.new_simplices.iter().copied().collect();
+        let seed_simplices: SimplexKeyBuffer = info.new_simplices.iter().copied().collect();
         let stats = repair_delaunay_with_flips_k2_k3(
             &mut tds,
             &kernel,
@@ -14169,7 +14171,7 @@ mod tests {
         let info = apply_bistellar_flip_k3(&mut tds, &context).unwrap();
 
         let kernel = AdaptiveKernel::<f64>::new();
-        let seed_simplices: Vec<SimplexKey> = info.new_simplices.iter().copied().collect();
+        let seed_simplices: SimplexKeyBuffer = info.new_simplices.iter().copied().collect();
         let result = repair_delaunay_with_flips_k2_k3(
             &mut tds,
             &kernel,

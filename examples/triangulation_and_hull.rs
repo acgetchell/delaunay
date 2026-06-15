@@ -95,7 +95,14 @@ fn run_case<const D: usize>(
     let index = dt.build_adjacency_index()?;
     println!("  edges:     {}", index.number_of_edges());
 
-    println!("  boundary facets: {}", dt.boundary_facets()?.count());
+    let boundary_facet_count = dt.boundary_facets()?.try_fold(0_usize, |count, facet| {
+        facet
+            .map(|_| count + 1)
+            .map_err(|source| QueryError::TriangulationCorrupted {
+                source: source.into(),
+            })
+    })?;
+    println!("  boundary facets: {boundary_facet_count}");
 
     let hull = ConvexHull::from_triangulation(dt.as_triangulation())?;
     println!("  hull facets: {}", hull.number_of_facets());

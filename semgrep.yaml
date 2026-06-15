@@ -152,6 +152,28 @@ rules:
               ...
           }
 
+  - id: delaunay.rust.prefer-simplex-key-buffer-for-local-frontiers
+    languages:
+      - generic
+    severity: WARNING
+    message: >-
+      Raw Vec<SimplexKey> used for a local repair/topology frontier. Prefer
+      SimplexKeyBuffer unless this is an unbounded full-TDS snapshot, public
+      error payload, serialization boundary, or other intentionally heap-backed
+      collection.
+    metadata:
+      category: performance
+      rationale: >-
+        Local repair, mutation, and diagnostic frontiers are usually small and
+        should use the repository's semantic stack-backed buffer alias. Full
+        triangulation snapshots and public error payloads should remain Vec.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-regex: >-
+      \b(?:(?:(?:pending|repair|seed|soft_fail|touched|affected|frontier|sample)_[A-Za-z0-9_]*|conflict_preview|(?:new|removed)_simplices)\s*:\s*(?:&\s*mut\s*)?Vec\s*<\s*SimplexKey\s*>|let\s+(?:mut\s+)?(?:(?:pending|repair|seed|soft_fail|touched|affected|frontier|sample)_[A-Za-z0-9_]*|conflict_preview|(?:new|removed)_simplices)\s*=\s*Vec\s*::\s*(?:(?:<\s*SimplexKey\s*>\s*::\s*)?)(?:new|with_capacity)\s*\()
+
   - id: delaunay.rust.no-silent-conversion-fallbacks
     languages:
       - rust
