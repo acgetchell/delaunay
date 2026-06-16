@@ -13,7 +13,7 @@ use crate::core::tds::{
 };
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
-use crate::core::util::is_delaunay_property_only;
+use crate::core::util::{DelaunayValidationError, is_delaunay_property_only};
 use crate::core::validation::{TopologyGuarantee, TriangulationValidationError};
 use crate::geometry::kernel::Kernel;
 use crate::repair::DelaunayRepairOperation;
@@ -21,6 +21,108 @@ use crate::topology::traits::topological_space::GlobalTopology;
 use crate::triangulation::DelaunayTriangulation;
 use std::num::NonZeroUsize;
 use thiserror::Error;
+
+/// Typed source for Level 4 Delaunay verification failures.
+///
+/// Passive validation has two implementation paths:
+/// - flip-predicate verification via [`verify_delaunay_for_triangulation`], used by
+///   [`DelaunayTriangulation::is_valid`](crate::DelaunayTriangulation::is_valid)
+/// - empty-circumsphere validation via `is_delaunay_property_only`, used when
+///   reconstructing Euclidean triangulations from raw [`Tds`]
+///
+/// This wrapper preserves which path failed and carries the original typed
+/// error so callers can inspect predicate, topology, and simplex-key context
+/// without parsing display text.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::repair::DelaunayRepairError;
+/// use delaunay::prelude::validation::{
+///     DelaunayVerificationError, DelaunayVerificationErrorKind,
+/// };
+///
+/// let source =
+///     DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
+///         message: "non-Delaunay facet".to_string(),
+///     });
+///
+/// assert_eq!(
+///     DelaunayVerificationErrorKind::from(&source),
+///     DelaunayVerificationErrorKind::FlipPredicates,
+/// );
+/// ```
+#[derive(Clone, Debug, Error, PartialEq)]
+#[non_exhaustive]
+pub enum DelaunayVerificationError {
+    /// Flip-predicate verification failed.
+    #[error("flip-predicate verification failed: {source}")]
+    FlipPredicates {
+        /// Underlying flip verification error.
+        #[source]
+        source: Box<DelaunayRepairError>,
+    },
+
+    /// Empty-circumsphere validation failed.
+    #[error("empty-circumsphere validation failed: {source}")]
+    EmptyCircumsphere {
+        /// Underlying Delaunay property validation error.
+        #[source]
+        source: Box<DelaunayValidationError>,
+    },
+}
+
+impl From<DelaunayRepairError> for DelaunayVerificationError {
+    fn from(source: DelaunayRepairError) -> Self {
+        Self::FlipPredicates {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<DelaunayValidationError> for DelaunayVerificationError {
+    fn from(source: DelaunayValidationError) -> Self {
+        Self::EmptyCircumsphere {
+            source: Box::new(source),
+        }
+    }
+}
+
+/// Discriminant for compact Level 4 verification-source summaries.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::repair::DelaunayRepairError;
+/// use delaunay::prelude::validation::{
+///     DelaunayVerificationError, DelaunayVerificationErrorKind,
+/// };
+///
+/// let source =
+///     DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
+///         message: "non-Delaunay facet".to_string(),
+///     });
+/// let kind = DelaunayVerificationErrorKind::from(&source);
+///
+/// assert_eq!(kind, DelaunayVerificationErrorKind::FlipPredicates);
+/// ```
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum DelaunayVerificationErrorKind {
+    /// Flip-predicate verification failed.
+    FlipPredicates,
+    /// Empty-circumsphere validation failed.
+    EmptyCircumsphere,
+}
+
+impl From<&DelaunayVerificationError> for DelaunayVerificationErrorKind {
+    fn from(source: &DelaunayVerificationError) -> Self {
+        match source {
+            DelaunayVerificationError::FlipPredicates { .. } => Self::FlipPredicates,
+            DelaunayVerificationError::EmptyCircumsphere { .. } => Self::EmptyCircumsphere,
+        }
+    }
+}
 
 /// Errors that can occur during Delaunay triangulation validation and repair.
 ///
@@ -86,10 +188,13 @@ pub enum DelaunayTriangulationValidationError {
     /// This is returned by [`DelaunayTriangulation::is_valid`](crate::DelaunayTriangulation::is_valid) when the fast
     /// O(simplices) flip-predicate scan finds a Delaunay violation.  The error is
     /// a Level 4 (Delaunay property) issue, not a Level 1–2 structural problem.
-    #[error("Delaunay verification failed: {message}")]
+    /// The [`DelaunayVerificationError`] source distinguishes flip-predicate
+    /// validation from empty-circumsphere reconstruction validation.
+    #[error("Delaunay verification failed: {source}")]
     VerificationFailed {
-        /// Description of the verification failure.
-        message: String,
+        /// Typed verification failure source.
+        #[source]
+        source: Box<DelaunayVerificationError>,
     },
 
     /// Flip-based Delaunay repair failed with string-only context.
@@ -256,9 +361,11 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`DelaunayTriangulationValidationError`] if the empty-circumsphere test fails, or if
-    /// the underlying triangulation state is inconsistent and prevents geometric predicates
-    /// from being evaluated.
+    /// Returns a [`DelaunayTriangulationValidationError`] if Level 4 verification
+    /// detects a Delaunay violation, or if the underlying triangulation state is
+    /// inconsistent and prevents geometric predicates from being evaluated. The
+    /// [`VerificationFailed`](DelaunayTriangulationValidationError::VerificationFailed)
+    /// variant preserves the typed [`DelaunayVerificationError`] source.
     ///
     /// # Examples
     ///
@@ -290,9 +397,9 @@ where
     /// ```
     pub fn is_valid(&self) -> Result<(), DelaunayTriangulationValidationError> {
         // Use fast flip-based verification (O(simplices) instead of O(simplices × vertices))
-        self.is_delaunay_via_flips().map_err(|err| {
+        self.is_delaunay_via_flips().map_err(|source| {
             DelaunayTriangulationValidationError::VerificationFailed {
-                message: err.to_string(),
+                source: Box::new(DelaunayVerificationError::from(source)),
             }
         })
     }
@@ -458,12 +565,12 @@ where
                 }
 
                 // Level 4 (Delaunay property)
-                if let Err(e) = self.is_delaunay_via_flips() {
+                if let Err(source) = self.is_delaunay_via_flips() {
                     report.violations.push(InvariantViolation {
                         kind: InvariantKind::DelaunayProperty,
                         error: InvariantError::Delaunay(
                             DelaunayTriangulationValidationError::VerificationFailed {
-                                message: e.to_string(),
+                                source: Box::new(DelaunayVerificationError::from(source)),
                             },
                         ),
                     });
@@ -693,9 +800,9 @@ where
         })?;
 
         if candidate.global_topology().is_euclidean() {
-            is_delaunay_property_only(&candidate.tri.tds).map_err(|e| {
+            is_delaunay_property_only(&candidate.tri.tds).map_err(|source| {
                 DelaunayTriangulationValidationError::VerificationFailed {
-                    message: format!("kernel-independent reconstruction validation failed: {e}"),
+                    source: Box::new(DelaunayVerificationError::from(source)),
                 }
             })?;
         } else {
@@ -744,6 +851,7 @@ mod tests {
     use crate::core::simplex::Simplex;
     use crate::core::tds::{SimplexKey, TriangulationConstructionState, VertexKey};
     use crate::geometry::kernel::AdaptiveKernel;
+    use std::assert_matches;
     use std::{error::Error, sync::Once};
     use uuid::Uuid;
 
@@ -796,6 +904,12 @@ mod tests {
         tds
     }
 
+    fn synthetic_flip_verification_source(message: &str) -> DelaunayVerificationError {
+        DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
+            message: message.to_string(),
+        })
+    }
+
     #[test]
     fn validation_cadence_maps_optional_every() {
         assert_eq!(
@@ -827,7 +941,10 @@ mod tests {
     #[test]
     fn verification_failed_display_includes_context() {
         let err = DelaunayTriangulationValidationError::VerificationFailed {
-            message: "flip predicate detected non-Delaunay facet".to_string(),
+            source: synthetic_flip_verification_source(
+                "flip predicate detected non-Delaunay facet",
+            )
+            .into(),
         };
         let msg = err.to_string();
 
@@ -838,6 +955,40 @@ mod tests {
         assert!(
             msg.contains("flip predicate detected non-Delaunay facet"),
             "Display should contain inner message: {msg}"
+        );
+        let DelaunayTriangulationValidationError::VerificationFailed { source } = &err else {
+            panic!("expected typed flip-predicate verification source, got {err:?}");
+        };
+        assert_matches!(
+            source.as_ref(),
+            DelaunayVerificationError::FlipPredicates { source }
+                if matches!(
+                    source.as_ref(),
+                    DelaunayRepairError::PostconditionFailed { .. }
+                )
+        );
+    }
+
+    #[test]
+    fn verification_error_kind_covers_empty_circumsphere_source() {
+        let simplex_key = SimplexKey::default();
+        let source = DelaunayVerificationError::from(DelaunayValidationError::DelaunayViolation {
+            simplex_key,
+        });
+
+        assert_eq!(
+            DelaunayVerificationErrorKind::from(&source),
+            DelaunayVerificationErrorKind::EmptyCircumsphere,
+        );
+        assert!(source.to_string().contains("empty-circumsphere"));
+        let DelaunayVerificationError::EmptyCircumsphere { source } = source else {
+            panic!("expected empty-circumsphere source");
+        };
+        assert_matches!(
+            source.as_ref(),
+            DelaunayValidationError::DelaunayViolation {
+                simplex_key: actual,
+            } if *actual == simplex_key
         );
     }
 

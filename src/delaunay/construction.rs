@@ -5041,7 +5041,7 @@ mod tests {
     use crate::geometry::util::RandomPointGenerationError;
     use crate::repair::DelaunayRepairPolicy;
     use crate::topology::characteristics::euler::TopologyClassification;
-    use crate::validation::DelaunayTriangulationValidationError;
+    use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
     use slotmap::KeyData;
     use std::assert_matches;
     use std::num::NonZeroUsize;
@@ -5050,6 +5050,17 @@ mod tests {
     use uuid::Uuid;
 
     type TestDelaunay<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
+
+    fn synthetic_delaunay_verification_error(
+        message: &str,
+    ) -> DelaunayTriangulationValidationError {
+        DelaunayTriangulationValidationError::VerificationFailed {
+            source: DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
+                message: message.to_string(),
+            })
+            .into(),
+        }
+    }
 
     #[test]
     fn test_random_point_generation_error_variant_preserved() {
@@ -7086,9 +7097,7 @@ mod tests {
                 reason: HullExtensionReason::NoVisibleFacets,
             },
             InsertionError::DelaunayValidationFailed {
-                source: DelaunayTriangulationValidationError::VerificationFailed {
-                    message: "test".to_string(),
-                },
+                source: synthetic_delaunay_verification_error("test"),
             },
             InsertionError::DelaunayRepairFailed {
                 source: Box::new(DelaunayRepairError::PostconditionFailed {
@@ -7259,9 +7268,7 @@ mod tests {
         );
 
         let delaunay = InsertionError::DelaunayValidationFailed {
-            source: DelaunayTriangulationValidationError::VerificationFailed {
-                message: "test".to_string(),
-            },
+            source: synthetic_delaunay_verification_error("test"),
         };
         let mapped = TestDelaunay::<3>::map_insertion_error(delaunay);
         assert_matches!(
@@ -7317,9 +7324,7 @@ mod tests {
 
         let failure = DelaunayConstructionFailure::from(
             TriangulationConstructionError::InsertionDelaunayValidation {
-                source: DelaunayTriangulationValidationError::VerificationFailed {
-                    message: "delaunay check".to_string(),
-                },
+                source: synthetic_delaunay_verification_error("delaunay check"),
             },
         );
         assert_matches!(
@@ -7551,9 +7556,7 @@ mod tests {
             .into();
         let final_delaunay_err = DelaunayTriangulationConstructionError::Triangulation(
             DelaunayConstructionFailure::FinalDelaunayValidation {
-                source: DelaunayTriangulationValidationError::VerificationFailed {
-                    message: "final Level 4 check failed".to_string(),
-                },
+                source: synthetic_delaunay_verification_error("final Level 4 check failed"),
             },
         );
 

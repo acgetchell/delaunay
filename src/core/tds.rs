@@ -7521,7 +7521,7 @@ mod tests {
     use crate::geometry::point::Point;
     use crate::repair::DelaunayRepairOperation;
     use crate::topology::characteristics::euler::TopologyClassification;
-    use crate::validation::DelaunayTriangulationValidationError;
+    use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
     use slotmap::KeyData;
     use std::assert_matches;
     use std::sync::Arc;
@@ -7529,6 +7529,17 @@ mod tests {
     // =============================================================================
     // TEST HELPER FUNCTIONS
     // =============================================================================
+
+    fn synthetic_delaunay_verification_error(
+        message: &str,
+    ) -> DelaunayTriangulationValidationError {
+        DelaunayTriangulationValidationError::VerificationFailed {
+            source: DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
+                message: message.to_string(),
+            })
+            .into(),
+        }
+    }
 
     fn vertex_with_uuid<U, const D: usize>(
         point: Point<D>,
@@ -7800,9 +7811,7 @@ mod tests {
                 DelaunayValidationErrorKind::Triangulation,
             ),
             (
-                DelaunayTriangulationValidationError::VerificationFailed {
-                    message: "non-Delaunay facet".to_string(),
-                },
+                synthetic_delaunay_verification_error("non-Delaunay facet"),
                 DelaunayValidationErrorKind::VerificationFailed,
             ),
             (
@@ -10695,9 +10704,7 @@ mod tests {
 
     #[test]
     fn test_invariant_error_from_delaunay_validation_error() {
-        let dt_err = DelaunayTriangulationValidationError::VerificationFailed {
-            message: "test".to_string(),
-        };
+        let dt_err = synthetic_delaunay_verification_error("test");
         let inv = InvariantError::from(dt_err);
         assert_matches!(inv, InvariantError::Delaunay(_));
     }
@@ -10722,9 +10729,7 @@ mod tests {
                 ),
             ),
             (
-                InvariantError::from(DelaunayTriangulationValidationError::VerificationFailed {
-                    message: "non-Delaunay facet".to_string(),
-                }),
+                InvariantError::from(synthetic_delaunay_verification_error("non-Delaunay facet")),
                 InvariantErrorSummaryKind::Delaunay,
                 InvariantErrorSummaryDetail::Delaunay(
                     DelaunayValidationErrorKind::VerificationFailed,

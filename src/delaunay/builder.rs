@@ -172,7 +172,7 @@ use crate::topology::traits::topological_space::{
     GlobalTopology, TopologyKind, ToroidalConstructionMode, ToroidalDomain, ToroidalDomainError,
 };
 use crate::triangulation::DelaunayTriangulation;
-use crate::validation::DelaunayTriangulationValidationError;
+use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationErrorKind};
 use num_traits::ToPrimitive;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -696,6 +696,8 @@ pub enum ExplicitDelaunayValidationSourceKind {
     Tds(TdsErrorKind),
     /// Lower-layer topology validation failed.
     Triangulation(TriangulationValidationErrorKind),
+    /// Level 4 verification failed in a specific verification path.
+    Verification(DelaunayVerificationErrorKind),
     /// Typed flip repair failed during a mutating operation.
     Repair(DelaunayRepairErrorKind),
 }
@@ -714,12 +716,17 @@ pub enum ExplicitDelaunayValidationSourceKind {
 ///
 /// ```rust
 /// use delaunay::prelude::construction::{
-///     DelaunayTriangulationValidationError, ExplicitDelaunayValidationError,
-///     ExplicitDelaunayValidationErrorKind,
+///     DelaunayTriangulationValidationError, DelaunayVerificationError,
+///     DelaunayVerificationErrorKind, ExplicitDelaunayValidationError,
+///     ExplicitDelaunayValidationErrorKind, ExplicitDelaunayValidationSourceKind,
 /// };
+/// use delaunay::prelude::repair::DelaunayRepairError;
 ///
 /// let source = DelaunayTriangulationValidationError::VerificationFailed {
-///     message: "non-Delaunay facet".to_string(),
+///     source: DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
+///         message: "non-Delaunay facet".to_string(),
+///     })
+///     .into(),
 /// };
 /// let summary = ExplicitDelaunayValidationError::from(source);
 ///
@@ -727,7 +734,12 @@ pub enum ExplicitDelaunayValidationSourceKind {
 ///     summary.kind,
 ///     ExplicitDelaunayValidationErrorKind::VerificationFailed,
 /// );
-/// assert!(summary.source_kind.is_none());
+/// assert_eq!(
+///     summary.source_kind,
+///     Some(ExplicitDelaunayValidationSourceKind::Verification(
+///         DelaunayVerificationErrorKind::FlipPredicates,
+///     )),
+/// );
 /// ```
 #[must_use]
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -767,11 +779,13 @@ impl From<DelaunayTriangulationValidationError> for ExplicitDelaunayValidationEr
             DelaunayTriangulationValidationError::Triangulation(source) => Some(
                 ExplicitDelaunayValidationSourceKind::Triangulation(source.as_ref().into()),
             ),
+            DelaunayTriangulationValidationError::VerificationFailed { source } => Some(
+                ExplicitDelaunayValidationSourceKind::Verification(source.as_ref().into()),
+            ),
             DelaunayTriangulationValidationError::RepairOperationFailed { source, .. } => Some(
                 ExplicitDelaunayValidationSourceKind::Repair(source.as_ref().into()),
             ),
-            DelaunayTriangulationValidationError::VerificationFailed { .. }
-            | DelaunayTriangulationValidationError::RepairFailed { .. } => None,
+            DelaunayTriangulationValidationError::RepairFailed { .. } => None,
         };
         Self {
             kind,
@@ -3195,8 +3209,9 @@ mod tests {
     use crate::core::simplex::SimplexValidationError;
     use crate::core::tds::{
         DelaunayValidationErrorKind, EntityKind, GeometricError, NeighborValidationError,
-        TdsConstructionError,
+        SimplexKey, TdsConstructionError,
     };
+    use crate::core::util::DelaunayValidationError;
     use crate::core::util::uuid::UuidValidationError;
     use crate::core::validation::TriangulationValidationError;
     use crate::core::vertex::VertexValidationError;
@@ -3210,6 +3225,7 @@ mod tests {
     use crate::topology::traits::topological_space::{
         GlobalTopology, TopologyKind, ToroidalConstructionMode, ToroidalDomainError,
     };
+    use crate::validation::DelaunayVerificationError;
     use approx::assert_relative_eq;
     use slotmap::{Key, KeyData};
     use std::assert_matches;
@@ -3231,6 +3247,17 @@ mod tests {
             ToroidalDomainError::InvalidPeriod { axis, period }
                 if axis == expected_axis && period.to_bits() == expected_period.to_bits()
         );
+    }
+
+    fn synthetic_delaunay_verification_error(
+        message: &str,
+    ) -> DelaunayTriangulationValidationError {
+        DelaunayTriangulationValidationError::VerificationFailed {
+            source: DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
+                message: message.to_string(),
+            })
+            .into(),
+        }
     }
 
     #[derive(Clone, Copy, Debug)]
@@ -3316,6 +3343,32 @@ mod tests {
             delaunay.source_kind,
             Some(ExplicitDelaunayValidationSourceKind::Repair(
                 DelaunayRepairErrorKind::HeuristicRebuildFailed,
+            ))
+        );
+
+        let delaunay_verification = ExplicitDelaunayValidationError::from(
+            synthetic_delaunay_verification_error("non-Delaunay facet"),
+        );
+        assert_eq!(
+            delaunay_verification.source_kind,
+            Some(ExplicitDelaunayValidationSourceKind::Verification(
+                DelaunayVerificationErrorKind::FlipPredicates,
+            ))
+        );
+        let delaunay_empty_circumsphere = ExplicitDelaunayValidationError::from(
+            DelaunayTriangulationValidationError::VerificationFailed {
+                source: DelaunayVerificationError::from(
+                    DelaunayValidationError::DelaunayViolation {
+                        simplex_key: SimplexKey::default(),
+                    },
+                )
+                .into(),
+            },
+        );
+        assert_eq!(
+            delaunay_empty_circumsphere.source_kind,
+            Some(ExplicitDelaunayValidationSourceKind::Verification(
+                DelaunayVerificationErrorKind::EmptyCircumsphere,
             ))
         );
 
@@ -3638,9 +3691,7 @@ mod tests {
     fn explicit_insertion_error_preserves_nested_validation_source_kinds() {
         assert_explicit_insertion_error(
             InsertionError::DelaunayValidationFailed {
-                source: DelaunayTriangulationValidationError::VerificationFailed {
-                    message: "non-Delaunay facet".to_string(),
-                },
+                source: synthetic_delaunay_verification_error("non-Delaunay facet"),
             },
             ExplicitInsertionErrorKind::DelaunayValidationFailed,
             Some(InsertionErrorSourceKind::Delaunay(

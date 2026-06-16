@@ -4565,6 +4565,7 @@ mod tests {
         InvalidCoordinateValue,
     };
     use crate::topology::characteristics::euler::TopologyClassification;
+    use crate::validation::DelaunayVerificationError;
     use slotmap::KeyData;
     use std::assert_matches;
 
@@ -5383,6 +5384,17 @@ mod tests {
         }
     }
 
+    fn synthetic_delaunay_verification_error(
+        message: &str,
+    ) -> DelaunayTriangulationValidationError {
+        DelaunayTriangulationValidationError::VerificationFailed {
+            source: DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
+                message: message.to_string(),
+            })
+            .into(),
+        }
+    }
+
     #[test]
     fn test_delaunay_repair_error_summary_covers_all_kinds() {
         let cases = [
@@ -5463,9 +5475,7 @@ mod tests {
             ),
             (
                 InsertionError::DelaunayValidationFailed {
-                    source: DelaunayTriangulationValidationError::VerificationFailed {
-                        message: "non-Delaunay facet".to_string(),
-                    },
+                    source: synthetic_delaunay_verification_error("non-Delaunay facet"),
                 },
                 InsertionErrorKind::DelaunayValidationFailed,
                 Some(InsertionErrorSourceKind::Delaunay(

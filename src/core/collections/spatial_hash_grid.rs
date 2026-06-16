@@ -335,6 +335,7 @@ mod tests {
     use crate::geometry::traits::coordinate::InvalidCoordinateValue;
     use approx::assert_abs_diff_eq;
     use slotmap::SlotMap;
+    use std::assert_matches;
 
     #[test]
     fn test_hash_grid_index_try_new_rejects_invalid_cell_size() {
@@ -342,32 +343,32 @@ mod tests {
         assert!(grid.is_usable());
         assert_abs_diff_eq!(grid.cell_size(), 1.0, epsilon = f64::EPSILON);
 
-        assert!(matches!(
+        assert_matches!(
             HashGridIndex::<2>::try_new(0.0),
             Err(HashGridIndexError::NonPositiveCellSize { value: 0.0 })
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             HashGridIndex::<2>::try_new(-1.0),
             Err(HashGridIndexError::NonPositiveCellSize { value: -1.0 })
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             HashGridIndex::<2>::try_new(f64::NAN),
             Err(HashGridIndexError::NonFiniteCellSize {
                 value: InvalidCoordinateValue::Nan
             })
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             HashGridIndex::<2>::try_new(f64::INFINITY),
             Err(HashGridIndexError::NonFiniteCellSize {
                 value: InvalidCoordinateValue::PositiveInfinity
             })
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             HashGridIndex::<2>::try_new(f64::NEG_INFINITY),
             Err(HashGridIndexError::NonFiniteCellSize {
                 value: InvalidCoordinateValue::NegativeInfinity
             })
-        ));
+        );
     }
 
     #[test]

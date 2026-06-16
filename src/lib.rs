@@ -808,7 +808,9 @@ pub use crate::repair::{
     DelaunayRepairOperation, DelaunayRepairOutcome, DelaunayRepairPolicy,
 };
 pub use crate::triangulation::*;
-pub use crate::validation::DelaunayTriangulationValidationError;
+pub use crate::validation::{
+    DelaunayTriangulationValidationError, DelaunayVerificationError, DelaunayVerificationErrorKind,
+};
 
 /// Creates vertices from points by re-validating coordinates at the public boundary.
 ///
@@ -1135,11 +1137,12 @@ pub mod prelude {
         DelaunayRepairOutcome, DelaunayRepairPolicy, DelaunayTriangulation,
         DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
         DelaunayTriangulationConstructionErrorWithStatistics, DelaunayTriangulationValidationError,
-        DuplicateDetectionMetrics, InitialSimplexStrategy, InsertionOrderStrategy, InsertionResult,
-        PlManifoldRepairError, PlManifoldRepairStats, RepairDecision, RepairSkipReason,
-        RetryPolicy, TopologicalOperation, TopologyGuarantee, Triangulation,
-        TriangulationConstructionError, TriangulationValidationError, ValidationConfigurationError,
-        ValidationPolicy, try_vertices_from_points,
+        DelaunayVerificationError, DelaunayVerificationErrorKind, DuplicateDetectionMetrics,
+        InitialSimplexStrategy, InsertionOrderStrategy, InsertionResult, PlManifoldRepairError,
+        PlManifoldRepairStats, RepairDecision, RepairSkipReason, RetryPolicy, TopologicalOperation,
+        TopologyGuarantee, Triangulation, TriangulationConstructionError,
+        TriangulationValidationError, ValidationConfigurationError, ValidationPolicy,
+        try_vertices_from_points,
     };
 
     // Re-export utility items, but avoid exporting the util module names themselves.
@@ -1269,7 +1272,10 @@ pub mod prelude {
             GlobalTopology, GlobalTopologyModelError, TopologyKind, ToroidalConstructionMode,
             ToroidalDomain, ToroidalDomainError,
         };
-        pub use crate::validation::DelaunayTriangulationValidationError;
+        pub use crate::validation::{
+            DelaunayTriangulationValidationError, DelaunayVerificationError,
+            DelaunayVerificationErrorKind,
+        };
         pub use crate::{
             CavityFillingError, CavityRepairStage, DelaunayTriangulation,
             SpatialIndexConstructionFailure, TopologyGuarantee, Triangulation,
@@ -1414,7 +1420,8 @@ pub mod prelude {
         };
         pub use crate::{
             DelaunayRepairErrorKind, DelaunayRepairErrorSummary, DelaunayRepairOperation,
-            DelaunayTriangulation, DelaunayTriangulationValidationError,
+            DelaunayTriangulation, DelaunayTriangulationValidationError, DelaunayVerificationError,
+            DelaunayVerificationErrorKind,
         };
         pub use crate::{DelaunayValidationError, find_delaunay_violations};
         pub use crate::{
@@ -1447,7 +1454,8 @@ pub mod prelude {
     pub mod validation {
         pub use crate::validation::*;
         pub use crate::{
-            DelaunayTriangulationValidationError, TopologyGuarantee, TriangulationValidationError,
+            DelaunayTriangulationValidationError, DelaunayVerificationError,
+            DelaunayVerificationErrorKind, TopologyGuarantee, TriangulationValidationError,
             ValidationConfigurationError, ValidationPolicy,
         };
     }

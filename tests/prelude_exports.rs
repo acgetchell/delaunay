@@ -29,6 +29,8 @@ use delaunay::prelude::construction::{
     DedupTolerance, DeduplicationError, DelaunayConstructionFailure, DelaunayRepairPolicy,
     DelaunayTriangulation, DelaunayTriangulationConstructionError,
     DelaunayTriangulationValidationError as ConstructionDelaunayTriangulationValidationError,
+    DelaunayVerificationError as ConstructionDelaunayVerificationError,
+    DelaunayVerificationErrorKind as ConstructionDelaunayVerificationErrorKind,
     ExplicitConstructionError, ExplicitDelaunayValidationError,
     ExplicitDelaunayValidationErrorKind, ExplicitDelaunayValidationSourceKind,
     ExplicitInsertionError, ExplicitInsertionErrorKind, ExplicitInvariantError,
@@ -947,14 +949,36 @@ fn construction_prelude_covers_random_point_generation_failure_variant()
     assert_matches!(
         DelaunayConstructionFailure::FinalDelaunayValidation {
             source: ConstructionDelaunayTriangulationValidationError::VerificationFailed {
-                message: "synthetic final Level 4 failure".to_string(),
+                source: ConstructionDelaunayVerificationError::from(
+                    DelaunayRepairError::PostconditionFailed {
+                        message: "synthetic final Level 4 failure".to_string(),
+                    },
+                )
+                .into(),
             },
         },
         DelaunayConstructionFailure::FinalDelaunayValidation {
             source: ConstructionDelaunayTriangulationValidationError::VerificationFailed {
-                message,
+                source,
             },
-        } if message == "synthetic final Level 4 failure"
+        } if source.to_string().contains("synthetic final Level 4 failure")
+    );
+
+    let validation_summary = ExplicitDelaunayValidationError::from(
+        ConstructionDelaunayTriangulationValidationError::VerificationFailed {
+            source: ConstructionDelaunayVerificationError::from(
+                DelaunayRepairError::PostconditionFailed {
+                    message: "synthetic Level 4 summary failure".to_string(),
+                },
+            )
+            .into(),
+        },
+    );
+    assert_eq!(
+        validation_summary.source_kind,
+        Some(ExplicitDelaunayValidationSourceKind::Verification(
+            ConstructionDelaunayVerificationErrorKind::FlipPredicates,
+        ))
     );
 
     Ok(())

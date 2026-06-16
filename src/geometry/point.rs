@@ -458,6 +458,7 @@ impl<const D: usize> From<&Point<D>> for [f64; D] {
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
+    use std::assert_matches;
     use std::cmp::Ordering;
     use std::collections::hash_map::DefaultHasher;
     use std::collections::{HashMap, HashSet};
@@ -1356,13 +1357,13 @@ mod tests {
         let err = Point::<1>::try_from([9_007_199_254_740_993_u64])
             .expect_err("integer coordinates that cannot round-trip through f64 must fail");
 
-        assert!(matches!(
+        assert_matches!(
             err,
             CoordinateConversionError::ConversionFailed {
                 coordinate_index: 0,
                 ..
             }
-        ));
+        );
     }
 
     #[test]

@@ -1588,6 +1588,7 @@ fn start_insertion_timing(telemetry_mode: InsertionTelemetryMode) -> Option<Inst
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::algorithms::flips::DelaunayRepairError;
     use crate::core::algorithms::incremental_insertion::CavityFillingError;
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
     use crate::core::collections::NeighborBuffer;
@@ -1601,9 +1602,20 @@ mod tests {
     use crate::geometry::util::generate_random_points_in_range_seeded;
     use crate::repair::DelaunayRepairPolicy;
     use crate::triangulation::DelaunayTriangulation;
-    use crate::validation::DelaunayTriangulationValidationError;
+    use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
     use slotmap::KeyData;
     use std::assert_matches;
+
+    fn synthetic_delaunay_verification_error(
+        message: &str,
+    ) -> DelaunayTriangulationValidationError {
+        DelaunayTriangulationValidationError::VerificationFailed {
+            source: DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
+                message: message.to_string(),
+            })
+            .into(),
+        }
+    }
 
     fn insert_test_vertex_with_coords<const D: usize>(
         tds: &mut Tds<(), (), D>,
@@ -2304,10 +2316,7 @@ mod tests {
             Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(inv);
         assert_matches!(ins, InsertionError::TopologyValidationFailed { .. });
 
-        let inv =
-            InvariantError::Delaunay(DelaunayTriangulationValidationError::VerificationFailed {
-                message: "test".to_string(),
-            });
+        let inv = InvariantError::Delaunay(synthetic_delaunay_verification_error("test"));
         let ins =
             Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(inv);
         assert_matches!(ins, InsertionError::DelaunayValidationFailed { .. });

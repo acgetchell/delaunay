@@ -165,9 +165,18 @@ use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
     Vertex,
 };
+use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::validation::ValidationPolicy;
 
-fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+#[derive(Debug, thiserror::Error)]
+enum ValidationExampleError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Coordinate(#[from] CoordinateConversionError),
+}
+
+fn main() -> Result<(), ValidationExampleError> {
     let vertices = vec![
         delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
         delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
@@ -317,9 +326,18 @@ use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
     Vertex,
 };
+use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::validation::ValidationPolicy;
 
-fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+#[derive(Debug, thiserror::Error)]
+enum ValidationExampleError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Coordinate(#[from] CoordinateConversionError),
+}
+
+fn main() -> Result<(), ValidationExampleError> {
     let vertices = vec![
         delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
         delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
@@ -402,9 +420,18 @@ use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
     Vertex,
 };
+use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::validation::ValidationPolicy;
 
-fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+#[derive(Debug, thiserror::Error)]
+enum ValidationExampleError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Coordinate(#[from] CoordinateConversionError),
+}
+
+fn main() -> Result<(), ValidationExampleError> {
     let vertices = vec![
         delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
         delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
@@ -474,9 +501,18 @@ use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
     Vertex,
 };
+use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::validation::ValidationPolicy;
 
-fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+#[derive(Debug, thiserror::Error)]
+enum ValidationExampleError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Coordinate(#[from] CoordinateConversionError),
+}
+
+fn main() -> Result<(), ValidationExampleError> {
     let vertices = vec![
         delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
         delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
