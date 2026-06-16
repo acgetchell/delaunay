@@ -50,6 +50,7 @@ use delaunay::prelude::flips::{FacetHandle, RidgeHandle, SimplexKey};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, Point};
 use delaunay::prelude::query::ConvexHull;
+use delaunay::try_vertices_from_points;
 use std::{env, hint::black_box, num::NonZeroUsize, sync::Once};
 #[cfg(feature = "bench-logging")]
 use tracing::warn;
@@ -423,7 +424,10 @@ fn prepare_inserts<const D: usize>(
         ),
         Dataset::Adversarial => generate_adv_points::<D>(count, seed),
     };
-    Vertex::from_validated_points(&points)
+    bench_result(
+        try_vertices_from_points(&points),
+        "failed to create insert benchmark vertices",
+    )
 }
 
 fn find_seed_vertices<const D: usize>(
@@ -439,7 +443,10 @@ fn find_seed_vertices<const D: usize>(
             generate_random_points_in_range_seeded::<D>(count, bounds, candidate_seed),
             "failed to generate candidate benchmark points",
         );
-        let vertices = Vertex::from_validated_points(&points);
+        let vertices = bench_result(
+            try_vertices_from_points(&points),
+            "failed to create candidate benchmark vertices",
+        );
 
         let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
             attempts,
@@ -460,7 +467,10 @@ fn stable_adv_points<const D: usize>(
     attempts: NonZeroUsize,
 ) -> SeedSearchResult<D> {
     let points = generate_adv_points::<D>(count, seed);
-    let vertices = Vertex::from_validated_points(&points);
+    let vertices = bench_result(
+        try_vertices_from_points(&points),
+        "failed to create adversarial benchmark vertices",
+    );
     let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
         attempts,
         base_seed: Some(seed),

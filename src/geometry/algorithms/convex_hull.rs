@@ -337,7 +337,8 @@ pub enum ConvexHullConstructionError {
 ///
 /// ## When to Rebuild the Hull
 ///
-/// You **must** create a new `ConvexHull` by calling `try_from_triangulation()` if:
+/// You **must** create a new [`ConvexHull`] by calling
+/// [`ConvexHull::try_from_triangulation`] if:
 /// - Vertices are added to or removed from the TDS
 /// - Simplices are added, removed, or modified in the TDS  
 /// - Any operation that changes the TDS generation counter
@@ -438,7 +439,7 @@ pub struct ConvexHull<U, V, const D: usize> {
     /// Uses `ArcSwapOption` for lock-free atomic updates when cache needs invalidation
     facet_to_simplices_cache: ArcSwapOption<FacetToSimplicesMap>,
     /// Immutable triangulation generation at hull creation time.
-    /// Set once in `try_from_triangulation()` and never modified. Used to detect stale hulls.
+    /// Set once in [`ConvexHull::try_from_triangulation`] and never modified. Used to detect stale hulls.
     /// Uses `OnceLock` to express the "set once, read many" semantic contract.
     creation_generation: OnceLock<u64>,
     /// Runtime identity of the TDS that produced the hull.

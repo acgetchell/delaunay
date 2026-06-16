@@ -4695,7 +4695,7 @@ mod tests {
         let mut saw_exhausted_skip = false;
 
         for point in perturbation_retry_repro_points_4d() {
-            let v = Vertex::from_validated_point(point);
+            let v = Vertex::from_validated_point(point, None);
             let (outcome, stats) =
                 insert_with_statistics(&mut exhaustion_tri, v, None, None).unwrap();
 
@@ -4729,7 +4729,7 @@ mod tests {
             Triangulation::new_empty(AdaptiveKernel::new());
 
         for point in perturbation_retry_repro_points_4d() {
-            let v = Vertex::from_validated_point(point);
+            let v = Vertex::from_validated_point(point, None);
             let (_outcome, stats) = insert_transactional(
                 &mut tri,
                 v,

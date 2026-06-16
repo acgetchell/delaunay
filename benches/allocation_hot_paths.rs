@@ -30,6 +30,7 @@ mod allocation_contracts {
     };
     use delaunay::prelude::query::measure_with_result;
     use delaunay::prelude::tds::{SimplexKey, TdsError, VertexKey, facet_key_from_vertices};
+    use delaunay::try_vertices_from_points;
     use std::assert_matches;
     use std::{hint::black_box, num::NonZeroUsize, time::Duration};
     use thiserror::Error;
@@ -105,7 +106,10 @@ mod allocation_contracts {
             generate_random_points_in_range_seeded::<D>(count, benchmark_bounds(), seed),
             "failed to generate allocation benchmark points",
         );
-        Vertex::from_validated_points(&points)
+        bench_result(
+            try_vertices_from_points(&points),
+            "failed to create allocation benchmark vertices",
+        )
     }
 
     fn first_simplex_key<const D: usize>(

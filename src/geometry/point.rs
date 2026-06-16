@@ -371,6 +371,7 @@ impl<'de, const D: usize> Deserialize<'de> for Point<D> {
 /// This replaces the previous infallible From<[T; D]> which silently defaulted on
 /// cast failures. Now, conversions will return an error if any coordinate cannot be
 /// cast into the target type, or if a non-finite value is encountered post-cast.
+/// Signed zero is canonicalized during conversion: `-0.0` is stored as `0.0`.
 impl<T, const D: usize> TryFrom<[T; D]> for Point<D>
 where
     T: cast::NumCast + Copy + fmt::Debug + PartialEq,

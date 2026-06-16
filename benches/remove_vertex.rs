@@ -20,6 +20,7 @@ use delaunay::prelude::construction::{DelaunayTriangulation, Vertex};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, Point};
 use delaunay::prelude::tds::VertexKey;
+use delaunay::try_vertices_from_points;
 use std::hint::black_box;
 use std::time::Duration;
 
@@ -144,7 +145,10 @@ fn generate_vertices<const D: usize>(
     };
 
     points.extend(generated_points);
-    Vertex::from_validated_points(&points)
+    bench_result(
+        try_vertices_from_points(&points),
+        "failed to create remove-vertex benchmark vertices",
+    )
 }
 
 /// Generate well-conditioned interior points inside the canonical simplex.
@@ -275,7 +279,10 @@ fn simplex_points<const D: usize>() -> Vec<Point<D>> {
 
 /// Generate the minimal full-dimensional simplex for the rollback benchmark.
 fn simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
-    Vertex::from_validated_points(&simplex_points::<D>())
+    bench_result(
+        try_vertices_from_points(&simplex_points::<D>()),
+        "failed to create rollback benchmark simplex vertices",
+    )
 }
 
 /// Deterministic radial coordinate for a point inside the canonical simplex.

@@ -810,6 +810,48 @@ pub use crate::repair::{
 pub use crate::triangulation::*;
 pub use crate::validation::DelaunayTriangulationValidationError;
 
+/// Creates vertices from points by re-validating coordinates at the public boundary.
+///
+/// This helper is useful when point generators or parsing code have already
+/// produced [`Point`](crate::geometry::Point) values, but the caller still wants
+/// vertex construction to pass through the same fallible validation path as
+/// [`tds::Vertex::try_new`]. New vertices have fresh UUIDs, no user data, and no
+/// incident simplex pointer until inserted into a triangulation data structure.
+///
+/// # Errors
+///
+/// Returns [`geometry::CoordinateConversionError`] when any point coordinate
+/// cannot be converted exactly to finite `f64`.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::try_vertices_from_points;
+///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Conversion(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+/// #     #[error(transparent)]
+/// #     Validation(#[from] delaunay::prelude::geometry::CoordinateValidationError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
+/// let points = [Point::try_new([0.0, 0.0])?, Point::try_new([1.0, 0.0])?];
+/// let vertices = try_vertices_from_points(&points)?;
+/// assert_eq!(vertices.len(), 2);
+/// # Ok(())
+/// # }
+/// ```
+pub fn try_vertices_from_points<const D: usize>(
+    points: &[geometry::Point<D>],
+) -> Result<Vec<tds::Vertex<(), D>>, geometry::CoordinateConversionError> {
+    points
+        .iter()
+        .map(|point| tds::Vertex::try_new(*point.coords()))
+        .collect()
+}
+
 /// Topology analysis and validation for triangulated spaces.
 ///
 /// This module provides traits, algorithms, and data structures for analyzing
@@ -1097,7 +1139,7 @@ pub mod prelude {
         PlManifoldRepairError, PlManifoldRepairStats, RepairDecision, RepairSkipReason,
         RetryPolicy, TopologicalOperation, TopologyGuarantee, Triangulation,
         TriangulationConstructionError, TriangulationValidationError, ValidationConfigurationError,
-        ValidationPolicy,
+        ValidationPolicy, try_vertices_from_points,
     };
 
     // Re-export utility items, but avoid exporting the util module names themselves.
@@ -1231,7 +1273,7 @@ pub mod prelude {
         pub use crate::{
             CavityFillingError, CavityRepairStage, DelaunayTriangulation,
             SpatialIndexConstructionFailure, TopologyGuarantee, Triangulation,
-            TriangulationConstructionError,
+            TriangulationConstructionError, try_vertices_from_points,
         };
     }
 

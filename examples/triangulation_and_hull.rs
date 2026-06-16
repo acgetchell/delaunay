@@ -21,7 +21,8 @@ use delaunay::prelude::generators::{
     RandomPointGenerationError, generate_random_points_in_range_seeded,
 };
 use delaunay::prelude::geometry::{
-    AdaptiveKernel, CoordinateRange, CoordinateRangeError, CoordinateValidationError,
+    AdaptiveKernel, CoordinateConversionError, CoordinateRange, CoordinateRangeError,
+    CoordinateValidationError,
 };
 use delaunay::prelude::query::{
     AdjacencyIndexBuildError, ConvexHull, ConvexHullConstructionError, Point, QueryError,
@@ -46,6 +47,8 @@ enum WorkflowExampleError {
     },
     #[error("retry attempt count must be non-zero")]
     ZeroRetryAttempts,
+    #[error(transparent)]
+    CoordinateConversion(#[from] CoordinateConversionError),
     #[error(transparent)]
     CoordinateValidation(#[from] CoordinateValidationError),
     #[error(transparent)]
@@ -77,8 +80,7 @@ fn run_case<const D: usize>(
     bounds: CoordinateRange<f64>,
 ) -> Result<(), WorkflowExampleError> {
     let points = generate_random_points_in_range_seeded::<D>(point_count, bounds, seed)?;
-    let vertices: Vec<delaunay::prelude::Vertex<(), D>> =
-        delaunay::prelude::Vertex::from_validated_points(&points);
+    let vertices = delaunay::try_vertices_from_points(&points)?;
     let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
         attempts: retry_attempts()?,
         base_seed: Some(seed),

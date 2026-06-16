@@ -35,9 +35,10 @@
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
 use ::uuid::Uuid;
-use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee, Vertex};
+use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::tds::SimplexKey;
+use delaunay::try_vertices_from_points;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
 use std::cell::RefCell;
@@ -353,7 +354,7 @@ macro_rules! test_quality_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|v| Vertex::from_validated_points(&v))
+                    ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
                         &AdaptiveKernel::default(),
@@ -383,7 +384,7 @@ macro_rules! test_quality_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|v| Vertex::from_validated_points(&v)),
+                    ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates")),
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
@@ -404,7 +405,8 @@ macro_rules! test_quality_properties {
                             })
                             .collect::<Vec<_>>();
 
-                        let translated_vertices = Vertex::from_validated_points(&translated_vertices);
+                        let translated_vertices = try_vertices_from_points(&translated_vertices)
+                            .expect("finite point coordinates");
 
                         if let Ok(dt_translated) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
                             &AdaptiveKernel::default(),
@@ -457,7 +459,7 @@ macro_rules! test_quality_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|v| Vertex::from_validated_points(&v)),
+                    ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates")),
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
@@ -478,7 +480,8 @@ macro_rules! test_quality_properties {
                             })
                             .collect::<Vec<_>>();
 
-                        let translated_vertices = Vertex::from_validated_points(&translated_vertices);
+                        let translated_vertices = try_vertices_from_points(&translated_vertices)
+                            .expect("finite point coordinates");
 
                         if let Ok(dt_translated) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
                             &AdaptiveKernel::default(),
@@ -531,7 +534,7 @@ macro_rules! test_quality_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|v| Vertex::from_validated_points(&v)),
+                    ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates")),
                     scale in 0.1f64..10.0f64
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
@@ -552,7 +555,8 @@ macro_rules! test_quality_properties {
                             })
                             .collect::<Vec<_>>();
 
-                        let scaled_vertices = Vertex::from_validated_points(&scaled_vertices);
+                        let scaled_vertices = try_vertices_from_points(&scaled_vertices)
+                            .expect("finite point coordinates");
 
                         if let Ok(dt_scaled) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
                             &AdaptiveKernel::default(),
@@ -605,7 +609,7 @@ macro_rules! test_quality_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|v| Vertex::from_validated_points(&v))
+                    ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
                         &AdaptiveKernel::default(),

@@ -2364,7 +2364,7 @@ where
                     let canonical_v = Vertex::new_with_uuid(new_point, v.uuid(), v.data);
                     expanded.push(canonical_v);
                 } else {
-                    let image_v: Vertex<U, D> = Vertex::from_validated_point(new_point);
+                    let image_v: Vertex<U, D> = Vertex::from_validated_point(new_point, None);
                     image_uuid_to_canonical_with_offset.insert(image_v.uuid(), (v.uuid(), offset));
                     expanded.push(image_v);
                 }

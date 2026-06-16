@@ -7,10 +7,11 @@
 //! preserving the quick performance probes.
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use delaunay::prelude::construction::{DelaunayTriangulation, Vertex};
+use delaunay::prelude::construction::DelaunayTriangulation;
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::CoordinateRange;
 use delaunay::prelude::query::BoundaryAnalysis;
+use delaunay::try_vertices_from_points;
 use uuid::Uuid;
 
 use std::collections::HashSet;
@@ -39,7 +40,10 @@ fn boundary_triangulation_3d(
         0xB0DA_FACE_0000_0000 ^ requested_vertices as u64,
     );
     let points = bench_result(points, "failed to generate boundary benchmark points");
-    let vertices = Vertex::from_validated_points(&points);
+    let vertices = bench_result(
+        try_vertices_from_points(&points),
+        "failed to create boundary benchmark vertices",
+    );
     bench_result(
         DelaunayTriangulation::try_new(&vertices),
         "failed to build 3D boundary benchmark triangulation",

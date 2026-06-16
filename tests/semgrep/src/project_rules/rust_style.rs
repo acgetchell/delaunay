@@ -200,6 +200,35 @@ pub fn vertex_try_new_replaces_empty_ok() {
     let _vertex = Vertex::<(), 3>::try_new([0.0, 0.0, 0.0]);
 }
 
+impl PublicValidatedConstructorFixture {
+    // ruleid: delaunay.rust.no-public-from-validated-constructors
+    pub fn from_validated_point(point: Point<3>) -> Self {
+        Self { point }
+    }
+}
+
+impl CratePrivateValidatedConstructorFixture {
+    // ok: delaunay.rust.no-public-from-validated-constructors
+    pub(crate) fn from_validated_point(point: Point<3>, data: Option<()>) -> Self {
+        Self { point, data }
+    }
+}
+
+impl ParallelValidatedDataConstructorFixture {
+    // ruleid: delaunay.rust.no-parallel-from-validated-with-data-constructors
+    fn from_validated_point_with_data(point: Point<3>, data: ()) -> Self {
+        Self {
+            point,
+            data: Some(data),
+        }
+    }
+
+    // ok: delaunay.rust.no-parallel-from-validated-with-data-constructors
+    fn from_validated_point(point: Point<3>, data: Option<()>) -> Self {
+        Self { point, data }
+    }
+}
+
 pub fn triangulation_fallible_constructor_names_bad(
     vertices: &[Vertex<(), 3>],
     options: ConstructionOptions,

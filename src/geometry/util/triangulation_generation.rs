@@ -152,11 +152,11 @@ where
     match vertex_data {
         Some(data) => points
             .into_iter()
-            .map(|point| Vertex::from_validated_point_with_data(point, data))
+            .map(|point| Vertex::from_validated_point(point, Some(data)))
             .collect(),
         None => points
             .into_iter()
-            .map(Vertex::from_validated_point)
+            .map(|point| Vertex::from_validated_point(point, None))
             .collect(),
     }
 }

@@ -24,6 +24,7 @@
 use delaunay::prelude::collections::{SimplexVertexBuffer, SimplexVertexKeyBuffer};
 use delaunay::prelude::query::*;
 use delaunay::prelude::tds::{Tds, jaccard_index};
+use delaunay::try_vertices_from_points;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
 use std::cell::RefCell;
@@ -79,22 +80,26 @@ fn vertex_5d() -> impl Strategy<Value = Point<5>> {
 
 /// Strategy for generating a small collection of 2D vertices (4-10 vertices)
 fn small_vertex_set_2d() -> impl Strategy<Value = Vec<Vertex<(), 2>>> {
-    prop::collection::vec(vertex_2d(), 4..=10).prop_map(|v| Vertex::from_validated_points(&v))
+    prop::collection::vec(vertex_2d(), 4..=10)
+        .prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
 }
 
 /// Strategy for generating a small collection of 3D vertices (5-12 vertices)
 fn small_vertex_set_3d() -> impl Strategy<Value = Vec<Vertex<(), 3>>> {
-    prop::collection::vec(vertex_3d(), 5..=12).prop_map(|v| Vertex::from_validated_points(&v))
+    prop::collection::vec(vertex_3d(), 5..=12)
+        .prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
 }
 
 /// Strategy for generating a small collection of 4D vertices (6-14 vertices)
 fn small_vertex_set_4d() -> impl Strategy<Value = Vec<Vertex<(), 4>>> {
-    prop::collection::vec(vertex_4d(), 6..=14).prop_map(|v| Vertex::from_validated_points(&v))
+    prop::collection::vec(vertex_4d(), 6..=14)
+        .prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
 }
 
 /// Strategy for generating a small collection of 5D vertices (7-16 vertices)
 fn small_vertex_set_5d() -> impl Strategy<Value = Vec<Vertex<(), 5>>> {
-    prop::collection::vec(vertex_5d(), 7..=16).prop_map(|v| Vertex::from_validated_points(&v))
+    prop::collection::vec(vertex_5d(), 7..=16)
+        .prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
 }
 
 // =============================================================================

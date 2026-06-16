@@ -762,6 +762,7 @@ mod tests {
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::geometry::point::Point;
     use crate::tds::VertexKey;
+    use crate::try_vertices_from_points;
     use crate::{DelaunayTriangulationBuilder, TriangulationConstructionError};
     use slotmap::KeyData;
     use std::assert_matches;
@@ -792,7 +793,7 @@ mod tests {
             coords[axis] = 1.0;
             points.push(Point::try_new(coords).expect("finite point coordinates"));
         }
-        Vertex::from_validated_points(&points)
+        try_vertices_from_points(&points).expect("finite point coordinates")
     }
 
     fn insert_duplicate_simplex_copies<const D: usize>(

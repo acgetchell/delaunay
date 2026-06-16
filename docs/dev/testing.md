@@ -274,8 +274,14 @@ let tri = build_triangulation(points)?;
 or
 
 ```rust
+#[derive(Debug, thiserror::Error)]
+enum ExampleQueryError<K: std::fmt::Debug> {
+    #[error("missing simplex {key:?}")]
+    MissingSimplex { key: K },
+}
+
 let Some(simplex) = tri.simplex(key) else {
-    return Err(QueryError::MissingSimplex { key });
+    return Err(ExampleQueryError::MissingSimplex { key });
 };
 ```
 

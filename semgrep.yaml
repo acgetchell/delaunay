@@ -571,6 +571,42 @@ rules:
           (?s)\bimpl[^{}]*\bDelaunayTriangulation\b[^{}]*\{(?:(?!^\}).)*?^\s*pub\s+(?:const\s+)?fn\s+(?:new|new_with_(?:construction_statistics|options(?:_and_construction_statistics)?|topology_guarantee)|with_(?:kernel|topology_guarantee(?:_and_options)?|options_and_statistics))\s*\(
       - pattern-regex: '(?s)\bimpl[^{}]*\bConvexHull\b[^{}]*\{(?:(?!^\}).)*?^\s*pub\s+fn\s+from_triangulation\s*(?:<|\()'
 
+  - id: delaunay.rust.no-public-from-validated-constructors
+    languages:
+      - generic
+    severity: WARNING
+    message: "Keep from_validated* constructors private or crate-private; public constructors must parse through try_new*/try_from_* boundaries."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/459"
+      rationale: >-
+        from_validated* means the caller already has validation evidence. Public
+        APIs should not ask callers to supply trusted data; they should parse and
+        validate with try_new*, try_from_*, or equivalent fallible constructors.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-regex: '^\s*pub\s+(?:const\s+)?fn\s+from_validated[A-Za-z0-9_]*\s*\('
+
+  - id: delaunay.rust.no-parallel-from-validated-with-data-constructors
+    languages:
+      - generic
+    severity: WARNING
+    message: "Prefer one from_validated* constructor that accepts all already-proved state, rather than parallel *_with_data variants."
+    metadata:
+      category: maintainability
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/459"
+      rationale: >-
+        Trusted constructors should be scarce and orthogonal. Optional payload
+        data can be carried by one from_validated* helper instead of introducing
+        a second trusted entry point with the same invariant proof.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-regex: '\bfn\s+from_validated[A-Za-z0-9_]*_with_data\s*\('
+
   - id: delaunay.rust.no-slotmap-key-topology-deserialization
     languages:
       - generic

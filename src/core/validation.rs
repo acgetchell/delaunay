@@ -3381,7 +3381,7 @@ mod tests {
         dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
 
         for (i, point) in points.into_iter().enumerate() {
-            let vertex = Vertex::from_validated_point(point);
+            let vertex = Vertex::from_validated_point(point, None);
             let (outcome, stats) = dt
                 .insert_best_effort_with_statistics(vertex)
                 .unwrap_or_else(|err| panic!("Non-retryable insertion error at i={i}: {err:?}"));

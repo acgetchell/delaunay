@@ -275,8 +275,12 @@ Use fallible names for raw or invariant-bearing input:
 Use `from_validated*` only for infallible construction from proof-bearing input:
 
 - `from_validated*` means validation evidence already exists at the call site.
-- These functions should normally be private or `pub(crate)` unless the proof
-  type is itself public and callers can genuinely supply validated input.
+- These functions should be private by default. Use `pub(crate)` only when a
+  non-test sibling module needs the trusted path after proving the invariant.
+  Do not expose `from_validated*` as public API.
+- Keep trusted constructors scarce. Prefer one `from_validated*` constructor
+  that accepts all already-proved state (for example optional payload data) over
+  parallel variants such as `from_validated_*_with_data`.
 - The pattern in `FacetHandle::try_new` followed by
   `FacetHandle::from_validated` is the preferred shape for internal helpers.
 
@@ -291,9 +295,9 @@ being parsed:
   to `build`; builder setters remain infallible and return `Self`.
 - Configuration and statistics types may derive or implement `Default` when the
   default value is valid and documented as a policy choice or accumulator state.
-- `from_*` is acceptable for infallible conversions from already-refined values,
-  such as validated points into vertices, or for passive report/view extraction
-  that cannot fail for representable input.
+- `from_*` is acceptable for passive report/view extraction or infallible
+  standard conversions that cannot fail for representable input. Trusted
+  construction from proof-bearing input should use `from_validated*` internally.
 
 Current migration targets for API-normalization work:
 

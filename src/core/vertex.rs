@@ -384,24 +384,12 @@ impl<U, const D: usize> Vertex<U, D> {
     /// Creates a vertex from already-validated point coordinates.
     #[inline]
     #[must_use]
-    pub(crate) fn from_validated_point(point: Point<D>) -> Self {
+    pub(crate) fn from_validated_point(point: Point<D>, data: Option<U>) -> Self {
         Self {
             point,
             uuid: make_uuid(),
             incident_simplex: None,
-            data: None,
-        }
-    }
-
-    /// Creates a vertex with user data from already-validated point coordinates.
-    #[inline]
-    #[must_use]
-    pub(crate) fn from_validated_point_with_data(point: Point<D>, data: impl Into<U>) -> Self {
-        Self {
-            point,
-            uuid: make_uuid(),
-            incident_simplex: None,
-            data: Some(data.into()),
+            data,
         }
     }
 
@@ -437,7 +425,7 @@ impl<U, const D: usize> Vertex<U, D> {
     where
         T: num_traits::cast::NumCast + Copy + fmt::Debug + PartialEq,
     {
-        Point::try_from(coords).map(Self::from_validated_point)
+        Point::try_from(coords).map(|point| Self::from_validated_point(point, None))
     }
 
     /// Tries to create a vertex with user data from raw coordinate values.
@@ -475,42 +463,7 @@ impl<U, const D: usize> Vertex<U, D> {
     where
         T: num_traits::cast::NumCast + Copy + fmt::Debug + PartialEq,
     {
-        Point::try_from(coords).map(|point| Self::from_validated_point_with_data(point, data))
-    }
-
-    /// Creates vertices with fresh UUIDs from validated points.
-    ///
-    /// # Arguments
-    ///
-    /// * `points`: `points` is a slice of [Point] objects.
-    ///
-    /// # Returns
-    ///
-    /// Returns one vertex per point. The new vertices have no user data and no
-    /// incident simplex pointer until they are inserted into a TDS.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use delaunay::prelude::Vertex;
-    /// use delaunay::prelude::geometry::Point;
-    /// use delaunay::prelude::geometry::Coordinate;
-    /// # fn main() -> Result<(), delaunay::prelude::geometry::CoordinateConversionError> {
-    /// let points = [Point::try_from([1.0, 2.0, 3.0])?];
-    /// let vertices: Vec<Vertex<(), 3>> = Vertex::from_validated_points(&points);
-    /// assert_eq!(vertices.len(), 1);
-    /// assert_eq!(vertices[0].point().coords(), &[1.0, 2.0, 3.0]);
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[inline]
-    #[must_use]
-    pub fn from_validated_points(points: &[Point<D>]) -> Vec<Self> {
-        points
-            .iter()
-            .copied()
-            .map(Self::from_validated_point)
-            .collect()
+        Point::try_from(coords).map(|point| Self::from_validated_point(point, Some(data.into())))
     }
 
     /// Converts vertices into a [`HashMap`] keyed by stable vertex [`Uuid`].
@@ -990,13 +943,17 @@ mod tests {
             epsilon = 1e-9
         );
 
-        // Test Vertex::from_validated_points() with multiple points
-        let points = vec![
+        // Test batch construction from already-validated test points.
+        let points = [
             Point::try_new([1.0, 2.0, 3.0]).expect("finite point coordinates"),
             Point::try_new([4.0, 5.0, 6.0]).expect("finite point coordinates"),
             Point::try_new([7.0, 8.0, 9.0]).expect("finite point coordinates"),
         ];
-        let mut vertices: Vec<Vertex<(), 3>> = Vertex::from_validated_points(&points);
+        let mut vertices: Vec<Vertex<(), 3>> = points
+            .iter()
+            .copied()
+            .map(|point| Vertex::from_validated_point(point, None))
+            .collect();
 
         assert_eq!(vertices.len(), 3);
         assert_relative_eq!(
@@ -1017,23 +974,6 @@ mod tests {
             epsilon = 1e-9
         );
         assert_eq!(vertices[2].dim(), 3);
-
-        // Test Vertex::from_validated_points() with empty slice
-        let empty_points: Vec<Point<3>> = Vec::new();
-        let empty_vertices: Vec<Vertex<(), 3>> = Vertex::from_validated_points(&empty_points);
-        assert!(empty_vertices.is_empty());
-
-        // Test Vertex::from_validated_points() with single point
-        let single_point = vec![Point::try_new([1.0, 2.0, 3.0]).expect("finite point coordinates")];
-        let single_vertices: Vec<Vertex<(), 3>> = Vertex::from_validated_points(&single_point);
-        assert_eq!(single_vertices.len(), 1);
-        assert_relative_eq!(
-            single_vertices[0].point().coords().as_slice(),
-            [1.0, 2.0, 3.0].as_slice(),
-            epsilon = 1e-9
-        );
-        assert_eq!(single_vertices[0].dim(), 3);
-        assert!(!single_vertices[0].uuid().is_nil());
 
         // Test Vertex::try_into_hashmap() with multiple vertices
         let hashmap = Vertex::try_into_hashmap(vertices.iter().copied()).unwrap();

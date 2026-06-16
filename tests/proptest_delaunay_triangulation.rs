@@ -39,6 +39,7 @@ use delaunay::prelude::construction::{
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::insertion::InsertionOutcome;
 use delaunay::prelude::validation::ValidationPolicy;
+use delaunay::try_vertices_from_points;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
 use rand::{SeedableRng, seq::SliceRandom};
@@ -462,7 +463,7 @@ fn unit_simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
         points.push(Point::try_new(coords).expect("finite point coordinates"));
     }
 
-    Vertex::from_validated_points(&points)
+    try_vertices_from_points(&points).expect("finite point coordinates")
 }
 
 /// Build coordinate input with one non-finite coordinate and finite filler elsewhere.
@@ -642,7 +643,7 @@ fn regression_insertion_order_3d_case_001() {
         ])
         .expect("finite point coordinates"),
     ];
-    let vertices = Vertex::from_validated_points(&points);
+    let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
         DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
@@ -683,7 +684,10 @@ macro_rules! gen_incremental_insertion_validity {
                     init_tracing();
                     // Dedup exact duplicates to avoid pathological degeneracies during shrinking.
                     let initial_vertices =
-                        dedup_vertices_by_coords::<$dim>(Vertex::from_validated_points(&initial_points));
+                        dedup_vertices_by_coords::<$dim>(
+                            try_vertices_from_points(&initial_points)
+                                .expect("finite point coordinates"),
+                        );
 
                     // Require at least D+1 distinct vertices for valid simplices.
                     prop_assume!(initial_vertices.len() > $dim);
@@ -750,7 +754,9 @@ proptest! {
         init_tracing();
         // Dedup exact duplicates to avoid pathological degeneracies during shrinking.
         let initial_vertices =
-            dedup_vertices_by_coords::<3>(Vertex::from_validated_points(&initial_points));
+            dedup_vertices_by_coords::<3>(
+                try_vertices_from_points(&initial_points).expect("finite point coordinates"),
+            );
 
         // Require at least D+1 distinct vertices for valid simplices.
         prop_assume!(initial_vertices.len() > 3);
@@ -892,7 +898,7 @@ macro_rules! gen_duplicate_coords_test {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min..=$max
-                    ).prop_map(|v| Vertex::from_validated_points(&v))
+                    ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
                     let options = ConstructionOptions::default()
                         .with_dedup_policy(DedupPolicy::Exact);
@@ -911,7 +917,7 @@ macro_rules! gen_duplicate_coords_test {
                     let (_, existing_vertex) = dt.vertices().next()
                         .expect("DelaunayTriangulation::try_new_with_options returned Ok but has no vertices");
                     let p = *existing_vertex.point();
-                    let dup = Vertex::from_validated_points(&[p])[0];
+                    let dup = try_vertices_from_points(&[p]).expect("finite point coordinates")[0];
                     let result = dt.insert(dup);
                     prop_assert!(
                         result.is_err(),
@@ -956,7 +962,11 @@ macro_rules! empty_circumsphere_vertices {
         pastey::paste! {{
             let max_vertices = empty_circumsphere_max_vertices($dim, $min_vertices, $max_vertices);
             prop::collection::vec([<vertex_ $dim d>](), $min_vertices..=max_vertices)
-                .prop_map(|pts| dedup_vertices_by_coords::<$dim>(Vertex::from_validated_points(&pts)))
+                .prop_map(|pts| {
+                    dedup_vertices_by_coords::<$dim>(
+                        try_vertices_from_points(&pts).expect("finite point coordinates"),
+                    )
+                })
         }}
     };
 }
@@ -1059,7 +1069,11 @@ macro_rules! gen_high_dim_delaunay_smoke {
                     [<vertex_ $dim d>](),
                     $min_vertices..=$max_vertices,
                 )
-                .prop_map(|pts| dedup_vertices_by_coords::<$dim>(Vertex::from_validated_points(&pts)));
+                .prop_map(|pts| {
+                    dedup_vertices_by_coords::<$dim>(
+                        try_vertices_from_points(&pts).expect("finite point coordinates"),
+                    )
+                });
                 let stats = RefCell::new(SmokeStats::default());
 
                 let run_result = runner.run(&strategy, |vertices| {
@@ -1110,7 +1124,8 @@ macro_rules! gen_high_dim_delaunay_smoke {
                         .vertices()
                         .next()
                         .expect("successfully constructed triangulation should contain vertices");
-                    let duplicate = Vertex::from_validated_points(&[*existing_vertex.point()])[0];
+                    let duplicate = try_vertices_from_points(&[*existing_vertex.point()])
+                        .expect("finite point coordinates")[0];
                     let duplicate_result = dt.insert(duplicate);
                     prop_assert!(
                         duplicate_result.is_err(),
@@ -1129,7 +1144,8 @@ macro_rules! gen_high_dim_delaunay_smoke {
                         cloud_points.push(Point::try_new(jittered).expect("finite point coordinates"));
                     }
 
-                    let cloud_vertices = Vertex::from_validated_points(&cloud_points);
+                    let cloud_vertices =
+                        try_vertices_from_points(&cloud_points).expect("finite point coordinates");
                     let options = ConstructionOptions::default()
                         .with_dedup_policy(DedupPolicy::try_epsilon(1e-6).unwrap());
                     let cloud_dt = match DelaunayTriangulation::<_, (), (), $dim>::try_new_with_options(
@@ -1274,7 +1290,11 @@ macro_rules! gen_insertion_order_robustness_test {
                     points in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|pts| dedup_vertices_by_coords::<$dim>(Vertex::from_validated_points(&pts)))
+                    ).prop_map(|pts| {
+                        dedup_vertices_by_coords::<$dim>(
+                            try_vertices_from_points(&pts).expect("finite point coordinates"),
+                        )
+                    })
                 ) {
                     // Require at least D+1 distinct vertices for valid simplices
                     prop_assume!(points.len() > $dim);
@@ -1425,7 +1445,11 @@ fn prop_insertion_order_robustness_3d() {
             .prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
         6..=10,
     )
-    .prop_map(|pts| dedup_vertices_by_coords::<3>(Vertex::from_validated_points(&pts)));
+    .prop_map(|pts| {
+        dedup_vertices_by_coords::<3>(
+            try_vertices_from_points(&pts).expect("finite point coordinates"),
+        )
+    });
 
     // `TestRunner::run` takes an `Fn` (not `FnMut`) closure, so use interior mutability to
     // track rejection rates.
@@ -1729,7 +1753,11 @@ macro_rules! gen_insertion_order_robustness_high_dim_impl {
                     [<vertex_ $dim d>](),
                     $min_vertices..=$max_vertices,
                 )
-                .prop_map(|pts| dedup_vertices_by_coords::<$dim>(Vertex::from_validated_points(&pts)));
+                .prop_map(|pts| {
+                    dedup_vertices_by_coords::<$dim>(
+                        try_vertices_from_points(&pts).expect("finite point coordinates"),
+                    )
+                });
 
                 // `TestRunner::run` takes an `Fn` (not `FnMut`) closure, so use interior mutability to
                 // track rejection rates.
@@ -1975,7 +2003,8 @@ macro_rules! gen_duplicate_cloud_test {
                     let unique = count_unique_coords_by_bits(&points);
                     prop_assume!(unique > $min_vertices);
 
-                    let vertices: Vec<Vertex<(), $dim>> = Vertex::from_validated_points(&points);
+                    let vertices: Vec<Vertex<(), $dim>> =
+                        try_vertices_from_points(&points).expect("finite point coordinates");
 
                     let build_start = std::time::Instant::now();
                     let options = ConstructionOptions::default()

@@ -40,10 +40,27 @@ use crate::geometry::robust_predicates::{
 };
 use crate::geometry::sos::{sos_insphere_sign, sos_orientation_sign};
 use crate::geometry::traits::coordinate::{
-    CoordinateConversionError, CoordinateConversionValue, DegenerateSimplexReason,
+    CoordinateConversionError, CoordinateConversionValue, CoordinateValidationError,
+    DegenerateSimplexReason,
 };
 use crate::geometry::util::safe_coords_to_f64;
 use core::marker::PhantomData;
+
+/// Converts f64 coordinates back into a validated point for `SoS` fallback paths.
+fn point_from_f64_coords<const D: usize>(
+    coords: [f64; D],
+) -> Result<Point<D>, CoordinateConversionError> {
+    Point::try_new(coords).map_err(|source| match source {
+        CoordinateValidationError::InvalidCoordinate {
+            coordinate_index,
+            coordinate_value,
+            ..
+        } => CoordinateConversionError::NonFiniteValue {
+            coordinate_index,
+            coordinate_value,
+        },
+    })
+}
 
 /// Converts an insphere classification into the [`Kernel::in_sphere`] integer convention.
 #[inline]
@@ -663,10 +680,7 @@ impl<const D: usize> Kernel<D> for AdaptiveKernel<f64> {
         let mut f64_points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
             SmallBuffer::with_capacity(points.len());
         for point in points {
-            f64_points.push(
-                Point::try_new(safe_coords_to_f64(point.coords())?)
-                    .expect("finite point coordinates"),
-            );
+            f64_points.push(point_from_f64_coords(safe_coords_to_f64(point.coords())?)?);
         }
 
         // SoS guarantees a non-zero sign for distinct points.  If SoS
@@ -703,13 +717,9 @@ impl<const D: usize> Kernel<D> for AdaptiveKernel<f64> {
         let mut f64_simplex: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
             SmallBuffer::with_capacity(simplex_points.len());
         for point in simplex_points {
-            f64_simplex.push(
-                Point::try_new(safe_coords_to_f64(point.coords())?)
-                    .expect("finite point coordinates"),
-            );
+            f64_simplex.push(point_from_f64_coords(safe_coords_to_f64(point.coords())?)?);
         }
-        let f64_test = Point::try_new(safe_coords_to_f64(test_point.coords())?)
-            .expect("finite point coordinates");
+        let f64_test = point_from_f64_coords(safe_coords_to_f64(test_point.coords())?)?;
 
         // Resolve orientation factor.
         let orient_factor: i32 = if rel_orient_sign != 0 {
@@ -757,13 +767,9 @@ impl<const D: usize> Kernel<D> for AdaptiveKernel<f64> {
             let mut f64_simplex: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
                 SmallBuffer::with_capacity(simplex_points.len());
             for point in simplex_points {
-                f64_simplex.push(
-                    Point::try_new(safe_coords_to_f64(point.coords())?)
-                        .expect("finite point coordinates"),
-                );
+                f64_simplex.push(point_from_f64_coords(safe_coords_to_f64(point.coords())?)?);
             }
-            let f64_test = Point::try_new(safe_coords_to_f64(test_point.coords())?)
-                .expect("finite point coordinates");
+            let f64_test = point_from_f64_coords(safe_coords_to_f64(test_point.coords())?)?;
             sos_insphere_sign(&f64_simplex, &f64_test)?
         };
 

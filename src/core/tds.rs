@@ -74,7 +74,7 @@
 //! | **Simplex Vertex Keys** | `Tds::is_valid()` / `Tds::validate()` | Simplices reference only valid vertex keys |
 //! | **Vertex Incidence** | `Tds::is_valid()` / `Tds::validate()` | `Vertex::incident_simplex` is non-dangling and consistent (when present) |
 //! | **Simplex Validity** | `SimplexBuilder::validate()` (vertex count) + `simplex.is_valid()` (comprehensive) | Construction + runtime validation |
-//! | **Vertex Validity** | `Point::from()` (coordinates) + UUID auto-gen + `vertex.is_valid()` | Construction + runtime validation |
+//! | **Vertex Validity** | [`Point::try_new`](crate::geometry::point::Point::try_new) / [`Point`](crate::geometry::point::Point) coordinate conversion (coordinates) + UUID auto-gen + `vertex.is_valid()` | Construction + runtime validation |
 //!
 //! The incremental insertion algorithm attempts to maintain the Delaunay property during
 //! construction, but rare violations can remain. Structural invariants are enforced
@@ -2570,7 +2570,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     Point::try_from([0.0, 0.0, 1.0])?,
     /// ];
     ///
-    /// let vertices = Vertex::<(), 3>::from_validated_points(&points);
+    /// let vertices = delaunay::try_vertices_from_points(&points)?;
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.number_of_vertices(), 4);
     /// # Ok(())
@@ -2667,7 +2667,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     Point::try_from([1.0, 0.0])?,
     ///     Point::try_from([0.5, 1.0])?,
     /// ];
-    /// let vertices_2d = Vertex::<(), 2>::from_validated_points(&points_2d);
+    /// let vertices_2d = delaunay::try_vertices_from_points(&points_2d)?;
     /// let dt_2d = DelaunayTriangulationBuilder::new(&vertices_2d).build::<()>()?;
     /// assert_eq!(dt_2d.dim(), 2);
     ///
@@ -2679,7 +2679,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     Point::try_from([0.0, 0.0, 1.0, 0.0])?,
     ///     Point::try_from([0.0, 0.0, 0.0, 1.0])?,
     /// ];
-    /// let vertices_4d = Vertex::<(), 4>::from_validated_points(&points_4d);
+    /// let vertices_4d = delaunay::try_vertices_from_points(&points_4d)?;
     /// let dt_4d = DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
     /// assert_eq!(dt_4d.dim(), 4);
     /// # Ok(())
@@ -2749,7 +2749,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     Point::try_from([0.0, 0.0, 1.0])?,
     /// ];
     ///
-    /// let vertices = Vertex::<(), 3>::from_validated_points(&points);
+    /// let vertices = delaunay::try_vertices_from_points(&points)?;
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.number_of_simplices(), 1); // Simplices are automatically created via triangulation
     /// # Ok(())
@@ -2780,7 +2780,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     Point::try_from([0.0, 0.0, 1.0])?,
     /// ];
     ///
-    /// let vertices = Vertex::<(), 3>::from_validated_points(&points);
+    /// let vertices = delaunay::try_vertices_from_points(&points)?;
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.number_of_simplices(), 1); // One tetrahedron for 4 points in 3D
     /// # Ok(())

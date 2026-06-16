@@ -328,9 +328,9 @@ mod tests {
     use crate::core::facet::{FacetError, FacetHandle};
     use crate::core::query::QueryError;
     use crate::core::tds::{SimplexKey, TdsError};
-    use crate::core::vertex::Vertex;
     use crate::geometry::point::Point;
     use crate::triangulation::DelaunayTriangulation;
+    use crate::try_vertices_from_points;
     use std::assert_matches;
 
     // =============================================================================
@@ -352,7 +352,7 @@ mod tests {
                 Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
                 Point::try_new([0.5, 1.0]).expect("finite point coordinates"),
             ];
-            let vertices = Vertex::from_validated_points(&points);
+            let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
             let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
             assert_eq!(
@@ -393,7 +393,7 @@ mod tests {
                 Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
                 Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
             ];
-            let vertices = Vertex::from_validated_points(&points);
+            let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
             let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
             assert_eq!(
@@ -435,7 +435,7 @@ mod tests {
                 Point::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
                 Point::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
             ];
-            let vertices = Vertex::from_validated_points(&points);
+            let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
             let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
             assert_eq!(
@@ -506,7 +506,7 @@ mod tests {
                 Point::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
                 Point::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
             ];
-            let vertices = Vertex::from_validated_points(&points);
+            let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
             let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
             assert_eq!(
@@ -563,7 +563,7 @@ mod tests {
                 Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
                 Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
             ];
-            let vertices = Vertex::from_validated_points(&points);
+            let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
             let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
             // Test boundary_facets() normal path
@@ -598,7 +598,7 @@ mod tests {
                 Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
                 Point::try_new([0.5, 0.5, 0.5]).expect("finite point coordinates"), // Interior point
             ];
-            let vertices = Vertex::from_validated_points(&points);
+            let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
             let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
             // After robust cleanup and facet-sharing filtering, we may end up with a single simplex
@@ -689,7 +689,7 @@ mod tests {
             Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
             Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
-        let vertices = Vertex::from_validated_points(&points);
+        let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
         // Build facet map
@@ -744,7 +744,7 @@ mod tests {
             Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
             Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
-        let vertices = Vertex::from_validated_points(&points);
+        let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let facet = dt.boundary_facets().unwrap().next().unwrap().unwrap();
         let facet_key = facet.key().unwrap();
@@ -812,7 +812,7 @@ mod tests {
             Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
             Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
-        let vertices = Vertex::from_validated_points(&points);
+        let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
         let (simplex_key, _) = dt.tri.tds.simplices().next().unwrap();
@@ -847,7 +847,7 @@ mod tests {
             Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
             Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
-        let vertices = Vertex::from_validated_points(&points);
+        let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
         // Test both methods return consistent results

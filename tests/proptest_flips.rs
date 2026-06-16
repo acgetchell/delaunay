@@ -14,6 +14,7 @@ use delaunay::prelude::construction::{
 };
 use delaunay::prelude::flips::BistellarFlips;
 use delaunay::prelude::geometry::{AdaptiveKernel, FastKernel, Kernel, Point, RobustKernel};
+use delaunay::try_vertices_from_points;
 use proptest::prelude::*;
 use std::collections::{BTreeSet, HashMap};
 
@@ -62,7 +63,7 @@ fn axis_aligned_simplex_vertices<const D: usize>(
         points.push(Point::try_new(coordinates).expect("finite point coordinates"));
     }
 
-    Vertex::from_validated_points(&points)
+    try_vertices_from_points(&points).expect("finite point coordinates")
 }
 
 /// Places a vertex strictly inside the generated axis-aligned simplex.

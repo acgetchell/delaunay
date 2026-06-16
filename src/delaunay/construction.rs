@@ -3904,6 +3904,8 @@ where
         }
         orientation_result?;
 
+        self.tri.tds.construction_state = TriangulationConstructionState::Constructed;
+
         tracing::debug!("post-construction: starting topology validation (finalize)");
         let validation_started = Instant::now();
         let validation_result = self.tri.validate();
@@ -3925,8 +3927,6 @@ where
             }
             .into());
         }
-        self.tri.tds.construction_state = TriangulationConstructionState::Constructed;
-
         Ok(())
     }
 
@@ -6551,62 +6551,55 @@ mod tests {
         assert!(dt.validate().is_ok());
     }
 
-    #[test]
-    fn test_new_with_construction_statistics_counts_initial_simplex_3d() {
+    fn assert_initial_simplex_statistics<const D: usize>() {
         init_tracing();
-        let vertices: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-        ];
+        let vertices = simplex_vertices::<D>();
 
         let (dt, stats) =
-            DelaunayTriangulation::try_new_with_construction_statistics(&vertices).unwrap();
+            DelaunayTriangulation::<_, (), (), D>::try_new_with_construction_statistics(&vertices)
+                .unwrap();
 
-        assert_eq!(dt.number_of_vertices(), 4);
-        assert_eq!(stats.inserted, 4);
+        assert_eq!(dt.number_of_vertices(), D + 1);
+        assert_eq!(stats.inserted, D + 1);
         assert_eq!(stats.total_skipped(), 0);
-        assert_eq!(stats.total_attempts, 4);
+        assert_eq!(stats.total_attempts, D + 1);
         assert_eq!(stats.max_attempts, 1);
-        assert_eq!(stats.attempts_histogram.get(1).copied().unwrap_or(0), 4);
+        assert_eq!(stats.attempts_histogram.get(1).copied().unwrap_or(0), D + 1);
     }
 
-    #[test]
-    fn test_constructed_delaunay_exposes_constructed_tds_state() {
+    fn assert_constructed_tds_state<const D: usize>() {
         init_tracing();
-        let vertices: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-        ];
+        let vertices = simplex_vertices::<D>();
 
-        let dt: DelaunayTriangulation<_, (), (), 3> =
+        let dt: DelaunayTriangulation<_, (), (), D> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
 
-        assert_matches!(
-            dt.as_triangulation().tds.construction_state(),
+        assert_eq!(
+            *dt.as_triangulation().tds.construction_state(),
             TriangulationConstructionState::Constructed
         );
     }
 
-    #[test]
-    fn test_new_with_construction_statistics_error_carries_empty_partial_stats() {
+    fn assert_empty_partial_stats_error<const D: usize>() {
         init_tracing();
-        let vertices: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        ];
+        let mut vertices = simplex_vertices::<D>();
+        let _removed_vertex = vertices.pop().expect("simplex has at least one vertex");
 
         let err =
-            DelaunayTriangulation::try_new_with_construction_statistics(&vertices).unwrap_err();
+            DelaunayTriangulation::<_, (), (), D>::try_new_with_construction_statistics(&vertices)
+                .unwrap_err();
 
-        assert_matches!(
+        assert_eq!(
             err.error,
             DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::InsufficientVertices { dimension: 3, .. }
+                DelaunayConstructionFailure::InsufficientVertices {
+                    dimension: D,
+                    source: SimplexValidationError::InsufficientVertices {
+                        actual: D,
+                        expected: D + 1,
+                        dimension: D,
+                    },
+                },
             )
         );
         assert_eq!(err.statistics.inserted, 0);
@@ -6616,44 +6609,70 @@ mod tests {
         assert!(err.statistics.skip_samples.is_empty());
     }
 
-    #[test]
-    fn test_try_new_with_options_and_construction_statistics_skips_duplicate_3d() {
+    fn assert_duplicate_skip_statistics<const D: usize>() {
         init_tracing();
-        let vertices: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        ];
-        let duplicate_uuid = vertices[4].uuid();
+        let mut vertices = simplex_vertices::<D>();
+        vertices.push(Vertex::<(), _>::try_new([0.0; D]).unwrap());
+        let duplicate_index = vertices.len() - 1;
+        let duplicate_uuid = vertices[duplicate_index].uuid();
 
         let opts = ConstructionOptions::default()
             .with_insertion_order(InsertionOrderStrategy::Input)
             .with_retry_policy(RetryPolicy::Disabled);
 
-        let (dt, stats) = DelaunayTriangulation::try_new_with_options_and_construction_statistics(
+        let (dt, stats) = DelaunayTriangulation::<_, (), (), D>::try_new_with_options_and_construction_statistics(
             &vertices, opts,
         )
         .unwrap();
 
-        assert_eq!(dt.number_of_vertices(), 4);
-        assert_eq!(stats.inserted, 4);
+        assert_eq!(dt.number_of_vertices(), D + 1);
+        assert_eq!(stats.inserted, D + 1);
         assert_eq!(stats.skipped_duplicate, 1);
         assert_eq!(stats.skipped_degeneracy, 0);
         assert_eq!(stats.total_skipped(), 1);
-        assert_eq!(stats.total_attempts, 5);
-        assert_eq!(stats.attempts_histogram.get(1).copied().unwrap_or(0), 5);
+        assert_eq!(stats.total_attempts, D + 2);
+        assert_eq!(stats.attempts_histogram.get(1).copied().unwrap_or(0), D + 2);
 
         assert_eq!(stats.skip_samples.len(), 1);
         let sample = &stats.skip_samples[0];
-        assert_eq!(sample.index, 4);
+        assert_eq!(sample.index, duplicate_index);
         assert_eq!(sample.uuid, duplicate_uuid);
-        assert_eq!(sample.coords, vec![0.0, 0.0, 0.0]);
+        assert_eq!(sample.coords, vec![0.0; D]);
         assert!(sample.coords_available);
         assert_eq!(sample.attempts, 1);
         assert!(sample.error.contains("Duplicate coordinates"));
     }
+
+    macro_rules! gen_constructor_statistics_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_new_with_construction_statistics_counts_initial_simplex_ $dim d>]() {
+                    assert_initial_simplex_statistics::<$dim>();
+                }
+
+                #[test]
+                fn [<test_constructed_delaunay_exposes_constructed_tds_state_ $dim d>]() {
+                    assert_constructed_tds_state::<$dim>();
+                }
+
+                #[test]
+                fn [<test_new_with_construction_statistics_error_carries_empty_partial_stats_ $dim d>]() {
+                    assert_empty_partial_stats_error::<$dim>();
+                }
+
+                #[test]
+                fn [<test_try_new_with_options_and_construction_statistics_skips_duplicate_ $dim d>]() {
+                    assert_duplicate_skip_statistics::<$dim>();
+                }
+            }
+        };
+    }
+
+    gen_constructor_statistics_tests!(2);
+    gen_constructor_statistics_tests!(3);
+    gen_constructor_statistics_tests!(4);
+    gen_constructor_statistics_tests!(5);
 
     #[test]
     fn test_new_with_topology_guarantee_sets_pl() {

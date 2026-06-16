@@ -406,7 +406,8 @@ where
     /// Returns a reference to the underlying `Triangulation` (kernel + tds).
     ///
     /// This is useful when you need to pass the triangulation to methods that
-    /// expect a `&Triangulation`, such as `ConvexHull::try_from_triangulation()`.
+    /// expect a `&Triangulation`, such as
+    /// [`ConvexHull::try_from_triangulation`](crate::geometry::algorithms::convex_hull::ConvexHull::try_from_triangulation).
     ///
     /// # Examples
     ///

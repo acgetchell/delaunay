@@ -39,6 +39,7 @@ use delaunay::prelude::construction::{
     SimplexValidationError,
     SpatialIndexConstructionFailure as ConstructionSpatialIndexConstructionFailure,
     TopologyGuarantee, ToroidalDomain as ConstructionToroidalDomain, Vertex, VertexValidationError,
+    try_vertices_from_points as construction_try_vertices_from_points,
 };
 use delaunay::prelude::delaunayize::{
     DelaunayTriangulationBuilder as DelaunayizeDelaunayTriangulationBuilder, DelaunayizeConfig,
@@ -55,7 +56,8 @@ use delaunay::prelude::flips::{
     BistellarFlips, FlipOrientationCheckStage as FocusedFlipOrientationCheckStage,
 };
 use delaunay::prelude::generators::{
-    CoordinateRange, CoordinateRangeError, InvalidPositiveScalar, RandomTriangulationBuilder,
+    CoordinateRange, CoordinateRangeError, InvalidPositiveScalar,
+    RandomPointGenerationError as GeneratorRandomPointGenerationError, RandomTriangulationBuilder,
     generate_grid_points, generate_random_points_in_range_seeded,
     try_generate_random_points_seeded,
 };
@@ -117,6 +119,7 @@ use delaunay::prelude::triangulation::{
     ValidationConfigurationError as TriangulationValidationConfigurationError,
     ValidationPolicy as TriangulationValidationPolicy,
 };
+use delaunay::prelude::try_vertices_from_points as prelude_try_vertices_from_points;
 use delaunay::prelude::validation::{
     TopologyGuarantee as FocusedValidationTopologyGuarantee, ValidationCadence,
     ValidationConfigurationError as FocusedValidationConfigurationError,
@@ -887,7 +890,24 @@ fn triangulation_prelude_covers_generic_layer() -> Result<(), PreludeExportTestE
 }
 
 #[test]
-fn construction_prelude_covers_random_point_generation_failure_variant() {
+fn construction_prelude_covers_random_point_generation_failure_variant()
+-> Result<(), PreludeExportTestError> {
+    let points = [Point::try_new([0.0, 0.0])?, Point::try_new([1.0, 0.0])?];
+    let root_prelude_vertices = prelude_try_vertices_from_points(&points)?;
+    let construction_prelude_vertices = construction_try_vertices_from_points(&points)?;
+    assert_eq!(root_prelude_vertices.len(), 2);
+    assert_eq!(construction_prelude_vertices.len(), 2);
+
+    let width_overflow = GeneratorRandomPointGenerationError::CoordinateRangeWidthOverflow {
+        min: -f64::MAX,
+        max: f64::MAX,
+    };
+    assert_matches!(
+        width_overflow,
+        GeneratorRandomPointGenerationError::CoordinateRangeWidthOverflow { min, max }
+            if min.to_bits() == (-f64::MAX).to_bits() && max.to_bits() == f64::MAX.to_bits()
+    );
+
     assert_matches!(
         DelaunayConstructionFailure::RandomPointGeneration {
             source: RandomPointGenerationError::InvalidCoordinateRange {
@@ -936,6 +956,8 @@ fn construction_prelude_covers_random_point_generation_failure_variant() {
             },
         } if message == "synthetic final Level 4 failure"
     );
+
+    Ok(())
 }
 
 #[test]

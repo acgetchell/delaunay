@@ -11,6 +11,7 @@
 use delaunay::prelude::query::*;
 use delaunay::prelude::tds::facet_key_from_vertices;
 use delaunay::prelude::topology::validation::*;
+use delaunay::try_vertices_from_points;
 use proptest::prelude::*;
 use std::collections::HashMap;
 
@@ -39,7 +40,7 @@ macro_rules! test_facet_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|v| Vertex::from_validated_points(&v))
+                    ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
                         &vertices,
@@ -73,7 +74,7 @@ macro_rules! test_facet_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|v| Vertex::from_validated_points(&v))
+                    ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
                         &vertices,
@@ -112,7 +113,7 @@ macro_rules! test_facet_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|v| Vertex::from_validated_points(&v))
+                    ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
                         &vertices,
@@ -141,7 +142,7 @@ macro_rules! test_facet_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|v| Vertex::from_validated_points(&v))
+                    ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
                         &vertices,
@@ -188,7 +189,7 @@ macro_rules! test_facet_multiplicity {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|v| Vertex::from_validated_points(&v))
+                    ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
                         &vertices,

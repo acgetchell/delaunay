@@ -88,6 +88,15 @@ pub enum RandomPointGenerationError<T = f64> {
         source: CoordinateRangeError<T>,
     },
 
+    /// Validated coordinate bounds are too wide for floating-point uniform sampling.
+    #[error("Coordinate range width overflows for random point generation: {min:?}..{max:?}")]
+    CoordinateRangeWidthOverflow {
+        /// Lower sampling bound.
+        min: T,
+        /// Upper sampling bound.
+        max: T,
+    },
+
     /// Invalid Poisson disk minimum distance provided.
     #[error("Invalid minimum distance for Poisson point generation: {distance} must be finite")]
     InvalidMinimumDistance {
@@ -295,7 +304,7 @@ pub fn scaled_bounds_by_point_count(
     Ok(CoordinateRange::from_validated_bounds(-half, half))
 }
 
-/// Samples one point from an already-validated coordinate range.
+/// Converts generated coordinates through the public [`Point`] validation boundary.
 fn point_from_generated_coords<const D: usize>(
     coords: [f64; D],
 ) -> Result<Point<D>, RandomPointGenerationError> {
@@ -303,9 +312,40 @@ fn point_from_generated_coords<const D: usize>(
         .map_err(|source| RandomPointGenerationError::GeneratedPointCoordinateRejected { source })
 }
 
-/// Samples one point from an already-validated coordinate range.
-fn sample_point_in_range<R, const D: usize>(
+/// Coordinate bounds proven finite and safe for `rand::Rng::random_range`.
+#[derive(Clone, Copy, Debug)]
+struct SamplerRange {
     range: CoordinateRange<f64>,
+}
+
+impl SamplerRange {
+    /// Parses validated coordinate bounds into sampler-safe bounds.
+    fn try_new(range: CoordinateRange<f64>) -> Result<Self, RandomPointGenerationError> {
+        let width = range.max() - range.min();
+        if width.is_finite() {
+            Ok(Self { range })
+        } else {
+            Err(RandomPointGenerationError::CoordinateRangeWidthOverflow {
+                min: range.min(),
+                max: range.max(),
+            })
+        }
+    }
+
+    /// Returns the lower sampling bound.
+    fn min(self) -> f64 {
+        self.range.min()
+    }
+
+    /// Returns the upper sampling bound.
+    fn max(self) -> f64 {
+        self.range.max()
+    }
+}
+
+/// Samples one point from an already-validated and sampler-safe coordinate range.
+fn sample_point_in_range<R, const D: usize>(
+    range: SamplerRange,
     rng: &mut R,
 ) -> Result<Point<D>, RandomPointGenerationError>
 where
@@ -315,7 +355,7 @@ where
     point_from_generated_coords(coords)
 }
 
-/// Generates points from an already-validated coordinate range.
+/// Generates points after proving the validated range is safe for uniform sampling.
 fn generate_random_points_in_range_with_rng<R, const D: usize>(
     n_points: usize,
     range: CoordinateRange<f64>,
@@ -324,6 +364,7 @@ fn generate_random_points_in_range_with_rng<R, const D: usize>(
 where
     R: rand::Rng + ?Sized,
 {
+    let range = SamplerRange::try_new(range)?;
     let mut points = Vec::with_capacity(n_points);
 
     for _ in 0..n_points {
@@ -448,6 +489,10 @@ const fn ball_max_attempts(n_points: usize, dimension: usize) -> usize {
 ///
 /// * [`RandomPointGenerationError::InvalidCoordinateRange`] if either bound is
 ///   non-finite, equal, decreasing, or incomparable.
+/// * [`RandomPointGenerationError::CoordinateRangeWidthOverflow`] if the
+///   validated bounds are too wide for uniform floating-point sampling.
+/// * [`RandomPointGenerationError::GeneratedPointCoordinateRejected`] if a
+///   generated coordinate is rejected while constructing a [`Point`].
 ///
 /// # Examples
 ///
@@ -471,7 +516,10 @@ const fn ball_max_attempts(n_points: usize, dimension: usize) -> usize {
 ///
 /// // Error handling
 /// let result = try_generate_random_points::<2>(100, (10.0, -10.0));
-/// assert!(result.is_err()); // Invalid range
+/// std::assert_matches!(
+///     result,
+///     Err(RandomPointGenerationError::InvalidCoordinateRange { .. })
+/// );
 /// # Ok(())
 /// # }
 /// ```
@@ -512,7 +560,9 @@ pub fn try_generate_random_points<const D: usize>(
 /// # Errors
 ///
 /// Returns [`RandomPointGenerationError::GeneratedPointCoordinateRejected`] if
-/// a generated coordinate is rejected while constructing a [`Point`].
+/// a generated coordinate is rejected while constructing a [`Point`], or
+/// [`RandomPointGenerationError::CoordinateRangeWidthOverflow`] if the validated
+/// bounds are too wide for uniform floating-point sampling.
 ///
 /// # Examples
 ///
@@ -556,6 +606,10 @@ pub fn generate_random_points_in_range<const D: usize>(
 ///
 /// * [`RandomPointGenerationError::InvalidCoordinateRange`] if either bound is
 ///   non-finite, equal, decreasing, or incomparable.
+/// * [`RandomPointGenerationError::CoordinateRangeWidthOverflow`] if the
+///   validated bounds are too wide for uniform floating-point sampling.
+/// * [`RandomPointGenerationError::GeneratedPointCoordinateRejected`] if a
+///   generated coordinate is rejected while constructing a [`Point`].
 ///
 /// # Examples
 ///
@@ -620,7 +674,9 @@ pub fn try_generate_random_points_seeded<const D: usize>(
 /// # Errors
 ///
 /// Returns [`RandomPointGenerationError::GeneratedPointCoordinateRejected`] if
-/// a generated coordinate is rejected while constructing a [`Point`].
+/// a generated coordinate is rejected while constructing a [`Point`], or
+/// [`RandomPointGenerationError::CoordinateRangeWidthOverflow`] if the validated
+/// bounds are too wide for uniform floating-point sampling.
 ///
 /// # Examples
 ///
@@ -754,6 +810,7 @@ where
             value: InvalidCoordinateValue::from_debug(&radius_sq),
         });
     }
+    let bounds = SamplerRange::try_new(bounds)?;
 
     let mut points = Vec::with_capacity(n_points);
     let mut attempts = 0;
@@ -801,7 +858,10 @@ where
 /// Returns [`RandomPointGenerationError::InvalidBallRadius`] if `radius` is
 /// non-finite or non-positive,
 /// [`RandomPointGenerationError::InvalidBallRadiusSquared`] if squaring a
-/// finite radius overflows to a non-finite value, or
+/// finite radius overflows to a non-finite value,
+/// [`RandomPointGenerationError::CoordinateRangeWidthOverflow`] if the
+/// radius-derived sampling cube is too wide for uniform floating-point
+/// sampling, or
 /// [`RandomPointGenerationError::BallSamplingFailed`] if rejection sampling
 /// exhausts its attempt budget before producing `n_points`.
 ///
@@ -842,7 +902,10 @@ pub fn generate_random_points_in_ball<const D: usize>(
 /// Returns [`RandomPointGenerationError::InvalidBallRadius`] if `radius` is
 /// non-finite or non-positive,
 /// [`RandomPointGenerationError::InvalidBallRadiusSquared`] if squaring a
-/// finite radius overflows to a non-finite value, or
+/// finite radius overflows to a non-finite value,
+/// [`RandomPointGenerationError::CoordinateRangeWidthOverflow`] if the
+/// radius-derived sampling cube is too wide for uniform floating-point
+/// sampling, or
 /// [`RandomPointGenerationError::BallSamplingFailed`] if rejection sampling
 /// exhausts its attempt budget before producing `n_points`.
 ///
@@ -1069,6 +1132,8 @@ fn grid_index_as_scalar<const D: usize>(
 ///   non-finite, equal, decreasing, or incomparable in `bounds`.
 /// * [`RandomPointGenerationError::InvalidMinimumDistance`] if `min_distance`
 ///   is non-finite.
+/// * [`RandomPointGenerationError::CoordinateRangeWidthOverflow`] if the
+///   validated bounds are too wide for uniform floating-point sampling.
 /// * [`RandomPointGenerationError::PoissonSamplingFailed`] if `min_distance`
 ///   is too large for the bounds or if no points can be generated within the
 ///   attempt limit
@@ -1122,7 +1187,9 @@ pub fn try_generate_poisson_points<const D: usize>(
 /// `min_distance` is non-finite. Returns
 /// [`RandomPointGenerationError::PoissonSamplingFailed`] if `min_distance` is
 /// too large for the bounds or if no point can be generated within the attempt
-/// limit.
+/// limit. Returns
+/// [`RandomPointGenerationError::CoordinateRangeWidthOverflow`] if the validated
+/// bounds are too wide for uniform floating-point sampling.
 ///
 /// # Examples
 ///
@@ -1160,6 +1227,8 @@ pub fn generate_poisson_points_in_range<const D: usize>(
     };
     let min_distance = min_distance.get();
 
+    let raw_bounds = bounds;
+    let bounds = SamplerRange::try_new(bounds)?;
     let mut points: Vec<Point<D>> = Vec::new();
 
     // Simple Poisson disk sampling: rejection method
@@ -1204,7 +1273,7 @@ pub fn generate_poisson_points_in_range<const D: usize>(
             requested_points: n_points,
             generated_points: points.len(),
             min_distance,
-            bounds,
+            bounds: raw_bounds,
             attempts,
         });
     }
@@ -1244,6 +1313,61 @@ mod tests {
         assert_relative_eq!(*max, expected_max, epsilon = f64::EPSILON);
     }
 
+    fn assert_generated_point_coordinate_rejected<const D: usize>(
+        coords: [f64; D],
+        expected_index: usize,
+        expected_value: &InvalidCoordinateValue,
+    ) {
+        let Err(RandomPointGenerationError::GeneratedPointCoordinateRejected {
+            source:
+                CoordinateValidationError::InvalidCoordinate {
+                    coordinate_index,
+                    coordinate_value,
+                    dimension,
+                },
+        }) = point_from_generated_coords(coords)
+        else {
+            panic!("expected generated point coordinate rejection");
+        };
+
+        assert_eq!(coordinate_index, expected_index);
+        assert_eq!(&coordinate_value, expected_value);
+        assert_eq!(dimension, D);
+    }
+
+    macro_rules! gen_generated_point_coordinate_rejected_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_generated_point_coordinate_rejected_nan_ $dim d>]() {
+                    let mut coords = [0.0; $dim];
+                    coords[0] = f64::NAN;
+                    assert_generated_point_coordinate_rejected::<$dim>(
+                        coords,
+                        0,
+                        &InvalidCoordinateValue::Nan,
+                    );
+                }
+
+                #[test]
+                fn [<test_generated_point_coordinate_rejected_infinity_ $dim d>]() {
+                    let mut coords = [0.0; $dim];
+                    coords[$dim - 1] = f64::INFINITY;
+                    assert_generated_point_coordinate_rejected::<$dim>(
+                        coords,
+                        $dim - 1,
+                        &InvalidCoordinateValue::PositiveInfinity,
+                    );
+                }
+            }
+        };
+    }
+
+    gen_generated_point_coordinate_rejected_tests!(2);
+    gen_generated_point_coordinate_rejected_tests!(3);
+    gen_generated_point_coordinate_rejected_tests!(4);
+    gen_generated_point_coordinate_rejected_tests!(5);
+
     #[test]
     fn random_point_generation_error_display_names_variants() {
         let range_error: RandomPointGenerationError<f64> =
@@ -1256,6 +1380,26 @@ mod tests {
             };
         let display = format!("{range_error}");
         assert!(display.contains("Invalid coordinate range"));
+
+        let range_width_error: RandomPointGenerationError<f64> =
+            RandomPointGenerationError::CoordinateRangeWidthOverflow {
+                min: -f64::MAX,
+                max: f64::MAX,
+            };
+        let display = format!("{range_width_error}");
+        assert!(display.contains("Coordinate range width overflows"));
+
+        let generated_point_error: RandomPointGenerationError<f64> =
+            RandomPointGenerationError::GeneratedPointCoordinateRejected {
+                source: CoordinateValidationError::InvalidCoordinate {
+                    coordinate_index: 1,
+                    coordinate_value: InvalidCoordinateValue::PositiveInfinity,
+                    dimension: 3,
+                },
+            };
+        let display = format!("{generated_point_error}");
+        assert!(display.contains("Generated point coordinates were invalid"));
+        assert!(display.contains("inf"));
 
         let grid_allocation_error: RandomPointGenerationError<f64> =
             RandomPointGenerationError::GridAllocationTooLarge {
@@ -1407,6 +1551,46 @@ mod tests {
             invalid_empty_poisson,
             Err(RandomPointGenerationError::InvalidMinimumDistance { distance })
                 if distance == InvalidCoordinateValue::Nan
+        );
+    }
+
+    #[test]
+    fn test_generate_random_points_in_range_rejects_overflowing_width() {
+        let range = CoordinateRange::try_new(-f64::MAX, f64::MAX).unwrap();
+
+        assert_matches!(
+            try_generate_random_points::<2>(1, (-f64::MAX, f64::MAX)),
+            Err(RandomPointGenerationError::CoordinateRangeWidthOverflow { min, max })
+                if min.to_bits() == (-f64::MAX).to_bits() && max.to_bits() == f64::MAX.to_bits()
+        );
+
+        assert_matches!(
+            try_generate_random_points_seeded::<2>(1, (-f64::MAX, f64::MAX), 42),
+            Err(RandomPointGenerationError::CoordinateRangeWidthOverflow { min, max })
+                if min.to_bits() == (-f64::MAX).to_bits() && max.to_bits() == f64::MAX.to_bits()
+        );
+
+        assert_matches!(
+            generate_random_points_in_range::<2>(1, range),
+            Err(RandomPointGenerationError::CoordinateRangeWidthOverflow { min, max })
+                if min.to_bits() == (-f64::MAX).to_bits() && max.to_bits() == f64::MAX.to_bits()
+        );
+
+        assert_matches!(
+            generate_random_points_in_range_seeded::<2>(1, range, 42),
+            Err(RandomPointGenerationError::CoordinateRangeWidthOverflow { min, max })
+                if min.to_bits() == (-f64::MAX).to_bits() && max.to_bits() == f64::MAX.to_bits()
+        );
+    }
+
+    #[test]
+    fn test_unconstrained_poisson_rejects_overflowing_width() {
+        let range = CoordinateRange::try_new(-f64::MAX, f64::MAX).unwrap();
+
+        assert_matches!(
+            generate_poisson_points_in_range::<2>(1, range, 0.0, 42),
+            Err(RandomPointGenerationError::CoordinateRangeWidthOverflow { min, max })
+                if min.to_bits() == (-f64::MAX).to_bits() && max.to_bits() == f64::MAX.to_bits()
         );
     }
 

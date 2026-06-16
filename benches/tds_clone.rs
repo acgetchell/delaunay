@@ -19,6 +19,7 @@ use delaunay::prelude::construction::{DelaunayTriangulation, Vertex};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange};
 use delaunay::prelude::tds::Tds;
+use delaunay::try_vertices_from_points;
 use std::hint::black_box;
 use std::time::Duration;
 
@@ -63,7 +64,10 @@ fn generate_vertices<const D: usize>(requested_vertices: usize, seed: u64) -> Ve
         generate_random_points_in_range_seeded::<D>(requested_vertices, benchmark_bounds(), seed),
         "failed to generate clone benchmark points",
     );
-    Vertex::from_validated_points(&points)
+    bench_result(
+        try_vertices_from_points(&points),
+        "failed to create clone benchmark vertices",
+    )
 }
 
 /// Build the triangulation snapshot that each benchmark iteration clones.
