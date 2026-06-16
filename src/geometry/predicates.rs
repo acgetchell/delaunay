@@ -121,8 +121,18 @@ fn fill_relative_insphere_matrix<const D: usize, const K: usize>(
     simplex_points: &[Point<D>],
     test_point: &Point<D>,
 ) -> Result<(), CoordinateConversionError> {
-    debug_assert_eq!(K, D + 1);
-    debug_assert_eq!(simplex_points.len(), D + 1);
+    if K != D + 1 {
+        return Err(
+            StackMatrixDispatchError::ActiveBlockDimensionMismatch { k: D + 1, dim: K }.into(),
+        );
+    }
+    if simplex_points.len() != D + 1 {
+        return Err(CoordinateConversionError::InvalidSimplexPointCount {
+            actual: simplex_points.len(),
+            expected: D + 1,
+            dimension: D,
+        });
+    }
 
     let reference_coords = simplex_points[0].coords();
 
@@ -2278,6 +2288,50 @@ mod tests {
         assert_matches!(
             err,
             StackMatrixDispatchError::ActiveBlockDimensionMismatch { k: 4, dim: 3 }
+        );
+    }
+
+    #[test]
+    fn test_fill_relative_insphere_matrix_rejects_dimension_mismatch() {
+        let simplex_points = [
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+            Point::from_validated_coords([0.0, 1.0]),
+        ];
+        let test_point = Point::from_validated_coords([0.25, 0.25]);
+        let mut matrix = Matrix::<4>::zero();
+
+        let err = fill_relative_insphere_matrix::<2, 4>(&mut matrix, &simplex_points, &test_point)
+            .unwrap_err();
+
+        assert_matches!(
+            err,
+            CoordinateConversionError::MatrixDimensionMismatch {
+                active: 3,
+                matrix_dimension: 4
+            }
+        );
+    }
+
+    #[test]
+    fn test_fill_relative_insphere_matrix_rejects_simplex_point_count_mismatch() {
+        let simplex_points = [
+            Point::from_validated_coords([0.0, 0.0]),
+            Point::from_validated_coords([1.0, 0.0]),
+        ];
+        let test_point = Point::from_validated_coords([0.25, 0.25]);
+        let mut matrix = Matrix::<3>::zero();
+
+        let err = fill_relative_insphere_matrix::<2, 3>(&mut matrix, &simplex_points, &test_point)
+            .unwrap_err();
+
+        assert_matches!(
+            err,
+            CoordinateConversionError::InvalidSimplexPointCount {
+                actual: 2,
+                expected: 3,
+                dimension: 2
+            }
         );
     }
 

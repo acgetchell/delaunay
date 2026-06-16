@@ -1262,6 +1262,17 @@ pub enum CavityFillingError {
         stage: CavityRepairStage,
     },
 
+    /// Cavity filling did not create exactly one replacement simplex per boundary facet.
+    #[error(
+        "created {new_simplex_count} replacement simplices for {boundary_facet_count} boundary facets"
+    )]
+    BoundarySimplexCountMismatch {
+        /// Number of boundary facets being filled.
+        boundary_facet_count: usize,
+        /// Number of replacement simplices created.
+        new_simplex_count: usize,
+    },
+
     /// Repairing neighbor pointers after cavity repair failed.
     #[error("failed to repair neighbors after insertion repairs: {reason}")]
     NeighborRebuild {
@@ -1906,6 +1917,7 @@ impl InsertionError {
             | CavityFillingError::RebuiltVertexMissing { .. }
             | CavityFillingError::EmptyConflictRegion { .. }
             | CavityFillingError::EmptyBoundary { .. }
+            | CavityFillingError::BoundarySimplexCountMismatch { .. }
             | CavityFillingError::PerturbationScaleConversion { .. }
             | CavityFillingError::UnsupportedDegenerateLocation { .. }
             | CavityFillingError::EmptyFanTriangulation => false,
@@ -2394,15 +2406,13 @@ where
         new_simplices.push(simplex_key);
     }
 
-    // Defensive check: 1:1 correspondence is guaranteed by construction
-    // (one iteration per boundary facet, one simplex push per iteration)
-    debug_assert_eq!(
-        boundary_facets.len(),
-        new_simplices.len(),
-        "Created {} simplices for {} boundary facets (should be 1:1)",
-        new_simplices.len(),
-        boundary_facets.len()
-    );
+    if boundary_facets.len() != new_simplices.len() {
+        return Err(CavityFillingError::BoundarySimplexCountMismatch {
+            boundary_facet_count: boundary_facets.len(),
+            new_simplex_count: new_simplices.len(),
+        }
+        .into());
+    }
 
     Ok(new_simplices)
 }
@@ -2917,7 +2927,10 @@ where
     if simplex.neighbor_slots().is_none() {
         set_simplex_neighbors_from_keys(simplex, (0..=D).map(|_| None))?;
     }
-    let neighbors = simplex.ensure_neighbors_buffer_mut();
+    let simplex_id = simplex.uuid();
+    let neighbors = simplex
+        .try_ensure_neighbors_buffer_mut()
+        .map_err(|source| TdsError::InvalidSimplex { simplex_id, source })?;
     neighbors[facet_idx] = NeighborSlot::from_neighbor_key(neighbor);
 
     Ok(())
@@ -2939,11 +2952,6 @@ fn set_simplex_neighbors_from_keys<V, const D: usize>(
 /// Uses [`FastHasher`] for deterministic hashing consistent with other
 /// internal collections ([`FastHashMap`], [`FastHashSet`]).
 fn facet_hash_from_sorted_vertices(sorted_vkeys: &[VertexKey]) -> u64 {
-    debug_assert!(
-        sorted_vkeys.windows(2).all(|pair| pair[0] <= pair[1]),
-        "facet_hash_from_sorted_vertices: input must be sorted"
-    );
-
     let mut hasher = FastHasher::default();
     for &vkey in sorted_vkeys {
         vkey.hash(&mut hasher);

@@ -398,8 +398,6 @@ fn insert_simplices_of_size(
         return;
     }
 
-    debug_assert!(vertex_keys.windows(2).all(|w| w[0] <= w[1]));
-
     let mut indices: SmallBuffer<usize, MAX_PRACTICAL_DIMENSION_SIZE> = (0..simplex_size).collect();
 
     'outer: loop {

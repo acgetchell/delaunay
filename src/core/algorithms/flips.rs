@@ -49,8 +49,6 @@ use crate::core::validation::{TopologyGuarantee, TriangulationValidationError};
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
-#[cfg(debug_assertions)]
-use crate::geometry::predicates::simplex_orientation;
 use crate::geometry::predicates::{Orientation, simplex_orientation_fast_filter_sign};
 use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::{
@@ -402,10 +400,20 @@ where
     {
         return Err(FlipContextError::OverlappingFaces.into());
     }
-    debug_assert!(
-        tds.is_coherently_oriented(),
-        "TDS coherent orientation invariant violated before bistellar flip (k={k_move}, direction={direction:?})",
-    );
+    #[cfg(debug_assertions)]
+    {
+        // Coherent orientation is a validation-scale invariant. Keep the typed
+        // diagnostic in debug/test builds, but do not scan the whole TDS inside
+        // every release-mode flip on construction/repair hot paths.
+        if !tds.is_coherently_oriented() {
+            return Err(FlipContextError::CoherentOrientationViolation {
+                stage: FlipOrientationCheckStage::BeforeMutation,
+                k_move,
+                direction,
+            }
+            .into());
+        }
+    }
 
     // Bistellar move legality: the inserted simplex must not already exist in the complex.
     //
@@ -579,10 +587,21 @@ where
         })
     })?;
 
-    debug_assert!(
-        trial.is_coherently_oriented(),
-        "TDS coherent orientation invariant violated after bistellar flip (k={k_move}, direction={direction:?})",
-    );
+    #[cfg(debug_assertions)]
+    {
+        // This is intentionally debug/test-only for the same reason as the
+        // pre-flip scan above: production validation already checks coherent
+        // orientation at explicit validation boundaries.
+        if !trial.is_coherently_oriented() {
+            return Err(FlipError::from(
+                FlipMutationError::CoherentOrientationViolation {
+                    stage: FlipOrientationCheckStage::AfterTrialMutation,
+                    k_move,
+                    direction,
+                },
+            ));
+        }
+    }
 
     *tds = trial;
 
@@ -2274,6 +2293,20 @@ impl FlipDirection {
         }
     }
 }
+
+/// Stage where debug/test flip validation checked coherent orientation.
+///
+/// Coherent orientation is a validation-scale TDS invariant. Release-mode flip
+/// hot paths rely on explicit validation boundaries rather than scanning the
+/// whole TDS before and after every attempted flip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FlipOrientationCheckStage {
+    /// Before applying the flip to the trial TDS.
+    BeforeMutation,
+    /// After applying the flip to the trial TDS and before committing it.
+    AfterTrialMutation,
+}
 /// Detect repeated flip signatures and abort on cycles.
 #[derive(Debug, Clone, Copy)]
 struct FlipCycleContext<'a> {
@@ -2626,6 +2659,22 @@ pub enum FlipContextError {
     /// Removed and inserted faces are not disjoint.
     #[error("removed-face and inserted-face must be disjoint")]
     OverlappingFaces,
+    /// The TDS coherent-orientation invariant failed during debug/test flip validation.
+    ///
+    /// This diagnostic is reserved for validation builds because the check scans
+    /// global TDS orientation state. Production callers should use explicit TDS
+    /// or triangulation validation when they need this invariant checked.
+    #[error(
+        "TDS coherent orientation invariant violated during {stage:?} for k={k_move}, direction={direction:?}"
+    )]
+    CoherentOrientationViolation {
+        /// Stage where the invariant was checked.
+        stage: FlipOrientationCheckStage,
+        /// k for the attempted move.
+        k_move: usize,
+        /// Direction of the attempted move.
+        direction: FlipDirection,
+    },
     /// Replacement-simplex offset sidecar length does not match the replacement simplices.
     #[error(
         "replacement periodic offset count {offset_count} does not match replacement simplex count {simplex_count}"
@@ -2920,6 +2969,9 @@ pub enum FlipNeighborCavityFailureKind {
     /// Facet sharing remained invalid after repair.
     #[error("invalid facet sharing after repair")]
     InvalidFacetSharingAfterRepair,
+    /// Cavity filling created the wrong number of replacement simplices.
+    #[error("boundary simplex count mismatch")]
+    BoundarySimplexCountMismatch,
     /// Neighbor rebuild failed.
     #[error("neighbor rebuild")]
     NeighborRebuild,
@@ -2951,6 +3003,9 @@ impl From<&CavityFillingError> for FlipNeighborCavityFailureKind {
             CavityFillingError::EmptyBoundary { .. } => Self::EmptyBoundary,
             CavityFillingError::InvalidFacetSharingAfterRepair { .. } => {
                 Self::InvalidFacetSharingAfterRepair
+            }
+            CavityFillingError::BoundarySimplexCountMismatch { .. } => {
+                Self::BoundarySimplexCountMismatch
             }
             CavityFillingError::NeighborRebuild { .. } => Self::NeighborRebuild,
             CavityFillingError::PerturbationScaleConversion { .. } => {
@@ -3366,6 +3421,22 @@ pub enum FlipMutationError {
         /// Underlying TDS validation error.
         #[source]
         source: TdsValidationFailure,
+    },
+    /// Trial TDS coherent-orientation validation failed before committing a flip.
+    ///
+    /// This diagnostic is debug/test-only in the flip hot path because it scans
+    /// global TDS orientation state. Release-mode callers should use explicit
+    /// validation boundaries when they need this invariant checked.
+    #[error(
+        "trial TDS coherent orientation invariant violated during {stage:?} (k={k_move}, direction={direction:?})"
+    )]
+    CoherentOrientationViolation {
+        /// Stage where the invariant was checked.
+        stage: FlipOrientationCheckStage,
+        /// k for the attempted move.
+        k_move: usize,
+        /// Direction of the attempted move.
+        direction: FlipDirection,
     },
 }
 
@@ -3816,7 +3887,11 @@ impl From<&FlipError> for FlipFailureKind {
                 _ => Self::NeighborWiring,
             },
             FlipError::TdsMutation { reason }
-                if matches!(reason.as_ref(), FlipMutationError::TrialValidation { .. }) =>
+                if matches!(
+                    reason.as_ref(),
+                    FlipMutationError::TrialValidation { .. }
+                        | FlipMutationError::CoherentOrientationViolation { .. }
+                ) =>
             {
                 Self::TrialValidation
             }
@@ -3971,10 +4046,6 @@ impl TriangleHandle {
     /// Creates a canonical triangle handle from vertices already known to be distinct.
     #[must_use]
     pub(crate) fn from_validated_vertices(a: VertexKey, b: VertexKey, c: VertexKey) -> Self {
-        debug_assert!(
-            a != b && a != c && b != c,
-            "triangle vertices must be distinct"
-        );
         let mut verts = [a, b, c];
         verts.sort_unstable_by_key(|v| v.data().as_ffi());
         Self {
@@ -4974,13 +5045,6 @@ fn source_simplex_is_certified_positive<const D: usize>(
 
     let known_positive =
         matches!(simplex_orientation_fast_filter_sign(points), Ok(Some(sign)) if sign > 0);
-    #[cfg(debug_assertions)]
-    if known_positive {
-        debug_assert!(
-            matches!(simplex_orientation(points), Ok(Orientation::POSITIVE)),
-            "stored source simplices must be positive-oriented before using the insphere fast path"
-        );
-    }
     known_positive
 }
 
@@ -14191,6 +14255,56 @@ mod tests {
         }
 
         assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_coherent_orientation_violation_maps_to_invalid_flip_context() {
+        let err: FlipError = FlipContextError::CoherentOrientationViolation {
+            stage: FlipOrientationCheckStage::BeforeMutation,
+            k_move: 2,
+            direction: FlipDirection::Forward,
+        }
+        .into();
+
+        assert_matches!(
+            err,
+            FlipError::InvalidFlipContext { reason }
+                if matches!(
+                    reason.as_ref(),
+                    FlipContextError::CoherentOrientationViolation {
+                        stage: FlipOrientationCheckStage::BeforeMutation,
+                        k_move: 2,
+                        direction: FlipDirection::Forward
+                    }
+                )
+        );
+    }
+
+    #[test]
+    fn test_coherent_orientation_violation_maps_to_tds_mutation() {
+        let err: FlipError = FlipMutationError::CoherentOrientationViolation {
+            stage: FlipOrientationCheckStage::AfterTrialMutation,
+            k_move: 2,
+            direction: FlipDirection::Forward,
+        }
+        .into();
+
+        assert_eq!(
+            FlipFailureKind::from(&err),
+            FlipFailureKind::TrialValidation
+        );
+        assert_matches!(
+            err,
+            FlipError::TdsMutation { reason }
+                if matches!(
+                    reason.as_ref(),
+                    FlipMutationError::CoherentOrientationViolation {
+                        stage: FlipOrientationCheckStage::AfterTrialMutation,
+                        k_move: 2,
+                        direction: FlipDirection::Forward
+                    }
+                )
+        );
     }
 
     #[test]

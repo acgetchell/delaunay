@@ -2306,8 +2306,7 @@ where
                                 retry_seed
                                     .wrapping_add(attempt_u64.wrapping_mul(0x9E37_79B9_7F4A_7C15)),
                             );
-                            let (canonical_prefix, image_suffix) = insertion_order.split_at_mut(n);
-                            debug_assert_eq!(canonical_prefix.len(), n);
+                            let (_canonical_prefix, image_suffix) = insertion_order.split_at_mut(n);
                             image_suffix.shuffle(&mut rng);
                         }
 

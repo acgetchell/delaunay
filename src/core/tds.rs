@@ -4766,17 +4766,10 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                 .set_neighbors_from_keys((0..=D).map(|_| None))
                 .map_err(|source| TdsError::InvalidSimplex { simplex_id, source })?;
         }
-        let neighbors = simplex.ensure_neighbors_buffer_mut();
-        if neighbors.len() != D + 1 {
-            return Err(TdsError::InvalidNeighbors {
-                reason: NeighborValidationError::LengthMismatch {
-                    actual: neighbors.len(),
-                    expected: D + 1,
-                    context: "reciprocal neighbor update".to_string(),
-                },
-            });
-        }
-        Ok(neighbors)
+        let simplex_id = simplex.uuid();
+        simplex
+            .try_ensure_neighbors_buffer_mut()
+            .map_err(|source| TdsError::InvalidSimplex { simplex_id, source })
     }
 
     fn set_neighbor_slot(
@@ -5604,11 +5597,13 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # }
     /// ```
     pub fn build_facet_to_simplices_map(&self) -> Result<FacetToSimplicesMap, TdsError> {
-        // Ensure facet indices fit in u8 range
-        debug_assert!(
-            D <= 255,
-            "Dimension D must be <= 255 to fit facet indices in u8 (indices 0..=D)"
-        );
+        if D > usize::from(u8::MAX) {
+            return Err(TdsError::DimensionMismatch {
+                expected: usize::from(u8::MAX),
+                actual: D,
+                context: "facet indices must fit in u8".to_string(),
+            });
+        }
 
         let cap = self.simplices.len().saturating_mul(D.saturating_add(1));
         let mut facet_to_simplices: FacetToSimplicesMap = fast_hash_map_with_capacity(cap);

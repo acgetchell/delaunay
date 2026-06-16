@@ -6,7 +6,7 @@ use delaunay::DelaunayTriangulation;
 use delaunay::prelude::Triangulation;
 use delaunay::prelude::geometry::{Coordinate, CoordinateValidationError, FastKernel};
 use delaunay::prelude::query::BoundaryAnalysis;
-use delaunay::prelude::tds::{Simplex, SimplexKey, Tds, verify_facet_index_consistency};
+use delaunay::prelude::tds::{Simplex, SimplexKey, Tds, VertexKey, verify_facet_index_consistency};
 use delaunay::prelude::topology::validation::validate_triangulation_euler;
 
 struct Payload;
@@ -83,9 +83,10 @@ fn read_only_topology_apis_accept_non_datatype_payloads() {
     );
 
     let index = tri.build_adjacency_index().unwrap();
-    assert!(index.vertex_to_simplices.is_empty());
-    assert!(index.simplex_to_neighbors.is_empty());
-    assert!(index.vertex_to_edges.is_empty());
+    assert_eq!(index.number_of_edges(), 0);
+    assert_eq!(index.number_of_adjacent_simplices(VertexKey::default()), 0);
+    assert_eq!(index.number_of_incident_edges(VertexKey::default()), 0);
+    assert_eq!(index.number_of_simplex_neighbors(SimplexKey::default()), 0);
 
     let tds: Tds<Payload, Payload, 2> = Tds::empty();
     assert!(tds.build_facet_to_simplices_map().unwrap().is_empty());

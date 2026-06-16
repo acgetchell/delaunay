@@ -1259,19 +1259,7 @@ where
         // Two-generation design: creation_generation (immutable) vs cached_generation (mutable)
         // - creation_generation: Set once at from_triangulation(), never changes. Used for stale detection.
         // - cached_generation: Can be reset to 0 by invalidate_cache() to force cache rebuild.
-        let creation_gen = self.creation_generation.get().copied().unwrap_or(0);
-        let tds_gen = tds.generation();
-        let identity_matches = self
-            .creation_identity
-            .get()
-            .is_some_and(|identity| Arc::ptr_eq(identity, tds.identity()));
-
-        debug_assert!(
-            creation_gen == tds_gen && identity_matches,
-            "ConvexHull used with a modified or different TDS; rebuild the hull (creation_gen={creation_gen}, tds_gen={tds_gen}, identity_matches={identity_matches})"
-        );
-
-        // Production build: always check creation_generation for stale detection
+        // Always check creation-generation and TDS identity for stale detection.
         self.ensure_current_for_construction(tri)?;
 
         // Derive facet vertex keys directly from the simplex to avoid UUID↔key roundtrips.

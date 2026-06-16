@@ -981,12 +981,9 @@ impl<V, const D: usize> Simplex<V, D> {
             return None;
         }
 
-        // Mirror facet semantics are defined for same-dimensional simplices.
-        debug_assert_eq!(
-            self.vertices().len(),
-            neighbor_simplex.vertices().len(),
-            "mirror_facet_index requires simplices with matching vertex counts",
-        );
+        if self.vertices().len() != neighbor_simplex.vertices().len() {
+            return None;
+        }
 
         // Build the facet vertex set from the source simplex (all except facet_idx)
         let mut facet_vertices: SimplexVertexKeyBuffer = SimplexVertexKeyBuffer::new();
@@ -1089,15 +1086,31 @@ impl<V, const D: usize> Simplex<V, D> {
     /// If the buffer does not exist, it is initialized with D+1 unassigned slots.
     #[inline]
     pub(crate) fn ensure_neighbors_buffer_mut(&mut self) -> &mut NeighborBuffer<NeighborSlot> {
-        debug_assert!(
-            self.neighbors.as_ref().is_none_or(|buf| buf.len() == D + 1),
-            "neighbors buffer must always have length D+1"
-        );
         self.neighbors.get_or_insert_with(|| {
             let mut buffer = NeighborBuffer::new();
             buffer.resize(D + 1, NeighborSlot::Unassigned);
             buffer
         })
+    }
+
+    /// Ensures this simplex has a correctly sized assigned neighbor-slot buffer.
+    ///
+    /// If the buffer does not exist, it is initialized with D+1 unassigned slots.
+    /// If a buffer exists with the wrong length, the invariant violation is
+    /// returned instead of being silently normalized.
+    #[inline]
+    pub(crate) fn try_ensure_neighbors_buffer_mut(
+        &mut self,
+    ) -> Result<&mut NeighborBuffer<NeighborSlot>, SimplexValidationError> {
+        let buffer = self.ensure_neighbors_buffer_mut();
+        if buffer.len() != D + 1 {
+            return Err(SimplexValidationError::InvalidNeighborsLength {
+                actual: buffer.len(),
+                expected: D + 1,
+                dimension: D,
+            });
+        }
+        Ok(buffer)
     }
 }
 
@@ -3981,6 +3994,30 @@ mod tests {
         buf[0] = NeighborSlot::Neighbor(simplex_key);
         let buf2 = simplex.ensure_neighbors_buffer_mut();
         assert_eq!(buf2[0], NeighborSlot::Neighbor(simplex_key));
+    }
+
+    #[test]
+    fn simplex_try_ensure_neighbors_buffer_mut_rejects_malformed_existing_buffer() {
+        let vertices = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let (_, simplex_ref) = dt.simplices().next().unwrap();
+
+        let mut simplex = simplex_ref.clone();
+        simplex.ensure_neighbors_buffer_mut().truncate(2);
+
+        assert_matches!(
+            simplex.try_ensure_neighbors_buffer_mut(),
+            Err(SimplexValidationError::InvalidNeighborsLength {
+                actual: 2,
+                expected: 3,
+                dimension: 2
+            })
+        );
+        assert_eq!(simplex.neighbor_slots().unwrap().len(), 2);
     }
 
     #[test]

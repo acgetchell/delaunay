@@ -1108,9 +1108,9 @@ pub mod prelude {
     pub use crate::flips::{
         DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairStats,
         DelaunayRepairVerificationContext, FlipContextError, FlipEdgeAdjacencyError, FlipError,
-        FlipMutationError, FlipNeighborWiringError, FlipPredicateError, FlipPredicateOperation,
-        FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder,
-        TriangleHandleError,
+        FlipMutationError, FlipNeighborWiringError, FlipOrientationCheckStage, FlipPredicateError,
+        FlipPredicateOperation, FlipTriangleAdjacencyError, FlipVertexAdjacencyError,
+        RepairQueueOrder, TriangleHandleError,
     };
 
     // Re-export commonly used collection types from the public collections facade.
@@ -1256,9 +1256,9 @@ pub mod prelude {
         pub use crate::flips::{
             BistellarFlipKind, BistellarFlips, FlipContextError, FlipDirection,
             FlipEdgeAdjacencyError, FlipError, FlipInfo, FlipMutationError,
-            FlipNeighborWiringError, FlipPredicateError, FlipPredicateOperation,
-            FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RidgeHandle, TriangleHandle,
-            TriangleHandleError,
+            FlipNeighborWiringError, FlipOrientationCheckStage, FlipPredicateError,
+            FlipPredicateOperation, FlipTriangleAdjacencyError, FlipVertexAdjacencyError,
+            RidgeHandle, TriangleHandle, TriangleHandleError,
         };
         pub use crate::flips::{BistellarMove, ConstK};
         pub use crate::tds::{EdgeKey, EdgeKeyError, FacetHandle, SimplexKey, VertexKey};
@@ -1308,10 +1308,10 @@ pub mod prelude {
         pub use crate::flips::{
             DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairStats,
             DelaunayRepairVerificationContext, FlipContextError, FlipEdgeAdjacencyError, FlipError,
-            FlipMutationError, FlipNeighborWiringError, FlipPredicateError, FlipPredicateOperation,
-            FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder,
-            TriangleHandleError, verify_delaunay_for_triangulation,
-            verify_delaunay_via_flip_predicates,
+            FlipMutationError, FlipNeighborWiringError, FlipOrientationCheckStage,
+            FlipPredicateError, FlipPredicateOperation, FlipTriangleAdjacencyError,
+            FlipVertexAdjacencyError, RepairQueueOrder, TriangleHandleError,
+            verify_delaunay_for_triangulation, verify_delaunay_via_flip_predicates,
         };
         pub use crate::repair::{
             DelaunayCheckPolicy, DelaunayRepairHeuristicConfig, DelaunayRepairHeuristicSeeds,

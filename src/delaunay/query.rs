@@ -874,6 +874,8 @@ where
     /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Adjacency(#[from] delaunay::query::AdjacencyIndexBuildError),
+    /// #     #[error(transparent)]
+    /// #     Query(#[from] delaunay::query::QueryError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
@@ -932,6 +934,11 @@ where
     /// This is a convenience wrapper around
     /// [`Triangulation::edges_with_index`](crate::Triangulation::edges_with_index).
     ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::AdjacencyIndexSnapshotMismatch`] if `index` was built
+    /// from a different triangulation snapshot.
+    ///
     /// # Examples
     ///
     /// ```rust
@@ -944,6 +951,8 @@ where
     /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Adjacency(#[from] delaunay::query::AdjacencyIndexBuildError),
+    /// #     #[error(transparent)]
+    /// #     Query(#[from] delaunay::query::QueryError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
@@ -956,7 +965,9 @@ where
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let index = dt.build_adjacency_index()?;
     ///
-    /// let edges: std::collections::HashSet<_> = dt.edges_with_index(&index).collect();
+    /// let edges: std::collections::HashSet<_> = dt
+    ///     .edges_with_index(&index)?
+    ///     .collect();
     /// assert_eq!(edges.len(), 6);
     /// # Ok(())
     /// # }
@@ -964,7 +975,7 @@ where
     pub fn edges_with_index<'a>(
         &self,
         index: &'a AdjacencyIndex,
-    ) -> impl Iterator<Item = EdgeKey> + 'a {
+    ) -> Result<impl Iterator<Item = EdgeKey> + 'a, QueryError> {
         self.as_triangulation().edges_with_index(index)
     }
 
@@ -1011,6 +1022,11 @@ where
     /// This is a convenience wrapper around
     /// [`Triangulation::incident_edges_with_index`](crate::Triangulation::incident_edges_with_index).
     ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::AdjacencyIndexSnapshotMismatch`] if `index` was built
+    /// from a different triangulation snapshot.
+    ///
     /// # Examples
     ///
     /// ```rust
@@ -1023,6 +1039,8 @@ where
     /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Adjacency(#[from] delaunay::query::AdjacencyIndexBuildError),
+    /// #     #[error(transparent)]
+    /// #     Query(#[from] delaunay::query::QueryError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
@@ -1038,7 +1056,10 @@ where
     ///     return Ok(());
     /// };
     ///
-    /// assert_eq!(dt.incident_edges_with_index(&index, v0).count(), 3);
+    /// assert_eq!(
+    ///     dt.incident_edges_with_index(&index, v0)?.count(),
+    ///     3
+    /// );
     /// # Ok(())
     /// # }
     /// ```
@@ -1046,7 +1067,7 @@ where
         &self,
         index: &'a AdjacencyIndex,
         v: VertexKey,
-    ) -> impl Iterator<Item = EdgeKey> + 'a {
+    ) -> Result<impl Iterator<Item = EdgeKey> + 'a, QueryError> {
         self.as_triangulation().incident_edges_with_index(index, v)
     }
 
@@ -1092,6 +1113,11 @@ where
     /// This is a convenience wrapper around
     /// [`Triangulation::simplex_neighbors_with_index`](crate::Triangulation::simplex_neighbors_with_index).
     ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::AdjacencyIndexSnapshotMismatch`] if `index` was built
+    /// from a different triangulation snapshot.
+    ///
     /// # Examples
     ///
     /// ```rust
@@ -1105,6 +1131,8 @@ where
     /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Adjacency(#[from] delaunay::query::AdjacencyIndexBuildError),
+    /// #     #[error(transparent)]
+    /// #     Query(#[from] delaunay::query::QueryError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices: Vec<_> = vec![
@@ -1123,7 +1151,10 @@ where
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
-    /// assert_eq!(dt.simplex_neighbors_with_index(&index, simplex_key).count(), 1);
+    /// assert_eq!(
+    ///     dt.simplex_neighbors_with_index(&index, simplex_key)?.count(),
+    ///     1
+    /// );
     /// # Ok(())
     /// # }
     /// ```
@@ -1131,7 +1162,7 @@ where
         &self,
         index: &'a AdjacencyIndex,
         c: SimplexKey,
-    ) -> impl Iterator<Item = SimplexKey> + 'a {
+    ) -> Result<impl Iterator<Item = SimplexKey> + 'a, QueryError> {
         self.as_triangulation()
             .simplex_neighbors_with_index(index, c)
     }
@@ -1652,8 +1683,14 @@ mod tests {
         assert_eq!(edges_dt.len(), 6);
 
         let index = dt.build_adjacency_index().unwrap();
-        let edges_dt_index: HashSet<_> = dt.edges_with_index(&index).collect();
-        let edges_tri_index: HashSet<_> = tri.edges_with_index(&index).collect();
+        let edges_dt_index: HashSet<_> = dt
+            .edges_with_index(&index)
+            .expect("fresh adjacency index")
+            .collect();
+        let edges_tri_index: HashSet<_> = tri
+            .edges_with_index(&index)
+            .expect("fresh adjacency index")
+            .collect();
         assert_eq!(edges_dt_index, edges_tri_index);
         assert_eq!(edges_dt_index, edges_dt);
 
@@ -1663,8 +1700,14 @@ mod tests {
         assert_eq!(incident_dt, incident_tri);
         assert_eq!(incident_dt.len(), 3);
 
-        let incident_dt_index: HashSet<_> = dt.incident_edges_with_index(&index, v0).collect();
-        let incident_tri_index: HashSet<_> = tri.incident_edges_with_index(&index, v0).collect();
+        let incident_dt_index: HashSet<_> = dt
+            .incident_edges_with_index(&index, v0)
+            .expect("fresh adjacency index")
+            .collect();
+        let incident_tri_index: HashSet<_> = tri
+            .incident_edges_with_index(&index, v0)
+            .expect("fresh adjacency index")
+            .collect();
         assert_eq!(incident_dt_index, incident_tri_index);
         assert_eq!(incident_dt_index, incident_dt);
 
@@ -1676,9 +1719,11 @@ mod tests {
 
         let neighbors_dt_index: Vec<_> = dt
             .simplex_neighbors_with_index(&index, simplex_key)
+            .expect("fresh adjacency index")
             .collect();
         let neighbors_tri_index: Vec<_> = tri
             .simplex_neighbors_with_index(&index, simplex_key)
+            .expect("fresh adjacency index")
             .collect();
         assert_eq!(neighbors_dt_index, neighbors_tri_index);
         assert_eq!(neighbors_dt_index, neighbors_dt);

@@ -236,9 +236,8 @@ pub enum ConflictError {
     ///
     /// This is raised when an invariant that must hold by construction does not —
     /// typically a `boundary_facets` or `RidgeInfo` index that is unconditionally
-    /// valid in correct code. Debug builds catch these with `debug_assert!` so the
-    /// error path is only reachable in release mode; returning it rather than
-    /// panicking preserves the caller's transactional rollback guarantees.
+    /// valid in correct code. Returning a structured error rather than panicking
+    /// preserves the caller's transactional rollback guarantees.
     ///
     /// Orthogonality: this variant is distinct from
     /// [`ConflictError::SimplexDataAccessFailed`]. Use `SimplexDataAccessFailed` when
@@ -351,9 +350,8 @@ pub enum ConflictError {
 /// keep them as typed data so callers can `matches!` / `assert_eq!` on them and
 /// so future localized formatting does not need to reparse prose.
 ///
-/// These paths are unreachable in debug builds — the corresponding
-/// `debug_assert!` invariants fire there — and are guarded only to preserve
-/// transactional-rollback semantics in release builds.
+/// These paths are unreachable in correct code and are guarded to preserve
+/// transactional-rollback semantics when an internal invariant is violated.
 ///
 /// # Examples
 ///
@@ -601,15 +599,6 @@ fn collect_ridge_fan_extra_simplices(
     boundary_facets: &CavityBoundaryBuffer,
     info: &RidgeInfo,
 ) -> Result<Vec<SimplexKey>, ConflictError> {
-    debug_assert!(
-        info.extra_facets
-            .iter()
-            .all(|&fi| fi < boundary_facets.len()),
-        "RidgeFan extra_facets index out of bounds: extra_facets={:?}, boundary_facets.len()={}",
-        info.extra_facets,
-        boundary_facets.len(),
-    );
-
     // Deduplicate: multiple extra facets can come from the same simplex. Downstream code
     // expects unique simplex keys when shrinking the conflict region.
     let mut seen = FastHashSet::<SimplexKey>::default();
