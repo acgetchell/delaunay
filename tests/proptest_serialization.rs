@@ -51,9 +51,9 @@ macro_rules! test_serialization_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|v| Vertex::from_points(&v))
+                    ).prop_map(|v| Vertex::from_validated_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -96,9 +96,9 @@ macro_rules! test_serialization_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|v| Vertex::from_points(&v))
+                    ).prop_map(|v| Vertex::from_validated_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -129,9 +129,9 @@ macro_rules! test_serialization_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|v| Vertex::from_points(&v))
+                    ).prop_map(|v| Vertex::from_validated_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -190,9 +190,9 @@ macro_rules! test_serialization_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|v| Vertex::from_points(&v))
+                    ).prop_map(|v| Vertex::from_validated_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {

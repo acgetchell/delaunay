@@ -33,6 +33,10 @@ The `diagnostics` feature does not change triangulation construction,
 validation, repair, or query semantics. It only compiles in additional
 inspection tools.
 
+Examples that derive `thiserror::Error` assume the example crate includes
+`thiserror`; run `cargo add thiserror` alongside `delaunay` when copying those
+snippets into an application.
+
 ## Commands
 
 Use the repository recipe for the standard diagnostics harness:
@@ -71,10 +75,10 @@ use delaunay::prelude::construction::{
 
 fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
@@ -128,10 +132,10 @@ enum DiagnosticsExampleError {
 
 fn main() -> Result<(), DiagnosticsExampleError> {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 

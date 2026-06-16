@@ -79,22 +79,22 @@ fn vertex_5d() -> impl Strategy<Value = Point<5>> {
 
 /// Strategy for generating a small collection of 2D vertices (4-10 vertices)
 fn small_vertex_set_2d() -> impl Strategy<Value = Vec<Vertex<(), 2>>> {
-    prop::collection::vec(vertex_2d(), 4..=10).prop_map(|v| Vertex::from_points(&v))
+    prop::collection::vec(vertex_2d(), 4..=10).prop_map(|v| Vertex::from_validated_points(&v))
 }
 
 /// Strategy for generating a small collection of 3D vertices (5-12 vertices)
 fn small_vertex_set_3d() -> impl Strategy<Value = Vec<Vertex<(), 3>>> {
-    prop::collection::vec(vertex_3d(), 5..=12).prop_map(|v| Vertex::from_points(&v))
+    prop::collection::vec(vertex_3d(), 5..=12).prop_map(|v| Vertex::from_validated_points(&v))
 }
 
 /// Strategy for generating a small collection of 4D vertices (6-14 vertices)
 fn small_vertex_set_4d() -> impl Strategy<Value = Vec<Vertex<(), 4>>> {
-    prop::collection::vec(vertex_4d(), 6..=14).prop_map(|v| Vertex::from_points(&v))
+    prop::collection::vec(vertex_4d(), 6..=14).prop_map(|v| Vertex::from_validated_points(&v))
 }
 
 /// Strategy for generating a small collection of 5D vertices (7-16 vertices)
 fn small_vertex_set_5d() -> impl Strategy<Value = Vec<Vertex<(), 5>>> {
-    prop::collection::vec(vertex_5d(), 7..=16).prop_map(|v| Vertex::from_points(&v))
+    prop::collection::vec(vertex_5d(), 7..=16).prop_map(|v| Vertex::from_validated_points(&v))
 }
 
 // =============================================================================
@@ -109,7 +109,7 @@ macro_rules! gen_tds_validity {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_tds_from_vertices_is_valid_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new(&vertices) {
                         prop_assert!(dt.tds().is_valid().is_ok(),
                             "{}D Tds should be valid: {:?}",
                             $dim, dt.tds().is_valid().err());
@@ -127,7 +127,7 @@ macro_rules! gen_neighbor_symmetry {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_neighbor_symmetry_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new(&vertices) {
                         let tds = dt.tds();
                         for (simplex_key, simplex) in dt.simplices() {
                             if let Some(neighbors) = simplex.neighbors() {
@@ -188,7 +188,7 @@ macro_rules! gen_neighbor_index_semantics {
                 #[test]
                 fn [<prop_neighbor_index_semantics_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     // Use stack-allocated buffer for D facet vertices (D ≤ 7 typical)
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new(&vertices) {
                         prop_assume!(dt.tds().is_valid().is_ok());
                         let tds = dt.tds();
                         for (simplex_key, simplex) in dt.simplices() {
@@ -233,7 +233,7 @@ macro_rules! gen_simplex_vertices_exist_in_tds {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_simplex_vertices_exist_in_tds_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new(&vertices) {
                         let all_vertex_keys: HashSet<_> = dt.tds().vertex_keys().collect();
                         for (_simplex_key, simplex) in dt.simplices() {
                             for vertex_key in simplex.vertices() {
@@ -255,7 +255,7 @@ macro_rules! gen_no_duplicate_simplices {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_no_duplicate_simplices_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new(&vertices) {
                         let mut seen = HashSet::new();
                         for (_simplex_key, simplex) in dt.simplices() {
                             // Use stack-allocated buffer for D+1 vertices (D ≤ 7 typical)
@@ -277,7 +277,7 @@ macro_rules! gen_dimension_consistency {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_dimension_consistency_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new(&vertices) {
                         if dt.number_of_vertices() >= $min_vertices && dt.number_of_simplices() > 0 {
                             prop_assert_eq!(dt.dim(), $dim as i32, "{}D Tds dimension mismatch", $dim);
                         }
@@ -295,7 +295,7 @@ macro_rules! gen_vertex_count_consistency {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_vertex_count_consistency_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new(&vertices) {
                         let keys = dt.tds().vertex_keys().count();
                         let n = dt.number_of_vertices();
                         prop_assert_eq!(keys, n, "{}D vertex keys count should match number_of_vertices", $dim);
@@ -313,7 +313,7 @@ macro_rules! gen_simplex_vertex_count {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_simplex_vertex_count_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new(&vertices) {
                         for (_, c) in dt.simplices() {
                             prop_assert_eq!(c.number_of_vertices(), $expected,
                                 "{}D simplices must have exactly {} vertices (D+1)", $dim, $expected);
@@ -433,7 +433,7 @@ macro_rules! gen_is_connected {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_tds_is_connected_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new(&vertices) {
                         prop_assert!(
                             dt.tds().is_connected(),
                             "{}D successfully-built triangulation must be connected ({} simplices)",
@@ -488,7 +488,7 @@ macro_rules! gen_high_dim_tds_smoke {
                     let mut stats = stats.borrow_mut();
                     stats.generated += 1;
 
-                    let dt = match DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                    let dt = match DelaunayTriangulation::<_, (), (), $dim>::try_new(&vertices) {
                         Ok(dt) => dt,
                         Err(err) => {
                             stats.rejected_construction_failed += 1;

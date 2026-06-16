@@ -59,9 +59,11 @@ fn seed_for_case<const D: usize>(requested_vertices: usize, seed_base: u64) -> u
 
 /// Generate a reproducible vertex set for one clone-cost benchmark fixture.
 fn generate_vertices<const D: usize>(requested_vertices: usize, seed: u64) -> Vec<Vertex<(), D>> {
-    let points =
-        generate_random_points_in_range_seeded::<D>(requested_vertices, benchmark_bounds(), seed);
-    Vertex::from_points(&points)
+    let points = bench_result(
+        generate_random_points_in_range_seeded::<D>(requested_vertices, benchmark_bounds(), seed),
+        "failed to generate clone benchmark points",
+    );
+    Vertex::from_validated_points(&points)
 }
 
 /// Build the triangulation snapshot that each benchmark iteration clones.
@@ -69,7 +71,7 @@ fn build_clone_source<const D: usize>(requested_vertices: usize, seed_base: u64)
     let seed = seed_for_case::<D>(requested_vertices, seed_base);
     let vertices = generate_vertices::<D>(requested_vertices, seed);
     let triangulation: BenchTriangulation<D> = bench_result(
-        DelaunayTriangulation::new(&vertices),
+        DelaunayTriangulation::try_new(&vertices),
         format!("failed to build {D}D benchmark triangulation"),
     );
     let tds = triangulation.tds().clone();

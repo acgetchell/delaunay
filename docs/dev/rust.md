@@ -14,6 +14,7 @@ Agents must follow these rules when modifying or adding Rust code.
 - [Numeric Conversions](#numeric-conversions)
 - [Borrowing and Ownership](#borrowing-and-ownership)
 - [Error Handling](#error-handling)
+- [Constructor Naming](#constructor-naming)
 - [Panic Policy](#panic-policy)
 - [Error Types](#error-types)
   - [Orthogonal variants](#orthogonal-variants)
@@ -251,6 +252,72 @@ builder
     .with_seed(seed)
     .build()?;
 ```
+
+---
+
+## Constructor Naming
+
+Constructor names must show where raw input is parsed into proof-bearing domain
+types and where already-validated values are merely assembled.
+
+Use fallible names for raw or invariant-bearing input:
+
+- `try_new*`, `try_from_*`, `parse`, `FromStr`, or `TryFrom` parse caller
+  input and reject invalid values before storage.
+- Raw numeric coordinates, slotmap keys, facet indexes, dimensions, UUIDs,
+  explicit connectivity, deserialized snapshots, and topology data are
+  invariant-bearing input unless a narrower validated type already carries the
+  proof.
+- The canonical pattern is `Point::try_new`, `Vertex::try_new`, and
+  `FacetHandle::try_new`: validate the raw values, then store only values whose
+  invariants have been proved.
+
+Use `from_validated*` only for infallible construction from proof-bearing input:
+
+- `from_validated*` means validation evidence already exists at the call site.
+- These functions should normally be private or `pub(crate)` unless the proof
+  type is itself public and callers can genuinely supply validated input.
+- The pattern in `FacetHandle::try_new` followed by
+  `FacetHandle::from_validated` is the preferred shape for internal helpers.
+
+Intentional idiomatic exceptions are allowed when no raw invalidable state is
+being parsed:
+
+- Zero-state strategies and markers may use `new`, such as geometry kernels and
+  simple topology-space marker values.
+- Empty containers and empty triangulations may use `empty`, `new_empty`, or
+  `with_empty_*` because no user geometry or topology is accepted.
+- Builder creation may use `Builder::new` when validation is explicitly deferred
+  to `build`; builder setters remain infallible and return `Self`.
+- Configuration and statistics types may derive or implement `Default` when the
+  default value is valid and documented as a policy choice or accumulator state.
+- `from_*` is acceptable for infallible conversions from already-refined values,
+  such as validated points into vertices, or for passive report/view extraction
+  that cannot fail for representable input.
+
+Current migration targets for API-normalization work:
+
+- Public `DelaunayTriangulation::try_new*` methods are the default fallible
+  constructors for default-kernel triangulations, and public
+  `DelaunayTriangulation::try_with_*` methods are the fallible custom-kernel
+  constructors. Infallible empty constructors remain `empty` and
+  `with_empty_*` because they accept no user geometry or topology.
+- `DelaunayTriangulationBuilder::from_vertices_and_simplices*` stores explicit
+  connectivity for later validation in `build`. If this API is renamed, keep the
+  validation boundary at `build` or introduce a fallible `try_from_*` path that
+  proves connectivity before storage.
+- `ConvexHull::try_from_triangulation` is the fallible hull-snapshot
+  constructor. Reserve `from_*` for infallible conversions from proof-bearing
+  input or passive view/report extraction.
+- Broad public `from_*` helpers should be reviewed case by case. Keep them when
+  they consume proof-bearing inputs and cannot fail; rename to `try_from_*` when
+  they parse raw invalidable state.
+
+Semgrep guardrails for constructor names should stay narrow and repo-specific:
+protect established public parse boundaries such as `DelaunayTriangulation` and
+`ConvexHull`, while preserving intentional exceptions such as empty
+constructors, builder `new`, and infallible construction from proof-bearing
+values.
 
 ---
 

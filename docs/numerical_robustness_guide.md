@@ -135,7 +135,7 @@ let vertices = vec![
 ];
 
 let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
-    DelaunayTriangulation::with_kernel(&kernel, &vertices).unwrap();
+    DelaunayTriangulation::try_with_kernel(&kernel, &vertices)?;
 
 assert!(dt.is_valid().is_ok());
 ```
@@ -208,8 +208,7 @@ use delaunay::prelude::insertion::InsertionOutcome;
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 
 let (outcome, stats) = dt
-    .insert_best_effort_with_statistics(delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.5])?)
-    .unwrap();
+    .insert_best_effort_with_statistics(delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.5])?)?;
 
 if stats.used_perturbation() {
     println!("used perturbation (attempts={})", stats.attempts);
@@ -270,7 +269,7 @@ the triangulation interior.
 
 When vertices are inserted via batch construction
 (`DelaunayTriangulationBuilder::new(&vertices).build::<()>()`,
-`DelaunayTriangulation::with_kernel()`, etc.) using the default
+`DelaunayTriangulation::try_with_kernel()`, etc.) using the default
 `InsertionOrderStrategy::Hilbert`, the
 Hilbert ordering pass quantizes each coordinate to a fixed-width integer grid before
 computing the space-filling curve index. After sorting, vertices that map to the same

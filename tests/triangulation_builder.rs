@@ -35,7 +35,7 @@ fn test_builder_euclidean_matches_new_2d() {
         Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
     ];
 
-    let dt_new = DelaunayTriangulation::new(&vertices).expect("new() should succeed");
+    let dt_new = DelaunayTriangulation::try_new(&vertices).expect("new() should succeed");
     let dt_builder = DelaunayTriangulationBuilder::new(&vertices)
         .build::<()>()
         .expect("builder should succeed");
@@ -742,7 +742,8 @@ fn test_explicit_round_trip_3d() {
         Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(),
     ];
 
-    let dt_original = DelaunayTriangulation::new(&vertices).expect("Delaunay build should succeed");
+    let dt_original =
+        DelaunayTriangulation::try_new(&vertices).expect("Delaunay build should succeed");
     let original_vertex_count = dt_original.number_of_vertices();
     let original_simplex_count = dt_original.number_of_simplices();
 
@@ -798,7 +799,8 @@ fn test_explicit_round_trip_2d() {
     ];
 
     // Build via standard Delaunay.
-    let dt_original = DelaunayTriangulation::new(&vertices).expect("Delaunay build should succeed");
+    let dt_original =
+        DelaunayTriangulation::try_new(&vertices).expect("Delaunay build should succeed");
     let original_vertex_count = dt_original.number_of_vertices();
     let original_simplex_count = dt_original.number_of_simplices();
 

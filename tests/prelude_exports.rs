@@ -38,7 +38,7 @@ use delaunay::prelude::construction::{
     InvalidPositiveScalar as ConstructionInvalidPositiveScalar, RandomPointGenerationError,
     SimplexValidationError,
     SpatialIndexConstructionFailure as ConstructionSpatialIndexConstructionFailure,
-    TopologyGuarantee, ToroidalDomain as ConstructionToroidalDomain, Vertex,
+    TopologyGuarantee, ToroidalDomain as ConstructionToroidalDomain, Vertex, VertexValidationError,
 };
 use delaunay::prelude::delaunayize::{
     DelaunayTriangulationBuilder as DelaunayizeDelaunayTriangulationBuilder, DelaunayizeConfig,
@@ -63,10 +63,10 @@ use delaunay::prelude::generators::{
 use delaunay::prelude::geometry::AdaptiveKernel;
 use delaunay::prelude::geometry::{
     ArrayConversionFailureReason, CircumcenterError, CircumcenterFailureReason,
-    CoordinateConversionError, CoordinateConversionValue, DegenerateGeometry, DegenerateMeasure,
-    DegenerateSimplexReason, FiniteCoordinateValue, InvalidCoordinateValue, LaError, MatrixError,
-    Point, QualitySimplexVerticesError, SurfaceMeasureError, ValueConversionError,
-    ValueConversionFailureReason,
+    CoordinateConversionError, CoordinateConversionValue, CoordinateValidationError,
+    DegenerateGeometry, DegenerateMeasure, DegenerateSimplexReason, FiniteCoordinateValue,
+    InvalidCoordinateValue, LaError, MatrixError, Point, QualitySimplexVerticesError,
+    SurfaceMeasureError, ValueConversionError, ValueConversionFailureReason,
 };
 use delaunay::prelude::insertion::{
     InitialSimplexConstructionError, InitialSimplexUnexpectedInsertionStage, InsertionError,
@@ -151,6 +151,10 @@ enum PreludeExportTestError {
     #[error(transparent)]
     CoordinateConversion(#[from] CoordinateConversionError),
     #[error(transparent)]
+    CoordinateValidation(#[from] CoordinateValidationError),
+    #[error(transparent)]
+    VertexValidation(#[from] VertexValidationError),
+    #[error(transparent)]
     RandomPointGeneration(#[from] RandomPointGenerationError),
     #[error(transparent)]
     Construction(#[from] DelaunayTriangulationConstructionError),
@@ -172,6 +176,8 @@ enum PreludeExportTestError {
     RidgeVertices(#[from] RidgeVerticesError),
     #[error(transparent)]
     ToroidalDomain(#[from] ToroidalDomainError),
+    #[error(transparent)]
+    GenericTriangulationConstruction(#[from] GenericTriangulationConstructionError),
 }
 
 /// Proves the focused flips prelude exports the trait bound expected by benchmarks.
@@ -374,7 +380,7 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
         options.batch_repair_policy(),
         DelaunayRepairPolicy::EveryInsertion
     );
-    let dt = DelaunayTriangulation::new_with_options(&vertices, options)?;
+    let dt = DelaunayTriangulation::try_new_with_options(&vertices, options)?;
 
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
     let _query_facade_all_facets: QueryFacadeAllFacetsIter<'_, (), (), 3> = dt.facets()?;
@@ -398,7 +404,7 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
             })
     })?;
     assert!(boundary_facet_count > 0);
-    let _hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+    let _hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
     dt.validate().unwrap();
     assert_bistellar_flips(&dt);
 
@@ -567,7 +573,7 @@ fn geometry_prelude_covers_typed_error_variants() {
 fn generator_prelude_covers_validated_coordinate_ranges() -> Result<(), PreludeExportTestError> {
     let generated_range = CoordinateRange::try_new(0.0_f64, 1.0)?;
     let range_points: Vec<Point<2>> =
-        generate_random_points_in_range_seeded(3, generated_range, 42);
+        generate_random_points_in_range_seeded(3, generated_range, 42)?;
     let grid_points: Vec<Point<2>> = generate_grid_points(NonZeroUsize::MIN, 1.0, [0.0, 0.0])?;
     let builder = RandomTriangulationBuilder::try_new(NonZeroUsize::MIN, (-1.0_f64, 1.0))?
         .seed(7)
@@ -678,73 +684,64 @@ fn validation_prelude_covers_configuration_error() {
     );
 }
 
-fn simplex_prelude_vertices<const D: usize>(origin: f64, scale: f64) -> Vec<Vertex<(), D>> {
+fn simplex_prelude_vertices<const D: usize>(
+    origin: f64,
+    scale: f64,
+) -> Result<Vec<Vertex<(), D>>, PreludeExportTestError> {
     let mut vertices = Vec::with_capacity(D + 1);
-    vertices.push(
-        delaunay::prelude::Vertex::<(), _>::try_new([origin; D])
-            .expect("finite simplex origin should construct"),
-    );
+    vertices.push(delaunay::prelude::Vertex::<(), _>::try_new([origin; D])?);
 
     for axis in 0..D {
         let mut coords = [origin; D];
         coords[axis] = origin + scale;
-        vertices.push(
-            delaunay::prelude::Vertex::<(), _>::try_new(coords)
-                .expect("finite simplex axis vertex should construct"),
-        );
+        vertices.push(delaunay::prelude::Vertex::<(), _>::try_new(coords)?);
     }
 
-    vertices
+    Ok(vertices)
 }
 
-fn cospherical_prelude_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
+fn cospherical_prelude_vertices<const D: usize>()
+-> Result<Vec<Vertex<(), D>>, PreludeExportTestError> {
     let mut vertices = Vec::with_capacity(D + 2);
 
     for axis in 0..D {
         let mut coords = [0.0; D];
         coords[axis] = 1.0;
-        vertices.push(
-            delaunay::prelude::Vertex::<(), _>::try_new(coords)
-                .expect("finite cospherical axis vertex should construct"),
-        );
+        vertices.push(delaunay::prelude::Vertex::<(), _>::try_new(coords)?);
     }
 
     let mut negative_first_axis = [0.0; D];
     negative_first_axis[0] = -1.0;
-    vertices.push(
-        delaunay::prelude::Vertex::<(), _>::try_new(negative_first_axis)
-            .expect("finite cospherical negative first-axis vertex should construct"),
-    );
+    vertices.push(delaunay::prelude::Vertex::<(), _>::try_new(
+        negative_first_axis,
+    )?);
 
     let mut negative_second_axis = [0.0; D];
     negative_second_axis[1] = -1.0;
-    vertices.push(
-        delaunay::prelude::Vertex::<(), _>::try_new(negative_second_axis)
-            .expect("finite cospherical negative second-axis vertex should construct"),
-    );
+    vertices.push(delaunay::prelude::Vertex::<(), _>::try_new(
+        negative_second_axis,
+    )?);
 
-    vertices
+    Ok(vertices)
 }
 
-fn degenerate_prelude_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
+fn degenerate_prelude_vertices<const D: usize>()
+-> Result<Vec<Vertex<(), D>>, PreludeExportTestError> {
     let mut vertices = Vec::with_capacity(D + 1);
     let mut coordinate = 0.0;
     for _ in 0..=D {
         let mut coords = [0.0; D];
         coords[0] = coordinate;
-        vertices.push(
-            delaunay::prelude::Vertex::<(), _>::try_new(coords)
-                .expect("finite degenerate fixture vertex should construct"),
-        );
+        vertices.push(delaunay::prelude::Vertex::<(), _>::try_new(coords)?);
         coordinate += 1.0;
     }
-    vertices
+    Ok(vertices)
 }
 
 fn assert_single_simplex_ridge_star<const D: usize>(
     vertices: &[Vertex<(), D>],
 ) -> Result<(), PreludeExportTestError> {
-    let dt = DelaunayTriangulation::new(vertices)?;
+    let dt = DelaunayTriangulation::try_new(vertices)?;
     let ridge = RidgeVertices::<D>::try_from_vertices(dt.tds().vertex_keys().take(D - 1))?;
     let star = ridge_star_simplices(dt.tds(), &ridge)?;
 
@@ -753,8 +750,8 @@ fn assert_single_simplex_ridge_star<const D: usize>(
 }
 
 fn assert_cospherical_ridge_star<const D: usize>() -> Result<(), PreludeExportTestError> {
-    let vertices = cospherical_prelude_vertices::<D>();
-    let dt = DelaunayTriangulation::new(&vertices)?;
+    let vertices = cospherical_prelude_vertices::<D>()?;
+    let dt = DelaunayTriangulation::try_new(&vertices)?;
     let ridge = RidgeVertices::<D>::try_from_vertices(dt.tds().vertex_keys().take(D - 1))?;
     let star = ridge_star_simplices(dt.tds(), &ridge)?;
 
@@ -781,19 +778,19 @@ fn assert_ridge_vertices_reject_adversarial_keys<const D: usize>(keys: &[VertexK
 }
 
 fn assert_topology_prelude_dimension<const D: usize>() -> Result<(), PreludeExportTestError> {
-    let simplex_vertices = simplex_prelude_vertices::<D>(0.0, 1.0);
+    let simplex_vertices = simplex_prelude_vertices::<D>(0.0, 1.0)?;
     assert_single_simplex_ridge_star(&simplex_vertices)?;
 
-    let near_boundary_vertices = simplex_prelude_vertices::<D>(f64::EPSILON, 1.0);
+    let near_boundary_vertices = simplex_prelude_vertices::<D>(f64::EPSILON, 1.0)?;
     assert_single_simplex_ridge_star(&near_boundary_vertices)?;
 
-    let dt = DelaunayTriangulation::new(&simplex_vertices)?;
+    let dt = DelaunayTriangulation::try_new(&simplex_vertices)?;
     let keys = dt.tds().vertex_keys().collect::<Vec<_>>();
     assert_ridge_vertices_reject_adversarial_keys::<D>(&keys);
 
     assert_cospherical_ridge_star::<D>()?;
     assert_matches!(
-        DelaunayTriangulation::new(&degenerate_prelude_vertices::<D>()),
+        DelaunayTriangulation::try_new(&degenerate_prelude_vertices::<D>()?),
         Err(DelaunayTriangulationConstructionError::Triangulation(
             DelaunayConstructionFailure::GeometricDegeneracy { .. }
         ))
@@ -834,15 +831,11 @@ fn topology_spaces_prelude_covers_toroidal_domain_api() -> Result<(), PreludeExp
 }
 
 #[test]
-fn triangulation_prelude_covers_generic_layer() -> Result<(), GenericTriangulationConstructionError>
-{
+fn triangulation_prelude_covers_generic_layer() -> Result<(), PreludeExportTestError> {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])
-            .expect("finite 2D vertex should construct"),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])
-            .expect("finite 2D vertex should construct"),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])
-            .expect("finite 2D vertex should construct"),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     ];
     let tds =
         GenericTriangulation::<TriangulationFastKernel<f64>, (), (), 2>::build_initial_simplex(
@@ -1016,7 +1009,7 @@ fn diagnostics_prelude_covers_opt_in_helpers() -> Result<(), PreludeExportTestEr
     assert!(DiagnosticNeighborSlot::Boundary.is_boundary());
 
     let kernel = AdaptiveKernel::new();
-    let point = Point::try_new([0.0, 0.0]).expect("finite point coordinates");
+    let point = Point::try_new([0.0, 0.0])?;
     let conflict_simplices = SimplexKeyBuffer::new();
     assert_eq!(
         verify_conflict_region_completeness(&tds, &kernel, &point, &conflict_simplices),

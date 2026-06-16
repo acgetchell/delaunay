@@ -70,7 +70,7 @@ pub enum ValueConversionError {
 
 /// Safely convert a coordinate value from type T to f64.
 /// This function provides proper error handling for coordinate type conversions,
-/// replacing the unsafe `cast(x).unwrap_or(fallback)` pattern with explicit
+/// replacing silent fallback after `cast(x)` with explicit
 /// error reporting. It also checks for non-finite values (NaN, infinity).
 ///
 /// # Arguments
@@ -104,7 +104,7 @@ pub(in crate::geometry::util) fn safe_cast_to_f64(
 /// Safely convert a coordinate value from f64 to type T.
 ///
 /// This function provides proper error handling for coordinate type conversions,
-/// replacing the unsafe `cast(x).unwrap_or(fallback)` pattern with explicit
+/// replacing silent fallback after `cast(x)` with explicit
 /// error reporting. It also checks for non-finite values (NaN, infinity).
 ///
 /// # Arguments

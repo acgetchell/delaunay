@@ -31,11 +31,7 @@ pub fn accumulate_live_simplex_seeds<U, V, const D: usize>(
     candidate_seed_simplices: &[SimplexKey],
     pending_seed_simplices: &mut SimplexKeyBuffer,
     pending_seen: &mut FastHashSet<SimplexKey>,
-) -> usize
-where
-    U: DataType,
-    V: DataType,
-{
+) -> usize {
     let mut added = 0usize;
     for &simplex_key in candidate_seed_simplices {
         if tds.contains_simplex(simplex_key) && pending_seen.insert(simplex_key) {
@@ -53,11 +49,7 @@ pub fn append_live_unique_simplex_seeds<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     candidate_seed_simplices: &[SimplexKey],
     seed_simplices: &mut SimplexKeyBuffer,
-) -> usize
-where
-    U: DataType,
-    V: DataType,
-{
+) -> usize {
     let mut seen: FastHashSet<SimplexKey> = fast_hash_set_with_capacity(
         seed_simplices
             .len()
@@ -80,10 +72,7 @@ pub fn retain_live_simplex_seeds<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     seed_simplices: &mut SimplexKeyBuffer,
     seen: &mut FastHashSet<SimplexKey>,
-) where
-    U: DataType,
-    V: DataType,
-{
+) {
     seen.clear();
     seed_simplices
         .retain(|simplex_key| tds.contains_simplex(*simplex_key) && seen.insert(*simplex_key));
@@ -198,7 +187,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let all_simplices: Vec<SimplexKey> =
             dt.simplices().map(|(simplex_key, _)| simplex_key).collect();
         assert!(
@@ -253,7 +242,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let all_simplices: Vec<SimplexKey> =
             dt.simplices().map(|(simplex_key, _)| simplex_key).collect();
         assert!(
@@ -292,7 +281,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let all_simplices: Vec<SimplexKey> =
             dt.simplices().map(|(simplex_key, _)| simplex_key).collect();
         assert!(
@@ -378,7 +367,7 @@ mod tests {
         let result = collect_local_exterior_conflict_seed_simplices(
             &tri.tds,
             &FastKernel::new(),
-            &Point::from_validated_coords([2.0, 2.0, 2.0]),
+            &Point::try_new([2.0, 2.0, 2.0]).expect("finite point coordinates"),
             terminal_simplex,
         )
         .unwrap();
@@ -397,7 +386,7 @@ mod tests {
         let result = collect_local_exterior_conflict_seed_simplices(
             &tri.tds,
             &FastKernel::new(),
-            &Point::from_validated_coords([0.5, 0.5, 0.5]),
+            &Point::try_new([0.5, 0.5, 0.5]).expect("finite point coordinates"),
             terminal_simplex,
         )
         .unwrap();

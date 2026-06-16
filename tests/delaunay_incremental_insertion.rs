@@ -141,7 +141,7 @@ macro_rules! test_insert_single_point {
                 ];
 
                 let mut dt: DelaunayTriangulation<_, (), (), $dim> =
-                    DelaunayTriangulation::new_with_topology_guarantee(
+                    DelaunayTriangulation::try_new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     )
@@ -209,7 +209,7 @@ macro_rules! test_insert_5_points {
                 ];
 
                 let mut dt: DelaunayTriangulation<_, (), (), $dim> =
-                    DelaunayTriangulation::new_with_topology_guarantee(
+                    DelaunayTriangulation::try_new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     )
@@ -302,7 +302,7 @@ macro_rules! test_local_neighbor_repair_guardrails {
                     $(delaunay::prelude::Vertex::<(), _>::try_new($simplex).unwrap()),+
                 ];
                 let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), $dim> =
-                    DelaunayTriangulation::with_topology_guarantee(
+                    DelaunayTriangulation::try_with_topology_guarantee(
                         &AdaptiveKernel::new(),
                         &vertices,
                         TopologyGuarantee::PLManifold,
@@ -399,7 +399,7 @@ fn test_adaptive_kernel_vs_robust_kernel_2d() {
     ];
 
     let dt_adaptive: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
-        DelaunayTriangulation::with_topology_guarantee(
+        DelaunayTriangulation::try_with_topology_guarantee(
             &AdaptiveKernel::new(),
             &vertices,
             TopologyGuarantee::PLManifold,
@@ -407,7 +407,7 @@ fn test_adaptive_kernel_vs_robust_kernel_2d() {
         .unwrap();
 
     let dt_robust: DelaunayTriangulation<RobustKernel<f64>, (), (), 2> =
-        DelaunayTriangulation::with_topology_guarantee(
+        DelaunayTriangulation::try_with_topology_guarantee(
             &RobustKernel::new(),
             &vertices,
             TopologyGuarantee::PLManifold,
@@ -435,7 +435,7 @@ fn test_robust_kernel_incremental_insertion() {
     ];
 
     let mut dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 2> =
-        DelaunayTriangulation::with_topology_guarantee(
+        DelaunayTriangulation::try_with_topology_guarantee(
             &RobustKernel::new(),
             &vertices,
             TopologyGuarantee::PLManifold,
@@ -467,7 +467,7 @@ fn test_clustered_points_2d() {
     ];
 
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -498,7 +498,7 @@ fn test_grid_pattern_2d() {
     ];
 
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -535,7 +535,7 @@ fn test_batch_vs_incremental_same_vertex_count() {
 
     // Batch construction
     let dt_batch: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &all_vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -548,8 +548,11 @@ fn test_batch_vs_incremental_same_vertex_count() {
         delaunay::prelude::Vertex::<(), _>::try_new([2.0, 4.0]).unwrap(),
     ];
     let mut dt_incremental: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new_with_topology_guarantee(&initial, TopologyGuarantee::PLManifold)
-            .unwrap();
+        DelaunayTriangulation::try_new_with_topology_guarantee(
+            &initial,
+            TopologyGuarantee::PLManifold,
+        )
+        .unwrap();
 
     dt_incremental
         .insert(delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap())
@@ -588,7 +591,7 @@ fn test_bulk_construction_skips_near_duplicate_3d() {
     let opts =
         ConstructionOptions::default().with_dedup_policy(DedupPolicy::try_epsilon(1e-10).unwrap());
     let dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new_with_options(&vertices, opts).unwrap();
+        DelaunayTriangulation::try_new_with_options(&vertices, opts).unwrap();
 
     // The near-duplicate should be skipped, so only 5 unique vertices remain.
     assert_eq!(dt.number_of_vertices(), 5);
@@ -607,7 +610,7 @@ fn test_insert_at_centroid() {
     ];
 
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -632,7 +635,7 @@ fn test_minimal_simplex_then_insert() {
     ];
 
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -662,7 +665,7 @@ fn test_f64_coordinates() {
     ];
 
     let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
-        DelaunayTriangulation::with_topology_guarantee(
+        DelaunayTriangulation::try_with_topology_guarantee(
             &AdaptiveKernel::new(),
             &vertices,
             TopologyGuarantee::PLManifold,

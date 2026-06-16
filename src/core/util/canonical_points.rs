@@ -296,7 +296,7 @@ mod tests {
         let (tds, keys) = build_tds_with_points(&[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
 
         let facet_keys = &[keys[0], keys[1]];
-        let extra = Point::from_validated_coords([0.5, 0.5]);
+        let extra = Point::try_new([0.5, 0.5]).expect("finite point coordinates");
 
         let points =
             sorted_facet_points_with_extra(&tds, facet_keys, extra).expect("should resolve");
@@ -311,7 +311,7 @@ mod tests {
     fn test_sorted_facet_points_with_extra_permutation_invariant() {
         let (tds, keys) = build_tds_with_points(&[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
 
-        let extra = Point::from_validated_coords([0.5, 0.5]);
+        let extra = Point::try_new([0.5, 0.5]).expect("finite point coordinates");
 
         let points_a = sorted_facet_points_with_extra(&tds, &[keys[0], keys[1]], extra).unwrap();
         let points_b = sorted_facet_points_with_extra(&tds, &[keys[1], keys[0]], extra).unwrap();
@@ -323,7 +323,7 @@ mod tests {
     #[test]
     fn test_sorted_facet_points_with_extra_rejects_wrong_arity() {
         let (tds, keys) = build_tds_with_points(&[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
-        let extra = Point::from_validated_coords([0.5, 0.5]);
+        let extra = Point::try_new([0.5, 0.5]).expect("finite point coordinates");
 
         let err = sorted_facet_points_with_extra(&tds, &[keys[0]], extra).unwrap_err();
 
@@ -340,7 +340,7 @@ mod tests {
     fn test_sorted_facet_points_with_extra_reports_missing_vertex_key() {
         let (tds, keys) = build_tds_with_points(&[[0.0, 0.0]]);
         let missing = VertexKey::from(KeyData::from_ffi(999_999));
-        let extra = Point::from_validated_coords([0.5, 0.5]);
+        let extra = Point::try_new([0.5, 0.5]).expect("finite point coordinates");
 
         let err = sorted_facet_points_with_extra(&tds, &[keys[0], missing], extra).unwrap_err();
 
@@ -362,7 +362,7 @@ mod tests {
         // 3 points forming a right triangle + a cospherical test point.
         // The circumcircle of (0,0),(1,0),(0,1) passes through (1,1).
         let (tds, keys) = build_tds_with_points(&[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
-        let test_point = Point::from_validated_coords([1.0, 1.0]);
+        let test_point = Point::try_new([1.0, 1.0]).expect("finite point coordinates");
         let kernel = AdaptiveKernel::<f64>::new();
 
         // All 6 permutations of the 3 vertices
@@ -406,7 +406,7 @@ mod tests {
             [0.0, 1.0, 0.0],
             [0.0, 0.0, 1.0],
         ]);
-        let test_point = Point::from_validated_coords([1.0, 1.0, 1.0]);
+        let test_point = Point::try_new([1.0, 1.0, 1.0]).expect("finite point coordinates");
         let kernel = AdaptiveKernel::<f64>::new();
 
         // All 24 permutations of 4 vertices

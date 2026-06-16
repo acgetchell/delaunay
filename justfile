@@ -564,12 +564,14 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
             case_status="FAIL"
         fi
 
-        local insertion_time total_time
+        local insertion_time total_time simplices
         insertion_time="$(awk -F': ' '/Insertion wall time:/ { value=$2 } END { print value }' "$log_file")"
         total_time="$(awk -F': ' '/Total wall time:/ { value=$2 } END { print value }' "$log_file")"
+        simplices="$(awk '/Triangulation size:/ { for (i = 1; i <= NF; i++) if ($i ~ /^simplices=/) { sub(/^simplices=/, "", $i); value=$i } } END { print value }' "$log_file")"
         [[ -n "$insertion_time" ]] || insertion_time="n/a"
         [[ -n "$total_time" ]] || total_time="n/a"
-        summaries+=("$dimension|$n_points|$insertion_time|$total_time|$case_status")
+        [[ -n "$simplices" ]] || simplices="n/a"
+        summaries+=("$dimension|$n_points|$simplices|$insertion_time|$total_time|$case_status")
         rm -f "$log_file"
     }
 
@@ -580,11 +582,11 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
 
     echo ""
     echo "Large-scale smoke summary:"
-    printf '%-4s %10s %18s %18s %8s\n' "Dim" "Vertices" "Insertion wall" "Total wall" "Status"
-    printf '%-4s %10s %18s %18s %8s\n' "----" "--------" "--------------" "----------" "------"
+    printf '%-4s %10s %12s %18s %18s %8s\n' "Dim" "Vertices" "Simplices" "Insertion wall" "Total wall" "Status"
+    printf '%-4s %10s %12s %18s %18s %8s\n' "----" "--------" "---------" "--------------" "----------" "------"
     for row in "${summaries[@]}"; do
-        IFS='|' read -r dimension n_points insertion_time total_time case_status <<< "$row"
-        printf '%-4s %10s %18s %18s %8s\n' "$dimension" "$n_points" "$insertion_time" "$total_time" "$case_status"
+        IFS='|' read -r dimension n_points simplices insertion_time total_time case_status <<< "$row"
+        printf '%-4s %10s %12s %18s %18s %8s\n' "$dimension" "$n_points" "$simplices" "$insertion_time" "$total_time" "$case_status"
     done
 
     if (( ${#failures[@]} > 0 )); then
@@ -802,7 +804,7 @@ semgrep-test: _ensure-uv
         state_dir="$state_root/${rel%.*}"
         mkdir -p "$(dirname "$config_path")"
         mkdir -p "$state_dir"
-        ln -s "$PWD/semgrep.yaml" "$config_path"
+        uv run python scripts/semgrep_fixture_config.py "$fixture" "$PWD/semgrep.yaml" "$config_path"
 
         SEMGREP_SEND_METRICS=off SEMGREP_SETTINGS_FILE="$state_dir/settings.yml" uv run semgrep scan --test --strict --config "$config_path" "$fixture"
     done < <(find tests/semgrep -type f ! -name '*.fixed' -print0)

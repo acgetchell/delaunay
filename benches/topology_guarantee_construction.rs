@@ -54,8 +54,10 @@ fn bench_dimension<const D: usize>(
 
         // Deterministic input per (dimension, count).
         let seed = seed_base ^ (n_points as u64).wrapping_mul(SEED_SALT);
-        let points =
-            generate_random_points_in_range_seeded::<D>(n_points, benchmark_bounds(), seed);
+        let points = bench_result(
+            generate_random_points_in_range_seeded::<D>(n_points, benchmark_bounds(), seed),
+            "failed to generate benchmark points",
+        );
         let vertices = points
             .into_iter()
             .map(|p| {

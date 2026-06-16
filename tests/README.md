@@ -692,8 +692,8 @@ assert_jaccard_gte!(
 use delaunay::prelude::query::extract_hull_facet_set;
 use delaunay::geometry::algorithms::convex_hull::ConvexHull;
 
-let hull1 = ConvexHull::from_triangulation(&tds)?;
-let hull2 = ConvexHull::from_triangulation(&tds)?;
+let hull1 = ConvexHull::try_from_triangulation(&tds)?;
+let hull2 = ConvexHull::try_from_triangulation(&tds)?;
 
 let facets1 = extract_hull_facet_set(&hull1, &tds);
 let facets2 = extract_hull_facet_set(&hull2, &tds);

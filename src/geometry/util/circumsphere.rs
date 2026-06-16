@@ -12,7 +12,9 @@ use crate::geometry::matrix::{
     matrix_set,
 };
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateConversionValue};
+use crate::geometry::traits::coordinate::{
+    CoordinateConversionError, CoordinateConversionValue, CoordinateValidationError,
+};
 use core::{fmt, hint::cold_path};
 
 /// Geometric measure involved in a degenerate simplex or facet calculation.
@@ -227,6 +229,14 @@ pub enum CircumcenterError {
         /// Typed source error from coordinate conversion.
         #[from]
         source: CoordinateConversionError,
+    },
+
+    /// Coordinate validation failed while constructing the circumcenter point.
+    #[error("Coordinate validation error: {source}")]
+    CoordinateValidation {
+        /// Typed source error from coordinate validation.
+        #[from]
+        source: CoordinateValidationError,
     },
 
     /// Scalar value conversion failed while converting dimensions or derived measures.
@@ -444,7 +454,7 @@ pub fn circumcenter<const D: usize>(points: &[Point<D>]) -> Result<Point<D>, Cir
         }
     }
 
-    Ok(Point::from_validated_coords(circumcenter_coords))
+    Ok(Point::try_new(circumcenter_coords)?)
 }
 
 /// Calculate the circumradius of a set of points forming a simplex.
@@ -682,22 +692,25 @@ mod tests {
     #[test]
     fn predicates_circumcenter() {
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         let center = circumcenter(&points).unwrap();
 
-        assert_eq!(center, Point::from_validated_coords([0.5, 0.5, 0.5]));
+        assert_eq!(
+            center,
+            Point::try_new([0.5, 0.5, 0.5]).expect("finite point coordinates")
+        );
     }
 
     #[test]
     fn predicates_circumcenter_fail() {
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
         ];
         let center = circumcenter(&points);
 
@@ -707,10 +720,10 @@ mod tests {
     #[test]
     fn predicates_circumradius() {
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         let radius = circumradius(&points).unwrap();
         let expected_radius: f64 = 3.0_f64.sqrt() / 2.0;
@@ -721,9 +734,9 @@ mod tests {
     #[test]
     fn predicates_circumcenter_2d() {
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([2.0, 0.0]),
-            Point::from_validated_coords([1.0, 2.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([2.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 2.0]).expect("finite point coordinates"),
         ];
         let center = circumcenter(&points).unwrap();
 
@@ -738,7 +751,7 @@ mod tests {
         // `circumradius_with_center` (previously only exercised by
         // `circumcenter`).
         let points: Vec<Point<3>> = Vec::new();
-        let center = Point::from_validated_coords([0.0, 0.0, 0.0]);
+        let center = Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates");
         match circumradius_with_center(&points, &center) {
             Err(CircumcenterError::EmptyPointSet) => {}
             other => panic!("expected EmptyPointSet, got {other:?}"),
@@ -748,9 +761,9 @@ mod tests {
     #[test]
     fn predicates_circumradius_2d() {
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
         ];
         let radius = circumradius(&points).unwrap();
 
@@ -763,10 +776,10 @@ mod tests {
     fn predicates_circumradius_with_center() {
         // Test the circumradius_with_center function
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
 
         let center = circumcenter(&points).unwrap();
@@ -780,10 +793,11 @@ mod tests {
     fn test_circumcenter_regular_simplex_3d() {
         // Test with a regular tetrahedron - use simpler vertices
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.5, 3.0_f64.sqrt() / 2.0, 0.0]),
-            Point::from_validated_coords([0.5, 3.0_f64.sqrt() / 6.0, (2.0 / 3.0_f64).sqrt()]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.5, 3.0_f64.sqrt() / 2.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.5, 3.0_f64.sqrt() / 6.0, (2.0 / 3.0_f64).sqrt()])
+                .expect("finite point coordinates"),
         ];
         let center = circumcenter(&points).unwrap();
 
@@ -820,11 +834,11 @@ mod tests {
     fn test_circumcenter_regular_simplex_4d() {
         // Test 4D simplex - use orthonormal basis plus origin
         let points: Vec<Point<4>> = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         let center = circumcenter(&points).unwrap();
 
@@ -844,9 +858,9 @@ mod tests {
     fn test_circumcenter_right_triangle_2d() {
         // Test with right triangle - circumcenter should be at hypotenuse midpoint
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([4.0, 0.0]),
-            Point::from_validated_coords([0.0, 3.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([4.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 3.0]).expect("finite point coordinates"),
         ];
         let center = circumcenter(&points).unwrap();
 
@@ -861,15 +875,20 @@ mod tests {
         // Test that scaling preserves circumcenter properties
         let scale = 10.0;
         let points = vec![
-            Point::from_validated_coords([0.0 * scale, 0.0 * scale, 0.0 * scale]),
-            Point::from_validated_coords([1.0 * scale, 0.0 * scale, 0.0 * scale]),
-            Point::from_validated_coords([0.0 * scale, 1.0 * scale, 0.0 * scale]),
-            Point::from_validated_coords([0.0 * scale, 0.0 * scale, 1.0 * scale]),
+            Point::try_new([0.0 * scale, 0.0 * scale, 0.0 * scale])
+                .expect("finite point coordinates"),
+            Point::try_new([1.0 * scale, 0.0 * scale, 0.0 * scale])
+                .expect("finite point coordinates"),
+            Point::try_new([0.0 * scale, 1.0 * scale, 0.0 * scale])
+                .expect("finite point coordinates"),
+            Point::try_new([0.0 * scale, 0.0 * scale, 1.0 * scale])
+                .expect("finite point coordinates"),
         ];
         let center = circumcenter(&points).unwrap();
 
         // Scaled simplex should have scaled circumcenter
-        let expected_center = Point::from_validated_coords([0.5 * scale, 0.5 * scale, 0.5 * scale]);
+        let expected_center = Point::try_new([0.5 * scale, 0.5 * scale, 0.5 * scale])
+            .expect("finite point coordinates");
         let center_coords = center.coords();
         let expected_coords = expected_center.coords();
 
@@ -883,35 +902,39 @@ mod tests {
         // Test that translation preserves relative circumcenter position
         let translation = [10.0, 20.0, 30.0];
         let points = vec![
-            Point::from_validated_coords([
+            Point::try_new([
                 0.0 + translation[0],
                 0.0 + translation[1],
                 0.0 + translation[2],
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 1.0 + translation[0],
                 0.0 + translation[1],
                 0.0 + translation[2],
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 0.0 + translation[0],
                 1.0 + translation[1],
                 0.0 + translation[2],
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 0.0 + translation[0],
                 0.0 + translation[1],
                 1.0 + translation[2],
-            ]),
+            ])
+            .expect("finite point coordinates"),
         ];
         let center = circumcenter(&points).unwrap();
 
         // Get the circumcenter of the untranslated simplex for comparison
         let untranslated_points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         let untranslated_center = circumcenter(&untranslated_points).unwrap();
 
@@ -939,10 +962,10 @@ mod tests {
         // Test with points that are nearly collinear (may succeed or fail gracefully)
         let eps = 1e-3; // Use larger epsilon for more robustness
         let points: Vec<Point<3>> = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.5, eps, 0.0]), // Slightly off the line
-            Point::from_validated_coords([0.5, 0.0, eps]), // Slightly off the plane
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.5, eps, 0.0]).expect("finite point coordinates"), // Slightly off the line
+            Point::try_new([0.5, 0.0, eps]).expect("finite point coordinates"), // Slightly off the plane
         ];
 
         let result = circumcenter(&points);
@@ -975,8 +998,8 @@ mod tests {
     fn test_circumcenter_wrong_dimension() {
         // Test with 2 points for 3D (need 4 points for 3D circumcenter)
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
         ];
         let result = circumcenter(&points);
 
@@ -1002,9 +1025,9 @@ mod tests {
         let height = side_length * 3.0_f64.sqrt() / 2.0;
 
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([side_length, 0.0]),
-            Point::from_validated_coords([side_length / 2.0, height]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([side_length, 0.0]).expect("finite point coordinates"),
+            Point::try_new([side_length / 2.0, height]).expect("finite point coordinates"),
         ];
 
         let center = circumcenter(&points).unwrap();
@@ -1018,7 +1041,8 @@ mod tests {
         assert_relative_eq!(center_coords[1], expected_y, epsilon = 1e-10);
 
         // Verify all vertices are equidistant from circumcenter
-        let _center_point = Point::from_validated_coords([center_coords[0], center_coords[1]]);
+        let _center_point =
+            Point::try_new([center_coords[0], center_coords[1]]).expect("finite point coordinates");
         let distances: Vec<f64> = points
             .iter()
             .map(|p| {
@@ -1041,9 +1065,9 @@ mod tests {
     fn test_circumcenter_numerical_stability() {
         // Test with points that could cause numerical instability
         let points: Vec<Point<2>> = vec![
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([1.000_000_1, 0.0]), // Very close to first point
-            Point::from_validated_coords([1.000_000_1, 0.000_000_1]), // Forms very thin triangle
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.000_000_1, 0.0]).expect("finite point coordinates"), // Very close to first point
+            Point::try_new([1.000_000_1, 0.000_000_1]).expect("finite point coordinates"), // Forms very thin triangle
         ];
 
         let result = circumcenter(&points);
@@ -1064,8 +1088,8 @@ mod tests {
     fn test_circumcenter_1d_case() {
         // Test 1D case (2 points)
         let points = vec![
-            Point::from_validated_coords([0.0]),
-            Point::from_validated_coords([2.0]),
+            Point::try_new([0.0]).expect("finite point coordinates"),
+            Point::try_new([2.0]).expect("finite point coordinates"),
         ];
 
         let center = circumcenter(&points).unwrap();
@@ -1079,12 +1103,12 @@ mod tests {
     fn test_circumcenter_high_dimension() {
         // Test higher dimensional case (5D)
         let points: Vec<Point<5>> = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
 
         let result = circumcenter(&points);
@@ -1129,10 +1153,10 @@ mod tests {
         // Test with precisely known circumcenter values
         // Using a simplex where we can calculate the circumcenter analytically
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([6.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 8.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 10.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([6.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 8.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 10.0]).expect("finite point coordinates"),
         ];
 
         let center = circumcenter(&points).unwrap();
@@ -1156,8 +1180,8 @@ mod tests {
     fn test_circumcenter_invalid_simplex() {
         // Test wrong number of points for dimension
         let points_2d = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
             // Missing third point for 2D circumcenter
         ];
 
@@ -1166,10 +1190,10 @@ mod tests {
 
         // Test too many points
         let points_extra = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0]),
-            Point::from_validated_coords([0.5, 0.5]), // Extra point for 2D
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
+            Point::try_new([0.5, 0.5]).expect("finite point coordinates"), // Extra point for 2D
         ];
 
         let result = circumcenter(&points_extra);
@@ -1180,9 +1204,9 @@ mod tests {
     fn test_circumcenter_degenerate_matrix() {
         // Test collinear points in 2D (should cause matrix inversion to fail)
         let collinear_points = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([2.0, 0.0]), // Collinear with first two
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([2.0, 0.0]).expect("finite point coordinates"), // Collinear with first two
         ];
 
         let result = circumcenter(&collinear_points);
@@ -1202,10 +1226,10 @@ mod tests {
         // solve_exact_rounded_f64 fallback path.
         let eps = 1e-14; // Perturbation small enough to make LU reject
         let points: Vec<Point<3>> = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.5, 0.5, eps]), // Barely off the z=0 plane
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.5, 0.5, eps]).expect("finite point coordinates"), // Barely off the z=0 plane
         ];
 
         let result = circumcenter(&points);
@@ -1246,9 +1270,9 @@ mod tests {
         // DEFAULT_SINGULAR_TOL.
         let eps = 1e-15;
         let points: Vec<Point<2>> = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([0.5, eps]), // Nearly collinear
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.5, eps]).expect("finite point coordinates"), // Nearly collinear
         ];
 
         let result = circumcenter(&points);

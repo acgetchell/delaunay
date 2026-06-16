@@ -20,10 +20,10 @@
 //! use delaunay::prelude::Vertex;
 //!
 //! // Create a simple vertex
-//! let vertex = Vertex::<(), 3>::try_new([1.0, 2.0, 3.0]).expect("finite vertex coordinates");
+//! let vertex = Vertex::<(), 3>::try_new([1.0, 2.0, 3.0])?;
 //!
 //! // Create vertex with data
-//! let vertex_with_data = Vertex::<i32, 2>::try_new_with_data([1.0, 2.0], 42).expect("finite vertex coordinates");
+//! let vertex_with_data = Vertex::<i32, 2>::try_new_with_data([1.0, 2.0], 42)?;
 //! # Ok::<(), delaunay::prelude::geometry::CoordinateConversionError>(())
 //! ```
 
@@ -126,7 +126,7 @@ pub enum VertexValidationError {
 /// use delaunay::prelude::Vertex;
 ///
 /// # fn main() -> Result<(), delaunay::prelude::geometry::CoordinateConversionError> {
-/// let vertex = Vertex::<i32, 3>::try_new_with_data([1.0, 2.0, 3.0], 42).expect("finite vertex coordinates");
+/// let vertex = Vertex::<i32, 3>::try_new_with_data([1.0, 2.0, 3.0], 42)?;
 /// assert_eq!(vertex.data(), Some(&42));
 /// # Ok(())
 /// # }
@@ -427,8 +427,10 @@ impl<U, const D: usize> Vertex<U, D> {
     /// use delaunay::prelude::construction::Vertex;
     /// use delaunay::prelude::geometry::CoordinateConversionError;
     ///
-    /// let err = Vertex::<(), 2>::try_new([f64::INFINITY, 1.0]).unwrap_err();
-    /// std::assert_matches!(err, CoordinateConversionError::NonFiniteValue { coordinate_index: 0, .. });
+    /// std::assert_matches!(
+    ///     Vertex::<(), 2>::try_new([f64::INFINITY, 1.0]),
+    ///     Err(CoordinateConversionError::NonFiniteValue { coordinate_index: 0, .. })
+    /// );
     /// ```
     #[inline]
     pub fn try_new<T>(coords: [T; D]) -> Result<Self, CoordinateConversionError>
@@ -460,8 +462,10 @@ impl<U, const D: usize> Vertex<U, D> {
     /// use delaunay::prelude::construction::Vertex;
     /// use delaunay::prelude::geometry::CoordinateConversionError;
     ///
-    /// let err = Vertex::<&str, 2>::try_new_with_data([f64::NAN, 1.0], "bad").unwrap_err();
-    /// std::assert_matches!(err, CoordinateConversionError::NonFiniteValue { coordinate_index: 0, .. });
+    /// std::assert_matches!(
+    ///     Vertex::<&str, 2>::try_new_with_data([f64::NAN, 1.0], "bad"),
+    ///     Err(CoordinateConversionError::NonFiniteValue { coordinate_index: 0, .. })
+    /// );
     /// ```
     #[inline]
     pub fn try_new_with_data<T>(
@@ -493,7 +497,7 @@ impl<U, const D: usize> Vertex<U, D> {
     /// use delaunay::prelude::geometry::Coordinate;
     /// # fn main() -> Result<(), delaunay::prelude::geometry::CoordinateConversionError> {
     /// let points = [Point::try_from([1.0, 2.0, 3.0])?];
-    /// let vertices: Vec<Vertex<(), 3>> = Vertex::from_points(&points);
+    /// let vertices: Vec<Vertex<(), 3>> = Vertex::from_validated_points(&points);
     /// assert_eq!(vertices.len(), 1);
     /// assert_eq!(vertices[0].point().coords(), &[1.0, 2.0, 3.0]);
     /// # Ok(())
@@ -501,7 +505,7 @@ impl<U, const D: usize> Vertex<U, D> {
     /// ```
     #[inline]
     #[must_use]
-    pub fn from_points(points: &[Point<D>]) -> Vec<Self> {
+    pub fn from_validated_points(points: &[Point<D>]) -> Vec<Self> {
         points
             .iter()
             .copied()
@@ -587,8 +591,15 @@ impl<U, const D: usize> Vertex<U, D> {
     /// use delaunay::prelude::{Point, Vertex, VertexValidationError};
     /// use uuid::Uuid;
     ///
-    /// # fn main() -> Result<(), VertexValidationError> {
-    /// let vertex: Vertex<(), 3> = Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).expect("finite vertex coordinates");
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] VertexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertex: Vertex<(), 3> = Vertex::<(), _>::try_new([1.0, 2.0, 3.0])?;
     /// assert!(vertex.is_valid().is_ok());
     ///
     /// match Vertex::<(), 3>::try_new_with_uuid(Point::default(), Uuid::nil(), None) {
@@ -633,7 +644,14 @@ impl<U, const D: usize> Vertex<U, D> {
     /// use delaunay::prelude::{Point, Vertex};
     /// use uuid::Uuid;
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::VertexValidationError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] delaunay::prelude::VertexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let point = Point::default();
     /// let uuid = Uuid::from_u128(0x67e5504410b1426f9247bb680e5fe0c8);
     /// let vertex = Vertex::<(), 3>::try_new_with_uuid(point, uuid, None)?;
@@ -972,13 +990,13 @@ mod tests {
             epsilon = 1e-9
         );
 
-        // Test Vertex::from_points() with multiple points
+        // Test Vertex::from_validated_points() with multiple points
         let points = vec![
-            Point::from_validated_coords([1.0, 2.0, 3.0]),
-            Point::from_validated_coords([4.0, 5.0, 6.0]),
-            Point::from_validated_coords([7.0, 8.0, 9.0]),
+            Point::try_new([1.0, 2.0, 3.0]).expect("finite point coordinates"),
+            Point::try_new([4.0, 5.0, 6.0]).expect("finite point coordinates"),
+            Point::try_new([7.0, 8.0, 9.0]).expect("finite point coordinates"),
         ];
-        let mut vertices: Vec<Vertex<(), 3>> = Vertex::from_points(&points);
+        let mut vertices: Vec<Vertex<(), 3>> = Vertex::from_validated_points(&points);
 
         assert_eq!(vertices.len(), 3);
         assert_relative_eq!(
@@ -1000,14 +1018,14 @@ mod tests {
         );
         assert_eq!(vertices[2].dim(), 3);
 
-        // Test Vertex::from_points() with empty slice
+        // Test Vertex::from_validated_points() with empty slice
         let empty_points: Vec<Point<3>> = Vec::new();
-        let empty_vertices: Vec<Vertex<(), 3>> = Vertex::from_points(&empty_points);
+        let empty_vertices: Vec<Vertex<(), 3>> = Vertex::from_validated_points(&empty_points);
         assert!(empty_vertices.is_empty());
 
-        // Test Vertex::from_points() with single point
-        let single_point = vec![Point::from_validated_coords([1.0, 2.0, 3.0])];
-        let single_vertices: Vec<Vertex<(), 3>> = Vertex::from_points(&single_point);
+        // Test Vertex::from_validated_points() with single point
+        let single_point = vec![Point::try_new([1.0, 2.0, 3.0]).expect("finite point coordinates")];
+        let single_vertices: Vec<Vertex<(), 3>> = Vertex::from_validated_points(&single_point);
         assert_eq!(single_vertices.len(), 1);
         assert_relative_eq!(
             single_vertices[0].point().coords().as_slice(),
@@ -1055,10 +1073,16 @@ mod tests {
     #[test]
     fn test_try_into_hashmap_rejects_duplicate_uuid() {
         let uuid = make_uuid();
-        let first: Vertex<(), 2> =
-            Vertex::new_with_uuid(Point::from_validated_coords([0.0, 0.0]), uuid, None);
-        let second: Vertex<(), 2> =
-            Vertex::new_with_uuid(Point::from_validated_coords([1.0, 0.0]), uuid, None);
+        let first: Vertex<(), 2> = Vertex::new_with_uuid(
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            uuid,
+            None,
+        );
+        let second: Vertex<(), 2> = Vertex::new_with_uuid(
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            uuid,
+            None,
+        );
 
         assert_matches!(
             Vertex::try_into_hashmap([first, second]),
@@ -1071,7 +1095,7 @@ mod tests {
 
     #[test]
     fn test_try_new_with_uuid_rejects_nil_uuid() {
-        let point = Point::from_validated_coords([1.0, 2.0, 3.0]);
+        let point = Point::try_new([1.0, 2.0, 3.0]).expect("finite point coordinates");
 
         let result = Vertex::<(), 3>::try_new_with_uuid(point, uuid::Uuid::nil(), None);
 
@@ -1085,7 +1109,7 @@ mod tests {
 
     #[test]
     fn test_try_new_with_uuid_preserves_valid_uuid() {
-        let point = Point::from_validated_coords([1.0, 2.0, 3.0]);
+        let point = Point::try_new([1.0, 2.0, 3.0]).expect("finite point coordinates");
         let uuid = make_uuid();
 
         let vertex = Vertex::<u8, 3>::try_new_with_uuid(point, uuid, Some(7)).unwrap();
@@ -1690,7 +1714,7 @@ mod tests {
 
         // Create a vertex with valid point but manually set nil UUID to test UUID validation
         let invalid_uuid_vertex: Vertex<(), 3> = Vertex {
-            point: Point::from_validated_coords([1.0, 2.0, 3.0]),
+            point: Point::try_new([1.0, 2.0, 3.0]).expect("finite point coordinates"),
             uuid: uuid::Uuid::nil(),
             incident_simplex: None,
             data: None,
@@ -1850,7 +1874,7 @@ mod tests {
         assert!(vertex.data.is_none());
 
         // Test deserialization with all fields including SimplexKey
-        let point = Point::from_validated_coords([1.5, 2.5, 3.5]);
+        let point = Point::try_new([1.5, 2.5, 3.5]).expect("finite point coordinates");
         let uuid_str = "550e8400-e29b-41d4-a716-446655440000";
         let uuid = uuid::Uuid::parse_str(uuid_str).unwrap();
         let simplex_key = SimplexKey::from(KeyData::from_ffi(42u64));
@@ -1948,7 +1972,7 @@ mod tests {
 
         // Test validation error for nil UUID
         let vertex_with_nil_uuid = Vertex {
-            point: Point::from_validated_coords([1.0, 2.0, 3.0]),
+            point: Point::try_new([1.0, 2.0, 3.0]).expect("finite point coordinates"),
             uuid: uuid::Uuid::nil(),
             incident_simplex: None,
             data: None::<()>,

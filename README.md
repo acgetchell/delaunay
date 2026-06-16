@@ -105,15 +105,17 @@ points:
 
 - [`DelaunayTriangulationBuilder`] - primary construction interface for common
   and advanced configuration.
-- `DelaunayTriangulation::new(&vertices)` - convenience constructor.
+- `DelaunayTriangulation::try_new(&vertices)` - convenience constructor.
 
 Add the library to your crate:
 
 ```bash
-cargo add delaunay
+cargo add delaunay thiserror
 ```
 
-Examples prefer focused preludes so imports document intent. For the full
+The examples below use `thiserror` only to keep local typed error wrappers
+compact; the triangulation APIs themselves return the crate's concrete error
+types. Examples prefer focused preludes so imports document intent. For the full
 prelude map and namespace policy, see the
 [Focused Prelude Reference](docs/code_organization.md#focused-prelude-reference).
 
@@ -122,20 +124,28 @@ use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
 };
 
-fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+#[derive(Debug, thiserror::Error)]
+enum ExampleError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+}
+
+fn main() -> Result<(), ExampleError> {
     let vertices = vec![
         delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0])
-            .expect("finite vertex coordinates"),
+            ?,
         delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0])
-            .expect("finite vertex coordinates"),
+            ?,
         delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0])
-            .expect("finite vertex coordinates"),
+            ?,
         delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0])
-            .expect("finite vertex coordinates"),
+            ?,
         delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0])
-            .expect("finite vertex coordinates"),
+            ?,
         delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2])
-            .expect("finite vertex coordinates"),
+            ?,
     ];
 
     let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -159,24 +169,35 @@ For coordinate wrapping on a toroidal domain, use
 ```rust
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyKind,
+    ToroidalDomainError,
 };
 
-fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+#[derive(Debug, thiserror::Error)]
+enum ExampleError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    #[error(transparent)]
+    Topology(#[from] ToroidalDomainError),
+}
+
+fn main() -> Result<(), ExampleError> {
     let vertices = vec![
         delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.2])
-            .expect("finite vertex coordinates"),
+            ?,
         delaunay::prelude::Vertex::<(), _>::try_new([0.8, 0.3])
-            .expect("finite vertex coordinates"),
+            ?,
         delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.7])
-            .expect("finite vertex coordinates"),
+            ?,
         // Wraps to [0.2, 0.4].
         delaunay::prelude::Vertex::<(), _>::try_new([1.2, 0.4])
-            .expect("finite vertex coordinates"),
+            ?,
     ];
 
     let dt = DelaunayTriangulationBuilder::new(&vertices)
         .try_canonicalized_toroidal([1.0, 1.0])
-        .expect("unit toroidal domain is valid")
+        ?
         .build::<()>()?;
 
     assert_eq!(dt.topology_kind(), TopologyKind::Toroidal);

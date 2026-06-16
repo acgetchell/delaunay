@@ -72,7 +72,7 @@ macro_rules! test_euler_properties {
                     )
                 ) {
                     // Attempt to build triangulation
-                    if let Ok(dt) = DelaunayTriangulation::new_with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::try_new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -104,7 +104,7 @@ macro_rules! test_euler_properties {
                         $min_vertices..$max_vertices
                     )
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::new_with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::try_new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -144,7 +144,7 @@ macro_rules! test_euler_properties {
                         $min_vertices..$max_vertices
                     )
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::new_with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::try_new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {

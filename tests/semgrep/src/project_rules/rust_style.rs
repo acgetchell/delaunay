@@ -200,6 +200,54 @@ pub fn vertex_try_new_replaces_empty_ok() {
     let _vertex = Vertex::<(), 3>::try_new([0.0, 0.0, 0.0]);
 }
 
+pub fn triangulation_fallible_constructor_names_bad(
+    vertices: &[Vertex<(), 3>],
+    options: ConstructionOptions,
+) {
+    // ruleid: delaunay.rust.no-infallible-fallible-triangulation-constructors
+    let _dt = DelaunayTriangulation::new(vertices);
+    // ruleid: delaunay.rust.no-infallible-fallible-triangulation-constructors
+    let _dt = DelaunayTriangulation::<_, (), (), 3>::new_with_options(vertices, options);
+    // ruleid: delaunay.rust.no-infallible-fallible-triangulation-constructors
+    let _dt = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::with_kernel(
+        &AdaptiveKernel::new(),
+        vertices,
+    );
+}
+
+pub fn triangulation_fallible_constructor_names_ok(
+    vertices: &[Vertex<(), 3>],
+    options: ConstructionOptions,
+) {
+    // ok: delaunay.rust.no-infallible-fallible-triangulation-constructors
+    let _dt = DelaunayTriangulation::try_new(vertices);
+    // ok: delaunay.rust.no-infallible-fallible-triangulation-constructors
+    let _dt = DelaunayTriangulation::<_, (), (), 3>::try_new_with_options(vertices, options);
+    // ok: delaunay.rust.no-infallible-fallible-triangulation-constructors
+    let _dt = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::try_with_kernel(
+        &AdaptiveKernel::new(),
+        vertices,
+    );
+    // ok: delaunay.rust.no-infallible-fallible-triangulation-constructors
+    let _dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    // ok: delaunay.rust.no-infallible-fallible-triangulation-constructors
+    let _builder = DelaunayTriangulationBuilder::new(vertices);
+}
+
+pub fn convex_hull_fallible_constructor_names_bad<TriangulationType>(
+    triangulation: &TriangulationType,
+) {
+    // ruleid: delaunay.rust.no-infallible-fallible-triangulation-constructors
+    let _hull = ConvexHull::from_triangulation(triangulation);
+}
+
+pub fn convex_hull_fallible_constructor_names_ok<TriangulationType>(
+    triangulation: &TriangulationType,
+) {
+    // ok: delaunay.rust.no-infallible-fallible-triangulation-constructors
+    let _hull = ConvexHull::try_from_triangulation(triangulation);
+}
+
 pub fn deserialize_simplex_vertex_keys_bad<M>(mut map: M)
 where
     M: MapAccess<'static>,
@@ -775,18 +823,63 @@ pub enum FlipError {
     ScalarDiagnostic { found: usize },
 }
 
-/// // ruleid: delaunay.rust.no-box-dyn-error-in-doctests
+// ruleid: delaunay.rust.no-box-dyn-error-in-doctests
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 fn doctest_style_error_is_ignored() {}
 
+// ruleid: delaunay.rust.no-unwrap-expect-in-doctests
+/// let value = Some(1_u32).unwrap();
+///
+// ruleid: delaunay.rust.no-unwrap-expect-in-doctests
+/// let value = Ok::<u32, &'static str>(1).expect("doctest should not panic");
+///
+// ruleid: delaunay.rust.no-unwrap-expect-in-doctests
+/// let value = maybe_value.unwrap_or(1_u32);
+///
+// ok: delaunay.rust.no-unwrap-expect-in-doctests
+/// # fn main() -> delaunay::DelaunayResult<()> { Ok(()) }
+///
+// ok: delaunay.rust.no-unwrap-expect-in-doctests
+/// Do not use `.unwrap()` in public examples.
+///
+// ok: delaunay.rust.no-unwrap-expect-in-doctests
+/// Prefer `?` to `.expect("message")` in public examples.
+///
+// ruleid: delaunay.rust.no-unwrap-expect-in-doctests
+/// let vertex = delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates");
+///
+// ruleid: delaunay.rust.no-unwrap-expect-in-doctests
+/// let vertex = delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 1).expect("finite vertex coordinates");
+///
+// ruleid: delaunay.rust.no-unwrap-expect-in-doctests
+/// let vertex: delaunay::prelude::Vertex<(), 2> = maybe_vertex.expect("finite vertex coordinates");
+///
+// ruleid: delaunay.rust.no-unwrap-expect-in-doctests
+/// let vertex = Some(delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])).expect("finite vertex coordinates");
+fn doctest_unwrap_expect_fixture() {}
+
+// ruleid: delaunay.rust.no-box-dyn-error-in-doctests
+/// # fn main() -> anyhow::Error { anyhow::anyhow!("erased") }
+///
+// ok: delaunay.rust.no-box-dyn-error-in-doctests
+/// # fn main() -> delaunay::DelaunayResult<()> { Ok(()) }
+fn doctest_erased_error_fixture() {}
+
+// ruleid: delaunay.rust.prefer-assert-matches-in-doctests
+/// assert!(matches!(value, Some(_)));
+///
+// ok: delaunay.rust.prefer-assert-matches-in-doctests
+/// std::assert_matches!(value, Some(_));
+fn doctest_assert_matches_fixture() {}
+
 /// ```rust
-/// // ruleid: delaunay.rust.prefer-prelude-imports-in-delaunay-doctests
+// ruleid: delaunay.rust.prefer-prelude-imports-in-delaunay-doctests
 /// use delaunay::flips::BistellarFlips;
-/// // ok: delaunay.rust.prefer-prelude-imports-in-delaunay-doctests
+// ok: delaunay.rust.prefer-prelude-imports-in-delaunay-doctests
 /// use delaunay::prelude::DelaunayTriangulation;
-/// // ok: delaunay.rust.prefer-prelude-imports-in-delaunay-doctests
+// ok: delaunay.rust.prefer-prelude-imports-in-delaunay-doctests
 /// # use delaunay::prelude::DelaunayTriangulation as HiddenPreludeImport;
-/// // ruleid: delaunay.rust.prefer-prelude-imports-in-delaunay-doctests
+// ruleid: delaunay.rust.prefer-prelude-imports-in-delaunay-doctests
 /// # use delaunay::flips::BistellarFlips as HiddenDeepImport;
 /// ```
 fn triangulation_doctest_deep_import_fixture() {}

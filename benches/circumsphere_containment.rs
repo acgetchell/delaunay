@@ -55,10 +55,13 @@ fn standard_simplex<const D: usize>() -> Vec<Point<D>> {
 
 /// Generate a random 3D simplex (tetrahedron) for benchmarking using seeded generation
 fn generate_random_simplex_3d(seed: u64) -> Vec<Point<3>> {
-    generate_random_points_in_range_seeded(
-        4,
-        coordinate_range(-10.0, 10.0, "random simplex bounds must be valid"),
-        seed,
+    bench_result(
+        generate_random_points_in_range_seeded(
+            4,
+            coordinate_range(-10.0, 10.0, "random simplex bounds must be valid"),
+            seed,
+        ),
+        "failed to generate random simplex points",
     )
 }
 
@@ -69,6 +72,7 @@ fn generate_random_test_point_3d(seed: u64) -> Point<3> {
         coordinate_range(-5.0, 5.0, "random test point bounds must be valid"),
         seed,
     );
+    let points = bench_result(points, "failed to generate random test point");
     bench_option(points.into_iter().next(), "expected exactly one test point")
 }
 
@@ -83,6 +87,7 @@ fn benchmark_random_queries(c: &mut Criterion) {
         coordinate_range(-5.0, 5.0, "random query bounds must be valid"),
         123,
     );
+    let test_points = bench_result(test_points, "failed to generate random query points");
 
     c.bench_function("random/insphere_1000_queries", |b| {
         b.iter(|| {

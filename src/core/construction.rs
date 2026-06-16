@@ -34,14 +34,24 @@ use thiserror::Error;
 ///     FastKernel, Triangulation, TriangulationConstructionError,
 /// };
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] TriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
 /// ];
 /// let result: Result<_, TriangulationConstructionError> =
 ///     Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices);
 /// assert!(result.is_ok());
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
@@ -235,16 +245,25 @@ where
     /// ```rust
     /// use delaunay::prelude::triangulation::{FastKernel, Triangulation};
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::prelude::triangulation::TriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let tds = Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices)?;
     /// assert_eq!(tds.number_of_vertices(), 3);
     /// assert_eq!(tds.number_of_simplices(), 1);
     /// assert_eq!(tds.dim(), 2);
-    /// # Ok::<(), delaunay::prelude::triangulation::TriangulationConstructionError>(())
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn build_initial_simplex(
         vertices: &[Vertex<U, D>],

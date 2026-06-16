@@ -52,7 +52,7 @@ fn test_non_delaunay_pl_manifold_repaired_2d() {
         delaunay::prelude::Vertex::<(), _>::try_new([2.0, 2.0]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new(&vertices).unwrap();
+        DelaunayTriangulation::try_new(&vertices).unwrap();
 
     // The triangulation is already Delaunay. delaunayize should be a no-op.
     let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap();
@@ -74,7 +74,7 @@ fn test_non_delaunay_pl_manifold_repaired_3d() {
         delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new(&vertices).unwrap();
+        DelaunayTriangulation::try_new(&vertices).unwrap();
 
     let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap();
     assert!(outcome.topology_repair.succeeded);
@@ -96,7 +96,7 @@ fn test_fallback_off_does_not_rebuild() {
         delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new(&vertices).unwrap();
+        DelaunayTriangulation::try_new(&vertices).unwrap();
 
     let config = DelaunayizeConfig {
         fallback_rebuild: false,
@@ -116,7 +116,7 @@ fn test_fallback_on_does_not_trigger_on_valid() {
         delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new(&vertices).unwrap();
+        DelaunayTriangulation::try_new(&vertices).unwrap();
 
     let config = DelaunayizeConfig {
         fallback_rebuild: true,
@@ -143,7 +143,7 @@ fn test_outcome_stats_populated_3d() {
         delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new(&vertices).unwrap();
+        DelaunayTriangulation::try_new(&vertices).unwrap();
 
     let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap();
 
@@ -173,11 +173,11 @@ fn test_repeat_run_determinism_2d() {
     let config = DelaunayizeConfig::default();
 
     let mut dt1: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new(&vertices).unwrap();
+        DelaunayTriangulation::try_new(&vertices).unwrap();
     let outcome1 = delaunayize_by_flips(&mut dt1, config).unwrap();
 
     let mut dt2: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new(&vertices).unwrap();
+        DelaunayTriangulation::try_new(&vertices).unwrap();
     let outcome2 = delaunayize_by_flips(&mut dt2, config).unwrap();
 
     // Stats should be identical across runs on the same input.
@@ -214,11 +214,11 @@ fn test_repeat_run_determinism_3d() {
     let config = DelaunayizeConfig::default();
 
     let mut dt1: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new(&vertices).unwrap();
+        DelaunayTriangulation::try_new(&vertices).unwrap();
     let outcome1 = delaunayize_by_flips(&mut dt1, config).unwrap();
 
     let mut dt2: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new(&vertices).unwrap();
+        DelaunayTriangulation::try_new(&vertices).unwrap();
     let outcome2 = delaunayize_by_flips(&mut dt2, config).unwrap();
 
     assert_eq!(
@@ -246,7 +246,7 @@ fn test_vertex_count_preserved_after_delaunayize() {
         delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new(&vertices).unwrap();
+        DelaunayTriangulation::try_new(&vertices).unwrap();
     let vertex_count_before = dt.number_of_vertices();
 
     let _outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap();
@@ -274,7 +274,7 @@ fn test_flip_breaks_delaunay_then_delaunayize_restores() {
         delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new(&vertices).unwrap();
+        DelaunayTriangulation::try_new(&vertices).unwrap();
     assert!(dt.validate().is_ok(), "Should start valid");
 
     // Collect candidate interior facets (immutable borrow ends before mutation).
@@ -480,7 +480,7 @@ fn test_delaunayize_with_explicit_flip_budget_3d() {
         delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new(&vertices).unwrap();
+        DelaunayTriangulation::try_new(&vertices).unwrap();
 
     let config = DelaunayizeConfig {
         delaunay_max_flips: Some(1000),
@@ -505,7 +505,7 @@ fn test_delaunayize_with_flip_budget_and_fallback_2d() {
         delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new(&vertices).unwrap();
+        DelaunayTriangulation::try_new(&vertices).unwrap();
 
     let config = DelaunayizeConfig {
         delaunay_max_flips: Some(500),
@@ -532,7 +532,7 @@ fn test_flip_breaks_then_delaunayize_with_budget_restores_3d() {
         delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new(&vertices).unwrap();
+        DelaunayTriangulation::try_new(&vertices).unwrap();
     assert!(dt.validate().is_ok());
 
     // Collect candidate interior facets.
@@ -587,7 +587,7 @@ fn test_full_validation_passes_after_delaunayize() {
         delaunay::prelude::Vertex::<(), _>::try_new([0.25, 0.75]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new(&vertices).unwrap();
+        DelaunayTriangulation::try_new(&vertices).unwrap();
 
     let _outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap();
 

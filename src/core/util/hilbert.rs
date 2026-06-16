@@ -2185,7 +2185,7 @@ mod tests {
 
     #[test]
     fn test_point_coords_work_with_hilbert() {
-        let p: Point<2> = Point::from_validated_coords([0.25, 0.75]);
+        let p: Point<2> = Point::try_new([0.25, 0.75]).expect("finite point coordinates");
         let idx = try_hilbert_index(p.coords(), (0.0, 1.0), bit_depth(16)).unwrap();
         assert!(idx > 0);
     }

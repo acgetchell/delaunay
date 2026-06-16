@@ -189,7 +189,7 @@ fn api_benchmark_entries() -> Vec<ApiBenchmarkEntry> {
     vec![
         ApiBenchmarkEntry {
             group: "construction",
-            public_api: "DelaunayTriangulation::new_with_options",
+            public_api: "DelaunayTriangulation::try_new_with_options",
             dimensions: "2,3,4,5",
             benchmark_ids: construction_benchmark_ids(),
             note: "construct_from_calibrated_seeded_and_adversarial_inputs",
@@ -203,7 +203,7 @@ fn api_benchmark_entries() -> Vec<ApiBenchmarkEntry> {
         },
         ApiBenchmarkEntry {
             group: "convex_hull",
-            public_api: "ConvexHull::from_triangulation",
+            public_api: "ConvexHull::try_from_triangulation",
             dimensions: "2,3,4,5",
             benchmark_ids: operation_benchmark_ids("convex_hull", "from_triangulation"),
             note: "extract_hull_from_well_conditioned_and_adversarial_triangulations",
@@ -381,7 +381,7 @@ fn prepare_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangulation
     });
 
     bench_result(
-        BenchTriangulation::<D>::new_with_options(&vertices, options),
+        BenchTriangulation::<D>::try_new_with_options(&vertices, options),
         format!("failed to prepare {D}D benchmark triangulation with {count} vertices"),
     )
 }
@@ -395,7 +395,7 @@ fn prepare_adv_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangula
     });
 
     bench_result(
-        BenchTriangulation::<D>::new_with_options(&vertices, options),
+        BenchTriangulation::<D>::try_new_with_options(&vertices, options),
         format!("failed to prepare adversarial {D}D benchmark triangulation with {count} vertices"),
     )
 }
@@ -410,25 +410,20 @@ fn prepare_inserts<const D: usize>(
         seed ^= 0xA5A5_A5A5;
     }
     let points = match dataset {
-        Dataset::WellConditioned => generate_random_points_in_range_seeded::<D>(
-            count,
-            bench_result(
-                CoordinateRange::try_new(-50.0_f64, 50.0),
-                "insert benchmark bounds must be valid",
+        Dataset::WellConditioned => bench_result(
+            generate_random_points_in_range_seeded::<D>(
+                count,
+                bench_result(
+                    CoordinateRange::try_new(-50.0_f64, 50.0),
+                    "insert benchmark bounds must be valid",
+                ),
+                seed,
             ),
-            seed,
+            "failed to generate insert benchmark points",
         ),
         Dataset::Adversarial => generate_adv_points::<D>(count, seed),
     };
-    points
-        .iter()
-        .map(|point| {
-            bench_result(
-                delaunay::prelude::Vertex::<(), _>::try_new((*point).into()),
-                "finite benchmark vertex coordinates",
-            )
-        })
-        .collect()
+    Vertex::from_validated_points(&points)
 }
 
 fn find_seed_vertices<const D: usize>(
@@ -440,23 +435,18 @@ fn find_seed_vertices<const D: usize>(
 ) -> SeedSearchResult<D> {
     for offset in 0..limit {
         let candidate_seed = start_seed.wrapping_add(offset as u64);
-        let points = generate_random_points_in_range_seeded::<D>(count, bounds, candidate_seed);
-        let vertices = points
-            .iter()
-            .map(|p| {
-                bench_result(
-                    delaunay::prelude::Vertex::<(), _>::try_new((*p).into()),
-                    "finite benchmark vertex coordinates",
-                )
-            })
-            .collect::<Vec<_>>();
+        let points = bench_result(
+            generate_random_points_in_range_seeded::<D>(count, bounds, candidate_seed),
+            "failed to generate candidate benchmark points",
+        );
+        let vertices = Vertex::from_validated_points(&points);
 
         let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
             attempts,
             base_seed: Some(candidate_seed),
         });
 
-        if DelaunayTriangulation::<_, (), (), D>::new_with_options(&vertices, options).is_ok() {
+        if DelaunayTriangulation::<_, (), (), D>::try_new_with_options(&vertices, options).is_ok() {
             return Some((candidate_seed, points, vertices));
         }
     }
@@ -470,21 +460,13 @@ fn stable_adv_points<const D: usize>(
     attempts: NonZeroUsize,
 ) -> SeedSearchResult<D> {
     let points = generate_adv_points::<D>(count, seed);
-    let vertices = points
-        .iter()
-        .map(|p| {
-            bench_result(
-                delaunay::prelude::Vertex::<(), _>::try_new((*p).into()),
-                "finite benchmark vertex coordinates",
-            )
-        })
-        .collect::<Vec<_>>();
+    let vertices = Vertex::from_validated_points(&points);
     let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
         attempts,
         base_seed: Some(seed),
     });
 
-    BenchTriangulation::<D>::new_with_options(&vertices, options)
+    BenchTriangulation::<D>::try_new_with_options(&vertices, options)
         .is_ok()
         .then_some((seed, points, vertices))
 }
@@ -527,13 +509,16 @@ fn prepare_adv_data<const D: usize>(
 }
 
 fn generate_adv_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<D>> {
-    let base_points = generate_random_points_in_range_seeded::<D>(
-        count,
-        bench_result(
-            CoordinateRange::try_new(-1.0_f64, 1.0),
-            "adversarial benchmark bounds must be valid",
+    let base_points = bench_result(
+        generate_random_points_in_range_seeded::<D>(
+            count,
+            bench_result(
+                CoordinateRange::try_new(-1.0_f64, 1.0),
+                "adversarial benchmark bounds must be valid",
+            ),
+            seed,
         ),
-        seed,
+        "failed to generate adversarial benchmark base points",
     );
 
     base_points
@@ -893,7 +878,7 @@ fn emit_construction_metric<const D: usize>(
     options: ConstructionOptions,
 ) {
     let dt = bench_result(
-        BenchTriangulation::<D>::new_with_options(vertices, options),
+        BenchTriangulation::<D>::try_new_with_options(vertices, options),
         format!("failed to collect construction metrics for {benchmark_id}"),
     );
     println!(
@@ -1046,7 +1031,7 @@ macro_rules! benchmark_tds_new_dimension {
                     emit_construction_metric::<$dim>(&bench_id, &vertices, options);
 
                     b.iter(|| {
-                        match DelaunayTriangulation::<_, (), (), $dim>::new_with_options(
+                        match DelaunayTriangulation::<_, (), (), $dim>::try_new_with_options(
                             &vertices,
                             options,
                         ) {
@@ -1056,7 +1041,7 @@ macro_rules! benchmark_tds_new_dimension {
                             Err(err) => {
                                 let error = format!("{err:?}");
                                 abort_benchmark(format_args!(
-                                    "DelaunayTriangulation::new failed for {}D: {error}; dim={}; count={}; seed={}; bounds={:?}; sample_points={sample_points:?}",
+                                    "DelaunayTriangulation::try_new_with_options failed for {}D: {error}; dim={}; count={}; seed={}; bounds={:?}; sample_points={sample_points:?}",
                                     $dim,
                                     $dim,
                                     count,
@@ -1085,7 +1070,7 @@ macro_rules! benchmark_tds_new_dimension {
                         emit_construction_metric::<$dim>(&adv_bench_id, &vertices, options);
 
                         b.iter(|| {
-                            match DelaunayTriangulation::<_, (), (), $dim>::new_with_options(
+                            match DelaunayTriangulation::<_, (), (), $dim>::try_new_with_options(
                                 &vertices,
                                 options,
                             ) {
@@ -1095,7 +1080,7 @@ macro_rules! benchmark_tds_new_dimension {
                                 Err(err) => {
                                     let error = format!("{err:?}");
                                     abort_benchmark(format_args!(
-                                        "adversarial DelaunayTriangulation::new failed for {}D: {error}; dim={}; count={}; seed={}; sample_points={sample_points:?}",
+                                        "adversarial DelaunayTriangulation::try_new_with_options failed for {}D: {error}; dim={}; count={}; seed={}; sample_points={sample_points:?}",
                                         $dim,
                                         $dim,
                                         count,
@@ -1159,7 +1144,7 @@ fn bench_hull_case<const D: usize>(
         ),
         |b| {
             b.iter(|| {
-                let hull = match ConvexHull::from_triangulation(dt.as_triangulation()) {
+                let hull = match ConvexHull::try_from_triangulation(dt.as_triangulation()) {
                     Ok(value) => value,
                     Err(error) => abort_benchmark(format_args!(
                         "convex hull extraction should succeed: {error}"
@@ -1203,7 +1188,7 @@ fn bench_hull_query_case<const D: usize>(
     count: usize,
     dt: &BenchTriangulation<D>,
 ) {
-    let hull = match ConvexHull::from_triangulation(dt.as_triangulation()) {
+    let hull = match ConvexHull::try_from_triangulation(dt.as_triangulation()) {
         Ok(value) => value,
         Err(error) => abort_benchmark(format_args!(
             "convex hull extraction should succeed before query benchmarks: {error}"

@@ -182,7 +182,7 @@ fn regression_empty_circumsphere_2d_minimal_case() {
     ];
 
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -212,7 +212,7 @@ fn regression_issue_120_minimal_failing_input_2d() {
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -297,7 +297,8 @@ fn regression_issue_306_3d_construction_succeeds() {
         .map(|p| delaunay::prelude::Vertex::<(), _>::try_new(p.into()).unwrap())
         .collect();
 
-    let dt: Result<DelaunayTriangulation<_, (), (), 3>, _> = DelaunayTriangulation::new(&vertices);
+    let dt: Result<DelaunayTriangulation<_, (), (), 3>, _> =
+        DelaunayTriangulation::try_new(&vertices);
     assert!(
         dt.is_ok(),
         "35-vertex 3D construction with seed 0x{seed:X} should succeed \
@@ -320,7 +321,7 @@ fn regression_issue_307_4d_bulk_repair_keeps_positive_orientation() {
         .with_insertion_order(InsertionOrderStrategy::Input)
         .with_retry_policy(RetryPolicy::Disabled);
     let (dt, stats) =
-        DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::with_options_and_statistics(
+        DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::try_with_options_and_statistics(
             &kernel,
             &vertices,
             TopologyGuarantee::PLManifoldStrict,
@@ -384,7 +385,7 @@ fn regression_issue_204_4d_500_local_repair_budget() {
         .collect();
 
     let (dt, stats) =
-        DelaunayTriangulation::<_, (), (), 4>::new_with_construction_statistics(&vertices)
+        DelaunayTriangulation::<_, (), (), 4>::try_new_with_construction_statistics(&vertices)
             .unwrap_or_else(|e| {
                 panic!(
                     "#204 regression: 4D {n_points}-point construction with seed 0x{seed:X} \

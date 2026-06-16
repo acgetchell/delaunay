@@ -79,7 +79,7 @@ fn report_valid_triangulation() -> Result<(), DiagnosticsExampleError> {
         delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
         delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     ];
-    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::try_new(&vertices)?;
 
     let report = delaunay_violation_report(dt.tds(), None)?;
 
@@ -130,7 +130,7 @@ fn build_non_delaunay_triangulation_2d()
         delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0])?,
         delaunay::prelude::Vertex::<(), _>::try_new([3.0, 1.0])?,
     ];
-    let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices)?;
+    let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::try_new(&vertices)?;
 
     for (simplex_key, simplex) in dt.simplices() {
         if let Some(neighbors) = simplex.neighbors() {

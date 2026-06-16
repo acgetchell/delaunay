@@ -194,10 +194,8 @@ let vertices = vec![
 ];
 
 let dt = DelaunayTriangulationBuilder::new(&vertices)
-    .try_canonicalized_toroidal([1.0, 1.0])
-    .expect("unit toroidal domain is valid") // Canonicalized toroidal construction
-    .build::<()>()
-    .unwrap();
+    .try_canonicalized_toroidal([1.0, 1.0])? // Canonicalized toroidal construction
+    .build::<()>()?;
 ```
 
 Canonicalized toroidal construction wraps coordinates into the fundamental

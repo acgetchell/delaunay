@@ -384,14 +384,16 @@ pub enum RidgeVerticesError {
 /// #     #[error(transparent)] Construction(#[from] DelaunayTriangulationConstructionError),
 /// #     #[error(transparent)] Ridge(#[from] RidgeVerticesError),
 /// #     #[error("constructed triangulation has no vertex keys")] Empty,
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
 /// ];
-/// let triangulation = DelaunayTriangulation::new(&vertices)?;
+/// let triangulation = DelaunayTriangulation::try_new(&vertices)?;
 /// let Some(v0) = triangulation.tds().vertex_keys().next() else {
 ///     return Err(ExampleError::Empty);
 /// };
@@ -433,15 +435,17 @@ impl<const D: usize> RidgeVertices<D> {
     /// #     #[error(transparent)] Construction(#[from] DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)] Ridge(#[from] RidgeVerticesError),
     /// #     #[error("constructed triangulation has fewer than two vertex keys")] TooFewVertices,
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
-    /// let triangulation = DelaunayTriangulation::new(&vertices)?;
+    /// let triangulation = DelaunayTriangulation::try_new(&vertices)?;
     /// let keys = triangulation.tds().vertex_keys().collect::<Vec<_>>();
     /// let [v0, v1, ..] = keys.as_slice() else {
     ///     return Err(ExampleError::TooFewVertices);
@@ -518,13 +522,15 @@ impl<const D: usize> RidgeVertices<D> {
 /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
 /// #     #[error(transparent)] Construction(#[from] delaunay::prelude::triangulation::TriangulationConstructionError),
 /// #     #[error(transparent)] Manifold(#[from] delaunay::prelude::topology::validation::ManifoldError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
 /// ];
 /// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices)?;
 /// let facet_to_simplices = tds.build_facet_to_simplices_map()?;
@@ -582,13 +588,15 @@ pub fn validate_facet_degree(
 /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
 /// #     #[error(transparent)] Construction(#[from] delaunay::prelude::triangulation::TriangulationConstructionError),
 /// #     #[error(transparent)] Manifold(#[from] delaunay::prelude::topology::validation::ManifoldError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
 /// ];
 /// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices)?;
 /// let facet_to_simplices = tds.build_facet_to_simplices_map()?;
@@ -1141,14 +1149,16 @@ fn simplex_link_simplices_from_star<U, V, const D: usize>(
 /// #     #[error(transparent)] Ridge(#[from] RidgeVerticesError),
 /// #     #[error(transparent)] Manifold(#[from] ManifoldError),
 /// #     #[error("constructed triangulation has no vertex keys")] Empty,
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
 /// ];
-/// let triangulation = DelaunayTriangulation::new(&vertices)?;
+/// let triangulation = DelaunayTriangulation::try_new(&vertices)?;
 /// let Some(v0) = triangulation.tds().vertex_keys().next() else {
 ///     return Err(ExampleError::Empty);
 /// };
@@ -1581,13 +1591,15 @@ fn periodic_aware_ridge_star<U, V, const D: usize>(
 /// # enum ExampleError {
 /// #     #[error(transparent)] Construction(#[from] delaunay::prelude::triangulation::TriangulationConstructionError),
 /// #     #[error(transparent)] Manifold(#[from] delaunay::prelude::topology::validation::ManifoldError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
 /// ];
 /// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices)?;
 ///
@@ -1663,13 +1675,15 @@ pub fn validate_ridge_links<U, V, const D: usize>(tds: &Tds<U, V, D>) -> Result<
 /// # enum ExampleError {
 /// #     #[error(transparent)] Construction(#[from] delaunay::prelude::triangulation::TriangulationConstructionError),
 /// #     #[error(transparent)] Manifold(#[from] delaunay::prelude::topology::validation::ManifoldError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
 /// ];
 /// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices)?;
 /// let simplices: SimplexKeyBuffer = tds.simplices().map(|(k, _)| k).collect();
@@ -1756,13 +1770,15 @@ pub fn validate_ridge_links_for_simplices<U, V, const D: usize>(
 /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
 /// #     #[error(transparent)] Construction(#[from] delaunay::prelude::triangulation::TriangulationConstructionError),
 /// #     #[error(transparent)] Manifold(#[from] delaunay::prelude::topology::validation::ManifoldError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
 /// ];
 /// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices)?;
 /// let facet_to_simplices = tds.build_facet_to_simplices_map()?;

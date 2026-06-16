@@ -770,11 +770,11 @@ pub(crate) struct LocateTrace {
 /// # fn main() -> Result<(), ExampleError> {
 /// // Create a 4D simplex (5 vertices)
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0])?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let kernel = FastKernel::<f64>::new();
@@ -816,11 +816,11 @@ pub(crate) struct LocateTrace {
 /// # fn main() -> Result<(), ExampleError> {
 /// // Create a 4D simplex
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0])?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let kernel = RobustKernel::<f64>::default();
@@ -880,9 +880,9 @@ where
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
 /// ];
 /// let dt: DelaunayTriangulation<_, (), (), 2> =
 ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1250,11 +1250,11 @@ const fn conflict_simplex_points_error(
 /// # fn main() -> Result<(), ExampleError> {
 /// // Create a 4D simplex (5 vertices forming a 4-simplex)
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0])?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
@@ -1669,11 +1669,11 @@ where
 /// # fn main() -> Result<(), ExampleError> {
 /// // Create a 4D simplex
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0])?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
@@ -2174,7 +2174,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let tds = dt.tds();
         let simplex_key = tds.simplex_keys().next().unwrap();
         let simplex = tds.simplex(simplex_key).unwrap();
@@ -2379,7 +2379,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Get the single simplex
@@ -2400,7 +2400,7 @@ mod tests {
         println!("Simplex orientation: {simplex_orientation}");
 
         // Test query point inside
-        let query_inside = Point::from_validated_coords([0.3, 0.3]);
+        let query_inside = Point::try_new([0.3, 0.3]).expect("finite point coordinates");
 
         // For each facet, test if point is outside using the actual function
         for facet_idx in 0..3 {
@@ -2418,7 +2418,7 @@ mod tests {
         }
 
         // Test query point outside
-        let query_outside = Point::from_validated_coords([2.0, 2.0]);
+        let query_outside = Point::try_new([2.0, 2.0]).expect("finite point coordinates");
         let mut found_outside_facet = false;
 
         for facet_idx in 0..3 {
@@ -2444,7 +2444,7 @@ mod tests {
     fn test_locate_empty_triangulation() {
         let tds: Tds<(), (), 3> = Tds::empty();
         let kernel = FastKernel::<f64>::new();
-        let point = Point::from_validated_coords([0.0, 0.0, 0.0]);
+        let point = Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates");
 
         let result = locate(&tds, &kernel, &point, None);
         assert_matches!(result, Err(LocateError::EmptyTriangulation));
@@ -2457,11 +2457,11 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Point inside the triangle
-        let point = Point::from_validated_coords([0.3, 0.3]);
+        let point = Point::try_new([0.3, 0.3]).expect("finite point coordinates");
         let result = locate(dt.tds(), &kernel, &point, None);
 
         match result {
@@ -2480,11 +2480,11 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Point inside the tetrahedron
-        let point = Point::from_validated_coords([0.25, 0.25, 0.25]);
+        let point = Point::try_new([0.25, 0.25, 0.25]).expect("finite point coordinates");
         let result = locate(dt.tds(), &kernel, &point, None);
 
         match result {
@@ -2502,11 +2502,11 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Point far outside the triangle
-        let point = Point::from_validated_coords([10.0, 10.0]);
+        let point = Point::try_new([10.0, 10.0]).expect("finite point coordinates");
         let result = locate(dt.tds(), &kernel, &point, None);
 
         assert_matches!(result, Ok(LocateResult::Outside));
@@ -2520,11 +2520,11 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Point far outside the tetrahedron
-        let point = Point::from_validated_coords([2.0, 2.0, 2.0]);
+        let point = Point::try_new([2.0, 2.0, 2.0]).expect("finite point coordinates");
         let result = locate(dt.tds(), &kernel, &point, None);
 
         assert_matches!(result, Ok(LocateResult::Outside));
@@ -2538,12 +2538,12 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Get a valid simplex as hint
         let hint_simplex = dt.tds().simplex_keys().next().unwrap();
-        let point = Point::from_validated_coords([0.25, 0.25, 0.25]);
+        let point = Point::try_new([0.25, 0.25, 0.25]).expect("finite point coordinates");
 
         let result = locate(dt.tds(), &kernel, &point, Some(hint_simplex));
         assert_matches!(result, Ok(LocateResult::InsideSimplex(_)));
@@ -2556,10 +2556,10 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let kernel = RobustKernel::<f64>::default();
 
-        let point = Point::from_validated_coords([0.3, 0.3]);
+        let point = Point::try_new([0.3, 0.3]).expect("finite point coordinates");
         let result = locate(dt.tds(), &kernel, &point, None);
 
         assert_matches!(result, Ok(LocateResult::InsideSimplex(_)));
@@ -2576,7 +2576,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
         let simplex_key = dt.tds().simplex_keys().next().unwrap();
@@ -2589,7 +2589,7 @@ mod tests {
 
         // Point outside the simplex: walking will attempt to cross a facet, hit the self-loop,
         // detect a cycle, and fall back to scan.
-        let point = Point::from_validated_coords([10.0, 10.0]);
+        let point = Point::try_new([10.0, 10.0]).expect("finite point coordinates");
         let (result, stats) = locate_with_stats(dt.tds(), &kernel, &point, None).unwrap();
 
         assert_matches!(result, LocateResult::Outside);
@@ -2614,11 +2614,11 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
         let simplex_key = dt.tds().simplex_keys().next().unwrap();
-        let point = Point::from_validated_coords([0.25, 0.25, 0.25]); // Inside tetrahedron
+        let point = Point::try_new([0.25, 0.25, 0.25]).expect("finite point coordinates"); // Inside tetrahedron
 
         // Test all facets - point should not be outside any of them
         for facet_idx in 0..4 {
@@ -2635,11 +2635,11 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
         let simplex_key = dt.tds().simplex_keys().next().unwrap();
-        let point = Point::from_validated_coords([2.0, 2.0, 2.0]); // Outside tetrahedron
+        let point = Point::try_new([2.0, 2.0, 2.0]).expect("finite point coordinates"); // Outside tetrahedron
 
         // At least one facet should show the point as outside
         let mut found_outside = false;
@@ -2665,11 +2665,11 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let kernel = RobustKernel::<f64>::default();
 
         // Point very close to an edge but still inside
-        let point = Point::from_validated_coords([0.01, 0.01]);
+        let point = Point::try_new([0.01, 0.01]).expect("finite point coordinates");
         let result = locate(dt.tds(), &kernel, &point, None);
 
         // Should either be inside or on the edge, not outside
@@ -2685,10 +2685,10 @@ mod tests {
             let vertices: Vec<_> = vec![
                 $(crate::core::vertex::Vertex::<(), _>::try_new($coords).unwrap()),+
             ];
-            let dt = DelaunayTriangulation::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
             let kernel = FastKernel::<f64>::new();
 
-            let point = Point::from_validated_coords($inside_point);
+            let point = Point::try_new($inside_point).expect("finite point coordinates");
             let result = locate(dt.tds(), &kernel, &point, None);
 
             assert!(
@@ -2749,11 +2749,11 @@ mod tests {
             let vertices: Vec<_> = vec![
                 $(crate::core::vertex::Vertex::<(), _>::try_new($coords).unwrap()),+
             ];
-            let dt = DelaunayTriangulation::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
             let kernel = FastKernel::<f64>::new();
 
             let start_simplex = dt.tds().simplex_keys().next().unwrap();
-            let point = Point::from_validated_coords($inside_point);
+            let point = Point::try_new($inside_point).expect("finite point coordinates");
 
             let conflict_simplices = find_conflict_region(dt.tds(), &kernel, &point, start_simplex).unwrap();
 
@@ -2819,11 +2819,11 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
         let start_simplex = dt.tds().simplex_keys().next().unwrap();
-        let point = Point::from_validated_coords([10.0, 10.0, 10.0]); // Far outside
+        let point = Point::try_new([10.0, 10.0, 10.0]).expect("finite point coordinates"); // Far outside
 
         let conflict_simplices =
             find_conflict_region(dt.tds(), &kernel, &point, start_simplex).unwrap();
@@ -2843,12 +2843,12 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Create invalid simplex key
         let invalid_simplex = SimplexKey::from(KeyData::from_ffi(999_999));
-        let point = Point::from_validated_coords([0.3, 0.3]);
+        let point = Point::try_new([0.3, 0.3]).expect("finite point coordinates");
 
         let result = find_conflict_region(dt.tds(), &kernel, &point, invalid_simplex);
 
@@ -2866,11 +2866,11 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let kernel = RobustKernel::<f64>::default();
 
         let start_simplex = dt.tds().simplex_keys().next().unwrap();
-        let point = Point::from_validated_coords([0.3, 0.3]);
+        let point = Point::try_new([0.3, 0.3]).expect("finite point coordinates");
 
         let conflict_simplices =
             find_conflict_region(dt.tds(), &kernel, &point, start_simplex).unwrap();
@@ -2888,7 +2888,7 @@ mod tests {
             let vertices: Vec<_> = vec![
                 $(crate::core::vertex::Vertex::<(), _>::try_new($coords).unwrap()),+
             ];
-            let dt = DelaunayTriangulation::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
             let start_simplex = dt.tds().simplex_keys().next().unwrap();
             let mut conflict_simplices = SimplexKeyBuffer::new();
@@ -2962,7 +2962,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
         let conflict_simplices = SimplexKeyBuffer::new(); // Empty
 
@@ -2982,9 +2982,9 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
-        let point = Point::from_validated_coords([0.25, 0.25]);
+        let point = Point::try_new([0.25, 0.25]).expect("finite point coordinates");
 
         let invalid_hint = SimplexKey::from(KeyData::from_ffi(999_999));
         let expected_start = dt.tds().simplex_keys().next().unwrap();
@@ -3004,12 +3004,12 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
         let expected_simplex = dt.tds().simplex_keys().next().unwrap();
 
-        let inside = Point::from_validated_coords([0.2, 0.2]);
-        let outside = Point::from_validated_coords([3.0, 3.0]);
+        let inside = Point::try_new([0.2, 0.2]).expect("finite point coordinates");
+        let outside = Point::try_new([3.0, 3.0]).expect("finite point coordinates");
 
         assert_eq!(
             locate_by_scan(dt.tds(), &kernel, &inside).unwrap(),
@@ -3161,9 +3161,9 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
-        let point = Point::from_validated_coords([0.2, 0.2]);
+        let point = Point::try_new([0.2, 0.2]).expect("finite point coordinates");
         let hint = dt.tds().simplex_keys().next().unwrap();
 
         let (result, stats) = locate_with_stats(dt.tds(), &kernel, &point, Some(hint)).unwrap();
@@ -3178,7 +3178,7 @@ mod tests {
     fn test_locate_by_scan_empty_returns_outside() {
         let tds: Tds<(), (), 2> = Tds::empty();
         let kernel = FastKernel::<f64>::new();
-        let point = Point::from_validated_coords([0.0, 0.0]);
+        let point = Point::try_new([0.0, 0.0]).expect("finite point coordinates");
 
         assert_eq!(
             locate_by_scan(&tds, &kernel, &point).unwrap(),
@@ -3193,7 +3193,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
         let invalid = SimplexKey::from(KeyData::from_ffi(424_242));
         let mut conflict_simplices = SimplexKeyBuffer::new();
@@ -3241,7 +3241,7 @@ mod tests {
         }
 
         let kernel = FastKernel::<f64>::new();
-        let point = Point::from_validated_coords([0.3, 0.3]);
+        let point = Point::try_new([0.3, 0.3]).expect("finite point coordinates");
         let result = is_point_outside_facet(&tds, &kernel, simplex_key, 0, &point);
         assert!(
             matches!(
@@ -3282,7 +3282,7 @@ mod tests {
             .unwrap();
 
         let kernel = FastKernel::<f64>::new();
-        let point = Point::from_validated_coords([0.3, 0.3]);
+        let point = Point::try_new([0.3, 0.3]).expect("finite point coordinates");
         let result = is_point_outside_facet(&tds, &kernel, simplex_key, 3, &point);
 
         assert!(
@@ -3338,7 +3338,7 @@ mod tests {
         }
 
         let kernel = FastKernel::<f64>::new();
-        let point = Point::from_validated_coords([0.3, 0.3]);
+        let point = Point::try_new([0.3, 0.3]).expect("finite point coordinates");
         // facet_idx=0 → opposite_key = missing → unresolvable.
         let result = is_point_outside_facet(&tds, &kernel, simplex_key, 0, &point);
         assert!(
@@ -3393,7 +3393,7 @@ mod tests {
         }
 
         let kernel = FastKernel::<f64>::new();
-        let point = Point::from_validated_coords([0.3_f64, 0.3_f64]);
+        let point = Point::try_new([0.3_f64, 0.3_f64]).expect("finite point coordinates");
 
         // One facet vertex is missing from the TDS, so canonical point collection fails.
         let result = is_point_outside_facet(&tds, &kernel, simplex_key, 0, &point);
@@ -3449,7 +3449,7 @@ mod tests {
         let kernel = FastKernel::<f64>::new();
         // Point inside the circumcircle so the start simplex is in conflict
         // and BFS tries to visit the ghost neighbor.
-        let point = Point::from_validated_coords([0.2, 0.2]);
+        let point = Point::try_new([0.2, 0.2]).expect("finite point coordinates");
         let result = find_conflict_region(&tds, &kernel, &point, simplex_key);
         assert!(
             matches!(
@@ -3496,7 +3496,7 @@ mod tests {
         }
 
         let kernel = FastKernel::<f64>::new();
-        let point = Point::from_validated_coords([0.3, 0.3]);
+        let point = Point::try_new([0.3, 0.3]).expect("finite point coordinates");
         let result = find_conflict_region(&tds, &kernel, &point, simplex_key);
         assert!(
             matches!(
@@ -3550,7 +3550,7 @@ mod tests {
         }
 
         let kernel = FastKernel::<f64>::new();
-        let point = Point::from_validated_coords([0.3_f64, 0.3_f64]);
+        let point = Point::try_new([0.3_f64, 0.3_f64]).expect("finite point coordinates");
 
         // BFS visits the simplex; canonical point collection rejects the missing vertex.
         let result = find_conflict_region(&tds, &kernel, &point, simplex_key);
@@ -3575,9 +3575,9 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
-        let point = Point::from_validated_coords([0.25_f64, 0.25_f64]);
+        let point = Point::try_new([0.25_f64, 0.25_f64]).expect("finite point coordinates");
 
         let (result, stats) = locate_with_stats(dt.tds(), &kernel, &point, None).unwrap();
 
@@ -3601,11 +3601,11 @@ mod tests {
             let vertices: Vec<_> = vec![
                 $(crate::core::vertex::Vertex::<(), _>::try_new($coords).unwrap()),+
             ];
-            let dt = DelaunayTriangulation::new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
             let kernel = FastKernel::<f64>::new();
 
             let start_simplex = dt.tds().simplex_keys().next().unwrap();
-            let point = Point::from_validated_coords($inside_point);
+            let point = Point::try_new($inside_point).expect("finite point coordinates");
 
             let conflict_simplices = find_conflict_region(dt.tds(), &kernel, &point, start_simplex).unwrap();
             assert!(
@@ -3691,11 +3691,11 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Point inside the circumcircle — the single simplex should be in conflict.
-        let point = Point::from_validated_coords([0.3, 0.3]);
+        let point = Point::try_new([0.3, 0.3]).expect("finite point coordinates");
         let empty_bfs = SimplexKeyBuffer::new();
 
         let missed = verify_conflict_region_completeness(dt.tds(), &kernel, &point, &empty_bfs);
@@ -3715,11 +3715,11 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
         let start_simplex = dt.tds().simplex_keys().next().unwrap();
-        let point = Point::from_validated_coords([10.0, 10.0, 10.0]);
+        let point = Point::try_new([10.0, 10.0, 10.0]).expect("finite point coordinates");
 
         let conflict_simplices =
             find_conflict_region(dt.tds(), &kernel, &point, start_simplex).unwrap();
@@ -3753,11 +3753,11 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([4.0, 3.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 3.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
         let start_simplex = dt.tds().simplex_keys().next().unwrap();
-        let point = Point::from_validated_coords([2.0, 1.5]);
+        let point = Point::try_new([2.0, 1.5]).expect("finite point coordinates");
 
         let full_conflict = find_conflict_region(dt.tds(), &kernel, &point, start_simplex).unwrap();
         assert!(

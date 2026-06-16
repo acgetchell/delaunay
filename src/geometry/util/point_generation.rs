@@ -11,7 +11,7 @@ use crate::geometry::coordinate_range::{
     CoordinateRange, CoordinateRangeError, InvalidCoordinateValue,
 };
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::CoordinateConversionError;
+use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateValidationError};
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 use std::{any::type_name, env, num::NonZeroUsize};
@@ -146,6 +146,13 @@ pub enum RandomPointGenerationError<T = f64> {
         target_type: &'static str,
         /// The coordinate conversion failure.
         source: CoordinateConversionError,
+    },
+
+    /// Generated coordinates failed the point validation boundary.
+    #[error("Generated point coordinates were invalid: {source}")]
+    GeneratedPointCoordinateRejected {
+        /// The coordinate validation failure.
+        source: CoordinateValidationError,
     },
 
     /// Requested grid dimensions overflowed `usize`.
@@ -289,12 +296,23 @@ pub fn scaled_bounds_by_point_count(
 }
 
 /// Samples one point from an already-validated coordinate range.
-fn sample_point_in_range<R, const D: usize>(range: CoordinateRange<f64>, rng: &mut R) -> Point<D>
+fn point_from_generated_coords<const D: usize>(
+    coords: [f64; D],
+) -> Result<Point<D>, RandomPointGenerationError> {
+    Point::try_new(coords)
+        .map_err(|source| RandomPointGenerationError::GeneratedPointCoordinateRejected { source })
+}
+
+/// Samples one point from an already-validated coordinate range.
+fn sample_point_in_range<R, const D: usize>(
+    range: CoordinateRange<f64>,
+    rng: &mut R,
+) -> Result<Point<D>, RandomPointGenerationError>
 where
     R: rand::Rng + ?Sized,
 {
     let coords = [0.0; D].map(|_| rng.random_range(range.min()..range.max()));
-    Point::from_validated_coords(coords)
+    point_from_generated_coords(coords)
 }
 
 /// Generates points from an already-validated coordinate range.
@@ -302,17 +320,17 @@ fn generate_random_points_in_range_with_rng<R, const D: usize>(
     n_points: usize,
     range: CoordinateRange<f64>,
     rng: &mut R,
-) -> Vec<Point<D>>
+) -> Result<Vec<Point<D>>, RandomPointGenerationError>
 where
     R: rand::Rng + ?Sized,
 {
     let mut points = Vec::with_capacity(n_points);
 
     for _ in 0..n_points {
-        points.push(sample_point_in_range(range, rng));
+        points.push(sample_point_in_range(range, rng)?);
     }
 
-    points
+    Ok(points)
 }
 
 /// Parsed Poisson disk spacing policy for public Poisson generators.
@@ -472,7 +490,7 @@ pub fn try_generate_random_points<const D: usize>(
     let range = CoordinateRange::try_from(range)?;
 
     let mut rng = rand::rng();
-    let points = generate_random_points_in_range_with_rng(n_points, range, &mut rng);
+    let points = generate_random_points_in_range_with_rng(n_points, range, &mut rng)?;
 
     Ok(points)
 }
@@ -491,25 +509,29 @@ pub fn try_generate_random_points<const D: usize>(
 ///
 /// Vector of random points with coordinates sampled from `range`.
 ///
+/// # Errors
+///
+/// Returns [`RandomPointGenerationError::GeneratedPointCoordinateRejected`] if
+/// a generated coordinate is rejected while constructing a [`Point`].
+///
 /// # Examples
 ///
 /// ```
 /// use delaunay::prelude::generators::{
-///     CoordinateRange, CoordinateRangeError, generate_random_points_in_range,
+///     CoordinateRange, RandomPointGenerationError, generate_random_points_in_range,
 /// };
 ///
-/// # fn main() -> Result<(), CoordinateRangeError> {
+/// # fn main() -> Result<(), RandomPointGenerationError> {
 /// let range = CoordinateRange::try_new(-1.0_f64, 1.0)?;
-/// let points = generate_random_points_in_range::<2>(8, range);
+/// let points = generate_random_points_in_range::<2>(8, range)?;
 /// assert_eq!(points.len(), 8);
 /// # Ok(())
 /// # }
 /// ```
-#[must_use]
 pub fn generate_random_points_in_range<const D: usize>(
     n_points: usize,
     range: CoordinateRange<f64>,
-) -> Vec<Point<D>> {
+) -> Result<Vec<Point<D>>, RandomPointGenerationError> {
     let mut rng = rand::rng();
     generate_random_points_in_range_with_rng(n_points, range, &mut rng)
 }
@@ -578,7 +600,7 @@ pub fn try_generate_random_points_seeded<const D: usize>(
     let range = CoordinateRange::try_from(range)?;
 
     let mut rng = StdRng::seed_from_u64(seed);
-    let points = generate_random_points_in_range_with_rng(n_points, range, &mut rng);
+    let points = generate_random_points_in_range_with_rng(n_points, range, &mut rng)?;
 
     Ok(points)
 }
@@ -595,27 +617,31 @@ pub fn try_generate_random_points_seeded<const D: usize>(
 ///
 /// Vector of random points with coordinates sampled from `range`.
 ///
+/// # Errors
+///
+/// Returns [`RandomPointGenerationError::GeneratedPointCoordinateRejected`] if
+/// a generated coordinate is rejected while constructing a [`Point`].
+///
 /// # Examples
 ///
 /// ```
 /// use delaunay::prelude::generators::{
-///     CoordinateRange, CoordinateRangeError, generate_random_points_in_range_seeded,
+///     CoordinateRange, RandomPointGenerationError, generate_random_points_in_range_seeded,
 /// };
 ///
-/// # fn main() -> Result<(), CoordinateRangeError> {
+/// # fn main() -> Result<(), RandomPointGenerationError> {
 /// let range = CoordinateRange::try_new(0.0_f64, 1.0)?;
-/// let points_a = generate_random_points_in_range_seeded::<3>(4, range, 42);
-/// let points_b = generate_random_points_in_range_seeded::<3>(4, range, 42);
+/// let points_a = generate_random_points_in_range_seeded::<3>(4, range, 42)?;
+/// let points_b = generate_random_points_in_range_seeded::<3>(4, range, 42)?;
 /// assert_eq!(points_a, points_b);
 /// # Ok(())
 /// # }
 /// ```
-#[must_use]
 pub fn generate_random_points_in_range_seeded<const D: usize>(
     n_points: usize,
     range: CoordinateRange<f64>,
     seed: u64,
-) -> Vec<Point<D>> {
+) -> Result<Vec<Point<D>>, RandomPointGenerationError> {
     let mut rng = StdRng::seed_from_u64(seed);
     generate_random_points_in_range_with_rng(n_points, range, &mut rng)
 }
@@ -676,7 +702,7 @@ pub fn generate_random_points_periodic<const D: usize>(
 
     for _ in 0..n_points {
         let coords = core::array::from_fn(|axis| rng.random_range(0.0..periods[axis].get()));
-        points.push(Point::from_validated_coords(coords));
+        points.push(point_from_generated_coords(coords)?);
     }
 
     Ok(points)
@@ -737,7 +763,7 @@ where
         let coords = [0.0; D].map(|_| rng.random_range(bounds.min()..bounds.max()));
         let norm_sq = coords.iter().fold(0.0, |acc, &c| c.mul_add(c, acc));
         if norm_sq <= radius_sq {
-            points.push(Point::from_validated_coords(coords));
+            points.push(point_from_generated_coords(coords)?);
         }
     }
 
@@ -975,7 +1001,7 @@ pub fn generate_grid_points<const D: usize>(
                 });
             }
         }
-        points.push(Point::from_validated_coords(coords));
+        points.push(point_from_generated_coords(coords)?);
 
         // Increment mixed-radix counter
         for d in (0..D).rev() {
@@ -1128,9 +1154,7 @@ pub fn generate_poisson_points_in_range<const D: usize>(
 
     let min_distance = match spacing {
         PoissonSpacing::Disabled => {
-            return Ok(generate_random_points_in_range_with_rng(
-                n_points, bounds, &mut rng,
-            ));
+            return generate_random_points_in_range_with_rng(n_points, bounds, &mut rng);
         }
         PoissonSpacing::Minimum(min_distance) => min_distance,
     };
@@ -1149,7 +1173,7 @@ pub fn generate_poisson_points_in_range<const D: usize>(
         attempts += 1;
 
         // Generate candidate point
-        let candidate = sample_point_in_range(bounds, &mut rng);
+        let candidate = sample_point_in_range(bounds, &mut rng)?;
 
         // Check distance to all existing points
         let mut valid = true;
@@ -1340,7 +1364,8 @@ mod tests {
     fn test_range_based_generators_use_validated_bounds() {
         let range = CoordinateRange::try_new(-1.0_f64, 1.0).unwrap();
 
-        let points = generate_random_points_in_range::<3>(8, range);
+        let points = generate_random_points_in_range::<3>(8, range)
+            .expect("validated range should generate finite points");
         assert_eq!(points.len(), 8);
         for point in points {
             for &coord in point.coords() {
@@ -1348,8 +1373,10 @@ mod tests {
             }
         }
 
-        let seeded_a = generate_random_points_in_range_seeded::<3>(8, range, 42);
-        let seeded_b = generate_random_points_in_range_seeded::<3>(8, range, 42);
+        let seeded_a = generate_random_points_in_range_seeded::<3>(8, range, 42)
+            .expect("validated range should generate finite points");
+        let seeded_b = generate_random_points_in_range_seeded::<3>(8, range, 42)
+            .expect("validated range should generate finite points");
         assert_eq!(seeded_a, seeded_b);
         for point in seeded_a {
             for &coord in point.coords() {
@@ -1357,10 +1384,12 @@ mod tests {
             }
         }
 
-        let empty = generate_random_points_in_range::<3>(0, range);
+        let empty = generate_random_points_in_range::<3>(0, range)
+            .expect("validated range should generate finite points");
         assert!(empty.is_empty());
 
-        let seeded_empty = generate_random_points_in_range_seeded::<3>(0, range, 42);
+        let seeded_empty = generate_random_points_in_range_seeded::<3>(0, range, 42)
+            .expect("validated range should generate finite points");
         assert!(seeded_empty.is_empty());
 
         let poisson = generate_poisson_points_in_range::<2>(8, range, 0.1, 42).unwrap();

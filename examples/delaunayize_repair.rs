@@ -85,7 +85,7 @@ fn already_delaunay_3d() -> Result<(), DelaunayizeRepairExampleError> {
         delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
         delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.5])?,
     ];
-    let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
+    let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::try_new(&vertices)?;
 
     println!(
         "  Built 3D triangulation: {} vertices, {} simplices",
@@ -118,7 +118,7 @@ fn already_delaunay_4d() -> Result<(), DelaunayizeRepairExampleError> {
         delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0])?,
         delaunay::prelude::Vertex::<(), _>::try_new([0.25, 0.25, 0.25, 0.25])?,
     ];
-    let mut dt: DelaunayTriangulation<_, (), (), 4> = DelaunayTriangulation::new(&vertices)?;
+    let mut dt: DelaunayTriangulation<_, (), (), 4> = DelaunayTriangulation::try_new(&vertices)?;
 
     println!(
         "  Built 4D triangulation: {} vertices, {} simplices",
@@ -154,7 +154,7 @@ fn flip_then_repair_2d() -> Result<(), DelaunayizeRepairExampleError> {
         delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0])?,
         delaunay::prelude::Vertex::<(), _>::try_new([3.0, 1.0])?,
     ];
-    let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices)?;
+    let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::try_new(&vertices)?;
 
     println!(
         "  Initial: {} vertices, {} simplices",
@@ -228,7 +228,7 @@ fn custom_config_2d() -> Result<(), DelaunayizeRepairExampleError> {
         delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0])?,
         delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5])?,
     ];
-    let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices)?;
+    let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::try_new(&vertices)?;
 
     let config = DelaunayizeConfig {
         topology_max_iterations: 10,

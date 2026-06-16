@@ -32,9 +32,9 @@ macro_rules! gen_orientation_construction_and_tamper_props {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|points| Vertex::from_points(&points))
+                    ).prop_map(|points| Vertex::from_validated_points(&points))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -58,9 +58,9 @@ macro_rules! gen_orientation_construction_and_tamper_props {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|points| Vertex::from_points(&points))
+                    ).prop_map(|points| Vertex::from_validated_points(&points))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -128,7 +128,7 @@ macro_rules! gen_orientation_incremental_props {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|points| Vertex::from_points(&points))
+                    ).prop_map(|points| Vertex::from_validated_points(&points))
                 ) {
                     let mut dt: DelaunayTriangulation<_, (), (), $dim> =
                         DelaunayTriangulation::empty_with_topology_guarantee(

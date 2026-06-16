@@ -260,24 +260,27 @@ Deterministic seeds allow failures to be reproduced.
 
 ## Error Handling in Tests
 
-Tests may freely use `unwrap()` or `expect()` when a failure should cause the
- test to fail immediately.
+Unit tests may use unwrap/expect-style failure when an impossible setup failure
+should fail the test immediately. Public examples, doctests, benchmarks, and
+public API integration tests should prefer typed `Result`, `Option`, or
+infallible flows so users do not copy panic-only control flow.
 
 Examples:
 
 ```rust
-let tri = build_triangulation(points).unwrap();
+let tri = build_triangulation(points)?;
 ```
 
 or
 
 ```rust
-let tri = build_triangulation(points)
-    .expect("triangulation construction failed");
+let Some(simplex) = tri.simplex(key) else {
+    return Err(QueryError::MissingSimplex { key });
+};
 ```
 
-Explicit error handling is usually unnecessary in tests unless the test is
-specifically verifying error behavior.
+Explicit error handling is still unnecessary inside focused unit tests unless
+the test is specifically verifying error behavior.
 
 Clippy's `unwrap_used` lint may be relaxed or allowed in test code when
 appropriate.

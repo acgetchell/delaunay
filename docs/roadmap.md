@@ -17,8 +17,8 @@ Key takeaways from v0.7.8:
 
 - Default correctness tests now stay under the routine 10-second budget, with
   long-running correctness work routed through `slow-tests`.
-- Public examples and doctests avoid release-hostile `.unwrap()` / `.expect(...)`
-  patterns in favor of typed `Result` wrappers or non-degenerate examples.
+- Public examples and doctests avoid release-hostile unwrap/expect patterns in
+  favor of typed `Result` wrappers or non-degenerate examples.
 - Compact 3D toroidal quotients are validated through topology and Delaunay
   checks before being returned; higher-dimensional quotient construction fails
   fast until scalable follow-up work lands.

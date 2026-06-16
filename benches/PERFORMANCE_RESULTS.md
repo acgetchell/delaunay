@@ -57,7 +57,7 @@ boundary traversal, and explicit bistellar flip roundtrips.
 
 #### Construction
 
-Public API: `DelaunayTriangulation::new_with_options`
+Public API: `DelaunayTriangulation::try_new_with_options`
 
 | Benchmark ID | Dimension | Input | Variant | Mean | 95% CI |
 |--------------|-----------|-------|---------|------|--------|
@@ -87,7 +87,7 @@ Public API: `DelaunayTriangulation::boundary_facets`
 
 #### Convex hull
 
-Public API: `ConvexHull::from_triangulation`
+Public API: `ConvexHull::try_from_triangulation`
 
 | Benchmark ID | Dimension | Input | Variant | Mean | 95% CI |
 |--------------|-----------|-------|---------|------|--------|

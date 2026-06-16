@@ -62,7 +62,7 @@ fn axis_aligned_simplex_vertices<const D: usize>(
         points.push(Point::try_new(coordinates).expect("finite point coordinates"));
     }
 
-    Vertex::from_points(&points)
+    Vertex::from_validated_points(&points)
 }
 
 /// Places a vertex strictly inside the generated axis-aligned simplex.
@@ -245,7 +245,7 @@ fn check_k1_roundtrip<const D: usize>(
 ) -> Result<(), TestCaseError> {
     let vertices = axis_aligned_simplex_vertices::<D>(origin, edge_lengths);
     let simplex =
-        DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), D>::new_with_topology_guarantee(
+        DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), D>::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )

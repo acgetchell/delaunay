@@ -356,13 +356,15 @@ where
     /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Repair(#[from] delaunay::flips::DelaunayRepairError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
@@ -569,13 +571,15 @@ where
     /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Repair(#[from] delaunay::flips::DelaunayRepairError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
@@ -977,7 +981,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 1> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
 
         assert_eq!(dt.number_of_simplices(), 1);
         assert_eq!(
@@ -1009,7 +1013,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
 
         assert_eq!(dt.number_of_simplices(), 1);
         dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
@@ -1025,7 +1029,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
 
         dt.set_delaunay_repair_policy(DelaunayRepairPolicy::EveryN(NonZeroUsize::new(2).unwrap()));
         let topology = dt.topology_guarantee();
@@ -1044,7 +1048,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let topology = dt.topology_guarantee();
 
         dt.set_delaunay_repair_policy(DelaunayRepairPolicy::EveryN(NonZeroUsize::new(2).unwrap()));
@@ -1064,7 +1068,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
 
         // Insert a vertex normally (no heuristic rebuild during insert).
         let inserted = crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.25]).unwrap();
@@ -1111,7 +1115,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let global_topology =
             GlobalTopology::try_toroidal([1.0, 1.0], ToroidalConstructionMode::PeriodicImagePoint)
                 .unwrap();
@@ -1141,7 +1145,7 @@ mod tests {
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
         let result = dt.repair_delaunay_with_flips();
@@ -1165,7 +1169,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
 
         let _guard = ForceRepairNonconvergentGuard::enable();
         let outcome = dt
@@ -1196,7 +1200,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
 
         // Sub-case 1: Already Delaunay — max_flips=0 should succeed (no flips needed).
         let config = DelaunayRepairHeuristicConfig {
@@ -1224,7 +1228,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
 
         let _guard = ForceRepairNonconvergentGuard::enable();
         let config = DelaunayRepairHeuristicConfig {
@@ -1319,7 +1323,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 1> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
 
         let result = dt.repair_delaunay_with_flips();
         assert!(
@@ -1347,7 +1351,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 1> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
 
         let result =
             dt.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default());

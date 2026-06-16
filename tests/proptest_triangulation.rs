@@ -353,9 +353,9 @@ macro_rules! test_quality_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|v| Vertex::from_points(&v))
+                    ).prop_map(|v| Vertex::from_validated_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
                         &AdaptiveKernel::default(),
                         &vertices,
                         TopologyGuarantee::PLManifold,
@@ -383,10 +383,10 @@ macro_rules! test_quality_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|v| Vertex::from_points(&v)),
+                    ).prop_map(|v| Vertex::from_validated_points(&v)),
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
                         &AdaptiveKernel::default(),
                         &vertices,
                         TopologyGuarantee::PLManifold,
@@ -404,9 +404,9 @@ macro_rules! test_quality_properties {
                             })
                             .collect::<Vec<_>>();
 
-                        let translated_vertices = Vertex::from_points(&translated_vertices);
+                        let translated_vertices = Vertex::from_validated_points(&translated_vertices);
 
-                        if let Ok(dt_translated) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                        if let Ok(dt_translated) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
                             &AdaptiveKernel::default(),
                             &translated_vertices,
                             TopologyGuarantee::PLManifold,
@@ -457,10 +457,10 @@ macro_rules! test_quality_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|v| Vertex::from_points(&v)),
+                    ).prop_map(|v| Vertex::from_validated_points(&v)),
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
                         &AdaptiveKernel::default(),
                         &vertices,
                         TopologyGuarantee::PLManifold,
@@ -478,9 +478,9 @@ macro_rules! test_quality_properties {
                             })
                             .collect::<Vec<_>>();
 
-                        let translated_vertices = Vertex::from_points(&translated_vertices);
+                        let translated_vertices = Vertex::from_validated_points(&translated_vertices);
 
-                        if let Ok(dt_translated) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                        if let Ok(dt_translated) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
                             &AdaptiveKernel::default(),
                             &translated_vertices,
                             TopologyGuarantee::PLManifold,
@@ -531,10 +531,10 @@ macro_rules! test_quality_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|v| Vertex::from_points(&v)),
+                    ).prop_map(|v| Vertex::from_validated_points(&v)),
                     scale in 0.1f64..10.0f64
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
                         &AdaptiveKernel::default(),
                         &vertices,
                         TopologyGuarantee::PLManifold,
@@ -552,9 +552,9 @@ macro_rules! test_quality_properties {
                             })
                             .collect::<Vec<_>>();
 
-                        let scaled_vertices = Vertex::from_points(&scaled_vertices);
+                        let scaled_vertices = Vertex::from_validated_points(&scaled_vertices);
 
-                        if let Ok(dt_scaled) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                        if let Ok(dt_scaled) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
                             &AdaptiveKernel::default(),
                             &scaled_vertices,
                             TopologyGuarantee::PLManifold,
@@ -605,9 +605,9 @@ macro_rules! test_quality_properties {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|v| Vertex::from_points(&v))
+                    ).prop_map(|v| Vertex::from_validated_points(&v))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
                         &AdaptiveKernel::default(),
                         &vertices,
                         TopologyGuarantee::PLManifold,
@@ -689,7 +689,7 @@ macro_rules! test_facet_topology_invariant {
                     )
                 ) {
                     // Build triangulation
-                    if let Ok(dt) = DelaunayTriangulation::new_with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::try_new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -719,7 +719,7 @@ macro_rules! test_facet_topology_invariant {
                     )
                 ) {
                     // Build triangulation
-                    if let Ok(dt) = DelaunayTriangulation::new_with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::try_new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -755,7 +755,7 @@ macro_rules! test_facet_topology_invariant {
                     )
                 ) {
                     // Build triangulation
-                    if let Ok(dt) = DelaunayTriangulation::new_with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::try_new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -815,7 +815,7 @@ macro_rules! gen_high_dim_facet_topology_smoke {
                     let mut stats = stats.borrow_mut();
                     stats.generated += 1;
 
-                    let dt = match DelaunayTriangulation::new_with_topology_guarantee(
+                    let dt = match DelaunayTriangulation::try_new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {

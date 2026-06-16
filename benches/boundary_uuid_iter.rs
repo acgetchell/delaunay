@@ -38,9 +38,10 @@ fn boundary_triangulation_3d(
         benchmark_bounds(),
         0xB0DA_FACE_0000_0000 ^ requested_vertices as u64,
     );
-    let vertices = Vertex::from_points(&points);
+    let points = bench_result(points, "failed to generate boundary benchmark points");
+    let vertices = Vertex::from_validated_points(&points);
     bench_result(
-        DelaunayTriangulation::new(&vertices),
+        DelaunayTriangulation::try_new(&vertices),
         "failed to build 3D boundary benchmark triangulation",
     )
 }
@@ -123,7 +124,7 @@ fn uuid_iter_source()
         ),
     ];
     bench_result(
-        DelaunayTriangulation::new(&vertices),
+        DelaunayTriangulation::try_new(&vertices),
         "failed to build UUID iterator benchmark triangulation",
     )
 }

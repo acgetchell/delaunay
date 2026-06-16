@@ -17,10 +17,11 @@ use std::time::Instant;
 use delaunay::prelude::construction::{
     ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError, RetryPolicy,
 };
-use delaunay::prelude::generators::generate_random_points_in_range_seeded;
+use delaunay::prelude::generators::{
+    RandomPointGenerationError, generate_random_points_in_range_seeded,
+};
 use delaunay::prelude::geometry::{
-    AdaptiveKernel, CoordinateConversionError, CoordinateRange, CoordinateRangeError,
-    CoordinateValidationError,
+    AdaptiveKernel, CoordinateRange, CoordinateRangeError, CoordinateValidationError,
 };
 use delaunay::prelude::query::{
     AdjacencyIndexBuildError, ConvexHull, ConvexHullConstructionError, Point, QueryError,
@@ -48,7 +49,7 @@ enum WorkflowExampleError {
     #[error(transparent)]
     CoordinateValidation(#[from] CoordinateValidationError),
     #[error(transparent)]
-    CoordinateConversion(#[from] CoordinateConversionError),
+    PointGeneration(#[from] RandomPointGenerationError),
     #[error("point count {point_count} is too large for centroid normalization")]
     PointCountTooLarge { point_count: usize },
 }
@@ -75,11 +76,9 @@ fn run_case<const D: usize>(
     seed: u64,
     bounds: CoordinateRange<f64>,
 ) -> Result<(), WorkflowExampleError> {
-    let points = generate_random_points_in_range_seeded::<D>(point_count, bounds, seed);
-    let vertices = points
-        .iter()
-        .map(|point| delaunay::prelude::Vertex::<(), _>::try_new((*point).into()))
-        .collect::<Result<Vec<_>, _>>()?;
+    let points = generate_random_points_in_range_seeded::<D>(point_count, bounds, seed)?;
+    let vertices: Vec<delaunay::prelude::Vertex<(), D>> =
+        delaunay::prelude::Vertex::from_validated_points(&points);
     let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
         attempts: retry_attempts()?,
         base_seed: Some(seed),
@@ -87,7 +86,8 @@ fn run_case<const D: usize>(
 
     println!("{label} Delaunay triangulation ({point_count} seeded points)");
     let start = Instant::now();
-    let dt: WorkflowTriangulation<D> = DelaunayTriangulation::new_with_options(&vertices, options)?;
+    let dt: WorkflowTriangulation<D> =
+        DelaunayTriangulation::try_new_with_options(&vertices, options)?;
     println!("  construction: {:?}", start.elapsed());
     println!("  vertices:  {}", dt.number_of_vertices());
     println!("  simplices: {}", dt.number_of_simplices());
@@ -104,7 +104,7 @@ fn run_case<const D: usize>(
     })?;
     println!("  boundary facets: {boundary_facet_count}");
 
-    let hull = ConvexHull::from_triangulation(dt.as_triangulation())?;
+    let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())?;
     println!("  hull facets: {}", hull.number_of_facets());
 
     let inside = centroid_point(&points)?;

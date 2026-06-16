@@ -59,7 +59,7 @@ fn test_2d_single_triangle() {
         delaunay::prelude::Vertex::<(), _>::try_new([0.5, 1.0]).unwrap(),
     ];
 
-    let dt = DelaunayTriangulation::new_with_topology_guarantee(
+    let dt = DelaunayTriangulation::try_new_with_topology_guarantee(
         &vertices,
         TopologyGuarantee::PLManifold,
     )
@@ -87,7 +87,7 @@ fn test_2d_multiple_triangles() {
         delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.3]).unwrap(), // Interior point
     ];
 
-    let dt = DelaunayTriangulation::new_with_topology_guarantee(
+    let dt = DelaunayTriangulation::try_new_with_topology_guarantee(
         &vertices,
         TopologyGuarantee::PLManifold,
     )
@@ -116,7 +116,7 @@ fn test_3d_single_tetrahedron() {
         delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
     ];
 
-    let dt = DelaunayTriangulation::new_with_topology_guarantee(
+    let dt = DelaunayTriangulation::try_new_with_topology_guarantee(
         &vertices,
         TopologyGuarantee::PLManifold,
     )
@@ -146,7 +146,7 @@ fn test_3d_with_interior_vertex() {
         delaunay::prelude::Vertex::<(), _>::try_new([0.25, 0.25, 0.25]).unwrap(), // Interior point
     ];
 
-    let dt = DelaunayTriangulation::new_with_topology_guarantee(
+    let dt = DelaunayTriangulation::try_new_with_topology_guarantee(
         &vertices,
         TopologyGuarantee::PLManifold,
     )
@@ -177,7 +177,7 @@ fn test_4d_single_simplex() {
         delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
     ];
 
-    let dt = DelaunayTriangulation::new_with_topology_guarantee(
+    let dt = DelaunayTriangulation::try_new_with_topology_guarantee(
         &vertices,
         TopologyGuarantee::PLManifold,
     )
@@ -209,7 +209,7 @@ fn test_5d_single_simplex() {
         delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
     ];
 
-    let dt = DelaunayTriangulation::new_with_topology_guarantee(
+    let dt = DelaunayTriangulation::try_new_with_topology_guarantee(
         &vertices,
         TopologyGuarantee::PLManifold,
     )
@@ -379,8 +379,8 @@ macro_rules! test_complex_with_interior {
         #[test]
         fn $test_name() {
             type DT = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), $dim>;
-            let dt =
-                DT::new_with_topology_guarantee($vertices, TopologyGuarantee::PLManifold).unwrap();
+            let dt = DT::try_new_with_topology_guarantee($vertices, TopologyGuarantee::PLManifold)
+                .unwrap();
 
             // Full complex should have χ = 1 (D-ball)
             let full_result = validation::validate_triangulation_euler(dt.tds()).unwrap();

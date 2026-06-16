@@ -792,14 +792,16 @@ fn facet_measure_gram_matrix<const D: usize>(
 /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
 /// #     #[error(transparent)]
 /// #     SurfaceMeasure(#[from] delaunay::prelude::geometry::SurfaceMeasureError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// // Create a triangulation and calculate surface measure of boundary facets
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let tds = dt.tds();
@@ -867,16 +869,16 @@ mod tests {
     fn test_simplex_volume_1d_line_segment() {
         // 1D: Line segment length
         let line = vec![
-            Point::from_validated_coords([0.0]),
-            Point::from_validated_coords([5.0]),
+            Point::try_new([0.0]).expect("finite point coordinates"),
+            Point::try_new([5.0]).expect("finite point coordinates"),
         ];
         let volume = simplex_volume(&line).unwrap();
         assert_relative_eq!(volume, 5.0, epsilon = 1e-10);
 
         // Negative direction
         let line_neg = vec![
-            Point::from_validated_coords([5.0]),
-            Point::from_validated_coords([0.0]),
+            Point::try_new([5.0]).expect("finite point coordinates"),
+            Point::try_new([0.0]).expect("finite point coordinates"),
         ];
         let volume_neg = simplex_volume(&line_neg).unwrap();
         assert_relative_eq!(volume_neg, 5.0, epsilon = 1e-10);
@@ -885,8 +887,8 @@ mod tests {
     #[test]
     fn simplex_volume_degenerate_segment_errors() {
         let line = vec![
-            Point::from_validated_coords([2.0]),
-            Point::from_validated_coords([2.0]),
+            Point::try_new([2.0]).expect("finite point coordinates"),
+            Point::try_new([2.0]).expect("finite point coordinates"),
         ];
         assert_matches!(
             simplex_volume(&line),
@@ -903,18 +905,18 @@ mod tests {
     fn test_simplex_volume_2d_triangle() {
         // 2D: Right triangle with legs 3 and 4
         let triangle = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([3.0, 0.0]),
-            Point::from_validated_coords([0.0, 4.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([3.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 4.0]).expect("finite point coordinates"),
         ];
         let area = simplex_volume(&triangle).unwrap();
         assert_relative_eq!(area, 6.0, epsilon = 1e-10); // Area = (3*4)/2 = 6
 
         // Equilateral triangle with side 1
         let equilateral = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([0.5, 0.866_025]), // sqrt(3)/2
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.5, 0.866_025]).expect("finite point coordinates"), // sqrt(3)/2
         ];
         let area_eq = simplex_volume(&equilateral).unwrap();
         // Area = sqrt(3)/4 ≈ 0.433013
@@ -925,10 +927,10 @@ mod tests {
     fn test_simplex_volume_3d_tetrahedron() {
         // 3D: Regular tetrahedron with vertices at unit cube corners
         let tetrahedron = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         let volume = simplex_volume(&tetrahedron).unwrap();
         assert_relative_eq!(volume, 1.0 / 6.0, epsilon = 1e-10); // Volume = 1/6
@@ -938,11 +940,11 @@ mod tests {
     fn test_simplex_volume_4d_simplex() {
         // 4D: Regular 4-simplex
         let simplex_4d = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         let volume = simplex_volume(&simplex_4d).unwrap();
         // 4D simplex volume = 1/4! = 1/24
@@ -953,9 +955,9 @@ mod tests {
     fn test_simplex_volume_degenerate() {
         // Degenerate triangle (collinear points) should return an error
         let collinear = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 1.0]),
-            Point::from_validated_coords([2.0, 2.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 1.0]).expect("finite point coordinates"),
+            Point::try_new([2.0, 2.0]).expect("finite point coordinates"),
         ];
         let result = simplex_volume(&collinear);
         assert_matches!(
@@ -973,8 +975,8 @@ mod tests {
     #[test]
     fn simplex_volume_non_finite_1d_intermediate_is_numeric_failure() {
         let points = vec![
-            Point::from_validated_coords([-f64::MAX]),
-            Point::from_validated_coords([f64::MAX]),
+            Point::try_new([-f64::MAX]).expect("finite point coordinates"),
+            Point::try_new([f64::MAX]).expect("finite point coordinates"),
         ];
 
         assert_matches!(
@@ -993,9 +995,9 @@ mod tests {
     #[test]
     fn simplex_volume_non_finite_2d_intermediate_is_numeric_failure() {
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([f64::MAX, 0.0]),
-            Point::from_validated_coords([0.0, f64::MAX]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([f64::MAX, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, f64::MAX]).expect("finite point coordinates"),
         ];
 
         assert_matches!(
@@ -1014,10 +1016,10 @@ mod tests {
     #[test]
     fn simplex_volume_coplanar_tetrahedron_errors() {
         let coplanar = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.25, 0.25, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.25, 0.25, 0.0]).expect("finite point coordinates"),
         ];
         let result = simplex_volume(&coplanar);
         assert_matches!(
@@ -1037,18 +1039,18 @@ mod tests {
         let small_val = 1e-14;
 
         let triangle = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([small_val, 0.0]),
-            Point::from_validated_coords([0.0, small_val]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([small_val, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, small_val]).expect("finite point coordinates"),
         ];
         let area = simplex_volume(&triangle).unwrap();
         assert_relative_eq!(area, small_val * small_val / 2.0, max_relative = 1e-12);
 
         let tetrahedron = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([small_val, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, small_val, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, small_val]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([small_val, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, small_val, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, small_val]).expect("finite point coordinates"),
         ];
         let volume = simplex_volume(&tetrahedron).unwrap();
         assert_relative_eq!(
@@ -1062,8 +1064,8 @@ mod tests {
     fn test_simplex_volume_wrong_point_count() {
         // Wrong number of points for 2D
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
         ];
         let result = simplex_volume::<2>(&points);
         assert!(result.is_err());
@@ -1077,9 +1079,9 @@ mod tests {
     fn test_inradius_2d_equilateral_triangle() {
         // Equilateral triangle with side 1
         let triangle = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([0.5, 0.866_025]), // sqrt(3)/2
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.5, 0.866_025]).expect("finite point coordinates"), // sqrt(3)/2
         ];
         let r_in = inradius(&triangle).unwrap();
         // For equilateral triangle: inradius = sqrt(3)/6 ≈ 0.28867513
@@ -1090,9 +1092,9 @@ mod tests {
     fn test_inradius_2d_right_triangle() {
         // Right triangle with legs 3 and 4
         let triangle = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([3.0, 0.0]),
-            Point::from_validated_coords([0.0, 4.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([3.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 4.0]).expect("finite point coordinates"),
         ];
         let r_in = inradius(&triangle).unwrap();
         // For right triangle: inradius = (a+b-c)/2 = (3+4-5)/2 = 1.0
@@ -1103,10 +1105,10 @@ mod tests {
     fn test_inradius_3d_regular_tetrahedron() {
         // Regular tetrahedron at unit cube corners
         let tetrahedron = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         let r_in = inradius(&tetrahedron).unwrap();
         // For this tetrahedron: inradius ≈ 0.2113
@@ -1117,9 +1119,9 @@ mod tests {
     fn test_inradius_degenerate() {
         // Degenerate triangle (collinear points)
         let collinear = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([2.0, 0.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([2.0, 0.0]).expect("finite point coordinates"),
         ];
         let result = inradius(&collinear);
         assert!(result.is_err()); // Should fail for degenerate simplex
@@ -1132,7 +1134,7 @@ mod tests {
     #[test]
     fn test_facet_measure_1d_point() {
         // 1D facet is a single point (0-dimensional) - measure should be 0
-        let points = vec![Point::from_validated_coords([5.0])];
+        let points = vec![Point::try_new([5.0]).expect("finite point coordinates")];
         let measure = facet_measure(&points).unwrap();
         assert_relative_eq!(measure, 0.0, epsilon = 1e-10);
     }
@@ -1141,8 +1143,8 @@ mod tests {
     fn test_facet_measure_2d_line_segment() {
         // 2D: Line segment (1D facet in 2D space) - 3-4-5 triangle
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([3.0, 4.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([3.0, 4.0]).expect("finite point coordinates"),
         ];
         let measure = facet_measure(&points).unwrap();
         // Length should be sqrt(3² + 4²) = 5.0
@@ -1153,9 +1155,9 @@ mod tests {
     fn test_facet_measure_3d_triangle_right_angle() {
         // 3D: Right triangle (area = 1/2 * base * height)
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([3.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 4.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([3.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 4.0, 0.0]).expect("finite point coordinates"),
         ];
         let measure = facet_measure(&points).unwrap();
         // Area should be 3 * 4 / 2 = 6.0
@@ -1166,10 +1168,10 @@ mod tests {
     fn test_facet_measure_4d_tetrahedron() {
         // 4D: Unit tetrahedron (3D facet in 4D space)
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
         ];
         let measure = facet_measure(&points).unwrap();
 
@@ -1331,9 +1333,9 @@ mod tests {
 
         // Test 1: Unit right triangle in 3D - area 0.5
         let triangle_3d = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
         ];
         let area_3d = facet_measure(&triangle_3d).unwrap();
         assert_relative_eq!(area_3d, 0.5, epsilon = 1e-10);
@@ -1343,9 +1345,9 @@ mod tests {
         // Test 1b: Nearly singular triangle should not error due to tiny negative det
         let eps = 1e-10;
         let near_singular = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, eps, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, eps, 0.0]).expect("finite point coordinates"),
         ];
         let area_ns = facet_measure(&near_singular).unwrap();
         assert!(area_ns >= 0.0);
@@ -1358,10 +1360,10 @@ mod tests {
 
         // Test 3: Unit tetrahedron in 4D - should be 1/6 ≈ 0.167
         let tetrahedron_4d = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
         ];
         let volume_4d = facet_measure(&tetrahedron_4d).unwrap();
         assert_relative_eq!(volume_4d, 1.0 / 6.0, epsilon = 1e-10);
@@ -1387,11 +1389,11 @@ mod tests {
     fn test_facet_measure_5d_simplex() {
         // 5D: 4-dimensional facet in 5D space (4-simplex volume)
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
         ];
         let measure = facet_measure(&points).unwrap();
 
@@ -1404,12 +1406,12 @@ mod tests {
     fn test_facet_measure_6d_simplex() {
         // 6D: 5-dimensional facet in 6D space
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
         ];
         let measure = facet_measure(&points).unwrap();
 
@@ -1427,8 +1429,8 @@ mod tests {
         // Test error when wrong number of points provided
         // 3D expects 3 points, but provide 2
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
         ];
         let result = facet_measure::<3>(&points);
 
@@ -1454,8 +1456,8 @@ mod tests {
     #[test]
     fn facet_measure_coincident_2d_points_reports_degenerate_length() {
         let points = vec![
-            Point::from_validated_coords([1.0, -2.0]),
-            Point::from_validated_coords([1.0, -2.0]),
+            Point::try_new([1.0, -2.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, -2.0]).expect("finite point coordinates"),
         ];
 
         assert_matches!(
@@ -1472,8 +1474,8 @@ mod tests {
     #[test]
     fn facet_measure_non_finite_2d_intermediate_is_numeric_failure() {
         let points = vec![
-            Point::from_validated_coords([-f64::MAX, -f64::MAX]),
-            Point::from_validated_coords([f64::MAX, f64::MAX]),
+            Point::try_new([-f64::MAX, -f64::MAX]).expect("finite point coordinates"),
+            Point::try_new([f64::MAX, f64::MAX]).expect("finite point coordinates"),
         ];
 
         assert_matches!(
@@ -1492,9 +1494,9 @@ mod tests {
     #[test]
     fn facet_measure_non_finite_3d_intermediate_is_numeric_failure() {
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([f64::MAX, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, f64::MAX, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([f64::MAX, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, f64::MAX, 0.0]).expect("finite point coordinates"),
         ];
 
         assert_matches!(
@@ -1514,9 +1516,9 @@ mod tests {
     fn test_facet_measure_zero_area_triangle() {
         // Degenerate triangle (collinear points) - should return an error
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([2.0, 0.0, 0.0]), // Collinear
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([2.0, 0.0, 0.0]).expect("finite point coordinates"), // Collinear
         ];
         let result = facet_measure(&points);
 
@@ -1529,8 +1531,8 @@ mod tests {
         // Test with points that are nearly collinear in 2D
         let eps = 1e-10;
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, eps]), // Slightly off the x-axis
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, eps]).expect("finite point coordinates"), // Slightly off the x-axis
         ];
 
         let measure = facet_measure(&points).unwrap();
@@ -1543,9 +1545,9 @@ mod tests {
         // Test with points that are truly nearly coplanar in 3D
         let eps = 1e-8;
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, eps, eps]), // Very close to the line from (0,0,0) to (1,0,0)
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, eps, eps]).expect("finite point coordinates"), // Very close to the line from (0,0,0) to (1,0,0)
         ];
 
         let measure = facet_measure(&points).unwrap();
@@ -1565,10 +1567,10 @@ mod tests {
     fn test_facet_measure_degenerate_4d_tetrahedron() {
         // Test with points that are coplanar in 4D (all points in 3D subspace)
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.5, 0.5, 0.0, 0.0]), // In the same 3D subspace
+            Point::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.5, 0.5, 0.0, 0.0]).expect("finite point coordinates"), // In the same 3D subspace
         ];
 
         let result = facet_measure(&points);
@@ -1609,7 +1611,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt
             .tds()
             .boundary_facets()
@@ -1658,7 +1660,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt
             .tds()
             .boundary_facets()
@@ -1679,7 +1681,7 @@ mod tests {
             .unwrap()
             .map(|v| {
                 let coords = *v.point().coords();
-                Point::from_validated_coords(coords)
+                Point::try_new(coords).expect("finite point coordinates")
             })
             .collect();
         let points2: Vec<Point<3>> = facet2
@@ -1687,7 +1689,7 @@ mod tests {
             .unwrap()
             .map(|v| {
                 let coords = *v.point().coords();
-                Point::from_validated_coords(coords)
+                Point::try_new(coords).expect("finite point coordinates")
             })
             .collect();
 
@@ -1708,12 +1710,12 @@ mod tests {
         // Test scaling property: measure should scale by |λ|^(D-1)
         let scale = 3.0;
         let original_points = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
         ];
         let scaled_points = vec![
-            Point::from_validated_coords([0.0 * scale, 0.0 * scale]),
-            Point::from_validated_coords([1.0 * scale, 0.0 * scale]),
+            Point::try_new([0.0 * scale, 0.0 * scale]).expect("finite point coordinates"),
+            Point::try_new([1.0 * scale, 0.0 * scale]).expect("finite point coordinates"),
         ];
 
         let original_measure = facet_measure(&original_points).unwrap();
@@ -1728,14 +1730,17 @@ mod tests {
         // Test scaling property for 3D triangle (D=3, measure scales by λ^2)
         let scale = 2.5;
         let original_points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([2.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 3.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([2.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 3.0, 0.0]).expect("finite point coordinates"),
         ];
         let scaled_points = vec![
-            Point::from_validated_coords([0.0 * scale, 0.0 * scale, 0.0 * scale]),
-            Point::from_validated_coords([2.0 * scale, 0.0 * scale, 0.0 * scale]),
-            Point::from_validated_coords([0.0 * scale, 3.0 * scale, 0.0 * scale]),
+            Point::try_new([0.0 * scale, 0.0 * scale, 0.0 * scale])
+                .expect("finite point coordinates"),
+            Point::try_new([2.0 * scale, 0.0 * scale, 0.0 * scale])
+                .expect("finite point coordinates"),
+            Point::try_new([0.0 * scale, 3.0 * scale, 0.0 * scale])
+                .expect("finite point coordinates"),
         ];
 
         let original_measure = facet_measure(&original_points).unwrap();
@@ -1754,16 +1759,20 @@ mod tests {
         // Test scaling property for 4D tetrahedron (D=4, measure scales by λ^3)
         let scale = 2.0;
         let original_points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
         ];
         let scaled_points = vec![
-            Point::from_validated_coords([0.0 * scale, 0.0 * scale, 0.0 * scale, 0.0 * scale]),
-            Point::from_validated_coords([1.0 * scale, 0.0 * scale, 0.0 * scale, 0.0 * scale]),
-            Point::from_validated_coords([0.0 * scale, 1.0 * scale, 0.0 * scale, 0.0 * scale]),
-            Point::from_validated_coords([0.0 * scale, 0.0 * scale, 1.0 * scale, 0.0 * scale]),
+            Point::try_new([0.0 * scale, 0.0 * scale, 0.0 * scale, 0.0 * scale])
+                .expect("finite point coordinates"),
+            Point::try_new([1.0 * scale, 0.0 * scale, 0.0 * scale, 0.0 * scale])
+                .expect("finite point coordinates"),
+            Point::try_new([0.0 * scale, 1.0 * scale, 0.0 * scale, 0.0 * scale])
+                .expect("finite point coordinates"),
+            Point::try_new([0.0 * scale, 0.0 * scale, 1.0 * scale, 0.0 * scale])
+                .expect("finite point coordinates"),
         ];
 
         let original_measure = facet_measure(&original_points).unwrap();
@@ -1786,9 +1795,9 @@ mod tests {
         // Test with very large but finite coordinates
         let large_val = 1e8;
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([large_val, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, large_val, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([large_val, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, large_val, 0.0]).expect("finite point coordinates"),
         ];
 
         let result = facet_measure(&points);
@@ -1807,9 +1816,9 @@ mod tests {
         // should be scale-aware rather than rejecting every tiny valid facet.
         let small_val = 1e-14;
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([small_val, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, small_val, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([small_val, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, small_val, 0.0]).expect("finite point coordinates"),
         ];
 
         let result = facet_measure(&points);
@@ -1826,9 +1835,9 @@ mod tests {
     fn test_facet_measure_mixed_positive_negative_coordinates() {
         // Test with mixed positive and negative coordinates
         let points = vec![
-            Point::from_validated_coords([-1.0, -1.0, 0.0]),
-            Point::from_validated_coords([2.0, -1.0, 0.0]),
-            Point::from_validated_coords([-1.0, 3.0, 0.0]),
+            Point::try_new([-1.0, -1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([2.0, -1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([-1.0, 3.0, 0.0]).expect("finite point coordinates"),
         ];
 
         let measure = facet_measure(&points).unwrap();
@@ -1845,26 +1854,29 @@ mod tests {
         // Test that translation doesn't change facet measure
         let translation = [10.0, 20.0, 30.0];
         let original_points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([3.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 4.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([3.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 4.0, 0.0]).expect("finite point coordinates"),
         ];
         let translated_points = vec![
-            Point::from_validated_coords([
+            Point::try_new([
                 0.0 + translation[0],
                 0.0 + translation[1],
                 0.0 + translation[2],
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 3.0 + translation[0],
                 0.0 + translation[1],
                 0.0 + translation[2],
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 0.0 + translation[0],
                 4.0 + translation[1],
                 0.0 + translation[2],
-            ]),
+            ])
+            .expect("finite point coordinates"),
         ];
 
         let original_measure = facet_measure(&original_points).unwrap();
@@ -1878,19 +1890,19 @@ mod tests {
     fn test_facet_measure_vertex_permutation_invariance() {
         // Test that vertex order doesn't change facet measure (absolute value)
         let points_order1 = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([3.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 4.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([3.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 4.0, 0.0]).expect("finite point coordinates"),
         ];
         let points_order2 = vec![
-            Point::from_validated_coords([3.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 4.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::try_new([3.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 4.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
         ];
         let points_order3 = vec![
-            Point::from_validated_coords([0.0, 4.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([3.0, 0.0, 0.0]),
+            Point::try_new([0.0, 4.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([3.0, 0.0, 0.0]).expect("finite point coordinates"),
         ];
 
         let measure1 = facet_measure(&points_order1).unwrap();
@@ -1909,27 +1921,27 @@ mod tests {
         let triangles = [
             // XY plane
             vec![
-                Point::from_validated_coords([0.0, 0.0, 0.0]),
-                Point::from_validated_coords([1.0, 0.0, 0.0]),
-                Point::from_validated_coords([0.0, 1.0, 0.0]),
+                Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
             ],
             // XZ plane
             vec![
-                Point::from_validated_coords([0.0, 0.0, 0.0]),
-                Point::from_validated_coords([1.0, 0.0, 0.0]),
-                Point::from_validated_coords([0.0, 0.0, 1.0]),
+                Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
             ],
             // YZ plane
             vec![
-                Point::from_validated_coords([0.0, 0.0, 0.0]),
-                Point::from_validated_coords([0.0, 1.0, 0.0]),
-                Point::from_validated_coords([0.0, 0.0, 1.0]),
+                Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
             ],
             // Diagonal plane
             vec![
-                Point::from_validated_coords([0.0, 0.0, 0.0]),
-                Point::from_validated_coords([1.0, 1.0, 0.0]),
-                Point::from_validated_coords([0.0, 1.0, 1.0]),
+                Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([1.0, 1.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 1.0, 1.0]).expect("finite point coordinates"),
             ],
         ];
 
@@ -1973,7 +1985,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(), // v4
         ];
         let dt1: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::new(&vertices1).unwrap();
+            DelaunayTriangulation::try_new(&vertices1).unwrap();
         let boundary_facets1: Vec<_> = dt1
             .tds()
             .boundary_facets()
@@ -2010,7 +2022,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(), // v8
         ];
         let dt2: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::new(&vertices2).unwrap();
+            DelaunayTriangulation::try_new(&vertices2).unwrap();
         let boundary_facets2: Vec<_> = dt2
             .tds()
             .boundary_facets()
@@ -2061,7 +2073,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt
             .tds()
             .boundary_facets()
@@ -2090,7 +2102,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 4> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt
             .tds()
             .boundary_facets()
@@ -2126,7 +2138,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt
             .tds()
             .boundary_facets()
@@ -2151,13 +2163,13 @@ mod tests {
     fn test_facet_measure_performance_many_dimensions() {
         // Test performance with higher dimensions (7D, 8D)
         let points_7d = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
         ];
 
         let measure_7d = facet_measure(&points_7d).unwrap();
@@ -2165,14 +2177,22 @@ mod tests {
         assert_relative_eq!(measure_7d, 1.0 / 720.0, epsilon = 1e-10);
 
         let points_8d = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+                .expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+                .expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+                .expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+                .expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0])
+                .expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
+                .expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
+                .expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0])
+                .expect("finite point coordinates"),
         ];
 
         let measure_8d = facet_measure(&points_8d).unwrap();
@@ -2192,7 +2212,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt
             .tds()
             .boundary_facets()
@@ -2227,9 +2247,9 @@ mod tests {
         for &side in &side_lengths {
             let height = side * 3.0_f64.sqrt() / 2.0;
             let points = vec![
-                Point::from_validated_coords([0.0, 0.0, 0.0]),
-                Point::from_validated_coords([side, 0.0, 0.0]),
-                Point::from_validated_coords([side / 2.0, height, 0.0]),
+                Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([side, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([side / 2.0, height, 0.0]).expect("finite point coordinates"),
             ];
 
             let measure = facet_measure(&points).unwrap();
@@ -2248,10 +2268,12 @@ mod tests {
         let center_offset = side / (2.0 * 3.0_f64.sqrt());
 
         // Regular tetrahedron vertices
-        let v1 = Point::from_validated_coords([0.0, 0.0, 0.0]);
-        let v2 = Point::from_validated_coords([side, 0.0, 0.0]);
-        let v3 = Point::from_validated_coords([side / 2.0, side * 3.0_f64.sqrt() / 2.0, 0.0]);
-        let v4 = Point::from_validated_coords([side / 2.0, center_offset, height]);
+        let v1 = Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates");
+        let v2 = Point::try_new([side, 0.0, 0.0]).expect("finite point coordinates");
+        let v3 = Point::try_new([side / 2.0, side * 3.0_f64.sqrt() / 2.0, 0.0])
+            .expect("finite point coordinates");
+        let v4 =
+            Point::try_new([side / 2.0, center_offset, height]).expect("finite point coordinates");
 
         // Test each face
         let faces = [
@@ -2275,30 +2297,30 @@ mod tests {
         // Test that reflection doesn't change facet measure
         // Use non-collinear points to form a valid triangle
         let original_points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([3.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 4.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([3.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 4.0, 0.0]).expect("finite point coordinates"),
         ];
 
         // Reflect across various planes
         let reflections = [
             // Reflect x-coordinate
             vec![
-                Point::from_validated_coords([0.0, 0.0, 0.0]),
-                Point::from_validated_coords([-3.0, 0.0, 0.0]),
-                Point::from_validated_coords([0.0, 4.0, 0.0]),
+                Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([-3.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 4.0, 0.0]).expect("finite point coordinates"),
             ],
             // Reflect y-coordinate
             vec![
-                Point::from_validated_coords([0.0, 0.0, 0.0]),
-                Point::from_validated_coords([3.0, 0.0, 0.0]),
-                Point::from_validated_coords([0.0, -4.0, 0.0]),
+                Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([3.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, -4.0, 0.0]).expect("finite point coordinates"),
             ],
             // Reflect z-coordinate (doesn't change since all z=0)
             vec![
-                Point::from_validated_coords([0.0, 0.0, 0.0]),
-                Point::from_validated_coords([3.0, 0.0, 0.0]),
-                Point::from_validated_coords([0.0, 4.0, 0.0]),
+                Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([3.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 4.0, 0.0]).expect("finite point coordinates"),
             ],
         ];
 
@@ -2315,14 +2337,14 @@ mod tests {
     fn test_facet_measure_rotation_invariance_2d() {
         // Test that rotation doesn't change 2D facet measure (line length)
         let original_points = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([3.0, 4.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([3.0, 4.0]).expect("finite point coordinates"),
         ];
 
         // Rotate by 90 degrees
         let rotated_points = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([-4.0, 3.0]), // 90° rotation of (3,4)
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([-4.0, 3.0]).expect("finite point coordinates"), // 90° rotation of (3,4)
         ];
 
         let original_measure = facet_measure(&original_points).unwrap();
@@ -2336,9 +2358,9 @@ mod tests {
     fn test_facet_measure_gram_matrix_degenerate() {
         // Test degenerate simplex (collinear points)
         let degenerate_points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([2.0, 0.0, 0.0]), // All collinear
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([2.0, 0.0, 0.0]).expect("finite point coordinates"), // All collinear
         ];
 
         let result = facet_measure(&degenerate_points);

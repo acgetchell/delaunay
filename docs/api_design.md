@@ -20,6 +20,10 @@ The library provides two distinct APIs for different use cases:
    - Does **not** automatically restore the Delaunay property
    - Designed for topology manipulation, research, and custom algorithms
 
+Examples that derive `thiserror::Error` assume the example crate includes
+`thiserror`; run `cargo add thiserror` alongside `delaunay` when copying those
+snippets into an application.
+
 ## When to Use Each API
 
 ### Use the Builder API when
@@ -129,7 +133,7 @@ fn main() -> Result<(), ExampleError> {
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices)
         .try_canonicalized_toroidal([1.0, 1.0])
-        .expect("unit toroidal domain is valid") // Canonicalized toroidal construction
+        ? // Canonicalized toroidal construction
         .topology_guarantee(TopologyGuarantee::PLManifoldStrict)
         .build::<()>()?;
 
