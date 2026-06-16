@@ -1,9 +1,9 @@
 # delaunay
 
 [![DOI](https://zenodo.org/badge/729897852.svg)](https://doi.org/10.5281/zenodo.16931097)
-[![Crates.io](https://img.shields.io/crates/v/delaunay.svg)](https://crates.io/crates/delaunay)
-[![Downloads](https://img.shields.io/crates/d/delaunay.svg)](https://crates.io/crates/delaunay)
-[![License](https://img.shields.io/crates/l/delaunay.svg)](https://github.com/acgetchell/delaunay/blob/main/LICENSE)
+[![Crates.io](https://badgen.net/crates/v/delaunay)](https://crates.io/crates/delaunay)
+[![Downloads](https://badgen.net/crates/d/delaunay)](https://crates.io/crates/delaunay)
+[![License](https://badgen.net/github/license/acgetchell/delaunay)](https://github.com/acgetchell/delaunay/blob/main/LICENSE)
 [![Docs.rs](https://docs.rs/delaunay/badge.svg)](https://docs.rs/delaunay)
 [![CI][ci-badge]][ci-workflow]
 [![CodeQL][codeql-badge]][codeql-workflow]

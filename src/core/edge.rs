@@ -164,8 +164,6 @@ impl EdgeKey {
     #[inline]
     #[must_use]
     pub(crate) fn from_validated_endpoints(a: VertexKey, b: VertexKey) -> Self {
-        debug_assert_ne!(a, b, "validated edge endpoints must be distinct");
-
         // Use the raw slotmap key representation for ordering to avoid relying on
         // any higher-level semantic ordering.
         let a_raw = a.data().as_ffi();

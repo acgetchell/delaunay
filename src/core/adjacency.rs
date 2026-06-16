@@ -16,7 +16,9 @@ use crate::core::collections::{
 };
 use crate::core::edge::EdgeKey;
 use crate::core::tds::{SimplexKey, VertexKey};
+use std::sync::Arc;
 use thiserror::Error;
+use uuid::Uuid;
 
 /// Errors that can occur while building an [`AdjacencyIndex`].
 ///
@@ -62,6 +64,9 @@ pub enum AdjacencyIndexBuildError {
 /// ## Notes
 /// - No sorted-order guarantees are provided for the values.
 /// - The collections are optimized for performance (FxHasher-backed).
+/// - An index is tied to the triangulation snapshot that built it. Rebuild it
+///   after mutating the triangulation, and do not share it across
+///   triangulations.
 ///
 /// # Examples
 ///
@@ -95,24 +100,28 @@ pub enum AdjacencyIndexBuildError {
 ///
 /// // Query incident simplices for some vertex key from the triangulation.
 /// let Some((vk, _)) = tri.vertices().next() else { return Ok(()); };
-/// let Some(incident_simplices) = index.vertex_to_simplices.get(&vk) else {
-///     return Ok(());
-/// };
-/// assert!(!incident_simplices.is_empty());
+/// assert!(index.number_of_adjacent_simplices(vk) > 0);
 /// # Ok(())
 /// # }
 /// ```
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct AdjacencyIndex {
+    /// Runtime identity of the TDS snapshot this index was built from.
+    pub(crate) tds_identity: Arc<Uuid>,
+
+    /// Generation of the TDS snapshot this index was built from.
+    pub(crate) tds_generation: u64,
+
     /// Vertex → incident edges.
-    pub vertex_to_edges: FastHashMap<VertexKey, SmallBuffer<EdgeKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
+    pub(crate) vertex_to_edges:
+        FastHashMap<VertexKey, SmallBuffer<EdgeKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
 
     /// Vertex → incident simplices.
-    pub vertex_to_simplices: VertexToSimplicesMap,
+    pub(crate) vertex_to_simplices: VertexToSimplicesMap,
 
     /// Simplex → neighboring simplices (boundary facets omitted).
-    pub simplex_to_neighbors:
+    pub(crate) simplex_to_neighbors:
         FastHashMap<SimplexKey, SmallBuffer<SimplexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
 }
 

@@ -51,7 +51,9 @@ use delaunay::prelude::diagnostics::{
     debug_print_first_delaunay_violation, delaunay_violation_report,
     verify_conflict_region_completeness,
 };
-use delaunay::prelude::flips::BistellarFlips;
+use delaunay::prelude::flips::{
+    BistellarFlips, FlipOrientationCheckStage as FocusedFlipOrientationCheckStage,
+};
 use delaunay::prelude::generators::{
     CoordinateRange, CoordinateRangeError, InvalidPositiveScalar, RandomTriangulationBuilder,
     generate_grid_points, generate_random_points_in_range_seeded,
@@ -85,8 +87,8 @@ use delaunay::prelude::repair::{
     DelaunayCheckPolicy, DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairOperation,
     DelaunayRepairOutcome, DelaunayRepairStats, DelaunayRepairVerificationContext,
     DelaunayTriangulationValidationError, FlipEdgeAdjacencyError, FlipError,
-    FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder,
-    verify_delaunay_for_triangulation,
+    FlipOrientationCheckStage as RepairFlipOrientationCheckStage, FlipTriangleAdjacencyError,
+    FlipVertexAdjacencyError, RepairQueueOrder, verify_delaunay_for_triangulation,
 };
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::tds::Tds;
@@ -121,7 +123,8 @@ use delaunay::prelude::validation::{
     ValidationPolicy as FocusedValidationPolicy,
 };
 use delaunay::prelude::{
-    CoordinateRange as RootCoordinateRange, SecureHashMap, SecureHashSet,
+    CoordinateRange as RootCoordinateRange,
+    FlipOrientationCheckStage as RootFlipOrientationCheckStage, SecureHashMap, SecureHashSet,
     ValidationConfigurationError as RootValidationConfigurationError,
 };
 use delaunay::query::{
@@ -333,6 +336,26 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
     assert!(!outcome.used_fallback_rebuild);
     assert!(outcome.topology_repair.succeeded);
     Ok(())
+}
+
+#[test]
+fn flip_preludes_cover_orientation_check_stage() {
+    assert_matches!(
+        FocusedFlipOrientationCheckStage::BeforeMutation,
+        FocusedFlipOrientationCheckStage::BeforeMutation
+    );
+    assert_matches!(
+        RepairFlipOrientationCheckStage::AfterTrialMutation,
+        RepairFlipOrientationCheckStage::AfterTrialMutation
+    );
+    assert_matches!(
+        RootFlipOrientationCheckStage::AfterTrialMutation,
+        RootFlipOrientationCheckStage::AfterTrialMutation
+    );
+    assert_matches!(
+        delaunay::flips::FlipOrientationCheckStage::BeforeMutation,
+        delaunay::flips::FlipOrientationCheckStage::BeforeMutation
+    );
 }
 
 #[test]

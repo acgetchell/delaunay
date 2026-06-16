@@ -12,9 +12,10 @@ pub use crate::core::algorithms::flips::{
     BistellarFlipKind, BistellarMove, ConstK, DelaunayRepairDiagnostics, DelaunayRepairError,
     DelaunayRepairStats, DelaunayRepairVerificationContext, FlipContextError, FlipDirection,
     FlipEdgeAdjacencyError, FlipError, FlipInfo, FlipMutationError, FlipNeighborWiringError,
-    FlipPredicateError, FlipPredicateOperation, FlipTriangleAdjacencyError,
-    FlipVertexAdjacencyError, RepairQueueOrder, RidgeHandle, TriangleHandle, TriangleHandleError,
-    verify_delaunay_for_triangulation, verify_delaunay_via_flip_predicates,
+    FlipOrientationCheckStage, FlipPredicateError, FlipPredicateOperation,
+    FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder, RidgeHandle,
+    TriangleHandle, TriangleHandleError, verify_delaunay_for_triangulation,
+    verify_delaunay_via_flip_predicates,
 };
 pub use crate::tds::{EdgeKey, FacetHandle, SimplexKey, VertexKey};
 
