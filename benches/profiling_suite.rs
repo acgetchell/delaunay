@@ -309,7 +309,10 @@ fn construct_triangulation<const D: usize>(
 fn benchmark_vertices_from_generated_points<const D: usize>(
     points: &[Point<D>],
 ) -> Vec<Vertex<(), D>> {
-    try_vertices_from_points(points).unwrap_or_else(|_| std::process::abort())
+    bench_result(
+        try_vertices_from_points(points),
+        "failed to create benchmark vertices",
+    )
 }
 
 /// Generates deterministic benchmark points inside validated bounds.

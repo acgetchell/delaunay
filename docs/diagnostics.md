@@ -120,7 +120,7 @@ use delaunay::prelude::diagnostics::delaunay_violation_report;
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
 };
-use delaunay::prelude::geometry::CoordinateValidationError;
+use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::DelaunayValidationError;
 
 #[derive(Debug, thiserror::Error)]
@@ -128,7 +128,7 @@ enum DiagnosticsExampleError {
     #[error(transparent)]
     Construction(#[from] DelaunayTriangulationConstructionError),
     #[error(transparent)]
-    Coordinate(#[from] CoordinateValidationError),
+    Coordinate(#[from] CoordinateConversionError),
     #[error(transparent)]
     Validation(#[from] DelaunayValidationError),
 }
