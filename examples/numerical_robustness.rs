@@ -107,7 +107,7 @@ fn build_with_adaptive_kernel() -> Result<(), NumericalRobustnessExampleError> {
     ];
 
     let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> =
-        DelaunayTriangulation::new(&vertices)?;
+        DelaunayTriangulation::try_new(&vertices)?;
 
     dt.validate()?;
     println!(

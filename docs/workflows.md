@@ -9,6 +9,10 @@ For the full design discussion (and more extensive examples), see [`api_design.m
 For validation semantics and configuration details, see [`validation.md`](validation.md).
 For the theoretical background and rationale behind the invariants, see [`invariants.md`](invariants.md).
 
+Examples that derive `thiserror::Error` assume the example crate includes
+`thiserror`; run `cargo add thiserror` alongside `delaunay` when copying those
+snippets into an application.
+
 ## Builder API: the happy path
 
 For most use cases, construction is a single call:
@@ -282,7 +286,7 @@ fn main() -> Result<(), ToroidalExampleError> {
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices)
         .try_canonicalized_toroidal([1.0, 1.0])
-        .expect("unit toroidal domain is valid") // canonicalized toroidal construction
+        ? // canonicalized toroidal construction
         .build::<()>()?;
 
     // Insert more points - they'll be wrapped to [0,1)×[0,1)

@@ -65,12 +65,14 @@ pub enum EdgeKeyError {
 /// #     Construction(#[from] DelaunayTriangulationConstructionError),
 /// #     #[error(transparent)]
 /// #     Edge(#[from] delaunay::prelude::tds::EdgeKeyError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = [
-///     Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-///     Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-///     Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+///     Vertex::<(), _>::try_new([0.0, 0.0])?,
+///     Vertex::<(), _>::try_new([1.0, 0.0])?,
+///     Vertex::<(), _>::try_new([0.0, 1.0])?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let Some((_simplex_key, simplex)) = dt.simplices().next() else {
@@ -115,12 +117,14 @@ impl EdgeKey {
     /// #     Construction(#[from] DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Edge(#[from] delaunay::prelude::tds::EdgeKeyError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((_simplex_key, simplex)) = dt.simplices().next() else {
@@ -190,12 +194,14 @@ impl EdgeKey {
     /// #     Construction(#[from] DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Edge(#[from] delaunay::prelude::tds::EdgeKeyError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((_simplex_key, simplex)) = dt.simplices().next() else {
@@ -231,12 +237,14 @@ impl EdgeKey {
     /// #     Construction(#[from] DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Edge(#[from] delaunay::prelude::tds::EdgeKeyError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((_simplex_key, simplex)) = dt.simplices().next() else {
@@ -272,12 +280,14 @@ impl EdgeKey {
     /// #     Construction(#[from] DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Edge(#[from] delaunay::prelude::tds::EdgeKeyError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((_simplex_key, simplex)) = dt.simplices().next() else {

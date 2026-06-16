@@ -52,7 +52,7 @@ fn repair_fallback_produces_valid_triangulation() {
         delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -172,7 +172,7 @@ fn repair_fallback_2d() {
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -199,7 +199,7 @@ fn explicit_repair_call_validates_result() {
     ];
 
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )

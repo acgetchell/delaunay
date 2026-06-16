@@ -43,13 +43,15 @@ use crate::triangulation::DelaunayTriangulation;
 /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
 /// #     #[error(transparent)]
 /// #     Flip(#[from] delaunay::flips::FlipError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
 /// ];
 /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
 ///     .topology_guarantee(TopologyGuarantee::PLManifold)
@@ -59,7 +61,7 @@ use crate::triangulation::DelaunayTriangulation;
 /// };
 ///
 /// // Split a simplex by inserting a vertex (k=1 move).
-/// let _info = dt.flip_k1_insert(simplex_key, delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.1, 0.1]).expect("finite vertex coordinates")).expect("finite vertex coordinates");
+/// let _info = dt.flip_k1_insert(simplex_key, delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.1, 0.1])?)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -86,13 +88,15 @@ pub trait BistellarFlips<const D: usize> {
     /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Flip(#[from] delaunay::flips::FlipError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
@@ -102,7 +106,7 @@ pub trait BistellarFlips<const D: usize> {
     /// };
     ///
     /// // Insert a vertex into the simplex
-    /// let info = dt.flip_k1_insert(simplex_key, delaunay::prelude::Vertex::<(), _>::try_new([0.25, 0.25, 0.25]).expect("finite vertex coordinates")).expect("finite vertex coordinates");
+    /// let info = dt.flip_k1_insert(simplex_key, delaunay::prelude::Vertex::<(), _>::try_new([0.25, 0.25, 0.25])?)?;
     /// assert!(!info.new_simplices.is_empty());
     /// # Ok(())
     /// # }
@@ -132,13 +136,15 @@ pub trait BistellarFlips<const D: usize> {
     /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Flip(#[from] delaunay::flips::FlipError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
@@ -146,7 +152,7 @@ pub trait BistellarFlips<const D: usize> {
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
-    /// let inserted = dt.flip_k1_insert(simplex_key, delaunay::prelude::Vertex::<(), _>::try_new([0.25, 0.25, 0.25]).expect("finite vertex coordinates")).expect("finite vertex coordinates");
+    /// let inserted = dt.flip_k1_insert(simplex_key, delaunay::prelude::Vertex::<(), _>::try_new([0.25, 0.25, 0.25])?)?;
     /// let inserted_vertex = inserted.inserted_face_vertices[0];
     ///
     /// // Remove the inserted vertex
@@ -176,14 +182,16 @@ pub trait BistellarFlips<const D: usize> {
     /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.3]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.3])?,
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
@@ -193,8 +201,7 @@ pub trait BistellarFlips<const D: usize> {
     /// if let Some(key) = simplex_key {
     ///     let has_neighbor = dt.tds().simplex(key)
     ///         .and_then(|simplex| simplex.neighbors())
-    ///         .map(|mut neighbors| neighbors.any(|n| n.is_some()))
-    ///         .unwrap_or(false);
+    ///         .is_some_and(|mut neighbors| neighbors.any(|n| n.is_some()));
     ///     if has_neighbor {
     ///         let facet = FacetHandle::try_new(dt.tds(), key, 0)?;
     ///         let _ = dt.flip_k2(facet);  // May succeed or fail depending on configuration
@@ -218,13 +225,20 @@ pub trait BistellarFlips<const D: usize> {
     /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     /// use delaunay::prelude::flips::*;
     ///
-    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
@@ -396,7 +410,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::new_with_topology_guarantee(
+            DelaunayTriangulation::try_new_with_topology_guarantee(
                 &vertices,
                 TopologyGuarantee::PLManifold,
             )
@@ -428,7 +442,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
 
         let simplex_key = dt.simplices().next().unwrap().0;
         dt.insertion_state.last_inserted_simplex = Some(simplex_key);
@@ -458,7 +472,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::new_with_topology_guarantee(
+            DelaunayTriangulation::try_new_with_topology_guarantee(
                 &vertices,
                 TopologyGuarantee::PLManifold,
             )

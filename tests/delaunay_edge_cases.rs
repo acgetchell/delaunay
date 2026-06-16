@@ -87,7 +87,7 @@ macro_rules! test_regression_config {
                 let vertices = $vertices;
 
                 let dt: DelaunayTriangulation<_, (), (), $dim> =
-                    DelaunayTriangulation::new_with_topology_guarantee(
+                    DelaunayTriangulation::try_new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     )
@@ -194,7 +194,7 @@ fn debug_issue_120_empty_circumsphere_5d() {
     ];
 
     let mut dt: DelaunayTriangulation<_, (), (), 5> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -239,7 +239,7 @@ fn debug_issue_120_empty_circumsphere_5d() {
     for attempt in 0..20 {
         let mut shuffled = vertices.clone();
         shuffled.shuffle(&mut rng);
-        if let Ok(dt_alt) = DelaunayTriangulation::<_, (), (), 5>::new_with_topology_guarantee(
+        if let Ok(dt_alt) = DelaunayTriangulation::<_, (), (), 5>::try_new_with_topology_guarantee(
             &shuffled,
             TopologyGuarantee::PLManifold,
         ) {
@@ -382,7 +382,7 @@ fn test_regression_proptest_insertion_order_4d_euler_mismatch() {
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 4> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -601,7 +601,7 @@ fn test_exact_minimum_vertices_2d() {
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -622,7 +622,7 @@ fn test_exact_minimum_vertices_3d() {
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -644,7 +644,7 @@ fn test_exact_minimum_vertices_4d() {
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 4> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -670,7 +670,7 @@ fn test_multiple_interior_points_2d() {
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -693,7 +693,7 @@ fn test_multiple_interior_points_3d() {
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -720,7 +720,7 @@ fn test_square_with_center_2d() {
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -745,7 +745,7 @@ fn test_cube_vertices_3d() {
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -753,7 +753,7 @@ fn test_cube_vertices_3d() {
 
     // The eight cube corners are cospherical, so this intentionally exercises
     // degenerate construction. Under `TopologyGuarantee::PLManifold`,
-    // `DelaunayTriangulation::new_with_topology_guarantee` may omit one
+    // `DelaunayTriangulation::try_new_with_topology_guarantee` may omit one
     // boundary vertex while preserving a valid PL-manifold. This edge-case test
     // checks that construction succeeds with a non-empty triangulation, not that
     // the cospherical cube is meshed into a specific tetrahedralization.
@@ -788,7 +788,7 @@ fn test_large_coordinates_2d() {
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -809,7 +809,7 @@ fn test_small_coordinates_3d() {
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -829,7 +829,7 @@ fn test_negative_coordinates_2d() {
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -854,7 +854,7 @@ fn test_robust_kernel_with_edge_case() {
     ];
 
     let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 2> =
-        DelaunayTriangulation::with_topology_guarantee(
+        DelaunayTriangulation::try_with_topology_guarantee(
             &RobustKernel::new(),
             &vertices,
             TopologyGuarantee::PLManifold,
@@ -882,7 +882,7 @@ fn test_collinear_points_2d() {
     ];
 
     let result: Result<DelaunayTriangulation<_, (), (), 2>, _> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &collinear,
             TopologyGuarantee::PLManifold,
         );
@@ -925,7 +925,7 @@ fn regression_issue_228_exact_predicate_paths_3d_fast() {
         .collect();
 
     let dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::Pseudomanifold,
         )
@@ -956,7 +956,7 @@ fn test_5d_simplex_plus_interior() {
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 5> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )

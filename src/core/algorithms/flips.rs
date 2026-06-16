@@ -4084,13 +4084,15 @@ impl TryFrom<[VertexKey; 3]> for TriangleHandle {
 /// #     Construction(#[from] DelaunayTriangulationConstructionError),
 /// #     #[error(transparent)]
 /// #     Flip(#[from] delaunay::prelude::flips::FlipError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = [
-///     Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-///     Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+///     Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+///     Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+///     Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+///     Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let Some((simplex_key, _)) = dt.simplices().next() else {
@@ -6415,12 +6417,19 @@ where
 /// use delaunay::prelude::repair::verify_delaunay_via_flip_predicates;
 /// use delaunay::prelude::geometry::AdaptiveKernel;
 ///
-/// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Source(#[from] DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
 /// ];
 ///
 /// let dt: DelaunayTriangulation<_, (), (), 3> =
@@ -6463,12 +6472,19 @@ where
 /// use delaunay::prelude::*;
 /// use delaunay::prelude::repair::verify_delaunay_for_triangulation;
 ///
-/// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Source(#[from] DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
 /// ];
 ///
 /// let dt: DelaunayTriangulation<_, (), (), 3> =
@@ -9846,9 +9862,9 @@ mod tests {
     fn test_source_simplex_is_certified_positive_requires_source_and_positive_order() {
         let source_simplex = SimplexKey::from(KeyData::from_ffi(42));
         let positive = [
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
         ];
         let negative = [positive[1], positive[0], positive[2]];
 
@@ -14417,6 +14433,18 @@ mod tests {
     #[test]
     fn test_flip_neighbor_conversion_kinds_cover_insertion_suberrors() {
         let cavity_kind = FlipNeighborCavityFailureKind::from(
+            &CavityFillingError::BoundarySimplexCountMismatch {
+                boundary_facet_count: 3,
+                new_simplex_count: 2,
+            },
+        );
+        assert_eq!(
+            cavity_kind,
+            FlipNeighborCavityFailureKind::BoundarySimplexCountMismatch
+        );
+        assert_eq!(cavity_kind.to_string(), "boundary simplex count mismatch");
+
+        let cavity_kind = FlipNeighborCavityFailureKind::from(
             &CavityFillingError::UnsupportedDegenerateLocation {
                 location: LocateResult::Outside,
             },
@@ -15458,7 +15486,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.2]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let tds = dt.tds();
         let local_simplex = tds.simplex_keys().next().unwrap();
         let outcome = RepairAttemptOutcome {
@@ -15490,7 +15518,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.2]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let mut tds = dt.tds().clone();
         let before = snapshot_topology(&tds);
         let kernel = AdaptiveKernel::<f64>::new();
@@ -15521,7 +15549,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.2]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let mut tds = dt.tds().clone();
         let kernel = AdaptiveKernel::<f64>::new();
 

@@ -52,7 +52,7 @@
 //! # Box half-width (default: 100) [used when distribution=box]
 //! DELAUNAY_LARGE_DEBUG_BOX_HALF_WIDTH=100 \
 //! # Construction mode:
-//! # - "new" (default): build via DelaunayTriangulation::new() which applies Hilbert ordering
+//! # - "new" (default): build via DelaunayTriangulation::try_new() which applies Hilbert ordering
 //! # - "incremental": manual insert loop (debug/profiling)
 //! DELAUNAY_LARGE_DEBUG_CONSTRUCTION_MODE=new \
 //! # Initial simplex strategy for batch construction: "max-volume" (default), "balanced", or "first"
@@ -414,7 +414,7 @@ enum PointDistribution {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConstructionMode {
-    /// Build via `DelaunayTriangulation::new()` (batch construction + Hilbert ordering).
+    /// Build via `DelaunayTriangulation::try_new()` (batch construction + Hilbert ordering).
     New,
     /// Insert vertices one by one (manual incremental construction).
     Incremental,
@@ -1268,7 +1268,11 @@ where
         PointDistribution::Box => {
             let range = CoordinateRange::try_new(-box_half_width, box_half_width)
                 .expect("box half-width should define a finite non-empty coordinate range");
-            generate_random_points_in_range_seeded::<D>(n_points, range, seed)
+            generate_random_points_in_range_seeded::<D>(n_points, range, seed).unwrap_or_else(|e| {
+                panic!(
+                    "failed to generate deterministic box points (half_width={box_half_width}): {e}"
+                )
+            })
         }
     };
     println!("Generated {} points in {:?}", points.len(), t_gen.elapsed());
@@ -1289,7 +1293,7 @@ where
 
     let mut dt: DelaunayTriangulation<_, (), (), D> = match mode {
         ConstructionMode::New => {
-            // `DelaunayTriangulation::new()` applies Hilbert ordering during batch construction.
+            // `DelaunayTriangulation::try_new()` applies Hilbert ordering during batch construction.
             // Use the statistics-returning variant so we can report aggregate insertion telemetry.
             let kernel = RobustKernel::<f64>::new();
             println!("Starting batch construction (new)...");
@@ -1297,7 +1301,7 @@ where
             let options = ConstructionOptions::default()
                 .with_initial_simplex_strategy(initial_simplex_strategy)
                 .with_batch_repair_policy(repair_policy);
-            match DelaunayTriangulation::with_options_and_statistics(
+            match DelaunayTriangulation::try_with_options_and_statistics(
                 &kernel,
                 &vertices,
                 topology_guarantee,
@@ -1701,7 +1705,7 @@ fn regression_issue_228_3d_1000_flip_repair_convergence() {
     // actual regression scenario.  PLManifold enables full orientation validation
     // now that #258 is fixed.
     let dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )
@@ -1742,7 +1746,7 @@ fn regression_issue_230_4d_100_orientation() {
 
     let kernel = RobustKernel::<f64>::new();
     let (dt, stats) =
-        DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::with_options_and_statistics(
+        DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::try_with_options_and_statistics(
             &kernel,
             &vertices,
             TopologyGuarantee::PLManifoldStrict,

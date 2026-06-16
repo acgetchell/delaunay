@@ -20,6 +20,7 @@ use delaunay::prelude::construction::{DelaunayTriangulation, Vertex};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, Point};
 use delaunay::prelude::tds::VertexKey;
+use delaunay::try_vertices_from_points;
 use std::hint::black_box;
 use std::time::Duration;
 
@@ -144,12 +145,18 @@ fn generate_vertices<const D: usize>(
     };
 
     points.extend(generated_points);
-    Vertex::from_points(&points)
+    bench_result(
+        try_vertices_from_points(&points),
+        "failed to create remove-vertex benchmark vertices",
+    )
 }
 
 /// Generate well-conditioned interior points inside the canonical simplex.
 fn generate_interior_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<D>> {
-    let raw_points = generate_random_points_in_range_seeded::<D>(count, interior_bounds(), seed);
+    let raw_points = bench_result(
+        generate_random_points_in_range_seeded::<D>(count, interior_bounds(), seed),
+        "failed to generate interior benchmark points",
+    );
     let mut points = Vec::with_capacity(count);
 
     for (index, raw_point) in raw_points.iter().enumerate() {
@@ -167,7 +174,10 @@ fn generate_interior_points<const D: usize>(count: usize, seed: u64) -> Vec<Poin
 
 /// Generate points close to coordinate-boundary facets of the canonical simplex.
 fn generate_near_boundary_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<D>> {
-    let raw_points = generate_random_points_in_range_seeded::<D>(count, interior_bounds(), seed);
+    let raw_points = bench_result(
+        generate_random_points_in_range_seeded::<D>(count, interior_bounds(), seed),
+        "failed to generate near-boundary benchmark points",
+    );
     let mut points = Vec::with_capacity(count);
 
     for (index, raw_point) in raw_points.iter().enumerate() {
@@ -187,7 +197,10 @@ fn generate_near_boundary_points<const D: usize>(count: usize, seed: u64) -> Vec
 
 /// Generate points on a shared sphere to stress cospherical predicates.
 fn generate_cospherical_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<D>> {
-    let raw_points = generate_random_points_in_range_seeded::<D>(count, interior_bounds(), seed);
+    let raw_points = bench_result(
+        generate_random_points_in_range_seeded::<D>(count, interior_bounds(), seed),
+        "failed to generate cospherical benchmark points",
+    );
     let mut points = Vec::with_capacity(count);
 
     for raw_point in &raw_points {
@@ -228,7 +241,10 @@ fn generate_near_degenerate_simplex<const D: usize>(count: usize, seed: u64) -> 
 
 /// Generate finite points with large coordinates to stress scale-sensitive paths.
 fn generate_large_coordinate_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<D>> {
-    let raw_points = generate_random_points_in_range_seeded::<D>(count, interior_bounds(), seed);
+    let raw_points = bench_result(
+        generate_random_points_in_range_seeded::<D>(count, interior_bounds(), seed),
+        "failed to generate large-coordinate benchmark points",
+    );
     let mut points = Vec::with_capacity(count);
 
     for (index, raw_point) in raw_points.iter().enumerate() {
@@ -263,7 +279,10 @@ fn simplex_points<const D: usize>() -> Vec<Point<D>> {
 
 /// Generate the minimal full-dimensional simplex for the rollback benchmark.
 fn simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
-    Vertex::from_points(&simplex_points::<D>())
+    bench_result(
+        try_vertices_from_points(&simplex_points::<D>()),
+        "failed to create rollback benchmark simplex vertices",
+    )
 }
 
 /// Deterministic radial coordinate for a point inside the canonical simplex.
@@ -341,7 +360,7 @@ fn build_success_source<const D: usize>(
             ^ attempt_seed.wrapping_mul(SEED_SALT.rotate_left(17));
         let fixture_kind = fixture_kind_for_attempt(preferred_kind, attempt);
         let vertices = generate_vertices::<D>(requested_vertices, seed, fixture_kind);
-        let Ok(triangulation) = DelaunayTriangulation::new(&vertices) else {
+        let Ok(triangulation) = DelaunayTriangulation::try_new(&vertices) else {
             continue;
         };
         let Some(vertex_key) = successful_removal_vertex(&triangulation) else {
@@ -370,7 +389,7 @@ fn build_success_source<const D: usize>(
 fn build_rollback_source<const D: usize>() -> RemovalSource<D> {
     let vertices = simplex_vertices::<D>();
     let triangulation: BenchTriangulation<D> = bench_result(
-        DelaunayTriangulation::new(&vertices),
+        DelaunayTriangulation::try_new(&vertices),
         format!("failed to build {D}D rollback benchmark simplex"),
     );
     let vertex_key = bench_option(

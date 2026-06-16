@@ -55,9 +55,9 @@ pub use uuid::Uuid;
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// // Internal use - not exposed in public API
-/// let vertices: StorageMap<VertexKey, Vertex<(), 3>> = StorageMap::with_key();
+/// ```rust,compile_fail
+/// // Internal use only: `StorageMap` is intentionally not exported publicly.
+/// use delaunay::prelude::collections::StorageMap;
 /// ```
 pub type StorageMap<K, V> = DenseSlotMap<K, V>;
 

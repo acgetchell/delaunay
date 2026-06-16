@@ -81,10 +81,13 @@ fn standard_simplex<const D: usize>() -> Vec<Point<D>> {
 /// Uses the range `[-10, 10]` against a unit simplex so that the Shewchuk
 /// errbound comfortably resolves the sign in Stage 1.
 fn hot_queries<const D: usize>() -> Vec<Point<D>> {
-    generate_random_points_in_range_seeded(
-        HOT_QUERIES,
-        coordinate_range(-10.0, 10.0, "hot-path query bounds must be valid"),
-        HOT_SEED,
+    bench_result(
+        generate_random_points_in_range_seeded(
+            HOT_QUERIES,
+            coordinate_range(-10.0, 10.0, "hot-path query bounds must be valid"),
+            HOT_SEED,
+        ),
+        "failed to generate hot-path query points",
     )
 }
 
@@ -96,10 +99,13 @@ fn near_boundary_queries<const D: usize>() -> Vec<Point<D>> {
     // Centered near the circumsphere radius of the standard simplex (~0.5 for
     // the D = 3 unit case); the exact value is unimportant — we just want a
     // high rate of errbound-ambiguous inputs.
-    generate_random_points_in_range_seeded(
-        NEAR_BOUNDARY_QUERIES,
-        coordinate_range(0.40, 0.60, "near-boundary query bounds must be valid"),
-        NEAR_BOUNDARY_SEED,
+    bench_result(
+        generate_random_points_in_range_seeded(
+            NEAR_BOUNDARY_QUERIES,
+            coordinate_range(0.40, 0.60, "near-boundary query bounds must be valid"),
+            NEAR_BOUNDARY_SEED,
+        ),
+        "failed to generate near-boundary query points",
     )
 }
 

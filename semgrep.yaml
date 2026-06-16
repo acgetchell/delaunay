@@ -520,6 +520,93 @@ rules:
         - "/tests/semgrep/**"
     pattern-regex: '\bVertex\s*(?:::<[^>\n]+>)?\s*::\s*empty\s*\('
 
+  - id: delaunay.rust.no-infallible-fallible-triangulation-constructors
+    languages:
+      - generic
+    severity: WARNING
+    message: "Use try_new*/try_with_* for fallible triangulation construction and ConvexHull::try_from_triangulation for fallible hull snapshots."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/459"
+      rationale: >-
+        Batch Delaunay construction and hull snapshot construction parse raw
+        invariant-bearing topology and geometry. Public names must expose that
+        fallibility with `try_new*`, `try_with_*`, or `try_from_*`. Empty
+        triangulation constructors remain infallible because they accept no
+        caller geometry or topology, and builder `new` remains infallible
+        because validation is explicitly deferred to `build`.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/examples/**/*.rs"
+        - "/docs/**/*.md"
+        - "/README.md"
+      exclude:
+        - "/docs/archive/**"
+    pattern-either:
+      - pattern-regex: >-
+          \bDelaunayTriangulation\b\s*(?:::\s*<[^;\n]+>\s*)?::\s*(?:new|new_with_(?:construction_statistics|options(?:_and_construction_statistics)?|topology_guarantee)|with_(?:kernel|topology_guarantee(?:_and_options)?|options_and_statistics))\s*\(
+      - pattern-regex: '\bConvexHull\b\s*(?:::\s*<[^;\n]+>\s*)?::\s*from_triangulation\s*\('
+
+  - id: delaunay.rust.no-infallible-fallible-constructor-definitions
+    languages:
+      - generic
+    severity: WARNING
+    message: "Public fallible constructors must use try_new*/try_with_* or try_from_* names."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/459"
+      rationale: >-
+        Public definitions on DelaunayTriangulation and ConvexHull must keep the
+        parse boundary visible in the function name. Empty constructors are
+        intentionally excluded because they accept no raw geometry or topology.
+    paths:
+      include:
+        - "/src/delaunay/construction.rs"
+        - "/src/geometry/algorithms/convex_hull.rs"
+    pattern-either:
+      - pattern-regex: >-
+          (?s)\bimpl[^{}]*\bDelaunayTriangulation\b[^{}]*\{(?:(?!^\}).)*?^\s*pub\s+(?:const\s+)?fn\s+(?:new|new_with_(?:construction_statistics|options(?:_and_construction_statistics)?|topology_guarantee)|with_(?:kernel|topology_guarantee(?:_and_options)?|options_and_statistics))\s*\(
+      - pattern-regex: '(?s)\bimpl[^{}]*\bConvexHull\b[^{}]*\{(?:(?!^\}).)*?^\s*pub\s+fn\s+from_triangulation\s*(?:<|\()'
+
+  - id: delaunay.rust.no-public-from-validated-constructors
+    languages:
+      - generic
+    severity: WARNING
+    message: "Keep from_validated* constructors private or crate-private; public constructors must parse through try_new*/try_from_* boundaries."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/459"
+      rationale: >-
+        from_validated* means the caller already has validation evidence. Public
+        APIs should not ask callers to supply trusted data; they should parse and
+        validate with try_new*, try_from_*, or equivalent fallible constructors.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-regex: '^\s*pub\s+(?:const\s+)?fn\s+from_validated[A-Za-z0-9_]*\s*\('
+
+  - id: delaunay.rust.no-parallel-from-validated-with-data-constructors
+    languages:
+      - generic
+    severity: WARNING
+    message: "Prefer one from_validated* constructor that accepts all already-proved state, rather than parallel *_with_data variants."
+    metadata:
+      category: maintainability
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/459"
+      rationale: >-
+        Trusted constructors should be scarce and orthogonal. Optional payload
+        data can be carried by one from_validated* helper instead of introducing
+        a second trusted entry point with the same invariant proof.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-regex: '\bfn\s+from_validated[A-Za-z0-9_]*_with_data\s*\('
+
   - id: delaunay.rust.no-slotmap-key-topology-deserialization
     languages:
       - generic
@@ -741,6 +828,12 @@ rules:
         JSON and some other object-like codecs can otherwise accept duplicate
         UUID keys with last-key-wins semantics. Raw snapshot relationship maps
         must reject duplicate simplex UUIDs before validation and hydration.
+        The negative lookbehinds in this rule intentionally match the current
+        rustfmt-consistent serde attribute layout for `simplex_vertices`,
+        `simplex_neighbors`, and `simplex_vertex_offsets`. They expect specific
+        indentation and line structure for those field attributes; different
+        indentation or line breaks can produce false positives even when the
+        required deserializers are present.
     paths:
       include:
         - "/src/core/tds_snapshot.rs"
@@ -980,18 +1073,33 @@ rules:
       rationale: >-
         Public Rust documentation examples should model typed error handling
         with DelaunayResult and ? rather than teaching panic-based control flow.
-        Literal vertex fixtures may use `expect("finite vertex coordinates")`
-        with `try_new` or `try_new_with_data` because the panic documents an
-        impossible finite-literal invariant, while keeping examples focused on
-        the API under discussion.
     paths:
       include:
         - "/src/**/*.rs"
         - "/tests/semgrep/doctests/**/*.txt"
+        - "/doctests/**/*.txt"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
     patterns:
-      - pattern-regex: '^\s*//[!/]\s*(?:#\s*)?.*(?:\b[\w:]+|[\]\)])\.(unwrap|expect)\s*\('
-      - pattern-not-regex: '^\s*//[!/].*\bVertex(?:\s*::<[^>]+>)?::try_new\s*\(\s*\[[^\]]*\]\s*\)\.expect\("finite vertex coordinates"\)'
-      - pattern-not-regex: '^\s*//[!/].*\bVertex(?:\s*::<[^>]+>)?::try_new_with_data\s*\(\s*\[[^\]]*\]\s*,[^()]*\)\.expect\("finite vertex coordinates"\)'
+      - pattern-regex: '^\s*//[!/]\s*(?:#\s*)?.*(?:\b[\w:]+|[\]\)])\.(unwrap(?:_[A-Za-z0-9_]+)?|expect)\s*\('
+
+  - id: delaunay.rust.no-unwrap-expect-in-markdown-examples
+    languages:
+      - generic
+    severity: WARNING
+    message: "Use fallible example flow instead of unwrap*() or expect() in public Markdown examples."
+    metadata:
+      category: correctness
+      rationale: >-
+        Public Markdown examples should model typed error handling with
+        DelaunayResult and ? rather than teaching panic-based or fallback-based
+        control flow.
+    paths:
+      include:
+        - "/README.md"
+        - "/docs/**/*.md"
+      exclude:
+        - "/docs/archive/**"
+    pattern-regex: '\.(?:unwrap(?:_[A-Za-z0-9_]+)?|expect)\s*\('
 
   - id: delaunay.rust.no-box-dyn-error-in-doctests
     languages:
@@ -1007,6 +1115,8 @@ rules:
       include:
         - "/src/**/*.rs"
         - "/tests/semgrep/doctests/**/*.txt"
+        - "/doctests/**/*.txt"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
     pattern-regex: '^\s*//[!/].*(?:Box\s*<\s*dyn\s+(?:std::error::Error|Error)|&\s*dyn\s+(?:std::error::Error|Error)|anyhow::Error|anyhow::Result)' # yamllint disable-line rule:line-length
 
   - id: delaunay.rust.prefer-assert-matches-in-doctests
@@ -1024,6 +1134,8 @@ rules:
       include:
         - "/src/**/*.rs"
         - "/tests/semgrep/doctests/**/*.txt"
+        - "/doctests/**/*.txt"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
     pattern-regex: '^\s*//[!/].*\bassert!\s*\(\s*matches!\s*\('
 
   - id: delaunay.rust.no-env-gated-stdio-diagnostics

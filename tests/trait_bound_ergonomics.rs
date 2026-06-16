@@ -4,13 +4,29 @@ use std::hash::Hasher;
 
 use delaunay::DelaunayTriangulation;
 use delaunay::prelude::Triangulation;
+use delaunay::prelude::construction::{GlobalTopology, TopologyGuarantee, TopologyKind};
 use delaunay::prelude::geometry::{Coordinate, CoordinateValidationError, FastKernel};
 use delaunay::prelude::query::BoundaryAnalysis;
 use delaunay::prelude::tds::{Simplex, SimplexKey, Tds, VertexKey, verify_facet_index_consistency};
 use delaunay::prelude::topology::validation::validate_triangulation_euler;
+use delaunay::query::{AdjacencyIndexBuildError, QueryError};
 
 struct Payload;
 struct NotAKernel;
+
+#[derive(Clone, Debug, thiserror::Error, PartialEq)]
+enum TraitBoundErgonomicsError {
+    #[error(transparent)]
+    Adjacency {
+        #[from]
+        source: AdjacencyIndexBuildError,
+    },
+    #[error(transparent)]
+    Query {
+        #[from]
+        source: QueryError,
+    },
+}
 
 struct MinimalCoordinate<const D: usize> {
     coords: [f64; D],
@@ -94,6 +110,55 @@ fn read_only_topology_apis_accept_non_datatype_payloads() {
 
     let topology = validate_triangulation_euler(&tds).unwrap();
     assert!(topology.is_valid());
+}
+
+#[test]
+fn delaunay_empty_query_wrappers_accept_non_datatype_payloads()
+-> Result<(), TraitBoundErgonomicsError> {
+    let mut dt: DelaunayTriangulation<FastKernel<f64>, Payload, Payload, 2> =
+        DelaunayTriangulation::with_empty_kernel(FastKernel::new());
+
+    assert_eq!(dt.number_of_vertices(), 0);
+    assert_eq!(dt.number_of_simplices(), 0);
+    assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
+    assert_eq!(dt.global_topology(), GlobalTopology::Euclidean);
+    assert_eq!(dt.topology_kind(), TopologyKind::Euclidean);
+
+    dt.set_global_topology(GlobalTopology::Euclidean);
+    dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+    assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+
+    assert!(dt.facets()?.next().is_none());
+    assert_eq!(dt.edges().count(), 0);
+    assert_eq!(dt.incident_edges(VertexKey::default()).count(), 0);
+    assert_eq!(dt.simplex_neighbors(SimplexKey::default()).count(), 0);
+    assert_eq!(dt.simplex_vertices(SimplexKey::default()), None);
+    assert_eq!(dt.vertex_coords(VertexKey::default()), None);
+
+    let index = dt.build_adjacency_index()?;
+    assert_eq!(dt.edges_with_index(&index)?.count(), 0);
+    assert_eq!(
+        dt.incident_edges_with_index(&index, VertexKey::default())?
+            .count(),
+        0
+    );
+    assert_eq!(
+        dt.simplex_neighbors_with_index(&index, SimplexKey::default())?
+            .count(),
+        0
+    );
+
+    let dt_with_topology: DelaunayTriangulation<FastKernel<f64>, Payload, Payload, 2> =
+        DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
+            FastKernel::new(),
+            TopologyGuarantee::Pseudomanifold,
+        );
+    assert_eq!(
+        dt_with_topology.topology_guarantee(),
+        TopologyGuarantee::Pseudomanifold
+    );
+
+    Ok(())
 }
 
 #[test]

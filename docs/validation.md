@@ -5,6 +5,10 @@ This document explains the validation hierarchy in the delaunay library and prov
 For the theoretical background, rationale, and implementation pointers behind the invariants, see
 [`invariants.md`](invariants.md).
 
+Examples that derive `thiserror::Error` assume the example crate includes
+`thiserror`; run `cargo add thiserror` alongside `delaunay` when copying those
+snippets into an application.
+
 ## Overview
 
 The library provides **four levels of validation**, each building on the previous level to provide increasingly comprehensive correctness guarantees:
@@ -93,6 +97,7 @@ use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
     Vertex,
 };
+use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::validation::{ValidationConfigurationError, ValidationPolicy};
 
 #[derive(Debug, thiserror::Error)]
@@ -100,15 +105,17 @@ enum ValidationExampleError {
     #[error(transparent)]
     Construction(#[from] DelaunayTriangulationConstructionError),
     #[error(transparent)]
+    Coordinate(#[from] CoordinateConversionError),
+    #[error(transparent)]
     Configuration(#[from] ValidationConfigurationError),
 }
 
 fn main() -> Result<(), ValidationExampleError> {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     ];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;

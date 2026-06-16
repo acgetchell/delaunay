@@ -1014,9 +1014,9 @@ mod tests {
 
         // 2D: Right triangle with legs of length 1
         let triangle_2d = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
         ];
         let radius_2d = circumradius(&triangle_2d).unwrap();
         // For a right triangle with legs of length 1, circumradius is sqrt(2)/2
@@ -1025,10 +1025,10 @@ mod tests {
 
         // 3D: Unit tetrahedron (origin + unit basis vectors)
         let tetrahedron_3d = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         let radius_3d = circumradius(&tetrahedron_3d).unwrap();
         println!("3D circumradius: {radius_3d}");
@@ -1039,11 +1039,11 @@ mod tests {
 
         // 4D: Unit 4-simplex
         let simplex_4d = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         let radius_4d = circumradius(&simplex_4d).unwrap();
         println!("4D circumradius: {radius_4d}");
@@ -1053,12 +1053,12 @@ mod tests {
 
         // 5D: Unit 5-simplex
         let simplex_5d = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         let radius_5d = circumradius(&simplex_5d).unwrap();
         println!("5D circumradius: {radius_5d}");
@@ -1107,71 +1107,91 @@ mod tests {
 
         // 2D triangle case
         let simplex_2d = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
         ];
 
         // Test far outside, inside, and boundary points for 2D
         assert_eq!(
-            insphere_lifted(&simplex_2d, Point::from_validated_coords([10.0, 10.0])).unwrap(),
+            insphere_lifted(
+                &simplex_2d,
+                Point::try_new([10.0, 10.0]).expect("finite point coordinates")
+            )
+            .unwrap(),
             InSphere::OUTSIDE,
             "2D far outside point should be OUTSIDE"
         );
         assert_eq!(
-            insphere_lifted(&simplex_2d, Point::from_validated_coords([0.1, 0.1])).unwrap(),
+            insphere_lifted(
+                &simplex_2d,
+                Point::try_new([0.1, 0.1]).expect("finite point coordinates")
+            )
+            .unwrap(),
             InSphere::INSIDE,
             "2D inside point should be INSIDE"
         );
         assert_eq!(
-            insphere_lifted(&simplex_2d, Point::from_validated_coords([0.0, 0.0])).unwrap(),
+            insphere_lifted(
+                &simplex_2d,
+                Point::try_new([0.0, 0.0]).expect("finite point coordinates")
+            )
+            .unwrap(),
             InSphere::BOUNDARY,
             "2D vertex should be BOUNDARY"
         );
 
         // 3D tetrahedron case
         let simplex_3d = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
 
         // Test far outside, inside, and boundary points for 3D
         assert_eq!(
             insphere_lifted(
                 &simplex_3d,
-                Point::from_validated_coords([10.0, 10.0, 10.0])
+                Point::try_new([10.0, 10.0, 10.0]).expect("finite point coordinates")
             )
             .unwrap(),
             InSphere::OUTSIDE,
             "3D far outside point should be OUTSIDE"
         );
         assert_eq!(
-            insphere_lifted(&simplex_3d, Point::from_validated_coords([0.1, 0.1, 0.1])).unwrap(),
+            insphere_lifted(
+                &simplex_3d,
+                Point::try_new([0.1, 0.1, 0.1]).expect("finite point coordinates")
+            )
+            .unwrap(),
             InSphere::INSIDE,
             "3D inside point should be INSIDE"
         );
         assert_eq!(
-            insphere_lifted(&simplex_3d, Point::from_validated_coords([0.0, 0.0, 0.0])).unwrap(),
+            insphere_lifted(
+                &simplex_3d,
+                Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates")
+            )
+            .unwrap(),
             InSphere::BOUNDARY,
             "3D vertex should be BOUNDARY"
         );
 
         // 4D simplex case
         let simplex_4d = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
 
         // Test far outside, inside, and boundary points for 4D
         assert_eq!(
             insphere_lifted(
                 &simplex_4d,
-                Point::from_validated_coords([10.0, 10.0, 10.0, 10.0])
+                Point::try_new([10.0, 10.0, 10.0, 10.0]).expect("finite point coordinates")
             )
             .unwrap(),
             InSphere::OUTSIDE,
@@ -1180,7 +1200,7 @@ mod tests {
         assert_eq!(
             insphere_lifted(
                 &simplex_4d,
-                Point::from_validated_coords([0.1, 0.1, 0.1, 0.1])
+                Point::try_new([0.1, 0.1, 0.1, 0.1]).expect("finite point coordinates")
             )
             .unwrap(),
             InSphere::INSIDE,
@@ -1189,7 +1209,7 @@ mod tests {
         assert_eq!(
             insphere_lifted(
                 &simplex_4d,
-                Point::from_validated_coords([0.0, 0.0, 0.0, 0.0])
+                Point::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates")
             )
             .unwrap(),
             InSphere::BOUNDARY,
@@ -1198,19 +1218,19 @@ mod tests {
 
         // 5D simplex case
         let simplex_5d = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
 
         // Test far outside, inside, and boundary points for 5D
         assert_eq!(
             insphere_lifted(
                 &simplex_5d,
-                Point::from_validated_coords([10.0, 10.0, 10.0, 10.0, 10.0])
+                Point::try_new([10.0, 10.0, 10.0, 10.0, 10.0]).expect("finite point coordinates")
             )
             .unwrap(),
             InSphere::OUTSIDE,
@@ -1219,7 +1239,7 @@ mod tests {
         assert_eq!(
             insphere_lifted(
                 &simplex_5d,
-                Point::from_validated_coords([0.1, 0.1, 0.1, 0.1, 0.1])
+                Point::try_new([0.1, 0.1, 0.1, 0.1, 0.1]).expect("finite point coordinates")
             )
             .unwrap(),
             InSphere::INSIDE,
@@ -1228,7 +1248,7 @@ mod tests {
         assert_eq!(
             insphere_lifted(
                 &simplex_5d,
-                Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0])
+                Point::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates")
             )
             .unwrap(),
             InSphere::BOUNDARY,
@@ -1242,11 +1262,11 @@ mod tests {
 
         // 1D case (line segment)
         let simplex_1d = vec![
-            Point::from_validated_coords([0.0]),
-            Point::from_validated_coords([2.0]),
+            Point::try_new([0.0]).expect("finite point coordinates"),
+            Point::try_new([2.0]).expect("finite point coordinates"),
         ];
-        let midpoint_1d = Point::from_validated_coords([1.0]);
-        let far_point_1d = Point::from_validated_coords([10.0]);
+        let midpoint_1d = Point::try_new([1.0]).expect("finite point coordinates");
+        let far_point_1d = Point::try_new([10.0]).expect("finite point coordinates");
 
         assert!(
             insphere_lifted(&simplex_1d, midpoint_1d).is_ok(),
@@ -1259,14 +1279,14 @@ mod tests {
 
         // Test circumcenter points for various dimensions
         let simplex_3d = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
 
         // Circumcenter should be inside the circumsphere
-        let circumcenter_3d = Point::from_validated_coords([0.5, 0.5, 0.5]);
+        let circumcenter_3d = Point::try_new([0.5, 0.5, 0.5]).expect("finite point coordinates");
         assert_eq!(
             insphere_lifted(&simplex_3d, circumcenter_3d).unwrap(),
             InSphere::INSIDE,
@@ -1275,18 +1295,18 @@ mod tests {
 
         // Test regular 4D simplex with symmetric properties
         let regular_4d_simplex = vec![
-            Point::from_validated_coords([1.0, 1.0, 1.0, 1.0]),
-            Point::from_validated_coords([1.0, -1.0, -1.0, -1.0]),
-            Point::from_validated_coords([-1.0, 1.0, -1.0, -1.0]),
-            Point::from_validated_coords([-1.0, -1.0, 1.0, -1.0]),
-            Point::from_validated_coords([-1.0, -1.0, -1.0, 1.0]),
+            Point::try_new([1.0, 1.0, 1.0, 1.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, -1.0, -1.0, -1.0]).expect("finite point coordinates"),
+            Point::try_new([-1.0, 1.0, -1.0, -1.0]).expect("finite point coordinates"),
+            Point::try_new([-1.0, -1.0, 1.0, -1.0]).expect("finite point coordinates"),
+            Point::try_new([-1.0, -1.0, -1.0, 1.0]).expect("finite point coordinates"),
         ];
 
         // Origin should be inside this symmetric simplex
         assert_eq!(
             insphere_lifted(
                 &regular_4d_simplex,
-                Point::from_validated_coords([0.0, 0.0, 0.0, 0.0])
+                Point::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates")
             )
             .unwrap(),
             InSphere::INSIDE,
@@ -1295,10 +1315,10 @@ mod tests {
 
         // Error case: insufficient vertices
         let incomplete_simplex = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
         ]; // Only 2 vertices for 3D
-        let test_point = Point::from_validated_coords([0.5, 0.5, 0.5]);
+        let test_point = Point::try_new([0.5, 0.5, 0.5]).expect("finite point coordinates");
 
         assert!(
             insphere_lifted(&incomplete_simplex, test_point).is_err(),
@@ -1309,10 +1329,10 @@ mod tests {
     #[test]
     fn test_relative_insphere_determinant_sign_rejects_wrong_point_count() {
         let incomplete_simplex = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
         ];
-        let test_point = Point::from_validated_coords([0.5, 0.5, 0.5]);
+        let test_point = Point::try_new([0.5, 0.5, 0.5]).expect("finite point coordinates");
 
         let err = relative_insphere_determinant_sign(&incomplete_simplex, &test_point).unwrap_err();
 
@@ -1329,11 +1349,11 @@ mod tests {
     #[test]
     fn test_relative_insphere_determinant_sign_boundary_matches_exact_signs() {
         let simplex = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
         ];
-        let boundary = Point::from_validated_coords([1.0, 1.0]);
+        let boundary = Point::try_new([1.0, 1.0]).expect("finite point coordinates");
 
         let determinant_sign = relative_insphere_determinant_sign(&simplex, &boundary).unwrap();
         let signs = relative_insphere_signs(&simplex, &boundary).unwrap();
@@ -1346,8 +1366,8 @@ mod tests {
     fn predicates_circumcenter_error_cases() {
         // Test circumcenter calculation with degenerate cases
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
         ]; // Only 2 points for 2D
 
         // Test with insufficient vertices for proper simplex
@@ -1359,10 +1379,10 @@ mod tests {
     fn predicates_circumcenter_collinear_points() {
         // Test circumcenter with collinear points (should fail)
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([2.0, 0.0, 0.0]),
-            Point::from_validated_coords([3.0, 0.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([2.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([3.0, 0.0, 0.0]).expect("finite point coordinates"),
         ];
 
         // This should fail because points are collinear
@@ -1374,10 +1394,10 @@ mod tests {
     fn predicates_circumradius_with_center() {
         // Test the circumradius_with_center function
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
 
         let center = circumcenter(&points).unwrap();
@@ -1391,17 +1411,17 @@ mod tests {
     fn predicates_circumsphere_edge_cases() {
         // Test circumsphere containment with simple cases
         let simplex_points = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
         ];
 
         // Test that the methods run without error
-        let test_point = Point::from_validated_coords([0.25, 0.25]);
+        let test_point = Point::try_new([0.25, 0.25]).expect("finite point coordinates");
         assert!(insphere_distance(&simplex_points, test_point).is_ok());
 
         // At minimum, both methods should give the same result for the same input
-        let far_point = Point::from_validated_coords([100.0, 100.0]);
+        let far_point = Point::try_new([100.0, 100.0]).expect("finite point coordinates");
         assert!(insphere_distance(&simplex_points, far_point).is_ok());
     }
 
@@ -1413,9 +1433,9 @@ mod tests {
     fn test_simplex_orientation_comprehensive() {
         // Test 2D orientation - positive case
         let positive_2d = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
         ];
         assert_eq!(
             simplex_orientation(&positive_2d).unwrap(),
@@ -1425,9 +1445,9 @@ mod tests {
 
         // Test 2D orientation - negative case (reversed order)
         let negative_2d = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0]),
-            Point::from_validated_coords([1.0, 0.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
         ];
         assert_eq!(
             simplex_orientation(&negative_2d).unwrap(),
@@ -1437,9 +1457,9 @@ mod tests {
 
         // Test 2D degenerate case - collinear points
         let degenerate_2d = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([2.0, 0.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([2.0, 0.0]).expect("finite point coordinates"),
         ];
         assert_eq!(
             simplex_orientation(&degenerate_2d).unwrap(),
@@ -1449,10 +1469,10 @@ mod tests {
 
         // Test 3D orientation - positive case
         let positive_3d = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         assert_eq!(
             simplex_orientation(&positive_3d).unwrap(),
@@ -1462,10 +1482,10 @@ mod tests {
 
         // Test 3D orientation - negative case
         let negative_3d = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         assert_eq!(
             simplex_orientation(&negative_3d).unwrap(),
@@ -1475,10 +1495,10 @@ mod tests {
 
         // Test 3D degenerate case - coplanar points
         let degenerate_3d = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
-            Point::from_validated_coords([1.0, 1.0, 0.0]), // All points on z=0 plane
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 1.0, 0.0]).expect("finite point coordinates"), // All points on z=0 plane
         ];
         assert_eq!(
             simplex_orientation(&degenerate_3d).unwrap(),
@@ -1488,11 +1508,11 @@ mod tests {
 
         // Test 4D orientation - positive case
         let positive_4d = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         assert_eq!(
             simplex_orientation(&positive_4d).unwrap(),
@@ -1502,11 +1522,11 @@ mod tests {
 
         // Test 4D orientation - negative case (different ordering)
         let negative_4d = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         assert_eq!(
             simplex_orientation(&negative_4d).unwrap(),
@@ -1516,11 +1536,11 @@ mod tests {
 
         // Test 4D degenerate case - points in 3D subspace
         let degenerate_4d = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0]),
-            Point::from_validated_coords([1.0, 1.0, 1.0, 0.0]), // All points have w=0
+            Point::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 1.0, 1.0, 0.0]).expect("finite point coordinates"), // All points have w=0
         ];
         assert_eq!(
             simplex_orientation(&degenerate_4d).unwrap(),
@@ -1531,12 +1551,12 @@ mod tests {
         // Test 5D orientation - positive case
         // For even dimensions, we need to adjust vertex order to get positive orientation
         let positive_5d = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         assert_eq!(
             simplex_orientation(&positive_5d).unwrap(),
@@ -1546,12 +1566,12 @@ mod tests {
 
         // Test 5D orientation - negative case (reversed from positive)
         let negative_5d = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         assert_eq!(
             simplex_orientation(&negative_5d).unwrap(),
@@ -1561,12 +1581,12 @@ mod tests {
 
         // Test 5D degenerate case - points in 4D subspace
         let degenerate_5d = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0, 0.0]),
-            Point::from_validated_coords([1.0, 1.0, 1.0, 1.0, 0.0]), // All points have v=0
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 1.0, 1.0, 1.0, 0.0]).expect("finite point coordinates"), // All points have v=0
         ];
         assert_eq!(
             simplex_orientation(&degenerate_5d).unwrap(),
@@ -1576,8 +1596,8 @@ mod tests {
 
         // Test error case: insufficient vertices
         let insufficient_vertices = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
         ]; // Only 2 vertices for 3D
         assert!(
             simplex_orientation(&insufficient_vertices).is_err(),
@@ -1589,12 +1609,12 @@ mod tests {
     fn test_insphere_degenerate_simplex_error_handling() {
         // Create a degenerate simplex (coplanar points in 3D)
         let degenerate_simplex = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
-            Point::from_validated_coords([1.0, 1.0, 0.0]), // All points lie on the same plane (z=0)
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 1.0, 0.0]).expect("finite point coordinates"), // All points lie on the same plane (z=0)
         ];
-        let test_point = Point::from_validated_coords([0.5, 0.5, 0.5]);
+        let test_point = Point::try_new([0.5, 0.5, 0.5]).expect("finite point coordinates");
 
         // Test that insphere errors with a typed degenerate-simplex variant.
         let result = insphere(&degenerate_simplex, test_point);
@@ -1622,8 +1642,8 @@ mod tests {
 
         // Test error handling for insufficient vertices
         let insufficient_vertices = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
         ]; // Only 2 vertices for 3D
 
         assert!(
@@ -1637,13 +1657,13 @@ mod tests {
         // Create a simplex and test with a point on or near the boundary
         // For 2D case, use a right triangle
         let simplex_points = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
         ];
 
         // Test with one of the original vertices (should be on boundary)
-        let vertex_point = Point::from_validated_coords([0.0, 0.0]);
+        let vertex_point = Point::try_new([0.0, 0.0]).expect("finite point coordinates");
         let result = insphere_lifted(&simplex_points, vertex_point).unwrap();
         assert_eq!(
             result,
@@ -1652,7 +1672,7 @@ mod tests {
         );
 
         // Test with a point clearly inside
-        let inside_point = Point::from_validated_coords([0.1, 0.1]);
+        let inside_point = Point::try_new([0.1, 0.1]).expect("finite point coordinates");
         let inside_result = insphere_lifted(&simplex_points, inside_point).unwrap();
         assert_eq!(
             inside_result,
@@ -1661,7 +1681,7 @@ mod tests {
         );
 
         // Test with a point clearly outside
-        let outside_point = Point::from_validated_coords([10.0, 10.0]);
+        let outside_point = Point::try_new([10.0, 10.0]).expect("finite point coordinates");
         let outside_result = insphere_lifted(&simplex_points, outside_point).unwrap();
         assert_eq!(
             outside_result,
@@ -1674,27 +1694,27 @@ mod tests {
     fn test_insphere_and_insphere_lifted_consistency() {
         // Test that both insphere implementations give consistent results for various cases
         let simplex_points = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
 
         // Test multiple points
         let test_cases = [
             // Inside points
             (
-                Point::from_validated_coords([0.2, 0.2, 0.2]),
+                Point::try_new([0.2, 0.2, 0.2]).expect("finite point coordinates"),
                 InSphere::INSIDE,
             ),
             // Outside points
             (
-                Point::from_validated_coords([2.0, 2.0, 2.0]),
+                Point::try_new([2.0, 2.0, 2.0]).expect("finite point coordinates"),
                 InSphere::OUTSIDE,
             ),
             // Boundary points (simplex vertices should be on boundary)
             (
-                Point::from_validated_coords([0.0, 0.0, 0.0]),
+                Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
                 InSphere::BOUNDARY,
             ),
         ];
@@ -1725,17 +1745,29 @@ mod tests {
     fn test_insphere_methods_2d_comprehensive() {
         // 2D triangle: origin, (1,0), (0,1)
         let simplex = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
         ];
 
         // Test various points and verify all methods agree
         let test_cases = [
-            (Point::from_validated_coords([0.1, 0.1]), "inside"), // Clearly inside
-            (Point::from_validated_coords([10.0, 10.0]), "outside"), // Clearly outside
-            (Point::from_validated_coords([0.0, 0.0]), "boundary"), // Vertex (on boundary)
-            (Point::from_validated_coords([0.5, 0.0]), "boundary"), // Edge midpoint
+            (
+                Point::try_new([0.1, 0.1]).expect("finite point coordinates"),
+                "inside",
+            ), // Clearly inside
+            (
+                Point::try_new([10.0, 10.0]).expect("finite point coordinates"),
+                "outside",
+            ), // Clearly outside
+            (
+                Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+                "boundary",
+            ), // Vertex (on boundary)
+            (
+                Point::try_new([0.5, 0.0]).expect("finite point coordinates"),
+                "boundary",
+            ), // Edge midpoint
         ];
 
         for (test_point, description) in &test_cases {
@@ -1763,17 +1795,29 @@ mod tests {
     fn test_insphere_methods_3d_comprehensive() {
         // 3D tetrahedron: origin and unit basis vectors
         let simplex = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
 
         let test_cases = [
-            (Point::from_validated_coords([0.1, 0.1, 0.1]), "inside"),
-            (Point::from_validated_coords([10.0, 10.0, 10.0]), "outside"),
-            (Point::from_validated_coords([0.0, 0.0, 0.0]), "boundary"), // Vertex
-            (Point::from_validated_coords([0.25, 0.25, 0.25]), "inside"), // Centroid region
+            (
+                Point::try_new([0.1, 0.1, 0.1]).expect("finite point coordinates"),
+                "inside",
+            ),
+            (
+                Point::try_new([10.0, 10.0, 10.0]).expect("finite point coordinates"),
+                "outside",
+            ),
+            (
+                Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+                "boundary",
+            ), // Vertex
+            (
+                Point::try_new([0.25, 0.25, 0.25]).expect("finite point coordinates"),
+                "inside",
+            ), // Centroid region
         ];
 
         for (test_point, description) in &test_cases {
@@ -1802,24 +1846,30 @@ mod tests {
     fn test_insphere_methods_4d_comprehensive() {
         // 4D simplex: origin and unit basis vectors
         let simplex = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
 
         let test_cases = [
-            (Point::from_validated_coords([0.1, 0.1, 0.1, 0.1]), "inside"),
             (
-                Point::from_validated_coords([10.0, 10.0, 10.0, 10.0]),
+                Point::try_new([0.1, 0.1, 0.1, 0.1]).expect("finite point coordinates"),
+                "inside",
+            ),
+            (
+                Point::try_new([10.0, 10.0, 10.0, 10.0]).expect("finite point coordinates"),
                 "outside",
             ),
             (
-                Point::from_validated_coords([0.0, 0.0, 0.0, 0.0]),
+                Point::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
                 "boundary",
             ), // Vertex
-            (Point::from_validated_coords([0.2, 0.2, 0.2, 0.2]), "inside"),
+            (
+                Point::try_new([0.2, 0.2, 0.2, 0.2]).expect("finite point coordinates"),
+                "inside",
+            ),
         ];
 
         for (test_point, description) in &test_cases {
@@ -1848,29 +1898,29 @@ mod tests {
     fn test_insphere_methods_5d_comprehensive() {
         // 5D simplex: origin and unit basis vectors
         let simplex = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
 
         let test_cases = [
             (
-                Point::from_validated_coords([0.1, 0.1, 0.1, 0.1, 0.1]),
+                Point::try_new([0.1, 0.1, 0.1, 0.1, 0.1]).expect("finite point coordinates"),
                 "inside",
             ),
             (
-                Point::from_validated_coords([10.0, 10.0, 10.0, 10.0, 10.0]),
+                Point::try_new([10.0, 10.0, 10.0, 10.0, 10.0]).expect("finite point coordinates"),
                 "outside",
             ),
             (
-                Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0]),
+                Point::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
                 "boundary",
             ), // Vertex
             (
-                Point::from_validated_coords([0.15, 0.15, 0.15, 0.15, 0.15]),
+                Point::try_new([0.15, 0.15, 0.15, 0.15, 0.15]).expect("finite point coordinates"),
                 "inside",
             ),
         ];
@@ -1903,34 +1953,36 @@ mod tests {
 
         // 2D: Test with very small simplex
         let tiny_simplex_2d = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1e-6, 0.0]),
-            Point::from_validated_coords([0.0, 1e-6]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1e-6, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1e-6]).expect("finite point coordinates"),
         ];
-        let test_point_2d = Point::from_validated_coords([1e-7, 1e-7]);
+        let test_point_2d = Point::try_new([1e-7, 1e-7]).expect("finite point coordinates");
         let result_2d = insphere(&tiny_simplex_2d, test_point_2d);
         assert!(result_2d.is_ok(), "2D tiny simplex should work");
 
         // 3D: Test with large coordinates
         let large_simplex_3d = vec![
-            Point::from_validated_coords([1e6, 0.0, 0.0]),
-            Point::from_validated_coords([1e6 + 1.0, 0.0, 0.0]),
-            Point::from_validated_coords([1e6, 1.0, 0.0]),
-            Point::from_validated_coords([1e6, 0.0, 1.0]),
+            Point::try_new([1e6, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1e6 + 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1e6, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1e6, 0.0, 1.0]).expect("finite point coordinates"),
         ];
-        let test_point_3d = Point::from_validated_coords([1e6 + 0.1, 0.1, 0.1]);
+        let test_point_3d =
+            Point::try_new([1e6 + 0.1, 0.1, 0.1]).expect("finite point coordinates");
         let result_3d = insphere(&large_simplex_3d, test_point_3d);
         assert!(result_3d.is_ok(), "3D large coordinates should work");
 
         // 4D: Test with negative coordinates
         let negative_simplex_4d = vec![
-            Point::from_validated_coords([-1.0, -1.0, -1.0, -1.0]),
-            Point::from_validated_coords([0.0, -1.0, -1.0, -1.0]),
-            Point::from_validated_coords([-1.0, 0.0, -1.0, -1.0]),
-            Point::from_validated_coords([-1.0, -1.0, 0.0, -1.0]),
-            Point::from_validated_coords([-1.0, -1.0, -1.0, 0.0]),
+            Point::try_new([-1.0, -1.0, -1.0, -1.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, -1.0, -1.0, -1.0]).expect("finite point coordinates"),
+            Point::try_new([-1.0, 0.0, -1.0, -1.0]).expect("finite point coordinates"),
+            Point::try_new([-1.0, -1.0, 0.0, -1.0]).expect("finite point coordinates"),
+            Point::try_new([-1.0, -1.0, -1.0, 0.0]).expect("finite point coordinates"),
         ];
-        let test_point_4d = Point::from_validated_coords([-0.5, -0.5, -0.5, -0.5]);
+        let test_point_4d =
+            Point::try_new([-0.5, -0.5, -0.5, -0.5]).expect("finite point coordinates");
         let result_4d = insphere(&negative_simplex_4d, test_point_4d);
         assert!(result_4d.is_ok(), "4D negative coordinates should work");
     }
@@ -1943,21 +1995,21 @@ mod tests {
 
         // Test 3D case with various random-ish points
         let simplex_3d = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
 
         let test_points = [
-            Point::from_validated_coords([0.1, 0.1, 0.1]),
-            Point::from_validated_coords([0.3, 0.2, 0.1]),
-            Point::from_validated_coords([0.5, 0.5, 0.5]),
-            Point::from_validated_coords([1.0, 1.0, 1.0]),
-            Point::from_validated_coords([2.0, 2.0, 2.0]),
-            Point::from_validated_coords([-0.1, -0.1, -0.1]),
-            Point::from_validated_coords([0.25, 0.25, 0.25]),
-            Point::from_validated_coords([0.01, 0.01, 0.01]),
+            Point::try_new([0.1, 0.1, 0.1]).expect("finite point coordinates"),
+            Point::try_new([0.3, 0.2, 0.1]).expect("finite point coordinates"),
+            Point::try_new([0.5, 0.5, 0.5]).expect("finite point coordinates"),
+            Point::try_new([1.0, 1.0, 1.0]).expect("finite point coordinates"),
+            Point::try_new([2.0, 2.0, 2.0]).expect("finite point coordinates"),
+            Point::try_new([-0.1, -0.1, -0.1]).expect("finite point coordinates"),
+            Point::try_new([0.25, 0.25, 0.25]).expect("finite point coordinates"),
+            Point::try_new([0.01, 0.01, 0.01]).expect("finite point coordinates"),
         ];
 
         for test_point in &test_points {
@@ -2031,11 +2083,11 @@ mod tests {
         // 2D (even dimension) with POSITIVE orientation
         check_insphere_parity(
             &[
-                Point::from_validated_coords([0.0, 0.0]),
-                Point::from_validated_coords([1.0, 0.0]),
-                Point::from_validated_coords([0.0, 1.0]),
+                Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
             ],
-            Point::from_validated_coords([0.1, 0.1]),
+            Point::try_new([0.1, 0.1]).expect("finite point coordinates"),
             Orientation::POSITIVE,
             InSphere::INSIDE,
             2,
@@ -2045,12 +2097,12 @@ mod tests {
         // 3D (odd dimension) with POSITIVE orientation
         check_insphere_parity(
             &[
-                Point::from_validated_coords([0.0, 0.0, 0.0]),
-                Point::from_validated_coords([0.0, 1.0, 0.0]),
-                Point::from_validated_coords([1.0, 0.0, 0.0]),
-                Point::from_validated_coords([0.0, 0.0, 1.0]),
+                Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
             ],
-            Point::from_validated_coords([0.1, 0.1, 0.1]),
+            Point::try_new([0.1, 0.1, 0.1]).expect("finite point coordinates"),
             Orientation::POSITIVE,
             InSphere::INSIDE,
             3,
@@ -2060,13 +2112,13 @@ mod tests {
         // 4D (even dimension) with POSITIVE orientation
         check_insphere_parity(
             &[
-                Point::from_validated_coords([0.0, 0.0, 0.0, 0.0]),
-                Point::from_validated_coords([1.0, 0.0, 0.0, 0.0]),
-                Point::from_validated_coords([0.0, 1.0, 0.0, 0.0]),
-                Point::from_validated_coords([0.0, 0.0, 1.0, 0.0]),
-                Point::from_validated_coords([0.0, 0.0, 0.0, 1.0]),
+                Point::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
             ],
-            Point::from_validated_coords([0.1, 0.1, 0.1, 0.1]),
+            Point::try_new([0.1, 0.1, 0.1, 0.1]).expect("finite point coordinates"),
             Orientation::POSITIVE,
             InSphere::INSIDE,
             4,
@@ -2076,14 +2128,14 @@ mod tests {
         // 5D (odd dimension) with POSITIVE orientation
         check_insphere_parity(
             &[
-                Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0]),
-                Point::from_validated_coords([0.0, 1.0, 0.0, 0.0, 0.0]),
-                Point::from_validated_coords([1.0, 0.0, 0.0, 0.0, 0.0]),
-                Point::from_validated_coords([0.0, 0.0, 1.0, 0.0, 0.0]),
-                Point::from_validated_coords([0.0, 0.0, 0.0, 1.0, 0.0]),
-                Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 1.0]),
+                Point::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
             ],
-            Point::from_validated_coords([0.1, 0.1, 0.1, 0.1, 0.1]),
+            Point::try_new([0.1, 0.1, 0.1, 0.1, 0.1]).expect("finite point coordinates"),
             Orientation::POSITIVE,
             InSphere::INSIDE,
             5,
@@ -2099,11 +2151,11 @@ mod tests {
         // 2D (even dimension) with NEGATIVE orientation
         check_insphere_parity(
             &[
-                Point::from_validated_coords([0.0, 0.0]),
-                Point::from_validated_coords([0.0, 1.0]),
-                Point::from_validated_coords([1.0, 0.0]),
+                Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
+                Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
             ],
-            Point::from_validated_coords([0.1, 0.1]),
+            Point::try_new([0.1, 0.1]).expect("finite point coordinates"),
             Orientation::NEGATIVE,
             InSphere::INSIDE,
             2,
@@ -2113,12 +2165,12 @@ mod tests {
         // 3D (odd dimension) with NEGATIVE orientation
         check_insphere_parity(
             &[
-                Point::from_validated_coords([0.0, 0.0, 0.0]),
-                Point::from_validated_coords([1.0, 0.0, 0.0]),
-                Point::from_validated_coords([0.0, 1.0, 0.0]),
-                Point::from_validated_coords([0.0, 0.0, 1.0]),
+                Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
             ],
-            Point::from_validated_coords([0.1, 0.1, 0.1]),
+            Point::try_new([0.1, 0.1, 0.1]).expect("finite point coordinates"),
             Orientation::NEGATIVE,
             InSphere::INSIDE,
             3,
@@ -2128,13 +2180,13 @@ mod tests {
         // 4D (even dimension) with NEGATIVE orientation
         check_insphere_parity(
             &[
-                Point::from_validated_coords([0.0, 0.0, 0.0, 0.0]),
-                Point::from_validated_coords([0.0, 1.0, 0.0, 0.0]),
-                Point::from_validated_coords([1.0, 0.0, 0.0, 0.0]),
-                Point::from_validated_coords([0.0, 0.0, 1.0, 0.0]),
-                Point::from_validated_coords([0.0, 0.0, 0.0, 1.0]),
+                Point::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
             ],
-            Point::from_validated_coords([0.1, 0.1, 0.1, 0.1]),
+            Point::try_new([0.1, 0.1, 0.1, 0.1]).expect("finite point coordinates"),
             Orientation::NEGATIVE,
             InSphere::INSIDE,
             4,
@@ -2144,14 +2196,14 @@ mod tests {
         // 5D (odd dimension) with NEGATIVE orientation
         check_insphere_parity(
             &[
-                Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 0.0]),
-                Point::from_validated_coords([1.0, 0.0, 0.0, 0.0, 0.0]),
-                Point::from_validated_coords([0.0, 1.0, 0.0, 0.0, 0.0]),
-                Point::from_validated_coords([0.0, 0.0, 1.0, 0.0, 0.0]),
-                Point::from_validated_coords([0.0, 0.0, 0.0, 1.0, 0.0]),
-                Point::from_validated_coords([0.0, 0.0, 0.0, 0.0, 1.0]),
+                Point::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).expect("finite point coordinates"),
+                Point::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
             ],
-            Point::from_validated_coords([0.1, 0.1, 0.1, 0.1, 0.1]),
+            Point::try_new([0.1, 0.1, 0.1, 0.1, 0.1]).expect("finite point coordinates"),
             Orientation::NEGATIVE,
             InSphere::INSIDE,
             5,
@@ -2294,11 +2346,11 @@ mod tests {
     #[test]
     fn test_fill_relative_insphere_matrix_rejects_dimension_mismatch() {
         let simplex_points = [
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
         ];
-        let test_point = Point::from_validated_coords([0.25, 0.25]);
+        let test_point = Point::try_new([0.25, 0.25]).expect("finite point coordinates");
         let mut matrix = Matrix::<4>::zero();
 
         let err = fill_relative_insphere_matrix::<2, 4>(&mut matrix, &simplex_points, &test_point)
@@ -2316,10 +2368,10 @@ mod tests {
     #[test]
     fn test_fill_relative_insphere_matrix_rejects_simplex_point_count_mismatch() {
         let simplex_points = [
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
         ];
-        let test_point = Point::from_validated_coords([0.25, 0.25]);
+        let test_point = Point::try_new([0.25, 0.25]).expect("finite point coordinates");
         let mut matrix = Matrix::<3>::zero();
 
         let err = fill_relative_insphere_matrix::<2, 3>(&mut matrix, &simplex_points, &test_point)
@@ -2342,9 +2394,9 @@ mod tests {
         // thresholds but produces a non-zero exact determinant.
         let eps = f64::from_bits(0x3CD0_0000_0000_0000); // 2^-50
         let nearly_collinear = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([0.5, eps]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.5, eps]).expect("finite point coordinates"),
         ];
         // Exact arithmetic should detect this is NOT degenerate.
         let orientation = simplex_orientation(&nearly_collinear).unwrap();
@@ -2360,10 +2412,10 @@ mod tests {
         // Near-degenerate 3D tetrahedron: fourth point is almost coplanar.
         let eps = f64::from_bits(0x3CD0_0000_0000_0000); // 2^-50
         let nearly_coplanar = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, eps]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, eps]).expect("finite point coordinates"),
         ];
         let orientation = simplex_orientation(&nearly_coplanar).unwrap();
         assert_ne!(
@@ -2484,10 +2536,13 @@ mod tests {
     #[test]
     fn test_insphere_wrong_point_count() {
         let two_points: Vec<Point<3>> = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
         ];
-        let result = insphere(&two_points, Point::from_validated_coords([0.5, 0.5, 0.5]));
+        let result = insphere(
+            &two_points,
+            Point::try_new([0.5, 0.5, 0.5]).expect("finite point coordinates"),
+        );
         assert!(result.is_err(), "insphere with 2 points in 3D should error");
     }
 
@@ -2500,13 +2555,13 @@ mod tests {
         // Test point very far from the simplex: relative squared norm overflows
         // f64, triggering the map_err conversion on the test-point path.
         let simplex = vec![
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0, 1.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         // 1e155² = 1e310 overflows f64::MAX ≈ 1.8e308.
-        let far_point = Point::from_validated_coords([1e155, 0.0, 0.0]);
+        let far_point = Point::try_new([1e155, 0.0, 0.0]).expect("finite point coordinates");
         let result = insphere_lifted(&simplex, far_point);
         assert!(
             result.is_err(),
@@ -2518,9 +2573,9 @@ mod tests {
     fn test_exact_orientation_truly_degenerate() {
         // Truly degenerate cases should still be detected correctly.
         let collinear_2d = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([2.0, 0.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([2.0, 0.0]).expect("finite point coordinates"),
         ];
         assert_eq!(
             simplex_orientation(&collinear_2d).unwrap(),
@@ -2530,10 +2585,10 @@ mod tests {
 
         // Row 2 = row 0 + row 1 in exact arithmetic (linear combination).
         let coplanar_3d = vec![
-            Point::from_validated_coords([1.0, 2.0, 3.0]),
-            Point::from_validated_coords([4.0, 5.0, 6.0]),
-            Point::from_validated_coords([5.0, 7.0, 9.0]),
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
+            Point::try_new([1.0, 2.0, 3.0]).expect("finite point coordinates"),
+            Point::try_new([4.0, 5.0, 6.0]).expect("finite point coordinates"),
+            Point::try_new([5.0, 7.0, 9.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
         ];
         assert_eq!(
             simplex_orientation(&coplanar_3d).unwrap(),

@@ -43,7 +43,7 @@ fn edges_and_incident_edges_on_single_tetrahedron() -> Result<(), PublicTopology
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )?;
@@ -119,7 +119,7 @@ fn adjacency_index_on_double_tetrahedron() -> Result<(), PublicTopologyApiTestEr
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::new_with_topology_guarantee(
+        DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )?;

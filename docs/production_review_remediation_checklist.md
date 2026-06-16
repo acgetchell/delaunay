@@ -140,7 +140,7 @@ Treat partial items as still open until their acceptance notes are satisfied.
   Include inputs near `||x|| ~= 1e154`.
 - [x] **34. Harden doctests that unwrap degenerate construction.**
   Public doctests now use typed `Result` wrappers or non-degenerate examples,
-  and `just verify-expect-counts` tracks a zero doc-comment `.expect(` baseline.
+  and `just verify-expect-counts` tracks a zero doc-comment expect-call baseline.
 
 ## Optional And Nitpicks
 

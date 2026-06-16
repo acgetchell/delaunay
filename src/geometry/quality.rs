@@ -362,13 +362,15 @@ fn scale_aware_epsilon<const D: usize>(
 /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
 /// #     #[error(transparent)]
 /// #     Quality(#[from] delaunay::prelude::geometry::QualityError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// // Create a 2D equilateral triangle
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.866]).expect("finite vertex coordinates"), // approximately sqrt(3)/2
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.866])?, // approximately sqrt(3)/2
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let Some((simplex_key, _)) = dt.simplices().next() else {
@@ -472,13 +474,15 @@ where
 /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
 /// #     #[error(transparent)]
 /// #     Quality(#[from] delaunay::prelude::geometry::QualityError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// // Create a 2D triangle
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let Some((simplex_key, _)) = dt.simplices().next() else {
@@ -612,7 +616,7 @@ mod tests {
                 #[test]
                 fn $test_name() {
                     let vertices = $vertices;
-                    let dt: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::new(&vertices).unwrap();
+                    let dt: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::try_new(&vertices).unwrap();
 let simplex_key = dt.simplices().next().unwrap().0;
 
                     // Test radius_ratio
@@ -633,7 +637,7 @@ let simplex_key = dt.simplices().next().unwrap().0;
                     fn [<$test_name _scale_invariance>]() {
                         // Test scale invariance by scaling coordinates
                         let vertices_base = $vertices;
-                        let dt_base: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::new(&vertices_base).unwrap();
+                        let dt_base: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::try_new(&vertices_base).unwrap();
 let key_base = dt_base.simplices().next().unwrap().0;
 
 	                        // Scale by 10x
@@ -641,7 +645,7 @@ let key_base = dt_base.simplices().next().unwrap().0;
 	                            let coords: [f64; $dim] = std::array::from_fn(|idx| v.point().coords()[idx] * 10.0);
 	                            crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap()
 	                        }).collect();
-                        let dt_scaled: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::new(&vertices_scaled).unwrap();
+                        let dt_scaled: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::try_new(&vertices_scaled).unwrap();
 let key_scaled = dt_scaled.simplices().next().unwrap().0;
 
                         let ratio_base = radius_ratio(dt_base.as_triangulation(), key_base).unwrap();
@@ -657,7 +661,7 @@ let key_scaled = dt_scaled.simplices().next().unwrap().0;
                     fn [<$test_name _translation_invariance>]() {
                         // Test translation invariance
                         let vertices_base = $vertices;
-                        let dt_base: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::new(&vertices_base).unwrap();
+                        let dt_base: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::try_new(&vertices_base).unwrap();
 let key_base = dt_base.simplices().next().unwrap().0;
 
 	                        // Translate by [5.0, 5.0, ...]
@@ -665,7 +669,7 @@ let key_base = dt_base.simplices().next().unwrap().0;
 	                            let coords: [f64; $dim] = std::array::from_fn(|idx| v.point().coords()[idx] + 5.0);
 	                            crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap()
 	                        }).collect();
-                        let dt_translated: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::new(&vertices_translated).unwrap();
+                        let dt_translated: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::try_new(&vertices_translated).unwrap();
 let key_translated = dt_translated.simplices().next().unwrap().0;
 
                         let ratio_base = radius_ratio(dt_base.as_triangulation(), key_base).unwrap();
@@ -770,7 +774,7 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
             crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.001]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Test radius_ratio
@@ -840,7 +844,7 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
     #[test]
     fn scale_aware_epsilon_uses_floor_when_point_set_has_no_edges() {
         let mut points = SmallBuffer::new();
-        points.push(Point::from_validated_coords([]));
+        points.push(Point::try_new([]).expect("finite point coordinates"));
 
         let (avg_edge_length, epsilon) = scale_aware_epsilon(&points);
 
@@ -927,7 +931,7 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
             crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.866_025]).unwrap(),
         ];
         let dt_good: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices_good).unwrap();
+            DelaunayTriangulation::try_new(&vertices_good).unwrap();
         let simplex_key_good = dt_good.simplices().next().unwrap().0;
 
         // Poor quality triangle (very flat)
@@ -937,7 +941,7 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
             crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.01]).unwrap(), // Nearly flat
         ];
         let dt_poor: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices_poor).unwrap();
+            DelaunayTriangulation::try_new(&vertices_poor).unwrap();
         let simplex_key_poor = dt_poor.simplices().next().unwrap().0;
 
         let ratio_good = radius_ratio(dt_good.as_triangulation(), simplex_key_good).unwrap();
@@ -970,7 +974,7 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
         let dt_result: Result<
             DelaunayTriangulation<_, (), (), 2>,
             DelaunayTriangulationConstructionError,
-        > = DelaunayTriangulation::new(&vertices);
+        > = DelaunayTriangulation::try_new(&vertices);
 
         // Construction may succeed with collinear points, but quality metrics
         // should detect the degeneracy
@@ -997,7 +1001,7 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
             crate::core::vertex::Vertex::<(), _>::try_new([1.000_000_1, 0.000_000_1]).unwrap(), // Nearly duplicate
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Either should error or produce very poor quality
@@ -1015,7 +1019,7 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
             crate::core::vertex::Vertex::<(), _>::try_new([1e-10, 1e10]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Should compute without panicking
@@ -1044,7 +1048,7 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 6> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         let ratio = radius_ratio(dt.as_triangulation(), simplex_key).unwrap();
@@ -1066,7 +1070,7 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
                 #[test]
                 fn $test_name() {
                     let vertices = $vertices;
-                    let dt: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::new(&vertices).unwrap();
+                    let dt: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::try_new(&vertices).unwrap();
 let simplex_key = dt.simplices().next().unwrap().0;
 
                     if let Ok(ratio) = radius_ratio(dt.as_triangulation(), simplex_key) {
@@ -1145,7 +1149,7 @@ let simplex_key = dt.simplices().next().unwrap().0;
             crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.866_025]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
 
         // Create an invalid key (not in the SlotMap)
         let invalid_key = SimplexKey::from(KeyData::from_ffi(u64::MAX));
@@ -1202,7 +1206,7 @@ let simplex_key = dt.simplices().next().unwrap().0;
             crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.866_025]).unwrap(),
         ];
         let dt_best: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices_best).unwrap();
+            DelaunayTriangulation::try_new(&vertices_best).unwrap();
         let key_best = dt_best.simplices().next().unwrap().0;
 
         // Medium: right triangle (acceptable quality)
@@ -1212,7 +1216,7 @@ let simplex_key = dt.simplices().next().unwrap().0;
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 4.0]).unwrap(),
         ];
         let dt_medium: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices_medium).unwrap();
+            DelaunayTriangulation::try_new(&vertices_medium).unwrap();
         let key_medium = dt_medium.simplices().next().unwrap().0;
 
         // Worst: very flat (poor quality)
@@ -1222,7 +1226,7 @@ let simplex_key = dt.simplices().next().unwrap().0;
             crate::core::vertex::Vertex::<(), _>::try_new([5.0, 0.1]).unwrap(),
         ];
         let dt_worst: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices_worst).unwrap();
+            DelaunayTriangulation::try_new(&vertices_worst).unwrap();
         let key_worst = dt_worst.simplices().next().unwrap().0;
 
         let ratio_best = radius_ratio(dt_best.as_triangulation(), key_best).unwrap();
@@ -1258,7 +1262,7 @@ let simplex_key = dt.simplices().next().unwrap().0;
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt_right: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices_right).unwrap();
+            DelaunayTriangulation::try_new(&vertices_right).unwrap();
         let key_right = dt_right.simplices().next().unwrap().0;
         let ratio_right = radius_ratio(dt_right.as_triangulation(), key_right).unwrap();
         assert_relative_eq!(ratio_right, 1.0 + 2.0_f64.sqrt(), epsilon = 0.1);
@@ -1270,7 +1274,7 @@ let simplex_key = dt.simplices().next().unwrap().0;
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap(),
         ];
         let dt_iso: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices_iso).unwrap();
+            DelaunayTriangulation::try_new(&vertices_iso).unwrap();
         let key_iso = dt_iso.simplices().next().unwrap().0;
         let ratio_iso = radius_ratio(dt_iso.as_triangulation(), key_iso).unwrap();
         assert!(ratio_iso > 2.0 && ratio_iso < 5.0);
@@ -1293,7 +1297,7 @@ let simplex_key = dt.simplices().next().unwrap().0;
             crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.866_025]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         let points = simplex_points(dt.as_triangulation(), simplex_key).unwrap();
@@ -1309,7 +1313,7 @@ let simplex_key = dt.simplices().next().unwrap().0;
             crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.866_025]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let invalid_key = SimplexKey::from(KeyData::from_ffi(u64::MAX));
 
         let result = simplex_points(dt.as_triangulation(), invalid_key);
@@ -1320,9 +1324,9 @@ let simplex_key = dt.simplices().next().unwrap().0;
     fn test_scale_aware_epsilon_2d() {
         // Test epsilon computation for 2D simplex
         let mut points = SmallBuffer::new();
-        points.push(Point::from_validated_coords([0.0, 0.0]));
-        points.push(Point::from_validated_coords([1.0, 0.0]));
-        points.push(Point::from_validated_coords([0.5, 0.866_025]));
+        points.push(Point::try_new([0.0, 0.0]).expect("finite point coordinates"));
+        points.push(Point::try_new([1.0, 0.0]).expect("finite point coordinates"));
+        points.push(Point::try_new([0.5, 0.866_025]).expect("finite point coordinates"));
 
         let (avg_edge_length, epsilon) = scale_aware_epsilon(&points);
         assert!(
@@ -1337,9 +1341,9 @@ let simplex_key = dt.simplices().next().unwrap().0;
     fn test_scale_aware_epsilon_tiny_simplex() {
         // Test epsilon computation with very small coordinates
         let mut points = SmallBuffer::new();
-        points.push(Point::from_validated_coords([0.0, 0.0]));
-        points.push(Point::from_validated_coords([1e-10, 0.0]));
-        points.push(Point::from_validated_coords([0.5e-10, 0.866_025e-10]));
+        points.push(Point::try_new([0.0, 0.0]).expect("finite point coordinates"));
+        points.push(Point::try_new([1e-10, 0.0]).expect("finite point coordinates"));
+        points.push(Point::try_new([0.5e-10, 0.866_025e-10]).expect("finite point coordinates"));
 
         let (avg_edge_length, epsilon) = scale_aware_epsilon(&points);
         // For tiny simplices, epsilon should use the floor (1e-12)
@@ -1351,9 +1355,9 @@ let simplex_key = dt.simplices().next().unwrap().0;
     fn test_scale_aware_epsilon_large_simplex() {
         // Test epsilon computation with large coordinates
         let mut points = SmallBuffer::new();
-        points.push(Point::from_validated_coords([0.0, 0.0]));
-        points.push(Point::from_validated_coords([1e6, 0.0]));
-        points.push(Point::from_validated_coords([0.5e6, 0.866_025e6]));
+        points.push(Point::try_new([0.0, 0.0]).expect("finite point coordinates"));
+        points.push(Point::try_new([1e6, 0.0]).expect("finite point coordinates"));
+        points.push(Point::try_new([0.5e6, 0.866_025e6]).expect("finite point coordinates"));
 
         let (avg_edge_length, epsilon) = scale_aware_epsilon(&points);
         // For large simplices, epsilon scales with average edge length
@@ -1365,10 +1369,10 @@ let simplex_key = dt.simplices().next().unwrap().0;
     fn test_scale_aware_epsilon_3d() {
         // Test epsilon computation for 3D simplex
         let mut points = SmallBuffer::new();
-        points.push(Point::from_validated_coords([0.0, 0.0, 0.0]));
-        points.push(Point::from_validated_coords([1.0, 0.0, 0.0]));
-        points.push(Point::from_validated_coords([0.0, 1.0, 0.0]));
-        points.push(Point::from_validated_coords([0.0, 0.0, 1.0]));
+        points.push(Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"));
+        points.push(Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"));
+        points.push(Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"));
+        points.push(Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"));
 
         let (avg_edge_length, epsilon) = scale_aware_epsilon(&points);
         assert!(avg_edge_length > 0.0);
@@ -1388,7 +1392,7 @@ let simplex_key = dt.simplices().next().unwrap().0;
             crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.866_025]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Normal case should succeed
@@ -1406,7 +1410,7 @@ let simplex_key = dt.simplices().next().unwrap().0;
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Should succeed with correct count
@@ -1425,7 +1429,7 @@ let simplex_key = dt.simplices().next().unwrap().0;
         let dt_result: Result<
             DelaunayTriangulation<_, (), (), 2>,
             DelaunayTriangulationConstructionError,
-        > = DelaunayTriangulation::new(&vertices);
+        > = DelaunayTriangulation::try_new(&vertices);
 
         match dt_result {
             Ok(dt) => {
@@ -1464,7 +1468,7 @@ let simplex_key = dt.simplices().next().unwrap().0;
         let dt_result: Result<
             DelaunayTriangulation<_, (), (), 3>,
             DelaunayTriangulationConstructionError,
-        > = DelaunayTriangulation::new(&vertices);
+        > = DelaunayTriangulation::try_new(&vertices);
 
         match dt_result {
             Ok(dt) => {
@@ -1563,7 +1567,7 @@ let simplex_key = dt.simplices().next().unwrap().0;
         let dt_result: Result<
             DelaunayTriangulation<_, (), (), 2>,
             DelaunayTriangulationConstructionError,
-        > = DelaunayTriangulation::new(&vertices);
+        > = DelaunayTriangulation::try_new(&vertices);
 
         match dt_result {
             Ok(dt) => {

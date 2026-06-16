@@ -10,10 +10,11 @@
 
 #![forbid(unsafe_code)]
 
-use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee, Vertex};
+use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::insertion::InsertionOutcome;
 use delaunay::prelude::tds::{Tds, TdsError};
+use delaunay::try_vertices_from_points;
 use proptest::prelude::*;
 
 /// Strategy for generating finite `f64` coordinates in a reasonable range.
@@ -32,9 +33,11 @@ macro_rules! gen_orientation_construction_and_tamper_props {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|points| Vertex::from_points(&points))
+                    ).prop_map(|points| {
+                        try_vertices_from_points(&points).expect("finite point coordinates")
+                    })
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -58,9 +61,11 @@ macro_rules! gen_orientation_construction_and_tamper_props {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|points| Vertex::from_points(&points))
+                    ).prop_map(|points| {
+                        try_vertices_from_points(&points).expect("finite point coordinates")
+                    })
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
@@ -128,7 +133,9 @@ macro_rules! gen_orientation_incremental_props {
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
-                    ).prop_map(|points| Vertex::from_points(&points))
+                    ).prop_map(|points| {
+                        try_vertices_from_points(&points).expect("finite point coordinates")
+                    })
                 ) {
                     let mut dt: DelaunayTriangulation<_, (), (), $dim> =
                         DelaunayTriangulation::empty_with_topology_guarantee(

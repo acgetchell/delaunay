@@ -14,6 +14,7 @@ use delaunay::prelude::construction::{
 };
 use delaunay::prelude::flips::BistellarFlips;
 use delaunay::prelude::geometry::{AdaptiveKernel, FastKernel, Kernel, Point, RobustKernel};
+use delaunay::try_vertices_from_points;
 use proptest::prelude::*;
 use std::collections::{BTreeSet, HashMap};
 
@@ -62,7 +63,7 @@ fn axis_aligned_simplex_vertices<const D: usize>(
         points.push(Point::try_new(coordinates).expect("finite point coordinates"));
     }
 
-    Vertex::from_points(&points)
+    try_vertices_from_points(&points).expect("finite point coordinates")
 }
 
 /// Places a vertex strictly inside the generated axis-aligned simplex.
@@ -245,7 +246,7 @@ fn check_k1_roundtrip<const D: usize>(
 ) -> Result<(), TestCaseError> {
     let vertices = axis_aligned_simplex_vertices::<D>(origin, edge_lengths);
     let simplex =
-        DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), D>::new_with_topology_guarantee(
+        DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), D>::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )

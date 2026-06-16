@@ -205,12 +205,19 @@ where
 /// use delaunay::prelude::*;
 /// use delaunay::prelude::query::extract_vertex_coordinate_set;
 ///
-/// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Source(#[from] DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let tds = dt.tds();
@@ -268,13 +275,15 @@ const fn canonical_edge(u: u128, v: u128) -> (u128, u128) {
 /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
 /// #     #[error(transparent)]
 /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let tds = dt.tds();
@@ -349,13 +358,15 @@ where
 /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
 /// #     #[error(transparent)]
 /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let tds = dt.tds();
@@ -425,17 +436,19 @@ where
 /// #     ConvexHull(#[from] delaunay::geometry::ConvexHullConstructionError),
 /// #     #[error(transparent)]
 /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices: Vec<_> = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
 /// ];
 /// let dt: DelaunayTriangulation<_, (), (), 3> =
 ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-/// let hull = ConvexHull::from_triangulation(dt.as_triangulation())?;
+/// let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())?;
 ///
 /// let facet_set = extract_hull_facet_set(&hull, dt.as_triangulation())?;
 /// assert_eq!(facet_set.len(), 4);
@@ -704,16 +717,24 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let tds = &dt.as_triangulation().tds;
 
         // Sub-test: Vertex coordinate extraction
         let coord_set = extract_vertex_coordinate_set(tds);
         assert_eq!(coord_set.len(), 4, "Should have 4 unique coordinates");
-        assert!(coord_set.contains(&Point::from_validated_coords([0.0, 0.0, 0.0])));
-        assert!(coord_set.contains(&Point::from_validated_coords([1.0, 0.0, 0.0])));
-        assert!(coord_set.contains(&Point::from_validated_coords([0.0, 1.0, 0.0])));
-        assert!(coord_set.contains(&Point::from_validated_coords([0.0, 0.0, 1.0])));
+        assert!(
+            coord_set.contains(&Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"))
+        );
+        assert!(
+            coord_set.contains(&Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"))
+        );
+        assert!(
+            coord_set.contains(&Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"))
+        );
+        assert!(
+            coord_set.contains(&Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"))
+        );
 
         // Sub-test: Edge extraction - tetrahedron has 6 edges (binomial(4,2))
         let edge_set = extract_edge_set(tds).unwrap();
@@ -724,9 +745,9 @@ mod tests {
         assert_eq!(facet_set.len(), 4, "Tetrahedron should have 4 facets");
 
         // Sub-test: Hull facet extraction
-        let dt_hull = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt_hull = DelaunayTriangulation::try_new(&vertices).unwrap();
         let tri = dt_hull.as_triangulation();
-        let hull = ConvexHull::from_triangulation(tri).unwrap();
+        let hull = ConvexHull::try_from_triangulation(tri).unwrap();
         let hull_facet_set = extract_hull_facet_set(&hull, tri).unwrap();
         assert_eq!(hull_facet_set.len(), 4, "Hull should have 4 facets");
     }
@@ -739,7 +760,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let mut dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
         let simplex_key = dt.as_triangulation().tds.simplex_keys().next().unwrap();
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
@@ -764,7 +785,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let mut dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
         let simplex_key = dt.as_triangulation().tds.simplex_keys().next().unwrap();
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
@@ -803,9 +824,9 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let tri = dt.as_triangulation();
-        let hull = ConvexHull::from_triangulation(tri).unwrap();
+        let hull = ConvexHull::try_from_triangulation(tri).unwrap();
 
         let hull_facet_set = extract_hull_facet_set(&hull, tri).unwrap();
         let boundary_set = extract_facet_identifier_set(&tri.tds).unwrap();

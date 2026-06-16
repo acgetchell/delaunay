@@ -40,10 +40,27 @@ use crate::geometry::robust_predicates::{
 };
 use crate::geometry::sos::{sos_insphere_sign, sos_orientation_sign};
 use crate::geometry::traits::coordinate::{
-    CoordinateConversionError, CoordinateConversionValue, DegenerateSimplexReason,
+    CoordinateConversionError, CoordinateConversionValue, CoordinateValidationError,
+    DegenerateSimplexReason,
 };
 use crate::geometry::util::safe_coords_to_f64;
 use core::marker::PhantomData;
+
+/// Converts f64 coordinates back into a validated point for `SoS` fallback paths.
+fn point_from_f64_coords<const D: usize>(
+    coords: [f64; D],
+) -> Result<Point<D>, CoordinateConversionError> {
+    Point::try_new(coords).map_err(|source| match source {
+        CoordinateValidationError::InvalidCoordinate {
+            coordinate_index,
+            coordinate_value,
+            ..
+        } => CoordinateConversionError::NonFiniteValue {
+            coordinate_index,
+            coordinate_value,
+        },
+    })
+}
 
 /// Converts an insphere classification into the [`Kernel::in_sphere`] integer convention.
 #[inline]
@@ -344,7 +361,7 @@ impl_exact_predicates_for_supported_dims!(0, 1, 2, 3, 4, 5);
 ///
 /// Use [`AdaptiveKernel`] (the default) for all 3D+ work. `FastKernel` remains
 /// suitable for 2D triangulations with well-conditioned input, or when explicitly
-/// opted into via [`DelaunayTriangulation::with_kernel`](crate::DelaunayTriangulation::with_kernel) for advanced use cases
+/// opted into via [`DelaunayTriangulation::try_with_kernel`](crate::DelaunayTriangulation::try_with_kernel) for advanced use cases
 /// where the caller has verified the input is non-degenerate.
 ///
 /// # Performance
@@ -562,7 +579,7 @@ impl<const D: usize> Kernel<D> for RobustKernel<f64> {
 /// Adaptive precision kernel with Simulation of Simplicity.
 ///
 /// This is the **default kernel** for [`DelaunayTriangulation`] convenience
-/// constructors (`new`, `empty`, `new_with_options`, etc.).
+/// constructors (`try_new`, `empty`, `try_new_with_options`, etc.).
 ///
 /// [`DelaunayTriangulation`]: crate::DelaunayTriangulation
 ///
@@ -663,9 +680,7 @@ impl<const D: usize> Kernel<D> for AdaptiveKernel<f64> {
         let mut f64_points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
             SmallBuffer::with_capacity(points.len());
         for point in points {
-            f64_points.push(Point::from_validated_coords(safe_coords_to_f64(
-                point.coords(),
-            )?));
+            f64_points.push(point_from_f64_coords(safe_coords_to_f64(point.coords())?)?);
         }
 
         // SoS guarantees a non-zero sign for distinct points.  If SoS
@@ -702,11 +717,9 @@ impl<const D: usize> Kernel<D> for AdaptiveKernel<f64> {
         let mut f64_simplex: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
             SmallBuffer::with_capacity(simplex_points.len());
         for point in simplex_points {
-            f64_simplex.push(Point::from_validated_coords(safe_coords_to_f64(
-                point.coords(),
-            )?));
+            f64_simplex.push(point_from_f64_coords(safe_coords_to_f64(point.coords())?)?);
         }
-        let f64_test = Point::from_validated_coords(safe_coords_to_f64(test_point.coords())?);
+        let f64_test = point_from_f64_coords(safe_coords_to_f64(test_point.coords())?)?;
 
         // Resolve orientation factor.
         let orient_factor: i32 = if rel_orient_sign != 0 {
@@ -754,11 +767,9 @@ impl<const D: usize> Kernel<D> for AdaptiveKernel<f64> {
             let mut f64_simplex: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
                 SmallBuffer::with_capacity(simplex_points.len());
             for point in simplex_points {
-                f64_simplex.push(Point::from_validated_coords(safe_coords_to_f64(
-                    point.coords(),
-                )?));
+                f64_simplex.push(point_from_f64_coords(safe_coords_to_f64(point.coords())?)?);
             }
-            let f64_test = Point::from_validated_coords(safe_coords_to_f64(test_point.coords())?);
+            let f64_test = point_from_f64_coords(safe_coords_to_f64(test_point.coords())?)?;
             sos_insphere_sign(&f64_simplex, &f64_test)?
         };
 
@@ -778,11 +789,11 @@ mod tests {
     /// Standard D-simplex: origin + D unit vectors (non-degenerate).
     fn standard_simplex<const D: usize>() -> Vec<Point<D>> {
         let mut points = Vec::with_capacity(D + 1);
-        points.push(Point::from_validated_coords([0.0; D]));
+        points.push(Point::try_new([0.0; D]).expect("finite point coordinates"));
         for i in 0..D {
             let mut coords = [0.0; D];
             coords[i] = 1.0;
-            points.push(Point::from_validated_coords(coords));
+            points.push(Point::try_new(coords).expect("finite point coordinates"));
         }
         points
     }
@@ -790,48 +801,48 @@ mod tests {
     /// Degenerate D-simplex: all points have last coordinate = 0.
     fn degenerate_simplex<const D: usize>() -> Vec<Point<D>> {
         let mut points = Vec::with_capacity(D + 1);
-        points.push(Point::from_validated_coords([0.0; D]));
+        points.push(Point::try_new([0.0; D]).expect("finite point coordinates"));
         for i in 0..D.saturating_sub(1) {
             let mut coords = [0.0; D];
             coords[i] = 1.0;
-            points.push(Point::from_validated_coords(coords));
+            points.push(Point::try_new(coords).expect("finite point coordinates"));
         }
         let mut bary = [0.0; D];
         for c in bary.iter_mut().take(D.saturating_sub(1)) {
             *c = 0.5;
         }
-        points.push(Point::from_validated_coords(bary));
+        points.push(Point::try_new(bary).expect("finite point coordinates"));
         points
     }
 
     /// Point clearly inside the circumsphere of the standard simplex.
     fn inside_point<const D: usize>() -> Point<D> {
-        Point::from_validated_coords([0.1; D])
+        Point::try_new([0.1; D]).expect("finite point coordinates")
     }
 
     /// Point clearly outside the circumsphere of the standard simplex.
     fn outside_point<const D: usize>() -> Point<D> {
-        Point::from_validated_coords([2.0; D])
+        Point::try_new([2.0; D]).expect("finite point coordinates")
     }
 
     /// Co-spherical test point: (1,1,…,1) lies on the circumsphere of the
     /// standard simplex for all D ≥ 2.
     fn cospherical_test<const D: usize>() -> Point<D> {
-        Point::from_validated_coords([1.0; D])
+        Point::try_new([1.0; D]).expect("finite point coordinates")
     }
 
     /// Test point off the degenerate hyperplane (last coord nonzero).
     fn off_plane_test<const D: usize>() -> Point<D> {
         let mut coords = [0.0; D];
         coords[D - 1] = 1.0;
-        Point::from_validated_coords(coords)
+        Point::try_new(coords).expect("finite point coordinates")
     }
 
     /// Test point in the degenerate hyperplane but far from the simplex.
     fn coplanar_far_test<const D: usize>() -> Point<D> {
         let mut coords = [0.0; D];
         coords[0] = 3.0;
-        Point::from_validated_coords(coords)
+        Point::try_new(coords).expect("finite point coordinates")
     }
 
     // =========================================================================
@@ -902,9 +913,9 @@ mod tests {
 
         // Three collinear points on diagonal
         let collinear = [
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 1.0]),
-            Point::from_validated_coords([2.0, 2.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 1.0]).expect("finite point coordinates"),
+            Point::try_new([2.0, 2.0]).expect("finite point coordinates"),
         ];
 
         let orientation = kernel.orientation(&collinear).unwrap();
@@ -920,9 +931,9 @@ mod tests {
 
         // Nearly collinear points (small perturbation)
         let nearly_collinear = [
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([2.0, 1e-10]), // Tiny deviation from collinearity
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([2.0, 1e-10]).expect("finite point coordinates"), // Tiny deviation from collinearity
         ];
 
         let orientation = kernel.orientation(&nearly_collinear).unwrap();
@@ -937,9 +948,9 @@ mod tests {
 
         // Triangle with large coordinates
         let large_triangle = [
-            Point::from_validated_coords([1e6, 1e6]),
-            Point::from_validated_coords([1e6 + 1.0, 1e6]),
-            Point::from_validated_coords([1e6, 1e6 + 1.0]),
+            Point::try_new([1e6, 1e6]).expect("finite point coordinates"),
+            Point::try_new([1e6 + 1.0, 1e6]).expect("finite point coordinates"),
+            Point::try_new([1e6, 1e6 + 1.0]).expect("finite point coordinates"),
         ];
 
         let orientation = kernel.orientation(&large_triangle).unwrap();
@@ -955,9 +966,9 @@ mod tests {
 
         // Very small but valid triangle
         let small_triangle = [
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1e-6, 0.0]),
-            Point::from_validated_coords([0.0, 1e-6]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1e-6, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1e-6]).expect("finite point coordinates"),
         ];
 
         let orientation = kernel.orientation(&small_triangle).unwrap();
@@ -979,10 +990,10 @@ mod tests {
         // Exercises the SimplexValidationError::InsufficientVertices mapping.
         let kernel = FastKernel::<f64>::new();
         let simplex: [Point<3>; 2] = [
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
         ];
-        let test_point = Point::from_validated_coords([0.5, 0.5, 0.5]);
+        let test_point = Point::try_new([0.5, 0.5, 0.5]).expect("finite point coordinates");
         let result = kernel.in_sphere(&simplex, &test_point);
         assert_eq!(
             result,
@@ -999,12 +1010,12 @@ mod tests {
         // Exercises the SimplexValidationError::DegenerateSimplex mapping.
         let kernel = FastKernel::<f64>::new();
         let simplex = [
-            Point::from_validated_coords([0.0, 0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0, 0.0]),
-            Point::from_validated_coords([1.0, 1.0, 0.0]), // Coplanar — degenerate
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 1.0, 0.0]).expect("finite point coordinates"), // Coplanar — degenerate
         ];
-        let test_point = Point::from_validated_coords([0.5, 0.5, 0.5]);
+        let test_point = Point::try_new([0.5, 0.5, 0.5]).expect("finite point coordinates");
         let result = kernel.in_sphere(&simplex, &test_point);
         assert_eq!(
             result,
@@ -1019,15 +1030,18 @@ mod tests {
     fn test_robust_kernel_positive_oriented_insphere_boundary_maps_to_zero() {
         let kernel = RobustKernel::<f64>::new();
         let simplex = [
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
         ];
 
         assert_eq!(kernel.orientation(&simplex).unwrap(), 1);
         assert_eq!(
             kernel
-                .in_sphere_positive_oriented(&simplex, &Point::from_validated_coords([1.0, 1.0]))
+                .in_sphere_positive_oriented(
+                    &simplex,
+                    &Point::try_new([1.0, 1.0]).expect("finite point coordinates")
+                )
                 .unwrap(),
             0
         );
@@ -1037,12 +1051,15 @@ mod tests {
     fn test_robust_kernel_positive_oriented_insphere_wrong_arity_errors() {
         let kernel = RobustKernel::<f64>::new();
         let simplex: [Point<2>; 2] = [
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
         ];
 
         let err = kernel
-            .in_sphere_positive_oriented(&simplex, &Point::from_validated_coords([0.25, 0.25]))
+            .in_sphere_positive_oriented(
+                &simplex,
+                &Point::try_new([0.25, 0.25]).expect("finite point coordinates"),
+            )
             .unwrap_err();
 
         assert_eq!(
@@ -1259,16 +1276,16 @@ mod tests {
     fn test_adaptive_kernel_wrong_point_count() {
         let kernel = AdaptiveKernel::<f64>::new();
         let points = [
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
         ];
         assert!(kernel.orientation(&points).is_err());
 
         let simplex = [
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
         ];
-        let test = Point::from_validated_coords([0.5, 0.5]);
+        let test = Point::try_new([0.5, 0.5]).expect("finite point coordinates");
         assert!(kernel.in_sphere(&simplex, &test).is_err());
     }
 
@@ -1287,7 +1304,7 @@ mod tests {
                 fn [<test_adaptive_sos_identical_points_ $dim d>]() {
                     let kernel = AdaptiveKernel::<f64>::new();
                     let points: Vec<Point<$dim>> =
-                        vec![Point::from_validated_coords([0.42; $dim]); $dim + 1];
+                        vec![Point::try_new([0.42; $dim]).expect("finite point coordinates"); $dim + 1];
                     let result = kernel.orientation(&points).unwrap();
                     assert_eq!(
                         result, 0,

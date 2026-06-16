@@ -156,18 +156,27 @@ where
 /// ```rust
 /// use delaunay::prelude::{DeduplicationError, try_dedup_vertices_epsilon};
 ///
-/// # fn main() -> Result<(), DeduplicationError> {
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Source(#[from] DeduplicationError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
 /// ];
 ///
 /// let deduped = try_dedup_vertices_epsilon(&vertices, 1e-9)?;
 /// assert_eq!(deduped.len(), 2);
 ///
-/// let err = try_dedup_vertices_epsilon(&vertices, f64::NAN).unwrap_err();
-/// assert_eq!(err, DeduplicationError::NonFiniteEpsilon);
+/// std::assert_matches!(
+///     try_dedup_vertices_epsilon(&vertices, f64::NAN),
+///     Err(DeduplicationError::NonFiniteEpsilon)
+/// );
 /// # Ok(())
 /// # }
 /// ```
@@ -313,23 +322,19 @@ mod tests {
     use super::*;
 
     use crate::geometry::point::Point;
+    use crate::try_vertices_from_points;
     use approx::assert_relative_eq;
+
+    fn vertex(coords: [f64; 2]) -> Vertex<(), 2> {
+        Vertex::try_new(coords).expect("finite vertex coordinates")
+    }
 
     #[test]
     fn test_dedup_vertices_exact_comprehensive() {
         // Sub-test: Basic deduplication
-        let v1: Vertex<(), 2> = Vertex::from_points(&[Point::from_validated_coords([0.0, 0.0])])
-            .into_iter()
-            .next()
-            .unwrap();
-        let v2: Vertex<(), 2> = Vertex::from_points(&[Point::from_validated_coords([0.0, 0.0])])
-            .into_iter()
-            .next()
-            .unwrap();
-        let v3: Vertex<(), 2> = Vertex::from_points(&[Point::from_validated_coords([1.0, 1.0])])
-            .into_iter()
-            .next()
-            .unwrap();
+        let v1 = vertex([0.0, 0.0]);
+        let v2 = vertex([0.0, 0.0]);
+        let v3 = vertex([1.0, 1.0]);
         let vertices = vec![v1, v2, v3];
         let unique = dedup_vertices_exact(&vertices);
         assert_eq!(unique.len(), 2, "Should remove exact duplicate");
@@ -337,21 +342,9 @@ mod tests {
         assert!(Point::<2>::try_new([f64::NAN, f64::NAN]).is_err());
 
         // Sub-test: Zero handling - +0.0 should equal -0.0
-        let v1_pos_zero: Vertex<(), 2> =
-            Vertex::from_points(&[Point::from_validated_coords([0.0, 0.0])])
-                .into_iter()
-                .next()
-                .unwrap();
-        let v2_neg_zero: Vertex<(), 2> =
-            Vertex::from_points(&[Point::from_validated_coords([-0.0, -0.0])])
-                .into_iter()
-                .next()
-                .unwrap();
-        let v3_one: Vertex<(), 2> =
-            Vertex::from_points(&[Point::from_validated_coords([1.0, 1.0])])
-                .into_iter()
-                .next()
-                .unwrap();
+        let v1_pos_zero = vertex([0.0, 0.0]);
+        let v2_neg_zero = vertex([-0.0, -0.0]);
+        let v3_one = vertex([1.0, 1.0]);
         let vertices_zero = vec![v1_pos_zero, v2_neg_zero, v3_one];
         let unique_zero = dedup_vertices_exact(&vertices_zero);
         assert_eq!(
@@ -364,19 +357,9 @@ mod tests {
     #[test]
     fn test_dedup_vertices_epsilon_basic() {
         // Near-duplicates should be filtered
-        let v1: Vertex<(), 2> = Vertex::from_points(&[Point::from_validated_coords([0.0, 0.0])])
-            .into_iter()
-            .next()
-            .unwrap();
-        let v2: Vertex<(), 2> =
-            Vertex::from_points(&[Point::from_validated_coords([1e-11, 1e-11])])
-                .into_iter()
-                .next()
-                .unwrap();
-        let v3: Vertex<(), 2> = Vertex::from_points(&[Point::from_validated_coords([1.0, 1.0])])
-            .into_iter()
-            .next()
-            .unwrap();
+        let v1 = vertex([0.0, 0.0]);
+        let v2 = vertex([1e-11, 1e-11]);
+        let v3 = vertex([1.0, 1.0]);
 
         let vertices = vec![v1, v2, v3];
         let unique = dedup_vertices_epsilon(&vertices, 1e-10);
@@ -390,21 +373,11 @@ mod tests {
     #[test]
     fn test_dedup_vertices_epsilon_boundary() {
         // Test strict < epsilon semantics (distance = epsilon should NOT be filtered)
-        let v1: Vertex<(), 2> = Vertex::from_points(&[Point::from_validated_coords([0.0, 0.0])])
-            .into_iter()
-            .next()
-            .unwrap();
+        let v1 = vertex([0.0, 0.0]);
         // Distance exactly epsilon (1e-10) in x direction
-        let v2: Vertex<(), 2> = Vertex::from_points(&[Point::from_validated_coords([1e-10, 0.0])])
-            .into_iter()
-            .next()
-            .unwrap();
+        let v2 = vertex([1e-10, 0.0]);
         // Distance slightly less than epsilon
-        let v3: Vertex<(), 2> =
-            Vertex::from_points(&[Point::from_validated_coords([0.99e-10, 0.0])])
-                .into_iter()
-                .next()
-                .unwrap();
+        let v3 = vertex([0.99e-10, 0.0]);
 
         let vertices = vec![v1, v2, v3];
         let unique = dedup_vertices_epsilon(&vertices, 1e-10);
@@ -426,11 +399,12 @@ mod tests {
 
     #[test]
     fn test_dedup_vertices_epsilon_negative_epsilon_returns_input_unchanged() {
-        let vertices: Vec<Vertex<(), 2>> = Vertex::from_points(&[
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-        ]);
+        let vertices: Vec<Vertex<(), 2>> = try_vertices_from_points(&[
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+        ])
+        .expect("finite point coordinates");
 
         let unique = dedup_vertices_epsilon(&vertices, -1.0);
 
@@ -449,8 +423,10 @@ mod tests {
 
     #[test]
     fn test_try_dedup_vertices_epsilon_negative_epsilon_returns_error() {
-        let vertices: Vec<Vertex<(), 2>> =
-            Vertex::from_points(&[Point::from_validated_coords([0.0, 0.0])]);
+        let vertices: Vec<Vertex<(), 2>> = try_vertices_from_points(&[
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates")
+        ])
+        .expect("finite point coordinates");
 
         let err = try_dedup_vertices_epsilon(&vertices, -1.0).unwrap_err();
 
@@ -459,11 +435,12 @@ mod tests {
 
     #[test]
     fn test_dedup_vertices_epsilon_non_finite_epsilon_returns_input_unchanged() {
-        let vertices: Vec<Vertex<(), 2>> = Vertex::from_points(&[
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-        ]);
+        let vertices: Vec<Vertex<(), 2>> = try_vertices_from_points(&[
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+        ])
+        .expect("finite point coordinates");
 
         for epsilon in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
             let unique = dedup_vertices_epsilon(&vertices, epsilon);
@@ -484,8 +461,10 @@ mod tests {
 
     #[test]
     fn test_try_dedup_vertices_epsilon_non_finite_epsilon_returns_error() {
-        let vertices: Vec<Vertex<(), 2>> =
-            Vertex::from_points(&[Point::from_validated_coords([0.0, 0.0])]);
+        let vertices: Vec<Vertex<(), 2>> = try_vertices_from_points(&[
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates")
+        ])
+        .expect("finite point coordinates");
 
         for epsilon in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
             let err = try_dedup_vertices_epsilon(&vertices, epsilon).unwrap_err();
@@ -498,12 +477,13 @@ mod tests {
     fn test_dedup_vertices_epsilon_preserves_first_occurrence() {
         // Verify that first occurrence is kept, later duplicates removed
         let points = [
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1e-11, 1e-11]), // Near-duplicate of first
-            Point::from_validated_coords([1.0, 1.0]),
-            Point::from_validated_coords([1.0 + 1e-11, 1.0 + 1e-11]), // Near-duplicate of third
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1e-11, 1e-11]).expect("finite point coordinates"), // Near-duplicate of first
+            Point::try_new([1.0, 1.0]).expect("finite point coordinates"),
+            Point::try_new([1.0 + 1e-11, 1.0 + 1e-11]).expect("finite point coordinates"), // Near-duplicate of third
         ];
-        let vertices: Vec<Vertex<(), 2>> = Vertex::from_points(&points);
+        let vertices: Vec<Vertex<(), 2>> =
+            try_vertices_from_points(&points).expect("finite point coordinates");
 
         let unique = dedup_vertices_epsilon(&vertices, 1e-10);
         assert_eq!(unique.len(), 2, "Should keep first of each cluster");
@@ -522,18 +502,9 @@ mod tests {
     #[test]
     fn test_filter_vertices_excluding_comprehensive() {
         // Sub-test: Basic exclusion
-        let v1: Vertex<(), 2> = Vertex::from_points(&[Point::from_validated_coords([0.0, 0.0])])
-            .into_iter()
-            .next()
-            .unwrap();
-        let v2: Vertex<(), 2> = Vertex::from_points(&[Point::from_validated_coords([1.0, 1.0])])
-            .into_iter()
-            .next()
-            .unwrap();
-        let v3: Vertex<(), 2> = Vertex::from_points(&[Point::from_validated_coords([2.0, 2.0])])
-            .into_iter()
-            .next()
-            .unwrap();
+        let v1 = vertex([0.0, 0.0]);
+        let v2 = vertex([1.0, 1.0]);
+        let v3 = vertex([2.0, 2.0]);
         let reference_basic = vec![v1];
         let vertices_basic = vec![v1, v2, v3];
         let filtered_basic = filter_vertices_excluding(&vertices_basic, &reference_basic);
@@ -546,16 +517,13 @@ mod tests {
         assert!(Point::<2>::try_new([f64::NAN, f64::NAN]).is_err());
 
         // Sub-test: Zero exclusion - +0.0 reference should match -0.0 vertices
-        let v_pos_zero: Vertex<(), 2> =
-            Vertex::from_points(&[Point::from_validated_coords([0.0, 0.0])])
-                .into_iter()
-                .next()
-                .unwrap();
+        let v_pos_zero = vertex([0.0, 0.0]);
         let reference_zero = vec![v_pos_zero];
-        let vertices_with_neg_zero: Vec<Vertex<(), 2>> = Vertex::from_points(&[
-            Point::from_validated_coords([-0.0, -0.0]),
-            Point::from_validated_coords([1.0, 1.0]),
-        ]);
+        let vertices_with_neg_zero: Vec<Vertex<(), 2>> = try_vertices_from_points(&[
+            Point::try_new([-0.0, -0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 1.0]).expect("finite point coordinates"),
+        ])
+        .expect("finite point coordinates");
         let filtered_zero = filter_vertices_excluding(&vertices_with_neg_zero, &reference_zero);
         assert_eq!(
             filtered_zero.len(),
@@ -564,14 +532,14 @@ mod tests {
         );
 
         // Sub-test: Multiple reference vertices
-        // Multiple reference vertices
         let points = [
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 1.0]),
-            Point::from_validated_coords([2.0, 2.0]),
-            Point::from_validated_coords([3.0, 3.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 1.0]).expect("finite point coordinates"),
+            Point::try_new([2.0, 2.0]).expect("finite point coordinates"),
+            Point::try_new([3.0, 3.0]).expect("finite point coordinates"),
         ];
-        let vertices: Vec<Vertex<(), 2>> = Vertex::from_points(&points);
+        let vertices: Vec<Vertex<(), 2>> =
+            try_vertices_from_points(&points).expect("finite point coordinates");
 
         let reference = vec![vertices[0], vertices[2]]; // Exclude first and third
         let filtered = filter_vertices_excluding(&vertices, &reference);

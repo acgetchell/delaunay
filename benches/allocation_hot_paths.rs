@@ -30,6 +30,7 @@ mod allocation_contracts {
     };
     use delaunay::prelude::query::measure_with_result;
     use delaunay::prelude::tds::{SimplexKey, TdsError, VertexKey, facet_key_from_vertices};
+    use delaunay::try_vertices_from_points;
     use std::assert_matches;
     use std::{hint::black_box, num::NonZeroUsize, time::Duration};
     use thiserror::Error;
@@ -101,16 +102,14 @@ mod allocation_contracts {
     }
 
     fn canary_vertices<const D: usize>(count: usize, seed: u64) -> Vec<Vertex<(), D>> {
-        let points = generate_random_points_in_range_seeded::<D>(count, benchmark_bounds(), seed);
-        points
-            .into_iter()
-            .map(|point| {
-                bench_result(
-                    delaunay::prelude::Vertex::<(), _>::try_new(point.into()),
-                    "finite benchmark vertex coordinates",
-                )
-            })
-            .collect()
+        let points = bench_result(
+            generate_random_points_in_range_seeded::<D>(count, benchmark_bounds(), seed),
+            "failed to generate allocation benchmark points",
+        );
+        bench_result(
+            try_vertices_from_points(&points),
+            "failed to create allocation benchmark vertices",
+        )
     }
 
     fn first_simplex_key<const D: usize>(
@@ -216,7 +215,7 @@ mod allocation_contracts {
             base_seed: Some(seed),
         });
         let dt = bench_result(
-            BenchTriangulation::<D>::new_with_options(&vertices, options),
+            BenchTriangulation::<D>::try_new_with_options(&vertices, options),
             format!("failed to build {D}D allocation benchmark triangulation"),
         );
         let simplex_key =

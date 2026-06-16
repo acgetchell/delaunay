@@ -3284,7 +3284,7 @@ mod tests {
 
         let existing_uuid = tri.tds.vertices().next().unwrap().1.uuid();
         let dup = Vertex::try_new_with_uuid(
-            Point::from_validated_coords([1.0, 0.0, 0.0]),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
             existing_uuid,
             None,
         )
@@ -3788,7 +3788,7 @@ mod tests {
                 crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.3]).unwrap(),
             )
             .unwrap();
-        let point = Point::from_validated_coords([0.5_f64, 0.3_f64]);
+        let point = Point::try_new([0.5_f64, 0.3_f64]).expect("finite point coordinates");
 
         let mut conflict_simplices = SimplexKeyBuffer::new();
         conflict_simplices.push(simplex_a);
@@ -3884,7 +3884,7 @@ mod tests {
                 crate::core::vertex::Vertex::<(), _>::try_new([0.1, 0.1, 0.1]).unwrap(),
             )
             .unwrap();
-        let point = Point::from_validated_coords([0.1_f64, 0.1_f64, 0.1_f64]);
+        let point = Point::try_new([0.1_f64, 0.1_f64, 0.1_f64]).expect("finite point coordinates");
 
         let mut conflict_simplices = SimplexKeyBuffer::new();
         conflict_simplices.push(simplex1);
@@ -4010,7 +4010,7 @@ mod tests {
                 crate::core::vertex::Vertex::<(), _>::try_new([0.3, 1.0]).unwrap(),
             )
             .unwrap();
-        let point = Point::from_validated_coords([0.3_f64, 1.0_f64]);
+        let point = Point::try_new([0.3_f64, 1.0_f64]).expect("finite point coordinates");
 
         let mut conflict_simplices = SimplexKeyBuffer::new();
         conflict_simplices.push(simplex1);
@@ -4166,7 +4166,7 @@ mod tests {
                 crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.3]).unwrap(),
             )
             .unwrap();
-        let point = Point::from_validated_coords([0.5_f64, 0.3_f64]);
+        let point = Point::try_new([0.5_f64, 0.3_f64]).expect("finite point coordinates");
 
         let mut conflict_simplices = SimplexKeyBuffer::new();
         conflict_simplices.push(simplex_a);
@@ -4414,7 +4414,7 @@ mod tests {
                 })
                 .collect();
             let dt: DelaunayTriangulation<_, (), (), 3> =
-                DelaunayTriangulation::new(&vertices).unwrap();
+                DelaunayTriangulation::try_new(&vertices).unwrap();
             (dt.number_of_vertices(), dt.number_of_simplices())
         }
 
@@ -4516,126 +4516,146 @@ mod tests {
         // perturbation retries in the current 4D path, so this keeps retry
         // coverage deterministic without looping over random seeds.
         [
-            Point::from_validated_coords([
+            Point::try_new([
                 0.660_063_804_566_304_3,
                 3.139_352_812_821_116,
                 1.460_437_437_858_557_2,
                 1.683_976_950_416_514_7,
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 2.451_966_162_957_145,
                 9.547_229_335_697_903,
                 3.306_128_696_560_687_5,
                 -3.722_166_730_957_705_6,
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 -2.344_360_378_074_79,
                 -2.755_831_029_562_339,
                 -1.275_699_073_649_171_6,
                 7.667_812_493_160_508,
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 -8.633_692_230_033_44,
                 1.995_093_685_275_964_6,
                 7.993_316_108_703_105,
                 -3.310_780_098_197_376_7,
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 9.710_410_828_147_591,
                 -9.675_293_457_452_888,
                 -7.169_080_272_753_141,
                 5.405_946_111_675_925_5,
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 2.266_246_031_487_613,
                 2.481_673_939_102_995,
                 3.039_413_140_674_462,
                 4.441_464_307_622_285,
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 2.565_731_492_709_954,
                 8.916_218_617_699_3,
                 -3.878_340_784_199_263_4,
                 -9.518_720_806_139_726,
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 -2.067_801_258_479_087_2,
                 -5.739_002_626_992_522,
                 7.554_154_642_458_165,
                 -2.983_334_995_469_171_2,
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 7.592_645_474_686_005,
                 -3.326_646_745_715_216,
                 -3.259_537_116_123_248,
                 -4.935_000_398_073_641,
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 -5.931_807_896_262_18,
                 8.897_268_005_841_394,
                 0.324_049_126_782_281_15,
                 -8.328_532_028_712_647,
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 -8.182_644_118_410_867,
                 5.373_925_359_941_506,
                 -9.015_837_749_827_128,
                 -1.703_973_344_007_208,
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 1.455_467_619_488_706_2,
                 9.869_985_381_801_74,
                 8.605_618_759_378_327,
                 -1.050_236_122_559_873_3,
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 -5.687_160_826_499_058,
                 6.504_655_423_433_022,
                 8.941_590_411_569_816,
                 9.543_547_641_077_382,
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 8.975_549_245_653_312,
                 -8.089_655_037_805_944,
                 9.936_284_142_216_682,
                 -7.816_992_427_475_977,
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 5.825_845_324_524_742,
                 -7.639_141_597_632_388,
                 1.549_524_653_880_336_4,
                 4.563_088_344_949_309,
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 7.387_141_055_690_918,
                 6.194_972_387_680_284,
                 -5.764_015_058_796_046,
                 9.298_338_336_238_999,
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 -1.597_916_740_077_209_9,
                 -4.938_008_036_006_716,
                 7.414_979_546_687_874,
                 -7.718_146_418_588_452,
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 -2.414_045_007_912_424_3,
                 8.888_648_260_600_007,
                 -5.859_329_894_512_815,
                 3.268_096_825_406_147,
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 -8.294_250_893_230_837,
                 3.083_275_278_154_95,
                 8.020_989_920_767_69,
                 8.155_291_219_012_977,
-            ]),
-            Point::from_validated_coords([
+            ])
+            .expect("finite point coordinates"),
+            Point::try_new([
                 6.718_748_825_685_814_6,
                 -4.640_634_945_941_695,
                 2.283_644_483_657_752_7,
                 0.837_537_687_473_188_8,
-            ]),
+            ])
+            .expect("finite point coordinates"),
         ]
     }
 
@@ -4675,7 +4695,7 @@ mod tests {
         let mut saw_exhausted_skip = false;
 
         for point in perturbation_retry_repro_points_4d() {
-            let v = Vertex::from_validated_point(point);
+            let v = Vertex::from_validated_point(point, None);
             let (outcome, stats) =
                 insert_with_statistics(&mut exhaustion_tri, v, None, None).unwrap();
 
@@ -4709,7 +4729,7 @@ mod tests {
             Triangulation::new_empty(AdaptiveKernel::new());
 
         for point in perturbation_retry_repro_points_4d() {
-            let v = Vertex::from_validated_point(point);
+            let v = Vertex::from_validated_point(point, None);
             let (_outcome, stats) = insert_transactional(
                 &mut tri,
                 v,

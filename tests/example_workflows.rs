@@ -18,7 +18,7 @@ fn triangulation_and_hull_workflow_remains_valid() -> Result<(), WorkflowTestErr
         delaunay::prelude::Vertex::<(), _>::try_new([0.20, 0.60, 0.25]).unwrap(),
     ];
 
-    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::try_new(&vertices)?;
     dt.validate()?;
 
     let index = dt.build_adjacency_index()?;
@@ -34,7 +34,7 @@ fn triangulation_and_hull_workflow_remains_valid() -> Result<(), WorkflowTestErr
         .collect::<Result<Vec<_>, _>>()?;
     assert!(!boundary_facets.is_empty());
 
-    let hull = ConvexHull::from_triangulation(dt.as_triangulation())?;
+    let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())?;
     hull.validate(dt.as_triangulation())?;
     assert_eq!(hull.number_of_facets(), boundary_facets.len());
 

@@ -74,7 +74,7 @@
 //! | **Simplex Vertex Keys** | `Tds::is_valid()` / `Tds::validate()` | Simplices reference only valid vertex keys |
 //! | **Vertex Incidence** | `Tds::is_valid()` / `Tds::validate()` | `Vertex::incident_simplex` is non-dangling and consistent (when present) |
 //! | **Simplex Validity** | `SimplexBuilder::validate()` (vertex count) + `simplex.is_valid()` (comprehensive) | Construction + runtime validation |
-//! | **Vertex Validity** | `Point::from()` (coordinates) + UUID auto-gen + `vertex.is_valid()` | Construction + runtime validation |
+//! | **Vertex Validity** | [`Point::try_new`](crate::geometry::point::Point::try_new) / [`Point`](crate::geometry::point::Point) coordinate conversion (coordinates) + UUID auto-gen + `vertex.is_valid()` | Construction + runtime validation |
 //!
 //! The incremental insertion algorithm attempts to maintain the Delaunay property during
 //! construction, but rare violations can remain. Structural invariants are enforced
@@ -135,13 +135,15 @@
 //! #     Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
 //! #     #[error(transparent)]
 //! #     Validation(#[from] delaunay::DelaunayTriangulationValidationError),
+//! #     #[error(transparent)]
+//! #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 //! # }
 //! # fn main() -> Result<(), ExampleError> {
 //! let vertices = [
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
 //! ];
 //! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
@@ -198,14 +200,16 @@
 //! #     Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
 //! #     #[error(transparent)]
 //! #     Validation(#[from] delaunay::DelaunayTriangulationValidationError),
+//! #     #[error(transparent)]
+//! #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 //! # }
 //! # fn main() -> Result<(), ExampleError> {
 //! // Create vertices for a tetrahedron
 //! let vertices = [
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
 //! ];
 //!
 //! // Create Delaunay triangulation
@@ -243,20 +247,22 @@
 //! #     Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
 //! #     #[error(transparent)]
 //! #     Validation(#[from] delaunay::DelaunayTriangulationValidationError),
+//! #     #[error(transparent)]
+//! #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 //! # }
 //! # fn main() -> Result<(), ExampleError> {
 //! // Start with initial vertices
 //! let initial_vertices = [
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
 //! ];
 //!
 //! let mut dt = DelaunayTriangulationBuilder::new(&initial_vertices).build::<()>()?;
 //!
 //! // Add a new vertex
-//! let new_vertex = delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.2, 0.2]).expect("finite vertex coordinates");
+//! let new_vertex = delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.2, 0.2])?;
 //! dt.insert(new_vertex)?;
 //!
 //! assert_eq!(dt.number_of_vertices(), 5);
@@ -288,15 +294,17 @@
 //! #     Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
 //! #     #[error(transparent)]
 //! #     Validation(#[from] delaunay::DelaunayTriangulationValidationError),
+//! #     #[error(transparent)]
+//! #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 //! # }
 //! # fn main() -> Result<(), ExampleError> {
 //! // Create 4D triangulation with 5 vertices (needed for a 4-simplex)
 //! let vertices_4d = [
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),  // Origin
-//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),  // Unit vector along first dimension
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite vertex coordinates"),  // Unit vector along second dimension
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite vertex coordinates"),  // Unit vector along third dimension
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite vertex coordinates"),  // Unit vector along fourth dimension
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0])?,  // Origin
+//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0])?,  // Unit vector along first dimension
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0])?,  // Unit vector along second dimension
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0])?,  // Unit vector along third dimension
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0])?,  // Unit vector along fourth dimension
 //! ];
 //!
 //! let dt_4d = DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
@@ -509,14 +517,16 @@ pub enum GeometricError {
 /// #     Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
 /// #     #[error(transparent)]
 /// #     Validation(#[from] delaunay::DelaunayTriangulationValidationError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// // Build a simple 3D triangulation
 /// let vertices = [
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// assert_eq!(dt.number_of_vertices(), 4);
@@ -1558,12 +1568,14 @@ new_key_type! {
         /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
         /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
         /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+        /// #     #[error(transparent)]
+        /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
         /// # }
         /// # fn main() -> Result<(), ExampleError> {
         /// let vertices = [
-        ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-        ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-        ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+        ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+        ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+        ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
         /// ];
         /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
         /// let Some(key) = dt.tds().vertex_keys().next() else {
@@ -1598,12 +1610,14 @@ new_key_type! {
         /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
         /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
         /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+        /// #     #[error(transparent)]
+        /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
         /// # }
         /// # fn main() -> Result<(), ExampleError> {
         /// let vertices = [
-        ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-        ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-        ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+        ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+        ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+        ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
         /// ];
         /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
         /// let Some(key) = dt.tds().simplex_keys().next() else {
@@ -1677,13 +1691,15 @@ new_key_type! {
 /// #     Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
 /// #     #[error(transparent)]
 /// #     Validation(#[from] delaunay::DelaunayTriangulationValidationError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// // Create vertices for a 2D triangulation
 /// let vertices = [
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 1.0])?,
 /// ];
 ///
 /// // Create a new triangulation
@@ -1727,7 +1743,7 @@ pub struct Tds<U, V, const D: usize> {
     /// D-dimensional triangulation or if it's still being incrementally built.
     ///
     /// Note: Not serialized - only constructed triangulations should be serialized.
-    pub construction_state: TriangulationConstructionState,
+    pub(crate) construction_state: TriangulationConstructionState,
 
     /// Generation counter for invalidating caches.
     /// This counter is incremented whenever the triangulation structure is modified
@@ -2178,13 +2194,15 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
     /// #     Validation(#[from] delaunay::DelaunayTriangulationValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
@@ -2231,13 +2249,15 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
     /// #     Validation(#[from] delaunay::DelaunayTriangulationValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
@@ -2286,9 +2306,9 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
@@ -2327,9 +2347,9 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let keys: Vec<_> = dt.tds().vertex_keys().collect();
@@ -2366,9 +2386,9 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let keys: Vec<_> = dt.tds().simplex_keys().collect();
@@ -2407,12 +2427,14 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tds = dt.tds();
@@ -2452,12 +2474,14 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tds = dt.tds();
@@ -2505,11 +2529,13 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
-    /// let vertex1: Vertex<(), 3> = delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).expect("finite vertex coordinates");
-    /// let vertex2: Vertex<(), 3> = delaunay::prelude::Vertex::<(), _>::try_new([4.0, 5.0, 6.0]).expect("finite vertex coordinates");
+    /// let vertex1: Vertex<(), 3> = delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0, 3.0])?;
+    /// let vertex2: Vertex<(), 3> = delaunay::prelude::Vertex::<(), _>::try_new([4.0, 5.0, 6.0])?;
     ///
     /// dt.insert(vertex1)?;
     /// assert_eq!(dt.number_of_vertices(), 1);
@@ -2544,7 +2570,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     Point::try_from([0.0, 0.0, 1.0])?,
     /// ];
     ///
-    /// let vertices = Vertex::<(), 3>::from_points(&points);
+    /// let vertices = delaunay::try_vertices_from_points(&points)?;
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.number_of_vertices(), 4);
     /// # Ok(())
@@ -2641,7 +2667,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     Point::try_from([1.0, 0.0])?,
     ///     Point::try_from([0.5, 1.0])?,
     /// ];
-    /// let vertices_2d = Vertex::<(), 2>::from_points(&points_2d);
+    /// let vertices_2d = delaunay::try_vertices_from_points(&points_2d)?;
     /// let dt_2d = DelaunayTriangulationBuilder::new(&vertices_2d).build::<()>()?;
     /// assert_eq!(dt_2d.dim(), 2);
     ///
@@ -2653,7 +2679,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     Point::try_from([0.0, 0.0, 1.0, 0.0])?,
     ///     Point::try_from([0.0, 0.0, 0.0, 1.0])?,
     /// ];
-    /// let vertices_4d = Vertex::<(), 4>::from_points(&points_4d);
+    /// let vertices_4d = delaunay::try_vertices_from_points(&points_4d)?;
     /// let dt_4d = DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
     /// assert_eq!(dt_4d.dim(), 4);
     /// # Ok(())
@@ -2666,6 +2692,29 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         let nv_i32 = i32::try_from(nv).unwrap_or(i32::MAX);
         let d_i32 = i32::try_from(D).unwrap_or(i32::MAX);
         nv_i32.saturating_sub(1).min(d_i32)
+    }
+
+    /// Returns the current construction state of this triangulation data structure.
+    ///
+    /// The state is maintained by checked TDS and Delaunay construction paths. It
+    /// is exposed read-only so callers can inspect incomplete vs. constructed
+    /// topology without bypassing mutation invariants.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::tds::{Tds, TriangulationConstructionState};
+    ///
+    /// let tds: Tds<(), (), 3> = Tds::empty();
+    /// std::assert_matches!(
+    ///     tds.construction_state(),
+    ///     TriangulationConstructionState::Incomplete(0)
+    /// );
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn construction_state(&self) -> &TriangulationConstructionState {
+        &self.construction_state
     }
 
     /// The function `number_of_simplices` returns the number of simplices in the [Tds].
@@ -2700,7 +2749,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     Point::try_from([0.0, 0.0, 1.0])?,
     /// ];
     ///
-    /// let vertices = Vertex::<(), 3>::from_points(&points);
+    /// let vertices = delaunay::try_vertices_from_points(&points)?;
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.number_of_simplices(), 1); // Simplices are automatically created via triangulation
     /// # Ok(())
@@ -2731,7 +2780,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     Point::try_from([0.0, 0.0, 1.0])?,
     /// ];
     ///
-    /// let vertices = Vertex::<(), 3>::from_points(&points);
+    /// let vertices = delaunay::try_vertices_from_points(&points)?;
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.number_of_simplices(), 1); // One tetrahedron for 4 points in 3D
     /// # Ok(())
@@ -2780,13 +2829,15 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert!(dt.tds().is_connected());
@@ -3242,12 +3293,14 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tds = dt.tds();
@@ -3317,14 +3370,16 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a triangulation with some vertices
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -3392,14 +3447,16 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a triangulation with some vertices
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -3467,14 +3524,16 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a triangulation with some vertices
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -3507,14 +3566,16 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a triangulation with some vertices
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -3574,14 +3635,16 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a triangulation with some vertices
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -3614,14 +3677,16 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a triangulation with some vertices
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -3703,12 +3768,14 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tds = dt.tds();
@@ -3770,12 +3837,14 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices: [Vertex<i32, 2>; 3] = [
-    ///     delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 10i32).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0], 20).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0], 30).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 10i32)?,
+    ///     delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0], 20)?,
+    ///     delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0], 30)?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let mut tds = dt.tds().clone();
@@ -3837,12 +3906,14 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<i32>()?;
     /// let mut tds = dt.tds().clone();
@@ -3899,12 +3970,14 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tds = dt.tds();
@@ -3945,12 +4018,14 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tds = dt.tds();
@@ -4010,12 +4085,14 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let mut tds = dt.tds().clone();
@@ -4368,13 +4445,15 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0])?,
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
@@ -4480,12 +4559,14 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tds = dt.tds();
@@ -4981,12 +5062,14 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let mut tds = dt.tds().clone();
@@ -5077,12 +5160,14 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tds = dt.tds();
@@ -5154,12 +5239,14 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let mut tds = dt.tds().clone();
@@ -5236,7 +5323,10 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// assert_eq!(tds.number_of_vertices(), 0);
     /// assert_eq!(tds.number_of_simplices(), 0);
     /// assert_eq!(tds.dim(), -1);
-    /// std::assert_matches!(tds.construction_state, TriangulationConstructionState::Incomplete(0));
+    /// std::assert_matches!(
+    ///     tds.construction_state(),
+    ///     TriangulationConstructionState::Incomplete(0)
+    /// );
     /// ```
     #[must_use]
     pub fn empty() -> Self {
@@ -5278,13 +5368,15 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -5582,12 +5674,14 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tds = dt.tds();
@@ -6090,12 +6184,14 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 2> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -6496,14 +6592,16 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices_4d = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0])?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 4> =
     ///     DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
@@ -6562,14 +6660,16 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
     /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices_4d = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0])?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 4> =
     ///     DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
@@ -7958,7 +8058,7 @@ mod tests {
     #[test]
     fn test_add_vertex_basic_insertion_succeeds() {
         let initial_vertices = initial_simplex_vertices_3d();
-        let mut dt = DelaunayTriangulation::new(&initial_vertices).unwrap();
+        let mut dt = DelaunayTriangulation::try_new(&initial_vertices).unwrap();
 
         let vertex = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
         let result = dt.insert(vertex);
@@ -7970,7 +8070,7 @@ mod tests {
     #[test]
     fn test_add_vertex_duplicate_coordinates_rejected() {
         let initial_vertices = initial_simplex_vertices_3d();
-        let mut dt = DelaunayTriangulation::new(&initial_vertices).unwrap();
+        let mut dt = DelaunayTriangulation::try_new(&initial_vertices).unwrap();
 
         let vertex = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
         let duplicate = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
@@ -7987,13 +8087,17 @@ mod tests {
     #[test]
     fn test_add_vertex_duplicate_uuid_rejected() {
         let initial_vertices = initial_simplex_vertices_3d();
-        let mut dt = DelaunayTriangulation::new(&initial_vertices).unwrap();
+        let mut dt = DelaunayTriangulation::try_new(&initial_vertices).unwrap();
 
         let vertex1 = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
         let uuid1 = vertex1.uuid();
         dt.insert(vertex1).unwrap();
 
-        let vertex2 = vertex_with_uuid(Point::from_validated_coords([4.0, 5.0, 6.0]), uuid1, None);
+        let vertex2 = vertex_with_uuid(
+            Point::try_new([4.0, 5.0, 6.0]).expect("finite point coordinates"),
+            uuid1,
+            None,
+        );
         let result = dt.insert(vertex2);
         assert!(
             matches!(
@@ -8010,7 +8114,7 @@ mod tests {
     #[test]
     fn test_add_vertex_increases_counts_and_leaves_tds_valid() {
         let initial_vertices = initial_simplex_vertices_3d();
-        let mut dt = DelaunayTriangulation::new(&initial_vertices).unwrap();
+        let mut dt = DelaunayTriangulation::try_new(&initial_vertices).unwrap();
         let initial_simplex_count = dt.number_of_simplices();
 
         let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap();
@@ -8030,7 +8134,7 @@ mod tests {
     #[test]
     fn test_add_vertex_is_accessible_by_uuid_and_coordinates() {
         let initial_vertices = initial_simplex_vertices_3d();
-        let mut dt = DelaunayTriangulation::new(&initial_vertices).unwrap();
+        let mut dt = DelaunayTriangulation::try_new(&initial_vertices).unwrap();
 
         let vertex = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
         let uuid = vertex.uuid();
@@ -8079,7 +8183,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.5, 1.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([1.5, 1.0]).unwrap(),
         ];
-        let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let mut dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
         // Verify initial state
         let initial_vertices = dt.number_of_vertices();
@@ -8151,7 +8255,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
-        let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let mut dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
         // Use a key that was never added
         let nonexistent_key = VertexKey::from(KeyData::from_ffi(u64::MAX));
@@ -8188,7 +8292,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
 
         let vertex_key = dt.vertices().next().unwrap().0;
 
@@ -8221,7 +8325,7 @@ mod tests {
                 crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
             ];
             let mut dt_2d: DelaunayTriangulation<_, (), (), 2> =
-                DelaunayTriangulation::new(&vertices_2d).unwrap();
+                DelaunayTriangulation::try_new(&vertices_2d).unwrap();
             let vertex_key = dt_2d.vertices().next().unwrap().0;
             let simplices_removed = dt_2d.remove_vertex(vertex_key).unwrap();
             assert!(simplices_removed > 0);
@@ -8238,7 +8342,7 @@ mod tests {
                 crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2]).unwrap(),
             ];
             let mut dt_3d: DelaunayTriangulation<_, (), (), 3> =
-                DelaunayTriangulation::new(&vertices_3d).unwrap();
+                DelaunayTriangulation::try_new(&vertices_3d).unwrap();
             let vertex_key = dt_3d
                 .vertices()
                 .find(|(_, vertex)| {
@@ -8266,7 +8370,7 @@ mod tests {
                 crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2]).unwrap(),
             ];
             let mut dt_4d: DelaunayTriangulation<_, (), (), 4> =
-                DelaunayTriangulation::new(&vertices_4d).unwrap();
+                DelaunayTriangulation::try_new(&vertices_4d).unwrap();
             let vertex_key = dt_4d
                 .vertices()
                 .find(|(_, vertex)| {
@@ -8302,7 +8406,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
 
         // Find the interior vertex by coordinates (order-independent)
         let interior_coords = [0.2, 0.2, 0.2];
@@ -8396,7 +8500,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(), // Interior vertex
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
 
         // Pick a vertex known to belong to at least one simplex (from an existing simplex)
         let first_simplex_key = dt.simplices().next().unwrap().0;
@@ -10385,46 +10489,17 @@ mod tests {
 
     #[test]
     fn test_build_facet_to_simplices_map_errors_on_u8_facet_index_overflow() {
-        let mut tds: Tds<(), (), 2> = Tds::empty();
-        let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
-            .unwrap();
-        let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
-            .unwrap();
-        let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
-            .unwrap();
-
-        let simplex_key = tds
-            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, c], None).unwrap())
-            .unwrap();
-
-        // NOTE: This scenario is not realistic for valid triangulations:
-        // - Valid D-simplices always contain exactly D+1 vertices (and `D <= MAX_PRACTICAL_DIMENSION_SIZE`).
-        // - Therefore facet indices are always within `0..=D` and trivially fit in `u8`.
-        //
-        // We intentionally *corrupt* the simplex here by inflating its vertex buffer (still using valid
-        // vertex keys) so facet indices exceed `u8::MAX`. This is a robustness test to ensure
-        // `build_facet_to_simplices_map()` fails fast on corrupted/invalid TDS state (e.g., unsafe internal
-        // mutation or malformed serialized data).
-        //
-        // Inflate the vertex buffer (still using valid vertex keys) so facet indices exceed u8.
-        {
-            let simplex = tds.simplex_mut(simplex_key).unwrap();
-            while simplex.number_of_vertices() <= usize::from(u8::MAX) + 1 {
-                simplex.push_vertex_key(a);
-            }
-        }
+        let tds: Tds<(), (), 256> = Tds::empty();
 
         let err = tds.build_facet_to_simplices_map().unwrap_err();
-        assert_matches!(err, TdsError::IndexOutOfBounds { .. });
+        assert_matches!(
+            err,
+            TdsError::DimensionMismatch {
+                expected: 255,
+                actual: 256,
+                ref context,
+            } if context == "facet indices must fit in u8"
+        );
     }
 
     #[test]
@@ -10958,7 +11033,7 @@ mod tests {
     #[test]
     fn test_remove_duplicate_simplices_noop_when_no_duplicates() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         let mut tds = dt.tds().clone();
         let generation_before = tds.generation();
 
@@ -11216,7 +11291,7 @@ mod tests {
     #[test]
     fn test_tds_is_valid_passes_for_valid_simplex() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         assert!(dt.tds().is_valid().is_ok());
         assert!(dt.tds().validate().is_ok());
     }
@@ -11234,9 +11309,9 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 2.0]).unwrap(),
         ];
         let dt_a: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&verts_a).unwrap();
+            DelaunayTriangulation::try_new(&verts_a).unwrap();
         let dt_b: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&verts_b).unwrap();
+            DelaunayTriangulation::try_new(&verts_b).unwrap();
         assert_ne!(dt_a.tds(), dt_b.tds());
     }
 
@@ -11250,7 +11325,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let mut tds = dt.tds().clone();
         assert!(tds.number_of_simplices() > 1);
 
@@ -11273,7 +11348,7 @@ mod tests {
     #[test]
     fn test_build_facet_to_simplices_map_basic() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         let tds = dt.tds();
 
         let facet_map = tds.build_facet_to_simplices_map().unwrap();
@@ -11293,7 +11368,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let tds = dt.tds();
 
         // Every vertex should be in at least one simplex
@@ -11925,7 +12000,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let mut tds = dt.tds().clone();
         assert!(tds.number_of_simplices() > 1);
 
@@ -11998,7 +12073,7 @@ mod tests {
     #[test]
     fn test_normalize_coherent_orientation_handles_single_simplex() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         let mut tds = dt.tds().clone();
         assert_eq!(tds.number_of_simplices(), 1);
 
@@ -12015,7 +12090,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let mut tds = dt.tds().clone();
         assert!(tds.number_of_simplices() > 1);
 
@@ -12030,7 +12105,7 @@ mod tests {
     #[test]
     fn test_validate_simplex_coordinate_uniqueness_passes_for_distinct_coords() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         let tds = dt.tds();
         assert!(tds.validate_simplex_coordinate_uniqueness().is_ok());
     }
@@ -12247,7 +12322,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let mut tds = dt.tds().clone();
         let key = tds.vertex_keys().next().unwrap();
 

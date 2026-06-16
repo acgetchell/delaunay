@@ -422,17 +422,17 @@ mod tests {
     /// + a barycentric combination with weight 0.5 in each active axis.
     fn degenerate_orient_points<const D: usize>() -> Vec<Point<D>> {
         let mut points = Vec::with_capacity(D + 1);
-        points.push(Point::from_validated_coords([0.0; D]));
+        points.push(Point::try_new([0.0; D]).expect("finite point coordinates"));
         for i in 0..D.saturating_sub(1) {
             let mut coords = [0.0; D];
             coords[i] = 1.0;
-            points.push(Point::from_validated_coords(coords));
+            points.push(Point::try_new(coords).expect("finite point coordinates"));
         }
         let mut bary = [0.0; D];
         for c in bary.iter_mut().take(D.saturating_sub(1)) {
             *c = 0.5;
         }
-        points.push(Point::from_validated_coords(bary));
+        points.push(Point::try_new(bary).expect("finite point coordinates"));
         points
     }
 
@@ -443,13 +443,16 @@ mod tests {
     /// center = circumradius for all D ≥ 2).
     fn cospherical_points<const D: usize>() -> (Vec<Point<D>>, Point<D>) {
         let mut simplex = Vec::with_capacity(D + 1);
-        simplex.push(Point::from_validated_coords([0.0; D]));
+        simplex.push(Point::try_new([0.0; D]).expect("finite point coordinates"));
         for i in 0..D {
             let mut coords = [0.0; D];
             coords[i] = 1.0;
-            simplex.push(Point::from_validated_coords(coords));
+            simplex.push(Point::try_new(coords).expect("finite point coordinates"));
         }
-        (simplex, Point::from_validated_coords([1.0; D]))
+        (
+            simplex,
+            Point::try_new([1.0; D]).expect("finite point coordinates"),
+        )
     }
 
     /// Translate a point by a deterministic per-axis offset.
@@ -459,7 +462,7 @@ mod tests {
         for (i, c) in coords.iter_mut().enumerate() {
             *c = p.coords()[i] + OFFSETS[i % OFFSETS.len()];
         }
-        Point::from_validated_coords(coords)
+        Point::try_new(coords).expect("finite point coordinates")
     }
 
     // =========================================================================
@@ -538,7 +541,7 @@ mod tests {
 
                 #[test]
                 fn [<test_sos_orientation_ $dim d_all_identical_returns_err>]() {
-                    let points = vec![Point::from_validated_coords([0.0; $dim]); $dim + 1];
+                    let points = vec![Point::try_new([0.0; $dim]).expect("finite point coordinates"); $dim + 1];
                     assert_eq!(
                         sos_orientation_sign(&points),
                         Err(CoordinateConversionError::DegenerateSimplex {
@@ -550,8 +553,8 @@ mod tests {
 
                 #[test]
                 fn [<test_sos_insphere_ $dim d_all_identical_returns_err>]() {
-                    let simplex = vec![Point::from_validated_coords([1.0; $dim]); $dim + 1];
-                    let test_pt = Point::from_validated_coords([1.0; $dim]);
+                    let simplex = vec![Point::try_new([1.0; $dim]).expect("finite point coordinates"); $dim + 1];
+                    let test_pt = Point::try_new([1.0; $dim]).expect("finite point coordinates");
                     assert_eq!(
                         sos_insphere_sign(&simplex, &test_pt),
                         Err(CoordinateConversionError::DegenerateSimplex {
@@ -580,9 +583,9 @@ mod tests {
         // orientation.  (SoS is only guaranteed correct for degenerate inputs;
         // the caller should never invoke SoS for non-degenerate cases.)
         let positive = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
-            Point::from_validated_coords([0.0, 1.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
         ];
         let sign = sos_orientation_sign(&positive).unwrap();
         assert_eq!(sign, 1, "Non-degenerate positive triangle should return +1");
@@ -595,8 +598,8 @@ mod tests {
     #[test]
     fn test_sos_orientation_wrong_point_count_returns_error() {
         let points = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
         ];
         let result = sos_orientation_sign(&points);
         assert_eq!(
@@ -612,10 +615,10 @@ mod tests {
     #[test]
     fn test_sos_insphere_wrong_simplex_count_returns_error() {
         let simplex = vec![
-            Point::from_validated_coords([0.0, 0.0]),
-            Point::from_validated_coords([1.0, 0.0]),
+            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
         ];
-        let test = Point::from_validated_coords([0.5, 0.5]);
+        let test = Point::try_new([0.5, 0.5]).expect("finite point coordinates");
         let result = sos_insphere_sign(&simplex, &test);
         assert_eq!(
             result,
@@ -741,8 +744,8 @@ mod tests {
         // Two identical 1D points: orientation determinant is exactly zero.
         // SoS must still resolve to ±1.
         let points = vec![
-            Point::from_validated_coords([5.0]),
-            Point::from_validated_coords([5.0]),
+            Point::try_new([5.0]).expect("finite point coordinates"),
+            Point::try_new([5.0]).expect("finite point coordinates"),
         ];
         let sign = sos_orientation_sign(&points).unwrap();
         assert!(
@@ -755,8 +758,8 @@ mod tests {
     fn test_sos_orientation_1d_distinct_degenerate() {
         // D=1 with distinct points is non-degenerate, but SoS still works.
         let points = vec![
-            Point::from_validated_coords([0.0]),
-            Point::from_validated_coords([1.0]),
+            Point::try_new([0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0]).expect("finite point coordinates"),
         ];
         let sign = sos_orientation_sign(&points).unwrap();
         assert!(

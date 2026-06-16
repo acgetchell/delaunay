@@ -132,7 +132,7 @@ cargo bench --profile perf --bench ci_performance_suite
 
 `ci_performance_suite.rs` is the stable public workflow contract. It covers:
 
-- construction via `DelaunayTriangulation::new_with_options`
+- construction via `DelaunayTriangulation::try_new_with_options`
 - adversarial construction
 - convex hull extraction
 - boundary facet traversal

@@ -21,11 +21,18 @@
 //!     InsertionOrderStrategy, Vertex,
 //! };
 //!
-//! # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+//! # #[derive(Debug, thiserror::Error)]
+//! # enum ExampleError {
+//! #     #[error(transparent)]
+//! #     Source(#[from] DelaunayTriangulationConstructionError),
+//! #     #[error(transparent)]
+//! #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+//! # }
+//! # fn main() -> Result<(), ExampleError> {
 //! let vertices = vec![
-//!     Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-//!     Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-//!     Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+//!     Vertex::<(), _>::try_new([0.0, 0.0])?,
+//!     Vertex::<(), _>::try_new([1.0, 0.0])?,
+//!     Vertex::<(), _>::try_new([0.0, 1.0])?,
 //! ];
 //!
 //! let options = ConstructionOptions::default()
@@ -67,7 +74,7 @@ use crate::core::operations::{
 };
 use crate::core::simplex::SimplexValidationError;
 use crate::core::tds::SimplexKey;
-use crate::core::tds::{TdsConstructionError, TdsError};
+use crate::core::tds::{TdsConstructionError, TdsError, TriangulationConstructionState};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::util::{
@@ -592,8 +599,10 @@ impl DedupTolerance {
     /// ```rust
     /// use delaunay::prelude::construction::{DeduplicationError, DedupTolerance};
     ///
-    /// let err = DedupTolerance::try_new(-1.0).unwrap_err();
-    /// assert_eq!(err, DeduplicationError::NegativeEpsilon);
+    /// std::assert_matches!(
+    ///     DedupTolerance::try_new(-1.0),
+    ///     Err(DeduplicationError::NegativeEpsilon)
+    /// );
     /// ```
     pub fn try_new(tolerance: f64) -> Result<Self, DeduplicationError> {
         if !tolerance.is_finite() {
@@ -1843,7 +1852,7 @@ fn simplex_volume_for_indices<const D: usize>(
     let mut points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::with_capacity(simplex_indices.len());
     for &idx in simplex_indices {
-        points.push(Point::from_validated_coords(coords_f64[idx]));
+        points.push(Point::try_new(coords_f64[idx]).ok()?);
     }
     simplex_volume(&points)
         .ok()
@@ -2074,7 +2083,7 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// Batch construction is a best-effort ingestion path for duplicate or
     /// degenerate inputs: a successful construction may contain fewer vertices
     /// than the input slice. Use
-    /// [`new_with_construction_statistics`](Self::new_with_construction_statistics)
+    /// [`try_new_with_construction_statistics`](Self::try_new_with_construction_statistics)
     /// when skipped-input observability is required.
     ///
     /// # Errors
@@ -2084,23 +2093,33 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
+    /// use delaunay::prelude::construction::DelaunayTriangulation;
     ///
-    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulation::try_new(&vertices)?;
     /// assert_eq!(dt.number_of_vertices(), 4);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn new(vertices: &[Vertex<(), D>]) -> Result<Self, DelaunayTriangulationConstructionError> {
-        Self::with_kernel(&AdaptiveKernel::<f64>::new(), vertices)
+    pub fn try_new(
+        vertices: &[Vertex<(), D>],
+    ) -> Result<Self, DelaunayTriangulationConstructionError> {
+        Self::try_with_kernel(&AdaptiveKernel::<f64>::new(), vertices)
     }
 
     /// Creates a default `f64` triangulation and returns aggregate construction
@@ -2120,31 +2139,40 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
+    /// use delaunay::prelude::construction::DelaunayTriangulation;
     ///
-    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionErrorWithStatistics),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let (dt, stats): (DelaunayTriangulation<_, (), (), 3>, _) =
+    ///     DelaunayTriangulation::try_new_with_construction_statistics(&vertices)?;
     /// assert_eq!(dt.number_of_vertices(), 4);
+    /// assert_eq!(stats.inserted, dt.number_of_vertices());
     /// # Ok(())
     /// # }
     /// ```
     #[expect(
         clippy::result_large_err,
-        reason = "Public API intentionally returns by-value construction statistics for compatibility"
+        reason = "Public API intentionally returns by-value construction statistics"
     )]
-    pub fn new_with_construction_statistics(
+    pub fn try_new_with_construction_statistics(
         vertices: &[Vertex<(), D>],
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
         let kernel = AdaptiveKernel::<f64>::new();
-        Self::with_options_and_statistics(
+        Self::try_with_options_and_statistics(
             &kernel,
             vertices,
             TopologyGuarantee::DEFAULT,
@@ -2170,16 +2198,23 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     ConstructionOptions, DelaunayTriangulationBuilder, RetryPolicy,
+    ///     ConstructionOptions, DelaunayTriangulation, RetryPolicy,
     /// };
     /// use std::num::NonZeroUsize;
     ///
-    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionErrorWithStatistics),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     ///
     /// let Some(attempts) = NonZeroUsize::new(2) else {
@@ -2189,31 +2224,39 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     ///     attempts,
     ///     base_seed: Some(7),
     /// });
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
-    ///     .construction_options(options)
-    ///     .build::<()>()?;
+    /// let (dt, stats): (DelaunayTriangulation<_, (), (), 3>, _) =
+    ///     DelaunayTriangulation::try_new_with_options_and_construction_statistics(
+    ///         &vertices,
+    ///         options,
+    ///     )?;
     /// assert_eq!(dt.number_of_vertices(), 4);
+    /// assert_eq!(stats.inserted, dt.number_of_vertices());
     /// # Ok(())
     /// # }
     /// ```
     #[expect(
         clippy::result_large_err,
-        reason = "Public API intentionally returns by-value construction statistics for compatibility"
+        reason = "Public API intentionally returns by-value construction statistics"
     )]
-    pub fn new_with_options_and_construction_statistics(
+    pub fn try_new_with_options_and_construction_statistics(
         vertices: &[Vertex<(), D>],
         options: ConstructionOptions,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
         let kernel = AdaptiveKernel::<f64>::new();
-        Self::with_options_and_statistics(&kernel, vertices, TopologyGuarantee::DEFAULT, options)
+        Self::try_with_options_and_statistics(
+            &kernel,
+            vertices,
+            TopologyGuarantee::DEFAULT,
+            options,
+        )
     }
 
     /// Creates a default `f64` triangulation with explicit construction options.
     ///
     /// This batch constructor may successfully build a triangulation after
     /// skipping duplicate or retry-exhausted degenerate input vertices. Use
-    /// [`new_with_options_and_construction_statistics`](Self::new_with_options_and_construction_statistics)
+    /// [`try_new_with_options_and_construction_statistics`](Self::try_new_with_options_and_construction_statistics)
     /// when skipped-input observability is required.
     ///
     /// # Errors
@@ -2223,33 +2266,39 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     ConstructionOptions, DedupPolicy, DelaunayTriangulationBuilder, InsertionOrderStrategy,
+    ///     ConstructionOptions, DedupPolicy, DelaunayTriangulation, InsertionOrderStrategy,
     /// };
     ///
-    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     /// let options = ConstructionOptions::default()
     ///     .with_insertion_order(InsertionOrderStrategy::Hilbert)
     ///     .with_dedup_policy(DedupPolicy::Exact);
     ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
-    ///     .construction_options(options)
-    ///     .build::<()>()?;
+    /// let dt: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulation::try_new_with_options(&vertices, options)?;
     /// assert_eq!(dt.number_of_vertices(), 4);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn new_with_options(
+    pub fn try_new_with_options(
         vertices: &[Vertex<(), D>],
         options: ConstructionOptions,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
         let kernel = AdaptiveKernel::<f64>::new();
-        Self::with_topology_guarantee_and_options(
+        Self::try_with_topology_guarantee_and_options(
             &kernel,
             vertices,
             TopologyGuarantee::DEFAULT,
@@ -2262,7 +2311,7 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// Batch construction is a best-effort ingestion path for duplicate or
     /// degenerate inputs: a successful construction may contain fewer vertices
     /// than the input slice. Use
-    /// [`new_with_construction_statistics`](Self::new_with_construction_statistics)
+    /// [`try_new_with_construction_statistics`](Self::try_new_with_construction_statistics)
     /// when skipped-input observability is required.
     ///
     /// # Errors
@@ -2273,24 +2322,33 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, TopologyGuarantee,
+    ///     DelaunayTriangulation, TopologyGuarantee,
     /// };
     ///
-    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
-    /// let vertices = vec![delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"), delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"), delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates")];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
-    ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build::<()>()?;
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = vec![delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?, delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?, delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?];
+    /// let dt: DelaunayTriangulation<_, (), (), 2> =
+    ///     DelaunayTriangulation::try_new_with_topology_guarantee(
+    ///         &vertices,
+    ///         TopologyGuarantee::PLManifold,
+    ///     )?;
     /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn new_with_topology_guarantee(
+    pub fn try_new_with_topology_guarantee(
         vertices: &[Vertex<(), D>],
         topology_guarantee: TopologyGuarantee,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
         let kernel = AdaptiveKernel::<f64>::new();
-        Self::with_topology_guarantee(&kernel, vertices, topology_guarantee)
+        Self::try_with_topology_guarantee(&kernel, vertices, topology_guarantee)
     }
 
     /// Creates an empty default `f64` triangulation with no attached data.
@@ -2338,10 +2396,17 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     ///
-    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
-    /// let vertices = vec![delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"), delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"), delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates")];
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = vec![delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?, delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?, delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.number_of_vertices(), 3);
     /// # Ok(())
@@ -3839,6 +3904,8 @@ where
         }
         orientation_result?;
 
+        self.tri.tds.construction_state = TriangulationConstructionState::Constructed;
+
         tracing::debug!("post-construction: starting topology validation (finalize)");
         let validation_started = Instant::now();
         let validation_result = self.tri.validate();
@@ -3860,7 +3927,6 @@ where
             }
             .into());
         }
-
         Ok(())
     }
 
@@ -3931,8 +3997,6 @@ where
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     /// Creates an empty Delaunay triangulation with the given kernel.
     ///
@@ -3991,13 +4055,20 @@ where
             spatial_index: HashGridIndex::try_new(duplicate_tolerance).ok(),
         }
     }
+}
 
+impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
+where
+    K: Kernel<D, Scalar = f64>,
+    U: DataType,
+    V: DataType,
+{
     /// Creates a Delaunay triangulation from vertices with an explicit kernel.
     ///
     /// Batch construction is a best-effort ingestion path for duplicate or
     /// degenerate inputs: a successful construction may contain fewer vertices
     /// than the input slice. Use
-    /// [`with_options_and_statistics`](Self::with_options_and_statistics) when
+    /// [`try_with_options_and_statistics`](Self::try_with_options_and_statistics) when
     /// skipped-input observability is required.
     ///
     /// # Errors
@@ -4006,28 +4077,35 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
+    /// use delaunay::prelude::construction::DelaunayTriangulation;
     /// use delaunay::prelude::geometry::RobustKernel;
     ///
-    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     /// let kernel = RobustKernel::<f64>::new();
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
-    ///     .build_with_kernel::<_, ()>(&kernel)?;
+    /// let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
+    ///     DelaunayTriangulation::try_with_kernel(&kernel, &vertices)?;
     /// assert_eq!(dt.number_of_vertices(), 4);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn with_kernel(
+    pub fn try_with_kernel(
         kernel: &K,
         vertices: &[Vertex<U, D>],
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
-        Self::with_topology_guarantee(kernel, vertices, TopologyGuarantee::DEFAULT)
+        Self::try_with_topology_guarantee(kernel, vertices, TopologyGuarantee::DEFAULT)
     }
 
     /// Creates a Delaunay triangulation with an explicit topology guarantee.
@@ -4035,7 +4113,7 @@ where
     /// Batch construction is a best-effort ingestion path for duplicate or
     /// degenerate inputs: a successful construction may contain fewer vertices
     /// than the input slice. Use
-    /// [`with_options_and_statistics`](Self::with_options_and_statistics) when
+    /// [`try_with_options_and_statistics`](Self::try_with_options_and_statistics) when
     /// skipped-input observability is required.
     ///
     /// # Errors
@@ -4046,31 +4124,41 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, TopologyGuarantee,
+    ///     DelaunayTriangulation, TopologyGuarantee,
     /// };
     /// use delaunay::prelude::geometry::RobustKernel;
     ///
-    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     /// let kernel = RobustKernel::<f64>::new();
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
-    ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build_with_kernel::<_, ()>(&kernel)?;
+    /// let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
+    ///     DelaunayTriangulation::try_with_topology_guarantee(
+    ///         &kernel,
+    ///         &vertices,
+    ///         TopologyGuarantee::PLManifold,
+    ///     )?;
     /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn with_topology_guarantee(
+    pub fn try_with_topology_guarantee(
         kernel: &K,
         vertices: &[Vertex<U, D>],
         topology_guarantee: TopologyGuarantee,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
-        Self::with_topology_guarantee_and_options(
+        Self::try_with_topology_guarantee_and_options(
             kernel,
             vertices,
             topology_guarantee,
@@ -4082,7 +4170,7 @@ where
     ///
     /// This batch constructor may successfully build a triangulation after
     /// skipping duplicate or retry-exhausted degenerate input vertices. Use
-    /// [`with_options_and_statistics`](Self::with_options_and_statistics) when
+    /// [`try_with_options_and_statistics`](Self::try_with_options_and_statistics) when
     /// skipped-input observability is required.
     ///
     /// # Errors
@@ -4093,27 +4181,37 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     ConstructionOptions, DelaunayTriangulationBuilder, TopologyGuarantee,
+    ///     ConstructionOptions, DelaunayTriangulation, TopologyGuarantee,
     /// };
     /// use delaunay::prelude::geometry::RobustKernel;
     ///
-    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     /// let kernel = RobustKernel::<f64>::new();
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
-    ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .construction_options(ConstructionOptions::default())
-    ///     .build_with_kernel::<_, ()>(&kernel)?;
+    /// let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
+    ///     DelaunayTriangulation::try_with_topology_guarantee_and_options(
+    ///         &kernel,
+    ///         &vertices,
+    ///         TopologyGuarantee::PLManifold,
+    ///         ConstructionOptions::default(),
+    ///     )?;
     /// assert_eq!(dt.number_of_vertices(), 4);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn with_topology_guarantee_and_options(
+    pub fn try_with_topology_guarantee_and_options(
         kernel: &K,
         vertices: &[Vertex<U, D>],
         topology_guarantee: TopologyGuarantee,
@@ -4220,16 +4318,23 @@ where
     /// };
     /// use delaunay::prelude::geometry::RobustKernel;
     ///
-    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionErrorWithStatistics> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionErrorWithStatistics),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     /// let kernel = RobustKernel::<f64>::new();
     /// let (dt, stats) =
-    ///     DelaunayTriangulation::<RobustKernel<f64>, (), (), 3>::with_options_and_statistics(
+    ///     DelaunayTriangulation::<RobustKernel<f64>, (), (), 3>::try_with_options_and_statistics(
     ///         &kernel,
     ///         &vertices,
     ///         TopologyGuarantee::PLManifold,
@@ -4241,13 +4346,13 @@ where
     /// ```
     #[expect(
         clippy::result_large_err,
-        reason = "Public API intentionally returns by-value construction statistics for compatibility"
+        reason = "Public API intentionally returns by-value construction statistics"
     )]
     #[expect(
         clippy::too_many_lines,
         reason = "Statistics constructor handles preprocessing, retry, and fallback aggregation"
     )]
-    pub fn with_options_and_statistics(
+    pub fn try_with_options_and_statistics(
         kernel: &K,
         vertices: &[Vertex<U, D>],
         topology_guarantee: TopologyGuarantee,
@@ -4919,7 +5024,10 @@ mod tests {
         SpatialIndexConstructionFailure,
     };
     use crate::core::algorithms::locate::{ConflictError, LocateError};
-    use crate::core::tds::{EntityKind, GeometricError, InvariantError, SimplexKey, VertexKey};
+    use crate::core::tds::{
+        EntityKind, GeometricError, InvariantError, SimplexKey, TriangulationConstructionState,
+        VertexKey,
+    };
     use crate::core::validation::{
         TopologyGuarantee, TriangulationValidationError, ValidationPolicy,
     };
@@ -5017,7 +5125,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 2.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([2.0, 1.0]).unwrap(),
         ];
-        let mut dt = DelaunayTriangulation::new_with_topology_guarantee(
+        let mut dt = DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::Pseudomanifold,
         )
@@ -5062,7 +5170,7 @@ mod tests {
 
                     let expected_vertices = vertices.len();
                     let dt: DelaunayTriangulation<_, (), (), $dim> =
-                        DelaunayTriangulation::new(&vertices).unwrap();
+                        DelaunayTriangulation::try_new(&vertices).unwrap();
 
                     assert_eq!(dt.number_of_vertices(), expected_vertices);
                     assert!(dt.number_of_simplices() > 1);
@@ -5121,7 +5229,7 @@ mod tests {
                     }
 
                     let dt_batch: DelaunayTriangulation<_, (), (), $dim> =
-                        DelaunayTriangulation::new(&vertices).unwrap();
+                        DelaunayTriangulation::try_new(&vertices).unwrap();
 
                     assert_eq!(dt_bootstrap.number_of_vertices(), dt_batch.number_of_vertices());
                     assert_eq!(
@@ -5183,7 +5291,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::with_kernel(&FastKernel::new(), &vertices).unwrap();
+            DelaunayTriangulation::try_with_kernel(&FastKernel::new(), &vertices).unwrap();
 
         assert_eq!(dt.number_of_vertices(), 3);
         assert_eq!(dt.number_of_simplices(), 1);
@@ -5199,7 +5307,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::with_kernel(&RobustKernel::new(), &vertices).unwrap();
+            DelaunayTriangulation::try_with_kernel(&RobustKernel::new(), &vertices).unwrap();
 
         assert_eq!(dt.number_of_vertices(), 3);
         assert_eq!(dt.number_of_simplices(), 1);
@@ -5214,7 +5322,7 @@ mod tests {
         ];
 
         let result: Result<DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2>, _> =
-            DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices);
+            DelaunayTriangulation::try_with_kernel(&AdaptiveKernel::new(), &vertices);
 
         match result.unwrap_err() {
             DelaunayTriangulationConstructionError::Triangulation(
@@ -5234,7 +5342,7 @@ mod tests {
         ];
 
         let result: Result<DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>, _> =
-            DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices);
+            DelaunayTriangulation::try_with_kernel(&AdaptiveKernel::new(), &vertices);
 
         match result.unwrap_err() {
             DelaunayTriangulationConstructionError::Triangulation(
@@ -5255,12 +5363,16 @@ mod tests {
 
         let dup_uuid = vertices[0].uuid();
         vertices.push(
-            Vertex::try_new_with_uuid(Point::from_validated_coords([0.25, 0.25]), dup_uuid, None)
-                .unwrap(),
+            Vertex::try_new_with_uuid(
+                Point::try_new([0.25, 0.25]).expect("finite point coordinates"),
+                dup_uuid,
+                None,
+            )
+            .unwrap(),
         );
 
         let result: Result<DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2>, _> =
-            DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices);
+            DelaunayTriangulation::try_with_kernel(&AdaptiveKernel::new(), &vertices);
 
         match result.unwrap_err() {
             DelaunayTriangulationConstructionError::Triangulation(
@@ -5283,7 +5395,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.3, 0.3]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         assert_eq!(dt.number_of_vertices(), 5);
         assert!(dt.validate().is_ok());
     }
@@ -5299,7 +5411,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.3, 0.3]).unwrap(),
         ];
         let (dt, stats) =
-            DelaunayTriangulation::<_, (), (), 3>::new_with_construction_statistics(&vertices)
+            DelaunayTriangulation::<_, (), (), 3>::try_new_with_construction_statistics(&vertices)
                 .unwrap();
         assert_eq!(dt.number_of_vertices(), 5);
         assert_eq!(stats.inserted, 5);
@@ -5321,11 +5433,10 @@ mod tests {
 
         let _guard = ForceRepairNonconvergentGuard::enable();
         let kernel = RobustKernel::<f64>::new();
-        let dt =
-            DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::with_kernel(&kernel, &vertices)
-                .expect(
-                    "D>=4 construction should continue after forced local repair non-convergence",
-                );
+        let dt = DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::try_with_kernel(
+            &kernel, &vertices,
+        )
+        .expect("D>=4 construction should continue after forced local repair non-convergence");
 
         assert_eq!(dt.number_of_vertices(), vertices.len());
         assert!(dt.validate().is_ok());
@@ -5347,7 +5458,7 @@ mod tests {
         let _guard = ForceRepairNonconvergentGuard::enable();
         let kernel = RobustKernel::<f64>::new();
         let (dt, stats) =
-            DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::with_options_and_statistics(
+            DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::try_with_options_and_statistics(
                 &kernel,
                 &vertices,
                 TopologyGuarantee::DEFAULT,
@@ -5381,7 +5492,7 @@ mod tests {
         let options = ConstructionOptions::default()
             .with_batch_repair_policy(DelaunayRepairPolicy::EveryN(NonZeroUsize::new(2).unwrap()));
         let (dt, stats) =
-            DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::with_options_and_statistics(
+            DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::try_with_options_and_statistics(
                 &kernel,
                 &vertices,
                 TopologyGuarantee::DEFAULT,
@@ -6188,7 +6299,7 @@ mod tests {
             .with_dedup_policy(DedupPolicy::try_epsilon(1e-10).unwrap())
             .with_retry_policy(RetryPolicy::Disabled);
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::new_with_options(&vertices, opts).unwrap();
+            DelaunayTriangulation::try_new_with_options(&vertices, opts).unwrap();
 
         assert_eq!(dt.number_of_vertices(), 5);
         assert!(dt.validate().is_ok());
@@ -6375,7 +6486,7 @@ mod tests {
     }
 
     #[test]
-    fn test_new_with_options_hilbert_smoke_3d() {
+    fn test_try_new_with_options_hilbert_smoke_3d() {
         init_tracing();
         let vertices: Vec<Vertex<(), 3>> = vec![
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
@@ -6390,14 +6501,14 @@ mod tests {
             .with_retry_policy(RetryPolicy::Disabled);
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::new_with_options(&vertices, opts).unwrap();
+            DelaunayTriangulation::try_new_with_options(&vertices, opts).unwrap();
 
         assert_eq!(dt.number_of_vertices(), 5);
         assert!(dt.validate().is_ok());
     }
 
     #[test]
-    fn test_new_with_options_shuffled_retry_policy_smoke_3d() {
+    fn test_try_new_with_options_shuffled_retry_policy_smoke_3d() {
         init_tracing();
         let vertices: Vec<Vertex<(), 3>> = vec![
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
@@ -6415,14 +6526,14 @@ mod tests {
             });
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::new_with_options(&vertices, opts).unwrap();
+            DelaunayTriangulation::try_new_with_options(&vertices, opts).unwrap();
 
         assert_eq!(dt.number_of_vertices(), 5);
         assert!(dt.validate().is_ok());
     }
 
     #[test]
-    fn test_new_with_options_smoke_3d() {
+    fn test_try_new_with_options_smoke_3d() {
         init_tracing();
         let vertices: Vec<Vertex<(), 3>> = vec![
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
@@ -6433,71 +6544,135 @@ mod tests {
 
         let opts = ConstructionOptions::default().with_retry_policy(RetryPolicy::Disabled);
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::new_with_options(&vertices, opts).unwrap();
+            DelaunayTriangulation::try_new_with_options(&vertices, opts).unwrap();
 
         assert_eq!(dt.number_of_vertices(), 4);
         assert_eq!(dt.number_of_simplices(), 1);
         assert!(dt.validate().is_ok());
     }
 
-    #[test]
-    fn test_new_with_construction_statistics_counts_initial_simplex_3d() {
+    fn assert_initial_simplex_statistics<const D: usize>() {
         init_tracing();
-        let vertices: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-        ];
+        let vertices = simplex_vertices::<D>();
 
         let (dt, stats) =
-            DelaunayTriangulation::new_with_construction_statistics(&vertices).unwrap();
+            DelaunayTriangulation::<_, (), (), D>::try_new_with_construction_statistics(&vertices)
+                .unwrap();
 
-        assert_eq!(dt.number_of_vertices(), 4);
-        assert_eq!(stats.inserted, 4);
+        assert_eq!(dt.number_of_vertices(), D + 1);
+        assert_eq!(stats.inserted, D + 1);
         assert_eq!(stats.total_skipped(), 0);
-        assert_eq!(stats.total_attempts, 4);
+        assert_eq!(stats.total_attempts, D + 1);
         assert_eq!(stats.max_attempts, 1);
-        assert_eq!(stats.attempts_histogram.get(1).copied().unwrap_or(0), 4);
+        assert_eq!(stats.attempts_histogram.get(1).copied().unwrap_or(0), D + 1);
     }
 
-    #[test]
-    fn test_new_with_options_and_construction_statistics_skips_duplicate_3d() {
+    fn assert_constructed_tds_state<const D: usize>() {
         init_tracing();
-        let vertices: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        ];
-        let duplicate_uuid = vertices[4].uuid();
+        let vertices = simplex_vertices::<D>();
+
+        let dt: DelaunayTriangulation<_, (), (), D> =
+            DelaunayTriangulation::try_new(&vertices).unwrap();
+
+        assert_eq!(
+            *dt.as_triangulation().tds.construction_state(),
+            TriangulationConstructionState::Constructed
+        );
+    }
+
+    fn assert_empty_partial_stats_error<const D: usize>() {
+        init_tracing();
+        let mut vertices = simplex_vertices::<D>();
+        let _removed_vertex = vertices.pop().expect("simplex has at least one vertex");
+
+        let err =
+            DelaunayTriangulation::<_, (), (), D>::try_new_with_construction_statistics(&vertices)
+                .unwrap_err();
+
+        assert_eq!(
+            err.error,
+            DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::InsufficientVertices {
+                    dimension: D,
+                    source: SimplexValidationError::InsufficientVertices {
+                        actual: D,
+                        expected: D + 1,
+                        dimension: D,
+                    },
+                },
+            )
+        );
+        assert_eq!(err.statistics.inserted, 0);
+        assert_eq!(err.statistics.total_skipped(), 0);
+        assert_eq!(err.statistics.total_attempts, 0);
+        assert!(err.statistics.slow_insertions.is_empty());
+        assert!(err.statistics.skip_samples.is_empty());
+    }
+
+    fn assert_duplicate_skip_statistics<const D: usize>() {
+        init_tracing();
+        let mut vertices = simplex_vertices::<D>();
+        vertices.push(Vertex::<(), _>::try_new([0.0; D]).unwrap());
+        let duplicate_index = vertices.len() - 1;
+        let duplicate_uuid = vertices[duplicate_index].uuid();
 
         let opts = ConstructionOptions::default()
             .with_insertion_order(InsertionOrderStrategy::Input)
             .with_retry_policy(RetryPolicy::Disabled);
 
-        let (dt, stats) =
-            DelaunayTriangulation::new_with_options_and_construction_statistics(&vertices, opts)
-                .unwrap();
+        let (dt, stats) = DelaunayTriangulation::<_, (), (), D>::try_new_with_options_and_construction_statistics(
+            &vertices, opts,
+        )
+        .unwrap();
 
-        assert_eq!(dt.number_of_vertices(), 4);
-        assert_eq!(stats.inserted, 4);
+        assert_eq!(dt.number_of_vertices(), D + 1);
+        assert_eq!(stats.inserted, D + 1);
         assert_eq!(stats.skipped_duplicate, 1);
         assert_eq!(stats.skipped_degeneracy, 0);
         assert_eq!(stats.total_skipped(), 1);
-        assert_eq!(stats.total_attempts, 5);
-        assert_eq!(stats.attempts_histogram.get(1).copied().unwrap_or(0), 5);
+        assert_eq!(stats.total_attempts, D + 2);
+        assert_eq!(stats.attempts_histogram.get(1).copied().unwrap_or(0), D + 2);
 
         assert_eq!(stats.skip_samples.len(), 1);
         let sample = &stats.skip_samples[0];
-        assert_eq!(sample.index, 4);
+        assert_eq!(sample.index, duplicate_index);
         assert_eq!(sample.uuid, duplicate_uuid);
-        assert_eq!(sample.coords, vec![0.0, 0.0, 0.0]);
+        assert_eq!(sample.coords, vec![0.0; D]);
         assert!(sample.coords_available);
         assert_eq!(sample.attempts, 1);
         assert!(sample.error.contains("Duplicate coordinates"));
     }
+
+    macro_rules! gen_constructor_statistics_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_new_with_construction_statistics_counts_initial_simplex_ $dim d>]() {
+                    assert_initial_simplex_statistics::<$dim>();
+                }
+
+                #[test]
+                fn [<test_constructed_delaunay_exposes_constructed_tds_state_ $dim d>]() {
+                    assert_constructed_tds_state::<$dim>();
+                }
+
+                #[test]
+                fn [<test_new_with_construction_statistics_error_carries_empty_partial_stats_ $dim d>]() {
+                    assert_empty_partial_stats_error::<$dim>();
+                }
+
+                #[test]
+                fn [<test_try_new_with_options_and_construction_statistics_skips_duplicate_ $dim d>]() {
+                    assert_duplicate_skip_statistics::<$dim>();
+                }
+            }
+        };
+    }
+
+    gen_constructor_statistics_tests!(2);
+    gen_constructor_statistics_tests!(3);
+    gen_constructor_statistics_tests!(4);
+    gen_constructor_statistics_tests!(5);
 
     #[test]
     fn test_new_with_topology_guarantee_sets_pl() {
@@ -6509,7 +6684,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new_with_topology_guarantee(
+            DelaunayTriangulation::try_new_with_topology_guarantee(
                 &vertices,
                 TopologyGuarantee::PLManifold,
             )

@@ -1390,7 +1390,7 @@ mod tests {
     #[test]
     fn coordinate_trait_basic_functionality() {
         // Test through Point implementation of Coordinate trait with multiple dimensions.
-        let coord: Point<3> = Point::from_validated_coords([1.0, 2.0, 3.0]);
+        let coord: Point<3> = Point::try_new([1.0, 2.0, 3.0]).expect("finite point coordinates");
         assert_eq!(coord.dim(), 3);
         assert_relative_eq!(
             coord.to_array().as_slice(),
@@ -1404,7 +1404,7 @@ mod tests {
         assert_eq!(coord.get(10), None);
 
         // Test with different dimensions
-        let coord_single: Point<1> = Point::from_validated_coords([42.0]);
+        let coord_single: Point<1> = Point::try_new([42.0]).expect("finite point coordinates");
         assert_eq!(coord_single.dim(), 1);
         assert_relative_eq!(
             coord_single.get(0).unwrap(),
@@ -1414,7 +1414,7 @@ mod tests {
         assert_eq!(coord_single.get(1), None);
 
         // Test zero-dimensional
-        let coord_zero: Point<0> = Point::from_validated_coords([]);
+        let coord_zero: Point<0> = Point::try_new([]).expect("finite point coordinates");
         assert_eq!(coord_zero.dim(), 0);
         assert_eq!(coord_zero.to_array().len(), 0);
         assert_eq!(coord_zero.get(0), None);
@@ -1422,7 +1422,8 @@ mod tests {
 
         // Test large dimension
         let coord_large: Point<10> =
-            Point::from_validated_coords([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]);
+            Point::try_new([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0])
+                .expect("finite point coordinates");
         assert_eq!(coord_large.dim(), 10);
         assert_eq!(coord_large.get(10), None);
         assert!(coord_large.validate().is_ok());
@@ -1431,7 +1432,7 @@ mod tests {
     #[test]
     fn coordinate_trait_new() {
         // Test new() method
-        let coord1: Point<2> = Point::from_validated_coords([5.0, 6.0]);
+        let coord1: Point<2> = Point::try_new([5.0, 6.0]).expect("finite point coordinates");
         assert_relative_eq!(
             coord1.to_array().as_slice(),
             [5.0, 6.0].as_slice(),
@@ -1439,7 +1440,7 @@ mod tests {
         );
 
         // Test multiple creations with new()
-        let coord2: Point<2> = Point::from_validated_coords([5.0, 6.0]);
+        let coord2: Point<2> = Point::try_new([5.0, 6.0]).expect("finite point coordinates");
         assert_relative_eq!(
             coord2.to_array().as_slice(),
             [5.0, 6.0].as_slice(),
@@ -1492,7 +1493,7 @@ mod tests {
         ];
 
         for &(coords, description) in &valid_cases {
-            let coord: Point<3> = Point::from_validated_coords(coords);
+            let coord: Point<3> = Point::try_new(coords).expect("finite point coordinates");
             assert!(coord.validate().is_ok(), "Valid case failed: {description}");
         }
 
@@ -1562,9 +1563,9 @@ mod tests {
     #[test]
     fn coordinate_trait_hash_coordinate_comprehensive() {
         // Test normal coordinates - same values should produce same hash
-        let coord1: Point<3> = Point::from_validated_coords([1.0, 2.0, 3.0]);
-        let coord2: Point<3> = Point::from_validated_coords([1.0, 2.0, 3.0]);
-        let coord3: Point<3> = Point::from_validated_coords([1.0, 2.0, 4.0]);
+        let coord1: Point<3> = Point::try_new([1.0, 2.0, 3.0]).expect("finite point coordinates");
+        let coord2: Point<3> = Point::try_new([1.0, 2.0, 3.0]).expect("finite point coordinates");
+        let coord3: Point<3> = Point::try_new([1.0, 2.0, 4.0]).expect("finite point coordinates");
 
         let mut hasher1 = DefaultHasher::new();
         let mut hasher2 = DefaultHasher::new();
@@ -1591,9 +1592,9 @@ mod tests {
     #[test]
     fn coordinate_trait_ordered_equals_comprehensive() {
         // Test normal values
-        let coord1: Point<3> = Point::from_validated_coords([1.0, 2.0, 3.0]);
-        let coord2: Point<3> = Point::from_validated_coords([1.0, 2.0, 3.0]);
-        let coord3: Point<3> = Point::from_validated_coords([1.0, 2.0, 4.0]);
+        let coord1: Point<3> = Point::try_new([1.0, 2.0, 3.0]).expect("finite point coordinates");
+        let coord2: Point<3> = Point::try_new([1.0, 2.0, 3.0]).expect("finite point coordinates");
+        let coord3: Point<3> = Point::try_new([1.0, 2.0, 4.0]).expect("finite point coordinates");
         assert!(coord1.ordered_equals(&coord2));
         assert!(coord2.ordered_equals(&coord1));
         assert!(!coord1.ordered_equals(&coord3));
@@ -1662,7 +1663,7 @@ mod tests {
         ];
 
         for coords in test_coords {
-            let coord: Point<3> = Point::from_validated_coords(coords);
+            let coord: Point<3> = Point::try_new(coords).expect("finite point coordinates");
             let mut hash_builder = DefaultHasher::new();
             coord.hash_coordinate(&mut hash_builder);
             hashes.insert(hash_builder.finish());
@@ -1727,11 +1728,12 @@ mod tests {
         // Test that dimension methods are consistent across supported coordinate dimensions.
 
         // Test various dimensions to ensure const generic consistency
-        let coord_1d: Point<1> = Point::from_validated_coords([42.0]);
+        let coord_1d: Point<1> = Point::try_new([42.0]).expect("finite point coordinates");
         assert_eq!(coord_1d.dim(), 1);
         assert_eq!(coord_1d.to_array().len(), 1);
 
-        let coord_7d: Point<7> = Point::from_validated_coords([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]);
+        let coord_7d: Point<7> =
+            Point::try_new([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]).expect("finite point coordinates");
         assert_eq!(coord_7d.dim(), 7);
         assert_eq!(coord_7d.to_array().len(), 7);
 

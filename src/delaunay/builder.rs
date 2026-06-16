@@ -39,11 +39,20 @@
 //! ```rust
 //! use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
 //!
-//! # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
+//! # #[derive(Debug, thiserror::Error)]
+//! # enum ExampleError {
+//! #     #[error(transparent)]
+//! #     Source(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
+//! #     #[error(transparent)]
+//! #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+//! #     #[error(transparent)]
+//! #     Topology(#[from] delaunay::prelude::construction::ToroidalDomainError),
+//! # }
+//! # fn main() -> Result<(), ExampleError> {
 //! let vertices = vec![
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
 //! ];
 //!
 //! let dt = DelaunayTriangulationBuilder::new(&vertices)
@@ -59,18 +68,27 @@
 //! ```rust
 //! use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
 //!
-//! # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
+//! # #[derive(Debug, thiserror::Error)]
+//! # enum ExampleError {
+//! #     #[error(transparent)]
+//! #     Source(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
+//! #     #[error(transparent)]
+//! #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+//! #     #[error(transparent)]
+//! #     Topology(#[from] delaunay::prelude::construction::ToroidalDomainError),
+//! # }
+//! # fn main() -> Result<(), ExampleError> {
 //! // Vertices that fall outside [0, 1)² are wrapped before triangulation.
 //! let vertices = vec![
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.3]).expect("finite vertex coordinates"),
-//!     delaunay::prelude::Vertex::<(), _>::try_new([1.8, 0.1]).expect("finite vertex coordinates"),  // x wraps to 0.8
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.7]).expect("finite vertex coordinates"),
-//!     delaunay::prelude::Vertex::<(), _>::try_new([-0.4, 0.9]).expect("finite vertex coordinates"), // x wraps to 0.6
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.3])?,
+//!     delaunay::prelude::Vertex::<(), _>::try_new([1.8, 0.1])?,  // x wraps to 0.8
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.7])?,
+//!     delaunay::prelude::Vertex::<(), _>::try_new([-0.4, 0.9])?, // x wraps to 0.6
 //! ];
 //!
 //! let dt = DelaunayTriangulationBuilder::new(&vertices)
 //!     .try_canonicalized_toroidal([1.0, 1.0])
-//!     .expect("unit toroidal domain is valid")
+//!     ?
 //!     .build::<()>()?;
 //!
 //! assert_eq!(dt.number_of_vertices(), 4);
@@ -87,21 +105,30 @@
 //! use delaunay::prelude::geometry::RobustKernel;
 //! use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
 //!
-//! # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
+//! # #[derive(Debug, thiserror::Error)]
+//! # enum ExampleError {
+//! #     #[error(transparent)]
+//! #     Source(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
+//! #     #[error(transparent)]
+//! #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+//! #     #[error(transparent)]
+//! #     Topology(#[from] delaunay::prelude::construction::ToroidalDomainError),
+//! # }
+//! # fn main() -> Result<(), ExampleError> {
 //! let vertices = vec![
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.2]).expect("finite vertex coordinates"),
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.4, 0.7]).expect("finite vertex coordinates"),
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.7, 0.3]).expect("finite vertex coordinates"),
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.9]).expect("finite vertex coordinates"),
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.8, 0.6]).expect("finite vertex coordinates"),
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.1]).expect("finite vertex coordinates"),
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.3, 0.5]).expect("finite vertex coordinates"),
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.2])?,
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.4, 0.7])?,
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.7, 0.3])?,
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.9])?,
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.8, 0.6])?,
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.1])?,
+//!     delaunay::prelude::Vertex::<(), _>::try_new([0.3, 0.5])?,
 //! ];
 //!
 //! let kernel = RobustKernel::new();
 //! let dt = DelaunayTriangulationBuilder::new(&vertices)
 //!     .try_toroidal([1.0, 1.0])
-//!     .expect("unit toroidal domain is valid")
+//!     ?
 //!     .build_with_kernel::<_, ()>(&kernel)?;
 //!
 //! assert_eq!(dt.number_of_vertices(), 7);
@@ -947,12 +974,19 @@ pub enum ExplicitConstructionError {
 ///     ConstructionOptions, DelaunayTriangulationBuilder, TopologyGuarantee,
 /// };
 ///
-/// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Source(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
 /// ];
 ///
 /// let dt = DelaunayTriangulationBuilder::new(&vertices)
@@ -1020,16 +1054,23 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
     /// };
     ///
-    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// // No vertex data (U = () inferred)
-    /// let vertices = vec![delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"), delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"), delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates")];
+    /// let vertices = vec![delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?, delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?, delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?];
     /// let _dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// // Typed vertex data (U = i32 inferred)
     /// let typed: [Vertex<i32, 2>; 3] = [
-    ///     delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 1i32).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0], 2).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0], 3).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 1i32)?,
+    ///     delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0], 2)?,
+    ///     delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0], 3)?,
     /// ];
     /// let _dt = DelaunayTriangulationBuilder::new(&typed).build::<()>()?;
     /// # Ok(())
@@ -1063,12 +1104,19 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     ///     ExplicitConstructionError,
     /// };
     ///
-    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let simplices = vec![vec![0, 1, 2], vec![0, 2, 3]];
     ///
@@ -1207,21 +1255,30 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     ///     DelaunayTriangulationBuilder,
     /// };
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// #     #[error(transparent)]
+    /// #     Topology(#[from] delaunay::prelude::construction::ToroidalDomainError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.2]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.4, 0.7]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.7, 0.3]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.9]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.8, 0.6]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.1]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.3, 0.5]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.2])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.4, 0.7])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.7, 0.3])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.9])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.8, 0.6])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.1])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.3, 0.5])?,
     /// ];
     ///
     /// let kernel = RobustKernel::new();
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .try_toroidal([1.0, 1.0])
-    ///     .expect("unit toroidal domain is valid")
+    ///     ?
     ///     .build_with_kernel::<_, ()>(&kernel)?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 7);
@@ -1252,15 +1309,24 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// use delaunay::prelude::geometry::RobustKernel;
     /// use delaunay::prelude::topology::spaces::ToroidalDomain;
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// #     #[error(transparent)]
+    /// #     Topology(#[from] delaunay::prelude::construction::ToroidalDomainError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.2]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.4, 0.7]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.7, 0.3]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.9]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.8, 0.6]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.1]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.3, 0.5]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.2])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.4, 0.7])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.7, 0.3])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.9])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.8, 0.6])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.1])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.3, 0.5])?,
     /// ];
     ///
     /// let domain = ToroidalDomain::<2>::unit();
@@ -1298,17 +1364,26 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     ///     DelaunayTriangulationBuilder,
     /// };
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// #     #[error(transparent)]
+    /// #     Topology(#[from] delaunay::prelude::construction::ToroidalDomainError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.3]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.8, 0.1]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.7]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.9]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.3])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.8, 0.1])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.7])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.9])?,
     /// ];
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .try_canonicalized_toroidal([1.0, 1.0])
-    ///     .expect("unit toroidal domain is valid")
+    ///     ?
     ///     .build::<()>()?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 4);
@@ -1340,12 +1415,19 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     /// use delaunay::prelude::topology::spaces::ToroidalDomain;
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.3]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.8, 0.1]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.7]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.9]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.3])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.8, 0.1])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.7])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.9])?,
     /// ];
     ///
     /// let domain = ToroidalDomain::<2>::unit();
@@ -1377,11 +1459,18 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     ///     DelaunayTriangulationBuilder, TopologyGuarantee,
     /// };
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
@@ -1421,10 +1510,20 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     ///     DelaunayTriangulationBuilder, GlobalTopology, ToroidalConstructionMode,
     /// };
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// #     #[error(transparent)]
+    /// #     Topology(#[from] delaunay::prelude::construction::ToroidalDomainError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     /// let simplices = vec![vec![0, 1, 2]];
     ///
@@ -1432,12 +1531,14 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     ///     [1.0, 1.0],
     ///     ToroidalConstructionMode::Explicit,
     /// )
-    /// .expect("example domain is finite and strictly positive");
+    /// ?;
     /// let result = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
     ///     .global_topology(topology)
     ///     .build::<()>();
     ///
     /// assert!(result.is_err());
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub const fn global_topology(mut self, global_topology: GlobalTopology<D>) -> Self {
@@ -1456,11 +1557,18 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     ///     ConstructionOptions, DelaunayTriangulationBuilder, InsertionOrderStrategy,
     /// };
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
     ///
     /// let opts = ConstructionOptions::default()
@@ -1648,12 +1756,19 @@ where
     ///     DelaunayTriangulationBuilder,
     /// };
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
@@ -1702,12 +1817,19 @@ where
     ///     DelaunayTriangulationBuilder,
     /// };
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     /// ];
     ///
     /// let kernel = RobustKernel::new();
@@ -1746,7 +1868,7 @@ where
         match self.topology {
             BuilderTopology::Euclidean => {
                 // Euclidean path: delegate directly.
-                let mut dt = DelaunayTriangulation::with_topology_guarantee_and_options(
+                let mut dt = DelaunayTriangulation::try_with_topology_guarantee_and_options(
                     kernel,
                     self.vertices,
                     self.topology_guarantee,
@@ -1764,7 +1886,7 @@ where
                 Self::validate_topology_model(&topology_model)?;
                 // Canonicalized toroidal construction: canonicalize then delegate.
                 let canonical = Self::canonicalize_vertices(self.vertices, &topology_model)?;
-                let mut dt = DelaunayTriangulation::with_topology_guarantee_and_options(
+                let mut dt = DelaunayTriangulation::try_with_topology_guarantee_and_options(
                     kernel,
                     &canonical,
                     self.topology_guarantee,
@@ -2242,7 +2364,7 @@ where
                     let canonical_v = Vertex::new_with_uuid(new_point, v.uuid(), v.data);
                     expanded.push(canonical_v);
                 } else {
-                    let image_v: Vertex<U, D> = Vertex::from_validated_point(new_point);
+                    let image_v: Vertex<U, D> = Vertex::from_validated_point(new_point, None);
                     image_uuid_to_canonical_with_offset.insert(image_v.uuid(), (v.uuid(), offset));
                     expanded.push(image_v);
                 }
@@ -2261,7 +2383,7 @@ where
                 }),
         };
         let full_dt: DelaunayTriangulation<K, U, V, D> =
-            match DelaunayTriangulation::with_topology_guarantee_and_options(
+            match DelaunayTriangulation::try_with_topology_guarantee_and_options(
                 kernel,
                 &expanded,
                 TopologyGuarantee::Pseudomanifold,

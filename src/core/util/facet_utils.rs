@@ -359,8 +359,8 @@ mod tests {
         let mut vertices2 = shared_vertices;
         vertices2.push(vertex_b);
 
-        let dt1 = DelaunayTriangulation::new(&vertices1).unwrap();
-        let dt2 = DelaunayTriangulation::new(&vertices2).unwrap();
+        let dt1 = DelaunayTriangulation::try_new(&vertices1).unwrap();
+        let dt2 = DelaunayTriangulation::try_new(&vertices2).unwrap();
         let tds1 = &dt1.as_triangulation().tds;
         let tds2 = &dt2.as_triangulation().tds;
 
@@ -450,8 +450,8 @@ mod tests {
         let mut vertices2 = shared_edge;
         vertices2.push(vertex_d);
 
-        let dt1 = DelaunayTriangulation::new(&vertices1).unwrap();
-        let dt2 = DelaunayTriangulation::new(&vertices2).unwrap();
+        let dt1 = DelaunayTriangulation::try_new(&vertices1).unwrap();
+        let dt2 = DelaunayTriangulation::try_new(&vertices2).unwrap();
         let tds1 = &dt1.as_triangulation().tds;
         let tds2 = &dt2.as_triangulation().tds;
 
@@ -499,8 +499,8 @@ mod tests {
         // Edge 2: shared_vertex to vertex_right
         let vertices2 = vec![shared_vertex, vertex_right];
 
-        let dt1 = DelaunayTriangulation::new(&vertices1).unwrap();
-        let dt2 = DelaunayTriangulation::new(&vertices2).unwrap();
+        let dt1 = DelaunayTriangulation::try_new(&vertices1).unwrap();
+        let dt2 = DelaunayTriangulation::try_new(&vertices2).unwrap();
         let tds1 = &dt1.as_triangulation().tds;
         let tds2 = &dt2.as_triangulation().tds;
 
@@ -551,7 +551,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let tds = &dt.as_triangulation().tds;
         let simplex_key = tds.simplex_keys().next().unwrap();
 
@@ -591,7 +591,7 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 2.0]).unwrap(),
         ];
 
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let tds = &dt.as_triangulation().tds;
         let simplex_key = tds.simplex_keys().next().unwrap();
 
@@ -637,8 +637,8 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([10.0, 10.0, 11.0]).unwrap(),
         ];
 
-        let dt1 = DelaunayTriangulation::new(&vertices1).unwrap();
-        let dt2 = DelaunayTriangulation::new(&vertices2).unwrap();
+        let dt1 = DelaunayTriangulation::try_new(&vertices1).unwrap();
+        let dt2 = DelaunayTriangulation::try_new(&vertices2).unwrap();
         let tds1 = &dt1.as_triangulation().tds;
         let tds2 = &dt2.as_triangulation().tds;
 
@@ -669,8 +669,8 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
-        let dt1 = DelaunayTriangulation::new(&vertices).unwrap();
-        let dt2 = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt1 = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt2 = DelaunayTriangulation::try_new(&vertices).unwrap();
         let tds1 = &dt1.as_triangulation().tds;
         let tds2 = &dt2.as_triangulation().tds;
 
@@ -743,8 +743,8 @@ mod tests {
         let mut vertices2 = shared_tetrahedron;
         vertices2.push(vertex_f);
 
-        let dt1 = DelaunayTriangulation::new(&vertices1).unwrap();
-        let dt2 = DelaunayTriangulation::new(&vertices2).unwrap();
+        let dt1 = DelaunayTriangulation::try_new(&vertices1).unwrap();
+        let dt2 = DelaunayTriangulation::try_new(&vertices2).unwrap();
         let tds1 = &dt1.as_triangulation().tds;
         let tds2 = &dt2.as_triangulation().tds;
 
@@ -806,8 +806,8 @@ mod tests {
         let mut vertices2 = shared_4d_simplex;
         vertices2.push(vertex_h);
 
-        let dt1 = DelaunayTriangulation::new(&vertices1).unwrap();
-        let dt2 = DelaunayTriangulation::new(&vertices2).unwrap();
+        let dt1 = DelaunayTriangulation::try_new(&vertices1).unwrap();
+        let dt2 = DelaunayTriangulation::try_new(&vertices2).unwrap();
         let tds1 = &dt1.as_triangulation().tds;
         let tds2 = &dt2.as_triangulation().tds;
 

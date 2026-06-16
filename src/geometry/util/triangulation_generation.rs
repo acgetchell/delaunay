@@ -54,7 +54,7 @@ fn random_points_with_seed<const D: usize>(
     n_points: usize,
     bounds: CoordinateRange<f64>,
     seed: Option<u64>,
-) -> Vec<Point<D>> {
+) -> Result<Vec<Point<D>>, RandomPointGenerationError> {
     #[expect(
         clippy::option_if_let_else,
         reason = "explicit match keeps seeded and unseeded generator paths readable"
@@ -126,7 +126,7 @@ where
         .with_insertion_order(InsertionOrderStrategy::Input)
         .with_retry_policy(RetryPolicy::Disabled);
 
-    let dt = DelaunayTriangulation::with_topology_guarantee_and_options(
+    let dt = DelaunayTriangulation::try_with_topology_guarantee_and_options(
         kernel,
         vertices,
         topology_guarantee,
@@ -152,11 +152,11 @@ where
     match vertex_data {
         Some(data) => points
             .into_iter()
-            .map(|point| Vertex::from_validated_point_with_data(point, data))
+            .map(|point| Vertex::from_validated_point(point, Some(data)))
             .collect(),
         None => points
             .into_iter()
-            .map(Vertex::from_validated_point)
+            .map(|point| Vertex::from_validated_point(point, None))
             .collect(),
     }
 }
@@ -628,7 +628,8 @@ where
         .into());
     }
 
-    let points: Vec<Point<D>> = random_points_with_seed(n_points, bounds, seed);
+    let points: Vec<Point<D>> =
+        random_points_with_seed(n_points, bounds, seed).map_err(random_point_generation_error)?;
 
     let min_vertices = (n_points / 6).max(D + 1);
 
@@ -662,6 +663,7 @@ where
             })?
         } else {
             random_points_with_seed(n_points, bounds, point_seed)
+                .map_err(random_point_generation_error)?
         };
 
         let vertices = random_triangulation_build_vertices(points, vertex_data);
@@ -1095,7 +1097,8 @@ impl RandomTriangulationBuilder {
             .into());
         }
 
-        let points: Vec<Point<D>> = random_points_with_seed(n_points, self.bounds, self.seed);
+        let points: Vec<Point<D>> = random_points_with_seed(n_points, self.bounds, self.seed)
+            .map_err(random_point_generation_error)?;
 
         // Convert to vertices
         let vertices = random_triangulation_build_vertices(points, vertex_data);
@@ -1112,7 +1115,7 @@ impl RandomTriangulationBuilder {
                 "random_triangulation_builder: single call to with_topology_guarantee_and_options"
             );
         }
-        let dt = DelaunayTriangulation::with_topology_guarantee_and_options(
+        let dt = DelaunayTriangulation::try_with_topology_guarantee_and_options(
             &make_adaptive_kernel(),
             &vertices,
             self.topology_guarantee,

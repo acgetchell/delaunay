@@ -365,7 +365,7 @@ The following previously deferred checks are now repository-owned Semgrep rules:
 
 Examples, benchmarks, and public API integration tests should model the same
 error-handling style the crate asks users to copy: return or route through
-typed errors instead of using `.unwrap()`, `.expect(...)`, or `panic!(...)` as
+typed errors instead of using unwrap/expect/panic-only control flow as
 narrative control flow.
 
 This is now enforced by `delaunay.rust.no-public-surface-unwrap-panic` for:
@@ -377,12 +377,10 @@ This is now enforced by `delaunay.rust.no-public-surface-unwrap-panic` for:
   - `tests/prelude_exports.rs`
   - `tests/public_*.rs`
 
-The doctest migration remains intentionally separate because Rust doc comments
-still have an existing `.unwrap()`/`.expect(...)` baseline that should be
-converted with hidden `Result` wrappers in a focused documentation pass. A
-broad no-doctest-unwrap Semgrep rule should only be enabled after that baseline
-is removed, otherwise `just semgrep` becomes noisy enough to hide actionable
-source and public-sample findings.
+The doctest migration removes the previous Rust doc-comment unwrap/expect
+baseline with hidden `Result` wrappers. The corresponding Semgrep guard should
+stay enabled so `just semgrep` catches regressions before they become broad
+public-sample noise.
 
 ```bash
 just verify-expect-counts
@@ -395,6 +393,6 @@ When extending the zero-tolerance Semgrep rule to doctests, prefer:
   `#[derive(thiserror::Error)]` enums that wrap the crate's typed errors.
 - Setup helpers returning typed `Result` values in benchmarks; Criterion entry
   points may still abort setup explicitly, but benchmark bodies should not hide
-  fallible API calls behind `.expect(...)`.
+  fallible API calls behind panic-only setup.
 - Doctests that use hidden `Result` wrappers and `?` where the visible API is
   fallible, so examples demonstrate the real error variant users receive.

@@ -483,7 +483,7 @@ pub fn build_flip_dt<const D: usize>(
     let options =
         ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
 
-    DelaunayTriangulation::with_topology_guarantee_and_options(
+    DelaunayTriangulation::try_with_topology_guarantee_and_options(
         &RobustKernel::new(),
         &vertices,
         TopologyGuarantee::PLManifold,

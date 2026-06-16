@@ -1270,7 +1270,7 @@ mod tests {
     /// constructs the JSON text needed to exercise duplicate-key deserialization.
     fn snapshot_json_with_duplicate_relationship_key(field: &str) -> String {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         let snapshot = raw_snapshot_from_tds(dt.tds());
         let simplex_uuid = snapshot
             .simplices
@@ -1361,7 +1361,7 @@ mod tests {
             Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
             Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let original = dt.tds().clone();
         let json = serde_json::to_value(&original).expect("serialize TDS to JSON value");
 
@@ -1465,7 +1465,7 @@ mod tests {
     #[test]
     fn test_tds_snapshot_deserialize_rejects_unknown_simplex_record_fields() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         let mut json = serde_json::to_value(dt.tds()).expect("serialize TDS to JSON value");
 
         let simplex_record = json
@@ -1569,7 +1569,7 @@ mod tests {
     #[test]
     fn test_tds_snapshot_deserialize_rejects_unknown_top_level_fields() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         let mut json = serde_json::to_value(dt.tds()).expect("serialize TDS to JSON value");
         json.as_object_mut()
             .expect("serialized TDS should be an object")
@@ -1587,7 +1587,7 @@ mod tests {
     #[test]
     fn test_tds_snapshot_deserialize_rejects_missing_top_level_neighbor_map() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         let mut json = serde_json::to_value(dt.tds()).expect("serialize TDS to JSON value");
         json.as_object_mut()
             .expect("serialized TDS should be an object")
@@ -1607,7 +1607,7 @@ mod tests {
     #[test]
     fn test_tds_snapshot_serde_round_trip_preserves_tds_structure() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         let original = dt.tds().clone();
 
         let json = serde_json::to_string(&original).expect("serialize failed");
@@ -1635,7 +1635,7 @@ mod tests {
             Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
             Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let original = dt.tds().clone();
         assert!(original.number_of_simplices() > 1);
 
@@ -1657,7 +1657,7 @@ mod tests {
             Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
+            DelaunayTriangulation::try_new(&vertices).unwrap();
         let original = dt.tds().clone();
 
         let json = serde_json::to_string(&original).unwrap();
@@ -1750,7 +1750,7 @@ mod tests {
     #[test]
     fn test_tds_snapshot_deserialize_rejects_duplicate_vertex_uuids() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         let original = dt.tds().clone();
         let mut json = serde_json::to_value(&original).expect("serialize TDS to JSON value");
 
@@ -1787,7 +1787,7 @@ mod tests {
     #[test]
     fn test_tds_snapshot_deserialize_rejects_extra_simplex_vertex_uuid_mapping() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         let original = dt.tds().clone();
         let mut json = serde_json::to_value(&original).expect("serialize TDS to JSON value");
         let (_, simplex) = original
@@ -1818,7 +1818,7 @@ mod tests {
     #[test]
     fn test_tds_snapshot_error_preserves_unknown_relationship_map_simplex_uuids() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
 
         let mut snapshot = raw_snapshot_from_tds(dt.tds());
         let unknown_neighbor_simplex_uuid = Uuid::new_v4();
@@ -1856,7 +1856,7 @@ mod tests {
     #[test]
     fn test_tds_snapshot_deserialize_rejects_invalid_simplex_vertex_uuid_mappings() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         let original = dt.tds().clone();
         let json = serde_json::to_value(&original).expect("serialize TDS to JSON value");
         let (_, simplex) = original
@@ -1937,7 +1937,7 @@ mod tests {
             Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
             Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let original = dt.tds().clone();
         assert!(original.number_of_simplices() > 1);
         let mut json = serde_json::to_value(&original).expect("serialize TDS to JSON value");
@@ -2081,7 +2081,7 @@ mod tests {
     #[test]
     fn test_tds_snapshot_rejects_missing_runtime_neighbor_slots() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         let mut tds = dt.tds().clone();
         let simplex_uuid = tds
             .simplices()
@@ -2104,7 +2104,7 @@ mod tests {
     #[test]
     fn test_tds_snapshot_error_preserves_duplicate_vertex_uuid() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         let mut snapshot = raw_snapshot_from_tds(dt.tds());
 
         let duplicate_uuid = snapshot
@@ -2134,7 +2134,7 @@ mod tests {
     #[test]
     fn test_tds_snapshot_hydration_relies_on_validated_vertex_uuid_uniqueness() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         let mut snapshot = raw_snapshot_from_tds(dt.tds())
             .parse()
             .expect("raw snapshot should parse into a validated snapshot");
@@ -2162,7 +2162,7 @@ mod tests {
     #[test]
     fn test_tds_snapshot_error_preserves_missing_simplex_vertex_mapping() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         let mut snapshot = raw_snapshot_from_tds(dt.tds());
         let simplex_uuid = snapshot
             .simplices
@@ -2186,7 +2186,7 @@ mod tests {
     #[test]
     fn test_tds_snapshot_error_preserves_invalid_simplex_vertex_uuid_slot_count() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         let mut snapshot = raw_snapshot_from_tds(dt.tds());
         let simplex_uuid = snapshot
             .simplices
@@ -2217,7 +2217,7 @@ mod tests {
     #[test]
     fn test_tds_snapshot_error_preserves_missing_simplex_neighbor_mapping() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         let mut snapshot = raw_snapshot_from_tds(dt.tds());
         let simplex_uuid = snapshot
             .simplices
@@ -2241,7 +2241,7 @@ mod tests {
     #[test]
     fn test_tds_snapshot_error_preserves_dangling_vertex_uuid_reference() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         let mut snapshot = raw_snapshot_from_tds(dt.tds());
         let simplex_uuid = snapshot
             .simplices
@@ -2277,7 +2277,7 @@ mod tests {
             Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
             Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let mut snapshot = raw_snapshot_from_tds(dt.tds());
         let simplex_uuid = *snapshot
             .simplex_neighbors
@@ -2336,7 +2336,7 @@ mod tests {
     #[test]
     fn test_tds_snapshot_error_preserves_duplicate_simplex_uuid() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         let mut snapshot = raw_snapshot_from_tds(dt.tds());
         let simplex_uuid = snapshot
             .simplices
@@ -2369,7 +2369,7 @@ mod tests {
             Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
             Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let mut snapshot = raw_snapshot_from_tds(dt.tds());
         let (simplex_uuid, neighbors) = snapshot
             .simplex_neighbors
@@ -2399,7 +2399,7 @@ mod tests {
     #[test]
     fn test_tds_snapshot_rejects_wrong_neighbor_slot_count() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         let mut snapshot = raw_snapshot_from_tds(dt.tds());
         let simplex_uuid = snapshot
             .simplices
@@ -2427,7 +2427,7 @@ mod tests {
     #[test]
     fn test_tds_snapshot_rejects_dangling_runtime_neighbor_key() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::new(&verts).unwrap();
+        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
         let mut tds = dt.tds().clone();
         let simplex_key = tds
             .simplices()

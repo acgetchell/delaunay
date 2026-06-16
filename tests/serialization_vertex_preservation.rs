@@ -11,11 +11,12 @@
 
 use delaunay::assert_jaccard_gte;
 use delaunay::prelude::construction::{
-    ConstructionOptions, DelaunayTriangulation, InsertionOrderStrategy, TopologyGuarantee, Vertex,
+    ConstructionOptions, DelaunayTriangulation, InsertionOrderStrategy, TopologyGuarantee,
 };
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::query::extract_vertex_coordinate_set;
 use delaunay::prelude::tds::Tds;
+use delaunay::try_vertices_from_points;
 use std::collections::HashSet;
 
 #[cfg(feature = "diagnostics")]
@@ -42,7 +43,7 @@ fn test_vertex_preservation_with_duplicates_3d() {
         // Duplicate coordinate
         Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
     ];
-    let vertices = Vertex::<(), 3>::from_points(&points);
+    let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
 
     let input_coords: HashSet<_> = vertices.iter().map(|v| *v.point()).collect();
     diag_debug!(
@@ -52,7 +53,7 @@ fn test_vertex_preservation_with_duplicates_3d() {
     );
 
     // Construct triangulation - duplicates should be skipped
-    let dt = DelaunayTriangulation::<_, (), (), 3>::new_with_topology_guarantee(
+    let dt = DelaunayTriangulation::<_, (), (), 3>::try_new_with_topology_guarantee(
         &vertices,
         TopologyGuarantee::PLManifold,
     )
@@ -110,9 +111,9 @@ fn test_vertex_preservation_without_duplicates_3d() {
         Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         Point::try_new([0.5, 0.5, 0.5]).expect("finite point coordinates"),
     ];
-    let vertices = Vertex::<(), 3>::from_points(&points);
+    let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
 
-    let dt = DelaunayTriangulation::<_, (), (), 3>::new_with_topology_guarantee(
+    let dt = DelaunayTriangulation::<_, (), (), 3>::try_new_with_topology_guarantee(
         &vertices,
         TopologyGuarantee::PLManifold,
     )
@@ -171,7 +172,7 @@ fn test_vertex_preservation_many_duplicates_3d() {
         points.push(base_point);
     }
 
-    let vertices = Vertex::<(), 3>::from_points(&points);
+    let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
 
     let unique_coords: HashSet<_> = vertices.iter().map(|v| *v.point()).collect();
     let unique_coords_len = unique_coords.len();
@@ -183,7 +184,7 @@ fn test_vertex_preservation_many_duplicates_3d() {
 
     // Use Input ordering to avoid Hilbert dedup collapsing duplicates before the initial simplex
     let opts = ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
-    let dt = DelaunayTriangulation::<_, (), (), 3>::new_with_options(&vertices, opts)
+    let dt = DelaunayTriangulation::<_, (), (), 3>::try_new_with_options(&vertices, opts)
         .expect("Tds construction succeeded");
     let tds = dt.tds();
     let tds_vertex_count = tds.vertices().count();
