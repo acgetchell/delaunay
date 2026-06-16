@@ -97,7 +97,7 @@ use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
     Vertex,
 };
-use delaunay::prelude::geometry::CoordinateValidationError;
+use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::validation::{ValidationConfigurationError, ValidationPolicy};
 
 #[derive(Debug, thiserror::Error)]
@@ -105,7 +105,7 @@ enum ValidationExampleError {
     #[error(transparent)]
     Construction(#[from] DelaunayTriangulationConstructionError),
     #[error(transparent)]
-    Coordinate(#[from] CoordinateValidationError),
+    Coordinate(#[from] CoordinateConversionError),
     #[error(transparent)]
     Configuration(#[from] ValidationConfigurationError),
 }
