@@ -7308,7 +7308,7 @@ mod tests {
             .expect("tetrahedron should have vertices")
             .1
             .uuid();
-        let duplicate_uuid_vertex = Vertex::new_with_uuid(
+        let duplicate_uuid_vertex = Vertex::from_validated_point_with_uuid(
             Point::try_new([0.25, 0.25, 0.125]).expect("finite point coordinates"),
             duplicate_uuid,
             None,

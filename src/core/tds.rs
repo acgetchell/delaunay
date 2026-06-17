@@ -897,12 +897,6 @@ pub enum NeighborValidationError {
         #[source]
         reason: Box<crate::core::algorithms::flips::FlipNeighborWiringError>,
     },
-    /// Neighbor validation failed in a context that is still being migrated to structured fields.
-    #[error("{message}")]
-    Other {
-        /// Diagnostic detail.
-        message: String,
-    },
 }
 
 /// Errors that can occur during triangulation validation (post-construction).
@@ -1064,9 +1058,9 @@ pub enum TdsError {
     },
     /// Internal data structure inconsistency.
     ///
-    /// This is the catch-all for structural invariant violations that do not
-    /// fit a more specific variant (e.g. topology contradictions, error
-    /// wrapping, operational failures). Prefer [`SimplexNotFound`],
+    /// This is the fallback for structural invariant violations that carry
+    /// open-ended diagnostic context and do not fit a more specific variant.
+    /// Prefer [`SimplexNotFound`],
     /// [`VertexNotFound`], [`DimensionMismatch`], or [`IndexOutOfBounds`]
     /// when applicable.
     ///
@@ -1195,12 +1189,10 @@ impl From<&TdsError> for TdsErrorKind {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::tds::{NeighborValidationError, TdsError, TdsMutationError};
+/// use delaunay::prelude::tds::{TdsError, TdsMutationError};
 ///
-/// let err = TdsError::InvalidNeighbors {
-///     reason: NeighborValidationError::Other {
-///         message: "bad neighbors".to_string(),
-///     },
+/// let err = TdsError::InconsistentDataStructure {
+///     message: "bad neighbors".to_string(),
 /// };
 /// let mutation: TdsMutationError = err.clone().into();
 /// let round_trip: TdsError = mutation.clone().into();
@@ -1287,12 +1279,10 @@ pub enum InvariantKind {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::tds::{InvariantError, NeighborValidationError, TdsError};
+/// use delaunay::prelude::tds::{InvariantError, TdsError};
 ///
-/// let err = InvariantError::Tds(TdsError::InvalidNeighbors {
-///     reason: NeighborValidationError::Other {
-///         message: "bad neighbors".to_string(),
-///     },
+/// let err = InvariantError::Tds(TdsError::InconsistentDataStructure {
+///     message: "bad neighbors".to_string(),
 /// });
 /// std::assert_matches!(err, InvariantError::Tds(_));
 /// ```
@@ -1385,8 +1375,6 @@ pub enum DelaunayValidationErrorKind {
     Triangulation,
     /// Delaunay verification failed.
     VerificationFailed,
-    /// Legacy string-only repair validation failed.
-    RepairFailed,
     /// Typed repair validation failed.
     RepairOperationFailed,
 }
@@ -1399,7 +1387,6 @@ impl From<&DelaunayTriangulationValidationError> for DelaunayValidationErrorKind
             DelaunayTriangulationValidationError::VerificationFailed { .. } => {
                 Self::VerificationFailed
             }
-            DelaunayTriangulationValidationError::RepairFailed { .. } => Self::RepairFailed,
             DelaunayTriangulationValidationError::RepairOperationFailed { .. } => {
                 Self::RepairOperationFailed
             }
@@ -1488,15 +1475,13 @@ impl From<InvariantError> for InvariantErrorSummary {
 ///
 /// ```
 /// use delaunay::prelude::tds::{
-///     InvariantError, InvariantKind, InvariantViolation, NeighborValidationError, TdsError,
+///     InvariantError, InvariantKind, InvariantViolation, TdsError,
 /// };
 ///
 /// let violation = InvariantViolation {
 ///     kind: InvariantKind::Topology,
-///     error: InvariantError::Tds(TdsError::InvalidNeighbors {
-///         reason: NeighborValidationError::Other {
-///             message: "bad neighbors".to_string(),
-///         },
+///     error: InvariantError::Tds(TdsError::InconsistentDataStructure {
+///         message: "bad neighbors".to_string(),
 ///     }),
 /// };
 /// assert_eq!(violation.kind, InvariantKind::Topology);
@@ -7512,7 +7497,7 @@ mod tests {
     use super::*;
     use crate::DelaunayTriangulation;
     use crate::builder::DelaunayTriangulationBuilder;
-    use crate::core::algorithms::flips::DelaunayRepairError;
+    use crate::core::algorithms::flips::{DelaunayRepairError, DelaunayRepairPostconditionFailure};
     use crate::core::algorithms::incremental_insertion::InsertionError;
     use crate::core::facet::FacetError;
     use crate::core::simplex::Simplex;
@@ -7521,7 +7506,7 @@ mod tests {
     use crate::geometry::point::Point;
     use crate::repair::DelaunayRepairOperation;
     use crate::topology::characteristics::euler::TopologyClassification;
-    use crate::validation::DelaunayTriangulationValidationError;
+    use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
     use slotmap::KeyData;
     use std::assert_matches;
     use std::sync::Arc;
@@ -7529,6 +7514,20 @@ mod tests {
     // =============================================================================
     // TEST HELPER FUNCTIONS
     // =============================================================================
+
+    fn synthetic_delaunay_verification_error(
+        message: &str,
+    ) -> DelaunayTriangulationValidationError {
+        let _ = message;
+        DelaunayTriangulationValidationError::VerificationFailed {
+            source: DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
+                reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
+                    simplex_count: 1,
+                }),
+            })
+            .into(),
+        }
+    }
 
     fn vertex_with_uuid<U, const D: usize>(
         point: Point<D>,
@@ -7579,8 +7578,10 @@ mod tests {
         );
         assert_tds_error_kind(
             &TdsError::InvalidNeighbors {
-                reason: NeighborValidationError::Other {
-                    message: "neighbor invariant failed".to_string(),
+                reason: NeighborValidationError::NonPeriodicSelfNeighbor {
+                    simplex_key,
+                    simplex_uuid: uuid,
+                    facet_index: 0,
                 },
             },
             TdsErrorKind::InvalidNeighbors,
@@ -7800,22 +7801,16 @@ mod tests {
                 DelaunayValidationErrorKind::Triangulation,
             ),
             (
-                DelaunayTriangulationValidationError::VerificationFailed {
-                    message: "non-Delaunay facet".to_string(),
-                },
+                synthetic_delaunay_verification_error("non-Delaunay facet"),
                 DelaunayValidationErrorKind::VerificationFailed,
-            ),
-            (
-                DelaunayTriangulationValidationError::RepairFailed {
-                    message: "repair did not converge".to_string(),
-                },
-                DelaunayValidationErrorKind::RepairFailed,
             ),
             (
                 DelaunayTriangulationValidationError::RepairOperationFailed {
                     operation: DelaunayRepairOperation::VertexRemoval,
                     source: Box::new(DelaunayRepairError::PostconditionFailed {
-                        message: "remaining violation".to_string(),
+                        reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
+                            simplex_count: 1,
+                        }),
                     }),
                 },
                 DelaunayValidationErrorKind::RepairOperationFailed,
@@ -8078,8 +8073,9 @@ mod tests {
 
         // Same coordinates again (distinct UUID, constructed via Vertex smart constructors)
         let result = dt.insert(duplicate);
-        assert!(
-            matches!(result, Err(InsertionError::DuplicateCoordinates { .. })),
+        assert_matches!(
+            &result,
+            Err(InsertionError::DuplicateCoordinates { .. }),
             "insert() should reject duplicate coordinates created via Vertex::try_new (before UUID), got: {result:?}"
         );
     }
@@ -8099,14 +8095,12 @@ mod tests {
             None,
         );
         let result = dt.insert(vertex2);
-        assert!(
-            matches!(
-                result,
-                Err(InsertionError::DuplicateUuid {
-                    entity: EntityKind::Vertex,
-                    ..
-                })
-            ),
+        assert_matches!(
+            &result,
+            Err(InsertionError::DuplicateUuid {
+                entity: EntityKind::Vertex,
+                ..
+            }),
             "Same UUID with different coordinates should fail with DuplicateUuid"
         );
     }
@@ -10661,10 +10655,8 @@ mod tests {
 
     #[test]
     fn test_tds_mutation_error_accessors() {
-        let inner = TdsError::InvalidNeighbors {
-            reason: NeighborValidationError::Other {
-                message: "test".to_string(),
-            },
+        let inner = TdsError::InconsistentDataStructure {
+            message: "test".to_string(),
         };
         let mutation = TdsMutationError::from(inner.clone());
 
@@ -10695,9 +10687,7 @@ mod tests {
 
     #[test]
     fn test_invariant_error_from_delaunay_validation_error() {
-        let dt_err = DelaunayTriangulationValidationError::VerificationFailed {
-            message: "test".to_string(),
-        };
+        let dt_err = synthetic_delaunay_verification_error("test");
         let inv = InvariantError::from(dt_err);
         assert_matches!(inv, InvariantError::Delaunay(_));
     }
@@ -10722,9 +10712,7 @@ mod tests {
                 ),
             ),
             (
-                InvariantError::from(DelaunayTriangulationValidationError::VerificationFailed {
-                    message: "non-Delaunay facet".to_string(),
-                }),
+                InvariantError::from(synthetic_delaunay_verification_error("non-Delaunay facet")),
                 InvariantErrorSummaryKind::Delaunay,
                 InvariantErrorSummaryDetail::Delaunay(
                     DelaunayValidationErrorKind::VerificationFailed,
@@ -10772,10 +10760,8 @@ mod tests {
     fn test_invariant_violation_stores_kind_and_error() {
         let violation = InvariantViolation {
             kind: InvariantKind::NeighborConsistency,
-            error: InvariantError::Tds(TdsError::InvalidNeighbors {
-                reason: NeighborValidationError::Other {
-                    message: "test".to_string(),
-                },
+            error: InvariantError::Tds(TdsError::InconsistentDataStructure {
+                message: "test".to_string(),
             }),
         };
         assert_eq!(violation.kind, InvariantKind::NeighborConsistency);
@@ -11167,8 +11153,9 @@ mod tests {
         .unwrap();
 
         let err = tds.validate_simplex_coordinate_uniqueness().unwrap_err();
-        assert!(
-            matches!(err, TdsError::DuplicateCoordinatesInSimplex { .. }),
+        assert_matches!(
+            &err,
+            TdsError::DuplicateCoordinatesInSimplex { .. },
             "Expected DuplicateCoordinatesInSimplex, got {err:?}"
         );
     }
@@ -11218,25 +11205,24 @@ mod tests {
 
         let err = tds.validate_facet_sharing().unwrap_err();
         let message = err.to_string();
-        assert!(
-            matches!(
-                &err,
-                TdsError::FacetSharingViolation {
-                    existing_incident_count: 2,
-                    attempted_incident_count: 3,
-                    max_incident_count: 2,
-                    candidate_facet_index: 2,
-                    ..
-                }
-            ),
+        assert_matches!(
+            &err,
+            TdsError::FacetSharingViolation {
+                existing_incident_count: 2,
+                attempted_incident_count: 3,
+                max_incident_count: 2,
+                candidate_facet_index: 2,
+                ..
+            },
             "Expected over-shared facet error, got {err:?}"
         );
         assert!(message.contains("exceeds incident-simplex limit"));
         assert!(!message.contains("inserting candidate simplex"));
 
         let err = tds.is_valid().unwrap_err();
-        assert!(
-            matches!(err, TdsError::FacetSharingViolation { .. }),
+        assert_matches!(
+            &err,
+            TdsError::FacetSharingViolation { .. },
             "Expected is_valid to surface facet-sharing violation, got {err:?}"
         );
 
@@ -11246,11 +11232,9 @@ mod tests {
             .iter()
             .find(|violation| violation.kind == InvariantKind::FacetSharing)
             .expect("validation_report should include the facet-sharing violation");
-        assert!(
-            matches!(
-                &facet_violation.error,
-                InvariantError::Tds(TdsError::FacetSharingViolation { .. })
-            ),
+        assert_matches!(
+            &facet_violation.error,
+            InvariantError::Tds(TdsError::FacetSharingViolation { .. }),
             "Expected validation_report to preserve structured facet-sharing error, got {:?}",
             facet_violation.error
         );

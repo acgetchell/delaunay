@@ -15,7 +15,6 @@ use crate::core::simplex::Simplex;
 use crate::core::tds::{SimplexKey, TdsError, VertexKey};
 use crate::core::triangulation::Triangulation;
 use crate::core::vertex::Vertex;
-use crate::geometry::kernel::Kernel;
 use std::sync::Arc;
 #[cfg(debug_assertions)]
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -92,10 +91,7 @@ pub enum QueryError {
     },
 }
 
-impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
-where
-    K: Kernel<D>,
-{
+impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// Returns an iterator over all simplices in the triangulation.
     ///
     /// Delegates to the underlying Tds.

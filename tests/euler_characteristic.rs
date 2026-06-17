@@ -267,7 +267,8 @@ fn test_2d_toroidal_explicit_construction_rejected() {
 
     let topology =
         GlobalTopology::try_toroidal([1.0, 1.0], ToroidalConstructionMode::Explicit).unwrap();
-    let err = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
+    let err = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+        .unwrap()
         .global_topology(topology)
         .topology_guarantee(TopologyGuarantee::Pseudomanifold)
         .build::<()>()
@@ -348,7 +349,8 @@ fn test_3d_toroidal_explicit_construction_rejected() {
 
     let topology =
         GlobalTopology::try_toroidal([1.0, 1.0, 1.0], ToroidalConstructionMode::Explicit).unwrap();
-    let err = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
+    let err = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+        .unwrap()
         .global_topology(topology)
         .topology_guarantee(TopologyGuarantee::Pseudomanifold)
         .build::<()>()

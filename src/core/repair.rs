@@ -4,9 +4,9 @@
 //! repair, and vertex-removal cavity retriangulation for [`Triangulation`](crate::prelude::triangulation::Triangulation).
 
 use crate::core::algorithms::incremental_insertion::{
-    CavityFillingError, CavityRepairStage, InsertionError, external_facets_for_boundary,
-    fill_cavity_replacing_simplices, repair_neighbor_pointers, repair_neighbor_pointers_local,
-    wire_cavity_neighbors,
+    CavityFillingError, CavityRepairStage, InsertionError, InsertionTopologyValidationContext,
+    external_facets_for_boundary, fill_cavity_replacing_simplices, repair_neighbor_pointers,
+    repair_neighbor_pointers_local, wire_cavity_neighbors,
 };
 use crate::core::algorithms::locate::extract_cavity_boundary;
 use crate::core::collections::{
@@ -157,8 +157,7 @@ where
             } else {
                 // Truly isolated: no simplex in the TDS contains this vertex.
                 return Err(InsertionError::TopologyValidationFailed {
-                    message: "Truly isolated vertex detected during stale incident-simplex repair"
-                        .to_string(),
+                    context: InsertionTopologyValidationContext::StaleIncidentSimplexRepair,
                     source: TriangulationValidationError::IsolatedVertex {
                         vertex_key: vk,
                         vertex_uuid: uuid,

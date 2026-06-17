@@ -70,15 +70,24 @@ For most validation work, start with the always-available APIs:
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
 };
+use delaunay::prelude::geometry::CoordinateConversionError;
 
-fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+#[derive(Debug, thiserror::Error)]
+enum DiagnosticsExampleError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Coordinate(#[from] CoordinateConversionError),
+}
+
+fn main() -> Result<(), DiagnosticsExampleError> {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
@@ -118,7 +127,7 @@ empty-circumsphere violations:
 ```rust
 use delaunay::prelude::diagnostics::delaunay_violation_report;
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
 };
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::DelaunayValidationError;
@@ -135,10 +144,10 @@ enum DiagnosticsExampleError {
 
 fn main() -> Result<(), DiagnosticsExampleError> {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 

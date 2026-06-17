@@ -35,7 +35,9 @@ use crate::core::collections::{
     FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer,
     SmallBuffer, VertexKeyBuffer,
 };
-use crate::core::construction::TriangulationConstructionError;
+use crate::core::construction::{
+    FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
+};
 use crate::core::facet::{FacetError, FacetHandle};
 use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
 use crate::core::tds::{
@@ -69,48 +71,89 @@ use std::hash::{Hash, Hasher};
 /// let reason = HullExtensionReason::NoVisibleFacets;
 /// std::assert_matches!(reason, HullExtensionReason::NoVisibleFacets);
 /// ```
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[non_exhaustive]
 pub enum HullExtensionReason {
     /// No visible boundary facets (coplanar with hull surface).
+    #[error(
+        "No visible boundary facets found for exterior vertex (may be coplanar with hull surface)"
+    )]
     NoVisibleFacets,
-    /// Visible facets form an invalid patch.
-    InvalidPatch {
-        /// Details about why the patch was invalid.
-        details: String,
+    /// Boundary-edge split matched the wrong number of facets.
+    #[error("2D boundary edge split expected {expected} facets, got {actual}")]
+    BoundaryEdgeSplitFacetCount {
+        /// Expected split-facet count.
+        expected: usize,
+        /// Actual split-facet count.
+        actual: usize,
+    },
+    /// Boundary-edge split matched more than one candidate facet.
+    #[error("2D boundary edge split matched multiple facets")]
+    MultipleBoundaryEdgeSplitFacets,
+    /// Visible facets form a disconnected or non-manifold patch.
+    #[error(
+        "visible patch is disconnected or non-manifold: boundary_ridges={boundary_ridges}, ridge_fans={ridge_fans}, components={components}, boundary_components={boundary_components}, boundary_subface_nonmanifold={boundary_subface_nonmanifold}"
+    )]
+    DisconnectedVisiblePatch {
+        /// Count of boundary ridges in the visible patch.
+        boundary_ridges: usize,
+        /// Count of ridges shared by more than two visible facets.
+        ridge_fans: usize,
+        /// Connected components in the visible-facet graph.
+        components: usize,
+        /// Connected components in the boundary-subface graph.
+        boundary_components: usize,
+        /// Count of boundary subfaces with non-manifold incidence.
+        boundary_subface_nonmanifold: usize,
     },
     /// Geometric predicate (orientation / in-sphere) failed.
     ///
     /// Preserves the structured [`CoordinateConversionError`] from the kernel or
     /// robust-predicate evaluation rather than collapsing it into a string.
-    PredicateFailed(CoordinateConversionError),
+    #[error("Geometric predicate failed: {0}")]
+    PredicateFailed(#[source] CoordinateConversionError),
     /// Lower-layer TDS error encountered during hull extension.
     ///
     /// Preserves the structured [`TdsError`] (e.g. from boundary-facet retrieval)
     /// rather than collapsing it into a string.
-    Tds(TdsError),
-    /// Other failure.
-    Other {
-        /// Underlying error message.
-        message: String,
-    },
+    #[error("TDS error: {0}")]
+    Tds(#[source] TdsError),
 }
 
-impl fmt::Display for HullExtensionReason {
+/// Fixed context for a Level 3 topology validation failure during insertion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum InsertionTopologyValidationContext {
+    /// Conversion from a generic invariant error back into an insertion error.
+    InvariantConversion,
+    /// Validation after a point insertion.
+    PostInsertion,
+    /// Validation while repairing local topology.
+    LocalRepair,
+    /// Validation of a structural topology repair path.
+    StructuralRepair,
+    /// Validation while repairing stale incident-simplex pointers.
+    StaleIncidentSimplexRepair,
+    /// Positive-orientation promotion failed its bounded convergence check.
+    PositiveOrientationPromotion,
+    /// Ridge-link validation after Delaunay repair.
+    DelaunayRepair,
+}
+
+impl fmt::Display for InsertionTopologyValidationContext {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NoVisibleFacets => f.write_str(
-                "No visible boundary facets found for exterior vertex (may be coplanar with hull surface)",
-            ),
-            Self::InvalidPatch { details } => write!(
-                f,
-                "Visible boundary facets are not a valid patch: {details}"
-            ),
-            Self::PredicateFailed(source) => {
-                write!(f, "Geometric predicate failed: {source}")
+            Self::InvariantConversion => f.write_str("topology validation failed"),
+            Self::PostInsertion => f.write_str("post-insertion topology validation failed"),
+            Self::LocalRepair => f.write_str("local topology validation failed"),
+            Self::StructuralRepair => f.write_str("structural topology validation failed"),
+            Self::StaleIncidentSimplexRepair => {
+                f.write_str("truly isolated vertex detected during stale incident-simplex repair")
             }
-            Self::Tds(source) => write!(f, "TDS error: {source}"),
-            Self::Other { message } => f.write_str(message),
+            Self::PositiveOrientationPromotion => {
+                f.write_str("positive-orientation promotion failed to converge")
+            }
+            Self::DelaunayRepair => f.write_str("topology invalid after Delaunay repair"),
         }
     }
 }
@@ -506,6 +549,7 @@ pub enum InitialSimplexUnexpectedInsertionStage {
     #[error("hull extension failed during insertion: {reason}")]
     HullExtension {
         /// Structured hull-extension failure reason.
+        #[source]
         reason: HullExtensionReason,
     },
 
@@ -518,19 +562,33 @@ pub enum InitialSimplexUnexpectedInsertionStage {
     },
 
     /// Topology validation escaped initial-simplex construction.
-    #[error("topology validation failed during insertion: {source}")]
+    #[error("{context}: {source}")]
     TopologyValidation {
+        /// Validation phase that failed.
+        context: InsertionTopologyValidationContext,
         /// Underlying topology validation error.
         #[source]
         source: Box<TriangulationValidationError>,
     },
 
     /// Final topology validation escaped initial-simplex construction.
-    #[error("final topology validation failed after construction: {source}")]
+    #[error("{context}: {source}")]
     FinalTopologyValidation {
+        /// Finalization phase that failed.
+        context: FinalTopologyValidationContext,
         /// Underlying final topology validation summary.
         #[source]
         source: InvariantErrorSummary,
+    },
+
+    /// Final Delaunay validation escaped initial-simplex construction.
+    #[error("{context}: {source}")]
+    FinalDelaunayValidation {
+        /// Finalization phase that failed.
+        context: FinalDelaunayValidationContext,
+        /// Underlying final Delaunay validation error.
+        #[source]
+        source: DelaunayTriangulationValidationError,
     },
 
     /// Spatial index construction escaped initial-simplex construction.
@@ -650,6 +708,10 @@ impl From<TdsConstructionError> for InitialSimplexConstructionError {
 }
 
 impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Conversion must exhaustively preserve typed construction error variants"
+    )]
     fn from(source: TriangulationConstructionError) -> Self {
         match source {
             TriangulationConstructionError::Tds(source) => source.into(),
@@ -728,9 +790,10 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
                     }),
                 }
             }
-            TriangulationConstructionError::InsertionTopologyValidation { source, .. } => {
+            TriangulationConstructionError::InsertionTopologyValidation { context, source } => {
                 Self::UnexpectedInsertionStage {
                     reason: Box::new(InitialSimplexUnexpectedInsertionStage::TopologyValidation {
+                        context,
                         source: Box::new(source),
                     }),
                 }
@@ -742,10 +805,23 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
                 max_simplices_removed,
                 attempted,
             },
-            TriangulationConstructionError::FinalTopologyValidation { source, .. } => {
+            TriangulationConstructionError::FinalTopologyValidation { context, source } => {
                 Self::UnexpectedInsertionStage {
                     reason: Box::new(
-                        InitialSimplexUnexpectedInsertionStage::FinalTopologyValidation { source },
+                        InitialSimplexUnexpectedInsertionStage::FinalTopologyValidation {
+                            context,
+                            source,
+                        },
+                    ),
+                }
+            }
+            TriangulationConstructionError::FinalDelaunayValidation { context, source } => {
+                Self::UnexpectedInsertionStage {
+                    reason: Box::new(
+                        InitialSimplexUnexpectedInsertionStage::FinalDelaunayValidation {
+                            context,
+                            source,
+                        },
                     ),
                 }
             }
@@ -801,15 +877,16 @@ impl From<&DelaunayRepairError> for DelaunayRepairErrorKind {
 /// ```rust
 /// use delaunay::prelude::repair::{
 ///     DelaunayRepairError, DelaunayRepairErrorKind, DelaunayRepairErrorSummary,
+///     DelaunayRepairPostconditionFailure,
 /// };
 ///
 /// let source = DelaunayRepairError::PostconditionFailed {
-///     message: "remaining non-Delaunay facet".to_string(),
+///     reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
 /// };
 /// let summary = DelaunayRepairErrorSummary::from(&source);
 ///
 /// assert_eq!(summary.kind, DelaunayRepairErrorKind::PostconditionFailed);
-/// assert!(summary.message.contains("remaining non-Delaunay facet"));
+/// assert!(summary.message.contains("disconnected the triangulation"));
 /// ```
 #[must_use]
 #[derive(Debug, Clone, thiserror::Error)]
@@ -914,11 +991,13 @@ pub enum InsertionErrorSourceKind {
 ///     InsertionError, InsertionErrorKind, InsertionErrorSourceKind,
 ///     InsertionErrorSummary,
 /// };
-/// use delaunay::prelude::repair::DelaunayRepairError;
+/// use delaunay::prelude::repair::{
+///     DelaunayRepairError, DelaunayRepairPostconditionFailure,
+/// };
 ///
 /// let source = InsertionError::DelaunayRepairFailed {
 ///     source: Box::new(DelaunayRepairError::PostconditionFailed {
-///         message: "remaining non-Delaunay facet".to_string(),
+///         reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
 ///     }),
 ///     context: DelaunayRepairFailureContext::LocalRepair,
 /// };
@@ -1592,6 +1671,7 @@ pub enum InsertionError {
     #[error("Hull extension failed: {reason}")]
     HullExtension {
         /// Structured reason for failure.
+        #[source]
         reason: HullExtensionReason,
     },
 
@@ -1648,10 +1728,10 @@ pub enum InsertionError {
     /// This preserves the structured [`TriangulationValidationError`] without wrapping it into a
     /// [`TdsError`],
     /// avoiding lower-layer (`Tds`) errors depending on higher-layer (`Triangulation`) errors.
-    #[error("{message}: {source}")]
+    #[error("{context}: {source}")]
     TopologyValidationFailed {
         /// High-level context for when the topology validation failed.
-        message: String,
+        context: InsertionTopologyValidationContext,
 
         /// The underlying Level 3 validation error.
         #[source]
@@ -1831,7 +1911,10 @@ impl InsertionError {
                 // be resolved by a perturbation retry.
                 matches!(
                     reason,
-                    HullExtensionReason::NoVisibleFacets | HullExtensionReason::InvalidPatch { .. }
+                    HullExtensionReason::NoVisibleFacets
+                        | HullExtensionReason::BoundaryEdgeSplitFacetCount { .. }
+                        | HullExtensionReason::MultipleBoundaryEdgeSplitFacets
+                        | HullExtensionReason::DisconnectedVisiblePatch { .. }
                 )
             }
             Self::CavityFilling { reason } => Self::is_cavity_filling_error_retryable(reason),
@@ -1942,19 +2025,21 @@ impl InsertionError {
                 )
             }
             InitialSimplexUnexpectedInsertionStage::NonManifoldTopology { .. } => true,
-            InitialSimplexUnexpectedInsertionStage::HullExtension { reason } => {
-                matches!(
-                    reason,
-                    HullExtensionReason::NoVisibleFacets | HullExtensionReason::InvalidPatch { .. }
-                )
-            }
-            InitialSimplexUnexpectedInsertionStage::TopologyValidation { source } => {
+            InitialSimplexUnexpectedInsertionStage::HullExtension { reason } => matches!(
+                reason,
+                HullExtensionReason::NoVisibleFacets
+                    | HullExtensionReason::BoundaryEdgeSplitFacetCount { .. }
+                    | HullExtensionReason::MultipleBoundaryEdgeSplitFacets
+                    | HullExtensionReason::DisconnectedVisiblePatch { .. }
+            ),
+            InitialSimplexUnexpectedInsertionStage::TopologyValidation { source, .. } => {
                 Self::is_level3_error_retryable(source)
             }
-            InitialSimplexUnexpectedInsertionStage::FinalTopologyValidation { source } => {
+            InitialSimplexUnexpectedInsertionStage::FinalTopologyValidation { source, .. } => {
                 Self::is_invariant_error_summary_retryable(source)
             }
-            InitialSimplexUnexpectedInsertionStage::Location { .. }
+            InitialSimplexUnexpectedInsertionStage::FinalDelaunayValidation { .. }
+            | InitialSimplexUnexpectedInsertionStage::Location { .. }
             | InitialSimplexUnexpectedInsertionStage::DelaunayValidation { .. }
             | InitialSimplexUnexpectedInsertionStage::SpatialIndexConstruction { .. } => false,
         }
@@ -3835,16 +3920,51 @@ fn invalid_boundary_facet_index(facet_index: u8, facet_count: usize) -> Insertio
     })
 }
 
-fn validate_boundary_edge_split_facet_count(facet_count: usize) -> Result<(), InsertionError> {
+/// Preserves the public hull-extension error contract for 2D boundary-edge splits.
+///
+/// A valid split replaces one boundary edge with exactly two facets. Reporting
+/// count mismatches through a typed [`HullExtensionReason`] lets callers decide
+/// retry behavior without parsing diagnostic text.
+const fn validate_boundary_edge_split_facet_count(
+    facet_count: usize,
+) -> Result<(), InsertionError> {
     if facet_count == 2 {
         return Ok(());
     }
 
     Err(InsertionError::HullExtension {
-        reason: HullExtensionReason::InvalidPatch {
-            details: format!("2D boundary edge split expected 2 facets, got {facet_count}"),
+        reason: HullExtensionReason::BoundaryEdgeSplitFacetCount {
+            expected: 2,
+            actual: facet_count,
         },
     })
+}
+
+/// Converts visible-patch topology summary counts into a typed hull-extension failure.
+const fn visible_patch_failure_reason(
+    boundary_ridges: usize,
+    ridge_fans: usize,
+    components: usize,
+    boundary_components: usize,
+    boundary_subface_nonmanifold: usize,
+    dimension: usize,
+) -> Option<HullExtensionReason> {
+    if ridge_fans > 0
+        || components > 1
+        || boundary_ridges == 0
+        || (dimension >= 3 && boundary_components > 1)
+        || (dimension >= 3 && boundary_subface_nonmanifold > 0)
+    {
+        Some(HullExtensionReason::DisconnectedVisiblePatch {
+            boundary_ridges,
+            ridge_fans,
+            components,
+            boundary_components,
+            boundary_subface_nonmanifold,
+        })
+    } else {
+        None
+    }
 }
 
 fn find_boundary_edge_split_facet<U, V, const D: usize>(
@@ -3954,9 +4074,7 @@ where
         if on_segment {
             if match_facet.is_some() {
                 return Err(InsertionError::HullExtension {
-                    reason: HullExtensionReason::InvalidPatch {
-                        details: "2D boundary edge split matched multiple facets".to_string(),
-                    },
+                    reason: HullExtensionReason::MultipleBoundaryEdgeSplitFacets,
                 });
             }
             match_facet = Some(FacetHandle::from_validated(simplex_key, facet_index));
@@ -4444,12 +4562,14 @@ where
             component_sizes.push(component_size);
         }
 
-        if over_shared_ridges > 0
-            || components > 1
-            || boundary_ridges == 0
-            || (D >= 3 && boundary_components > 1)
-            || (D >= 3 && boundary_subface_nonmanifold > 0)
-        {
+        if let Some(reason) = visible_patch_failure_reason(
+            boundary_ridges,
+            over_shared_ridges,
+            components,
+            boundary_components,
+            boundary_subface_nonmanifold,
+            D,
+        ) {
             #[cfg(debug_assertions)]
             if detail_enabled || log_enabled {
                 let visible_sample = &visible_facets[..visible_facets.len().min(10)];
@@ -4478,13 +4598,7 @@ where
                     "find_visible_boundary_facets: invalid patch"
                 );
             }
-            return Err(InsertionError::HullExtension {
-                reason: HullExtensionReason::InvalidPatch {
-                    details: format!(
-                        "boundary_ridges={boundary_ridges}, ridge_fans={over_shared_ridges}, components={components}, boundary_components={boundary_components}, boundary_subface_nonmanifold={boundary_subface_nonmanifold}",
-                    ),
-                },
-            });
+            return Err(InsertionError::HullExtension { reason });
         }
 
         #[cfg(debug_assertions)]
@@ -4553,7 +4667,9 @@ mod tests {
     use super::*;
     use crate::DelaunayTriangulation;
     use crate::core::algorithms::flips::{
-        DelaunayRepairDiagnostics, DelaunayRepairVerificationContext, FlipError, RepairQueueOrder,
+        DelaunayRepairDiagnostics, DelaunayRepairHeuristicRebuildFailure,
+        DelaunayRepairOrientationCanonicalizationFailure, DelaunayRepairPostconditionFailure,
+        DelaunayRepairVerificationContext, FlipError, RepairQueueOrder,
     };
     use crate::core::algorithms::locate::InternalInconsistencySite;
     use crate::core::collections::SimplexKeyBuffer;
@@ -4565,6 +4681,7 @@ mod tests {
         InvalidCoordinateValue,
     };
     use crate::topology::characteristics::euler::TopologyClassification;
+    use crate::validation::DelaunayVerificationError;
     use slotmap::KeyData;
     use std::assert_matches;
 
@@ -4594,6 +4711,70 @@ mod tests {
             }
         }
         None
+    }
+
+    #[test]
+    fn test_topology_validation_context_display() {
+        let cases = [
+            (
+                InsertionTopologyValidationContext::InvariantConversion,
+                "topology validation failed",
+            ),
+            (
+                InsertionTopologyValidationContext::PostInsertion,
+                "post-insertion topology validation failed",
+            ),
+            (
+                InsertionTopologyValidationContext::LocalRepair,
+                "local topology validation failed",
+            ),
+            (
+                InsertionTopologyValidationContext::StructuralRepair,
+                "structural topology validation failed",
+            ),
+            (
+                InsertionTopologyValidationContext::StaleIncidentSimplexRepair,
+                "truly isolated vertex detected during stale incident-simplex repair",
+            ),
+            (
+                InsertionTopologyValidationContext::PositiveOrientationPromotion,
+                "positive-orientation promotion failed to converge",
+            ),
+            (
+                InsertionTopologyValidationContext::DelaunayRepair,
+                "topology invalid after Delaunay repair",
+            ),
+        ];
+
+        for (context, expected) in cases {
+            assert_eq!(context.to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn test_hull_extension_reason_exposes_typed_sources() {
+        let predicate_source = CoordinateConversionError::InvalidSimplexPointCount {
+            actual: 2,
+            expected: 3,
+            dimension: 2,
+        };
+        let predicate_reason = HullExtensionReason::PredicateFailed(predicate_source.clone());
+        let predicate_error = std::error::Error::source(&predicate_reason)
+            .and_then(|source| source.downcast_ref::<CoordinateConversionError>());
+        assert_eq!(predicate_error, Some(&predicate_source));
+
+        let tds_source = TdsError::InconsistentDataStructure {
+            message: "missing boundary facet".to_string(),
+        };
+        let tds_reason = HullExtensionReason::Tds(tds_source.clone());
+        let tds_error = std::error::Error::source(&tds_reason)
+            .and_then(|source| source.downcast_ref::<TdsError>());
+        assert_eq!(tds_error, Some(&tds_source));
+
+        let insertion_error = InsertionError::HullExtension { reason: tds_reason };
+        let insertion_source = std::error::Error::source(&insertion_error)
+            .and_then(|source| source.downcast_ref::<HullExtensionReason>());
+        assert_matches!(insertion_source, Some(HullExtensionReason::Tds(_)));
     }
 
     /// Macro to generate cavity filling tests for different dimensions
@@ -4726,13 +4907,11 @@ mod tests {
             .collect();
 
         let result = fill_cavity(tds, invalid_vkey, &boundary_facets);
-        assert!(
-            matches!(
-                result,
-                Err(InsertionError::CavityFilling {
-                    reason: CavityFillingError::MissingInsertedVertex { .. },
-                })
-            ),
+        assert_matches!(
+            result,
+            Err(InsertionError::CavityFilling {
+                reason: CavityFillingError::MissingInsertedVertex { .. },
+            }),
             "Expected CavityFilling error, got: {result:?}"
         );
     }
@@ -5383,6 +5562,20 @@ mod tests {
         }
     }
 
+    fn synthetic_delaunay_verification_error(
+        message: &str,
+    ) -> DelaunayTriangulationValidationError {
+        let _ = message;
+        DelaunayTriangulationValidationError::VerificationFailed {
+            source: DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
+                reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
+                    simplex_count: 1,
+                }),
+            })
+            .into(),
+        }
+    }
+
     #[test]
     fn test_delaunay_repair_error_summary_covers_all_kinds() {
         let cases = [
@@ -5395,7 +5588,9 @@ mod tests {
             ),
             (
                 DelaunayRepairError::PostconditionFailed {
-                    message: "remaining non-Delaunay facet".to_string(),
+                    reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
+                        simplex_count: 1,
+                    }),
                 },
                 DelaunayRepairErrorKind::PostconditionFailed,
             ),
@@ -5408,7 +5603,13 @@ mod tests {
             ),
             (
                 DelaunayRepairError::OrientationCanonicalizationFailed {
-                    message: "orientation pass failed".to_string(),
+                    reason: Box::new(
+                        DelaunayRepairOrientationCanonicalizationFailure::AfterFlipRepair {
+                            source: Box::new(InsertionError::DuplicateCoordinates {
+                                coordinates: CoordinateValues::from([0.0, 0.0]),
+                            }),
+                        },
+                    ),
                 },
                 DelaunayRepairErrorKind::OrientationCanonicalizationFailed,
             ),
@@ -5422,7 +5623,11 @@ mod tests {
             ),
             (
                 DelaunayRepairError::HeuristicRebuildFailed {
-                    message: "fallback rebuild failed".to_string(),
+                    reason: Box::new(
+                        DelaunayRepairHeuristicRebuildFailure::RecursionDepthExceeded {
+                            max_depth: 1,
+                        },
+                    ),
                 },
                 DelaunayRepairErrorKind::HeuristicRebuildFailed,
             ),
@@ -5453,7 +5658,7 @@ mod tests {
             ),
             (
                 InsertionError::TopologyValidationFailed {
-                    message: "post-insertion topology validation failed".to_string(),
+                    context: InsertionTopologyValidationContext::PostInsertion,
                     source: TriangulationValidationError::Disconnected { simplex_count: 2 },
                 },
                 InsertionErrorKind::TopologyValidationFailed,
@@ -5463,9 +5668,7 @@ mod tests {
             ),
             (
                 InsertionError::DelaunayValidationFailed {
-                    source: DelaunayTriangulationValidationError::VerificationFailed {
-                        message: "non-Delaunay facet".to_string(),
-                    },
+                    source: synthetic_delaunay_verification_error("non-Delaunay facet"),
                 },
                 InsertionErrorKind::DelaunayValidationFailed,
                 Some(InsertionErrorSourceKind::Delaunay(
@@ -5475,7 +5678,11 @@ mod tests {
             (
                 InsertionError::DelaunayRepairFailed {
                     source: Box::new(DelaunayRepairError::HeuristicRebuildFailed {
-                        message: "rebuild could not restore topology".to_string(),
+                        reason: Box::new(
+                            DelaunayRepairHeuristicRebuildFailure::RecursionDepthExceeded {
+                                max_depth: 1,
+                            },
+                        ),
                     }),
                     context: DelaunayRepairFailureContext::LocalRepair,
                 },
@@ -5545,7 +5752,7 @@ mod tests {
     #[test]
     fn test_robust_fallback_context_preserves_initial_repair_summary() {
         let initial = DelaunayRepairError::PostconditionFailed {
-            message: "local predicate violation".to_string(),
+            reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
         };
         let context = DelaunayRepairFailureContext::LocalRepairRobustFallback {
             initial: DelaunayRepairErrorSummary::from(&initial),
@@ -5553,7 +5760,7 @@ mod tests {
 
         let msg = context.to_string();
         assert!(msg.contains("local repair failed"));
-        assert!(msg.contains("local predicate violation"));
+        assert!(msg.contains("disconnected the triangulation"));
         assert!(msg.contains("robust fallback also failed"));
     }
 
@@ -5648,7 +5855,7 @@ mod tests {
             InsertionError::CavityFilling {
                 reason: CavityFillingError::NeighborRebuild {
                     reason: NeighborRebuildError::from(InsertionError::TopologyValidationFailed {
-                        message: "local topology validation failed".to_string(),
+                        context: InsertionTopologyValidationContext::LocalRepair,
                         source: TriangulationValidationError::ManifoldFacetMultiplicity {
                             facet_key: 0x1234,
                             simplex_count: 3,
@@ -5662,7 +5869,7 @@ mod tests {
             !InsertionError::CavityFilling {
                 reason: CavityFillingError::NeighborRebuild {
                     reason: NeighborRebuildError::from(InsertionError::TopologyValidationFailed {
-                        message: "structural topology validation failed".to_string(),
+                        context: InsertionTopologyValidationContext::StructuralRepair,
                         source: TriangulationValidationError::Disconnected { simplex_count: 2 },
                     }),
                 },
@@ -5781,7 +5988,7 @@ mod tests {
         // perturbing coordinates changes the conflict region.
         assert!(
             InsertionError::TopologyValidationFailed {
-                message: "test".to_string(),
+                context: InsertionTopologyValidationContext::PostInsertion,
                 source: TriangulationValidationError::IsolatedVertex {
                     vertex_key: VertexKey::from(KeyData::from_ffi(1)),
                     vertex_uuid: uuid::Uuid::nil(),
@@ -5793,7 +6000,7 @@ mod tests {
         // TopologyValidationFailed wrapping a structural error is non-retryable.
         assert!(
             !InsertionError::TopologyValidationFailed {
-                message: "test".to_string(),
+                context: InsertionTopologyValidationContext::PostInsertion,
                 source: TriangulationValidationError::EulerCharacteristicMismatch {
                     computed: 3,
                     expected: 2,
@@ -5810,7 +6017,7 @@ mod tests {
         };
         assert!(
             InsertionError::TopologyValidationFailed {
-                message: "test".to_string(),
+                context: InsertionTopologyValidationContext::PostInsertion,
                 source: geometry_l3,
             }
             .is_retryable()
@@ -5819,7 +6026,7 @@ mod tests {
         // TopologyValidationFailed wrapping BoundaryRidgeMultiplicity is retryable.
         assert!(
             InsertionError::TopologyValidationFailed {
-                message: "test".to_string(),
+                context: InsertionTopologyValidationContext::PostInsertion,
                 source: TriangulationValidationError::BoundaryRidgeMultiplicity {
                     ridge_key: 0xab,
                     boundary_facet_count: 3,
@@ -5830,7 +6037,7 @@ mod tests {
         // TopologyValidationFailed wrapping RidgeLinkNotManifold is retryable.
         assert!(
             InsertionError::TopologyValidationFailed {
-                message: "test".to_string(),
+                context: InsertionTopologyValidationContext::PostInsertion,
                 source: TriangulationValidationError::RidgeLinkNotManifold {
                     ridge_key: 0xcd,
                     link_vertex_count: 4,
@@ -5845,7 +6052,7 @@ mod tests {
         // TopologyValidationFailed wrapping VertexLinkNotManifold is retryable.
         assert!(
             InsertionError::TopologyValidationFailed {
-                message: "test".to_string(),
+                context: InsertionTopologyValidationContext::PostInsertion,
                 source: TriangulationValidationError::VertexLinkNotManifold {
                     vertex_key: VertexKey::from(KeyData::from_ffi(1)),
                     link_vertex_count: 3,
@@ -5862,7 +6069,7 @@ mod tests {
         // (wildcard fallback).
         assert!(
             !InsertionError::TopologyValidationFailed {
-                message: "test".to_string(),
+                context: InsertionTopologyValidationContext::PostInsertion,
                 source: TriangulationValidationError::EulerCharacteristicMismatch {
                     computed: 3,
                     expected: 2,
@@ -6056,17 +6263,12 @@ mod tests {
 
         assert!(
             InsertionError::HullExtension {
-                reason: HullExtensionReason::InvalidPatch {
-                    details: "test".to_string(),
-                }
-            }
-            .is_retryable()
-        );
-
-        assert!(
-            !InsertionError::HullExtension {
-                reason: HullExtensionReason::Other {
-                    message: "Failed to get boundary facets: test".to_string()
+                reason: HullExtensionReason::DisconnectedVisiblePatch {
+                    boundary_ridges: 1,
+                    ridge_fans: 0,
+                    components: 2,
+                    boundary_components: 2,
+                    boundary_subface_nonmanifold: 0,
                 }
             }
             .is_retryable()
@@ -6599,15 +6801,48 @@ mod tests {
     }
 
     #[test]
-    fn test_boundary_edge_split_invalid_boundary_count_is_retryable_invalid_patch() {
+    fn test_boundary_edge_split_invalid_boundary_count_is_retryable_typed_reason() {
         let err = validate_boundary_edge_split_facet_count(1).unwrap_err();
 
         assert!(err.is_retryable());
         assert_matches!(
             err,
             InsertionError::HullExtension {
-                reason: HullExtensionReason::InvalidPatch { details },
-            } if details == "2D boundary edge split expected 2 facets, got 1"
+                reason: HullExtensionReason::BoundaryEdgeSplitFacetCount {
+                    expected: 2,
+                    actual: 1,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn test_visible_patch_failure_reason_preserves_typed_counts() {
+        assert_eq!(
+            visible_patch_failure_reason(0, 2, 3, 4, 5, 3),
+            Some(HullExtensionReason::DisconnectedVisiblePatch {
+                boundary_ridges: 0,
+                ridge_fans: 2,
+                components: 3,
+                boundary_components: 4,
+                boundary_subface_nonmanifold: 5,
+            })
+        );
+    }
+
+    #[test]
+    fn test_visible_patch_failure_reason_respects_dimension_specific_boundary_checks() {
+        assert_eq!(visible_patch_failure_reason(1, 0, 1, 2, 3, 2), None);
+
+        assert_matches!(
+            visible_patch_failure_reason(1, 0, 1, 2, 0, 3),
+            Some(HullExtensionReason::DisconnectedVisiblePatch {
+                boundary_ridges: 1,
+                ridge_fans: 0,
+                components: 1,
+                boundary_components: 2,
+                boundary_subface_nonmanifold: 0,
+            })
         );
     }
 
@@ -6626,7 +6861,7 @@ mod tests {
     }
 
     #[test]
-    fn test_find_boundary_edge_split_facet_hull_vertex_is_retryable_invalid_patch() {
+    fn test_find_boundary_edge_split_facet_hull_vertex_is_retryable_typed_reason() {
         let vertices = vec![
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
@@ -6641,8 +6876,8 @@ mod tests {
         assert_matches!(
             err,
             InsertionError::HullExtension {
-                reason: HullExtensionReason::InvalidPatch { details },
-            } if details == "2D boundary edge split matched multiple facets"
+                reason: HullExtensionReason::MultipleBoundaryEdgeSplitFacets,
+            }
         );
     }
 

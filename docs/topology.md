@@ -184,12 +184,12 @@ Toroidal (periodic) triangulations are **fully implemented and functional**. You
 construct toroidal triangulations using `DelaunayTriangulationBuilder`:
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
+use delaunay::prelude::construction::{DelaunayTriangulationBuilder, Vertex};
 
 // 2D canonicalized toroidal triangulation
 let vertices = vec![
-    delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.1])?,
-    delaunay::prelude::Vertex::<(), _>::try_new([0.9, 0.9])?,
+    Vertex::<(), _>::try_new([0.1, 0.1])?,
+    Vertex::<(), _>::try_new([0.9, 0.9])?,
     // ...
 ];
 

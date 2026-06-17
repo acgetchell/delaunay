@@ -377,6 +377,45 @@ rules:
               ...
           }
 
+  - id: delaunay.rust.no-production-debug-assert
+    languages:
+      - rust
+    severity: WARNING
+    message: "Avoid debug_assert! in production source; encode invariants in types or return typed errors."
+    metadata:
+      category: correctness
+      rationale: >-
+        Debug-only assertions disappear in release builds, so they cannot be
+        parse-don't-validate boundaries for library invariants.
+    paths:
+      include:
+        - "/src/**/*.rs"
+    patterns:
+      - pattern-either:
+          - pattern: debug_assert!(...)
+          - pattern: std::debug_assert!(...)
+          - pattern: core::debug_assert!(...)
+          - pattern: debug_assert_eq!(...)
+          - pattern: std::debug_assert_eq!(...)
+          - pattern: core::debug_assert_eq!(...)
+          - pattern: debug_assert_ne!(...)
+          - pattern: std::debug_assert_ne!(...)
+          - pattern: core::debug_assert_ne!(...)
+      - pattern-not-inside: |
+          mod tests {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          mod $MOD {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(any(test, ...))]
+          mod $MOD {
+              ...
+          }
+
   - id: delaunay.rust.no-public-surface-unwrap-panic
     languages:
       - rust
@@ -571,6 +610,25 @@ rules:
           (?s)\bimpl[^{}]*\bDelaunayTriangulation\b[^{}]*\{(?:(?!^\}).)*?^\s*pub\s+(?:const\s+)?fn\s+(?:new|new_with_(?:construction_statistics|options(?:_and_construction_statistics)?|topology_guarantee)|with_(?:kernel|topology_guarantee(?:_and_options)?|options_and_statistics))\s*\(
       - pattern-regex: '(?s)\bimpl[^{}]*\bConvexHull\b[^{}]*\{(?:(?!^\}).)*?^\s*pub\s+fn\s+from_triangulation\s*(?:<|\()'
 
+  - id: delaunay.rust.no-fallible-new-or-from-constructor-definitions
+    languages:
+      - generic
+    severity: WARNING
+    message: "Fallible constructor definitions must not use new/from_*; use try_new*, try_from_*, TryFrom, parse, or descriptive try_* names."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/459"
+      rationale: >-
+        Constructor definitions returning Result are parse boundaries. Naming
+        them new or from_* hides fallibility and invites storing raw invalidable
+        values before validation.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-regex: >-
+      (?s)^\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+|async\s+)?fn\s+(?:new|from_(?!str\b)[A-Za-z0-9_]+)(?:<[^>{}]*>)?\s*\([^;{}]*?\)\s*->\s*Result\s*<
+
   - id: delaunay.rust.no-public-from-validated-constructors
     languages:
       - generic
@@ -606,6 +664,24 @@ rules:
         - "/src/**/*.rs"
         - "/tests/semgrep/src/project_rules/**/*.rs"
     pattern-regex: '\bfn\s+from_validated[A-Za-z0-9_]*_with_data\s*\('
+
+  - id: delaunay.rust.no-unreviewed-from-unchecked-constructors
+    languages:
+      - generic
+    severity: WARNING
+    message: "Do not add from_unchecked_* constructors; use a candidate type, try_new*/try_from_*, or from_validated*."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/459"
+      rationale: >-
+        Temporarily assembled invalidable state should live in an explicit
+        candidate type until validation proof is consumed. New unchecked
+        constructors silently create another invalid-state escape hatch.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-regex: '^\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+|async\s+)?fn\s+from_unchecked_[A-Za-z0-9_]*\s*\('
 
   - id: delaunay.rust.no-slotmap-key-topology-deserialization
     languages:
@@ -1043,7 +1119,7 @@ rules:
         - "/src/project_rules/**/*.rs"
       exclude:
         - "/tests/semgrep/**"
-    pattern-regex: '^\s*pub(?:\([^)]*\))?\s+(?:const\s+|async\s+|unsafe\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*_unchecked\s*\(' # yamllint disable-line rule:line-length
+    pattern-regex: '^\s*pub\s+(?:const\s+|async\s+|unsafe\s+)?fn\s+(?:[A-Za-z_][A-Za-z0-9_]*_unchecked|from_unchecked_[A-Za-z0-9_]*)\s*\(' # yamllint disable-line rule:line-length
 
   - id: delaunay.rust.no-public-vertex-new-with-uuid
     languages:

@@ -13,7 +13,7 @@ use crate::construction::{
     ConstructionOptions, DelaunayConstructionFailure, DelaunayTriangulationConstructionError,
     InsertionOrderStrategy, RetryPolicy,
 };
-use crate::core::construction::TriangulationConstructionError;
+use crate::core::construction::{FinalTopologyValidationContext, TriangulationConstructionError};
 use crate::core::simplex::SimplexValidationError;
 use crate::core::traits::data_type::DataType;
 use crate::core::validation::TopologyGuarantee;
@@ -80,7 +80,7 @@ where
 {
     dt.as_triangulation().validate().map_err(|e| {
         TriangulationConstructionError::FinalTopologyValidation {
-            message: "random triangulation failed final Levels 1-3 topology validation".to_string(),
+            context: FinalTopologyValidationContext::RandomGeneration,
             source: e.into(),
         }
     })?;

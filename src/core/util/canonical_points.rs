@@ -183,6 +183,7 @@ mod tests {
     use crate::core::vertex::Vertex;
     use crate::geometry::kernel::{AdaptiveKernel, Kernel};
     use slotmap::KeyData;
+    use std::assert_matches;
 
     // =========================================================================
     // HELPER FUNCTIONS
@@ -263,13 +264,13 @@ mod tests {
 
         let err = sorted_simplex_points(&tds, &simplex).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             CanonicalSimplexPointError::InvalidArity {
                 expected: 3,
                 found: 2,
             }
-        ));
+        );
     }
 
     #[test]
@@ -281,10 +282,10 @@ mod tests {
 
         let err = sorted_simplex_points(&tds, &simplex).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             CanonicalSimplexPointError::MissingVertex { vertex_key } if vertex_key == missing
-        ));
+        );
     }
 
     // =========================================================================
@@ -327,13 +328,13 @@ mod tests {
 
         let err = sorted_facet_points_with_extra(&tds, &[keys[0]], extra).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             CanonicalFacetPointError::InvalidArity {
                 expected: 2,
                 found: 1,
             }
-        ));
+        );
     }
 
     #[test]
@@ -344,10 +345,10 @@ mod tests {
 
         let err = sorted_facet_points_with_extra(&tds, &[keys[0], missing], extra).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             CanonicalFacetPointError::MissingVertex { vertex_key } if vertex_key == missing
-        ));
+        );
     }
 
     // =========================================================================

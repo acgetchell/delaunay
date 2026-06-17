@@ -29,10 +29,13 @@ use delaunay::prelude::construction::{
     DedupTolerance, DeduplicationError, DelaunayConstructionFailure, DelaunayRepairPolicy,
     DelaunayTriangulation, DelaunayTriangulationConstructionError,
     DelaunayTriangulationValidationError as ConstructionDelaunayTriangulationValidationError,
+    DelaunayVerificationError as ConstructionDelaunayVerificationError,
+    DelaunayVerificationErrorKind as ConstructionDelaunayVerificationErrorKind,
     ExplicitConstructionError, ExplicitDelaunayValidationError,
     ExplicitDelaunayValidationErrorKind, ExplicitDelaunayValidationSourceKind,
     ExplicitInsertionError, ExplicitInsertionErrorKind, ExplicitInvariantError,
     ExplicitInvariantErrorKind, ExplicitTdsError, ExplicitTdsErrorKind,
+    FinalDelaunayValidationContext, FinalTopologyValidationContext,
     GlobalTopologyModelError as ConstructionGlobalTopologyModelError, InsertionOrderStrategy,
     InvalidCoordinateValue as ConstructionInvalidCoordinateValue,
     InvalidPositiveScalar as ConstructionInvalidPositiveScalar, RandomPointGenerationError,
@@ -66,13 +69,15 @@ use delaunay::prelude::geometry::AdaptiveKernel;
 use delaunay::prelude::geometry::{
     ArrayConversionFailureReason, CircumcenterError, CircumcenterFailureReason,
     CoordinateConversionError, CoordinateConversionValue, CoordinateValidationError,
-    DegenerateGeometry, DegenerateMeasure, DegenerateSimplexReason, FiniteCoordinateValue,
-    InvalidCoordinateValue, LaError, MatrixError, Point, QualitySimplexVerticesError,
-    SurfaceMeasureError, ValueConversionError, ValueConversionFailureReason,
+    CoordinateValues, DegenerateGeometry, DegenerateMeasure, DegenerateSimplexReason,
+    FiniteCoordinateValue, InvalidCoordinateValue, LaError, MatrixError, Point,
+    QualitySimplexVerticesError, SurfaceMeasureError, ValueConversionError,
+    ValueConversionFailureReason,
 };
 use delaunay::prelude::insertion::{
     InitialSimplexConstructionError, InitialSimplexUnexpectedInsertionStage, InsertionError,
-    NeighborRebuildError, Tds as InsertionTds, TdsMutationError, repair_neighbor_pointers_local,
+    InsertionTopologyValidationContext, NeighborRebuildError, Tds as InsertionTds,
+    TdsMutationError, repair_neighbor_pointers_local,
 };
 use delaunay::prelude::ordering::{
     HilbertBitDepth, HilbertError, HilbertQuantizedBatch, MAX_HILBERT_BITS, hilbert_index_in_range,
@@ -86,8 +91,12 @@ use delaunay::prelude::query::{
     QueryError,
 };
 use delaunay::prelude::repair::{
-    DelaunayCheckPolicy, DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairOperation,
-    DelaunayRepairOutcome, DelaunayRepairStats, DelaunayRepairVerificationContext,
+    DelaunayCheckPolicy, DelaunayRepairDiagnostics, DelaunayRepairError,
+    DelaunayRepairHeuristicRebuildFailure, DelaunayRepairHeuristicRebuildFailureKind,
+    DelaunayRepairHeuristicVertexContext, DelaunayRepairOperation,
+    DelaunayRepairOrientationCanonicalizationFailure,
+    DelaunayRepairOrientationCanonicalizationFailureKind, DelaunayRepairOutcome,
+    DelaunayRepairPostconditionFailure, DelaunayRepairStats, DelaunayRepairVerificationContext,
     DelaunayTriangulationValidationError, FlipEdgeAdjacencyError, FlipError,
     FlipOrientationCheckStage as RepairFlipOrientationCheckStage, FlipTriangleAdjacencyError,
     FlipVertexAdjacencyError, RepairQueueOrder, verify_delaunay_for_triangulation,
@@ -204,6 +213,18 @@ fn construction_prelude_covers_dedup_policy() {
 
 #[test]
 fn construction_prelude_covers_typed_construction_failure_variants() {
+    assert_eq!(
+        FinalTopologyValidationContext::ConstructionFinalize.to_string(),
+        "topology validation failed after construction"
+    );
+    assert_eq!(
+        FinalDelaunayValidationContext::PeriodicQuotientDelaunay.to_string(),
+        "periodic quotient failed final Level 4 Delaunay validation"
+    );
+    assert_eq!(
+        InsertionTopologyValidationContext::PostInsertion.to_string(),
+        "post-insertion topology validation failed"
+    );
     assert_matches!(
         DelaunayConstructionFailure::GeometricDegeneracy {
             message: "synthetic".to_string(),
@@ -946,15 +967,43 @@ fn construction_prelude_covers_random_point_generation_failure_variant()
 
     assert_matches!(
         DelaunayConstructionFailure::FinalDelaunayValidation {
+            context: FinalDelaunayValidationContext::ConstructionFinalize,
             source: ConstructionDelaunayTriangulationValidationError::VerificationFailed {
-                message: "synthetic final Level 4 failure".to_string(),
+                source: ConstructionDelaunayVerificationError::from(
+                    DelaunayRepairError::PostconditionFailed {
+                        reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
+                            simplex_count: 1,
+                        }),
+                    },
+                )
+                .into(),
             },
         },
         DelaunayConstructionFailure::FinalDelaunayValidation {
+            context: FinalDelaunayValidationContext::ConstructionFinalize,
             source: ConstructionDelaunayTriangulationValidationError::VerificationFailed {
-                message,
+                source,
             },
-        } if message == "synthetic final Level 4 failure"
+        } if source.to_string().contains("disconnected the triangulation")
+    );
+
+    let validation_summary = ExplicitDelaunayValidationError::from(
+        ConstructionDelaunayTriangulationValidationError::VerificationFailed {
+            source: ConstructionDelaunayVerificationError::from(
+                DelaunayRepairError::PostconditionFailed {
+                    reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
+                        simplex_count: 1,
+                    }),
+                },
+            )
+            .into(),
+        },
+    );
+    assert_eq!(
+        validation_summary.source_kind,
+        Some(ExplicitDelaunayValidationSourceKind::Verification(
+            ConstructionDelaunayVerificationErrorKind::FlipPredicates,
+        ))
     );
 
     Ok(())
@@ -998,6 +1047,33 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
     assert_matches!(
         DelaunayRepairError::from(FlipError::DegenerateSimplex),
         DelaunayRepairError::Flip { .. }
+    );
+    let orientation_reason = DelaunayRepairOrientationCanonicalizationFailure::AfterFlipRepair {
+        source: Box::new(InsertionError::DuplicateCoordinates {
+            coordinates: CoordinateValues::from([0.0, 0.0, 0.0]),
+        }),
+    };
+    assert!(orientation_reason.to_string().contains("after flip repair"));
+    let orientation_kind = DelaunayRepairOrientationCanonicalizationFailureKind::AfterFlipRepair {
+        source_kind: delaunay::prelude::insertion::InsertionErrorKind::DuplicateCoordinates,
+    };
+    assert!(matches!(
+        orientation_kind,
+        DelaunayRepairOrientationCanonicalizationFailureKind::AfterFlipRepair { .. }
+    ));
+    let heuristic_vertex: Option<DelaunayRepairHeuristicVertexContext> = None;
+    assert!(heuristic_vertex.is_none());
+    let heuristic_reason =
+        DelaunayRepairHeuristicRebuildFailure::RecursionDepthExceeded { max_depth: 1 };
+    assert!(
+        heuristic_reason
+            .to_string()
+            .contains("recursion depth exceeded")
+    );
+    let heuristic_kind = DelaunayRepairHeuristicRebuildFailureKind::RecursionDepthExceeded;
+    assert_eq!(
+        heuristic_kind,
+        DelaunayRepairHeuristicRebuildFailureKind::RecursionDepthExceeded
     );
     assert_send_sync_unpin::<FlipEdgeAdjacencyError>();
     assert_send_sync_unpin::<FlipTriangleAdjacencyError>();

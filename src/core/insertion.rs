@@ -587,8 +587,11 @@ where
                 // to retry with perturbed coordinates.
                 let perturbed_point = Point::try_new(perturbed_coords)
                     .map_err(|source| InsertionError::PerturbedCoordinateInvalid { source })?;
-                current_vertex =
-                    Vertex::new_with_uuid(perturbed_point, original_uuid, current_vertex.data);
+                current_vertex = Vertex::from_validated_point_with_uuid(
+                    perturbed_point,
+                    original_uuid,
+                    current_vertex.data,
+                );
             }
 
             // Duplicate coordinate detection uses the hash grid when available; otherwise it

@@ -87,7 +87,9 @@
 //! with the correct boundary behavior (a necessary condition), but does not attempt to
 //! distinguish spheres/balls from other manifolds (not sufficient in general).
 
-use crate::core::algorithms::incremental_insertion::InsertionError;
+use crate::core::algorithms::incremental_insertion::{
+    InsertionError, InsertionTopologyValidationContext,
+};
 use crate::core::collections::{
     FacetToSimplicesMap, FastHashSet, SimplexKeyBuffer, SimplexKeySet, fast_hash_set_with_capacity,
 };
@@ -667,10 +669,7 @@ pub(crate) enum InsertionValidationWork {
     RequiredTopologyLinks,
 }
 
-impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
-where
-    K: Kernel<D, Scalar = f64>,
-{
+impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// Returns the topology guarantee used for Level 3 topology validation.
     #[inline]
     #[must_use]
@@ -831,7 +830,12 @@ where
             tracing::warn!("{err}. Topology guarantee not updated.");
         }
     }
+}
 
+impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
+where
+    K: Kernel<D, Scalar = f64>,
+{
     /// Traverses the simplex neighbor graph for validation without assuming global connectivity.
     ///
     /// If `allowed` is `Some`, traversal is restricted to that set. Neighbors
@@ -1299,12 +1303,12 @@ where
     ///
     /// - `InvariantError::Tds(e)` → `InsertionError::TopologyValidation(e)`
     /// - `InvariantError::Triangulation(e)` → `InsertionError::TopologyValidationFailed { source: e }`
-    /// - `InvariantError::Delaunay(e)` → `InsertionError::DelaunayValidationFailed { message }`
+    /// - `InvariantError::Delaunay(e)` → `InsertionError::DelaunayValidationFailed { source: e }`
     pub(crate) fn invariant_error_to_insertion_error(err: InvariantError) -> InsertionError {
         match err {
             InvariantError::Tds(tds_err) => InsertionError::TopologyValidation(tds_err),
             InvariantError::Triangulation(tri_err) => InsertionError::TopologyValidationFailed {
-                message: "Topology validation failed".to_string(),
+                context: InsertionTopologyValidationContext::InvariantConversion,
                 source: tri_err,
             },
             InvariantError::Delaunay(dt_err) => {
@@ -1588,6 +1592,7 @@ fn start_insertion_timing(telemetry_mode: InsertionTelemetryMode) -> Option<Inst
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::algorithms::flips::{DelaunayRepairError, DelaunayRepairPostconditionFailure};
     use crate::core::algorithms::incremental_insertion::CavityFillingError;
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
     use crate::core::collections::NeighborBuffer;
@@ -1601,9 +1606,23 @@ mod tests {
     use crate::geometry::util::generate_random_points_in_range_seeded;
     use crate::repair::DelaunayRepairPolicy;
     use crate::triangulation::DelaunayTriangulation;
-    use crate::validation::DelaunayTriangulationValidationError;
+    use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
     use slotmap::KeyData;
     use std::assert_matches;
+
+    fn synthetic_delaunay_verification_error(
+        message: &str,
+    ) -> DelaunayTriangulationValidationError {
+        let _ = message;
+        DelaunayTriangulationValidationError::VerificationFailed {
+            source: DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
+                reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
+                    simplex_count: 1,
+                }),
+            })
+            .into(),
+        }
+    }
 
     fn insert_test_vertex_with_coords<const D: usize>(
         tds: &mut Tds<(), (), D>,
@@ -1847,10 +1866,8 @@ mod tests {
 
     #[test]
     fn triangulation_validation_error_try_from_manifold_error_preserves_detail() {
-        let tds_err = TdsError::InvalidNeighbors {
-            reason: NeighborValidationError::Other {
-                message: "unit test".to_string(),
-            },
+        let tds_err = TdsError::InconsistentDataStructure {
+            message: "unit test".to_string(),
         };
 
         assert_eq!(
@@ -2265,7 +2282,7 @@ mod tests {
             vertex_uuid: Uuid::nil(),
         };
         let error = InsertionError::TopologyValidationFailed {
-            message: "outer".to_string(),
+            context: InsertionTopologyValidationContext::InvariantConversion,
             source: inner.clone(),
         };
         assert_eq!(
@@ -2304,10 +2321,7 @@ mod tests {
             Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(inv);
         assert_matches!(ins, InsertionError::TopologyValidationFailed { .. });
 
-        let inv =
-            InvariantError::Delaunay(DelaunayTriangulationValidationError::VerificationFailed {
-                message: "test".to_string(),
-            });
+        let inv = InvariantError::Delaunay(synthetic_delaunay_verification_error("test"));
         let ins =
             Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(inv);
         assert_matches!(ins, InsertionError::DelaunayValidationFailed { .. });
@@ -3136,7 +3150,7 @@ mod tests {
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
 
-        let invalid_vertex: Vertex<(), 3> = Vertex::new_with_uuid(
+        let invalid_vertex: Vertex<(), 3> = Vertex::from_validated_point_with_uuid(
             Point::try_new([0.25, 0.25, 0.25]).expect("finite point coordinates"),
             Uuid::nil(),
             None,

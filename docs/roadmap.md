@@ -51,6 +51,8 @@ work intentionally deferred from v0.7.8 cleanup:
   `SphericalSpace::canonicalize_point()`.
 - **Iterator cleanup (#353):** prefer iterator-based collection-building paths
   where that improves clarity and allocation behavior.
+- **Rust test cleanup (#329):** adopt stable `assert_matches!` in tests now
+  that the MSRV supports it.
 
 ### v0.9.0 and later horizon
 
@@ -61,8 +63,6 @@ tightly coupled to the v0.8.0 paper/API push:
   triangulations, Voronoi diagrams, and weakly-visible hull facets.
 - **Visualization and high-dimensional tuning (#64/#106):** built-in
   visualization and convex-hull buffer allocation work for D > 7.
-- **Future Rust cleanup (#329):** adopt `assert_matches!` in tests once it is
-  stable.
 
 ## Ongoing Performance Monitoring
 

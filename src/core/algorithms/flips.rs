@@ -28,9 +28,10 @@
 #![forbid(unsafe_code)]
 
 use crate::core::algorithms::incremental_insertion::{
-    CavityFillingError, HullExtensionReason, InsertionError, NeighborWiringError,
-    SpatialIndexConstructionFailure, TdsConstructionFailure, TdsValidationFailure,
-    external_facets_for_boundary, wire_cavity_neighbors,
+    CavityFillingError, HullExtensionReason, InsertionError, InsertionErrorKind,
+    InsertionTopologyValidationContext, NeighborWiringError, SpatialIndexConstructionFailure,
+    TdsConstructionFailure, TdsValidationFailure, external_facets_for_boundary,
+    wire_cavity_neighbors,
 };
 use crate::core::algorithms::locate::{ConflictError, LocateError, extract_cavity_boundary};
 use crate::core::collections::{
@@ -1964,7 +1965,7 @@ where
 
     format!(
         "k={} removed_face={:?} inserted_face={:?} removed_simplices={:?} new_simplices={:?} ridge_simplex_is_new={} global_simplices_in_new={global_simplices_in_new:?} predecessor_new_simplex_vertices={predecessor_new_simplex_vertices:?}",
-        last_applied_flip.k_move,
+        last_applied_flip.kind.k(),
         last_applied_flip.removed_face_vertices,
         last_applied_flip.inserted_face_vertices,
         last_applied_flip.removed_simplices,
@@ -2105,7 +2106,7 @@ where
 
     format!(
         "k={} removed_face={:?} inserted_face={:?} removed_simplices={:?} new_simplices={:?} incident_simplices_in_new={incident_simplices_in_new:?} incident_simplices_in_removed={incident_simplices_in_removed:?} predecessor_new_simplex_vertices={predecessor_new_simplex_vertices:?} predecessor_removed_simplex_vertices={predecessor_removed_simplex_vertices:?}",
-        last_applied_flip.k_move,
+        last_applied_flip.kind.k(),
         last_applied_flip.removed_face_vertices,
         last_applied_flip.inserted_face_vertices,
         last_applied_flip.removed_simplices,
@@ -2310,8 +2311,8 @@ pub enum FlipOrientationCheckStage {
 /// Detect repeated flip signatures and abort on cycles.
 #[derive(Debug, Clone, Copy)]
 struct FlipCycleContext<'a> {
-    signature: u64,
-    k_move: usize,
+    signature: FlipSignature,
+    kind: BistellarFlipKind,
     direction: FlipDirection,
     removed_face_vertices: &'a [VertexKey],
     inserted_face_vertices: &'a [VertexKey],
@@ -2320,16 +2321,16 @@ struct FlipCycleContext<'a> {
 impl<'a> FlipCycleContext<'a> {
     /// Bundles the flip data needed for diagnostics without cloning vertex
     /// buffers on every repair step.
-    const fn new(
-        signature: u64,
-        k_move: usize,
+    const fn from_validated_flip(
+        signature: FlipSignature,
+        kind: BistellarFlipKind,
         direction: FlipDirection,
         removed_face_vertices: &'a [VertexKey],
         inserted_face_vertices: &'a [VertexKey],
     ) -> Self {
         Self {
             signature,
-            k_move,
+            kind,
             direction,
             removed_face_vertices,
             inserted_face_vertices,
@@ -2377,7 +2378,7 @@ where
                 max_flips,
                 config.attempt,
                 config.queue_order,
-                context.k_move,
+                context.kind.k(),
                 context.direction,
                 removed_details,
                 inserted_details,
@@ -3032,28 +3033,36 @@ pub enum FlipNeighborHullExtensionFailureKind {
     /// No visible facets were found.
     #[error("no visible facets")]
     NoVisibleFacets,
-    /// Visible facets formed an invalid patch.
-    #[error("invalid patch")]
-    InvalidPatch,
+    /// Boundary-edge split matched the wrong number of facets.
+    #[error("boundary edge split facet count")]
+    BoundaryEdgeSplitFacetCount,
+    /// Boundary-edge split matched more than one candidate facet.
+    #[error("multiple boundary edge split facets")]
+    MultipleBoundaryEdgeSplitFacets,
+    /// Visible facets formed a disconnected or non-manifold patch.
+    #[error("disconnected visible patch")]
+    DisconnectedVisiblePatch,
     /// Geometric predicate failed.
     #[error("predicate failed")]
     PredicateFailed,
     /// Lower-layer TDS error.
     #[error("TDS")]
     Tds,
-    /// Other hull-extension failure.
-    #[error("other")]
-    Other,
 }
 
 impl From<&HullExtensionReason> for FlipNeighborHullExtensionFailureKind {
     fn from(source: &HullExtensionReason) -> Self {
         match source {
             HullExtensionReason::NoVisibleFacets => Self::NoVisibleFacets,
-            HullExtensionReason::InvalidPatch { .. } => Self::InvalidPatch,
+            HullExtensionReason::BoundaryEdgeSplitFacetCount { .. } => {
+                Self::BoundaryEdgeSplitFacetCount
+            }
+            HullExtensionReason::MultipleBoundaryEdgeSplitFacets => {
+                Self::MultipleBoundaryEdgeSplitFacets
+            }
+            HullExtensionReason::DisconnectedVisiblePatch { .. } => Self::DisconnectedVisiblePatch,
             HullExtensionReason::PredicateFailed(_) => Self::PredicateFailed,
             HullExtensionReason::Tds(_) => Self::Tds,
-            HullExtensionReason::Other { .. } => Self::Other,
         }
     }
 }
@@ -3077,9 +3086,6 @@ pub enum FlipNeighborDelaunayValidationFailureKind {
     /// Delaunay verification failed.
     #[error("verification failed")]
     VerificationFailed,
-    /// Legacy repair validation failed.
-    #[error("repair failed")]
-    RepairFailed,
     /// Repair operation validation failed.
     #[error("repair operation failed")]
     RepairOperationFailed,
@@ -3093,7 +3099,6 @@ impl From<&DelaunayTriangulationValidationError> for FlipNeighborDelaunayValidat
             DelaunayTriangulationValidationError::VerificationFailed { .. } => {
                 Self::VerificationFailed
             }
-            DelaunayTriangulationValidationError::RepairFailed { .. } => Self::RepairFailed,
             DelaunayTriangulationValidationError::RepairOperationFailed { .. } => {
                 Self::RepairOperationFailed
             }
@@ -3173,10 +3178,11 @@ pub enum FlipNeighborRepairFailure {
         diagnostics: FlipNeighborRepairDiagnostics,
     },
     /// Repair completed but left a Delaunay violation.
-    #[error("repair postcondition failed: {message}")]
+    #[error("repair postcondition failed: {reason}")]
     PostconditionFailed {
-        /// Additional context describing the postcondition failure.
-        message: String,
+        /// Structured postcondition failure reason.
+        #[source]
+        reason: DelaunayRepairPostconditionFailure,
     },
     /// Post-repair verification could not evaluate a local flip predicate.
     #[error("repair verification failed during {context}: {source_kind}")]
@@ -3187,10 +3193,10 @@ pub enum FlipNeighborRepairFailure {
         source_kind: FlipFailureKind,
     },
     /// Repair completed but orientation canonicalization failed.
-    #[error("repair orientation canonicalization failed: {message}")]
+    #[error("repair orientation canonicalization failed: {reason}")]
     OrientationCanonicalizationFailed {
-        /// Additional context describing the canonicalization failure.
-        message: String,
+        /// Structured canonicalization failure reason.
+        reason: DelaunayRepairOrientationCanonicalizationFailureKind,
     },
     /// Flip-based repair is not admissible under the current topology guarantee.
     #[error("repair requires {required:?} topology, found {found:?}: {message}")]
@@ -3203,10 +3209,10 @@ pub enum FlipNeighborRepairFailure {
         message: &'static str,
     },
     /// Heuristic rebuild failed during advanced repair.
-    #[error("heuristic rebuild failed: {message}")]
+    #[error("heuristic rebuild failed: {reason}")]
     HeuristicRebuildFailed {
-        /// Additional context for the rebuild failure.
-        message: String,
+        /// Structured rebuild failure category.
+        reason: DelaunayRepairHeuristicRebuildFailureKind,
     },
     /// Underlying flip error.
     #[error("flip error: {source_kind}")]
@@ -3303,10 +3309,10 @@ pub enum FlipNeighborWiringError {
         uuid: uuid::Uuid,
     },
     /// Level 3 topology validation failed while preparing flip neighbor wiring.
-    #[error("topology validation error reached flip neighbor wiring: {message}: {source}")]
+    #[error("topology validation error reached flip neighbor wiring: {context}: {source}")]
     TopologyValidationFailed {
         /// High-level insertion context.
-        message: String,
+        context: InsertionTopologyValidationContext,
         /// Underlying topology validation error.
         #[source]
         source: TriangulationValidationError,
@@ -3371,8 +3377,8 @@ impl From<InsertionError> for FlipNeighborWiringError {
                 Self::DuplicateCoordinates { coordinates }
             }
             InsertionError::DuplicateUuid { entity, uuid } => Self::DuplicateUuid { entity, uuid },
-            InsertionError::TopologyValidationFailed { message, source } => {
-                Self::TopologyValidationFailed { message, source }
+            InsertionError::TopologyValidationFailed { context, source } => {
+                Self::TopologyValidationFailed { context, source }
             }
             InsertionError::MaxSimplicesRemovedExceeded {
                 max_simplices_removed,
@@ -4546,6 +4552,334 @@ impl fmt::Display for DelaunayRepairVerificationContext {
     }
 }
 
+/// Structured reason a repair pass failed its postcondition.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DelaunayRepairPostconditionFailure {
+    /// Repair disconnected the triangulation neighbor graph.
+    Disconnected {
+        /// Number of simplices remaining when the disconnected graph was detected.
+        simplex_count: usize,
+    },
+    /// A local k=2 facet flip opportunity remained after repair.
+    LocalK2Violation {
+        /// Facet whose flip predicate still reports a violation.
+        facet: FacetHandle,
+        /// Optional opt-in diagnostic details captured under repair debug flags.
+        debug_details: Option<String>,
+    },
+    /// A local k=3 ridge flip opportunity remained after repair.
+    LocalK3Violation {
+        /// Ridge whose flip predicate still reports a violation.
+        ridge: RidgeHandle,
+    },
+    /// A local inverse k=2 edge-collapse opportunity remained after repair.
+    LocalInverseK2Violation {
+        /// Edge whose inverse flip predicate still reports a violation.
+        edge: EdgeKey,
+    },
+    /// A local inverse k=3 triangle-collapse opportunity remained after repair.
+    LocalInverseK3Violation {
+        /// Triangle whose inverse flip predicate still reports a violation.
+        triangle: TriangleHandle,
+    },
+}
+
+impl fmt::Display for DelaunayRepairPostconditionFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Disconnected { simplex_count } => write!(
+                f,
+                "repair pass disconnected the triangulation ({simplex_count} simplices remain); neighbor wiring is incomplete"
+            ),
+            Self::LocalK2Violation {
+                facet,
+                debug_details,
+            } => {
+                write!(
+                    f,
+                    "local k=2 violation remains after repair (facet={facet:?})"
+                )?;
+                if let Some(details) = debug_details {
+                    write!(f, "; {details}")?;
+                }
+                Ok(())
+            }
+            Self::LocalK3Violation { ridge } => {
+                write!(
+                    f,
+                    "local k=3 violation remains after repair (ridge={ridge:?})"
+                )
+            }
+            Self::LocalInverseK2Violation { edge } => {
+                write!(
+                    f,
+                    "local inverse k=2 flip remains applicable after repair (edge={edge:?})"
+                )
+            }
+            Self::LocalInverseK3Violation { triangle } => write!(
+                f,
+                "local inverse k=3 flip remains applicable after repair (triangle={triangle:?})"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DelaunayRepairPostconditionFailure {}
+
+/// Structured reason orientation canonicalization failed after repair.
+#[derive(Clone, Debug, Error, PartialEq)]
+#[non_exhaustive]
+pub enum DelaunayRepairOrientationCanonicalizationFailure {
+    /// Positive-orientation promotion failed after a flip-repair pass.
+    #[error("after flip repair: {source}")]
+    AfterFlipRepair {
+        /// Insertion-layer failure produced by orientation promotion.
+        #[source]
+        source: Box<InsertionError>,
+    },
+}
+
+/// Compact orientation-canonicalization failure category for non-recursive summaries.
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DelaunayRepairOrientationCanonicalizationFailureKind {
+    /// Positive-orientation promotion failed after a flip-repair pass.
+    #[error("after flip repair: {source_kind:?}")]
+    AfterFlipRepair {
+        /// Category of the insertion-layer failure.
+        source_kind: InsertionErrorKind,
+    },
+}
+
+impl From<&DelaunayRepairOrientationCanonicalizationFailure>
+    for DelaunayRepairOrientationCanonicalizationFailureKind
+{
+    fn from(source: &DelaunayRepairOrientationCanonicalizationFailure) -> Self {
+        match source {
+            DelaunayRepairOrientationCanonicalizationFailure::AfterFlipRepair { source } => {
+                Self::AfterFlipRepair {
+                    source_kind: insertion_error_kind(source),
+                }
+            }
+        }
+    }
+}
+
+/// Passive vertex context reported with heuristic rebuild failures.
+///
+/// The fields identify the vertex position, UUID, and coordinates that were
+/// being replayed when rebuild failed. This is diagnostic context only; repair
+/// algorithms do not accept it back as proof of a valid vertex.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct DelaunayRepairHeuristicVertexContext {
+    /// Position of the vertex in the shuffled rebuild order.
+    pub index: usize,
+    /// Stable vertex UUID.
+    pub vertex_uuid: uuid::Uuid,
+    /// Vertex coordinates at the rebuild boundary.
+    pub coordinates: CoordinateValues,
+}
+
+impl fmt::Display for DelaunayRepairHeuristicVertexContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "idx={} uuid={} coords={}",
+            self.index, self.vertex_uuid, self.coordinates
+        )
+    }
+}
+
+/// Structured reason heuristic rebuild failed during advanced repair.
+#[derive(Clone, Debug, Error, PartialEq)]
+#[non_exhaustive]
+pub enum DelaunayRepairHeuristicRebuildFailure {
+    /// Heuristic rebuild recursion exceeded its guard depth.
+    #[error("heuristic rebuild recursion depth exceeded {max_depth}")]
+    RecursionDepthExceeded {
+        /// Maximum permitted nested heuristic rebuild depth.
+        max_depth: usize,
+    },
+    /// Primary repair, robust fallback, and heuristic rebuild all failed.
+    #[error("primary repair failed ({primary}); robust fallback failed ({robust}); {heuristic}")]
+    FallbackChainFailed {
+        /// Primary flip-repair failure.
+        #[source]
+        primary: Box<DelaunayRepairError>,
+        /// Robust-kernel fallback failure.
+        robust: Box<DelaunayRepairError>,
+        /// Heuristic rebuild failure.
+        heuristic: Box<Self>,
+    },
+    /// A non-heuristic repair error escaped the heuristic rebuild path.
+    #[error("heuristic rebuild failed with unexpected repair error: {source}")]
+    UnexpectedRepairFailure {
+        /// Repair error returned by the heuristic path.
+        #[source]
+        source: Box<DelaunayRepairError>,
+    },
+    /// The attempt loop exited without recording a rebuild attempt.
+    #[error("heuristic rebuild made no attempts")]
+    NoAttempts,
+    /// Vertex insertion failed during heuristic rebuild.
+    #[error("heuristic rebuild insertion failed at {vertex}: {source}")]
+    InsertionFailed {
+        /// Vertex being inserted.
+        vertex: DelaunayRepairHeuristicVertexContext,
+        /// Insertion failure.
+        #[source]
+        source: Box<InsertionError>,
+    },
+    /// Local repair failed after a heuristic rebuild insertion.
+    #[error("heuristic rebuild repair failed at {vertex}: {source}")]
+    RepairFailed {
+        /// Vertex whose insertion triggered repair.
+        vertex: DelaunayRepairHeuristicVertexContext,
+        /// Insertion-layer repair failure.
+        #[source]
+        source: Box<InsertionError>,
+    },
+    /// Delaunay check failed after a heuristic rebuild insertion.
+    #[error("heuristic rebuild Delaunay check failed at {vertex}: {source}")]
+    DelaunayCheckFailed {
+        /// Vertex whose insertion triggered the check.
+        vertex: DelaunayRepairHeuristicVertexContext,
+        /// Insertion-layer check failure.
+        #[source]
+        source: Box<InsertionError>,
+    },
+    /// A vertex was skipped during heuristic rebuild.
+    #[error("heuristic rebuild skipped vertex at {vertex}: {source}")]
+    SkippedVertex {
+        /// Skipped vertex.
+        vertex: DelaunayRepairHeuristicVertexContext,
+        /// Insertion-layer skip reason.
+        #[source]
+        source: Box<InsertionError>,
+    },
+    /// One deterministic rebuild attempt failed.
+    #[error(
+        "attempt {attempt}/{max_attempts} (shuffle_seed={shuffle_seed} perturbation_seed={perturbation_seed}): {source}"
+    )]
+    AttemptFailed {
+        /// 1-based attempt number.
+        attempt: usize,
+        /// Maximum number of attempts.
+        max_attempts: usize,
+        /// Shuffle seed used for this attempt.
+        shuffle_seed: u64,
+        /// Perturbation seed used for this attempt.
+        perturbation_seed: u64,
+        /// Attempt failure.
+        #[source]
+        source: Box<DelaunayRepairError>,
+    },
+    /// Every deterministic heuristic rebuild attempt failed.
+    #[error("heuristic rebuild failed after {attempts} attempts: {last_failure}")]
+    ExhaustedAttempts {
+        /// Number of attempts tried.
+        attempts: usize,
+        /// Last observed attempt failure.
+        #[source]
+        last_failure: Box<Self>,
+    },
+}
+
+/// Compact heuristic-rebuild failure category for non-recursive summaries.
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DelaunayRepairHeuristicRebuildFailureKind {
+    /// Heuristic rebuild recursion exceeded its guard depth.
+    #[error("recursion depth exceeded")]
+    RecursionDepthExceeded,
+    /// Primary repair, robust fallback, and heuristic rebuild all failed.
+    #[error("fallback chain failed")]
+    FallbackChainFailed,
+    /// A non-heuristic repair error escaped the heuristic rebuild path.
+    #[error("unexpected repair failure")]
+    UnexpectedRepairFailure,
+    /// The attempt loop exited without recording a rebuild attempt.
+    #[error("no attempts")]
+    NoAttempts,
+    /// Vertex insertion failed during heuristic rebuild.
+    #[error("insertion failed")]
+    InsertionFailed,
+    /// Local repair failed after a heuristic rebuild insertion.
+    #[error("repair failed")]
+    RepairFailed,
+    /// Delaunay check failed after a heuristic rebuild insertion.
+    #[error("Delaunay check failed")]
+    DelaunayCheckFailed,
+    /// A vertex was skipped during heuristic rebuild.
+    #[error("skipped vertex")]
+    SkippedVertex,
+    /// One deterministic rebuild attempt failed.
+    #[error("attempt failed")]
+    AttemptFailed,
+    /// Every deterministic heuristic rebuild attempt failed.
+    #[error("attempts exhausted")]
+    ExhaustedAttempts,
+}
+
+impl From<&DelaunayRepairHeuristicRebuildFailure> for DelaunayRepairHeuristicRebuildFailureKind {
+    fn from(source: &DelaunayRepairHeuristicRebuildFailure) -> Self {
+        match source {
+            DelaunayRepairHeuristicRebuildFailure::RecursionDepthExceeded { .. } => {
+                Self::RecursionDepthExceeded
+            }
+            DelaunayRepairHeuristicRebuildFailure::FallbackChainFailed { .. } => {
+                Self::FallbackChainFailed
+            }
+            DelaunayRepairHeuristicRebuildFailure::UnexpectedRepairFailure { .. } => {
+                Self::UnexpectedRepairFailure
+            }
+            DelaunayRepairHeuristicRebuildFailure::NoAttempts => Self::NoAttempts,
+            DelaunayRepairHeuristicRebuildFailure::InsertionFailed { .. } => Self::InsertionFailed,
+            DelaunayRepairHeuristicRebuildFailure::RepairFailed { .. } => Self::RepairFailed,
+            DelaunayRepairHeuristicRebuildFailure::DelaunayCheckFailed { .. } => {
+                Self::DelaunayCheckFailed
+            }
+            DelaunayRepairHeuristicRebuildFailure::SkippedVertex { .. } => Self::SkippedVertex,
+            DelaunayRepairHeuristicRebuildFailure::AttemptFailed { .. } => Self::AttemptFailed,
+            DelaunayRepairHeuristicRebuildFailure::ExhaustedAttempts { .. } => {
+                Self::ExhaustedAttempts
+            }
+        }
+    }
+}
+
+const fn insertion_error_kind(source: &InsertionError) -> InsertionErrorKind {
+    match source {
+        InsertionError::ConflictRegion(_) => InsertionErrorKind::ConflictRegion,
+        InsertionError::Location(_) => InsertionErrorKind::Location,
+        InsertionError::CavityFilling { .. } => InsertionErrorKind::CavityFilling,
+        InsertionError::NeighborWiring { .. } => InsertionErrorKind::NeighborWiring,
+        InsertionError::NonManifoldTopology { .. } => InsertionErrorKind::NonManifoldTopology,
+        InsertionError::HullExtension { .. } => InsertionErrorKind::HullExtension,
+        InsertionError::DelaunayValidationFailed { .. } => {
+            InsertionErrorKind::DelaunayValidationFailed
+        }
+        InsertionError::DelaunayRepairFailed { .. } => InsertionErrorKind::DelaunayRepairFailed,
+        InsertionError::DuplicateCoordinates { .. } => InsertionErrorKind::DuplicateCoordinates,
+        InsertionError::DuplicateUuid { .. } => InsertionErrorKind::DuplicateUuid,
+        InsertionError::TopologyValidation(_) => InsertionErrorKind::TopologyValidation,
+        InsertionError::TopologyValidationFailed { .. } => {
+            InsertionErrorKind::TopologyValidationFailed
+        }
+        InsertionError::MaxSimplicesRemovedExceeded { .. } => {
+            InsertionErrorKind::MaxSimplicesRemovedExceeded
+        }
+        InsertionError::SpatialIndexConstruction { .. } => {
+            InsertionErrorKind::SpatialIndexConstruction
+        }
+        InsertionError::PerturbedCoordinateInvalid { .. } => {
+            InsertionErrorKind::PerturbedCoordinateInvalid
+        }
+    }
+}
+
 /// Errors that can occur during flip-based Delaunay repair.
 ///
 /// Large typed payloads are boxed to keep the public enum small and cheap to
@@ -4588,10 +4922,11 @@ pub enum DelaunayRepairError {
         diagnostics: Box<DelaunayRepairDiagnostics>,
     },
     /// Repair completed but left a Delaunay violation.
-    #[error("Delaunay repair postcondition failed: {message}")]
+    #[error("Delaunay repair postcondition failed: {reason}")]
     PostconditionFailed {
-        /// Additional context describing the postcondition failure.
-        message: String,
+        /// Structured postcondition failure reason.
+        #[source]
+        reason: Box<DelaunayRepairPostconditionFailure>,
     },
     /// Post-repair verification could not evaluate a local flip predicate.
     #[error("Delaunay repair verification failed during {context}: {source}")]
@@ -4603,10 +4938,11 @@ pub enum DelaunayRepairError {
         source: Box<FlipError>,
     },
     /// Repair completed but orientation canonicalization failed.
-    #[error("Delaunay repair orientation canonicalization failed: {message}")]
+    #[error("Delaunay repair orientation canonicalization failed: {reason}")]
     OrientationCanonicalizationFailed {
-        /// Additional context describing the canonicalization failure.
-        message: String,
+        /// Structured canonicalization failure reason.
+        #[source]
+        reason: Box<DelaunayRepairOrientationCanonicalizationFailure>,
     },
     /// Flip-based repair is not admissible under the current topology guarantee.
     #[error("Delaunay repair requires {required:?} topology, found {found:?}: {message}")]
@@ -4619,10 +4955,11 @@ pub enum DelaunayRepairError {
         message: &'static str,
     },
     /// Heuristic rebuild failed during advanced repair.
-    #[error("Heuristic rebuild failed: {message}")]
+    #[error("Heuristic rebuild failed: {reason}")]
     HeuristicRebuildFailed {
-        /// Additional context for the rebuild failure.
-        message: String,
+        /// Structured rebuild failure reason.
+        #[source]
+        reason: Box<DelaunayRepairHeuristicRebuildFailure>,
     },
     /// A lower-level [`FlipError`] stopped repair.
     ///
@@ -4660,8 +4997,8 @@ impl From<DelaunayRepairError> for FlipNeighborRepairFailure {
                 max_flips,
                 diagnostics: (*diagnostics).into(),
             },
-            DelaunayRepairError::PostconditionFailed { message } => {
-                Self::PostconditionFailed { message }
+            DelaunayRepairError::PostconditionFailed { reason } => {
+                Self::PostconditionFailed { reason: *reason }
             }
             DelaunayRepairError::VerificationFailed { context, source } => {
                 Self::VerificationFailed {
@@ -4669,8 +5006,10 @@ impl From<DelaunayRepairError> for FlipNeighborRepairFailure {
                     source_kind: FlipFailureKind::from(source.as_ref()),
                 }
             }
-            DelaunayRepairError::OrientationCanonicalizationFailed { message } => {
-                Self::OrientationCanonicalizationFailed { message }
+            DelaunayRepairError::OrientationCanonicalizationFailed { reason } => {
+                Self::OrientationCanonicalizationFailed {
+                    reason: reason.as_ref().into(),
+                }
             }
             DelaunayRepairError::InvalidTopology {
                 required,
@@ -4681,8 +5020,10 @@ impl From<DelaunayRepairError> for FlipNeighborRepairFailure {
                 found,
                 message,
             },
-            DelaunayRepairError::HeuristicRebuildFailed { message } => {
-                Self::HeuristicRebuildFailed { message }
+            DelaunayRepairError::HeuristicRebuildFailed { reason } => {
+                Self::HeuristicRebuildFailed {
+                    reason: reason.as_ref().into(),
+                }
             }
             DelaunayRepairError::Flip { source } => Self::Flip {
                 source_kind: FlipFailureKind::from(source.as_ref()),
@@ -5934,17 +6275,18 @@ where
         }
         diagnostics.record_applicable_repair_site();
 
+        let kind = BistellarFlipKind::k2(D);
         let signature = flip_signature(
-            2,
+            kind,
             context.direction,
             &context.removed_face_vertices,
             &context.inserted_face_vertices,
         );
         check_flip_cycle(
             tds,
-            FlipCycleContext::new(
+            FlipCycleContext::from_validated_flip(
                 signature,
-                2,
+                kind,
                 context.direction,
                 &context.removed_face_vertices,
                 &context.inserted_face_vertices,
@@ -6720,11 +7062,9 @@ where
     // stronger boundary guarantee than final validation already enforces.
     if connectivity == ConnectivityPostcondition::Check && !tds.is_connected() {
         return Err(DelaunayRepairError::PostconditionFailed {
-            message: format!(
-                "repair pass disconnected the triangulation \
-                 ({} simplices remain); neighbor wiring is incomplete",
-                tds.number_of_simplices()
-            ),
+            reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
+                simplex_count: tds.number_of_simplices(),
+            }),
         });
     }
 
@@ -6820,9 +7160,7 @@ where
                     diagnostics,
                     last_applied_flip,
                 );
-                let mut message =
-                    format!("local k=2 violation remains after repair (facet={facet:?})");
-                if env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
+                let debug_details = if env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
                     let removed_details: Vec<_> = context
                         .removed_face_vertices
                         .iter()
@@ -6833,11 +7171,18 @@ where
                         .iter()
                         .filter_map(|&vkey| tds.vertex(vkey).map(|vertex| (vkey, *vertex.point())))
                         .collect();
-                    message = format!(
-                        "{message}; removed_face={removed_details:?}; inserted_face={inserted_details:?}"
-                    );
-                }
-                return Err(DelaunayRepairError::PostconditionFailed { message });
+                    Some(format!(
+                        "removed_face={removed_details:?}; inserted_face={inserted_details:?}"
+                    ))
+                } else {
+                    None
+                };
+                return Err(DelaunayRepairError::PostconditionFailed {
+                    reason: Box::new(DelaunayRepairPostconditionFailure::LocalK2Violation {
+                        facet,
+                        debug_details,
+                    }),
+                });
             }
             Ok(false) => {
                 // No violation detected.
@@ -6939,7 +7284,9 @@ where
                     debug_ridge_context(tds, ridge, None, diagnostics, last_applied_flip);
                 }
                 return Err(DelaunayRepairError::PostconditionFailed {
-                    message: format!("local k=3 violation remains after repair (ridge={ridge:?})"),
+                    reason: Box::new(DelaunayRepairPostconditionFailure::LocalK3Violation {
+                        ridge,
+                    }),
                 });
             }
             Ok(false) => {
@@ -7037,8 +7384,8 @@ where
                 );
             }
             return Err(DelaunayRepairError::PostconditionFailed {
-                message: format!(
-                    "local inverse k=2 flip remains applicable after repair (edge={edge:?})"
+                reason: Box::new(
+                    DelaunayRepairPostconditionFailure::LocalInverseK2Violation { edge },
                 ),
             });
         }
@@ -7113,8 +7460,8 @@ where
                 );
             }
             return Err(DelaunayRepairError::PostconditionFailed {
-                message: format!(
-                    "local inverse k=3 flip remains applicable after repair (triangle={triangle:?})"
+                reason: Box::new(
+                    DelaunayRepairPostconditionFailure::LocalInverseK3Violation { triangle },
                 ),
             });
         }
@@ -7134,13 +7481,22 @@ const FLIP_SIGNATURE_WINDOW: usize = 4096;
 // pathological cases while giving legitimate repair sequences room to converge.
 const MAX_REPEAT_SIGNATURE: usize = 128;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct FlipSignature(u64);
+
+impl fmt::Display for FlipSignature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 #[derive(Debug, Default)]
 struct RepairDiagnostics {
     ambiguous_predicates: usize,
     ambiguous_samples: Vec<u64>,
     predicate_failures: usize,
     cycle_detections: usize,
-    cycle_samples: Vec<u64>,
+    cycle_samples: Vec<FlipSignature>,
     inserted_simplex_skips: usize,
     inserted_simplex_sample: Option<InsertedSimplexSkipSample>,
     invalid_ridge_multiplicity_skips: usize,
@@ -7148,8 +7504,8 @@ struct RepairDiagnostics {
     missing_simplex_skips: usize,
     missing_simplex_sample: Option<MissingSimplexSkipSample>,
     saw_applicable_repair_site: bool,
-    flip_signature_window: VecDeque<u64>,
-    flip_signature_counts: FastHashMap<u64, usize>,
+    flip_signature_window: VecDeque<FlipSignature>,
+    flip_signature_counts: FastHashMap<FlipSignature, usize>,
     ridge_debug_emitted: usize,
     postcondition_facet_debug_emitted: usize,
 }
@@ -7275,7 +7631,7 @@ impl RepairDiagnostics {
 
     /// Maintains a sliding signature window so cycle detection is bounded in
     /// memory but still catches local oscillations.
-    fn record_flip_signature(&mut self, signature: u64) {
+    fn record_flip_signature(&mut self, signature: FlipSignature) {
         let count = self.flip_signature_counts.entry(signature).or_insert(0);
         *count = count.saturating_add(1);
 
@@ -7302,7 +7658,7 @@ impl RepairDiagnostics {
 
     /// Preserves the signature that triggered a non-convergence abort even if it
     /// was already sampled earlier.
-    fn record_cycle_abort(&mut self, signature: u64) {
+    fn record_cycle_abort(&mut self, signature: FlipSignature) {
         self.cycle_detections = self.cycle_detections.saturating_add(1);
         if self.cycle_samples.len() < CYCLE_SAMPLE_LIMIT && !self.cycle_samples.contains(&signature)
         {
@@ -7374,7 +7730,11 @@ fn non_convergent_error(
             ambiguous_predicate_samples: diagnostics.ambiguous_samples.clone(),
             predicate_failures: diagnostics.predicate_failures,
             cycle_detections: diagnostics.cycle_detections,
-            cycle_signature_samples: diagnostics.cycle_samples.clone(),
+            cycle_signature_samples: diagnostics
+                .cycle_samples
+                .iter()
+                .map(|signature| signature.0)
+                .collect(),
             attempt: config.attempt,
             queue_order: config.queue_order,
         }),
@@ -7447,11 +7807,11 @@ fn predicate_key_from_vertices(simplex_vertices: &[VertexKey], test_vertex: Vert
 
 /// Canonicalizes a flip attempt into a compact key for cycle detection.
 fn flip_signature(
-    k_move: usize,
+    kind: BistellarFlipKind,
     direction: FlipDirection,
     removed_face_vertices: &[VertexKey],
     inserted_face_vertices: &[VertexKey],
-) -> u64 {
+) -> FlipSignature {
     let mut removed: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
         removed_face_vertices.iter().copied().collect();
     removed.sort_unstable();
@@ -7461,7 +7821,7 @@ fn flip_signature(
     inserted.sort_unstable();
 
     let mut hasher = FastHasher::default();
-    k_move.hash(&mut hasher);
+    kind.k().hash(&mut hasher);
     match direction {
         FlipDirection::Forward => 0_u8.hash(&mut hasher),
         FlipDirection::Inverse => 1_u8.hash(&mut hasher),
@@ -7474,19 +7834,20 @@ fn flip_signature(
     for vkey in &inserted {
         vkey.hash(&mut hasher);
     }
-    hasher.finish()
+    FlipSignature(hasher.finish())
 }
 
 #[derive(Debug, Clone)]
 struct LastAppliedFlip {
-    k_move: usize,
+    kind: BistellarFlipKind,
     removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
     inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
     removed_simplices: SimplexKeyBuffer,
     new_simplices: SimplexKeyBuffer,
     /// Snapshot of each removed simplex's vertex list captured before the flip's
     /// `remove_simplices_by_keys` call; pairs 1:1 with `removed_simplices`. Empty
-    /// inner buffers only appear in placeholder instances built via `Self::new`.
+    /// inner buffers only appear in placeholder instances built from validated
+    /// flip faces.
     removed_simplex_vertices: RemovedSimplexVertexSnapshot,
 }
 
@@ -7494,7 +7855,11 @@ impl LastAppliedFlip {
     /// Sorts faces so immediate-reversal detection is independent of local simplex
     /// vertex order. Simplex lists stay empty here because this constructor is also
     /// used for temporary reversal checks.
-    fn new(k_move: usize, removed: &[VertexKey], inserted: &[VertexKey]) -> Self {
+    fn from_validated_flip_faces(
+        kind: BistellarFlipKind,
+        removed: &[VertexKey],
+        inserted: &[VertexKey],
+    ) -> Self {
         let mut removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
             removed.iter().copied().collect();
         removed_face_vertices.sort_unstable();
@@ -7504,7 +7869,7 @@ impl LastAppliedFlip {
         inserted_face_vertices.sort_unstable();
 
         Self {
-            k_move,
+            kind,
             removed_face_vertices,
             inserted_face_vertices,
             removed_simplices: SimplexKeyBuffer::new(),
@@ -7517,8 +7882,8 @@ impl LastAppliedFlip {
     /// whether the immediately preceding move created the bad local star.
     fn from_applied_flip<const D: usize>(applied: &AppliedFlip<D>) -> Self {
         let info = &applied.info;
-        let mut last = Self::new(
-            info.kind.k(),
+        let mut last = Self::from_validated_flip_faces(
+            info.kind,
             &info.removed_face_vertices,
             &info.inserted_face_vertices,
         );
@@ -7531,7 +7896,8 @@ impl LastAppliedFlip {
 
     /// Formats each removed simplex as `SimplexKey(N): vertices=[...]` using the
     /// snapshot captured before the flip's simplex removal. Falls back to
-    /// `missing-snapshot` only for placeholder rows created by `Self::new`.
+    /// `missing-snapshot` only for placeholder rows built from validated flip
+    /// faces.
     fn removed_simplex_vertex_lines(&self) -> Vec<String> {
         self.removed_simplices
             .iter()
@@ -7553,7 +7919,7 @@ impl LastAppliedFlip {
 /// consume the global flip budget.
 fn would_immediately_reverse_last_flip<const D: usize>(
     last: Option<&LastAppliedFlip>,
-    k_move: usize,
+    kind: BistellarFlipKind,
     removed_face_vertices: &[VertexKey],
     inserted_face_vertices: &[VertexKey],
 ) -> bool {
@@ -7561,11 +7927,15 @@ fn would_immediately_reverse_last_flip<const D: usize>(
         return false;
     };
 
-    if k_move + last_flip.k_move != D + 2 {
+    if kind.k() + last_flip.kind.k() != D + 2 {
         return false;
     }
 
-    let current = LastAppliedFlip::new(k_move, removed_face_vertices, inserted_face_vertices);
+    let current = LastAppliedFlip::from_validated_flip_faces(
+        kind,
+        removed_face_vertices,
+        inserted_face_vertices,
+    );
     current.removed_face_vertices == last_flip.inserted_face_vertices
         && current.inserted_face_vertices == last_flip.removed_face_vertices
 }
@@ -8018,7 +8388,7 @@ where
 
     if would_immediately_reverse_last_flip::<D>(
         last_applied_flip.as_ref(),
-        3,
+        BistellarFlipKind::k3(D),
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     ) {
@@ -8030,17 +8400,18 @@ where
         return Ok(true);
     }
 
+    let kind = BistellarFlipKind::k3(D);
     let signature = flip_signature(
-        3,
+        kind,
         context.direction,
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     );
     check_flip_cycle(
         tds,
-        FlipCycleContext::new(
+        FlipCycleContext::from_validated_flip(
             signature,
-            3,
+            kind,
             context.direction,
             &context.removed_face_vertices,
             &context.inserted_face_vertices,
@@ -8211,7 +8582,7 @@ where
 
     if would_immediately_reverse_last_flip::<D>(
         last_applied_flip.as_ref(),
-        D,
+        BistellarFlipKind::k2(D).inverse(),
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     ) {
@@ -8222,17 +8593,18 @@ where
         }
         return Ok(true);
     }
+    let kind = BistellarFlipKind::k2(D).inverse();
     let signature = flip_signature(
-        D,
+        kind,
         context.direction,
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     );
     check_flip_cycle(
         tds,
-        FlipCycleContext::new(
+        FlipCycleContext::from_validated_flip(
             signature,
-            D,
+            kind,
             context.direction,
             &context.removed_face_vertices,
             &context.inserted_face_vertices,
@@ -8260,7 +8632,7 @@ where
             );
         }
     };
-    let applied = match apply_delaunay_flip_dynamic(tds, D, &context) {
+    let applied = match apply_delaunay_flip_dynamic(tds, kind.k(), &context) {
         Ok(applied) => applied,
         Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
             diagnostics.record_inserted_simplex_skip(InsertedSimplexSkipSample {
@@ -8394,7 +8766,7 @@ where
 
     if would_immediately_reverse_last_flip::<D>(
         last_applied_flip.as_ref(),
-        D - 1,
+        BistellarFlipKind::k3(D).inverse(),
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     ) {
@@ -8405,17 +8777,18 @@ where
         }
         return Ok(true);
     }
+    let kind = BistellarFlipKind::k3(D).inverse();
     let signature = flip_signature(
-        D - 1,
+        kind,
         context.direction,
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     );
     check_flip_cycle(
         tds,
-        FlipCycleContext::new(
+        FlipCycleContext::from_validated_flip(
             signature,
-            D - 1,
+            kind,
             context.direction,
             &context.removed_face_vertices,
             &context.inserted_face_vertices,
@@ -8443,7 +8816,7 @@ where
             );
         }
     };
-    let applied = match apply_delaunay_flip_dynamic(tds, D - 1, &context) {
+    let applied = match apply_delaunay_flip_dynamic(tds, kind.k(), &context) {
         Ok(applied) => applied,
         Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
             diagnostics.record_inserted_simplex_skip(InsertedSimplexSkipSample {
@@ -8571,7 +8944,7 @@ where
 
     if would_immediately_reverse_last_flip::<D>(
         last_applied_flip.as_ref(),
-        2,
+        BistellarFlipKind::k2(D),
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     ) {
@@ -8583,17 +8956,18 @@ where
         return Ok(true);
     }
 
+    let kind = BistellarFlipKind::k2(D);
     let signature = flip_signature(
-        2,
+        kind,
         context.direction,
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
     );
     check_flip_cycle(
         tds,
-        FlipCycleContext::new(
+        FlipCycleContext::from_validated_flip(
             signature,
-            2,
+            kind,
             context.direction,
             &context.removed_face_vertices,
             &context.inserted_face_vertices,
@@ -9773,6 +10147,15 @@ mod tests {
                 .try_init();
         });
     }
+
+    fn sample_heuristic_vertex_context() -> DelaunayRepairHeuristicVertexContext {
+        DelaunayRepairHeuristicVertexContext {
+            index: 3,
+            vertex_uuid: Uuid::nil(),
+            coordinates: CoordinateValues::from([1.0, 2.0]),
+        }
+    }
+
     /// Builds a simplex-basis vertex coordinate for dimension-generic flip tests.
     fn unit_vector<const D: usize>(index: usize) -> [f64; D] {
         let mut coords = [0.0; D];
@@ -9991,7 +10374,7 @@ mod tests {
                     };
 
                     let last = LastAppliedFlip::from_applied_flip(&applied);
-                    assert_eq!(last.k_move, 2);
+                    assert_eq!(last.kind, BistellarFlipKind::k2($dim));
                     assert_eq!(
                         last.removed_face_vertices
                             .iter()
@@ -10020,7 +10403,8 @@ mod tests {
                     assert!(lines[0].contains(&format!("{removed_simplex:?}: vertices=")));
                     assert!(!lines[0].contains("missing-snapshot"));
 
-                    let mut placeholder = LastAppliedFlip::new(1, &[v1], &[v2]);
+                    let mut placeholder =
+                        LastAppliedFlip::from_validated_flip_faces(BistellarFlipKind::k2($dim), &[v1], &[v2]);
                     placeholder.removed_simplices.push(removed_simplex);
                     assert_eq!(
                         placeholder.removed_simplex_vertex_lines(),
@@ -10823,19 +11207,17 @@ mod tests {
                         &[FacetHandle::from_validated(external_simplex_key, 0)],
                     );
 
-                    assert!(
-                        matches!(
-                            result,
-                            Err(FlipError::InvalidFlipContext { ref reason })
-                                if matches!(
-                                    reason.as_ref(),
-                                    FlipContextError::ConflictingReplacementPeriodicFrameTranslation {
-                                        source_simplex_key,
-                                        target_simplex_index: 0,
-                                        ..
-                                    } if *source_simplex_key == external_simplex_key
-                                )
-                        ),
+                    assert_matches!(
+                        &result,
+                        Err(FlipError::InvalidFlipContext { reason })
+                            if matches!(
+                                reason.as_ref(),
+                                FlipContextError::ConflictingReplacementPeriodicFrameTranslation {
+                                    source_simplex_key,
+                                    target_simplex_index: 0,
+                                    ..
+                                } if *source_simplex_key == external_simplex_key
+                            ),
                         "conflicting periodic external facet translations should fail before mutation: {result:?}"
                     );
                 }
@@ -10854,18 +11236,16 @@ mod tests {
                         &[],
                     );
 
-                    assert!(
-                        matches!(
-                            result,
-                            Err(FlipError::InvalidFlipContext { ref reason })
-                                if matches!(
-                                    reason.as_ref(),
-                                    FlipContextError::ReplacementPeriodicOffsetCountMismatch {
-                                        simplex_count: 1,
-                                        offset_count: 0,
-                                    }
-                                )
-                        ),
+                    assert_matches!(
+                        &result,
+                        Err(FlipError::InvalidFlipContext { reason })
+                            if matches!(
+                                reason.as_ref(),
+                                FlipContextError::ReplacementPeriodicOffsetCountMismatch {
+                                    simplex_count: 1,
+                                    offset_count: 0,
+                                }
+                            ),
                         "replacement offset sidecar length mismatch should fail explicitly: {result:?}"
                     );
                 }
@@ -10890,17 +11270,15 @@ mod tests {
                         &[FacetHandle::from_validated(external_simplex_key, 0)],
                     );
 
-                    assert!(
-                        matches!(
-                            result,
-                            Err(FlipError::InvalidFlipContext { ref reason })
-                                if matches!(
-                                    reason.as_ref(),
-                                    FlipContextError::MissingReplacementPeriodicOffsets {
-                                        simplex_index: 0,
-                                    }
-                                )
-                        ),
+                    assert_matches!(
+                        &result,
+                        Err(FlipError::InvalidFlipContext { reason })
+                            if matches!(
+                                reason.as_ref(),
+                                FlipContextError::MissingReplacementPeriodicOffsets {
+                                    simplex_index: 0,
+                                }
+                            ),
                         "periodic external parity should require replacement offsets: {result:?}"
                     );
                 }
@@ -10927,19 +11305,17 @@ mod tests {
                         &[FacetHandle::from_validated(external_simplex_key, 0)],
                     );
 
-                    assert!(
-                        matches!(
-                            result,
-                            Err(FlipError::InvalidFlipContext { ref reason })
-                                if matches!(
-                                    reason.as_ref(),
-                                    FlipContextError::ReplacementPeriodicOffsetLengthMismatch {
-                                        simplex_index: 0,
-                                        offset_count: $dim,
-                                        vertex_count,
-                                    } if *vertex_count == $dim + 1
-                                )
-                        ),
+                    assert_matches!(
+                        &result,
+                        Err(FlipError::InvalidFlipContext { reason })
+                            if matches!(
+                                reason.as_ref(),
+                                FlipContextError::ReplacementPeriodicOffsetLengthMismatch {
+                                    simplex_index: 0,
+                                    offset_count: $dim,
+                                    vertex_count,
+                                } if *vertex_count == $dim + 1
+                            ),
                         "replacement periodic offsets should stay slot-aligned with vertices: {result:?}"
                     );
                 }
@@ -10963,11 +11339,9 @@ mod tests {
                         &[FacetHandle::from_validated(external_simplex_key, 0)],
                     );
 
-                    assert!(
-                        matches!(
-                            result,
-                            Err(FlipError::MissingSimplex { simplex_key }) if simplex_key == external_simplex_key
-                        ),
+                    assert_matches!(
+                        &result,
+                        Err(FlipError::MissingSimplex { simplex_key }) if *simplex_key == external_simplex_key,
                         "missing external simplex should fail explicitly: {result:?}"
                     );
                 }
@@ -11002,18 +11376,16 @@ mod tests {
                         .filter_map(|(idx, &vertex)| (idx != 1).then_some(vertex))
                         .collect::<Vec<_>>();
                     assert_eq!(order.iter().copied().collect::<Vec<_>>(), expected_order);
-                    assert!(
-                        matches!(
-                            facet_order(&source, source.len()),
-                            Err(FlipError::InvalidFlipContext { ref reason })
-                                if matches!(
-                                    reason.as_ref(),
-                                    FlipContextError::ReplacementFacetIndexOutOfRange {
-                                        facet_index,
-                                        vertex_count,
-                                    } if *facet_index == source.len() && *vertex_count == source.len()
-                                )
-                        ),
+                    assert_matches!(
+                        facet_order(&source, source.len()),
+                        Err(FlipError::InvalidFlipContext { reason })
+                            if matches!(
+                                reason.as_ref(),
+                                FlipContextError::ReplacementFacetIndexOutOfRange {
+                                    facet_index,
+                                    vertex_count,
+                                } if *facet_index == source.len() && *vertex_count == source.len()
+                            ),
                         "out-of-range facet indices should be rejected"
                     );
 
@@ -11026,11 +11398,9 @@ mod tests {
                     assert_eq!(shared_facet_indices(&source, &two_unique), None);
 
                     assert!(!facet_orders_coherent(&source, $dim, &neighbor, $dim).unwrap());
-                    assert!(
-                        matches!(
-                            facet_orders_coherent(&source, source.len(), &neighbor, $dim),
-                            Err(FlipError::InvalidFlipContext { .. })
-                        ),
+                    assert_matches!(
+                        facet_orders_coherent(&source, source.len(), &neighbor, $dim),
+                        Err(FlipError::InvalidFlipContext { .. }),
                         "invalid facet-order constraints should surface as invalid context"
                     );
 
@@ -11050,30 +11420,26 @@ mod tests {
                     assert!(set_flip_assignment(&mut assignments, 0, true).unwrap());
                     assert_eq!(assignments[0], Some(true));
                     assert!(!set_flip_assignment(&mut assignments, 0, true).unwrap());
-                    assert!(
-                        matches!(
-                            set_flip_assignment(&mut assignments, 0, false),
-                            Err(FlipError::InvalidFlipContext { ref reason })
-                                if matches!(
-                                    reason.as_ref(),
-                                    FlipContextError::ConflictingReplacementOrientationForSimplex {
-                                        simplex_index: 0,
-                                    }
-                                )
-                        ),
+                    assert_matches!(
+                        set_flip_assignment(&mut assignments, 0, false),
+                        Err(FlipError::InvalidFlipContext { reason })
+                            if matches!(
+                                reason.as_ref(),
+                                FlipContextError::ConflictingReplacementOrientationForSimplex {
+                                    simplex_index: 0,
+                                }
+                            ),
                         "conflicting parity assignments should fail"
                     );
-                    assert!(
-                        matches!(
-                            set_flip_assignment(&mut assignments, 1, false),
-                            Err(FlipError::InvalidFlipContext { reason })
-                                if matches!(
-                                    reason.as_ref(),
-                                    FlipContextError::ReplacementOrientationIndexOutOfRange {
-                                        simplex_index: 1,
-                                    }
-                                )
-                        ),
+                    assert_matches!(
+                        set_flip_assignment(&mut assignments, 1, false),
+                        Err(FlipError::InvalidFlipContext { reason })
+                            if matches!(
+                                reason.as_ref(),
+                                FlipContextError::ReplacementOrientationIndexOutOfRange {
+                                    simplex_index: 1,
+                                }
+                            ),
                         "out-of-range parity assignments should fail"
                     );
                 }
@@ -11154,12 +11520,10 @@ mod tests {
                     negative_vertices.swap(1, 2);
                     let negative = vertex_key_buffer(&negative_vertices);
                     let negative_result = validate_replacement_orientation(&tds, &[negative]);
-                    assert!(
-                        matches!(
-                            negative_result,
-                            Err(FlipError::NegativeOrientation { ref simplex_vertices })
-                                if simplex_vertices == &negative_vertices
-                        ),
+                    assert_matches!(
+                        &negative_result,
+                        Err(FlipError::NegativeOrientation { simplex_vertices })
+                            if simplex_vertices == &negative_vertices,
                         "negative replacement simplices should fail before mutation: {negative_result:?}"
                     );
 
@@ -11167,8 +11531,9 @@ mod tests {
                     degenerate_vertices[$dim] = v_collinear;
                     let degenerate = vertex_key_buffer(&degenerate_vertices);
                     let degenerate_result = validate_replacement_orientation(&tds, &[degenerate]);
-                    assert!(
-                        matches!(degenerate_result, Err(FlipError::DegenerateSimplex)),
+                    assert_matches!(
+                        &degenerate_result,
+                        Err(FlipError::DegenerateSimplex),
                         "degenerate replacement simplices should fail before mutation: {degenerate_result:?}"
                     );
                 }
@@ -11352,17 +11717,17 @@ mod tests {
     fn test_repair_diagnostics_cycle_detection_records_repeats() {
         init_tracing();
         let mut diagnostics = RepairDiagnostics::default();
-        diagnostics.record_flip_signature(10);
-        diagnostics.record_flip_signature(20);
+        diagnostics.record_flip_signature(FlipSignature(10));
+        diagnostics.record_flip_signature(FlipSignature(20));
         assert_eq!(diagnostics.cycle_detections, 0);
 
-        diagnostics.record_flip_signature(10);
+        diagnostics.record_flip_signature(FlipSignature(10));
         assert_eq!(diagnostics.cycle_detections, 1);
-        assert_eq!(diagnostics.cycle_samples, vec![10]);
+        assert_eq!(diagnostics.cycle_samples, vec![FlipSignature(10)]);
 
-        diagnostics.record_flip_signature(10);
+        diagnostics.record_flip_signature(FlipSignature(10));
         assert_eq!(diagnostics.cycle_detections, 2);
-        assert_eq!(diagnostics.cycle_samples, vec![10]);
+        assert_eq!(diagnostics.cycle_samples, vec![FlipSignature(10)]);
     }
 
     #[test]
@@ -14342,10 +14707,8 @@ mod tests {
     }
 
     fn sample_tds_validation_failure() -> TdsValidationFailure {
-        TdsValidationFailure::InvalidNeighbors {
-            reason: NeighborValidationError::Other {
-                message: "synthetic neighbor mismatch".to_string(),
-            },
+        TdsValidationFailure::InconsistentDataStructure {
+            message: "synthetic neighbor mismatch".to_string(),
         }
     }
 
@@ -14430,6 +14793,46 @@ mod tests {
         );
     }
 
+    fn assert_hull_extension_failure_kind(
+        source: &HullExtensionReason,
+        expected: FlipNeighborHullExtensionFailureKind,
+        expected_display: &str,
+    ) {
+        let hull_kind = FlipNeighborHullExtensionFailureKind::from(source);
+        assert_eq!(hull_kind, expected);
+        assert_eq!(hull_kind.to_string(), expected_display);
+    }
+
+    #[test]
+    fn test_flip_neighbor_hull_extension_failure_kind_conversions() {
+        assert_hull_extension_failure_kind(
+            &HullExtensionReason::BoundaryEdgeSplitFacetCount {
+                expected: 2,
+                actual: 1,
+            },
+            FlipNeighborHullExtensionFailureKind::BoundaryEdgeSplitFacetCount,
+            "boundary edge split facet count",
+        );
+
+        assert_hull_extension_failure_kind(
+            &HullExtensionReason::MultipleBoundaryEdgeSplitFacets,
+            FlipNeighborHullExtensionFailureKind::MultipleBoundaryEdgeSplitFacets,
+            "multiple boundary edge split facets",
+        );
+
+        assert_hull_extension_failure_kind(
+            &HullExtensionReason::DisconnectedVisiblePatch {
+                boundary_ridges: 1,
+                ridge_fans: 0,
+                components: 2,
+                boundary_components: 2,
+                boundary_subface_nonmanifold: 0,
+            },
+            FlipNeighborHullExtensionFailureKind::DisconnectedVisiblePatch,
+            "disconnected visible patch",
+        );
+    }
+
     #[test]
     fn test_flip_neighbor_conversion_kinds_cover_insertion_suberrors() {
         let cavity_kind = FlipNeighborCavityFailureKind::from(
@@ -14454,16 +14857,6 @@ mod tests {
             FlipNeighborCavityFailureKind::UnsupportedDegenerateLocation
         );
         assert_eq!(cavity_kind.to_string(), "unsupported degenerate location");
-
-        let hull_kind =
-            FlipNeighborHullExtensionFailureKind::from(&HullExtensionReason::InvalidPatch {
-                details: "non-manifold visible patch".to_string(),
-            });
-        assert_eq!(
-            hull_kind,
-            FlipNeighborHullExtensionFailureKind::InvalidPatch
-        );
-        assert_eq!(hull_kind.to_string(), "invalid patch");
 
         let validation_kind = FlipNeighborDelaunayValidationFailureKind::from(
             &DelaunayTriangulationValidationError::RepairOperationFailed {
@@ -14574,13 +14967,13 @@ mod tests {
     #[test]
     fn test_delaunay_repair_error_partial_eq() {
         let post_test = DelaunayRepairError::PostconditionFailed {
-            message: "test".to_string(),
+            reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
         };
         let post_test_copy = DelaunayRepairError::PostconditionFailed {
-            message: "test".to_string(),
+            reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
         };
         let post_other = DelaunayRepairError::PostconditionFailed {
-            message: "other".to_string(),
+            reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 2 }),
         };
         assert_eq!(post_test, post_test_copy);
         assert_ne!(post_test, post_other);
@@ -14607,13 +15000,31 @@ mod tests {
         assert_ne!(flip_err, flip_other);
 
         let canonicalization_err = DelaunayRepairError::OrientationCanonicalizationFailed {
-            message: "test".to_string(),
+            reason: Box::new(
+                DelaunayRepairOrientationCanonicalizationFailure::AfterFlipRepair {
+                    source: Box::new(InsertionError::DuplicateCoordinates {
+                        coordinates: CoordinateValues::from([0.0, 0.0]),
+                    }),
+                },
+            ),
         };
         let canonicalization_err_copy = DelaunayRepairError::OrientationCanonicalizationFailed {
-            message: "test".to_string(),
+            reason: Box::new(
+                DelaunayRepairOrientationCanonicalizationFailure::AfterFlipRepair {
+                    source: Box::new(InsertionError::DuplicateCoordinates {
+                        coordinates: CoordinateValues::from([0.0, 0.0]),
+                    }),
+                },
+            ),
         };
         let canonicalization_other = DelaunayRepairError::OrientationCanonicalizationFailed {
-            message: "other".to_string(),
+            reason: Box::new(
+                DelaunayRepairOrientationCanonicalizationFailure::AfterFlipRepair {
+                    source: Box::new(InsertionError::DuplicateCoordinates {
+                        coordinates: CoordinateValues::from([1.0, 1.0]),
+                    }),
+                },
+            ),
         };
         assert_eq!(canonicalization_err, canonicalization_err_copy);
         assert_ne!(canonicalization_err, canonicalization_other);
@@ -14637,6 +15048,197 @@ mod tests {
     }
 
     #[test]
+    fn test_postcondition_failure_display_covers_variants() {
+        let simplex = SimplexKey::from(KeyData::from_ffi(91));
+        let v0 = VertexKey::from(KeyData::from_ffi(101));
+        let v1 = VertexKey::from(KeyData::from_ffi(102));
+        let v2 = VertexKey::from(KeyData::from_ffi(103));
+        let facet = FacetHandle::from_validated(simplex, 0);
+        let ridge = RidgeHandle::from_validated(simplex, 0, 1);
+        let edge = EdgeKey::from_validated_endpoints(v0, v1);
+        let triangle = TriangleHandle::try_new(v0, v1, v2).unwrap();
+
+        assert_eq!(
+            DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 2 }.to_string(),
+            "repair pass disconnected the triangulation (2 simplices remain); neighbor wiring is incomplete"
+        );
+
+        let k2 = DelaunayRepairPostconditionFailure::LocalK2Violation {
+            facet,
+            debug_details: Some("debug facet snapshot".to_string()),
+        }
+        .to_string();
+        assert!(k2.contains("local k=2 violation remains after repair"));
+        assert!(k2.contains("debug facet snapshot"));
+
+        let k3 = DelaunayRepairPostconditionFailure::LocalK3Violation { ridge }.to_string();
+        assert!(k3.contains("local k=3 violation remains after repair"));
+
+        let inverse_k2 =
+            DelaunayRepairPostconditionFailure::LocalInverseK2Violation { edge }.to_string();
+        assert!(inverse_k2.contains("local inverse k=2 flip remains applicable after repair"));
+
+        let inverse_k3 =
+            DelaunayRepairPostconditionFailure::LocalInverseK3Violation { triangle }.to_string();
+        assert!(inverse_k3.contains("local inverse k=3 flip remains applicable after repair"));
+    }
+
+    #[test]
+    fn test_postcondition_failure_exposes_source() {
+        let reason = DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 };
+        let repair = DelaunayRepairError::PostconditionFailed {
+            reason: Box::new(reason.clone()),
+        };
+        let source = repair
+            .source()
+            .and_then(|source| source.downcast_ref::<Box<DelaunayRepairPostconditionFailure>>());
+        assert_eq!(source.map(Box::as_ref), Some(&reason));
+
+        let neighbor_repair = FlipNeighborRepairFailure::PostconditionFailed { reason };
+        assert_matches!(
+            std::error::Error::source(&neighbor_repair)
+                .and_then(|source| source.downcast_ref::<DelaunayRepairPostconditionFailure>()),
+            Some(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 })
+        );
+    }
+
+    #[test]
+    fn test_heuristic_vertex_context_display() {
+        let context = sample_heuristic_vertex_context().to_string();
+
+        assert!(context.contains("idx=3"));
+        assert!(context.contains("uuid=00000000-0000-0000-0000-000000000000"));
+        assert!(context.contains("coords=[1.0, 2.0]"));
+    }
+
+    #[test]
+    fn test_orientation_failure_kind_conversion() {
+        let orientation_failure =
+            DelaunayRepairOrientationCanonicalizationFailure::AfterFlipRepair {
+                source: Box::new(InsertionError::DuplicateCoordinates {
+                    coordinates: CoordinateValues::from([0.0, 0.0]),
+                }),
+            };
+
+        assert_eq!(
+            DelaunayRepairOrientationCanonicalizationFailureKind::from(&orientation_failure),
+            DelaunayRepairOrientationCanonicalizationFailureKind::AfterFlipRepair {
+                source_kind: InsertionErrorKind::DuplicateCoordinates,
+            },
+        );
+
+        let orientation_repair = DelaunayRepairError::OrientationCanonicalizationFailed {
+            reason: Box::new(orientation_failure),
+        };
+        assert_matches!(
+            FlipNeighborRepairFailure::from(orientation_repair),
+            FlipNeighborRepairFailure::OrientationCanonicalizationFailed {
+                reason: DelaunayRepairOrientationCanonicalizationFailureKind::AfterFlipRepair {
+                    source_kind: InsertionErrorKind::DuplicateCoordinates
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn test_heuristic_rebuild_failure_kind_conversion() {
+        let insertion_failure = InsertionError::DuplicateCoordinates {
+            coordinates: CoordinateValues::from([0.0, 0.0]),
+        };
+        let repair_source = || DelaunayRepairError::from(FlipError::DegenerateSimplex);
+        let vertex = sample_heuristic_vertex_context();
+        let heuristic_cases = [
+            (
+                DelaunayRepairHeuristicRebuildFailure::RecursionDepthExceeded { max_depth: 1 },
+                DelaunayRepairHeuristicRebuildFailureKind::RecursionDepthExceeded,
+            ),
+            (
+                DelaunayRepairHeuristicRebuildFailure::FallbackChainFailed {
+                    primary: Box::new(repair_source()),
+                    robust: Box::new(repair_source()),
+                    heuristic: Box::new(DelaunayRepairHeuristicRebuildFailure::NoAttempts),
+                },
+                DelaunayRepairHeuristicRebuildFailureKind::FallbackChainFailed,
+            ),
+            (
+                DelaunayRepairHeuristicRebuildFailure::UnexpectedRepairFailure {
+                    source: Box::new(repair_source()),
+                },
+                DelaunayRepairHeuristicRebuildFailureKind::UnexpectedRepairFailure,
+            ),
+            (
+                DelaunayRepairHeuristicRebuildFailure::NoAttempts,
+                DelaunayRepairHeuristicRebuildFailureKind::NoAttempts,
+            ),
+            (
+                DelaunayRepairHeuristicRebuildFailure::InsertionFailed {
+                    vertex: vertex.clone(),
+                    source: Box::new(insertion_failure.clone()),
+                },
+                DelaunayRepairHeuristicRebuildFailureKind::InsertionFailed,
+            ),
+            (
+                DelaunayRepairHeuristicRebuildFailure::RepairFailed {
+                    vertex: vertex.clone(),
+                    source: Box::new(insertion_failure.clone()),
+                },
+                DelaunayRepairHeuristicRebuildFailureKind::RepairFailed,
+            ),
+            (
+                DelaunayRepairHeuristicRebuildFailure::DelaunayCheckFailed {
+                    vertex: vertex.clone(),
+                    source: Box::new(insertion_failure.clone()),
+                },
+                DelaunayRepairHeuristicRebuildFailureKind::DelaunayCheckFailed,
+            ),
+            (
+                DelaunayRepairHeuristicRebuildFailure::SkippedVertex {
+                    vertex,
+                    source: Box::new(insertion_failure),
+                },
+                DelaunayRepairHeuristicRebuildFailureKind::SkippedVertex,
+            ),
+            (
+                DelaunayRepairHeuristicRebuildFailure::AttemptFailed {
+                    attempt: 1,
+                    max_attempts: 2,
+                    shuffle_seed: 3,
+                    perturbation_seed: 4,
+                    source: Box::new(repair_source()),
+                },
+                DelaunayRepairHeuristicRebuildFailureKind::AttemptFailed,
+            ),
+            (
+                DelaunayRepairHeuristicRebuildFailure::ExhaustedAttempts {
+                    attempts: 2,
+                    last_failure: Box::new(DelaunayRepairHeuristicRebuildFailure::NoAttempts),
+                },
+                DelaunayRepairHeuristicRebuildFailureKind::ExhaustedAttempts,
+            ),
+        ];
+
+        for (failure, expected_kind) in heuristic_cases {
+            assert_eq!(
+                DelaunayRepairHeuristicRebuildFailureKind::from(&failure),
+                expected_kind,
+            );
+        }
+    }
+
+    #[test]
+    fn test_flip_neighbor_repair_failure_conversion() {
+        let heuristic_repair = DelaunayRepairError::HeuristicRebuildFailed {
+            reason: Box::new(DelaunayRepairHeuristicRebuildFailure::NoAttempts),
+        };
+        assert_matches!(
+            FlipNeighborRepairFailure::from(heuristic_repair),
+            FlipNeighborRepairFailure::HeuristicRebuildFailed {
+                reason: DelaunayRepairHeuristicRebuildFailureKind::NoAttempts
+            }
+        );
+    }
+
+    #[test]
     fn test_delaunay_repair_error_boxes_large_flip_sources() {
         assert!(
             std::mem::size_of::<DelaunayRepairError>() <= std::mem::size_of::<FlipError>(),
@@ -14654,6 +15256,24 @@ mod tests {
             panic!("expected boxed flip source");
         };
         assert_matches!(source.as_ref(), FlipError::DegenerateSimplex);
+    }
+
+    #[test]
+    fn test_heuristic_exhausted_attempts_exposes_last_failure_source() {
+        let exhausted = DelaunayRepairHeuristicRebuildFailure::ExhaustedAttempts {
+            attempts: 6,
+            last_failure: Box::new(DelaunayRepairHeuristicRebuildFailure::NoAttempts),
+        };
+
+        let source = exhausted
+            .source()
+            .expect("exhausted attempts should expose the last failure source")
+            .downcast_ref::<Box<DelaunayRepairHeuristicRebuildFailure>>()
+            .expect("source should remain a typed boxed heuristic failure");
+        assert_matches!(
+            source.as_ref(),
+            DelaunayRepairHeuristicRebuildFailure::NoAttempts
+        );
     }
 
     #[test]

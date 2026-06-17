@@ -57,8 +57,8 @@ use crate::core::algorithms::flips::{
     repair_delaunay_with_flips_k2_k3,
 };
 use crate::core::algorithms::incremental_insertion::{
-    CavityFillingError, HullExtensionReason, InsertionError, SpatialIndexConstructionFailure,
-    TdsConstructionFailure,
+    CavityFillingError, HullExtensionReason, InsertionError, InsertionTopologyValidationContext,
+    SpatialIndexConstructionFailure, TdsConstructionFailure,
 };
 use crate::core::algorithms::locate::{ConflictError, LocateError};
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
@@ -66,7 +66,9 @@ use crate::core::collections::{
     FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SecureHashMap, SimplexKeyBuffer,
     SmallBuffer,
 };
-use crate::core::construction::TriangulationConstructionError;
+use crate::core::construction::{
+    FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
+};
 use crate::core::insertion::record_duplicate_detection_metrics;
 use crate::core::operations::{
     DelaunayInsertionState, InsertionOutcome, InsertionResult, InsertionStatistics,
@@ -396,6 +398,7 @@ pub enum DelaunayConstructionFailure {
     #[error("hull extension failed during insertion: {reason}")]
     InsertionHullExtension {
         /// Structured hull-extension failure reason.
+        #[source]
         reason: HullExtensionReason,
     },
 
@@ -408,10 +411,10 @@ pub enum DelaunayConstructionFailure {
     },
 
     /// Level 3 topology validation failed during insertion.
-    #[error("topology validation failed during insertion: {message}: {source}")]
+    #[error("topology validation failed during insertion: {context}: {source}")]
     InsertionTopologyValidation {
         /// High-level insertion context.
-        message: String,
+        context: InsertionTopologyValidationContext,
         /// Underlying topology validation error.
         #[source]
         source: TriangulationValidationError,
@@ -429,18 +432,20 @@ pub enum DelaunayConstructionFailure {
     },
 
     /// Final topology validation failed after construction.
-    #[error("final topology validation failed after construction: {message}: {source}")]
+    #[error("final topology validation failed after construction: {context}: {source}")]
     FinalTopologyValidation {
-        /// Validation failure detail.
-        message: String,
+        /// Finalization phase that produced the validation failure.
+        context: FinalTopologyValidationContext,
         /// Underlying validation error.
         #[source]
         source: crate::core::tds::InvariantErrorSummary,
     },
 
     /// Final Delaunay-property validation failed after construction.
-    #[error("final Delaunay validation failed after construction: {source}")]
+    #[error("final Delaunay validation failed after construction: {context}: {source}")]
     FinalDelaunayValidation {
+        /// Finalization phase that produced the validation failure.
+        context: FinalDelaunayValidationContext,
         /// Underlying Delaunay validation error.
         #[source]
         source: DelaunayTriangulationValidationError,
@@ -502,8 +507,8 @@ impl From<TriangulationConstructionError> for DelaunayConstructionFailure {
             TriangulationConstructionError::InsertionDelaunayValidation { source } => {
                 Self::InsertionDelaunayValidation { source }
             }
-            TriangulationConstructionError::InsertionTopologyValidation { message, source } => {
-                Self::InsertionTopologyValidation { message, source }
+            TriangulationConstructionError::InsertionTopologyValidation { context, source } => {
+                Self::InsertionTopologyValidation { context, source }
             }
             TriangulationConstructionError::LocalRepairBudgetExceeded {
                 max_simplices_removed,
@@ -512,8 +517,11 @@ impl From<TriangulationConstructionError> for DelaunayConstructionFailure {
                 max_simplices_removed,
                 attempted,
             },
-            TriangulationConstructionError::FinalTopologyValidation { message, source } => {
-                Self::FinalTopologyValidation { message, source }
+            TriangulationConstructionError::FinalTopologyValidation { context, source } => {
+                Self::FinalTopologyValidation { context, source }
+            }
+            TriangulationConstructionError::FinalDelaunayValidation { context, source } => {
+                Self::FinalDelaunayValidation { context, source }
             }
         }
     }
@@ -2894,7 +2902,10 @@ where
         );
         delaunay_result.map_err(|source| {
             DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::FinalDelaunayValidation { source },
+                DelaunayConstructionFailure::FinalDelaunayValidation {
+                    context: FinalDelaunayValidationContext::ConstructionFinalize,
+                    source,
+                },
             )
         })?;
 
@@ -2946,7 +2957,10 @@ where
         if let Err(err) = delaunay_result {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                 error: DelaunayTriangulationConstructionError::Triangulation(
-                    DelaunayConstructionFailure::FinalDelaunayValidation { source: err },
+                    DelaunayConstructionFailure::FinalDelaunayValidation {
+                        context: FinalDelaunayValidationContext::ConstructionFinalize,
+                        source: err,
+                    },
                 ),
                 statistics: stats,
             });
@@ -3150,7 +3164,7 @@ where
 
         // During batch construction, use suspicion-driven validation instead of
         // per-insertion validation (see _with_construction_statistics variant for
-        // rationale: O(n²) avoidance + post-construction catch-all).
+        // rationale: O(n²) avoidance + post-construction validation fallback).
         //
         // Exception: PLManifoldStrict requires per-insertion vertex-link validation,
         // so we must use ValidationPolicy::Always to satisfy that guarantee.
@@ -3922,7 +3936,7 @@ where
         );
         if let Err(err) = validation_result {
             return Err(TriangulationConstructionError::FinalTopologyValidation {
-                message: "topology validation failed after construction".to_string(),
+                context: FinalTopologyValidationContext::ConstructionFinalize,
                 source: err.into(),
             }
             .into());
@@ -4790,8 +4804,8 @@ where
             InsertionError::DelaunayValidationFailed { source } => {
                 TriangulationConstructionError::InsertionDelaunayValidation { source }
             }
-            InsertionError::TopologyValidationFailed { message, source } => {
-                TriangulationConstructionError::InsertionTopologyValidation { message, source }
+            InsertionError::TopologyValidationFailed { context, source } => {
+                TriangulationConstructionError::InsertionTopologyValidation { context, source }
             }
             InsertionError::MaxSimplicesRemovedExceeded {
                 max_simplices_removed,
@@ -5016,7 +5030,8 @@ fn construction_retry_trace_enabled() -> bool {
 mod tests {
     use super::*;
     use crate::core::algorithms::flips::{
-        DelaunayRepairDiagnostics, DelaunayRepairVerificationContext, FlipContextError,
+        DelaunayRepairDiagnostics, DelaunayRepairOrientationCanonicalizationFailure,
+        DelaunayRepairPostconditionFailure, DelaunayRepairVerificationContext, FlipContextError,
         FlipPredicateError, FlipPredicateOperation, RepairQueueOrder,
     };
     use crate::core::algorithms::incremental_insertion::{
@@ -5041,7 +5056,7 @@ mod tests {
     use crate::geometry::util::RandomPointGenerationError;
     use crate::repair::DelaunayRepairPolicy;
     use crate::topology::characteristics::euler::TopologyClassification;
-    use crate::validation::DelaunayTriangulationValidationError;
+    use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
     use slotmap::KeyData;
     use std::assert_matches;
     use std::num::NonZeroUsize;
@@ -5050,6 +5065,17 @@ mod tests {
     use uuid::Uuid;
 
     type TestDelaunay<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
+
+    fn synthetic_delaunay_verification_error() -> DelaunayTriangulationValidationError {
+        DelaunayTriangulationValidationError::VerificationFailed {
+            source: DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
+                reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
+                    simplex_count: 1,
+                }),
+            })
+            .into(),
+        }
+    }
 
     #[test]
     fn test_random_point_generation_error_variant_preserved() {
@@ -6787,7 +6813,7 @@ mod tests {
         assert!(TestDelaunay::<4>::can_soft_fail(&nonconvergent));
 
         let postcondition = DelaunayRepairError::PostconditionFailed {
-            message: "unresolved facet".to_string(),
+            reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
         };
         assert!(TestDelaunay::<4>::can_soft_fail(&postcondition));
 
@@ -6811,7 +6837,13 @@ mod tests {
         assert!(!TestDelaunay::<4>::can_soft_fail(&verification_error));
 
         let canonicalization_error = DelaunayRepairError::OrientationCanonicalizationFailed {
-            message: "after flip repair: broken orientation".to_string(),
+            reason: Box::new(
+                DelaunayRepairOrientationCanonicalizationFailure::AfterFlipRepair {
+                    source: Box::new(InsertionError::DuplicateCoordinates {
+                        coordinates: CoordinateValues::from([0.0, 0.0, 0.0]),
+                    }),
+                },
+            ),
         };
         assert!(!TestDelaunay::<4>::can_soft_fail(&canonicalization_error));
 
@@ -6983,7 +7015,7 @@ mod tests {
     #[test]
     fn test_map_orientation_canonicalization_error_isolated_vertex_is_internal() {
         let error = InsertionError::TopologyValidationFailed {
-            message: "test".to_string(),
+            context: InsertionTopologyValidationContext::PostInsertion,
             source: TriangulationValidationError::IsolatedVertex {
                 vertex_key: VertexKey::from(KeyData::from_ffi(1)),
                 vertex_uuid: Uuid::nil(),
@@ -7002,7 +7034,7 @@ mod tests {
     #[test]
     fn test_map_orientation_canonicalization_error_topology_validation_failed_is_internal() {
         let error = InsertionError::TopologyValidationFailed {
-            message: "post-insertion".to_string(),
+            context: InsertionTopologyValidationContext::PostInsertion,
             source: TriangulationValidationError::EulerCharacteristicMismatch {
                 computed: 3,
                 expected: 2,
@@ -7086,13 +7118,13 @@ mod tests {
                 reason: HullExtensionReason::NoVisibleFacets,
             },
             InsertionError::DelaunayValidationFailed {
-                source: DelaunayTriangulationValidationError::VerificationFailed {
-                    message: "test".to_string(),
-                },
+                source: synthetic_delaunay_verification_error(),
             },
             InsertionError::DelaunayRepairFailed {
                 source: Box::new(DelaunayRepairError::PostconditionFailed {
-                    message: "test".to_string(),
+                    reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
+                        simplex_count: 1,
+                    }),
                 }),
                 context: DelaunayRepairFailureContext::LocalRepair,
             },
@@ -7259,9 +7291,7 @@ mod tests {
         );
 
         let delaunay = InsertionError::DelaunayValidationFailed {
-            source: DelaunayTriangulationValidationError::VerificationFailed {
-                message: "test".to_string(),
-            },
+            source: synthetic_delaunay_verification_error(),
         };
         let mapped = TestDelaunay::<3>::map_insertion_error(delaunay);
         assert_matches!(
@@ -7270,7 +7300,7 @@ mod tests {
         );
 
         let topology = InsertionError::TopologyValidationFailed {
-            message: "test".to_string(),
+            context: InsertionTopologyValidationContext::PostInsertion,
             source: TriangulationValidationError::EulerCharacteristicMismatch {
                 computed: 3,
                 expected: 2,
@@ -7315,11 +7345,13 @@ mod tests {
             }
         );
 
+        let source = std::error::Error::source(&failure)
+            .and_then(|source| source.downcast_ref::<HullExtensionReason>());
+        assert_eq!(source, Some(&HullExtensionReason::NoVisibleFacets));
+
         let failure = DelaunayConstructionFailure::from(
             TriangulationConstructionError::InsertionDelaunayValidation {
-                source: DelaunayTriangulationValidationError::VerificationFailed {
-                    message: "delaunay check".to_string(),
-                },
+                source: synthetic_delaunay_verification_error(),
             },
         );
         assert_matches!(
@@ -7332,7 +7364,7 @@ mod tests {
         let vertex_key = VertexKey::from(KeyData::from_ffi(2));
         let failure = DelaunayConstructionFailure::from(
             TriangulationConstructionError::InsertionTopologyValidation {
-                message: "post-insertion".to_string(),
+                context: InsertionTopologyValidationContext::PostInsertion,
                 source: TriangulationValidationError::IsolatedVertex {
                     vertex_key,
                     vertex_uuid: Uuid::nil(),
@@ -7342,12 +7374,12 @@ mod tests {
         assert_matches!(
             failure,
             DelaunayConstructionFailure::InsertionTopologyValidation {
-                message,
+                context,
                 source: TriangulationValidationError::IsolatedVertex {
                     vertex_key: preserved_key,
                     ..
                 },
-            } if message == "post-insertion" && preserved_key == vertex_key
+            } if context == InsertionTopologyValidationContext::PostInsertion && preserved_key == vertex_key
         );
     }
 
@@ -7530,7 +7562,7 @@ mod tests {
         let vertex_key = VertexKey::from(KeyData::from_ffi(1));
         let insertion_err: DelaunayTriangulationConstructionError =
             TriangulationConstructionError::InsertionTopologyValidation {
-                message: "test".to_string(),
+                context: InsertionTopologyValidationContext::PostInsertion,
                 source: TriangulationValidationError::IsolatedVertex {
                     vertex_key,
                     vertex_uuid: Uuid::nil(),
@@ -7539,7 +7571,7 @@ mod tests {
             .into();
         let final_err: DelaunayTriangulationConstructionError =
             TriangulationConstructionError::FinalTopologyValidation {
-                message: "test".to_string(),
+                context: FinalTopologyValidationContext::ConstructionFinalize,
                 source: InvariantError::Triangulation(
                     TriangulationValidationError::IsolatedVertex {
                         vertex_key,
@@ -7551,9 +7583,8 @@ mod tests {
             .into();
         let final_delaunay_err = DelaunayTriangulationConstructionError::Triangulation(
             DelaunayConstructionFailure::FinalDelaunayValidation {
-                source: DelaunayTriangulationValidationError::VerificationFailed {
-                    message: "final Level 4 check failed".to_string(),
-                },
+                context: FinalDelaunayValidationContext::ConstructionFinalize,
+                source: synthetic_delaunay_verification_error(),
             },
         );
 

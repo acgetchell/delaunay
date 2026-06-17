@@ -13,7 +13,9 @@
 #[cfg(test)]
 use crate::construction::test_hooks;
 use crate::core::algorithms::flips::{
-    DelaunayRepairError, DelaunayRepairRun, DelaunayRepairStats, repair_delaunay_with_flips_k2_k3,
+    DelaunayRepairError, DelaunayRepairHeuristicRebuildFailure,
+    DelaunayRepairHeuristicVertexContext, DelaunayRepairOrientationCanonicalizationFailure,
+    DelaunayRepairRun, DelaunayRepairStats, repair_delaunay_with_flips_k2_k3,
     repair_delaunay_with_flips_k2_k3_run,
 };
 use crate::core::collections::FastHasher;
@@ -24,7 +26,10 @@ use crate::core::util::stable_hash_u64_slice;
 use crate::core::validation::TopologyGuarantee;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{ExactPredicates, Kernel, RobustKernel};
+use crate::geometry::traits::coordinate::CoordinateValues;
 use crate::triangulation::DelaunayTriangulation;
+#[cfg(test)]
+use crate::validation::DelaunayTriangulationCandidate;
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use std::{
@@ -59,8 +64,10 @@ impl HeuristicRebuildRecursionGuard {
         });
         if prior_depth >= MAX_HEURISTIC_REBUILD_DEPTH {
             return Err(DelaunayRepairError::HeuristicRebuildFailed {
-                message: format!(
-                    "heuristic rebuild recursion depth exceeded {MAX_HEURISTIC_REBUILD_DEPTH}"
+                reason: Box::new(
+                    DelaunayRepairHeuristicRebuildFailure::RecursionDepthExceeded {
+                        max_depth: MAX_HEURISTIC_REBUILD_DEPTH,
+                    },
                 ),
             });
         }
@@ -341,8 +348,12 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`DelaunayRepairError`] if the repair fails to converge, an underlying
-    /// flip operation fails, or post-repair orientation canonicalization fails.
+    /// Returns [`DelaunayRepairError::NonConvergent`] if the flip budget is
+    /// exhausted, [`DelaunayRepairError::PostconditionFailed`] if repair
+    /// finishes with a remaining violation or disconnected triangulation,
+    /// [`DelaunayRepairError::OrientationCanonicalizationFailed`] if the final
+    /// positive-orientation pass fails, or another [`DelaunayRepairError`]
+    /// variant for lower-level flip, topology, or predicate failures.
     ///
     /// # Examples
     ///
@@ -427,7 +438,11 @@ where
         self.tri
             .normalize_and_promote_positive_orientation()
             .map_err(|e| DelaunayRepairError::OrientationCanonicalizationFailed {
-                message: format!("after flip repair: {e}"),
+                reason: Box::new(
+                    DelaunayRepairOrientationCanonicalizationFailure::AfterFlipRepair {
+                        source: Box::new(e),
+                    },
+                ),
             })
     }
 
@@ -555,9 +570,13 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`DelaunayRepairError`] if the flip-based repair fails, the heuristic
-    /// rebuild fallback cannot construct a valid triangulation, or post-repair
-    /// orientation canonicalization fails.
+    /// Returns [`DelaunayRepairError::HeuristicRebuildFailed`] when the
+    /// deterministic rebuild fallback cannot replay all vertices into a valid
+    /// triangulation, [`DelaunayRepairError::PostconditionFailed`] when a repair
+    /// pass leaves a violation, [`DelaunayRepairError::OrientationCanonicalizationFailed`]
+    /// when final positive-orientation promotion fails, or another
+    /// [`DelaunayRepairError`] variant for lower-level flip, topology, or
+    /// predicate failures.
     ///
     /// # Examples
     ///
@@ -634,15 +653,23 @@ where
                         let (candidate, stats, used_seeds) = self
                             .rebuild_with_heuristic(seeds, max_flips)
                             .map_err(|heuristic_err| {
-                                let heuristic_message = match heuristic_err {
-                                    DelaunayRepairError::HeuristicRebuildFailed { message } => {
-                                        message
+                                let heuristic = match heuristic_err {
+                                    DelaunayRepairError::HeuristicRebuildFailed { reason } => {
+                                        reason
                                     }
-                                    other => other.to_string(),
+                                    other => Box::new(
+                                        DelaunayRepairHeuristicRebuildFailure::UnexpectedRepairFailure {
+                                            source: Box::new(other),
+                                        },
+                                    ),
                                 };
                                 DelaunayRepairError::HeuristicRebuildFailed {
-                                    message: format!(
-                                        "primary repair failed ({primary_err}); robust fallback failed ({robust_err}); {heuristic_message}"
+                                    reason: Box::new(
+                                        DelaunayRepairHeuristicRebuildFailure::FallbackChainFailed {
+                                            primary: Box::new(primary_err.clone()),
+                                            robust: Box::new(robust_err),
+                                            heuristic,
+                                        },
                                     ),
                                 }
                             })?;
@@ -674,7 +701,7 @@ where
     {
         let base_vertices = self.collect_vertices_for_rebuild();
 
-        let mut last_error: Option<String> = None;
+        let mut last_error: Option<DelaunayRepairHeuristicRebuildFailure> = None;
 
         for attempt in 0..HEURISTIC_REBUILD_ATTEMPTS {
             let seeds = if attempt == 0 {
@@ -734,6 +761,11 @@ where
                 for (idx, vertex) in vertices.into_iter().enumerate() {
                     let uuid = vertex.uuid();
                     let coords = *vertex.point().coords();
+                    let vertex_context = DelaunayRepairHeuristicVertexContext {
+                        index: idx,
+                        vertex_uuid: uuid,
+                        coordinates: CoordinateValues::from(coords),
+                    };
 
                     let hint = candidate.insertion_state.last_inserted_simplex;
                     let insert_detail = {
@@ -747,10 +779,15 @@ where
                             spatial_index.as_mut(),
                             Some(idx),
                         )
-                        .map_err(|e| DelaunayRepairError::HeuristicRebuildFailed {
-                            message: format!(
-                                "heuristic rebuild insertion failed at idx={idx} uuid={uuid} coords={coords:?}: {e}"
-                            ),
+                        .map_err(|e| {
+                            DelaunayRepairError::HeuristicRebuildFailed {
+                                reason: Box::new(
+                                    DelaunayRepairHeuristicRebuildFailure::InsertionFailed {
+                                        vertex: vertex_context.clone(),
+                                        source: Box::new(e),
+                                    },
+                                ),
+                            }
                         })?
                     };
                     let repair_seed_simplices = insert_detail.repair_seed_simplices;
@@ -773,24 +810,33 @@ where
                                         max_flips_override,
                                     )
                                     .map_err(|e| DelaunayRepairError::HeuristicRebuildFailed {
-                                        message: format!(
-                                            "heuristic rebuild repair failed at idx={idx} uuid={uuid} coords={coords:?}: {e}"
+                                        reason: Box::new(
+                                            DelaunayRepairHeuristicRebuildFailure::RepairFailed {
+                                                vertex: vertex_context.clone(),
+                                                source: Box::new(e),
+                                            },
                                         ),
                                     })?;
                             }
 
-                            candidate
-                                .maybe_check_after_insertion()
-                                .map_err(|e| DelaunayRepairError::HeuristicRebuildFailed {
-                                    message: format!(
-                                        "heuristic rebuild Delaunay check failed at idx={idx} uuid={uuid} coords={coords:?}: {e}"
+                            candidate.maybe_check_after_insertion().map_err(|e| {
+                                DelaunayRepairError::HeuristicRebuildFailed {
+                                    reason: Box::new(
+                                        DelaunayRepairHeuristicRebuildFailure::DelaunayCheckFailed {
+                                            vertex: vertex_context,
+                                            source: Box::new(e),
+                                        },
                                     ),
-                                })?;
+                                }
+                            })?;
                         }
                         InsertionOutcome::Skipped { error } => {
                             return Err(DelaunayRepairError::HeuristicRebuildFailed {
-                                message: format!(
-                                    "heuristic rebuild skipped vertex at idx={idx} uuid={uuid} coords={coords:?}: {error}"
+                                reason: Box::new(
+                                    DelaunayRepairHeuristicRebuildFailure::SkippedVertex {
+                                        vertex: vertex_context,
+                                        source: Box::new(error),
+                                    },
                                 ),
                             });
                         }
@@ -827,22 +873,24 @@ where
             match rebuild_attempt {
                 Ok((candidate, stats)) => return Ok((candidate, stats, seeds)),
                 Err(err) => {
-                    last_error = Some(format!(
-                        "attempt {}/{} (shuffle_seed={} perturbation_seed={}): {err}",
-                        attempt + 1,
-                        HEURISTIC_REBUILD_ATTEMPTS,
-                        seeds.shuffle_seed,
-                        seeds.perturbation_seed,
-                    ));
+                    last_error = Some(DelaunayRepairHeuristicRebuildFailure::AttemptFailed {
+                        attempt: attempt + 1,
+                        max_attempts: HEURISTIC_REBUILD_ATTEMPTS,
+                        shuffle_seed: seeds.shuffle_seed,
+                        perturbation_seed: seeds.perturbation_seed,
+                        source: Box::new(err),
+                    });
                 }
             }
         }
 
         Err(DelaunayRepairError::HeuristicRebuildFailed {
-            message: format!(
-                "heuristic rebuild failed after {HEURISTIC_REBUILD_ATTEMPTS} attempts: {}",
-                last_error.unwrap_or_else(|| "unknown error".to_string())
-            ),
+            reason: Box::new(DelaunayRepairHeuristicRebuildFailure::ExhaustedAttempts {
+                attempts: HEURISTIC_REBUILD_ATTEMPTS,
+                last_failure: Box::new(
+                    last_error.unwrap_or(DelaunayRepairHeuristicRebuildFailure::NoAttempts),
+                ),
+            }),
         })
     }
 
@@ -852,7 +900,9 @@ where
         self.tri
             .tds
             .vertices()
-            .map(|(_, vertex)| Vertex::new_with_uuid(*vertex.point(), vertex.uuid(), vertex.data))
+            .map(|(_, vertex)| {
+                Vertex::from_validated_point_with_uuid(*vertex.point(), vertex.uuid(), vertex.data)
+            })
             .collect()
     }
 
@@ -875,7 +925,8 @@ mod tests {
     use super::*;
     use crate::construction::test_hooks;
     use crate::core::algorithms::flips::{
-        DelaunayRepairDiagnostics, FlipError, RepairQueueOrder, verify_delaunay_via_flip_predicates,
+        DelaunayRepairDiagnostics, DelaunayRepairPostconditionFailure, FlipError, RepairQueueOrder,
+        verify_delaunay_via_flip_predicates,
     };
     use crate::core::simplex::Simplex;
     use crate::core::tds::{Tds, TriangulationConstructionState};
@@ -1263,11 +1314,8 @@ mod tests {
         assert!(verify_delaunay_via_flip_predicates(&tds, &kernel).is_err());
         assert!(verify_delaunay_via_flip_predicates(&tds, &robust_kernel).is_err());
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::from_tds_with_topology_guarantee(
-                tds,
-                kernel,
-                TopologyGuarantee::PLManifold,
-            );
+            DelaunayTriangulationCandidate::assemble(tds, kernel, TopologyGuarantee::PLManifold)
+                .into_repairable_delaunay_for_test();
         dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
         // max_flips=0 should fail (flips are needed but budget is zero).
@@ -1297,11 +1345,12 @@ mod tests {
         // Reconstruct dt from the same raw TDS in case the previous attempt mutated it.
         let tds2 = non_delaunay_quad_tds();
         let mut dt2: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::from_tds_with_topology_guarantee(
+            DelaunayTriangulationCandidate::assemble(
                 tds2,
                 AdaptiveKernel::new(),
                 TopologyGuarantee::PLManifold,
-            );
+            )
+            .into_repairable_delaunay_for_test();
         dt2.set_topology_guarantee(TopologyGuarantee::PLManifold);
         let outcome_generous = dt2
             .repair_delaunay_with_flips_advanced(config_generous)
@@ -1394,21 +1443,23 @@ mod tests {
             }),
         };
         let robust_err = DelaunayRepairError::PostconditionFailed {
-            message: "robust postcondition failure".to_string(),
-        };
-        let heuristic_inner = DelaunayRepairError::HeuristicRebuildFailed {
-            message: "heuristic rebuild failed after 3 attempts: attempt 3/3 (shuffle_seed=1 perturbation_seed=2): inner".to_string(),
-        };
-
-        // Simulate the map_err closure in repair_delaunay_with_flips_advanced.
-        let heuristic_message = match heuristic_inner {
-            DelaunayRepairError::HeuristicRebuildFailed { message } => message,
-            other => other.to_string(),
+            reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
         };
         let combined = DelaunayRepairError::HeuristicRebuildFailed {
-            message: format!(
-                "primary repair failed ({primary_err}); robust fallback failed ({robust_err}); {heuristic_message}"
-            ),
+            reason: Box::new(DelaunayRepairHeuristicRebuildFailure::FallbackChainFailed {
+                primary: Box::new(primary_err),
+                robust: Box::new(robust_err),
+                heuristic: Box::new(DelaunayRepairHeuristicRebuildFailure::ExhaustedAttempts {
+                    attempts: 3,
+                    last_failure: Box::new(DelaunayRepairHeuristicRebuildFailure::AttemptFailed {
+                        attempt: 3,
+                        max_attempts: 3,
+                        shuffle_seed: 1,
+                        perturbation_seed: 2,
+                        source: Box::new(DelaunayRepairError::from(FlipError::DegenerateSimplex)),
+                    }),
+                }),
+            }),
         };
 
         let msg = combined.to_string();
@@ -1421,7 +1472,7 @@ mod tests {
             "error should mention robust failure: {msg}"
         );
         assert!(
-            msg.contains("robust postcondition failure"),
+            msg.contains("disconnected the triangulation"),
             "error should include robust failure details: {msg}"
         );
         assert!(

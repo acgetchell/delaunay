@@ -409,11 +409,11 @@ impl<const D: usize> SnapshotVertexUuidSlots<D> {
             }
         }
 
-        Ok(Self::from_checked_slice(slots))
+        Ok(Self::from_validated_slice(slots))
     }
 
     /// Builds vertex UUID slots from validated runtime state before serialization.
-    fn from_runtime(simplex_uuid: Uuid, slots: &[Uuid]) -> Result<Self, TdsSnapshotError> {
+    fn try_from_runtime(simplex_uuid: Uuid, slots: &[Uuid]) -> Result<Self, TdsSnapshotError> {
         validate_snapshot_vertex_slot_arity::<D>(simplex_uuid, slots.len())?;
 
         let mut seen_vertex_uuids = fast_hash_set_with_capacity(slots.len());
@@ -426,11 +426,11 @@ impl<const D: usize> SnapshotVertexUuidSlots<D> {
             }
         }
 
-        Ok(Self::from_checked_slice(slots))
+        Ok(Self::from_validated_slice(slots))
     }
 
     /// Stores an already checked vertex UUID slice in the snapshot buffer type.
-    fn from_checked_slice(slots: &[Uuid]) -> Self {
+    fn from_validated_slice(slots: &[Uuid]) -> Self {
         let mut checked_slots = SimplexVertexUuidBuffer::with_capacity(slots.len());
         checked_slots.extend(slots.iter().copied());
         Self {
@@ -473,17 +473,20 @@ impl<const D: usize> SnapshotNeighborUuidSlots<D> {
             }
         }
 
-        Ok(Self::from_checked_slice(slots))
+        Ok(Self::from_validated_slice(slots))
     }
 
     /// Builds neighbor UUID slots from validated runtime neighbor keys.
-    fn from_runtime(simplex_uuid: Uuid, slots: &[Option<Uuid>]) -> Result<Self, TdsSnapshotError> {
+    fn try_from_runtime(
+        simplex_uuid: Uuid,
+        slots: &[Option<Uuid>],
+    ) -> Result<Self, TdsSnapshotError> {
         validate_snapshot_neighbor_slot_arity::<D>(simplex_uuid, slots.len())?;
-        Ok(Self::from_checked_slice(slots))
+        Ok(Self::from_validated_slice(slots))
     }
 
     /// Stores an already checked neighbor UUID slice in the snapshot buffer type.
-    fn from_checked_slice(slots: &[Option<Uuid>]) -> Self {
+    fn from_validated_slice(slots: &[Option<Uuid>]) -> Self {
         let mut checked_slots = NeighborBuffer::with_capacity(slots.len());
         checked_slots.extend(slots.iter().copied());
         Self {
@@ -523,16 +526,16 @@ impl<const D: usize> SnapshotPeriodicOffsetSlots<D> {
             })?;
             slots.push(parsed_offset);
         }
-        Self::from_parsed_offsets(simplex_uuid, slots)
+        Self::try_from_parsed_offsets(simplex_uuid, slots)
     }
 
     /// Builds periodic-offset slots from runtime fixed-size offset arrays.
-    fn from_runtime(simplex_uuid: Uuid, offsets: &[[i8; D]]) -> Result<Self, TdsSnapshotError> {
-        Self::from_parsed_offsets(simplex_uuid, offsets.iter().copied())
+    fn try_from_runtime(simplex_uuid: Uuid, offsets: &[[i8; D]]) -> Result<Self, TdsSnapshotError> {
+        Self::try_from_parsed_offsets(simplex_uuid, offsets.iter().copied())
     }
 
     /// Stores parsed offsets after proving there is one offset per simplex vertex.
-    fn from_parsed_offsets(
+    fn try_from_parsed_offsets(
         simplex_uuid: Uuid,
         offsets: impl IntoIterator<Item = [i8; D]>,
     ) -> Result<Self, TdsSnapshotError> {
@@ -570,7 +573,7 @@ impl<SnapshotData, const D: usize> TdsSnapshotSimplex<SnapshotData, D> {
     /// The relationship checks are identical for owned and borrowed payloads, so
     /// this helper lets [`Tds`] serialization borrow `U`/`V` data while tests can
     /// still build owned raw snapshots for mutation.
-    fn from_simplex_with_data<U, RuntimeData>(
+    fn try_from_simplex_with_data<U, RuntimeData>(
         tds: &Tds<U, RuntimeData, D>,
         simplex: &Simplex<RuntimeData, D>,
         data: Option<SnapshotData>,
@@ -598,12 +601,12 @@ impl<SnapshotData, const D: usize> TdsSnapshotSimplex<SnapshotData, D> {
                     .transpose()
             })
             .collect::<Result<Vec<_>, TdsSnapshotError>>()?;
-        let vertex_uuids = SnapshotVertexUuidSlots::from_runtime(simplex_uuid, &vertex_uuids)?;
+        let vertex_uuids = SnapshotVertexUuidSlots::try_from_runtime(simplex_uuid, &vertex_uuids)?;
         let neighbor_uuids =
-            SnapshotNeighborUuidSlots::from_runtime(simplex_uuid, &neighbor_uuids)?;
+            SnapshotNeighborUuidSlots::try_from_runtime(simplex_uuid, &neighbor_uuids)?;
         let periodic_vertex_offsets = simplex
             .periodic_vertex_offsets()
-            .map(|offsets| SnapshotPeriodicOffsetSlots::from_runtime(simplex_uuid, offsets))
+            .map(|offsets| SnapshotPeriodicOffsetSlots::try_from_runtime(simplex_uuid, offsets))
             .transpose()?;
 
         Ok(Self {
@@ -799,7 +802,7 @@ impl<U, V, const D: usize> TdsSnapshot<U, V, D> {
     /// Production serialization uses the borrowed `from_tds` path below so non-`Copy`
     /// payloads can still cross the public [`Tds`] codec boundary.
     #[cfg(test)]
-    fn from_tds_owned(tds: &Tds<U, V, D>) -> Result<Self, TdsSnapshotError>
+    fn try_from_tds_owned(tds: &Tds<U, V, D>) -> Result<Self, TdsSnapshotError>
     where
         U: Copy,
         V: Copy,
@@ -814,7 +817,7 @@ impl<U, V, const D: usize> TdsSnapshot<U, V, D> {
         let simplices = tds
             .simplices()
             .map(|(_simplex_key, simplex)| {
-                TdsSnapshotSimplex::from_simplex_with_data(tds, simplex, simplex.data)
+                TdsSnapshotSimplex::try_from_simplex_with_data(tds, simplex, simplex.data)
             })
             .collect::<Result<Vec<_>, TdsSnapshotError>>()?;
 
@@ -888,15 +891,18 @@ impl<'a, U, V, const D: usize> TdsSnapshot<&'a U, &'a V, D> {
     /// This is the production serialization path for [`Tds`]. It validates the
     /// live topology, stores UUID relationships, and borrows payload data so
     /// callers only need [`DataSerialize`] rather than `Copy`.
-    fn from_tds(tds: &'a Tds<U, V, D>) -> Result<Self, TdsSnapshotError> {
+    fn try_from_tds(tds: &'a Tds<U, V, D>) -> Result<Self, TdsSnapshotError> {
         tds.validate()
             .map_err(|source| TdsSnapshotError::SourceValidationFailed { source })?;
 
         let vertices = tds
             .vertices()
             .map(|(_vertex_key, vertex)| {
-                let mut snapshot_vertex =
-                    Vertex::new_with_uuid(*vertex.point(), vertex.uuid(), vertex.data());
+                let mut snapshot_vertex = Vertex::from_validated_point_with_uuid(
+                    *vertex.point(),
+                    vertex.uuid(),
+                    vertex.data(),
+                );
                 snapshot_vertex.set_incident_simplex(vertex.incident_simplex());
                 snapshot_vertex
             })
@@ -904,7 +910,7 @@ impl<'a, U, V, const D: usize> TdsSnapshot<&'a U, &'a V, D> {
         let simplices = tds
             .simplices()
             .map(|(_simplex_key, simplex)| {
-                TdsSnapshotSimplex::from_simplex_with_data(tds, simplex, simplex.data())
+                TdsSnapshotSimplex::try_from_simplex_with_data(tds, simplex, simplex.data())
             })
             .collect::<Result<Vec<_>, TdsSnapshotError>>()?;
 
@@ -1177,7 +1183,7 @@ where
     where
         S: serde::Serializer,
     {
-        TdsSnapshot::from_tds(self)
+        TdsSnapshot::try_from_tds(self)
             .map_err(serde::ser::Error::custom)?
             .into_raw()
             .serialize(serializer)
@@ -1254,7 +1260,7 @@ mod tests {
         U: Copy,
         V: Copy,
     {
-        TdsSnapshot::from_tds_owned(tds)
+        TdsSnapshot::try_from_tds_owned(tds)
             .expect("TDS should snapshot")
             .into_raw()
     }
@@ -2091,7 +2097,7 @@ mod tests {
             .uuid();
         tds.clear_all_neighbors();
 
-        let err = TdsSnapshot::from_tds(&tds)
+        let err = TdsSnapshot::try_from_tds(&tds)
             .expect_err("snapshotting a TDS without assigned neighbors should fail");
 
         assert_matches!(
@@ -2446,7 +2452,7 @@ mod tests {
             ])
             .expect("fixture neighbor arity should match");
 
-        let err = TdsSnapshot::from_tds(&tds)
+        let err = TdsSnapshot::try_from_tds(&tds)
             .expect_err("snapshotting dangling runtime neighbor key should fail");
 
         assert_matches!(err, TdsSnapshotError::SourceValidationFailed { .. });

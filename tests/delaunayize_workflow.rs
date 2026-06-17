@@ -342,12 +342,12 @@ fn test_error_display_topology_repair_failed() {
 #[test]
 fn test_error_display_delaunay_repair_failed() {
     let inner = DelaunayRepairError::PostconditionFailed {
-        message: "test postcondition".to_string(),
+        reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
     };
     let err: DelaunayizeError = inner.clone().into();
     let msg = err.to_string();
     assert!(msg.contains("Delaunay repair failed"), "{msg}");
-    assert!(msg.contains("test postcondition"), "{msg}");
+    assert!(msg.contains("disconnected the triangulation"), "{msg}");
 
     // Typed source is preserved end-to-end — no stringification.
     assert_eq!(
@@ -419,7 +419,7 @@ fn test_error_display_delaunay_repair_with_rebuild() {
         }
         .into();
     let source = DelaunayRepairError::PostconditionFailed {
-        message: "synthetic postcondition".to_string(),
+        reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
     };
     let err = DelaunayizeError::DelaunayRepairFailedWithRebuild {
         source: source.clone(),
@@ -428,7 +428,7 @@ fn test_error_display_delaunay_repair_with_rebuild() {
 
     let msg = err.to_string();
     assert!(msg.contains("Delaunay repair failed"), "{msg}");
-    assert!(msg.contains("synthetic postcondition"), "{msg}");
+    assert!(msg.contains("disconnected the triangulation"), "{msg}");
     assert!(msg.contains("fallback rebuild also failed"), "{msg}");
     assert!(msg.contains("synthetic rebuild degeneracy"), "{msg}");
 
@@ -445,7 +445,9 @@ fn test_error_display_delaunay_repair_with_rebuild() {
         .source()
         .expect("source() must be Some for the with-rebuild variant");
     assert!(
-        source.to_string().contains("synthetic postcondition"),
+        source
+            .to_string()
+            .contains("disconnected the triangulation"),
         "source display should match the underlying DelaunayRepairError: {source}"
     );
 }

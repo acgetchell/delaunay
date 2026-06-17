@@ -262,8 +262,19 @@ types and where already-validated values are merely assembled.
 
 Use fallible names for raw or invariant-bearing input:
 
-- `try_new*`, `try_from_*`, `parse`, `FromStr`, or `TryFrom` parse caller
-  input and reject invalid values before storage.
+- `try_new*` is the default smart-constructor family for raw values becoming a
+  proof-bearing domain type.
+- `try_from_*`, `TryFrom`, and clearly named `parse` methods are appropriate
+  when the source shape matters, especially conversions from another
+  representation, deserialized snapshot data, or textual/raw DTO input. Prefer
+  these names over owned `from_str` constructors so fallibility remains visible
+  in the repository's constructor taxonomy.
+- `try_<variant>` is appropriate for fallible enum variant constructors, such as
+  `DedupPolicy::try_epsilon`, when the variant name is the clearest API.
+- `try_<builder_option>` is appropriate for fallible builder setters, such as
+  `DelaunayTriangulationBuilder::try_toroidal`, when the builder remains an
+  intermediate state and final construction still happens at `build`.
+- All of these names parse caller input and reject invalid values before storage.
 - Raw numeric coordinates, slotmap keys, facet indexes, dimensions, UUIDs,
   explicit connectivity, deserialized snapshots, and topology data are
   invariant-bearing input unless a narrower validated type already carries the
@@ -292,7 +303,9 @@ being parsed:
 - Empty containers and empty triangulations may use `empty`, `new_empty`, or
   `with_empty_*` because no user geometry or topology is accepted.
 - Builder creation may use `Builder::new` when validation is explicitly deferred
-  to `build`; builder setters remain infallible and return `Self`.
+  to `build`; fallible builder setters must use descriptive `try_*` names, while
+  infallible builder setters keep `with_*` or domain-specific names and return
+  `Self`.
 - Configuration and statistics types may derive or implement `Default` when the
   default value is valid and documented as a policy choice or accumulator state.
 - `from_*` is acceptable for passive report/view extraction or infallible
@@ -306,10 +319,10 @@ Current migration targets for API-normalization work:
   `DelaunayTriangulation::try_with_*` methods are the fallible custom-kernel
   constructors. Infallible empty constructors remain `empty` and
   `with_empty_*` because they accept no user geometry or topology.
-- `DelaunayTriangulationBuilder::from_vertices_and_simplices*` stores explicit
-  connectivity for later validation in `build`. If this API is renamed, keep the
-  validation boundary at `build` or introduce a fallible `try_from_*` path that
-  proves connectivity before storage.
+- `DelaunayTriangulationBuilder::try_from_vertices_and_simplices*` validates
+  explicit simplex specs before storing them in a private proof-bearing wrapper.
+  Full TDS/topology/Delaunay validation still happens at `build`, where the
+  assembled triangulation exists.
 - `ConvexHull::try_from_triangulation` is the fallible hull-snapshot
   constructor. Reserve `from_*` for infallible conversions from proof-bearing
   input or passive view/report extraction.
@@ -317,11 +330,17 @@ Current migration targets for API-normalization work:
   they consume proof-bearing inputs and cannot fail; rename to `try_from_*` when
   they parse raw invalidable state.
 
-Semgrep guardrails for constructor names should stay narrow and repo-specific:
-protect established public parse boundaries such as `DelaunayTriangulation` and
-`ConvexHull`, while preserving intentional exceptions such as empty
-constructors, builder `new`, and infallible construction from proof-bearing
-values.
+Semgrep guardrails for constructor names should stay narrow and repo-specific.
+They enforce that fallible constructor definitions do not use misleading `new`
+or `from_*` names, and they protect established public parse boundaries such as
+`DelaunayTriangulation` and `ConvexHull`. Do not make the rules require every
+fallible boundary to be named `try_new*`; descriptive `try_*` names are allowed
+for builder setters and enum variant constructors when they better describe the
+operation.
+Do not add `from_unchecked_*` constructors; use an explicit candidate type for
+temporarily assembled state, then consume validation proof before converting to
+the final domain type. Other infallible `from_*` names remain acceptable only
+for total conversions, passive report/view extraction, or proof-bearing input.
 
 ---
 
@@ -329,11 +348,23 @@ values.
 
 Panics should be avoided in library code.
 
+User-facing Rust surfaces must also avoid panic-based examples. Do not use
+unwrap or expect calls in committed examples, benchmarks, Markdown Rust blocks,
+or doctests. These artifacts are copied by users and should model typed error
+propagation with `?`, local `thiserror` enums, or crate error types. Reserve
+unwrap and expect calls for unit tests and test-only fixtures, where a panic
+clearly reports a broken test assumption.
+
 Acceptable panic situations:
 
 - internal invariants violated
 - unreachable logic errors
-- debugging assertions
+
+Do not use `debug_assert!`, `debug_assert_eq!`, or `debug_assert_ne!` in
+production source. Debug-only assertions disappear in release builds, so they
+cannot protect library invariants or serve as parse-don't-validate boundaries.
+Encode the invariant in a type, return a typed error, or cover the assumption
+with tests instead.
 
 Prefer returning:
 

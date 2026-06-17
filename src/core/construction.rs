@@ -7,7 +7,8 @@
 //! with the triangulation type until they can be split into narrower modules.
 
 use crate::core::algorithms::incremental_insertion::{
-    CavityFillingError, HullExtensionReason, SpatialIndexConstructionFailure,
+    CavityFillingError, HullExtensionReason, InsertionTopologyValidationContext,
+    SpatialIndexConstructionFailure,
 };
 use crate::core::algorithms::locate::{ConflictError, LocateError};
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
@@ -24,6 +25,67 @@ use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::CoordinateValues;
 use crate::validation::DelaunayTriangulationValidationError;
 use thiserror::Error;
+
+/// Classifies the construction phase that failed final Levels 1–3 validation.
+///
+/// This context is carried by
+/// [`TriangulationConstructionError::FinalTopologyValidation`] so callers can
+/// distinguish ordinary construction finalization from periodic-quotient and
+/// random-generation validation failures without parsing display text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FinalTopologyValidationContext {
+    /// Standard final validation after Euclidean construction.
+    ConstructionFinalize,
+    /// Final Levels 1-3 topology validation for a periodic quotient.
+    PeriodicQuotientTopology,
+    /// Final Levels 1-3 topology validation for a generated random triangulation.
+    RandomGeneration,
+}
+
+impl std::fmt::Display for FinalTopologyValidationContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ConstructionFinalize => {
+                f.write_str("topology validation failed after construction")
+            }
+            Self::PeriodicQuotientTopology => {
+                f.write_str("periodic quotient failed final Levels 1-3 topology validation")
+            }
+            Self::RandomGeneration => {
+                f.write_str("random triangulation failed final Levels 1-3 topology validation")
+            }
+        }
+    }
+}
+
+/// Classifies the construction phase that failed final Level 4 validation.
+///
+/// This context is carried by
+/// [`TriangulationConstructionError::FinalDelaunayValidation`] so callers can
+/// distinguish ordinary construction finalization from periodic-quotient
+/// Delaunay checks without collapsing the typed source error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FinalDelaunayValidationContext {
+    /// Standard final Level 4 Delaunay validation after construction.
+    ConstructionFinalize,
+    /// Final Level 4 Delaunay validation for a periodic quotient.
+    PeriodicQuotientDelaunay,
+}
+
+impl std::fmt::Display for FinalDelaunayValidationContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ConstructionFinalize => {
+                f.write_str("Delaunay validation failed after construction")
+            }
+            Self::PeriodicQuotientDelaunay => {
+                f.write_str("periodic quotient failed final Level 4 Delaunay validation")
+            }
+        }
+    }
+}
 
 /// Errors that can occur during triangulation construction.
 ///
@@ -81,6 +143,7 @@ pub enum TriangulationConstructionError {
         /// The dimension that was attempted.
         dimension: usize,
         /// The underlying simplex validation error.
+        #[source]
         source: SimplexValidationError,
     },
 
@@ -135,6 +198,7 @@ pub enum TriangulationConstructionError {
     #[error("Hull extension failed during insertion: {reason}")]
     InsertionHullExtension {
         /// Structured hull-extension failure reason.
+        #[source]
         reason: HullExtensionReason,
     },
 
@@ -147,10 +211,10 @@ pub enum TriangulationConstructionError {
     },
 
     /// Level 3 topology validation failed during incremental construction.
-    #[error("{message}: {source}")]
+    #[error("{context}: {source}")]
     InsertionTopologyValidation {
         /// High-level insertion context.
-        message: String,
+        context: InsertionTopologyValidationContext,
         /// Underlying topology validation error.
         #[source]
         source: TriangulationValidationError,
@@ -171,13 +235,23 @@ pub enum TriangulationConstructionError {
     ///
     /// Mirrors [`InsertionTopologyValidation`](Self::InsertionTopologyValidation)
     /// for post-build checks that run after the incremental insertion phase.
-    #[error("{message}: {source}")]
+    #[error("{context}: {source}")]
     FinalTopologyValidation {
-        /// High-level finalization context.
-        message: String,
+        /// Finalization phase that produced the validation failure.
+        context: FinalTopologyValidationContext,
         /// Underlying validation error.
         #[source]
         source: InvariantErrorSummary,
+    },
+
+    /// Final Delaunay validation failed after construction.
+    #[error("{context}: {source}")]
+    FinalDelaunayValidation {
+        /// Finalization phase that produced the validation failure.
+        context: FinalDelaunayValidationContext,
+        /// Underlying Delaunay validation error.
+        #[source]
+        source: DelaunayTriangulationValidationError,
     },
 
     /// Attempted to insert a vertex with coordinates that already exist.
@@ -377,6 +451,74 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "Internal inconsistency during construction: missing vertex in lookup table"
+        );
+    }
+
+    #[test]
+    fn final_topology_validation_context_display() {
+        let cases = [
+            (
+                FinalTopologyValidationContext::ConstructionFinalize,
+                "topology validation failed after construction",
+            ),
+            (
+                FinalTopologyValidationContext::PeriodicQuotientTopology,
+                "periodic quotient failed final Levels 1-3 topology validation",
+            ),
+            (
+                FinalTopologyValidationContext::RandomGeneration,
+                "random triangulation failed final Levels 1-3 topology validation",
+            ),
+        ];
+
+        for (context, expected) in cases {
+            assert_eq!(context.to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn final_delaunay_validation_context_display() {
+        assert_eq!(
+            FinalDelaunayValidationContext::ConstructionFinalize.to_string(),
+            "Delaunay validation failed after construction"
+        );
+        assert_eq!(
+            FinalDelaunayValidationContext::PeriodicQuotientDelaunay.to_string(),
+            "periodic quotient failed final Level 4 Delaunay validation"
+        );
+    }
+
+    #[test]
+    fn insertion_hull_extension_exposes_typed_source() {
+        let reason = HullExtensionReason::Tds(TdsError::InconsistentDataStructure {
+            message: "missing boundary facet".to_string(),
+        });
+        let error = TriangulationConstructionError::InsertionHullExtension { reason };
+        let source = std::error::Error::source(&error)
+            .and_then(|source| source.downcast_ref::<HullExtensionReason>());
+        assert_matches!(source, Some(HullExtensionReason::Tds(_)));
+    }
+
+    #[test]
+    fn insufficient_vertices_exposes_typed_source() {
+        let error = TriangulationConstructionError::InsufficientVertices {
+            dimension: 3,
+            source: SimplexValidationError::InsufficientVertices {
+                actual: 3,
+                expected: 4,
+                dimension: 3,
+            },
+        };
+
+        let source = std::error::Error::source(&error)
+            .and_then(|source| source.downcast_ref::<SimplexValidationError>());
+        assert_matches!(
+            source,
+            Some(SimplexValidationError::InsufficientVertices {
+                actual: 3,
+                expected: 4,
+                dimension: 3,
+            })
         );
     }
 
