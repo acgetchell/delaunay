@@ -79,11 +79,32 @@ pub enum HullExtensionReason {
         "No visible boundary facets found for exterior vertex (may be coplanar with hull surface)"
     )]
     NoVisibleFacets,
-    /// Visible facets form an invalid patch.
-    #[error("Visible boundary facets are not a valid patch: {details}")]
-    InvalidPatch {
-        /// Details about why the patch was invalid.
-        details: String,
+    /// Boundary-edge split matched the wrong number of facets.
+    #[error("2D boundary edge split expected {expected} facets, got {actual}")]
+    BoundaryEdgeSplitFacetCount {
+        /// Expected split-facet count.
+        expected: usize,
+        /// Actual split-facet count.
+        actual: usize,
+    },
+    /// Boundary-edge split matched more than one candidate facet.
+    #[error("2D boundary edge split matched multiple facets")]
+    MultipleBoundaryEdgeSplitFacets,
+    /// Visible facets form a disconnected or non-manifold patch.
+    #[error(
+        "visible patch is disconnected or non-manifold: boundary_ridges={boundary_ridges}, ridge_fans={ridge_fans}, components={components}, boundary_components={boundary_components}, boundary_subface_nonmanifold={boundary_subface_nonmanifold}"
+    )]
+    DisconnectedVisiblePatch {
+        /// Count of boundary ridges in the visible patch.
+        boundary_ridges: usize,
+        /// Count of ridges shared by more than two visible facets.
+        ridge_fans: usize,
+        /// Connected components in the visible-facet graph.
+        components: usize,
+        /// Connected components in the boundary-subface graph.
+        boundary_components: usize,
+        /// Count of boundary subfaces with non-manifold incidence.
+        boundary_subface_nonmanifold: usize,
     },
     /// Geometric predicate (orientation / in-sphere) failed.
     ///
@@ -1890,7 +1911,10 @@ impl InsertionError {
                 // be resolved by a perturbation retry.
                 matches!(
                     reason,
-                    HullExtensionReason::NoVisibleFacets | HullExtensionReason::InvalidPatch { .. }
+                    HullExtensionReason::NoVisibleFacets
+                        | HullExtensionReason::BoundaryEdgeSplitFacetCount { .. }
+                        | HullExtensionReason::MultipleBoundaryEdgeSplitFacets
+                        | HullExtensionReason::DisconnectedVisiblePatch { .. }
                 )
             }
             Self::CavityFilling { reason } => Self::is_cavity_filling_error_retryable(reason),
@@ -2001,12 +2025,13 @@ impl InsertionError {
                 )
             }
             InitialSimplexUnexpectedInsertionStage::NonManifoldTopology { .. } => true,
-            InitialSimplexUnexpectedInsertionStage::HullExtension { reason } => {
-                matches!(
-                    reason,
-                    HullExtensionReason::NoVisibleFacets | HullExtensionReason::InvalidPatch { .. }
-                )
-            }
+            InitialSimplexUnexpectedInsertionStage::HullExtension { reason } => matches!(
+                reason,
+                HullExtensionReason::NoVisibleFacets
+                    | HullExtensionReason::BoundaryEdgeSplitFacetCount { .. }
+                    | HullExtensionReason::MultipleBoundaryEdgeSplitFacets
+                    | HullExtensionReason::DisconnectedVisiblePatch { .. }
+            ),
             InitialSimplexUnexpectedInsertionStage::TopologyValidation { source, .. } => {
                 Self::is_level3_error_retryable(source)
             }
@@ -3895,16 +3920,51 @@ fn invalid_boundary_facet_index(facet_index: u8, facet_count: usize) -> Insertio
     })
 }
 
-fn validate_boundary_edge_split_facet_count(facet_count: usize) -> Result<(), InsertionError> {
+/// Preserves the public hull-extension error contract for 2D boundary-edge splits.
+///
+/// A valid split replaces one boundary edge with exactly two facets. Reporting
+/// count mismatches through a typed [`HullExtensionReason`] lets callers decide
+/// retry behavior without parsing diagnostic text.
+const fn validate_boundary_edge_split_facet_count(
+    facet_count: usize,
+) -> Result<(), InsertionError> {
     if facet_count == 2 {
         return Ok(());
     }
 
     Err(InsertionError::HullExtension {
-        reason: HullExtensionReason::InvalidPatch {
-            details: format!("2D boundary edge split expected 2 facets, got {facet_count}"),
+        reason: HullExtensionReason::BoundaryEdgeSplitFacetCount {
+            expected: 2,
+            actual: facet_count,
         },
     })
+}
+
+/// Converts visible-patch topology summary counts into a typed hull-extension failure.
+const fn visible_patch_failure_reason(
+    boundary_ridges: usize,
+    ridge_fans: usize,
+    components: usize,
+    boundary_components: usize,
+    boundary_subface_nonmanifold: usize,
+    dimension: usize,
+) -> Option<HullExtensionReason> {
+    if ridge_fans > 0
+        || components > 1
+        || boundary_ridges == 0
+        || (dimension >= 3 && boundary_components > 1)
+        || (dimension >= 3 && boundary_subface_nonmanifold > 0)
+    {
+        Some(HullExtensionReason::DisconnectedVisiblePatch {
+            boundary_ridges,
+            ridge_fans,
+            components,
+            boundary_components,
+            boundary_subface_nonmanifold,
+        })
+    } else {
+        None
+    }
 }
 
 fn find_boundary_edge_split_facet<U, V, const D: usize>(
@@ -4014,9 +4074,7 @@ where
         if on_segment {
             if match_facet.is_some() {
                 return Err(InsertionError::HullExtension {
-                    reason: HullExtensionReason::InvalidPatch {
-                        details: "2D boundary edge split matched multiple facets".to_string(),
-                    },
+                    reason: HullExtensionReason::MultipleBoundaryEdgeSplitFacets,
                 });
             }
             match_facet = Some(FacetHandle::from_validated(simplex_key, facet_index));
@@ -4504,12 +4562,14 @@ where
             component_sizes.push(component_size);
         }
 
-        if over_shared_ridges > 0
-            || components > 1
-            || boundary_ridges == 0
-            || (D >= 3 && boundary_components > 1)
-            || (D >= 3 && boundary_subface_nonmanifold > 0)
-        {
+        if let Some(reason) = visible_patch_failure_reason(
+            boundary_ridges,
+            over_shared_ridges,
+            components,
+            boundary_components,
+            boundary_subface_nonmanifold,
+            D,
+        ) {
             #[cfg(debug_assertions)]
             if detail_enabled || log_enabled {
                 let visible_sample = &visible_facets[..visible_facets.len().min(10)];
@@ -4538,13 +4598,7 @@ where
                     "find_visible_boundary_facets: invalid patch"
                 );
             }
-            return Err(InsertionError::HullExtension {
-                reason: HullExtensionReason::InvalidPatch {
-                    details: format!(
-                        "boundary_ridges={boundary_ridges}, ridge_fans={over_shared_ridges}, components={components}, boundary_components={boundary_components}, boundary_subface_nonmanifold={boundary_subface_nonmanifold}",
-                    ),
-                },
-            });
+            return Err(InsertionError::HullExtension { reason });
         }
 
         #[cfg(debug_assertions)]
@@ -4853,13 +4907,11 @@ mod tests {
             .collect();
 
         let result = fill_cavity(tds, invalid_vkey, &boundary_facets);
-        assert!(
-            matches!(
-                result,
-                Err(InsertionError::CavityFilling {
-                    reason: CavityFillingError::MissingInsertedVertex { .. },
-                })
-            ),
+        assert_matches!(
+            result,
+            Err(InsertionError::CavityFilling {
+                reason: CavityFillingError::MissingInsertedVertex { .. },
+            }),
             "Expected CavityFilling error, got: {result:?}"
         );
     }
@@ -6211,8 +6263,12 @@ mod tests {
 
         assert!(
             InsertionError::HullExtension {
-                reason: HullExtensionReason::InvalidPatch {
-                    details: "test".to_string(),
+                reason: HullExtensionReason::DisconnectedVisiblePatch {
+                    boundary_ridges: 1,
+                    ridge_fans: 0,
+                    components: 2,
+                    boundary_components: 2,
+                    boundary_subface_nonmanifold: 0,
                 }
             }
             .is_retryable()
@@ -6745,15 +6801,48 @@ mod tests {
     }
 
     #[test]
-    fn test_boundary_edge_split_invalid_boundary_count_is_retryable_invalid_patch() {
+    fn test_boundary_edge_split_invalid_boundary_count_is_retryable_typed_reason() {
         let err = validate_boundary_edge_split_facet_count(1).unwrap_err();
 
         assert!(err.is_retryable());
         assert_matches!(
             err,
             InsertionError::HullExtension {
-                reason: HullExtensionReason::InvalidPatch { details },
-            } if details == "2D boundary edge split expected 2 facets, got 1"
+                reason: HullExtensionReason::BoundaryEdgeSplitFacetCount {
+                    expected: 2,
+                    actual: 1,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn test_visible_patch_failure_reason_preserves_typed_counts() {
+        assert_eq!(
+            visible_patch_failure_reason(0, 2, 3, 4, 5, 3),
+            Some(HullExtensionReason::DisconnectedVisiblePatch {
+                boundary_ridges: 0,
+                ridge_fans: 2,
+                components: 3,
+                boundary_components: 4,
+                boundary_subface_nonmanifold: 5,
+            })
+        );
+    }
+
+    #[test]
+    fn test_visible_patch_failure_reason_respects_dimension_specific_boundary_checks() {
+        assert_eq!(visible_patch_failure_reason(1, 0, 1, 2, 3, 2), None);
+
+        assert_matches!(
+            visible_patch_failure_reason(1, 0, 1, 2, 0, 3),
+            Some(HullExtensionReason::DisconnectedVisiblePatch {
+                boundary_ridges: 1,
+                ridge_fans: 0,
+                components: 1,
+                boundary_components: 2,
+                boundary_subface_nonmanifold: 0,
+            })
         );
     }
 
@@ -6772,7 +6861,7 @@ mod tests {
     }
 
     #[test]
-    fn test_find_boundary_edge_split_facet_hull_vertex_is_retryable_invalid_patch() {
+    fn test_find_boundary_edge_split_facet_hull_vertex_is_retryable_typed_reason() {
         let vertices = vec![
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
@@ -6787,8 +6876,8 @@ mod tests {
         assert_matches!(
             err,
             InsertionError::HullExtension {
-                reason: HullExtensionReason::InvalidPatch { details },
-            } if details == "2D boundary edge split matched multiple facets"
+                reason: HullExtensionReason::MultipleBoundaryEdgeSplitFacets,
+            }
         );
     }
 

@@ -3033,9 +3033,15 @@ pub enum FlipNeighborHullExtensionFailureKind {
     /// No visible facets were found.
     #[error("no visible facets")]
     NoVisibleFacets,
-    /// Visible facets formed an invalid patch.
-    #[error("invalid patch")]
-    InvalidPatch,
+    /// Boundary-edge split matched the wrong number of facets.
+    #[error("boundary edge split facet count")]
+    BoundaryEdgeSplitFacetCount,
+    /// Boundary-edge split matched more than one candidate facet.
+    #[error("multiple boundary edge split facets")]
+    MultipleBoundaryEdgeSplitFacets,
+    /// Visible facets formed a disconnected or non-manifold patch.
+    #[error("disconnected visible patch")]
+    DisconnectedVisiblePatch,
     /// Geometric predicate failed.
     #[error("predicate failed")]
     PredicateFailed,
@@ -3048,7 +3054,13 @@ impl From<&HullExtensionReason> for FlipNeighborHullExtensionFailureKind {
     fn from(source: &HullExtensionReason) -> Self {
         match source {
             HullExtensionReason::NoVisibleFacets => Self::NoVisibleFacets,
-            HullExtensionReason::InvalidPatch { .. } => Self::InvalidPatch,
+            HullExtensionReason::BoundaryEdgeSplitFacetCount { .. } => {
+                Self::BoundaryEdgeSplitFacetCount
+            }
+            HullExtensionReason::MultipleBoundaryEdgeSplitFacets => {
+                Self::MultipleBoundaryEdgeSplitFacets
+            }
+            HullExtensionReason::DisconnectedVisiblePatch { .. } => Self::DisconnectedVisiblePatch,
             HullExtensionReason::PredicateFailed(_) => Self::PredicateFailed,
             HullExtensionReason::Tds(_) => Self::Tds,
         }
@@ -14806,15 +14818,20 @@ mod tests {
         );
         assert_eq!(cavity_kind.to_string(), "unsupported degenerate location");
 
-        let hull_kind =
-            FlipNeighborHullExtensionFailureKind::from(&HullExtensionReason::InvalidPatch {
-                details: "non-manifold visible patch".to_string(),
-            });
+        let hull_kind = FlipNeighborHullExtensionFailureKind::from(
+            &HullExtensionReason::DisconnectedVisiblePatch {
+                boundary_ridges: 1,
+                ridge_fans: 0,
+                components: 2,
+                boundary_components: 2,
+                boundary_subface_nonmanifold: 0,
+            },
+        );
         assert_eq!(
             hull_kind,
-            FlipNeighborHullExtensionFailureKind::InvalidPatch
+            FlipNeighborHullExtensionFailureKind::DisconnectedVisiblePatch
         );
-        assert_eq!(hull_kind.to_string(), "invalid patch");
+        assert_eq!(hull_kind.to_string(), "disconnected visible patch");
 
         let validation_kind = FlipNeighborDelaunayValidationFailureKind::from(
             &DelaunayTriangulationValidationError::RepairOperationFailed {

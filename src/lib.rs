@@ -1209,7 +1209,9 @@ pub mod prelude {
         DelaunayRepairOrientationCanonicalizationFailure,
         DelaunayRepairOrientationCanonicalizationFailureKind, DelaunayRepairPostconditionFailure,
         DelaunayRepairStats, DelaunayRepairVerificationContext, FlipContextError,
-        FlipEdgeAdjacencyError, FlipError, FlipMutationError, FlipNeighborWiringError,
+        FlipEdgeAdjacencyError, FlipError, FlipMutationError, FlipNeighborCavityFailureKind,
+        FlipNeighborDelaunayValidationFailureKind, FlipNeighborHullExtensionFailureKind,
+        FlipNeighborRepairDiagnostics, FlipNeighborRepairFailure, FlipNeighborWiringError,
         FlipOrientationCheckStage, FlipPredicateError, FlipPredicateOperation,
         FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder,
         TriangleHandleError,
@@ -1427,6 +1429,20 @@ pub mod prelude {
     ///
     /// [`DelaunayRepairErrorSummary`]: crate::prelude::repair::DelaunayRepairErrorSummary
     /// [`DelaunayRepairErrorKind`]: crate::prelude::repair::DelaunayRepairErrorKind
+    ///
+    /// ```rust
+    /// use delaunay::prelude::repair::{
+    ///     FlipNeighborHullExtensionFailureKind, FlipNeighborRepairFailure,
+    /// };
+    ///
+    /// let reason = FlipNeighborHullExtensionFailureKind::DisconnectedVisiblePatch;
+    /// std::assert_matches!(
+    ///     reason,
+    ///     FlipNeighborHullExtensionFailureKind::DisconnectedVisiblePatch
+    /// );
+    ///
+    /// let _ = std::mem::size_of::<FlipNeighborRepairFailure>();
+    /// ```
     pub mod repair {
         pub use crate::flips::{
             DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairHeuristicRebuildFailure,
@@ -1435,10 +1451,13 @@ pub mod prelude {
             DelaunayRepairOrientationCanonicalizationFailureKind,
             DelaunayRepairPostconditionFailure, DelaunayRepairStats,
             DelaunayRepairVerificationContext, FlipContextError, FlipEdgeAdjacencyError, FlipError,
-            FlipMutationError, FlipNeighborWiringError, FlipOrientationCheckStage,
-            FlipPredicateError, FlipPredicateOperation, FlipTriangleAdjacencyError,
-            FlipVertexAdjacencyError, RepairQueueOrder, TriangleHandleError,
-            verify_delaunay_for_triangulation, verify_delaunay_via_flip_predicates,
+            FlipMutationError, FlipNeighborCavityFailureKind,
+            FlipNeighborDelaunayValidationFailureKind, FlipNeighborHullExtensionFailureKind,
+            FlipNeighborRepairDiagnostics, FlipNeighborRepairFailure, FlipNeighborWiringError,
+            FlipOrientationCheckStage, FlipPredicateError, FlipPredicateOperation,
+            FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder,
+            TriangleHandleError, verify_delaunay_for_triangulation,
+            verify_delaunay_via_flip_predicates,
         };
         pub use crate::repair::{
             DelaunayCheckPolicy, DelaunayRepairHeuristicConfig, DelaunayRepairHeuristicSeeds,

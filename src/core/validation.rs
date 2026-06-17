@@ -1303,7 +1303,7 @@ where
     ///
     /// - `InvariantError::Tds(e)` → `InsertionError::TopologyValidation(e)`
     /// - `InvariantError::Triangulation(e)` → `InsertionError::TopologyValidationFailed { source: e }`
-    /// - `InvariantError::Delaunay(e)` → `InsertionError::DelaunayValidationFailed { message }`
+    /// - `InvariantError::Delaunay(e)` → `InsertionError::DelaunayValidationFailed { source: e }`
     pub(crate) fn invariant_error_to_insertion_error(err: InvariantError) -> InsertionError {
         match err {
             InvariantError::Tds(tds_err) => InsertionError::TopologyValidation(tds_err),

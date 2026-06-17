@@ -87,6 +87,13 @@ impl<K, U, V, const D: usize> DelaunayTriangulationCandidate<K, U, V, D> {
     }
 
     /// Converts a candidate after the caller has proved structural validity.
+    ///
+    /// This is intentionally crate-private repair/construction machinery for
+    /// paths that already return a `DelaunayTriangulation` wrapper while only
+    /// promising Level 1-2 TDS structure at this boundary. General reconstruction
+    /// must use [`Self::validate_delaunay_property`] plus
+    /// [`Self::into_validated_delaunay`] so the returned wrapper carries the full
+    /// Levels 1-4 validation contract.
     pub(crate) fn into_structurally_valid_delaunay(
         self,
         _proof: TdsStructureValidationProof,
