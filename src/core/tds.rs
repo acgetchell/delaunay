@@ -1058,9 +1058,9 @@ pub enum TdsError {
     },
     /// Internal data structure inconsistency.
     ///
-    /// This is the catch-all for structural invariant violations that do not
-    /// fit a more specific variant (e.g. topology contradictions, error
-    /// wrapping, operational failures). Prefer [`SimplexNotFound`],
+    /// This is the fallback for structural invariant violations that carry
+    /// open-ended diagnostic context and do not fit a more specific variant.
+    /// Prefer [`SimplexNotFound`],
     /// [`VertexNotFound`], [`DimensionMismatch`], or [`IndexOutOfBounds`]
     /// when applicable.
     ///
@@ -8073,8 +8073,9 @@ mod tests {
 
         // Same coordinates again (distinct UUID, constructed via Vertex smart constructors)
         let result = dt.insert(duplicate);
-        assert!(
-            matches!(result, Err(InsertionError::DuplicateCoordinates { .. })),
+        assert_matches!(
+            &result,
+            Err(InsertionError::DuplicateCoordinates { .. }),
             "insert() should reject duplicate coordinates created via Vertex::try_new (before UUID), got: {result:?}"
         );
     }
@@ -8094,14 +8095,12 @@ mod tests {
             None,
         );
         let result = dt.insert(vertex2);
-        assert!(
-            matches!(
-                result,
-                Err(InsertionError::DuplicateUuid {
-                    entity: EntityKind::Vertex,
-                    ..
-                })
-            ),
+        assert_matches!(
+            &result,
+            Err(InsertionError::DuplicateUuid {
+                entity: EntityKind::Vertex,
+                ..
+            }),
             "Same UUID with different coordinates should fail with DuplicateUuid"
         );
     }
@@ -11154,8 +11153,9 @@ mod tests {
         .unwrap();
 
         let err = tds.validate_simplex_coordinate_uniqueness().unwrap_err();
-        assert!(
-            matches!(err, TdsError::DuplicateCoordinatesInSimplex { .. }),
+        assert_matches!(
+            &err,
+            TdsError::DuplicateCoordinatesInSimplex { .. },
             "Expected DuplicateCoordinatesInSimplex, got {err:?}"
         );
     }
@@ -11205,25 +11205,24 @@ mod tests {
 
         let err = tds.validate_facet_sharing().unwrap_err();
         let message = err.to_string();
-        assert!(
-            matches!(
-                &err,
-                TdsError::FacetSharingViolation {
-                    existing_incident_count: 2,
-                    attempted_incident_count: 3,
-                    max_incident_count: 2,
-                    candidate_facet_index: 2,
-                    ..
-                }
-            ),
+        assert_matches!(
+            &err,
+            TdsError::FacetSharingViolation {
+                existing_incident_count: 2,
+                attempted_incident_count: 3,
+                max_incident_count: 2,
+                candidate_facet_index: 2,
+                ..
+            },
             "Expected over-shared facet error, got {err:?}"
         );
         assert!(message.contains("exceeds incident-simplex limit"));
         assert!(!message.contains("inserting candidate simplex"));
 
         let err = tds.is_valid().unwrap_err();
-        assert!(
-            matches!(err, TdsError::FacetSharingViolation { .. }),
+        assert_matches!(
+            &err,
+            TdsError::FacetSharingViolation { .. },
             "Expected is_valid to surface facet-sharing violation, got {err:?}"
         );
 
@@ -11233,11 +11232,9 @@ mod tests {
             .iter()
             .find(|violation| violation.kind == InvariantKind::FacetSharing)
             .expect("validation_report should include the facet-sharing violation");
-        assert!(
-            matches!(
-                &facet_violation.error,
-                InvariantError::Tds(TdsError::FacetSharingViolation { .. })
-            ),
+        assert_matches!(
+            &facet_violation.error,
+            InvariantError::Tds(TdsError::FacetSharingViolation { .. }),
             "Expected validation_report to preserve structured facet-sharing error, got {:?}",
             facet_violation.error
         );

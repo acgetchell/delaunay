@@ -669,10 +669,7 @@ pub(crate) enum InsertionValidationWork {
     RequiredTopologyLinks,
 }
 
-impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
-where
-    K: Kernel<D, Scalar = f64>,
-{
+impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// Returns the topology guarantee used for Level 3 topology validation.
     #[inline]
     #[must_use]
@@ -833,7 +830,12 @@ where
             tracing::warn!("{err}. Topology guarantee not updated.");
         }
     }
+}
 
+impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
+where
+    K: Kernel<D, Scalar = f64>,
+{
     /// Traverses the simplex neighbor graph for validation without assuming global connectivity.
     ///
     /// If `allowed` is `Some`, traversal is restricted to that set. Neighbors

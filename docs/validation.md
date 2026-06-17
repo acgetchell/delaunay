@@ -112,10 +112,10 @@ enum ValidationExampleError {
 
 fn main() -> Result<(), ValidationExampleError> {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     ];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -178,10 +178,10 @@ enum ValidationExampleError {
 
 fn main() -> Result<(), ValidationExampleError> {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     ];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -271,7 +271,7 @@ use delaunay::prelude::construction::{
 };
 use delaunay::prelude::validation::ValidationPolicy;
 
-let v = delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?;
+let v = Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?;
 assert!(v.is_valid().is_ok());
 ```
 
@@ -339,10 +339,10 @@ enum ValidationExampleError {
 
 fn main() -> Result<(), ValidationExampleError> {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
@@ -433,11 +433,11 @@ enum ValidationExampleError {
 
 fn main() -> Result<(), ValidationExampleError> {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.25, 0.25, 0.25])?, // Interior point
+        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        Vertex::<(), _>::try_new([0.25, 0.25, 0.25])?, // Interior point
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
@@ -514,10 +514,10 @@ enum ValidationExampleError {
 
 fn main() -> Result<(), ValidationExampleError> {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
@@ -576,6 +576,14 @@ helper.
 ---
 
 ## Common Patterns
+
+`Triangulation::is_valid()` returns `InvariantError`, the public wrapper enum
+used for validation failures across Levels 1–4. Its variants preserve the
+failing layer's typed error: `TdsError` for Levels 1–2,
+`TriangulationValidationError` for Level 3 topology failures, and
+`DelaunayTriangulationValidationError` for Level 4 Delaunay failures. In normal
+Level 3 code, handle the wrapper as shown in Patterns 2 and 3 rather than
+expecting `TriangulationValidationError` directly.
 
 ### Pattern 1: Test Suite Validation
 

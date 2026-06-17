@@ -612,13 +612,11 @@ mod tests {
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
         let err = tri.validate_geometric_simplex_orientation().unwrap_err();
-        assert!(
-            matches!(
-                &err,
-                TdsError::Geometric(GeometricError::NegativeOrientation { message })
-                    if message.contains("negative geometric orientation")
-                       && message.contains("vertices")
-            ),
+        assert_matches!(
+            &err,
+            TdsError::Geometric(GeometricError::NegativeOrientation { message })
+                if message.contains("negative geometric orientation")
+                    && message.contains("vertices"),
             "Error should contain vertex keys: {err}"
         );
     }

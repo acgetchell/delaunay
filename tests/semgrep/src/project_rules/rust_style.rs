@@ -246,6 +246,11 @@ impl FallibleConstructorDefinitionFixture {
     }
 
     // ruleid: delaunay.rust.no-fallible-new-or-from-constructor-definitions
+    fn from_str(value: &str) -> Result<Self, PrivateFixtureError> {
+        Ok(Self { value: value.len() })
+    }
+
+    // ruleid: delaunay.rust.no-fallible-new-or-from-constructor-definitions
     fn from_simplex_with_data<T>(
         value: usize,
         _data: Option<T>,

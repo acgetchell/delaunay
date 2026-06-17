@@ -16,7 +16,6 @@ use crate::core::tds::{SimplexKey, Tds, VertexKey};
 use crate::core::triangulation::Triangulation;
 use crate::core::validation::{TopologyGuarantee, ValidationConfigurationError, ValidationPolicy};
 use crate::core::vertex::Vertex;
-use crate::geometry::kernel::Kernel;
 use crate::repair::{DelaunayCheckPolicy, DelaunayRepairPolicy};
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
 use crate::triangulation::DelaunayTriangulation;
@@ -25,16 +24,7 @@ use crate::triangulation::DelaunayTriangulation;
 // QUERY, ACCESSORS, AND CONFIGURATION (Minimal Bounds)
 // =============================================================================
 //
-// Methods that only need f64-backed kernels. Downstream generic code
-// (e.g. `delaunayize_by_flips`) does not need extra coordinate-conversion
-// bounds when calling these methods.
-//
-// Follows the precedent of the existing PURE STRUCT ASSEMBLY impl block.
-
-impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
-where
-    K: Kernel<D, Scalar = f64>,
-{
+impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     // -------------------------------------------------------------------------
     // QUERY / ACCESSORS
     // -------------------------------------------------------------------------
@@ -768,10 +758,7 @@ where
 // CONFIGURATION & TRAVERSAL (Minimal Bounds, continued)
 // =============================================================================
 
-impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
-where
-    K: Kernel<D, Scalar = f64>,
-{
+impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     // -------------------------------------------------------------------------
     // CONFIGURATION
     // -------------------------------------------------------------------------

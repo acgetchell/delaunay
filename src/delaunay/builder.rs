@@ -151,7 +151,9 @@ use crate::core::collections::{
     FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, PeriodicOffsetBuffer, SmallBuffer, Uuid,
     VertexKeySet,
 };
-use crate::core::construction::{FinalTopologyValidationContext, TriangulationConstructionError};
+use crate::core::construction::{
+    FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
+};
 use crate::core::operations::InsertionOutcome;
 use crate::core::simplex::{Simplex, SimplexValidationError};
 use crate::core::tds::{
@@ -2012,9 +2014,9 @@ where
                     }
                 })?;
                 dt.is_valid().map_err(|e| {
-                    TriangulationConstructionError::FinalTopologyValidation {
-                        context: FinalTopologyValidationContext::PeriodicQuotientDelaunay,
-                        source: InvariantError::Delaunay(e).into(),
+                    TriangulationConstructionError::FinalDelaunayValidation {
+                        context: FinalDelaunayValidationContext::PeriodicQuotientDelaunay,
+                        source: e,
                     }
                 })?;
                 Ok(dt)

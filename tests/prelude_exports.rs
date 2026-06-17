@@ -35,7 +35,7 @@ use delaunay::prelude::construction::{
     ExplicitDelaunayValidationErrorKind, ExplicitDelaunayValidationSourceKind,
     ExplicitInsertionError, ExplicitInsertionErrorKind, ExplicitInvariantError,
     ExplicitInvariantErrorKind, ExplicitTdsError, ExplicitTdsErrorKind,
-    FinalTopologyValidationContext,
+    FinalDelaunayValidationContext, FinalTopologyValidationContext,
     GlobalTopologyModelError as ConstructionGlobalTopologyModelError, InsertionOrderStrategy,
     InvalidCoordinateValue as ConstructionInvalidCoordinateValue,
     InvalidPositiveScalar as ConstructionInvalidPositiveScalar, RandomPointGenerationError,
@@ -216,6 +216,10 @@ fn construction_prelude_covers_typed_construction_failure_variants() {
     assert_eq!(
         FinalTopologyValidationContext::ConstructionFinalize.to_string(),
         "topology validation failed after construction"
+    );
+    assert_eq!(
+        FinalDelaunayValidationContext::PeriodicQuotientDelaunay.to_string(),
+        "periodic quotient failed final Level 4 Delaunay validation"
     );
     assert_eq!(
         InsertionTopologyValidationContext::PostInsertion.to_string(),
@@ -963,6 +967,7 @@ fn construction_prelude_covers_random_point_generation_failure_variant()
 
     assert_matches!(
         DelaunayConstructionFailure::FinalDelaunayValidation {
+            context: FinalDelaunayValidationContext::ConstructionFinalize,
             source: ConstructionDelaunayTriangulationValidationError::VerificationFailed {
                 source: ConstructionDelaunayVerificationError::from(
                     DelaunayRepairError::PostconditionFailed {
@@ -975,6 +980,7 @@ fn construction_prelude_covers_random_point_generation_failure_variant()
             },
         },
         DelaunayConstructionFailure::FinalDelaunayValidation {
+            context: FinalDelaunayValidationContext::ConstructionFinalize,
             source: ConstructionDelaunayTriangulationValidationError::VerificationFailed {
                 source,
             },

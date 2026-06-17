@@ -614,7 +614,7 @@ rules:
     languages:
       - generic
     severity: WARNING
-    message: "Fallible constructor definitions must not use new/from_*; use try_new*, try_from_*, parse, FromStr/TryFrom, or descriptive try_* names."
+    message: "Fallible constructor definitions must not use new/from_*; use try_new*, try_from_*, TryFrom, parse, or descriptive try_* names."
     metadata:
       category: correctness
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/459"

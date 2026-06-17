@@ -27,7 +27,10 @@ use thiserror::Error;
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct TdsStructureValidationProof(());
 
-/// Proof that a candidate passed the Delaunay-layer validation boundary.
+/// Proof that a candidate passed the full validation boundary for a Delaunay wrapper.
+///
+/// The proof is minted only after Levels 1–3 structural/topological validation and
+/// the Level 4 Delaunay-property check succeed for the candidate's topology model.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct DelaunayTriangulationValidationProof(());
 
@@ -41,12 +44,7 @@ pub(crate) struct DelaunayTriangulationCandidate<K, U, V, const D: usize> {
     candidate: DelaunayTriangulation<K, U, V, D>,
 }
 
-impl<K, U, V, const D: usize> DelaunayTriangulationCandidate<K, U, V, D>
-where
-    K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
-{
+impl<K, U, V, const D: usize> DelaunayTriangulationCandidate<K, U, V, D> {
     /// Assembles a validation candidate from a TDS and topology guarantee.
     pub(crate) const fn assemble(
         tds: Tds<U, V, D>,
@@ -74,68 +72,13 @@ where
         self.candidate.tri.set_global_topology(global_topology);
     }
 
-    /// Normalizes coherent orientation on the assembled candidate.
-    pub(crate) fn normalize_and_promote_positive_orientation(
-        &mut self,
-    ) -> Result<(), InsertionError> {
-        self.candidate
-            .tri
-            .normalize_and_promote_positive_orientation()
-    }
-
     /// Validates Level 1–2 TDS structure and returns proof for structural-only assembly paths.
     pub(crate) fn validate_tds_structure(&self) -> Result<TdsStructureValidationProof, TdsError> {
         self.candidate.tri.tds.validate()?;
         Ok(TdsStructureValidationProof(()))
     }
 
-    /// Validates Level 3 topology without geometric orientation checks.
-    pub(crate) fn validate_topology_only(&self) -> Result<(), InvariantError> {
-        self.candidate.tri.is_valid_topology_only()
-    }
-
-    /// Validates completion-time PL-manifold constraints.
-    pub(crate) fn validate_at_completion(&self) -> Result<(), InvariantError> {
-        self.candidate.tri.validate_at_completion()
-    }
-
-    /// Validates explicit geometric nondegeneracy constraints.
-    pub(crate) fn validate_geometric_nondegeneracy(&self) -> Result<(), TdsError> {
-        self.candidate.tri.validate_geometric_nondegeneracy()
-    }
-
-    /// Validates the Delaunay property and returns proof for final conversion.
-    pub(crate) fn validate_delaunay_property(
-        &self,
-    ) -> Result<DelaunayTriangulationValidationProof, DelaunayTriangulationValidationError> {
-        self.candidate.is_valid()?;
-        Ok(DelaunayTriangulationValidationProof(()))
-    }
-
-    /// Validates all public reconstruction invariants and returns the final wrapper.
-    pub(crate) fn try_into_validated_delaunay(
-        self,
-    ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationValidationError> {
-        self.candidate.tri.validate().map_err(|e| match e {
-            InvariantError::Tds(tds_err) => tds_err.into(),
-            InvariantError::Triangulation(tri_err) => tri_err.into(),
-            InvariantError::Delaunay(dt_err) => dt_err,
-        })?;
-
-        if self.candidate.global_topology().is_euclidean() {
-            is_delaunay_property_only(&self.candidate.tri.tds).map_err(|source| {
-                DelaunayTriangulationValidationError::VerificationFailed {
-                    source: Box::new(DelaunayVerificationError::from(source)),
-                }
-            })?;
-        } else {
-            self.candidate.is_valid()?;
-        }
-
-        Ok(self.candidate)
-    }
-
-    /// Converts a candidate after the caller has proved the Delaunay boundary.
+    /// Converts a candidate using proof from [`Self::validate_delaunay_property`].
     pub(crate) fn into_validated_delaunay(
         self,
         _proof: DelaunayTriangulationValidationProof,
@@ -154,6 +97,71 @@ where
     #[cfg(test)]
     pub(crate) fn into_repairable_delaunay_for_test(self) -> DelaunayTriangulation<K, U, V, D> {
         self.candidate
+    }
+}
+
+impl<K, U, V, const D: usize> DelaunayTriangulationCandidate<K, U, V, D>
+where
+    K: Kernel<D, Scalar = f64>,
+{
+    /// Normalizes coherent orientation on the assembled candidate.
+    pub(crate) fn normalize_and_promote_positive_orientation(
+        &mut self,
+    ) -> Result<(), InsertionError> {
+        self.candidate
+            .tri
+            .normalize_and_promote_positive_orientation()
+    }
+
+    /// Validates Level 3 topology without geometric orientation checks.
+    pub(crate) fn validate_topology_only(&self) -> Result<(), InvariantError> {
+        self.candidate.tri.is_valid_topology_only()
+    }
+
+    /// Validates completion-time PL-manifold constraints.
+    pub(crate) fn validate_at_completion(&self) -> Result<(), InvariantError> {
+        self.candidate.tri.validate_at_completion()
+    }
+
+    /// Validates explicit geometric nondegeneracy constraints.
+    pub(crate) fn validate_geometric_nondegeneracy(&self) -> Result<(), TdsError> {
+        self.candidate.tri.validate_geometric_nondegeneracy()
+    }
+}
+
+impl<K, U, V, const D: usize> DelaunayTriangulationCandidate<K, U, V, D>
+where
+    K: Kernel<D, Scalar = f64>,
+    U: DataType,
+    V: DataType,
+{
+    /// Validates all invariants required before exposing a Delaunay wrapper.
+    ///
+    /// This preserves the public reconstruction contract for
+    /// [`DelaunayTriangulation`]: a candidate cannot cross the boundary until
+    /// its underlying [`Triangulation`] passes Levels 1–3 validation and the
+    /// Level 4 Delaunay property is checked with the topology-appropriate
+    /// validator.
+    pub(crate) fn validate_delaunay_property(
+        &self,
+    ) -> Result<DelaunayTriangulationValidationProof, DelaunayTriangulationValidationError> {
+        self.candidate.tri.validate().map_err(|e| match e {
+            InvariantError::Tds(tds_err) => tds_err.into(),
+            InvariantError::Triangulation(tri_err) => tri_err.into(),
+            InvariantError::Delaunay(dt_err) => dt_err,
+        })?;
+
+        if self.candidate.global_topology().is_euclidean() {
+            is_delaunay_property_only(&self.candidate.tri.tds).map_err(|source| {
+                DelaunayTriangulationValidationError::VerificationFailed {
+                    source: Box::new(DelaunayVerificationError::from(source)),
+                }
+            })?;
+        } else {
+            self.candidate.is_valid()?;
+        }
+
+        Ok(DelaunayTriangulationValidationProof(()))
     }
 }
 
@@ -915,7 +923,8 @@ where
         let mut candidate =
             DelaunayTriangulationCandidate::assemble(tds, kernel, topology_guarantee);
         candidate.set_global_topology(global_topology);
-        candidate.try_into_validated_delaunay()
+        let proof = candidate.validate_delaunay_property()?;
+        Ok(candidate.into_validated_delaunay(proof))
     }
 }
 
@@ -927,6 +936,7 @@ mod tests {
     };
     use crate::core::simplex::Simplex;
     use crate::core::tds::{SimplexKey, TriangulationConstructionState, VertexKey};
+    use crate::core::vertex::Vertex;
     use crate::geometry::kernel::AdaptiveKernel;
     use std::assert_matches;
     use std::{error::Error, sync::Once};
@@ -947,24 +957,16 @@ mod tests {
     fn non_delaunay_quad_tds() -> Tds<(), (), 2> {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([4.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([4.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([4.0, 2.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([4.0, 2.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 2.0]).unwrap())
             .unwrap();
 
         tds.insert_simplex_with_mapping(
@@ -1150,13 +1152,68 @@ mod tests {
     }
 
     #[test]
+    fn try_from_tds_rejects_structural_validation_failure() {
+        init_tracing();
+        let vertices = [
+            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::try_new(&vertices).unwrap();
+        let mut tds = dt.tds().clone();
+
+        let vk = tds.vertex_keys().next().unwrap();
+        let uuid = tds.vertex(vk).unwrap().uuid();
+        tds.uuid_to_vertex_key.remove(&uuid);
+
+        let err = DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())
+            .expect_err("checked TDS reconstruction must reject broken UUID mappings");
+        assert_matches!(
+            err,
+            DelaunayTriangulationValidationError::Tds(source)
+                if matches!(source.as_ref(), TdsError::MappingInconsistency { .. })
+        );
+    }
+
+    #[test]
+    fn try_from_tds_rejects_topology_validation_failure() {
+        init_tracing();
+        let vertices = [
+            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::try_new(&vertices).unwrap();
+        let mut tds = dt.tds().clone();
+
+        let _ = tds
+            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap())
+            .unwrap();
+
+        let err = DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())
+            .expect_err("checked TDS reconstruction must reject isolated vertices");
+        assert_matches!(
+            err,
+            DelaunayTriangulationValidationError::Triangulation(source)
+                if matches!(
+                    source.as_ref(),
+                    TriangulationValidationError::IsolatedVertex { .. }
+                )
+        );
+    }
+
+    #[test]
     fn test_validation_report_ok_for_valid_triangulation() {
         init_tracing();
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
@@ -1168,10 +1225,10 @@ mod tests {
     fn test_validation_report_returns_mapping_failures_only() {
         init_tracing();
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
@@ -1203,10 +1260,10 @@ mod tests {
     fn test_validation_report_includes_vertex_incidence_violation() {
         init_tracing();
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
@@ -1233,10 +1290,10 @@ mod tests {
     fn test_dt_validate_maps_tds_error_to_tds_variant() {
         init_tracing();
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -1259,10 +1316,10 @@ mod tests {
     fn test_dt_validate_maps_topology_error_to_triangulation_variant() {
         init_tracing();
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -1270,9 +1327,7 @@ mod tests {
         // Add an isolated vertex so Level 3 (topology) fails.
         let _ = dt
             .tds_mut()
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
-            )
+            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap())
             .unwrap();
 
         match dt.validate() {

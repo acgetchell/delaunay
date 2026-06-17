@@ -264,9 +264,11 @@ Use fallible names for raw or invariant-bearing input:
 
 - `try_new*` is the default smart-constructor family for raw values becoming a
   proof-bearing domain type.
-- `try_from_*`, `TryFrom`, `parse`, and `FromStr` are appropriate when the source
-  shape matters, especially conversions from another representation,
-  deserialized snapshot data, or textual/raw DTO input.
+- `try_from_*`, `TryFrom`, and clearly named `parse` methods are appropriate
+  when the source shape matters, especially conversions from another
+  representation, deserialized snapshot data, or textual/raw DTO input. Prefer
+  these names over owned `from_str` constructors so fallibility remains visible
+  in the repository's constructor taxonomy.
 - `try_<variant>` is appropriate for fallible enum variant constructors, such as
   `DedupPolicy::try_epsilon`, when the variant name is the clearest API.
 - `try_<builder_option>` is appropriate for fallible builder setters, such as

@@ -35,7 +35,9 @@ use crate::core::collections::{
     FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer,
     SmallBuffer, VertexKeyBuffer,
 };
-use crate::core::construction::TriangulationConstructionError;
+use crate::core::construction::{
+    FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
+};
 use crate::core::facet::{FacetError, FacetHandle};
 use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
 use crate::core::tds::{
@@ -69,12 +71,16 @@ use std::hash::{Hash, Hasher};
 /// let reason = HullExtensionReason::NoVisibleFacets;
 /// std::assert_matches!(reason, HullExtensionReason::NoVisibleFacets);
 /// ```
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[non_exhaustive]
 pub enum HullExtensionReason {
     /// No visible boundary facets (coplanar with hull surface).
+    #[error(
+        "No visible boundary facets found for exterior vertex (may be coplanar with hull surface)"
+    )]
     NoVisibleFacets,
     /// Visible facets form an invalid patch.
+    #[error("Visible boundary facets are not a valid patch: {details}")]
     InvalidPatch {
         /// Details about why the patch was invalid.
         details: String,
@@ -83,30 +89,14 @@ pub enum HullExtensionReason {
     ///
     /// Preserves the structured [`CoordinateConversionError`] from the kernel or
     /// robust-predicate evaluation rather than collapsing it into a string.
-    PredicateFailed(CoordinateConversionError),
+    #[error("Geometric predicate failed: {0}")]
+    PredicateFailed(#[source] CoordinateConversionError),
     /// Lower-layer TDS error encountered during hull extension.
     ///
     /// Preserves the structured [`TdsError`] (e.g. from boundary-facet retrieval)
     /// rather than collapsing it into a string.
-    Tds(TdsError),
-}
-
-impl fmt::Display for HullExtensionReason {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NoVisibleFacets => f.write_str(
-                "No visible boundary facets found for exterior vertex (may be coplanar with hull surface)",
-            ),
-            Self::InvalidPatch { details } => write!(
-                f,
-                "Visible boundary facets are not a valid patch: {details}"
-            ),
-            Self::PredicateFailed(source) => {
-                write!(f, "Geometric predicate failed: {source}")
-            }
-            Self::Tds(source) => write!(f, "TDS error: {source}"),
-        }
-    }
+    #[error("TDS error: {0}")]
+    Tds(#[source] TdsError),
 }
 
 /// Fixed context for a Level 3 topology validation failure during insertion.
@@ -538,6 +528,7 @@ pub enum InitialSimplexUnexpectedInsertionStage {
     #[error("hull extension failed during insertion: {reason}")]
     HullExtension {
         /// Structured hull-extension failure reason.
+        #[source]
         reason: HullExtensionReason,
     },
 
@@ -550,19 +541,33 @@ pub enum InitialSimplexUnexpectedInsertionStage {
     },
 
     /// Topology validation escaped initial-simplex construction.
-    #[error("topology validation failed during insertion: {source}")]
+    #[error("{context}: {source}")]
     TopologyValidation {
+        /// Validation phase that failed.
+        context: InsertionTopologyValidationContext,
         /// Underlying topology validation error.
         #[source]
         source: Box<TriangulationValidationError>,
     },
 
     /// Final topology validation escaped initial-simplex construction.
-    #[error("final topology validation failed after construction: {source}")]
+    #[error("{context}: {source}")]
     FinalTopologyValidation {
+        /// Finalization phase that failed.
+        context: FinalTopologyValidationContext,
         /// Underlying final topology validation summary.
         #[source]
         source: InvariantErrorSummary,
+    },
+
+    /// Final Delaunay validation escaped initial-simplex construction.
+    #[error("{context}: {source}")]
+    FinalDelaunayValidation {
+        /// Finalization phase that failed.
+        context: FinalDelaunayValidationContext,
+        /// Underlying final Delaunay validation error.
+        #[source]
+        source: DelaunayTriangulationValidationError,
     },
 
     /// Spatial index construction escaped initial-simplex construction.
@@ -682,6 +687,10 @@ impl From<TdsConstructionError> for InitialSimplexConstructionError {
 }
 
 impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Conversion must exhaustively preserve typed construction error variants"
+    )]
     fn from(source: TriangulationConstructionError) -> Self {
         match source {
             TriangulationConstructionError::Tds(source) => source.into(),
@@ -760,9 +769,10 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
                     }),
                 }
             }
-            TriangulationConstructionError::InsertionTopologyValidation { source, .. } => {
+            TriangulationConstructionError::InsertionTopologyValidation { context, source } => {
                 Self::UnexpectedInsertionStage {
                     reason: Box::new(InitialSimplexUnexpectedInsertionStage::TopologyValidation {
+                        context,
                         source: Box::new(source),
                     }),
                 }
@@ -774,10 +784,23 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
                 max_simplices_removed,
                 attempted,
             },
-            TriangulationConstructionError::FinalTopologyValidation { source, .. } => {
+            TriangulationConstructionError::FinalTopologyValidation { context, source } => {
                 Self::UnexpectedInsertionStage {
                     reason: Box::new(
-                        InitialSimplexUnexpectedInsertionStage::FinalTopologyValidation { source },
+                        InitialSimplexUnexpectedInsertionStage::FinalTopologyValidation {
+                            context,
+                            source,
+                        },
+                    ),
+                }
+            }
+            TriangulationConstructionError::FinalDelaunayValidation { context, source } => {
+                Self::UnexpectedInsertionStage {
+                    reason: Box::new(
+                        InitialSimplexUnexpectedInsertionStage::FinalDelaunayValidation {
+                            context,
+                            source,
+                        },
                     ),
                 }
             }
@@ -1627,6 +1650,7 @@ pub enum InsertionError {
     #[error("Hull extension failed: {reason}")]
     HullExtension {
         /// Structured reason for failure.
+        #[source]
         reason: HullExtensionReason,
     },
 
@@ -1983,13 +2007,14 @@ impl InsertionError {
                     HullExtensionReason::NoVisibleFacets | HullExtensionReason::InvalidPatch { .. }
                 )
             }
-            InitialSimplexUnexpectedInsertionStage::TopologyValidation { source } => {
+            InitialSimplexUnexpectedInsertionStage::TopologyValidation { source, .. } => {
                 Self::is_level3_error_retryable(source)
             }
-            InitialSimplexUnexpectedInsertionStage::FinalTopologyValidation { source } => {
+            InitialSimplexUnexpectedInsertionStage::FinalTopologyValidation { source, .. } => {
                 Self::is_invariant_error_summary_retryable(source)
             }
-            InitialSimplexUnexpectedInsertionStage::Location { .. }
+            InitialSimplexUnexpectedInsertionStage::FinalDelaunayValidation { .. }
+            | InitialSimplexUnexpectedInsertionStage::Location { .. }
             | InitialSimplexUnexpectedInsertionStage::DelaunayValidation { .. }
             | InitialSimplexUnexpectedInsertionStage::SpatialIndexConstruction { .. } => false,
         }
@@ -4632,6 +4657,70 @@ mod tests {
             }
         }
         None
+    }
+
+    #[test]
+    fn test_topology_validation_context_display() {
+        let cases = [
+            (
+                InsertionTopologyValidationContext::InvariantConversion,
+                "topology validation failed",
+            ),
+            (
+                InsertionTopologyValidationContext::PostInsertion,
+                "post-insertion topology validation failed",
+            ),
+            (
+                InsertionTopologyValidationContext::LocalRepair,
+                "local topology validation failed",
+            ),
+            (
+                InsertionTopologyValidationContext::StructuralRepair,
+                "structural topology validation failed",
+            ),
+            (
+                InsertionTopologyValidationContext::StaleIncidentSimplexRepair,
+                "truly isolated vertex detected during stale incident-simplex repair",
+            ),
+            (
+                InsertionTopologyValidationContext::PositiveOrientationPromotion,
+                "positive-orientation promotion failed to converge",
+            ),
+            (
+                InsertionTopologyValidationContext::DelaunayRepair,
+                "topology invalid after Delaunay repair",
+            ),
+        ];
+
+        for (context, expected) in cases {
+            assert_eq!(context.to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn test_hull_extension_reason_exposes_typed_sources() {
+        let predicate_source = CoordinateConversionError::InvalidSimplexPointCount {
+            actual: 2,
+            expected: 3,
+            dimension: 2,
+        };
+        let predicate_reason = HullExtensionReason::PredicateFailed(predicate_source.clone());
+        let predicate_error = std::error::Error::source(&predicate_reason)
+            .and_then(|source| source.downcast_ref::<CoordinateConversionError>());
+        assert_eq!(predicate_error, Some(&predicate_source));
+
+        let tds_source = TdsError::InconsistentDataStructure {
+            message: "missing boundary facet".to_string(),
+        };
+        let tds_reason = HullExtensionReason::Tds(tds_source.clone());
+        let tds_error = std::error::Error::source(&tds_reason)
+            .and_then(|source| source.downcast_ref::<TdsError>());
+        assert_eq!(tds_error, Some(&tds_source));
+
+        let insertion_error = InsertionError::HullExtension { reason: tds_reason };
+        let insertion_source = std::error::Error::source(&insertion_error)
+            .and_then(|source| source.downcast_ref::<HullExtensionReason>());
+        assert_matches!(insertion_source, Some(HullExtensionReason::Tds(_)));
     }
 
     /// Macro to generate cavity filling tests for different dimensions

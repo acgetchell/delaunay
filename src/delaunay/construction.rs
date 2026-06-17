@@ -66,7 +66,9 @@ use crate::core::collections::{
     FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SecureHashMap, SimplexKeyBuffer,
     SmallBuffer,
 };
-use crate::core::construction::{FinalTopologyValidationContext, TriangulationConstructionError};
+use crate::core::construction::{
+    FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
+};
 use crate::core::insertion::record_duplicate_detection_metrics;
 use crate::core::operations::{
     DelaunayInsertionState, InsertionOutcome, InsertionResult, InsertionStatistics,
@@ -396,6 +398,7 @@ pub enum DelaunayConstructionFailure {
     #[error("hull extension failed during insertion: {reason}")]
     InsertionHullExtension {
         /// Structured hull-extension failure reason.
+        #[source]
         reason: HullExtensionReason,
     },
 
@@ -431,7 +434,7 @@ pub enum DelaunayConstructionFailure {
     /// Final topology validation failed after construction.
     #[error("final topology validation failed after construction: {context}: {source}")]
     FinalTopologyValidation {
-        /// Validation failure detail.
+        /// Finalization phase that produced the validation failure.
         context: FinalTopologyValidationContext,
         /// Underlying validation error.
         #[source]
@@ -439,8 +442,10 @@ pub enum DelaunayConstructionFailure {
     },
 
     /// Final Delaunay-property validation failed after construction.
-    #[error("final Delaunay validation failed after construction: {source}")]
+    #[error("final Delaunay validation failed after construction: {context}: {source}")]
     FinalDelaunayValidation {
+        /// Finalization phase that produced the validation failure.
+        context: FinalDelaunayValidationContext,
         /// Underlying Delaunay validation error.
         #[source]
         source: DelaunayTriangulationValidationError,
@@ -514,6 +519,9 @@ impl From<TriangulationConstructionError> for DelaunayConstructionFailure {
             },
             TriangulationConstructionError::FinalTopologyValidation { context, source } => {
                 Self::FinalTopologyValidation { context, source }
+            }
+            TriangulationConstructionError::FinalDelaunayValidation { context, source } => {
+                Self::FinalDelaunayValidation { context, source }
             }
         }
     }
@@ -2894,7 +2902,10 @@ where
         );
         delaunay_result.map_err(|source| {
             DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::FinalDelaunayValidation { source },
+                DelaunayConstructionFailure::FinalDelaunayValidation {
+                    context: FinalDelaunayValidationContext::ConstructionFinalize,
+                    source,
+                },
             )
         })?;
 
@@ -2946,7 +2957,10 @@ where
         if let Err(err) = delaunay_result {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                 error: DelaunayTriangulationConstructionError::Triangulation(
-                    DelaunayConstructionFailure::FinalDelaunayValidation { source: err },
+                    DelaunayConstructionFailure::FinalDelaunayValidation {
+                        context: FinalDelaunayValidationContext::ConstructionFinalize,
+                        source: err,
+                    },
                 ),
                 statistics: stats,
             });
@@ -3150,7 +3164,7 @@ where
 
         // During batch construction, use suspicion-driven validation instead of
         // per-insertion validation (see _with_construction_statistics variant for
-        // rationale: O(n²) avoidance + post-construction catch-all).
+        // rationale: O(n²) avoidance + post-construction validation fallback).
         //
         // Exception: PLManifoldStrict requires per-insertion vertex-link validation,
         // so we must use ValidationPolicy::Always to satisfy that guarantee.
@@ -5052,10 +5066,7 @@ mod tests {
 
     type TestDelaunay<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
 
-    fn synthetic_delaunay_verification_error(
-        message: &str,
-    ) -> DelaunayTriangulationValidationError {
-        let _ = message;
+    fn synthetic_delaunay_verification_error() -> DelaunayTriangulationValidationError {
         DelaunayTriangulationValidationError::VerificationFailed {
             source: DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
                 reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
@@ -7107,7 +7118,7 @@ mod tests {
                 reason: HullExtensionReason::NoVisibleFacets,
             },
             InsertionError::DelaunayValidationFailed {
-                source: synthetic_delaunay_verification_error("test"),
+                source: synthetic_delaunay_verification_error(),
             },
             InsertionError::DelaunayRepairFailed {
                 source: Box::new(DelaunayRepairError::PostconditionFailed {
@@ -7280,7 +7291,7 @@ mod tests {
         );
 
         let delaunay = InsertionError::DelaunayValidationFailed {
-            source: synthetic_delaunay_verification_error("test"),
+            source: synthetic_delaunay_verification_error(),
         };
         let mapped = TestDelaunay::<3>::map_insertion_error(delaunay);
         assert_matches!(
@@ -7334,9 +7345,13 @@ mod tests {
             }
         );
 
+        let source = std::error::Error::source(&failure)
+            .and_then(|source| source.downcast_ref::<HullExtensionReason>());
+        assert_eq!(source, Some(&HullExtensionReason::NoVisibleFacets));
+
         let failure = DelaunayConstructionFailure::from(
             TriangulationConstructionError::InsertionDelaunayValidation {
-                source: synthetic_delaunay_verification_error("delaunay check"),
+                source: synthetic_delaunay_verification_error(),
             },
         );
         assert_matches!(
@@ -7568,7 +7583,8 @@ mod tests {
             .into();
         let final_delaunay_err = DelaunayTriangulationConstructionError::Triangulation(
             DelaunayConstructionFailure::FinalDelaunayValidation {
-                source: synthetic_delaunay_verification_error("final Level 4 check failed"),
+                context: FinalDelaunayValidationContext::ConstructionFinalize,
+                source: synthetic_delaunay_verification_error(),
             },
         );
 
