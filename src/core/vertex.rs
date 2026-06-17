@@ -620,7 +620,7 @@ impl<U, const D: usize> Vertex<U, D> {
     ) -> Result<Self, VertexValidationError> {
         validate_uuid(&uuid)?;
 
-        Ok(Self::new_with_uuid(point, uuid, data))
+        Ok(Self::from_validated_point_with_uuid(point, uuid, data))
     }
 
     /// Creates a vertex with a UUID already known to be valid.
@@ -640,7 +640,11 @@ impl<U, const D: usize> Vertex<U, D> {
     /// # Returns
     ///
     /// A new `Vertex` with the specified UUID and data.
-    pub(crate) const fn new_with_uuid(point: Point<D>, uuid: Uuid, data: Option<U>) -> Self {
+    pub(crate) const fn from_validated_point_with_uuid(
+        point: Point<D>,
+        uuid: Uuid,
+        data: Option<U>,
+    ) -> Self {
         Self {
             point,
             uuid,
@@ -1013,12 +1017,12 @@ mod tests {
     #[test]
     fn test_try_into_hashmap_rejects_duplicate_uuid() {
         let uuid = make_uuid();
-        let first: Vertex<(), 2> = Vertex::new_with_uuid(
+        let first: Vertex<(), 2> = Vertex::from_validated_point_with_uuid(
             Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
             uuid,
             None,
         );
-        let second: Vertex<(), 2> = Vertex::new_with_uuid(
+        let second: Vertex<(), 2> = Vertex::from_validated_point_with_uuid(
             Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
             uuid,
             None,

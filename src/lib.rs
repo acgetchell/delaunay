@@ -779,14 +779,17 @@ pub use crate::core::algorithms::incremental_insertion::{
     CavityFillingError, CavityRepairStage, DelaunayRepairErrorKind, DelaunayRepairErrorSummary,
     DelaunayRepairFailureContext, HullExtensionReason, InitialSimplexConstructionError,
     InitialSimplexUnexpectedInsertionStage, InsertionError, InsertionErrorKind,
-    InsertionErrorSourceKind, InsertionErrorSummary, NeighborRebuildError, NeighborWiringError,
-    SpatialIndexConstructionFailure, TdsConstructionFailure, TdsValidationFailure, extend_hull,
-    fill_cavity, repair_neighbor_pointers, repair_neighbor_pointers_local, wire_cavity_neighbors,
+    InsertionErrorSourceKind, InsertionErrorSummary, InsertionTopologyValidationContext,
+    NeighborRebuildError, NeighborWiringError, SpatialIndexConstructionFailure,
+    TdsConstructionFailure, TdsValidationFailure, extend_hull, fill_cavity,
+    repair_neighbor_pointers, repair_neighbor_pointers_local, wire_cavity_neighbors,
 };
 pub use crate::core::algorithms::pl_manifold_repair::{
     PlManifoldRepairError, PlManifoldRepairStats,
 };
-pub use crate::core::construction::TriangulationConstructionError;
+pub use crate::core::construction::{
+    FinalTopologyValidationContext, TriangulationConstructionError,
+};
 pub use crate::core::insertion::DuplicateDetectionMetrics;
 pub use crate::core::operations::{
     InsertionOutcome, InsertionResult, InsertionStatistics, RepairDecision, RepairSkipReason,
@@ -1138,11 +1141,11 @@ pub mod prelude {
         DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
         DelaunayTriangulationConstructionErrorWithStatistics, DelaunayTriangulationValidationError,
         DelaunayVerificationError, DelaunayVerificationErrorKind, DuplicateDetectionMetrics,
-        InitialSimplexStrategy, InsertionOrderStrategy, InsertionResult, PlManifoldRepairError,
-        PlManifoldRepairStats, RepairDecision, RepairSkipReason, RetryPolicy, TopologicalOperation,
-        TopologyGuarantee, Triangulation, TriangulationConstructionError,
-        TriangulationValidationError, ValidationConfigurationError, ValidationPolicy,
-        try_vertices_from_points,
+        FinalTopologyValidationContext, InitialSimplexStrategy, InsertionOrderStrategy,
+        InsertionResult, PlManifoldRepairError, PlManifoldRepairStats, RepairDecision,
+        RepairSkipReason, RetryPolicy, TopologicalOperation, TopologyGuarantee, Triangulation,
+        TriangulationConstructionError, TriangulationValidationError, ValidationConfigurationError,
+        ValidationPolicy, try_vertices_from_points,
     };
 
     // Re-export utility items, but avoid exporting the util module names themselves.
@@ -1183,18 +1186,23 @@ pub mod prelude {
         CavityFillingError, CavityRepairStage, DelaunayRepairErrorKind, DelaunayRepairErrorSummary,
         DelaunayRepairFailureContext, HullExtensionReason, InitialSimplexConstructionError,
         InitialSimplexUnexpectedInsertionStage, InsertionError, InsertionErrorKind,
-        InsertionErrorSourceKind, InsertionErrorSummary, NeighborRebuildError, NeighborWiringError,
-        SpatialIndexConstructionFailure, TdsConstructionFailure, TdsValidationFailure,
+        InsertionErrorSourceKind, InsertionErrorSummary, InsertionTopologyValidationContext,
+        NeighborRebuildError, NeighborWiringError, SpatialIndexConstructionFailure,
+        TdsConstructionFailure, TdsValidationFailure,
     };
     pub use crate::{InsertionOutcome, InsertionStatistics, SuspicionFlags};
 
     // Re-export diagnostic types for scientific analysis of construction and repair
     pub use crate::flips::{
-        DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairStats,
-        DelaunayRepairVerificationContext, FlipContextError, FlipEdgeAdjacencyError, FlipError,
-        FlipMutationError, FlipNeighborWiringError, FlipOrientationCheckStage, FlipPredicateError,
-        FlipPredicateOperation, FlipTriangleAdjacencyError, FlipVertexAdjacencyError,
-        RepairQueueOrder, TriangleHandleError,
+        DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairHeuristicRebuildFailure,
+        DelaunayRepairHeuristicRebuildFailureKind, DelaunayRepairHeuristicVertexContext,
+        DelaunayRepairOrientationCanonicalizationFailure,
+        DelaunayRepairOrientationCanonicalizationFailureKind, DelaunayRepairPostconditionFailure,
+        DelaunayRepairStats, DelaunayRepairVerificationContext, FlipContextError,
+        FlipEdgeAdjacencyError, FlipError, FlipMutationError, FlipNeighborWiringError,
+        FlipOrientationCheckStage, FlipPredicateError, FlipPredicateOperation,
+        FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder,
+        TriangleHandleError,
     };
 
     // Re-export commonly used collection types from the public collections facade.
@@ -1278,8 +1286,8 @@ pub mod prelude {
         };
         pub use crate::{
             CavityFillingError, CavityRepairStage, DelaunayTriangulation,
-            SpatialIndexConstructionFailure, TopologyGuarantee, Triangulation,
-            TriangulationConstructionError, try_vertices_from_points,
+            FinalTopologyValidationContext, SpatialIndexConstructionFailure, TopologyGuarantee,
+            Triangulation, TriangulationConstructionError, try_vertices_from_points,
         };
     }
 
@@ -1382,9 +1390,10 @@ pub mod prelude {
             DelaunayRepairErrorSummary, DelaunayRepairFailureContext, HullExtensionReason,
             InitialSimplexConstructionError, InitialSimplexUnexpectedInsertionStage,
             InsertionError, InsertionErrorKind, InsertionErrorSourceKind, InsertionErrorSummary,
-            NeighborRebuildError, NeighborWiringError, SpatialIndexConstructionFailure,
-            TdsConstructionFailure, TdsValidationFailure, extend_hull, fill_cavity,
-            repair_neighbor_pointers, repair_neighbor_pointers_local, wire_cavity_neighbors,
+            InsertionTopologyValidationContext, NeighborRebuildError, NeighborWiringError,
+            SpatialIndexConstructionFailure, TdsConstructionFailure, TdsValidationFailure,
+            extend_hull, fill_cavity, repair_neighbor_pointers, repair_neighbor_pointers_local,
+            wire_cavity_neighbors,
         };
         pub use crate::{InsertionOutcome, InsertionResult, InsertionStatistics};
     }
@@ -1407,7 +1416,11 @@ pub mod prelude {
     /// [`DelaunayRepairErrorKind`]: crate::prelude::repair::DelaunayRepairErrorKind
     pub mod repair {
         pub use crate::flips::{
-            DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairStats,
+            DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairHeuristicRebuildFailure,
+            DelaunayRepairHeuristicRebuildFailureKind, DelaunayRepairHeuristicVertexContext,
+            DelaunayRepairOrientationCanonicalizationFailure,
+            DelaunayRepairOrientationCanonicalizationFailureKind,
+            DelaunayRepairPostconditionFailure, DelaunayRepairStats,
             DelaunayRepairVerificationContext, FlipContextError, FlipEdgeAdjacencyError, FlipError,
             FlipMutationError, FlipNeighborWiringError, FlipOrientationCheckStage,
             FlipPredicateError, FlipPredicateOperation, FlipTriangleAdjacencyError,

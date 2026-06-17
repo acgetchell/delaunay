@@ -151,7 +151,7 @@ use crate::core::collections::{
     FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, PeriodicOffsetBuffer, SmallBuffer, Uuid,
     VertexKeySet,
 };
-use crate::core::construction::TriangulationConstructionError;
+use crate::core::construction::{FinalTopologyValidationContext, TriangulationConstructionError};
 use crate::core::operations::InsertionOutcome;
 use crate::core::simplex::{Simplex, SimplexValidationError};
 use crate::core::tds::{
@@ -172,7 +172,10 @@ use crate::topology::traits::topological_space::{
     GlobalTopology, TopologyKind, ToroidalConstructionMode, ToroidalDomain, ToroidalDomainError,
 };
 use crate::triangulation::DelaunayTriangulation;
-use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationErrorKind};
+use crate::validation::{
+    DelaunayTriangulationCandidate, DelaunayTriangulationValidationError,
+    DelaunayTriangulationValidationProof, DelaunayVerificationErrorKind,
+};
 use num_traits::ToPrimitive;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -682,8 +685,6 @@ pub enum ExplicitDelaunayValidationErrorKind {
     Triangulation,
     /// Level 4 Delaunay verification failed.
     VerificationFailed,
-    /// Legacy string-only repair validation failed.
-    RepairFailed,
     /// Typed repair validation failed.
     RepairOperationFailed,
 }
@@ -720,11 +721,13 @@ pub enum ExplicitDelaunayValidationSourceKind {
 ///     DelaunayVerificationErrorKind, ExplicitDelaunayValidationError,
 ///     ExplicitDelaunayValidationErrorKind, ExplicitDelaunayValidationSourceKind,
 /// };
-/// use delaunay::prelude::repair::DelaunayRepairError;
+/// use delaunay::prelude::repair::{
+///     DelaunayRepairError, DelaunayRepairPostconditionFailure,
+/// };
 ///
 /// let source = DelaunayTriangulationValidationError::VerificationFailed {
 ///     source: DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
-///         message: "non-Delaunay facet".to_string(),
+///         reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
 ///     })
 ///     .into(),
 /// };
@@ -765,9 +768,6 @@ impl From<DelaunayTriangulationValidationError> for ExplicitDelaunayValidationEr
             DelaunayTriangulationValidationError::VerificationFailed { .. } => {
                 ExplicitDelaunayValidationErrorKind::VerificationFailed
             }
-            DelaunayTriangulationValidationError::RepairFailed { .. } => {
-                ExplicitDelaunayValidationErrorKind::RepairFailed
-            }
             DelaunayTriangulationValidationError::RepairOperationFailed { .. } => {
                 ExplicitDelaunayValidationErrorKind::RepairOperationFailed
             }
@@ -785,7 +785,6 @@ impl From<DelaunayTriangulationValidationError> for ExplicitDelaunayValidationEr
             DelaunayTriangulationValidationError::RepairOperationFailed { source, .. } => Some(
                 ExplicitDelaunayValidationSourceKind::Repair(source.as_ref().into()),
             ),
-            DelaunayTriangulationValidationError::RepairFailed { .. } => None,
         };
         Self {
             kind,
@@ -828,11 +827,18 @@ impl From<DelaunayTriangulationValidationError> for ExplicitDelaunayValidationEr
 /// ];
 /// let simplices = vec![vec![0, 1]]; // Wrong arity for 2D (needs 3 vertices)
 ///
+/// let Err(err) =
+///     DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+/// else {
+///     panic!("bad simplex specs should be rejected");
+/// };
 /// std::assert_matches!(
-///     DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices).build::<()>(),
-///     Err(DelaunayTriangulationConstructionError::ExplicitConstruction(
-///         ExplicitConstructionError::InvalidSimplexArity { simplex_index: 0, actual: 2, expected: 3 },
-///     ))
+///     err,
+///     ExplicitConstructionError::InvalidSimplexArity {
+///         simplex_index: 0,
+///         actual: 2,
+///         expected: 3,
+///     }
 /// );
 /// # Ok(())
 /// # }
@@ -965,6 +971,67 @@ pub enum ExplicitConstructionError {
     },
 }
 
+#[derive(Clone, Copy)]
+struct ValidatedExplicitSimplices<'v> {
+    specs: &'v [Vec<usize>],
+}
+
+impl<'v> ValidatedExplicitSimplices<'v> {
+    fn try_new<const D: usize>(
+        vertex_count: usize,
+        specs: &'v [Vec<usize>],
+    ) -> Result<Self, ExplicitConstructionError> {
+        validate_explicit_simplex_specs::<D>(vertex_count, specs)?;
+        Ok(Self::from_validated_specs(specs))
+    }
+
+    const fn from_validated_specs(specs: &'v [Vec<usize>]) -> Self {
+        Self { specs }
+    }
+
+    const fn as_slice(self) -> &'v [Vec<usize>] {
+        self.specs
+    }
+}
+
+/// Validates explicit simplex specifications before storing them in a builder.
+fn validate_explicit_simplex_specs<const D: usize>(
+    vertex_count: usize,
+    simplices: &[Vec<usize>],
+) -> Result<(), ExplicitConstructionError> {
+    if simplices.is_empty() {
+        return Err(ExplicitConstructionError::EmptySimplices);
+    }
+
+    for (simplex_idx, simplex_spec) in simplices.iter().enumerate() {
+        if simplex_spec.len() != D + 1 {
+            return Err(ExplicitConstructionError::InvalidSimplexArity {
+                simplex_index: simplex_idx,
+                actual: simplex_spec.len(),
+                expected: D + 1,
+            });
+        }
+        for (i, &vi) in simplex_spec.iter().enumerate() {
+            if vi >= vertex_count {
+                return Err(ExplicitConstructionError::IndexOutOfBounds {
+                    simplex_index: simplex_idx,
+                    vertex_index: vi,
+                    bound: vertex_count,
+                });
+            }
+            for &vj in &simplex_spec[i + 1..] {
+                if vi == vj {
+                    return Err(ExplicitConstructionError::DuplicateVertexInSimplex {
+                        simplex_index: simplex_idx,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 // =============================================================================
 // BUILDER STRUCT
 // =============================================================================
@@ -1025,8 +1092,7 @@ pub struct DelaunayTriangulationBuilder<'v, U, const D: usize> {
     ///
     /// When set, the builder constructs a triangulation from the given vertices and
     /// simplices directly, bypassing point-insertion-based Delaunay construction.
-    /// Each inner slice must contain exactly D+1 vertex indices.
-    explicit_simplices: Option<&'v [Vec<usize>]>,
+    explicit_simplices: Option<ValidatedExplicitSimplices<'v>>,
     /// Runtime global topology metadata.
     ///
     /// When set to a non-Euclidean topology (e.g. `Toroidal`), Euler characteristic
@@ -1110,6 +1176,16 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// explicit connectivity is rejected because it requires Level 4 handling
     /// that is not available for quotient meshes.
     ///
+    /// # Errors
+    ///
+    /// Returns [`ExplicitConstructionError::EmptySimplices`] when no simplices
+    /// are provided, [`ExplicitConstructionError::InvalidSimplexArity`] when a
+    /// simplex does not contain `D + 1` vertex indices,
+    /// [`ExplicitConstructionError::IndexOutOfBounds`] when a simplex references
+    /// a missing vertex, or
+    /// [`ExplicitConstructionError::DuplicateVertexInSimplex`] when a simplex
+    /// repeats a vertex index.
+    ///
     /// # Examples
     ///
     /// ```rust
@@ -1123,6 +1199,8 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// #     #[error(transparent)]
     /// #     Source(#[from] DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
+    /// #     Explicit(#[from] ExplicitConstructionError),
+    /// #     #[error(transparent)]
     /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
@@ -1134,41 +1212,51 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// ];
     /// let simplices = vec![vec![0, 1, 2], vec![0, 2, 3]];
     ///
-    /// let dt = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
+    /// let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)?
     ///     .build::<()>()?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 4);
     /// assert_eq!(dt.number_of_simplices(), 2);
     ///
     /// let bad_simplices = vec![vec![0, 1]]; // Wrong arity for a 2D simplex.
-    /// std::assert_matches!(
-    ///     DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &bad_simplices).build::<()>(),
-    ///     Err(DelaunayTriangulationConstructionError::ExplicitConstruction(
-    ///         ExplicitConstructionError::InvalidSimplexArity { .. },
-    ///     ))
-    /// );
+    /// let Err(err) =
+    ///     DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &bad_simplices)
+    /// else {
+    ///     panic!("bad simplex specs should be rejected");
+    /// };
+    /// std::assert_matches!(err, ExplicitConstructionError::InvalidSimplexArity { .. });
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
-    pub fn from_vertices_and_simplices(
+    pub fn try_from_vertices_and_simplices(
         vertices: &'v [Vertex<U, D>],
         simplices: &'v [Vec<usize>],
-    ) -> Self {
-        Self::from_vertices_and_simplices_generic(vertices, simplices)
+    ) -> Result<Self, ExplicitConstructionError> {
+        Self::try_from_vertices_and_simplices_generic(vertices, simplices)
     }
     /// Creates a builder from explicit vertex and simplex specifications.
     ///
     /// This constructs a triangulation from the given connectivity without
     /// Delaunay point insertion.
     ///
-    /// The explicit connectivity is still validated when
-    /// [`build`](Self::build) or [`build_with_kernel`](Self::build_with_kernel)
-    /// is called. Euclidean explicit meshes are checked at Levels 1–4, including
-    /// the Delaunay empty-circumsphere property. Non-Euclidean explicit
-    /// connectivity is rejected because there is no successful Levels 1–3-only
+    /// Simplex arity, bounds, and duplicate indices are validated before the
+    /// builder stores the explicit connectivity. Euclidean explicit meshes are
+    /// checked at Levels 1–4 during [`build`](Self::build) or
+    /// [`build_with_kernel`](Self::build_with_kernel), including the Delaunay
+    /// empty-circumsphere property. Non-Euclidean explicit connectivity is
+    /// rejected at build time because there is no successful Levels 1–3-only
     /// path for the public `DelaunayTriangulation` wrapper; quotient meshes need
     /// Level 4 handling before they can be accepted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExplicitConstructionError::EmptySimplices`] when no simplices
+    /// are provided, [`ExplicitConstructionError::InvalidSimplexArity`] when a
+    /// simplex does not contain `D + 1` vertex indices,
+    /// [`ExplicitConstructionError::IndexOutOfBounds`] when a simplex references
+    /// a missing vertex, or
+    /// [`ExplicitConstructionError::DuplicateVertexInSimplex`] when a simplex
+    /// repeats a vertex index.
     ///
     /// # Examples
     ///
@@ -1181,6 +1269,8 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// # enum ExampleError {
     /// #     #[error(transparent)]
     /// #     Construction(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Explicit(#[from] delaunay::prelude::construction::ExplicitConstructionError),
     /// #     #[error(transparent)]
     /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
@@ -1192,7 +1282,7 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// ];
     /// let simplices = vec![vec![0, 1, 2]];
     ///
-    /// let dt = DelaunayTriangulationBuilder::from_vertices_and_simplices_generic(&vertices, &simplices)
+    /// let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices_generic(&vertices, &simplices)?
     ///     .build::<()>()?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 3);
@@ -1200,53 +1290,15 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
-    pub fn from_vertices_and_simplices_generic(
+    pub fn try_from_vertices_and_simplices_generic(
         vertices: &'v [Vertex<U, D>],
         simplices: &'v [Vec<usize>],
-    ) -> Self {
+    ) -> Result<Self, ExplicitConstructionError> {
+        let explicit_simplices =
+            ValidatedExplicitSimplices::try_new::<D>(vertices.len(), simplices)?;
         let mut builder = Self::new(vertices);
-        builder.explicit_simplices = Some(simplices);
-        builder
-    }
-
-    /// Creates a builder from a vertex slice.
-    ///
-    /// For raw coordinate arrays, prefer [`new`](DelaunayTriangulationBuilder::new) which
-    /// infers all type parameters without explicit annotations. Use `from_vertices`
-    /// when callers already have validated [`Vertex`] values.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, Vertex,
-    /// };
-    ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// let vertices: Vec<Vertex<(), 2>> = vec![
-    ///     Vertex::try_new([0.0, 0.0])?,
-    ///     Vertex::try_new([1.0, 0.0])?,
-    ///     Vertex::try_new([0.0, 1.0])?,
-    /// ];
-    ///
-    /// let dt = DelaunayTriangulationBuilder::from_vertices(&vertices)
-    ///     .build::<()>()?;
-    ///
-    /// assert_eq!(dt.number_of_vertices(), 3);
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[must_use]
-    pub fn from_vertices(vertices: &'v [Vertex<U, D>]) -> Self {
-        Self::new(vertices)
+        builder.explicit_simplices = Some(explicit_simplices);
+        Ok(builder)
     }
 
     /// Enables periodic toroidal topology via the image-point method.
@@ -1275,6 +1327,8 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// #     Source(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// #     #[error(transparent)]
+    /// #     Explicit(#[from] delaunay::prelude::construction::ExplicitConstructionError),
     /// #     #[error(transparent)]
     /// #     Topology(#[from] delaunay::prelude::construction::ToroidalDomainError),
     /// # }
@@ -1529,6 +1583,8 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// #     #[error(transparent)]
     /// #     Construction(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
+    /// #     Explicit(#[from] delaunay::prelude::construction::ExplicitConstructionError),
+    /// #     #[error(transparent)]
     /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// #     #[error(transparent)]
     /// #     Topology(#[from] delaunay::prelude::construction::ToroidalDomainError),
@@ -1546,7 +1602,7 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     ///     ToroidalConstructionMode::Explicit,
     /// )
     /// ?;
-    /// let result = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
+    /// let result = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)?
     ///     .global_topology(topology)
     ///     .build::<()>();
     ///
@@ -1739,7 +1795,7 @@ where
                     },
                 )
             })?;
-            let new_vertex = Vertex::new_with_uuid(new_point, v.uuid(), v.data);
+            let new_vertex = Vertex::from_validated_point_with_uuid(new_point, v.uuid(), v.data);
 
             out.push(new_vertex);
         }
@@ -1873,7 +1929,7 @@ where
             return Self::build_explicit(
                 kernel,
                 self.vertices,
-                simplices,
+                simplices.as_slice(),
                 self.topology_guarantee,
                 self.global_topology,
             );
@@ -1951,15 +2007,13 @@ where
                     })?;
                 dt.as_triangulation().validate().map_err(|e| {
                     TriangulationConstructionError::FinalTopologyValidation {
-                        message: "Periodic quotient failed final Levels 1-3 topology validation"
-                            .to_string(),
+                        context: FinalTopologyValidationContext::PeriodicQuotientTopology,
                         source: e.into(),
                     }
                 })?;
                 dt.is_valid().map_err(|e| {
                     TriangulationConstructionError::FinalTopologyValidation {
-                        message: "Periodic quotient failed final Level 4 Delaunay validation"
-                            .to_string(),
+                        context: FinalTopologyValidationContext::PeriodicQuotientDelaunay,
                         source: InvariantError::Delaunay(e).into(),
                     }
                 })?;
@@ -1983,7 +2037,7 @@ where
     /// 2. Build a `Tds`: insert all vertices, then insert simplices from the specifications.
     /// 3. Compute adjacency via `assign_neighbors()`.
     /// 4. Assign incident simplices via `assign_incident_simplices()`.
-    /// 5. Wrap in `DelaunayTriangulation` via `from_tds_with_topology_guarantee`.
+    /// 5. Wrap in a validation candidate.
     /// 6. Normalize coherent orientation and promote to positive canonical sign
     ///    via `normalize_and_promote_positive_orientation()`.
     /// 7. Reject non-Euclidean explicit connectivity until Level 4 quotient
@@ -2004,7 +2058,7 @@ where
         K: Kernel<D, Scalar = f64>,
         V: DataType,
     {
-        Self::validate_explicit_simplex_specs(vertices.len(), simplices)?;
+        validate_explicit_simplex_specs::<D>(vertices.len(), simplices)?;
         Self::reject_explicit_non_euclidean_topology(global_topology)?;
 
         let vertex_count = vertices.len();
@@ -2061,16 +2115,13 @@ where
         // Construct the DT first so the Triangulation-layer helpers
         // (orientation promotion, topology checks) operate on the assembled
         // complex.
-        let mut dt = DelaunayTriangulation::from_tds_with_topology_guarantee(
-            tds,
-            kernel.clone(),
-            topology_guarantee,
-        );
+        let mut candidate =
+            DelaunayTriangulationCandidate::assemble(tds, kernel.clone(), topology_guarantee);
 
         // Set global topology metadata before validation so that
         // validate_topology_core() uses the correct Euler characteristic
         // expectation (e.g. χ = 0 for toroidal instead of χ = 2 for sphere).
-        dt.set_global_topology(global_topology);
+        candidate.set_global_topology(global_topology);
 
         // --- Normalize orientation and promote to positive ---
         //
@@ -2080,7 +2131,7 @@ where
         //   3. Bounded per-simplex promotion passes for FP-precision edge cases
         // This ensures the returned DT has positive geometric orientation,
         // matching the invariant expected by validate_geometric_simplex_orientation.
-        dt.tri
+        candidate
             .normalize_and_promote_positive_orientation()
             .map_err(
                 |source| ExplicitConstructionError::OrientationNormalization {
@@ -2090,7 +2141,7 @@ where
 
         // Level 1–2: TDS structural validation (mappings, neighbors, facet
         // sharing, coherent orientation, etc.).
-        if let Err(e) = dt.tri.tds.validate() {
+        if let Err(e) = candidate.validate_tds_structure() {
             return Err(
                 ExplicitConstructionError::StructuralValidation { source: e.into() }.into(),
             );
@@ -2102,12 +2153,12 @@ where
         // them.  We call `is_valid_topology_only()` which covers all these;
         // the only check we intentionally omit is
         // `validate_geometric_simplex_orientation`.
-        if let Err(e) = dt.tri.is_valid_topology_only() {
+        if let Err(e) = candidate.validate_topology_only() {
             return Err(ExplicitConstructionError::TopologyValidation { source: e.into() }.into());
         }
 
         // Completion-time PL-manifold check (vertex links) if required.
-        if let Err(e) = dt.tri.validate_at_completion() {
+        if let Err(e) = candidate.validate_at_completion() {
             return Err(
                 ExplicitConstructionError::CompletionValidation { source: e.into() }.into(),
             );
@@ -2120,53 +2171,15 @@ where
         // may tolerate near-degenerate simplices from flip-based repair,
         // explicit construction should not silently accept geometrically
         // collapsed simplices supplied by the user.
-        if let Err(e) = dt.tri.validate_geometric_nondegeneracy() {
+        if let Err(e) = candidate.validate_geometric_nondegeneracy() {
             return Err(
                 ExplicitConstructionError::GeometricNondegeneracy { source: e.into() }.into(),
             );
         }
 
-        Self::enforce_explicit_delaunay_property(&dt)?;
+        let proof = Self::enforce_explicit_delaunay_property(&candidate)?;
 
-        Ok(dt)
-    }
-
-    /// Validates explicit simplex specifications before constructing a TDS.
-    fn validate_explicit_simplex_specs(
-        vertex_count: usize,
-        simplices: &[Vec<usize>],
-    ) -> Result<(), ExplicitConstructionError> {
-        if simplices.is_empty() {
-            return Err(ExplicitConstructionError::EmptySimplices);
-        }
-
-        for (simplex_idx, simplex_spec) in simplices.iter().enumerate() {
-            if simplex_spec.len() != D + 1 {
-                return Err(ExplicitConstructionError::InvalidSimplexArity {
-                    simplex_index: simplex_idx,
-                    actual: simplex_spec.len(),
-                    expected: D + 1,
-                });
-            }
-            for (i, &vi) in simplex_spec.iter().enumerate() {
-                if vi >= vertex_count {
-                    return Err(ExplicitConstructionError::IndexOutOfBounds {
-                        simplex_index: simplex_idx,
-                        vertex_index: vi,
-                        bound: vertex_count,
-                    });
-                }
-                for &vj in &simplex_spec[i + 1..] {
-                    if vi == vj {
-                        return Err(ExplicitConstructionError::DuplicateVertexInSimplex {
-                            simplex_index: simplex_idx,
-                        });
-                    }
-                }
-            }
-        }
-
-        Ok(())
+        Ok(candidate.into_validated_delaunay(proof))
     }
 
     /// Enforces Level 4 validation before returning the Delaunay wrapper.
@@ -2176,13 +2189,13 @@ where
     /// this API boundary. Explicit non-Euclidean topology is rejected earlier in
     /// `build_explicit` until a Level 4 validator exists for quotient connectivity.
     fn enforce_explicit_delaunay_property<K, V>(
-        dt: &DelaunayTriangulation<K, U, V, D>,
-    ) -> Result<(), DelaunayTriangulationConstructionError>
+        candidate: &DelaunayTriangulationCandidate<K, U, V, D>,
+    ) -> Result<DelaunayTriangulationValidationProof, DelaunayTriangulationConstructionError>
     where
         K: Kernel<D, Scalar = f64>,
         V: DataType,
     {
-        dt.is_valid().map_err(|source| {
+        candidate.validate_delaunay_property().map_err(|source| {
             ExplicitConstructionError::DelaunayValidation {
                 source: source.into(),
             }
@@ -2375,7 +2388,8 @@ where
                 })?;
                 if is_canonical {
                     image_uuid_to_canonical_with_offset.insert(v.uuid(), (v.uuid(), [0_i8; D]));
-                    let canonical_v = Vertex::new_with_uuid(new_point, v.uuid(), v.data);
+                    let canonical_v =
+                        Vertex::from_validated_point_with_uuid(new_point, v.uuid(), v.data);
                     expanded.push(canonical_v);
                 } else {
                     let image_v: Vertex<U, D> = Vertex::from_validated_point(new_point, None);
@@ -3183,11 +3197,14 @@ where
             .into());
         }
 
-        Ok(DelaunayTriangulation::from_tds_with_topology_guarantee(
-            tds_mut,
-            kernel.clone(),
-            topology_guarantee,
-        ))
+        let candidate =
+            DelaunayTriangulationCandidate::assemble(tds_mut, kernel.clone(), topology_guarantee);
+        let proof = candidate.validate_tds_structure().map_err(|e| {
+            TriangulationConstructionError::GeometricDegeneracy {
+                message: format!("Periodic quotient TDS invalid before return: {e}"),
+            }
+        })?;
+        Ok(candidate.into_structurally_valid_delaunay(proof))
     }
 }
 
@@ -3199,7 +3216,10 @@ where
 mod tests {
     use super::*;
     use crate::construction::{DelaunayConstructionFailure, InsertionOrderStrategy};
-    use crate::core::algorithms::flips::DelaunayRepairError;
+    use crate::core::algorithms::flips::{
+        DelaunayRepairError, DelaunayRepairHeuristicRebuildFailure,
+        DelaunayRepairPostconditionFailure,
+    };
     use crate::core::algorithms::incremental_insertion::{
         CavityFillingError, DelaunayRepairFailureContext, HullExtensionReason, NeighborWiringError,
         SpatialIndexConstructionFailure,
@@ -3252,9 +3272,12 @@ mod tests {
     fn synthetic_delaunay_verification_error(
         message: &str,
     ) -> DelaunayTriangulationValidationError {
+        let _ = message;
         DelaunayTriangulationValidationError::VerificationFailed {
             source: DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
-                message: message.to_string(),
+                reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
+                    simplex_count: 1,
+                }),
             })
             .into(),
         }
@@ -3335,7 +3358,11 @@ mod tests {
             DelaunayTriangulationValidationError::RepairOperationFailed {
                 operation: DelaunayRepairOperation::VertexRemoval,
                 source: Box::new(DelaunayRepairError::HeuristicRebuildFailed {
-                    message: "rebuild failed".to_string(),
+                    reason: Box::new(
+                        DelaunayRepairHeuristicRebuildFailure::RecursionDepthExceeded {
+                            max_depth: 1,
+                        },
+                    ),
                 }),
             },
         );
@@ -3432,8 +3459,10 @@ mod tests {
         );
         assert_explicit_tds_error_kind(
             TdsError::InvalidNeighbors {
-                reason: NeighborValidationError::Other {
-                    message: "neighbor invariant failed".to_string(),
+                reason: NeighborValidationError::NonPeriodicSelfNeighbor {
+                    simplex_key,
+                    simplex_uuid: uuid,
+                    facet_index: 0,
                 },
             },
             ExplicitTdsErrorKind::InvalidNeighbors,
@@ -3701,7 +3730,9 @@ mod tests {
         assert_explicit_insertion_error(
             InsertionError::DelaunayRepairFailed {
                 source: Box::new(DelaunayRepairError::PostconditionFailed {
-                    message: "remaining violation".to_string(),
+                    reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
+                        simplex_count: 1,
+                    }),
                 }),
                 context: DelaunayRepairFailureContext::LocalRepair,
             },
@@ -3729,7 +3760,7 @@ mod tests {
                     degree_one_vertices: 1,
                     connected: false,
                 },
-                message: "scoped topology validation".to_string(),
+                context: crate::InsertionTopologyValidationContext::PostInsertion,
             },
             ExplicitInsertionErrorKind::TopologyValidationFailed,
             Some(InsertionErrorSourceKind::Triangulation(
@@ -4067,13 +4098,13 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // Generic path (from_vertices)
+    // Generic builder path
     // -------------------------------------------------------------------------
 
-    /// `from_vertices` is required when vertices carry user data (`U ≠ ()`).
-    /// Verify that the data is preserved after canonicalized toroidal wrapping.
+    /// `new` accepts vertices carrying user data (`U ≠ ()`). Verify that the
+    /// data is preserved after canonicalized toroidal wrapping.
     #[test]
-    fn test_builder_from_vertices_preserves_vertex_data() {
+    fn test_builder_new_preserves_vertex_data() {
         let vertices: Vec<Vertex<i32, 2>> = vec![
             Vertex::try_new_with_data([0.2_f64, 0.3], 1_i32).unwrap(),
             Vertex::try_new_with_data([1.8_f64, 0.1], 2_i32).unwrap(), // x → 0.8

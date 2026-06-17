@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 use crate::core::algorithms::flips::{DelaunayRepairError, verify_delaunay_for_triangulation};
+use crate::core::algorithms::incremental_insertion::InsertionError;
 use crate::core::operations::DelaunayInsertionState;
 use crate::core::tds::{
     InvariantError, InvariantKind, InvariantViolation, Tds, TdsError, TriangulationValidationReport,
@@ -21,6 +22,140 @@ use crate::topology::traits::topological_space::GlobalTopology;
 use crate::triangulation::DelaunayTriangulation;
 use std::num::NonZeroUsize;
 use thiserror::Error;
+
+/// Proof that a candidate's underlying TDS passed structural validation.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TdsStructureValidationProof(());
+
+/// Proof that a candidate passed the Delaunay-layer validation boundary.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DelaunayTriangulationValidationProof(());
+
+/// Internal assembly stage for a triangulation that has not crossed its validation boundary yet.
+///
+/// This keeps raw or freshly assembled [`Tds`] values out of the final
+/// [`DelaunayTriangulation`] wrapper until the caller has proved the relevant
+/// invariants for the construction path.
+#[derive(Clone, Debug)]
+pub(crate) struct DelaunayTriangulationCandidate<K, U, V, const D: usize> {
+    candidate: DelaunayTriangulation<K, U, V, D>,
+}
+
+impl<K, U, V, const D: usize> DelaunayTriangulationCandidate<K, U, V, D>
+where
+    K: Kernel<D, Scalar = f64>,
+    U: DataType,
+    V: DataType,
+{
+    /// Assembles a validation candidate from a TDS and topology guarantee.
+    pub(crate) const fn assemble(
+        tds: Tds<U, V, D>,
+        kernel: K,
+        topology_guarantee: TopologyGuarantee,
+    ) -> Self {
+        let validation_policy = topology_guarantee.default_validation_policy();
+        Self {
+            candidate: DelaunayTriangulation {
+                tri: Triangulation {
+                    kernel,
+                    tds,
+                    global_topology: GlobalTopology::DEFAULT,
+                    validation_policy,
+                    topology_guarantee,
+                },
+                insertion_state: DelaunayInsertionState::new(),
+                spatial_index: None,
+            },
+        }
+    }
+
+    /// Sets runtime global-topology metadata before validation.
+    pub(crate) const fn set_global_topology(&mut self, global_topology: GlobalTopology<D>) {
+        self.candidate.tri.set_global_topology(global_topology);
+    }
+
+    /// Normalizes coherent orientation on the assembled candidate.
+    pub(crate) fn normalize_and_promote_positive_orientation(
+        &mut self,
+    ) -> Result<(), InsertionError> {
+        self.candidate
+            .tri
+            .normalize_and_promote_positive_orientation()
+    }
+
+    /// Validates Level 1–2 TDS structure and returns proof for structural-only assembly paths.
+    pub(crate) fn validate_tds_structure(&self) -> Result<TdsStructureValidationProof, TdsError> {
+        self.candidate.tri.tds.validate()?;
+        Ok(TdsStructureValidationProof(()))
+    }
+
+    /// Validates Level 3 topology without geometric orientation checks.
+    pub(crate) fn validate_topology_only(&self) -> Result<(), InvariantError> {
+        self.candidate.tri.is_valid_topology_only()
+    }
+
+    /// Validates completion-time PL-manifold constraints.
+    pub(crate) fn validate_at_completion(&self) -> Result<(), InvariantError> {
+        self.candidate.tri.validate_at_completion()
+    }
+
+    /// Validates explicit geometric nondegeneracy constraints.
+    pub(crate) fn validate_geometric_nondegeneracy(&self) -> Result<(), TdsError> {
+        self.candidate.tri.validate_geometric_nondegeneracy()
+    }
+
+    /// Validates the Delaunay property and returns proof for final conversion.
+    pub(crate) fn validate_delaunay_property(
+        &self,
+    ) -> Result<DelaunayTriangulationValidationProof, DelaunayTriangulationValidationError> {
+        self.candidate.is_valid()?;
+        Ok(DelaunayTriangulationValidationProof(()))
+    }
+
+    /// Validates all public reconstruction invariants and returns the final wrapper.
+    pub(crate) fn try_into_validated_delaunay(
+        self,
+    ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationValidationError> {
+        self.candidate.tri.validate().map_err(|e| match e {
+            InvariantError::Tds(tds_err) => tds_err.into(),
+            InvariantError::Triangulation(tri_err) => tri_err.into(),
+            InvariantError::Delaunay(dt_err) => dt_err,
+        })?;
+
+        if self.candidate.global_topology().is_euclidean() {
+            is_delaunay_property_only(&self.candidate.tri.tds).map_err(|source| {
+                DelaunayTriangulationValidationError::VerificationFailed {
+                    source: Box::new(DelaunayVerificationError::from(source)),
+                }
+            })?;
+        } else {
+            self.candidate.is_valid()?;
+        }
+
+        Ok(self.candidate)
+    }
+
+    /// Converts a candidate after the caller has proved the Delaunay boundary.
+    pub(crate) fn into_validated_delaunay(
+        self,
+        _proof: DelaunayTriangulationValidationProof,
+    ) -> DelaunayTriangulation<K, U, V, D> {
+        self.candidate
+    }
+
+    /// Converts a candidate after the caller has proved structural validity.
+    pub(crate) fn into_structurally_valid_delaunay(
+        self,
+        _proof: TdsStructureValidationProof,
+    ) -> DelaunayTriangulation<K, U, V, D> {
+        self.candidate
+    }
+
+    #[cfg(test)]
+    pub(crate) fn into_repairable_delaunay_for_test(self) -> DelaunayTriangulation<K, U, V, D> {
+        self.candidate
+    }
+}
 
 /// Typed source for Level 4 Delaunay verification failures.
 ///
@@ -37,14 +172,14 @@ use thiserror::Error;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::repair::DelaunayRepairError;
+/// use delaunay::prelude::repair::{DelaunayRepairError, DelaunayRepairPostconditionFailure};
 /// use delaunay::prelude::validation::{
 ///     DelaunayVerificationError, DelaunayVerificationErrorKind,
 /// };
 ///
 /// let source =
 ///     DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
-///         message: "non-Delaunay facet".to_string(),
+///         reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
 ///     });
 ///
 /// assert_eq!(
@@ -93,14 +228,14 @@ impl From<DelaunayValidationError> for DelaunayVerificationError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::repair::DelaunayRepairError;
+/// use delaunay::prelude::repair::{DelaunayRepairError, DelaunayRepairPostconditionFailure};
 /// use delaunay::prelude::validation::{
 ///     DelaunayVerificationError, DelaunayVerificationErrorKind,
 /// };
 ///
 /// let source =
 ///     DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
-///         message: "non-Delaunay facet".to_string(),
+///         reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
 ///     });
 /// let kind = DelaunayVerificationErrorKind::from(&source);
 ///
@@ -195,20 +330,6 @@ pub enum DelaunayTriangulationValidationError {
         /// Typed verification failure source.
         #[source]
         source: Box<DelaunayVerificationError>,
-    },
-
-    /// Flip-based Delaunay repair failed with string-only context.
-    ///
-    /// This variant is retained for compatibility with existing callers. New
-    /// mutating operations that can preserve the repair source should prefer
-    /// [`RepairOperationFailed`](Self::RepairOperationFailed).
-    ///
-    /// **Not** returned by `validate()` or `is_valid()` — those use
-    /// [`VerificationFailed`](Self::VerificationFailed) for passive checks.
-    #[error("Delaunay repair failed: {message}")]
-    RepairFailed {
-        /// Description of the repair failure.
-        message: String,
     },
 
     /// Flip-based Delaunay repair failed during a specific mutating operation.
@@ -791,63 +912,19 @@ where
         topology_guarantee: TopologyGuarantee,
         global_topology: GlobalTopology<D>,
     ) -> Result<Self, DelaunayTriangulationValidationError> {
-        let mut candidate = Self::from_tds_with_topology_guarantee(tds, kernel, topology_guarantee);
+        let mut candidate =
+            DelaunayTriangulationCandidate::assemble(tds, kernel, topology_guarantee);
         candidate.set_global_topology(global_topology);
-        candidate.tri.validate().map_err(|e| match e {
-            InvariantError::Tds(tds_err) => tds_err.into(),
-            InvariantError::Triangulation(tri_err) => tri_err.into(),
-            InvariantError::Delaunay(dt_err) => dt_err,
-        })?;
-
-        if candidate.global_topology().is_euclidean() {
-            is_delaunay_property_only(&candidate.tri.tds).map_err(|source| {
-                DelaunayTriangulationValidationError::VerificationFailed {
-                    source: Box::new(DelaunayVerificationError::from(source)),
-                }
-            })?;
-        } else {
-            candidate.is_valid()?;
-        }
-        Ok(candidate)
-    }
-
-    /// Assemble a `DelaunayTriangulation` from a `Tds` with an explicit topology guarantee.
-    ///
-    /// This crate-internal constructor performs no validation; public callers
-    /// must use [`try_from_tds_with_topology_guarantee`](Self::try_from_tds_with_topology_guarantee).
-    /// The initial
-    /// [`ValidationPolicy`](crate::ValidationPolicy) is derived from the guarantee:
-    /// [`PLManifoldStrict`](TopologyGuarantee::PLManifoldStrict) uses
-    /// [`Always`](crate::ValidationPolicy::Always),
-    /// [`PLManifold`](TopologyGuarantee::PLManifold) uses
-    /// [`ExplicitOnly`](crate::ValidationPolicy::ExplicitOnly), and
-    /// [`Pseudomanifold`](TopologyGuarantee::Pseudomanifold) uses
-    /// [`OnSuspicion`](crate::ValidationPolicy::OnSuspicion).
-    #[must_use]
-    pub(crate) const fn from_tds_with_topology_guarantee(
-        tds: Tds<U, V, D>,
-        kernel: K,
-        topology_guarantee: TopologyGuarantee,
-    ) -> Self {
-        let validation_policy = topology_guarantee.default_validation_policy();
-        Self {
-            tri: Triangulation {
-                kernel,
-                tds,
-                global_topology: GlobalTopology::DEFAULT,
-                validation_policy,
-                topology_guarantee,
-            },
-            insertion_state: DelaunayInsertionState::new(),
-            spatial_index: None,
-        }
+        candidate.try_into_validated_delaunay()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::algorithms::flips::{DelaunayRepairDiagnostics, RepairQueueOrder};
+    use crate::core::algorithms::flips::{
+        DelaunayRepairDiagnostics, DelaunayRepairPostconditionFailure, RepairQueueOrder,
+    };
     use crate::core::simplex::Simplex;
     use crate::core::tds::{SimplexKey, TriangulationConstructionState, VertexKey};
     use crate::geometry::kernel::AdaptiveKernel;
@@ -905,8 +982,9 @@ mod tests {
     }
 
     fn synthetic_flip_verification_source(message: &str) -> DelaunayVerificationError {
+        let _ = message;
         DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
-            message: message.to_string(),
+            reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
         })
     }
 
@@ -953,7 +1031,7 @@ mod tests {
             "Display should contain prefix: {msg}"
         );
         assert!(
-            msg.contains("flip predicate detected non-Delaunay facet"),
+            msg.contains("repair pass disconnected the triangulation"),
             "Display should contain inner message: {msg}"
         );
         let DelaunayTriangulationValidationError::VerificationFailed { source } = &err else {

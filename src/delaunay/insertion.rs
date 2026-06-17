@@ -24,6 +24,7 @@ use crate::core::algorithms::flips::{
 };
 use crate::core::algorithms::incremental_insertion::{
     DelaunayRepairErrorSummary, DelaunayRepairFailureContext, InsertionError,
+    InsertionTopologyValidationContext,
 };
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::collections::{FastHashSet, SimplexKeyBuffer};
@@ -38,15 +39,15 @@ use crate::geometry::kernel::Kernel;
 use crate::repair::{DelaunayRepairOperation, DelaunayRepairPolicy};
 use crate::topology::manifold::{ManifoldError, validate_ridge_links_for_simplices};
 use crate::triangulation::DelaunayTriangulation;
+#[cfg(test)]
+use crate::validation::DelaunayTriangulationCandidate;
 use crate::validation::DelaunayTriangulationValidationError;
 use std::env;
-
-const RIDGE_LINK_REPAIR_VALIDATION_MESSAGE: &str = "Topology invalid after Delaunay repair";
 
 fn ridge_link_repair_validation_error(err: ManifoldError) -> InsertionError {
     match TriangulationValidationError::try_from(err) {
         Ok(source) => InsertionError::TopologyValidationFailed {
-            message: RIDGE_LINK_REPAIR_VALIDATION_MESSAGE.to_string(),
+            context: InsertionTopologyValidationContext::DelaunayRepair,
             source,
         },
         Err(source) => InsertionError::TopologyValidation(source),
@@ -1090,10 +1091,8 @@ mod tests {
 
     #[test]
     fn test_ridge_link_repair_validation_error_routes_tds_errors_to_tds_layer() {
-        let tds_err = TdsError::InvalidNeighbors {
-            reason: NeighborValidationError::Other {
-                message: "unit test".to_string(),
-            },
+        let tds_err = TdsError::InconsistentDataStructure {
+            message: "unit test".to_string(),
         };
 
         match ridge_link_repair_validation_error(ManifoldError::Tds(tds_err.clone())) {
@@ -1111,8 +1110,8 @@ mod tests {
         });
 
         match error {
-            InsertionError::TopologyValidationFailed { message, source } => {
-                assert_eq!(message, RIDGE_LINK_REPAIR_VALIDATION_MESSAGE);
+            InsertionError::TopologyValidationFailed { context, source } => {
+                assert_eq!(context, InsertionTopologyValidationContext::DelaunayRepair);
                 assert_matches!(
                     source,
                     TriangulationValidationError::BoundaryRidgeMultiplicity {
@@ -1509,11 +1508,12 @@ mod tests {
     fn test_validate_ridge_links_after_full_reseed_repair_uses_mutation_frontier() {
         init_tracing();
         let (tds, incident_to_invalid_ridge, nonincident) = wedge_two_spheres_share_vertex_tds_2d();
-        let dt = DelaunayTriangulation::from_tds_with_topology_guarantee(
+        let dt = DelaunayTriangulationCandidate::assemble(
             tds,
             AdaptiveKernel::new(),
             TopologyGuarantee::PLManifold,
-        );
+        )
+        .into_repairable_delaunay_for_test();
         let stats = DelaunayRepairStats {
             flips_performed: 1,
             ..DelaunayRepairStats::default()

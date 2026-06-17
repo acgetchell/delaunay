@@ -113,6 +113,11 @@ pub fn public_panic_bypass() {
     panic!("public APIs should return typed errors instead");
 }
 
+pub fn production_debug_assert_bypass(value: usize) {
+    // ruleid: delaunay.rust.no-production-debug-assert
+    debug_assert!(value > 0);
+}
+
 // ruleid: delaunay.rust.no-legacy-coordinate-generic-api
 type LegacyPoint = Point<f64, 3>;
 
@@ -226,6 +231,65 @@ impl ParallelValidatedDataConstructorFixture {
     // ok: delaunay.rust.no-parallel-from-validated-with-data-constructors
     fn from_validated_point(point: Point<3>, data: Option<()>) -> Self {
         Self { point, data }
+    }
+}
+
+impl FallibleConstructorDefinitionFixture {
+    // ruleid: delaunay.rust.no-fallible-new-or-from-constructor-definitions
+    pub fn new(value: usize) -> Result<Self, PrivateFixtureError> {
+        Ok(Self { value })
+    }
+
+    // ruleid: delaunay.rust.no-fallible-new-or-from-constructor-definitions
+    fn from_runtime(value: usize) -> Result<Self, PrivateFixtureError> {
+        Ok(Self { value })
+    }
+
+    // ruleid: delaunay.rust.no-fallible-new-or-from-constructor-definitions
+    fn from_simplex_with_data<T>(
+        value: usize,
+        _data: Option<T>,
+    ) -> Result<Self, PrivateFixtureError> {
+        Ok(Self { value })
+    }
+
+    // ok: delaunay.rust.no-fallible-new-or-from-constructor-definitions
+    fn try_new(value: usize) -> Result<Self, PrivateFixtureError> {
+        Ok(Self { value })
+    }
+
+    // ok: delaunay.rust.no-fallible-new-or-from-constructor-definitions
+    fn try_from_runtime(value: usize) -> Result<Self, PrivateFixtureError> {
+        Ok(Self { value })
+    }
+
+    // ok: delaunay.rust.no-fallible-new-or-from-constructor-definitions
+    fn from_validated_value(value: usize) -> Self {
+        Self { value }
+    }
+}
+
+impl UncheckedConstructorFixture {
+    // ruleid: delaunay.rust.no-unreviewed-from-unchecked-constructors
+    pub(crate) const fn from_unchecked_tds_with_topology_guarantee() -> Self {
+        Self
+    }
+
+    // ruleid: delaunay.rust.no-unreviewed-from-unchecked-constructors
+    pub(crate) fn from_unchecked_raw_state() -> Self {
+        Self
+    }
+
+    // ok: delaunay.rust.no-unreviewed-from-unchecked-constructors
+    pub(crate) fn assemble_tds_with_topology_guarantee() -> Self {
+        Self
+    }
+}
+
+impl PublicUncheckedPrefixConstructorFixture {
+    // ruleid: delaunay.rust.no-unreviewed-from-unchecked-constructors, delaunay.rust.no-public-unchecked-apis
+    pub fn from_unchecked_tds_with_topology_guarantee() -> Self {
+        Self
     }
 }
 
@@ -622,7 +686,11 @@ impl PublicVertexUuidConstructorFixture {
 
 impl CratePrivateVertexUuidConstructorFixture {
     // ok: delaunay.rust.no-public-vertex-new-with-uuid
-    pub(crate) const fn new_with_uuid(point: Point<3>, uuid: Uuid, data: Option<()>) -> Self {
+    pub(crate) const fn from_validated_point_with_uuid(
+        point: Point<3>,
+        uuid: Uuid,
+        data: Option<()>,
+    ) -> Self {
         Self { point, uuid, data }
     }
 

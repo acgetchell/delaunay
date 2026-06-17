@@ -7,7 +7,8 @@
 //! with the triangulation type until they can be split into narrower modules.
 
 use crate::core::algorithms::incremental_insertion::{
-    CavityFillingError, HullExtensionReason, SpatialIndexConstructionFailure,
+    CavityFillingError, HullExtensionReason, InsertionTopologyValidationContext,
+    SpatialIndexConstructionFailure,
 };
 use crate::core::algorithms::locate::{ConflictError, LocateError};
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
@@ -24,6 +25,39 @@ use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::CoordinateValues;
 use crate::validation::DelaunayTriangulationValidationError;
 use thiserror::Error;
+
+/// Fixed context for final topology validation after construction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FinalTopologyValidationContext {
+    /// Standard final validation after Euclidean construction.
+    ConstructionFinalize,
+    /// Final Levels 1-3 topology validation for a periodic quotient.
+    PeriodicQuotientTopology,
+    /// Final Level 4 Delaunay validation for a periodic quotient.
+    PeriodicQuotientDelaunay,
+    /// Final Levels 1-3 topology validation for a generated random triangulation.
+    RandomGeneration,
+}
+
+impl std::fmt::Display for FinalTopologyValidationContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ConstructionFinalize => {
+                f.write_str("topology validation failed after construction")
+            }
+            Self::PeriodicQuotientTopology => {
+                f.write_str("periodic quotient failed final Levels 1-3 topology validation")
+            }
+            Self::PeriodicQuotientDelaunay => {
+                f.write_str("periodic quotient failed final Level 4 Delaunay validation")
+            }
+            Self::RandomGeneration => {
+                f.write_str("random triangulation failed final Levels 1-3 topology validation")
+            }
+        }
+    }
+}
 
 /// Errors that can occur during triangulation construction.
 ///
@@ -147,10 +181,10 @@ pub enum TriangulationConstructionError {
     },
 
     /// Level 3 topology validation failed during incremental construction.
-    #[error("{message}: {source}")]
+    #[error("{context}: {source}")]
     InsertionTopologyValidation {
         /// High-level insertion context.
-        message: String,
+        context: InsertionTopologyValidationContext,
         /// Underlying topology validation error.
         #[source]
         source: TriangulationValidationError,
@@ -171,10 +205,10 @@ pub enum TriangulationConstructionError {
     ///
     /// Mirrors [`InsertionTopologyValidation`](Self::InsertionTopologyValidation)
     /// for post-build checks that run after the incremental insertion phase.
-    #[error("{message}: {source}")]
+    #[error("{context}: {source}")]
     FinalTopologyValidation {
         /// High-level finalization context.
-        message: String,
+        context: FinalTopologyValidationContext,
         /// Underlying validation error.
         #[source]
         source: InvariantErrorSummary,

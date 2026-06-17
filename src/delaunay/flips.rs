@@ -10,6 +10,9 @@
 
 pub use crate::core::algorithms::flips::{
     BistellarFlipKind, BistellarMove, ConstK, DelaunayRepairDiagnostics, DelaunayRepairError,
+    DelaunayRepairHeuristicRebuildFailure, DelaunayRepairHeuristicRebuildFailureKind,
+    DelaunayRepairHeuristicVertexContext, DelaunayRepairOrientationCanonicalizationFailure,
+    DelaunayRepairOrientationCanonicalizationFailureKind, DelaunayRepairPostconditionFailure,
     DelaunayRepairStats, DelaunayRepairVerificationContext, FlipContextError, FlipDirection,
     FlipEdgeAdjacencyError, FlipError, FlipInfo, FlipMutationError, FlipNeighborWiringError,
     FlipOrientationCheckStage, FlipPredicateError, FlipPredicateOperation,

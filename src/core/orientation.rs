@@ -5,7 +5,9 @@
 //! slot order, and normalizing coherent orientation after construction or edits.
 //! Predicate implementations remain in the geometry layer.
 
-use crate::core::algorithms::incremental_insertion::InsertionError;
+use crate::core::algorithms::incremental_insertion::{
+    InsertionError, InsertionTopologyValidationContext,
+};
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer, SmallBuffer};
 use crate::core::simplex::Simplex;
 use crate::core::tds::{GeometricError, SimplexKey, TdsError, VertexKey};
@@ -350,7 +352,7 @@ where
             }
             let sampled: Vec<SimplexKey> = sample_keys.into_iter().flatten().collect();
             return Err(InsertionError::TopologyValidationFailed {
-                message: "Positive-orientation promotion failed to converge".to_string(),
+                context: InsertionTopologyValidationContext::PositiveOrientationPromotion,
                 source: TriangulationValidationError::OrientationPromotionNonConvergence {
                     residual_count,
                     sampled,

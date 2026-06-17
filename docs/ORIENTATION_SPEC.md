@@ -196,10 +196,10 @@ drive repair, but replacement-simplex orientation itself uses `robust_orientatio
 
 `src/delaunay/builder.rs` normalizes explicit and periodic construction:
 
-- `from_vertices_and_simplices(...)` accepts user-provided simplex orderings, assembles
-  the TDS, calls `normalize_and_promote_positive_orientation()`, validates TDS
-  structure/topology, rejects geometrically degenerate simplices, and then enforces
-  the Delaunay property.
+- `try_from_vertices_and_simplices(...)` validates user-provided simplex specs
+  before storage, assembles the TDS, calls `normalize_and_promote_positive_orientation()`,
+  validates TDS structure/topology, rejects geometrically degenerate simplices,
+  and then enforces the Delaunay property.
 - `.try_toroidal([..])` builds an image-point triangulation and then runs
   orientation normalization, lifted geometric orientation validation, final
   Levels 1-3 topology validation, and final Level 4 Delaunay validation before

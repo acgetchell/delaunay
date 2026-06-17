@@ -87,7 +87,9 @@
 //! with the correct boundary behavior (a necessary condition), but does not attempt to
 //! distinguish spheres/balls from other manifolds (not sufficient in general).
 
-use crate::core::algorithms::incremental_insertion::InsertionError;
+use crate::core::algorithms::incremental_insertion::{
+    InsertionError, InsertionTopologyValidationContext,
+};
 use crate::core::collections::{
     FacetToSimplicesMap, FastHashSet, SimplexKeyBuffer, SimplexKeySet, fast_hash_set_with_capacity,
 };
@@ -1304,7 +1306,7 @@ where
         match err {
             InvariantError::Tds(tds_err) => InsertionError::TopologyValidation(tds_err),
             InvariantError::Triangulation(tri_err) => InsertionError::TopologyValidationFailed {
-                message: "Topology validation failed".to_string(),
+                context: InsertionTopologyValidationContext::InvariantConversion,
                 source: tri_err,
             },
             InvariantError::Delaunay(dt_err) => {
@@ -1588,7 +1590,7 @@ fn start_insertion_timing(telemetry_mode: InsertionTelemetryMode) -> Option<Inst
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::algorithms::flips::DelaunayRepairError;
+    use crate::core::algorithms::flips::{DelaunayRepairError, DelaunayRepairPostconditionFailure};
     use crate::core::algorithms::incremental_insertion::CavityFillingError;
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
     use crate::core::collections::NeighborBuffer;
@@ -1609,9 +1611,12 @@ mod tests {
     fn synthetic_delaunay_verification_error(
         message: &str,
     ) -> DelaunayTriangulationValidationError {
+        let _ = message;
         DelaunayTriangulationValidationError::VerificationFailed {
             source: DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
-                message: message.to_string(),
+                reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
+                    simplex_count: 1,
+                }),
             })
             .into(),
         }
@@ -1859,10 +1864,8 @@ mod tests {
 
     #[test]
     fn triangulation_validation_error_try_from_manifold_error_preserves_detail() {
-        let tds_err = TdsError::InvalidNeighbors {
-            reason: NeighborValidationError::Other {
-                message: "unit test".to_string(),
-            },
+        let tds_err = TdsError::InconsistentDataStructure {
+            message: "unit test".to_string(),
         };
 
         assert_eq!(
@@ -2277,7 +2280,7 @@ mod tests {
             vertex_uuid: Uuid::nil(),
         };
         let error = InsertionError::TopologyValidationFailed {
-            message: "outer".to_string(),
+            context: InsertionTopologyValidationContext::InvariantConversion,
             source: inner.clone(),
         };
         assert_eq!(
@@ -3145,7 +3148,7 @@ mod tests {
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
 
-        let invalid_vertex: Vertex<(), 3> = Vertex::new_with_uuid(
+        let invalid_vertex: Vertex<(), 3> = Vertex::from_validated_point_with_uuid(
             Point::try_new([0.25, 0.25, 0.25]).expect("finite point coordinates"),
             Uuid::nil(),
             None,

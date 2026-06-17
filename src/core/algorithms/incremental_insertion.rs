@@ -89,11 +89,6 @@ pub enum HullExtensionReason {
     /// Preserves the structured [`TdsError`] (e.g. from boundary-facet retrieval)
     /// rather than collapsing it into a string.
     Tds(TdsError),
-    /// Other failure.
-    Other {
-        /// Underlying error message.
-        message: String,
-    },
 }
 
 impl fmt::Display for HullExtensionReason {
@@ -110,7 +105,44 @@ impl fmt::Display for HullExtensionReason {
                 write!(f, "Geometric predicate failed: {source}")
             }
             Self::Tds(source) => write!(f, "TDS error: {source}"),
-            Self::Other { message } => f.write_str(message),
+        }
+    }
+}
+
+/// Fixed context for a Level 3 topology validation failure during insertion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum InsertionTopologyValidationContext {
+    /// Conversion from a generic invariant error back into an insertion error.
+    InvariantConversion,
+    /// Validation after a point insertion.
+    PostInsertion,
+    /// Validation while repairing local topology.
+    LocalRepair,
+    /// Validation of a structural topology repair path.
+    StructuralRepair,
+    /// Validation while repairing stale incident-simplex pointers.
+    StaleIncidentSimplexRepair,
+    /// Positive-orientation promotion failed its bounded convergence check.
+    PositiveOrientationPromotion,
+    /// Ridge-link validation after Delaunay repair.
+    DelaunayRepair,
+}
+
+impl fmt::Display for InsertionTopologyValidationContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvariantConversion => f.write_str("topology validation failed"),
+            Self::PostInsertion => f.write_str("post-insertion topology validation failed"),
+            Self::LocalRepair => f.write_str("local topology validation failed"),
+            Self::StructuralRepair => f.write_str("structural topology validation failed"),
+            Self::StaleIncidentSimplexRepair => {
+                f.write_str("truly isolated vertex detected during stale incident-simplex repair")
+            }
+            Self::PositiveOrientationPromotion => {
+                f.write_str("positive-orientation promotion failed to converge")
+            }
+            Self::DelaunayRepair => f.write_str("topology invalid after Delaunay repair"),
         }
     }
 }
@@ -801,15 +833,16 @@ impl From<&DelaunayRepairError> for DelaunayRepairErrorKind {
 /// ```rust
 /// use delaunay::prelude::repair::{
 ///     DelaunayRepairError, DelaunayRepairErrorKind, DelaunayRepairErrorSummary,
+///     DelaunayRepairPostconditionFailure,
 /// };
 ///
 /// let source = DelaunayRepairError::PostconditionFailed {
-///     message: "remaining non-Delaunay facet".to_string(),
+///     reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
 /// };
 /// let summary = DelaunayRepairErrorSummary::from(&source);
 ///
 /// assert_eq!(summary.kind, DelaunayRepairErrorKind::PostconditionFailed);
-/// assert!(summary.message.contains("remaining non-Delaunay facet"));
+/// assert!(summary.message.contains("disconnected the triangulation"));
 /// ```
 #[must_use]
 #[derive(Debug, Clone, thiserror::Error)]
@@ -914,11 +947,13 @@ pub enum InsertionErrorSourceKind {
 ///     InsertionError, InsertionErrorKind, InsertionErrorSourceKind,
 ///     InsertionErrorSummary,
 /// };
-/// use delaunay::prelude::repair::DelaunayRepairError;
+/// use delaunay::prelude::repair::{
+///     DelaunayRepairError, DelaunayRepairPostconditionFailure,
+/// };
 ///
 /// let source = InsertionError::DelaunayRepairFailed {
 ///     source: Box::new(DelaunayRepairError::PostconditionFailed {
-///         message: "remaining non-Delaunay facet".to_string(),
+///         reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
 ///     }),
 ///     context: DelaunayRepairFailureContext::LocalRepair,
 /// };
@@ -1648,10 +1683,10 @@ pub enum InsertionError {
     /// This preserves the structured [`TriangulationValidationError`] without wrapping it into a
     /// [`TdsError`],
     /// avoiding lower-layer (`Tds`) errors depending on higher-layer (`Triangulation`) errors.
-    #[error("{message}: {source}")]
+    #[error("{context}: {source}")]
     TopologyValidationFailed {
         /// High-level context for when the topology validation failed.
-        message: String,
+        context: InsertionTopologyValidationContext,
 
         /// The underlying Level 3 validation error.
         #[source]
@@ -4553,7 +4588,9 @@ mod tests {
     use super::*;
     use crate::DelaunayTriangulation;
     use crate::core::algorithms::flips::{
-        DelaunayRepairDiagnostics, DelaunayRepairVerificationContext, FlipError, RepairQueueOrder,
+        DelaunayRepairDiagnostics, DelaunayRepairHeuristicRebuildFailure,
+        DelaunayRepairOrientationCanonicalizationFailure, DelaunayRepairPostconditionFailure,
+        DelaunayRepairVerificationContext, FlipError, RepairQueueOrder,
     };
     use crate::core::algorithms::locate::InternalInconsistencySite;
     use crate::core::collections::SimplexKeyBuffer;
@@ -5387,9 +5424,12 @@ mod tests {
     fn synthetic_delaunay_verification_error(
         message: &str,
     ) -> DelaunayTriangulationValidationError {
+        let _ = message;
         DelaunayTriangulationValidationError::VerificationFailed {
             source: DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
-                message: message.to_string(),
+                reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
+                    simplex_count: 1,
+                }),
             })
             .into(),
         }
@@ -5407,7 +5447,9 @@ mod tests {
             ),
             (
                 DelaunayRepairError::PostconditionFailed {
-                    message: "remaining non-Delaunay facet".to_string(),
+                    reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
+                        simplex_count: 1,
+                    }),
                 },
                 DelaunayRepairErrorKind::PostconditionFailed,
             ),
@@ -5420,7 +5462,13 @@ mod tests {
             ),
             (
                 DelaunayRepairError::OrientationCanonicalizationFailed {
-                    message: "orientation pass failed".to_string(),
+                    reason: Box::new(
+                        DelaunayRepairOrientationCanonicalizationFailure::AfterFlipRepair {
+                            source: Box::new(InsertionError::DuplicateCoordinates {
+                                coordinates: CoordinateValues::from([0.0, 0.0]),
+                            }),
+                        },
+                    ),
                 },
                 DelaunayRepairErrorKind::OrientationCanonicalizationFailed,
             ),
@@ -5434,7 +5482,11 @@ mod tests {
             ),
             (
                 DelaunayRepairError::HeuristicRebuildFailed {
-                    message: "fallback rebuild failed".to_string(),
+                    reason: Box::new(
+                        DelaunayRepairHeuristicRebuildFailure::RecursionDepthExceeded {
+                            max_depth: 1,
+                        },
+                    ),
                 },
                 DelaunayRepairErrorKind::HeuristicRebuildFailed,
             ),
@@ -5465,7 +5517,7 @@ mod tests {
             ),
             (
                 InsertionError::TopologyValidationFailed {
-                    message: "post-insertion topology validation failed".to_string(),
+                    context: InsertionTopologyValidationContext::PostInsertion,
                     source: TriangulationValidationError::Disconnected { simplex_count: 2 },
                 },
                 InsertionErrorKind::TopologyValidationFailed,
@@ -5485,7 +5537,11 @@ mod tests {
             (
                 InsertionError::DelaunayRepairFailed {
                     source: Box::new(DelaunayRepairError::HeuristicRebuildFailed {
-                        message: "rebuild could not restore topology".to_string(),
+                        reason: Box::new(
+                            DelaunayRepairHeuristicRebuildFailure::RecursionDepthExceeded {
+                                max_depth: 1,
+                            },
+                        ),
                     }),
                     context: DelaunayRepairFailureContext::LocalRepair,
                 },
@@ -5555,7 +5611,7 @@ mod tests {
     #[test]
     fn test_robust_fallback_context_preserves_initial_repair_summary() {
         let initial = DelaunayRepairError::PostconditionFailed {
-            message: "local predicate violation".to_string(),
+            reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
         };
         let context = DelaunayRepairFailureContext::LocalRepairRobustFallback {
             initial: DelaunayRepairErrorSummary::from(&initial),
@@ -5563,7 +5619,7 @@ mod tests {
 
         let msg = context.to_string();
         assert!(msg.contains("local repair failed"));
-        assert!(msg.contains("local predicate violation"));
+        assert!(msg.contains("disconnected the triangulation"));
         assert!(msg.contains("robust fallback also failed"));
     }
 
@@ -5658,7 +5714,7 @@ mod tests {
             InsertionError::CavityFilling {
                 reason: CavityFillingError::NeighborRebuild {
                     reason: NeighborRebuildError::from(InsertionError::TopologyValidationFailed {
-                        message: "local topology validation failed".to_string(),
+                        context: InsertionTopologyValidationContext::LocalRepair,
                         source: TriangulationValidationError::ManifoldFacetMultiplicity {
                             facet_key: 0x1234,
                             simplex_count: 3,
@@ -5672,7 +5728,7 @@ mod tests {
             !InsertionError::CavityFilling {
                 reason: CavityFillingError::NeighborRebuild {
                     reason: NeighborRebuildError::from(InsertionError::TopologyValidationFailed {
-                        message: "structural topology validation failed".to_string(),
+                        context: InsertionTopologyValidationContext::StructuralRepair,
                         source: TriangulationValidationError::Disconnected { simplex_count: 2 },
                     }),
                 },
@@ -5791,7 +5847,7 @@ mod tests {
         // perturbing coordinates changes the conflict region.
         assert!(
             InsertionError::TopologyValidationFailed {
-                message: "test".to_string(),
+                context: InsertionTopologyValidationContext::PostInsertion,
                 source: TriangulationValidationError::IsolatedVertex {
                     vertex_key: VertexKey::from(KeyData::from_ffi(1)),
                     vertex_uuid: uuid::Uuid::nil(),
@@ -5803,7 +5859,7 @@ mod tests {
         // TopologyValidationFailed wrapping a structural error is non-retryable.
         assert!(
             !InsertionError::TopologyValidationFailed {
-                message: "test".to_string(),
+                context: InsertionTopologyValidationContext::PostInsertion,
                 source: TriangulationValidationError::EulerCharacteristicMismatch {
                     computed: 3,
                     expected: 2,
@@ -5820,7 +5876,7 @@ mod tests {
         };
         assert!(
             InsertionError::TopologyValidationFailed {
-                message: "test".to_string(),
+                context: InsertionTopologyValidationContext::PostInsertion,
                 source: geometry_l3,
             }
             .is_retryable()
@@ -5829,7 +5885,7 @@ mod tests {
         // TopologyValidationFailed wrapping BoundaryRidgeMultiplicity is retryable.
         assert!(
             InsertionError::TopologyValidationFailed {
-                message: "test".to_string(),
+                context: InsertionTopologyValidationContext::PostInsertion,
                 source: TriangulationValidationError::BoundaryRidgeMultiplicity {
                     ridge_key: 0xab,
                     boundary_facet_count: 3,
@@ -5840,7 +5896,7 @@ mod tests {
         // TopologyValidationFailed wrapping RidgeLinkNotManifold is retryable.
         assert!(
             InsertionError::TopologyValidationFailed {
-                message: "test".to_string(),
+                context: InsertionTopologyValidationContext::PostInsertion,
                 source: TriangulationValidationError::RidgeLinkNotManifold {
                     ridge_key: 0xcd,
                     link_vertex_count: 4,
@@ -5855,7 +5911,7 @@ mod tests {
         // TopologyValidationFailed wrapping VertexLinkNotManifold is retryable.
         assert!(
             InsertionError::TopologyValidationFailed {
-                message: "test".to_string(),
+                context: InsertionTopologyValidationContext::PostInsertion,
                 source: TriangulationValidationError::VertexLinkNotManifold {
                     vertex_key: VertexKey::from(KeyData::from_ffi(1)),
                     link_vertex_count: 3,
@@ -5872,7 +5928,7 @@ mod tests {
         // (wildcard fallback).
         assert!(
             !InsertionError::TopologyValidationFailed {
-                message: "test".to_string(),
+                context: InsertionTopologyValidationContext::PostInsertion,
                 source: TriangulationValidationError::EulerCharacteristicMismatch {
                     computed: 3,
                     expected: 2,
@@ -6068,15 +6124,6 @@ mod tests {
             InsertionError::HullExtension {
                 reason: HullExtensionReason::InvalidPatch {
                     details: "test".to_string(),
-                }
-            }
-            .is_retryable()
-        );
-
-        assert!(
-            !InsertionError::HullExtension {
-                reason: HullExtensionReason::Other {
-                    message: "Failed to get boundary facets: test".to_string()
                 }
             }
             .is_retryable()

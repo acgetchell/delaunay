@@ -897,12 +897,6 @@ pub enum NeighborValidationError {
         #[source]
         reason: Box<crate::core::algorithms::flips::FlipNeighborWiringError>,
     },
-    /// Neighbor validation failed in a context that is still being migrated to structured fields.
-    #[error("{message}")]
-    Other {
-        /// Diagnostic detail.
-        message: String,
-    },
 }
 
 /// Errors that can occur during triangulation validation (post-construction).
@@ -1195,12 +1189,10 @@ impl From<&TdsError> for TdsErrorKind {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::tds::{NeighborValidationError, TdsError, TdsMutationError};
+/// use delaunay::prelude::tds::{TdsError, TdsMutationError};
 ///
-/// let err = TdsError::InvalidNeighbors {
-///     reason: NeighborValidationError::Other {
-///         message: "bad neighbors".to_string(),
-///     },
+/// let err = TdsError::InconsistentDataStructure {
+///     message: "bad neighbors".to_string(),
 /// };
 /// let mutation: TdsMutationError = err.clone().into();
 /// let round_trip: TdsError = mutation.clone().into();
@@ -1287,12 +1279,10 @@ pub enum InvariantKind {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::tds::{InvariantError, NeighborValidationError, TdsError};
+/// use delaunay::prelude::tds::{InvariantError, TdsError};
 ///
-/// let err = InvariantError::Tds(TdsError::InvalidNeighbors {
-///     reason: NeighborValidationError::Other {
-///         message: "bad neighbors".to_string(),
-///     },
+/// let err = InvariantError::Tds(TdsError::InconsistentDataStructure {
+///     message: "bad neighbors".to_string(),
 /// });
 /// std::assert_matches!(err, InvariantError::Tds(_));
 /// ```
@@ -1385,8 +1375,6 @@ pub enum DelaunayValidationErrorKind {
     Triangulation,
     /// Delaunay verification failed.
     VerificationFailed,
-    /// Legacy string-only repair validation failed.
-    RepairFailed,
     /// Typed repair validation failed.
     RepairOperationFailed,
 }
@@ -1399,7 +1387,6 @@ impl From<&DelaunayTriangulationValidationError> for DelaunayValidationErrorKind
             DelaunayTriangulationValidationError::VerificationFailed { .. } => {
                 Self::VerificationFailed
             }
-            DelaunayTriangulationValidationError::RepairFailed { .. } => Self::RepairFailed,
             DelaunayTriangulationValidationError::RepairOperationFailed { .. } => {
                 Self::RepairOperationFailed
             }
@@ -1488,15 +1475,13 @@ impl From<InvariantError> for InvariantErrorSummary {
 ///
 /// ```
 /// use delaunay::prelude::tds::{
-///     InvariantError, InvariantKind, InvariantViolation, NeighborValidationError, TdsError,
+///     InvariantError, InvariantKind, InvariantViolation, TdsError,
 /// };
 ///
 /// let violation = InvariantViolation {
 ///     kind: InvariantKind::Topology,
-///     error: InvariantError::Tds(TdsError::InvalidNeighbors {
-///         reason: NeighborValidationError::Other {
-///             message: "bad neighbors".to_string(),
-///         },
+///     error: InvariantError::Tds(TdsError::InconsistentDataStructure {
+///         message: "bad neighbors".to_string(),
 ///     }),
 /// };
 /// assert_eq!(violation.kind, InvariantKind::Topology);
@@ -7512,7 +7497,7 @@ mod tests {
     use super::*;
     use crate::DelaunayTriangulation;
     use crate::builder::DelaunayTriangulationBuilder;
-    use crate::core::algorithms::flips::DelaunayRepairError;
+    use crate::core::algorithms::flips::{DelaunayRepairError, DelaunayRepairPostconditionFailure};
     use crate::core::algorithms::incremental_insertion::InsertionError;
     use crate::core::facet::FacetError;
     use crate::core::simplex::Simplex;
@@ -7533,9 +7518,12 @@ mod tests {
     fn synthetic_delaunay_verification_error(
         message: &str,
     ) -> DelaunayTriangulationValidationError {
+        let _ = message;
         DelaunayTriangulationValidationError::VerificationFailed {
             source: DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
-                message: message.to_string(),
+                reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
+                    simplex_count: 1,
+                }),
             })
             .into(),
         }
@@ -7590,8 +7578,10 @@ mod tests {
         );
         assert_tds_error_kind(
             &TdsError::InvalidNeighbors {
-                reason: NeighborValidationError::Other {
-                    message: "neighbor invariant failed".to_string(),
+                reason: NeighborValidationError::NonPeriodicSelfNeighbor {
+                    simplex_key,
+                    simplex_uuid: uuid,
+                    facet_index: 0,
                 },
             },
             TdsErrorKind::InvalidNeighbors,
@@ -7815,16 +7805,12 @@ mod tests {
                 DelaunayValidationErrorKind::VerificationFailed,
             ),
             (
-                DelaunayTriangulationValidationError::RepairFailed {
-                    message: "repair did not converge".to_string(),
-                },
-                DelaunayValidationErrorKind::RepairFailed,
-            ),
-            (
                 DelaunayTriangulationValidationError::RepairOperationFailed {
                     operation: DelaunayRepairOperation::VertexRemoval,
                     source: Box::new(DelaunayRepairError::PostconditionFailed {
-                        message: "remaining violation".to_string(),
+                        reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
+                            simplex_count: 1,
+                        }),
                     }),
                 },
                 DelaunayValidationErrorKind::RepairOperationFailed,
@@ -10670,10 +10656,8 @@ mod tests {
 
     #[test]
     fn test_tds_mutation_error_accessors() {
-        let inner = TdsError::InvalidNeighbors {
-            reason: NeighborValidationError::Other {
-                message: "test".to_string(),
-            },
+        let inner = TdsError::InconsistentDataStructure {
+            message: "test".to_string(),
         };
         let mutation = TdsMutationError::from(inner.clone());
 
@@ -10777,10 +10761,8 @@ mod tests {
     fn test_invariant_violation_stores_kind_and_error() {
         let violation = InvariantViolation {
             kind: InvariantKind::NeighborConsistency,
-            error: InvariantError::Tds(TdsError::InvalidNeighbors {
-                reason: NeighborValidationError::Other {
-                    message: "test".to_string(),
-                },
+            error: InvariantError::Tds(TdsError::InconsistentDataStructure {
+                message: "test".to_string(),
             }),
         };
         assert_eq!(violation.kind, InvariantKind::NeighborConsistency);

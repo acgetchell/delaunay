@@ -56,7 +56,13 @@
 // Re-export outcome/error field types so users can name the public contract
 // without reaching into lower-level modules.
 pub use crate::construction::DelaunayTriangulationConstructionError;
-pub use crate::flips::{DelaunayRepairError, DelaunayRepairStats};
+pub use crate::flips::{
+    DelaunayRepairError, DelaunayRepairHeuristicRebuildFailure,
+    DelaunayRepairHeuristicRebuildFailureKind, DelaunayRepairHeuristicVertexContext,
+    DelaunayRepairOrientationCanonicalizationFailure,
+    DelaunayRepairOrientationCanonicalizationFailureKind, DelaunayRepairPostconditionFailure,
+    DelaunayRepairStats,
+};
 pub use crate::tds::SimplexValidationError;
 pub use crate::{PlManifoldRepairError, PlManifoldRepairStats};
 
@@ -268,7 +274,7 @@ pub struct DelaunayizeOutcome<U, V, const D: usize> {
 ///
 /// let err = DelaunayizeError::DelaunayRepairFailed {
 ///     source: DelaunayRepairError::PostconditionFailed {
-///         message: "still non-Delaunay after repair".to_string(),
+///         reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
 ///     },
 /// };
 /// assert!(err.to_string().contains("Delaunay repair failed"));
@@ -393,7 +399,7 @@ where
 {
     let vertices = tds
         .vertices()
-        .map(|(_, v)| Vertex::new_with_uuid(*v.point(), v.uuid(), v.data))
+        .map(|(_, v)| Vertex::from_validated_point_with_uuid(*v.point(), v.uuid(), v.data))
         .collect::<Vec<_>>();
     let simplex_data = collect_simplex_data(tds)?;
     Ok((vertices, simplex_data))
@@ -1037,7 +1043,7 @@ mod tests {
     #[test]
     fn test_repair_snapshot_error_source() {
         let source = DelaunayRepairError::PostconditionFailed {
-            message: "synthetic postcondition".to_string(),
+            reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
         };
         let snapshot_error = SimplexValidationError::VertexKeyNotFound {
             key: VertexKey::from(KeyData::from_ffi(0xBAD)),
@@ -1070,7 +1076,7 @@ mod tests {
             simplices_removed: 4,
         };
         let delaunay_source = DelaunayRepairError::PostconditionFailed {
-            message: "synthetic postcondition".to_string(),
+            reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
         };
         let restore_error = SimplexValidationError::VertexKeyNotFound {
             key: VertexKey::from(KeyData::from_ffi(0xBAD)),
@@ -1159,7 +1165,7 @@ mod tests {
     #[test]
     fn test_delaunay_rebuild_error_mapping() {
         let source = DelaunayRepairError::PostconditionFailed {
-            message: "synthetic postcondition".to_string(),
+            reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
         };
         let rebuild_error = construction_error();
         let restore_error = SimplexValidationError::VertexKeyNotFound {
@@ -1331,7 +1337,7 @@ mod tests {
         let tds = &dt.as_triangulation().tds;
         let vertices: Vec<_> = tds
             .vertices()
-            .map(|(_, v)| Vertex::new_with_uuid(*v.point(), v.uuid(), v.data))
+            .map(|(_, v)| Vertex::from_validated_point_with_uuid(*v.point(), v.uuid(), v.data))
             .collect();
         let simplex_data = collect_simplex_data(tds).unwrap();
 
@@ -1367,7 +1373,7 @@ mod tests {
 
         let rebuild_vertices: Vec<_> = tds
             .vertices()
-            .map(|(_, v)| Vertex::new_with_uuid(*v.point(), v.uuid(), v.data))
+            .map(|(_, v)| Vertex::from_validated_point_with_uuid(*v.point(), v.uuid(), v.data))
             .collect();
         let simplex_data = collect_simplex_data(&tds).unwrap();
         let kernel = AdaptiveKernel::new();

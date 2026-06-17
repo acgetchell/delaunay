@@ -317,7 +317,7 @@ Validates the combinatorial structure of the Triangulation Data Structure.
 
 - **Production**: After construction or major modifications
 - **Tests**: In test suites to catch structural bugs
-- **Debug builds**: Use `debug_assert!(dt.tds().is_valid().is_ok())`
+- **Development builds**: Run explicit validation and propagate the typed error
 
 ### Example
 
@@ -595,22 +595,32 @@ fn test_my_triangulation_operation() {
 }
 ```
 
-### Pattern 2: Debug Build Validation
+### Pattern 2: Development Validation
 
 ```rust
 use delaunay::prelude::query::*;
+use delaunay::prelude::tds::{InvariantError, TdsError};
 
-pub fn my_algorithm(dt: &mut DelaunayTriangulation<FastKernel<f64>, (), (), 3>) {
+#[derive(Debug, thiserror::Error)]
+pub enum DevelopmentValidationError {
+    #[error(transparent)]
+    Tds(#[from] TdsError),
+    #[error(transparent)]
+    Topology(#[from] InvariantError),
+}
+
+pub fn my_algorithm(
+    dt: &mut DelaunayTriangulation<FastKernel<f64>, (), (), 3>,
+) -> Result<(), DevelopmentValidationError> {
     // Do work...
 
     #[cfg(debug_assertions)]
     {
-        debug_assert!(dt.tds().is_valid().is_ok(), "TDS structure violated");
-        debug_assert!(
-            dt.as_triangulation().is_valid().is_ok(),
-            "Topology invariant violated"
-        );
+        dt.tds().is_valid()?;
+        dt.as_triangulation().is_valid()?;
     }
+
+    Ok(())
 }
 ```
 
@@ -618,13 +628,33 @@ pub fn my_algorithm(dt: &mut DelaunayTriangulation<FastKernel<f64>, (), (), 3>) 
 
 ```rust
 use delaunay::prelude::query::*;
+use delaunay::prelude::tds::{InvariantError, TdsError};
+use delaunay::DelaunayTriangulationValidationError;
 
-pub fn validate_with_level(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>, level: u8) -> Result<(), String> {
+#[derive(Debug, thiserror::Error)]
+pub enum ValidationLevelError {
+    #[error(transparent)]
+    Tds(#[from] TdsError),
+    #[error(transparent)]
+    Topology(#[from] InvariantError),
+    #[error(transparent)]
+    Delaunay(#[from] DelaunayTriangulationValidationError),
+    #[error("unsupported validation level {level}; expected 2, 3, or 4")]
+    UnsupportedLevel { level: u8 },
+}
+
+pub fn validate_with_level(
+    dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3>,
+    level: u8,
+) -> Result<(), ValidationLevelError> {
     match level {
-        2 => dt.tds().is_valid().map_err(|e| e.to_string()),
-        3 => dt.as_triangulation().is_valid().map_err(|e| e.to_string()),
-        4 => dt.is_valid().map_err(|e| e.to_string()),
-        _ => Err("Invalid validation level".to_string()),
+        2 => dt.tds().is_valid().map_err(ValidationLevelError::from),
+        3 => dt
+            .as_triangulation()
+            .is_valid()
+            .map_err(ValidationLevelError::from),
+        4 => dt.is_valid().map_err(ValidationLevelError::from),
+        _ => Err(ValidationLevelError::UnsupportedLevel { level }),
     }
 }
 ```
