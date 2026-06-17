@@ -829,18 +829,15 @@ impl From<DelaunayTriangulationValidationError> for ExplicitDelaunayValidationEr
 /// ];
 /// let simplices = vec![vec![0, 1]]; // Wrong arity for 2D (needs 3 vertices)
 ///
-/// let Err(err) =
-///     DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
-/// else {
-///     panic!("bad simplex specs should be rejected");
-/// };
+/// let result =
+///     DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices);
 /// std::assert_matches!(
-///     err,
-///     ExplicitConstructionError::InvalidSimplexArity {
+///     result.err(),
+///     Some(ExplicitConstructionError::InvalidSimplexArity {
 ///         simplex_index: 0,
 ///         actual: 2,
 ///         expected: 3,
-///     }
+///     })
 /// );
 /// # Ok(())
 /// # }
@@ -1221,12 +1218,12 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// assert_eq!(dt.number_of_simplices(), 2);
     ///
     /// let bad_simplices = vec![vec![0, 1]]; // Wrong arity for a 2D simplex.
-    /// let Err(err) =
-    ///     DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &bad_simplices)
-    /// else {
-    ///     panic!("bad simplex specs should be rejected");
-    /// };
-    /// std::assert_matches!(err, ExplicitConstructionError::InvalidSimplexArity { .. });
+    /// let result =
+    ///     DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &bad_simplices);
+    /// std::assert_matches!(
+    ///     result.err(),
+    ///     Some(ExplicitConstructionError::InvalidSimplexArity { .. })
+    /// );
     /// # Ok(())
     /// # }
     /// ```

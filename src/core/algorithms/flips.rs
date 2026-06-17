@@ -14793,6 +14793,46 @@ mod tests {
         );
     }
 
+    fn assert_hull_extension_failure_kind(
+        source: &HullExtensionReason,
+        expected: FlipNeighborHullExtensionFailureKind,
+        expected_display: &str,
+    ) {
+        let hull_kind = FlipNeighborHullExtensionFailureKind::from(source);
+        assert_eq!(hull_kind, expected);
+        assert_eq!(hull_kind.to_string(), expected_display);
+    }
+
+    #[test]
+    fn test_flip_neighbor_hull_extension_failure_kind_conversions() {
+        assert_hull_extension_failure_kind(
+            &HullExtensionReason::BoundaryEdgeSplitFacetCount {
+                expected: 2,
+                actual: 1,
+            },
+            FlipNeighborHullExtensionFailureKind::BoundaryEdgeSplitFacetCount,
+            "boundary edge split facet count",
+        );
+
+        assert_hull_extension_failure_kind(
+            &HullExtensionReason::MultipleBoundaryEdgeSplitFacets,
+            FlipNeighborHullExtensionFailureKind::MultipleBoundaryEdgeSplitFacets,
+            "multiple boundary edge split facets",
+        );
+
+        assert_hull_extension_failure_kind(
+            &HullExtensionReason::DisconnectedVisiblePatch {
+                boundary_ridges: 1,
+                ridge_fans: 0,
+                components: 2,
+                boundary_components: 2,
+                boundary_subface_nonmanifold: 0,
+            },
+            FlipNeighborHullExtensionFailureKind::DisconnectedVisiblePatch,
+            "disconnected visible patch",
+        );
+    }
+
     #[test]
     fn test_flip_neighbor_conversion_kinds_cover_insertion_suberrors() {
         let cavity_kind = FlipNeighborCavityFailureKind::from(
@@ -14817,21 +14857,6 @@ mod tests {
             FlipNeighborCavityFailureKind::UnsupportedDegenerateLocation
         );
         assert_eq!(cavity_kind.to_string(), "unsupported degenerate location");
-
-        let hull_kind = FlipNeighborHullExtensionFailureKind::from(
-            &HullExtensionReason::DisconnectedVisiblePatch {
-                boundary_ridges: 1,
-                ridge_fans: 0,
-                components: 2,
-                boundary_components: 2,
-                boundary_subface_nonmanifold: 0,
-            },
-        );
-        assert_eq!(
-            hull_kind,
-            FlipNeighborHullExtensionFailureKind::DisconnectedVisiblePatch
-        );
-        assert_eq!(hull_kind.to_string(), "disconnected visible patch");
 
         let validation_kind = FlipNeighborDelaunayValidationFailureKind::from(
             &DelaunayTriangulationValidationError::RepairOperationFailed {

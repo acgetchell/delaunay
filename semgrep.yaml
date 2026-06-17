@@ -627,7 +627,7 @@ rules:
         - "/src/**/*.rs"
         - "/tests/semgrep/src/project_rules/**/*.rs"
     pattern-regex: >-
-      (?s)^\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+|async\s+)?fn\s+(?:new|from_[A-Za-z0-9_]+)(?:<[^>{}]*>)?\s*\([^;{}]*?\)\s*->\s*Result\s*<
+      (?s)^\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+|async\s+)?fn\s+(?:new|from_(?!str\b)[A-Za-z0-9_]+)(?:<[^>{}]*>)?\s*\([^;{}]*?\)\s*->\s*Result\s*<
 
   - id: delaunay.rust.no-public-from-validated-constructors
     languages:

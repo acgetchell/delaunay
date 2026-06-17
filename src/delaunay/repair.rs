@@ -348,8 +348,12 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a [`DelaunayRepairError`] if the repair fails to converge, an underlying
-    /// flip operation fails, or post-repair orientation canonicalization fails.
+    /// Returns [`DelaunayRepairError::NonConvergent`] if the flip budget is
+    /// exhausted, [`DelaunayRepairError::PostconditionFailed`] if repair
+    /// finishes with a remaining violation or disconnected triangulation,
+    /// [`DelaunayRepairError::OrientationCanonicalizationFailed`] if the final
+    /// positive-orientation pass fails, or another [`DelaunayRepairError`]
+    /// variant for lower-level flip, topology, or predicate failures.
     ///
     /// # Examples
     ///
@@ -566,9 +570,13 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`DelaunayRepairError`] if the flip-based repair fails, the heuristic
-    /// rebuild fallback cannot construct a valid triangulation, or post-repair
-    /// orientation canonicalization fails.
+    /// Returns [`DelaunayRepairError::HeuristicRebuildFailed`] when the
+    /// deterministic rebuild fallback cannot replay all vertices into a valid
+    /// triangulation, [`DelaunayRepairError::PostconditionFailed`] when a repair
+    /// pass leaves a violation, [`DelaunayRepairError::OrientationCanonicalizationFailed`]
+    /// when final positive-orientation promotion fails, or another
+    /// [`DelaunayRepairError`] variant for lower-level flip, topology, or
+    /// predicate failures.
     ///
     /// # Examples
     ///
