@@ -27,7 +27,7 @@ use std::time::Duration;
 /// Shared benchmark setup error helpers.
 #[path = "common/bench_utils.rs"]
 pub mod bench_utils;
-use bench_utils::{bench_option, bench_result};
+use bench_utils::{OrAbort, OrAbortWithContext, abort_benchmark};
 
 const INTERIOR_RADIUS_MIN: f64 = 0.15;
 const INTERIOR_RADIUS_SPAN: f64 = 0.70;
@@ -42,10 +42,7 @@ fn finite_point<const D: usize>(coords: [f64; D]) -> Point<D> {
 }
 
 fn interior_bounds() -> CoordinateRange<f64> {
-    bench_result(
-        CoordinateRange::try_new(0.0_f64, 1.0),
-        "interior benchmark bounds must be valid",
-    )
+    CoordinateRange::try_new(0.0_f64, 1.0).or_abort()
 }
 const LARGE_COORDINATE_JITTER: f64 = 1.0e3;
 const SEED_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
@@ -105,11 +102,8 @@ impl FixtureKind {
 
 /// Derive a deterministic, dimension-specific seed for one benchmark case.
 fn seed_for_case<const D: usize>(requested_vertices: usize, seed_base: u64) -> u64 {
-    let vertices = bench_result(
-        u64::try_from(requested_vertices),
-        "vertex count does not fit in u64",
-    );
-    let dimension = bench_result(u64::try_from(D), "dimension does not fit in u64");
+    let vertices = u64::try_from(requested_vertices).or_abort();
+    let dimension = u64::try_from(D).or_abort();
     seed_base ^ vertices.wrapping_mul(SEED_SALT) ^ dimension.rotate_left(32)
 }
 
@@ -124,8 +118,8 @@ const fn fixture_kind_for_attempt(preferred_kind: FixtureKind, attempt: usize) -
 }
 
 /// Convert a bounded benchmark index to `f64` without unchecked casts.
-fn usize_to_f64(value: usize, context: &str) -> f64 {
-    f64::from(bench_result(u32::try_from(value), context))
+fn usize_to_f64(value: usize) -> f64 {
+    f64::from(u32::try_from(value).or_abort())
 }
 
 /// Generate a reproducible canonical simplex with selected adversarial points.
@@ -145,18 +139,13 @@ fn generate_vertices<const D: usize>(
     };
 
     points.extend(generated_points);
-    bench_result(
-        try_vertices_from_points(&points),
-        "failed to create remove-vertex benchmark vertices",
-    )
+    try_vertices_from_points(&points).or_abort()
 }
 
 /// Generate well-conditioned interior points inside the canonical simplex.
 fn generate_interior_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<D>> {
-    let raw_points = bench_result(
-        generate_random_points_in_range_seeded::<D>(count, interior_bounds(), seed),
-        "failed to generate interior benchmark points",
-    );
+    let raw_points =
+        generate_random_points_in_range_seeded::<D>(count, interior_bounds(), seed).or_abort();
     let mut points = Vec::with_capacity(count);
 
     for (index, raw_point) in raw_points.iter().enumerate() {
@@ -174,10 +163,8 @@ fn generate_interior_points<const D: usize>(count: usize, seed: u64) -> Vec<Poin
 
 /// Generate points close to coordinate-boundary facets of the canonical simplex.
 fn generate_near_boundary_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<D>> {
-    let raw_points = bench_result(
-        generate_random_points_in_range_seeded::<D>(count, interior_bounds(), seed),
-        "failed to generate near-boundary benchmark points",
-    );
+    let raw_points =
+        generate_random_points_in_range_seeded::<D>(count, interior_bounds(), seed).or_abort();
     let mut points = Vec::with_capacity(count);
 
     for (index, raw_point) in raw_points.iter().enumerate() {
@@ -187,8 +174,7 @@ fn generate_near_boundary_points<const D: usize>(count: usize, seed: u64) -> Vec
         for (coord, direction_coord) in coords.iter_mut().zip(direction) {
             *coord = 0.98 * direction_coord;
         }
-        coords[near_boundary_axis] =
-            NEAR_BOUNDARY_EPSILON * usize_to_f64(index + 1, "near-boundary index too large");
+        coords[near_boundary_axis] = NEAR_BOUNDARY_EPSILON * usize_to_f64(index + 1);
         points.push(finite_point(coords));
     }
 
@@ -197,10 +183,8 @@ fn generate_near_boundary_points<const D: usize>(count: usize, seed: u64) -> Vec
 
 /// Generate points on a shared sphere to stress cospherical predicates.
 fn generate_cospherical_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<D>> {
-    let raw_points = bench_result(
-        generate_random_points_in_range_seeded::<D>(count, interior_bounds(), seed),
-        "failed to generate cospherical benchmark points",
-    );
+    let raw_points =
+        generate_random_points_in_range_seeded::<D>(count, interior_bounds(), seed).or_abort();
     let mut points = Vec::with_capacity(count);
 
     for raw_point in &raw_points {
@@ -217,19 +201,16 @@ fn generate_cospherical_points<const D: usize>(count: usize, seed: u64) -> Vec<P
 
 /// Generate points close to a lower-dimensional diagonal simplex.
 fn generate_near_degenerate_simplex<const D: usize>(count: usize, seed: u64) -> Vec<Point<D>> {
-    let seed_offset = f64::from(bench_result(
-        u32::try_from(seed % 997),
-        "near-degenerate seed phase does not fit in u32",
-    )) * 1.0e-14;
-    let denominator = usize_to_f64(count + 1, "near-degenerate count too large");
+    let seed_offset = f64::from(u32::try_from(seed % 997).or_abort()) * 1.0e-14;
+    let denominator = usize_to_f64(count + 1);
     let mut points = Vec::with_capacity(count);
 
     for index in 0..count {
-        let index_factor = usize_to_f64(index + 1, "near-degenerate index too large");
+        let index_factor = usize_to_f64(index + 1);
         let diagonal = index_factor / denominator;
         let mut coords = [0.0; D];
         for (axis, coord) in coords.iter_mut().enumerate() {
-            let axis_factor = usize_to_f64(axis + 1, "near-degenerate axis too large");
+            let axis_factor = usize_to_f64(axis + 1);
             *coord = (NEAR_DEGENERATE_EPSILON * axis_factor)
                 .mul_add(index_factor, diagonal + seed_offset);
         }
@@ -241,17 +222,15 @@ fn generate_near_degenerate_simplex<const D: usize>(count: usize, seed: u64) -> 
 
 /// Generate finite points with large coordinates to stress scale-sensitive paths.
 fn generate_large_coordinate_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<D>> {
-    let raw_points = bench_result(
-        generate_random_points_in_range_seeded::<D>(count, interior_bounds(), seed),
-        "failed to generate large-coordinate benchmark points",
-    );
+    let raw_points =
+        generate_random_points_in_range_seeded::<D>(count, interior_bounds(), seed).or_abort();
     let mut points = Vec::with_capacity(count);
 
     for (index, raw_point) in raw_points.iter().enumerate() {
-        let index_offset = usize_to_f64(index + 1, "large-coordinate index too large");
+        let index_offset = usize_to_f64(index + 1);
         let mut coords = [0.0; D];
         for (axis, (coord, raw_coord)) in coords.iter_mut().zip(raw_point.coords()).enumerate() {
-            let axis_factor = usize_to_f64(axis + 1, "large-coordinate axis too large");
+            let axis_factor = usize_to_f64(axis + 1);
             *coord = LARGE_COORDINATE_SCALE.mul_add(
                 axis_factor,
                 LARGE_COORDINATE_JITTER.mul_add(*raw_coord, index_offset),
@@ -279,18 +258,12 @@ fn simplex_points<const D: usize>() -> Vec<Point<D>> {
 
 /// Generate the minimal full-dimensional simplex for the rollback benchmark.
 fn simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
-    bench_result(
-        try_vertices_from_points(&simplex_points::<D>()),
-        "failed to create rollback benchmark simplex vertices",
-    )
+    try_vertices_from_points(&simplex_points::<D>()).or_abort()
 }
 
 /// Deterministic radial coordinate for a point inside the canonical simplex.
 fn interior_radius(index: usize) -> f64 {
-    let numerator = bench_result(
-        u32::try_from(index.wrapping_mul(37) % 997),
-        "interior radius numerator does not fit in u32",
-    );
+    let numerator = u32::try_from(index.wrapping_mul(37) % 997).or_abort();
     INTERIOR_RADIUS_MIN + INTERIOR_RADIUS_SPAN * f64::from(numerator) / 997.0
 }
 
@@ -355,7 +328,7 @@ fn build_success_source<const D: usize>(
     preferred_kind: FixtureKind,
 ) -> RemovalSource<D> {
     for attempt in 0..SEED_SEARCH_ATTEMPTS {
-        let attempt_seed = bench_result(u64::try_from(attempt), "seed attempt does not fit in u64");
+        let attempt_seed = u64::try_from(attempt).or_abort();
         let seed = seed_for_case::<D>(requested_vertices, seed_base)
             ^ attempt_seed.wrapping_mul(SEED_SALT.rotate_left(17));
         let fixture_kind = fixture_kind_for_attempt(preferred_kind, attempt);
@@ -376,26 +349,21 @@ fn build_success_source<const D: usize>(
         };
     }
 
-    bench_option(
-        None,
-        format!(
-            "no successful {D}D remove_vertex fixture found for {requested_vertices} vertices \
+    abort_benchmark(format!(
+        "no successful {D}D remove_vertex fixture found for {requested_vertices} vertices \
              after {SEED_SEARCH_ATTEMPTS} seeds across all fixture kinds"
-        ),
-    )
+    ))
 }
 
 /// Build the source triangulation for invalid-removal rollback measurements.
 fn build_rollback_source<const D: usize>() -> RemovalSource<D> {
     let vertices = simplex_vertices::<D>();
-    let triangulation: BenchTriangulation<D> = bench_result(
-        DelaunayTriangulation::try_new(&vertices),
-        format!("failed to build {D}D rollback benchmark simplex"),
-    );
-    let vertex_key = bench_option(
-        triangulation.vertices().next().map(|(key, _)| key),
-        format!("rollback benchmark simplex has no {D}D vertices"),
-    );
+    let triangulation: BenchTriangulation<D> = DelaunayTriangulation::try_new(&vertices).or_abort();
+    let vertex_key = triangulation
+        .vertices()
+        .next()
+        .map(|(key, _)| key)
+        .or_abort(format!("rollback benchmark simplex has no {D}D vertices"));
 
     RemovalSource {
         vertex_count: triangulation.number_of_vertices(),
@@ -409,10 +377,7 @@ fn build_rollback_source<const D: usize>() -> RemovalSource<D> {
 /// Report benchmark throughput in total stored vertices plus simplices.
 fn triangulation_element_count<const D: usize>(source: &RemovalSource<D>) -> u64 {
     let total_elements = source.vertex_count + source.simplex_count;
-    bench_result(
-        u64::try_from(total_elements),
-        "triangulation element count does not fit in u64",
-    )
+    u64::try_from(total_elements).or_abort()
 }
 
 /// Register the successful-removal cases for one dimension and input-size schedule.
@@ -450,10 +415,7 @@ fn bench_success_dimension<const D: usize>(
                 b.iter_batched(
                     || source.triangulation.clone(),
                     |mut triangulation| {
-                        black_box(bench_result(
-                            triangulation.remove_vertex(source.vertex_key),
-                            "successful remove_vertex benchmark unexpectedly failed",
-                        ));
+                        black_box(triangulation.remove_vertex(source.vertex_key).or_abort());
                     },
                     BatchSize::SmallInput,
                 );

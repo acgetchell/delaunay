@@ -43,14 +43,14 @@ use std::hint::black_box;
 /// Shared benchmark setup error helpers.
 #[path = "common/bench_utils.rs"]
 pub mod bench_utils;
-use bench_utils::{abort_benchmark, bench_result};
+use bench_utils::{OrAbort, abort_benchmark};
 
 fn finite_point<const D: usize>(coords: [f64; D]) -> Point<D> {
     Point::try_new(coords).unwrap_or_else(|_| std::process::abort())
 }
 
-fn coordinate_range(min: f64, max: f64, context: &'static str) -> CoordinateRange<f64> {
-    bench_result(CoordinateRange::try_new(min, max), context)
+fn coordinate_range(min: f64, max: f64) -> CoordinateRange<f64> {
+    CoordinateRange::try_new(min, max).or_abort()
 }
 
 /// Deterministic seed for query-point generation in the hot path.
@@ -81,14 +81,8 @@ fn standard_simplex<const D: usize>() -> Vec<Point<D>> {
 /// Uses the range `[-10, 10]` against a unit simplex so that the Shewchuk
 /// errbound comfortably resolves the sign in Stage 1.
 fn hot_queries<const D: usize>() -> Vec<Point<D>> {
-    bench_result(
-        generate_random_points_in_range_seeded(
-            HOT_QUERIES,
-            coordinate_range(-10.0, 10.0, "hot-path query bounds must be valid"),
-            HOT_SEED,
-        ),
-        "failed to generate hot-path query points",
-    )
+    generate_random_points_in_range_seeded(HOT_QUERIES, coordinate_range(-10.0, 10.0), HOT_SEED)
+        .or_abort()
 }
 
 /// Generate near-boundary query points for dimension `D`.
@@ -99,14 +93,12 @@ fn near_boundary_queries<const D: usize>() -> Vec<Point<D>> {
     // Centered near the circumsphere radius of the standard simplex (~0.5 for
     // the D = 3 unit case); the exact value is unimportant — we just want a
     // high rate of errbound-ambiguous inputs.
-    bench_result(
-        generate_random_points_in_range_seeded(
-            NEAR_BOUNDARY_QUERIES,
-            coordinate_range(0.40, 0.60, "near-boundary query bounds must be valid"),
-            NEAR_BOUNDARY_SEED,
-        ),
-        "failed to generate near-boundary query points",
+    generate_random_points_in_range_seeded(
+        NEAR_BOUNDARY_QUERIES,
+        coordinate_range(0.40, 0.60),
+        NEAR_BOUNDARY_SEED,
     )
+    .or_abort()
 }
 
 /// Run `insphere` across `queries` against `simplex`, black-boxing each result.

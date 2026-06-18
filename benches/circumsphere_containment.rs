@@ -22,14 +22,14 @@ use std::hint::black_box;
 /// Shared benchmark setup error helpers.
 #[path = "common/bench_utils.rs"]
 pub mod bench_utils;
-use bench_utils::{abort_benchmark, bench_option, bench_result};
+use bench_utils::{OrAbort, OrAbortWithContext, abort_benchmark};
 
 fn finite_point<const D: usize>(coords: [f64; D]) -> Point<D> {
     Point::try_new(coords).unwrap_or_else(|_| std::process::abort())
 }
 
-fn coordinate_range(min: f64, max: f64, context: &'static str) -> CoordinateRange<f64> {
-    bench_result(CoordinateRange::try_new(min, max), context)
+fn coordinate_range(min: f64, max: f64) -> CoordinateRange<f64> {
+    CoordinateRange::try_new(min, max).or_abort()
 }
 
 /// Generate a standard D-dimensional simplex (D+1 vertices)
@@ -55,25 +55,17 @@ fn standard_simplex<const D: usize>() -> Vec<Point<D>> {
 
 /// Generate a random 3D simplex (tetrahedron) for benchmarking using seeded generation
 fn generate_random_simplex_3d(seed: u64) -> Vec<Point<3>> {
-    bench_result(
-        generate_random_points_in_range_seeded(
-            4,
-            coordinate_range(-10.0, 10.0, "random simplex bounds must be valid"),
-            seed,
-        ),
-        "failed to generate random simplex points",
-    )
+    generate_random_points_in_range_seeded(4, coordinate_range(-10.0, 10.0), seed).or_abort()
 }
 
 /// Generate a random 3D test point using seeded generation
 fn generate_random_test_point_3d(seed: u64) -> Point<3> {
-    let points = generate_random_points_in_range_seeded(
-        1,
-        coordinate_range(-5.0, 5.0, "random test point bounds must be valid"),
-        seed,
-    );
-    let points = bench_result(points, "failed to generate random test point");
-    bench_option(points.into_iter().next(), "expected exactly one test point")
+    let points = generate_random_points_in_range_seeded(1, coordinate_range(-5.0, 5.0), seed);
+    let points = points.or_abort();
+    points
+        .into_iter()
+        .next()
+        .or_abort("expected exactly one test point")
 }
 
 /// Benchmark with many random queries
@@ -82,12 +74,9 @@ fn benchmark_random_queries(c: &mut Criterion) {
     let simplex_points = generate_random_simplex_3d(42);
 
     // Generate many test points using seeded generation for reproducible results
-    let test_points = generate_random_points_in_range_seeded(
-        1000,
-        coordinate_range(-5.0, 5.0, "random query bounds must be valid"),
-        123,
-    );
-    let test_points = bench_result(test_points, "failed to generate random query points");
+    let test_points =
+        generate_random_points_in_range_seeded(1000, coordinate_range(-5.0, 5.0), 123);
+    let test_points = test_points.or_abort();
 
     c.bench_function("random/insphere_1000_queries", |b| {
         b.iter(|| {

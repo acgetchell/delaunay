@@ -88,7 +88,7 @@ use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, get_cu
 /// Shared benchmark setup error helpers.
 #[path = "common/bench_utils.rs"]
 pub mod bench_utils;
-use bench_utils::{abort_benchmark, bench_result};
+use bench_utils::{OrAbort, abort_benchmark};
 
 /// Builds a benchmark point from hard-coded finite coordinates.
 fn finite_point<const D: usize>(coords: [f64; D]) -> Point<D> {
@@ -104,18 +104,18 @@ fn retry_attempts(value: usize) -> NonZeroUsize {
 }
 
 /// Parses benchmark coordinate bounds and aborts if the fixture is invalid.
-fn coordinate_range(min: f64, max: f64, context: &'static str) -> CoordinateRange<f64> {
-    bench_result(CoordinateRange::try_new(min, max), context)
+fn coordinate_range(min: f64, max: f64) -> CoordinateRange<f64> {
+    CoordinateRange::try_new(min, max).or_abort()
 }
 
 /// Returns broad bounds used by general random benchmark point clouds.
 fn wide_bounds() -> CoordinateRange<f64> {
-    coordinate_range(-100.0, 100.0, "wide benchmark bounds must be valid")
+    coordinate_range(-100.0, 100.0)
 }
 
 /// Returns compact bounds used by adversarial benchmark point clouds.
 fn adversarial_bounds() -> CoordinateRange<f64> {
-    coordinate_range(-1.0, 1.0, "adversarial benchmark bounds must be valid")
+    coordinate_range(-1.0, 1.0)
 }
 
 #[cfg(feature = "bench-logging")]
@@ -221,13 +221,13 @@ fn memory_usage_kib() -> u64 {
         bench_info!("Memory measurements in KiB (sysinfo::Process::memory() / 1024)");
     });
 
-    let pid = bench_result(get_current_pid(), "failed to get current PID");
+    let pid = get_current_pid().or_abort();
     let sys = SYS.get_or_init(|| {
         Mutex::new(System::new_with_specifics(
             RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing().with_memory()),
         ))
     });
-    let mut system = bench_result(sys.lock(), "failed to lock System");
+    let mut system = sys.lock().or_abort();
     system.refresh_processes_specifics(
         ProcessesToUpdate::Some(&[pid]),
         true,
@@ -296,23 +296,14 @@ fn construct_triangulation<const D: usize>(
     vertices: &[Vertex<(), D>],
     seed: u64,
 ) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
-    bench_result(
-        DelaunayTriangulation::try_new_with_options(vertices, construction_options(seed)),
-        format!(
-            "failed to create triangulation (dim={D}, n_vertices={}, seed={seed})",
-            vertices.len()
-        ),
-    )
+    DelaunayTriangulation::try_new_with_options(vertices, construction_options(seed)).or_abort()
 }
 
 /// Converts generated point fixtures into benchmark vertices without attaching data.
 fn benchmark_vertices_from_generated_points<const D: usize>(
     points: &[Point<D>],
 ) -> Vec<Vertex<(), D>> {
-    bench_result(
-        try_vertices_from_points(points),
-        "failed to create benchmark vertices",
-    )
+    try_vertices_from_points(points).or_abort()
 }
 
 /// Generates deterministic benchmark points inside validated bounds.
@@ -321,10 +312,7 @@ fn generated_points_in_range<const D: usize>(
     bounds: CoordinateRange<f64>,
     seed: u64,
 ) -> Vec<Point<D>> {
-    bench_result(
-        generate_random_points_in_range_seeded::<D>(count, bounds, seed),
-        "failed to generate benchmark points",
-    )
+    generate_random_points_in_range_seeded::<D>(count, bounds, seed).or_abort()
 }
 
 /// Measure memory delta during triangulation construction.
@@ -393,13 +381,10 @@ fn gen_points<const D: usize>(
         .iter()
         .enumerate()
         .map(|(index, point)| {
-            let index = bench_result(
-                u32::try_from(index),
-                "benchmark point index should fit in u32",
-            );
+            let index = u32::try_from(index).or_abort();
             let mut coords = [0.0_f64; D];
             for (axis, coord) in coords.iter_mut().enumerate() {
-                let axis_number = bench_result(u32::try_from(axis + 1), "axis should fit in u32");
+                let axis_number = u32::try_from(axis + 1).or_abort();
                 let base: f64 = point.coords()[axis];
                 let cluster_offset = f64::from(index % 7) * 1.0e-3;
                 let axis_offset = f64::from(axis_number) * 0.25;
@@ -849,10 +834,9 @@ fn bench_memory_usage<const D: usize>(
                     let start_time = Instant::now();
 
                     let alloc_info = measure(|| {
-                        let dt = bench_result(
-                            DelaunayTriangulationBuilder::new(&vertices).build::<()>(),
-                            "allocation benchmark triangulation construction failed",
-                        );
+                        let dt = DelaunayTriangulationBuilder::new(&vertices)
+                            .build::<()>()
+                            .or_abort();
                         black_box(dt);
                     });
 

@@ -35,7 +35,7 @@ mod allocation_contracts {
     use std::{hint::black_box, num::NonZeroUsize, time::Duration};
     use thiserror::Error;
 
-    use super::bench_utils::{bench_option, bench_result};
+    use super::bench_utils::{OrAbort, OrAbortWithContext};
 
     const CANARY_COUNT_2D: usize = 4_000;
     const CANARY_COUNT_3D: usize = 750;
@@ -95,21 +95,13 @@ mod allocation_contracts {
     }
 
     fn benchmark_bounds() -> CoordinateRange<f64> {
-        bench_result(
-            CoordinateRange::try_new(-100.0_f64, 100.0),
-            "allocation benchmark bounds must be valid",
-        )
+        CoordinateRange::try_new(-100.0_f64, 100.0).or_abort()
     }
 
     fn canary_vertices<const D: usize>(count: usize, seed: u64) -> Vec<Vertex<(), D>> {
-        let points = bench_result(
-            generate_random_points_in_range_seeded::<D>(count, benchmark_bounds(), seed),
-            "failed to generate allocation benchmark points",
-        );
-        bench_result(
-            try_vertices_from_points(&points),
-            "failed to create allocation benchmark vertices",
-        )
+        let points =
+            generate_random_points_in_range_seeded::<D>(count, benchmark_bounds(), seed).or_abort();
+        try_vertices_from_points(&points).or_abort()
     }
 
     fn first_simplex_key<const D: usize>(
@@ -195,10 +187,7 @@ mod allocation_contracts {
             }
         }
 
-        let vertex_count = bench_result(
-            u32::try_from(points.len()),
-            "simplex vertex count should fit in u32",
-        );
+        let vertex_count = u32::try_from(points.len()).or_abort();
         let inv_vertex_count = 1.0 / f64::from(vertex_count);
         for coord in &mut coords {
             *coord *= inv_vertex_count;
@@ -214,20 +203,10 @@ mod allocation_contracts {
             attempts,
             base_seed: Some(seed),
         });
-        let dt = bench_result(
-            BenchTriangulation::<D>::try_new_with_options(&vertices, options),
-            format!("failed to build {D}D allocation benchmark triangulation"),
-        );
-        let simplex_key =
-            bench_result(representative_simplex_key(&dt), "missing benchmark simplex");
-        let facet_vertices = bench_result(
-            first_facet_vertices(&dt, simplex_key),
-            "failed to prepare benchmark facet vertices",
-        );
-        let query = bench_result(
-            simplex_barycenter(&dt, simplex_key),
-            "failed to prepare benchmark locate query",
-        );
+        let dt = BenchTriangulation::<D>::try_new_with_options(&vertices, options).or_abort();
+        let simplex_key = representative_simplex_key(&dt).or_abort();
+        let facet_vertices = first_facet_vertices(&dt, simplex_key).or_abort();
+        let query = simplex_barycenter(&dt, simplex_key).or_abort();
         let simplex_count = dt.tds().simplices().count();
         let vertex_count = dt.tds().vertices().count();
 
@@ -349,10 +328,7 @@ mod allocation_contracts {
                     let (vertex_count, info) = measure_with_result(|| {
                         tds.simplex_vertices(simplex_key).map(|keys| keys.len())
                     });
-                    assert_eq!(
-                        bench_result(vertex_count, "Tds::simplex_vertices should succeed"),
-                        D + 1
-                    );
+                    assert_eq!(vertex_count.or_abort(), D + 1);
                     assert_zero_allocations(&info, "Tds::simplex_vertices");
                 });
             },
@@ -364,10 +340,9 @@ mod allocation_contracts {
         fixture: &DimensionFixture<D>,
     ) {
         let tds = fixture.dt.tds();
-        let simplex = bench_option(
-            tds.simplex(fixture.simplex_key),
-            format!("{D}D benchmark simplex should exist"),
-        );
+        let simplex = tds
+            .simplex(fixture.simplex_key)
+            .or_abort(format!("{D}D benchmark simplex should exist"));
 
         group.bench_function(
             BenchmarkId::new(
@@ -381,10 +356,7 @@ mod allocation_contracts {
                             .vertex_uuid_iter(tds)
                             .try_fold(0usize, |count, uuid| uuid.map(|_| count + 1))
                     });
-                    assert_eq!(
-                        bench_result(uuid_count, "Simplex::vertex_uuid_iter should succeed"),
-                        D + 1
-                    );
+                    assert_eq!(uuid_count.or_abort(), D + 1);
                     assert_zero_allocations(&info, "Simplex::vertex_uuid_iter");
                 });
             },
@@ -429,8 +401,7 @@ mod allocation_contracts {
                     let (locate_result, info) = measure_with_result(|| {
                         locate_with_stats(fixture.dt.tds(), &kernel, &fixture.query, Some(simplex_key))
                     });
-                    let (location, stats) =
-                        bench_result(locate_result, "hinted locate_with_stats should succeed");
+                    let (location, stats) = locate_result.or_abort();
 
                     assert_matches!(location, LocateResult::InsideSimplex(found) if found == simplex_key);
                     assert!(stats.used_hint);

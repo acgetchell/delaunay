@@ -58,7 +58,7 @@ use tracing::warn;
 /// Shared benchmark setup error helpers.
 #[path = "common/bench_utils.rs"]
 pub mod bench_utils;
-use bench_utils::{abort_benchmark, bench_option, bench_result};
+use bench_utils::{OrAbort, OrAbortWithContext, abort_benchmark};
 
 #[path = "common/flip_fixtures.rs"]
 mod flip_fixtures;
@@ -340,8 +340,7 @@ fn prepare_data<const D: usize>(
     // Slow fallback: runtime search from the base seed
     let base_seed = dim_seed.wrapping_add(count as u64);
     let search_limit = seed_search_limit();
-    bench_option(
-        find_seed_vertices::<D>(base_seed, count, bounds, search_limit, attempts),
+    find_seed_vertices::<D>(base_seed, count, bounds, search_limit, attempts).or_abort(
         format_args!(
             "No stable benchmark seed found for {D}D/{count}: \
                  start_seed={base_seed}; search_limit={search_limit}; bounds={bounds}"
@@ -370,10 +369,7 @@ fn warn_known_seed_failed<const D: usize>(seed: u64, count: usize, dataset: Data
 }
 
 fn prepare_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangulation<D> {
-    let bounds = bench_result(
-        CoordinateRange::try_new(-100.0_f64, 100.0),
-        "well-conditioned benchmark bounds must be valid",
-    );
+    let bounds = CoordinateRange::try_new(-100.0_f64, 100.0).or_abort();
     let attempts = retry_attempts(6);
     let (seed, _, vertices) = prepare_data::<D>(dim_seed, count, bounds, attempts);
     let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
@@ -381,10 +377,7 @@ fn prepare_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangulation
         base_seed: Some(seed),
     });
 
-    bench_result(
-        BenchTriangulation::<D>::try_new_with_options(&vertices, options),
-        format!("failed to prepare {D}D benchmark triangulation with {count} vertices"),
-    )
+    BenchTriangulation::<D>::try_new_with_options(&vertices, options).or_abort()
 }
 
 fn prepare_adv_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangulation<D> {
@@ -395,10 +388,7 @@ fn prepare_adv_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangula
         base_seed: Some(seed),
     });
 
-    bench_result(
-        BenchTriangulation::<D>::try_new_with_options(&vertices, options),
-        format!("failed to prepare adversarial {D}D benchmark triangulation with {count} vertices"),
-    )
+    BenchTriangulation::<D>::try_new_with_options(&vertices, options).or_abort()
 }
 
 fn prepare_inserts<const D: usize>(
@@ -411,23 +401,15 @@ fn prepare_inserts<const D: usize>(
         seed ^= 0xA5A5_A5A5;
     }
     let points = match dataset {
-        Dataset::WellConditioned => bench_result(
-            generate_random_points_in_range_seeded::<D>(
-                count,
-                bench_result(
-                    CoordinateRange::try_new(-50.0_f64, 50.0),
-                    "insert benchmark bounds must be valid",
-                ),
-                seed,
-            ),
-            "failed to generate insert benchmark points",
-        ),
+        Dataset::WellConditioned => generate_random_points_in_range_seeded::<D>(
+            count,
+            CoordinateRange::try_new(-50.0_f64, 50.0).or_abort(),
+            seed,
+        )
+        .or_abort(),
         Dataset::Adversarial => generate_adv_points::<D>(count, seed),
     };
-    bench_result(
-        try_vertices_from_points(&points),
-        "failed to create insert benchmark vertices",
-    )
+    try_vertices_from_points(&points).or_abort()
 }
 
 fn find_seed_vertices<const D: usize>(
@@ -439,14 +421,9 @@ fn find_seed_vertices<const D: usize>(
 ) -> SeedSearchResult<D> {
     for offset in 0..limit {
         let candidate_seed = start_seed.wrapping_add(offset as u64);
-        let points = bench_result(
-            generate_random_points_in_range_seeded::<D>(count, bounds, candidate_seed),
-            "failed to generate candidate benchmark points",
-        );
-        let vertices = bench_result(
-            try_vertices_from_points(&points),
-            "failed to create candidate benchmark vertices",
-        );
+        let points =
+            generate_random_points_in_range_seeded::<D>(count, bounds, candidate_seed).or_abort();
+        let vertices = try_vertices_from_points(&points).or_abort();
 
         let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
             attempts,
@@ -467,10 +444,7 @@ fn stable_adv_points<const D: usize>(
     attempts: NonZeroUsize,
 ) -> SeedSearchResult<D> {
     let points = generate_adv_points::<D>(count, seed);
-    let vertices = bench_result(
-        try_vertices_from_points(&points),
-        "failed to create adversarial benchmark vertices",
-    );
+    let vertices = try_vertices_from_points(&points).or_abort();
     let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
         attempts,
         base_seed: Some(seed),
@@ -519,29 +493,21 @@ fn prepare_adv_data<const D: usize>(
 }
 
 fn generate_adv_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<D>> {
-    let base_points = bench_result(
-        generate_random_points_in_range_seeded::<D>(
-            count,
-            bench_result(
-                CoordinateRange::try_new(-1.0_f64, 1.0),
-                "adversarial benchmark bounds must be valid",
-            ),
-            seed,
-        ),
-        "failed to generate adversarial benchmark base points",
-    );
+    let base_points = generate_random_points_in_range_seeded::<D>(
+        count,
+        CoordinateRange::try_new(-1.0_f64, 1.0).or_abort(),
+        seed,
+    )
+    .or_abort();
 
     base_points
         .iter()
         .enumerate()
         .map(|(index, point)| {
-            let index = bench_result(
-                u32::try_from(index),
-                "benchmark point index should fit in u32",
-            );
+            let index = u32::try_from(index).or_abort();
             let mut coords = [0.0_f64; D];
             for (axis, coord) in coords.iter_mut().enumerate() {
-                let axis_number = bench_result(u32::try_from(axis + 1), "axis should fit in u32");
+                let axis_number = u32::try_from(axis + 1).or_abort();
                 let base = point.coords()[axis];
                 let cluster_offset = f64::from(index % 7) * 1.0e-3;
                 let axis_offset = f64::from(axis_number) * 0.25;
@@ -559,10 +525,7 @@ fn generate_adv_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<D>>
 /// both stable and adversarial fixtures stay deterministic across runs and
 /// Criterion measures only the public flip operation.
 fn build_flip_dt<const D: usize>(points: &[[f64; D]]) -> FlipTriangulation<D> {
-    bench_result(
-        flip_workflows::build_flip_dt(points),
-        format!("failed to build {D}D flip fixture triangulation"),
-    )
+    flip_workflows::build_flip_dt(points).or_abort()
 }
 
 /// Selects a non-degenerate simplex for deterministic k=1 benchmark setup.
@@ -574,10 +537,8 @@ fn largest_volume_simplex<const D: usize>(dt: &FlipTriangulation<D>) -> SimplexK
 fn adversarial_largest_volume_simplex<const D: usize>(dt: &FlipTriangulation<D>) -> SimplexKey {
     let simplex_key =
         largest_volume_simplex_matching(dt, CandidateFilter::TouchesAdversarialFeature);
-    let touches_feature = bench_result(
-        flip_workflows::simplex_touches_adversarial_feature(dt, simplex_key),
-        format!("failed to inspect adversarial k=1 simplex support for {D}D"),
-    );
+    let touches_feature =
+        flip_workflows::simplex_touches_adversarial_feature(dt, simplex_key).or_abort();
     if !touches_feature {
         abort_benchmark(format_args!(
             "selected adversarial {D}D k=1 simplex does not touch an adversarial fixture feature"
@@ -591,18 +552,12 @@ fn largest_volume_simplex_matching<const D: usize>(
     dt: &FlipTriangulation<D>,
     filter: CandidateFilter,
 ) -> SimplexKey {
-    bench_result(
-        flip_workflows::largest_volume_simplex(dt, filter),
-        format!("failed to select {filter:?} k=1 simplex for {D}D flip benchmark"),
-    )
+    flip_workflows::largest_volume_simplex(dt, filter).or_abort()
 }
 
 /// Exercises the public k=1 insert and remove APIs as one benchmark workflow.
 fn roundtrip_k1<const D: usize>(dt: &mut FlipTriangulation<D>, simplex_key: SimplexKey) {
-    bench_result(
-        flip_workflows::roundtrip_k1(dt, simplex_key),
-        format!("k=1 roundtrip should succeed in {D}D"),
-    );
+    flip_workflows::roundtrip_k1(dt, simplex_key).or_abort();
 }
 
 /// Finds a deterministic k=2 facet candidate before Criterion opens the timed group.
@@ -628,10 +583,8 @@ fn adversarial_flippable_k2_facet<const D: usize>(
         require_inverse,
         CandidateFilter::TouchesAdversarialFeature,
     );
-    let touches_feature = bench_result(
-        flip_workflows::facet_support_touches_adversarial_feature(dt, facet),
-        format!("failed to inspect adversarial k=2 facet support for {D}D"),
-    );
+    let touches_feature =
+        flip_workflows::facet_support_touches_adversarial_feature(dt, facet).or_abort();
     if !touches_feature {
         abort_benchmark(format_args!(
             "selected adversarial {D}D k=2 facet does not touch an adversarial fixture feature"
@@ -646,26 +599,17 @@ fn flippable_k2_facet_matching<const D: usize>(
     require_inverse: bool,
     filter: CandidateFilter,
 ) -> FacetHandle {
-    bench_result(
-        flip_workflows::flippable_k2_facet(dt, require_inverse, filter),
-        format!("failed to select {filter:?} k=2 facet for {D}D flip benchmark"),
-    )
+    flip_workflows::flippable_k2_facet(dt, require_inverse, filter).or_abort()
 }
 
 /// Exercises the public k=2 forward flip API for dimensions without inversion.
 fn forward_k2<const D: usize>(dt: &mut FlipTriangulation<D>, facet: FacetHandle) {
-    bench_result(
-        flip_workflows::forward_k2(dt, facet),
-        format!("k=2 flip should succeed for preselected {D}D benchmark facet"),
-    );
+    flip_workflows::forward_k2(dt, facet).or_abort();
 }
 
 /// Exercises the public k=2 flip and inverse APIs as one benchmark workflow.
 fn roundtrip_k2<const D: usize>(dt: &mut FlipTriangulation<D>, facet: FacetHandle) {
-    bench_result(
-        flip_workflows::roundtrip_k2(dt, facet),
-        format!("k=2 roundtrip should succeed in {D}D"),
-    );
+    flip_workflows::roundtrip_k2(dt, facet).or_abort();
 }
 
 /// Finds a deterministic k=3 ridge candidate before Criterion opens the timed group.
@@ -691,10 +635,8 @@ fn adversarial_flippable_k3_ridge<const D: usize>(
         require_inverse,
         CandidateFilter::TouchesAdversarialFeature,
     );
-    let touches_feature = bench_result(
-        flip_workflows::ridge_support_touches_adversarial_feature(dt, ridge),
-        format!("failed to inspect adversarial k=3 ridge support for {D}D"),
-    );
+    let touches_feature =
+        flip_workflows::ridge_support_touches_adversarial_feature(dt, ridge).or_abort();
     if !touches_feature {
         abort_benchmark(format_args!(
             "selected adversarial {D}D k=3 ridge does not touch an adversarial fixture feature"
@@ -709,26 +651,17 @@ fn flippable_k3_ridge_matching<const D: usize>(
     require_inverse: bool,
     filter: CandidateFilter,
 ) -> RidgeHandle {
-    bench_result(
-        flip_workflows::flippable_k3_ridge(dt, require_inverse, filter),
-        format!("failed to select {filter:?} k=3 ridge for {D}D flip benchmark"),
-    )
+    flip_workflows::flippable_k3_ridge(dt, require_inverse, filter).or_abort()
 }
 
 /// Exercises the public k=3 forward flip API for dimensions without inversion.
 fn forward_k3<const D: usize>(dt: &mut FlipTriangulation<D>, ridge: RidgeHandle) {
-    bench_result(
-        flip_workflows::forward_k3(dt, ridge),
-        format!("k=3 flip should succeed for preselected {D}D benchmark ridge"),
-    );
+    flip_workflows::forward_k3(dt, ridge).or_abort();
 }
 
 /// Exercises the public k=3 flip and inverse APIs as one benchmark workflow.
 fn roundtrip_k3<const D: usize>(dt: &mut FlipTriangulation<D>, ridge: RidgeHandle) {
-    bench_result(
-        flip_workflows::roundtrip_k3(dt, ridge),
-        format!("k=3 roundtrip should succeed in {D}D"),
-    );
+    flip_workflows::roundtrip_k3(dt, ridge).or_abort();
 }
 
 /// Registers one k=1 insert/remove roundtrip flip benchmark case.
@@ -738,10 +671,7 @@ fn bench_k1_roundtrip_case<const D: usize>(
     base_dt: &FlipTriangulation<D>,
     simplex_key: SimplexKey,
 ) {
-    bench_result(
-        flip_workflows::verify_k1_roundtrip(base_dt, simplex_key, name),
-        format!("k=1 setup roundtrip should recover exact topology for {name}"),
-    );
+    flip_workflows::verify_k1_roundtrip(base_dt, simplex_key, name).or_abort();
     group.bench_function(name, |b| {
         b.iter_batched(
             || base_dt.clone(),
@@ -780,10 +710,7 @@ fn bench_k2_roundtrip_case<const D: usize>(
     base_dt: &FlipTriangulation<D>,
     facet: FacetHandle,
 ) {
-    bench_result(
-        flip_workflows::verify_k2_roundtrip(base_dt, facet, name),
-        format!("k=2 setup roundtrip should recover exact topology for {name}"),
-    );
+    flip_workflows::verify_k2_roundtrip(base_dt, facet, name).or_abort();
     group.bench_function(name, |b| {
         b.iter_batched(
             || base_dt.clone(),
@@ -822,10 +749,7 @@ fn bench_k3_roundtrip_case<const D: usize>(
     base_dt: &FlipTriangulation<D>,
     ridge: RidgeHandle,
 ) {
-    bench_result(
-        flip_workflows::verify_k3_roundtrip(base_dt, ridge, name),
-        format!("k=3 setup roundtrip should recover exact topology for {name}"),
-    );
+    flip_workflows::verify_k3_roundtrip(base_dt, ridge, name).or_abort();
     group.bench_function(name, |b| {
         b.iter_batched(
             || base_dt.clone(),
@@ -887,10 +811,7 @@ fn emit_construction_metric<const D: usize>(
     vertices: &[Vertex<(), D>],
     options: ConstructionOptions,
 ) {
-    let dt = bench_result(
-        BenchTriangulation::<D>::try_new_with_options(vertices, options),
-        format!("failed to collect construction metrics for {benchmark_id}"),
-    );
+    let dt = BenchTriangulation::<D>::try_new_with_options(vertices, options).or_abort();
     println!(
         "api_benchmark_metric benchmark_id={benchmark_id} vertices={} simplices={}",
         vertices.len(),
@@ -930,10 +851,7 @@ macro_rules! benchmark_tds_new_dimension {
             // We avoid `std::process::exit` here so that destructors run and Criterion
             // can clean up state on both success and failure.
             if discover_seeds_enabled() {
-                let bounds = bench_result(
-                    CoordinateRange::try_new(-100.0_f64, 100.0),
-                    "well-conditioned benchmark bounds must be valid",
-                );
+                let bounds = CoordinateRange::try_new(-100.0_f64, 100.0).or_abort();
                 let filters = criterion_filters();
 
                 let bench_id = format!("tds_new_{}d/tds_new/{count}", stringify!($dim));
@@ -978,10 +896,7 @@ macro_rules! benchmark_tds_new_dimension {
                     format!("tds_new_{}d/tds_new_adversarial/{count}", stringify!($dim));
 
                 if benchmark_selected(&filters, &bench_id) {
-                    let bounds = bench_result(
-                        CoordinateRange::try_new(-100.0_f64, 100.0),
-                        "well-conditioned benchmark bounds must be valid",
-                    );
+                    let bounds = CoordinateRange::try_new(-100.0_f64, 100.0).or_abort();
                     let attempts = retry_attempts(6);
                     let (seed, _, vertices) = prepare_data::<$dim>($seed, count, bounds, attempts);
                     let options = ConstructionOptions::default().with_retry_policy(
@@ -1021,10 +936,7 @@ macro_rules! benchmark_tds_new_dimension {
             group.bench_with_input(BenchmarkId::new("tds_new", count), &count, |b, &count| {
                     // Reduce variance: pre-generate deterministic inputs outside the measured loop,
                     // then benchmark only triangulation construction.
-                    let bounds = bench_result(
-                        CoordinateRange::try_new(-100.0_f64, 100.0),
-                        "well-conditioned benchmark bounds must be valid",
-                    );
+                    let bounds = CoordinateRange::try_new(-100.0_f64, 100.0).or_abort();
                     let attempts = retry_attempts(6);
                     let (seed, points, vertices) =
                         prepare_data::<$dim>($seed, count, bounds, attempts);
