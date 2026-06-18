@@ -5,6 +5,422 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### ⚠️ Breaking Changes
+
+- Validate toroidal domains at parse boundaries [#437](https://github.com/acgetchell/delaunay/pull/437) [#450](https://github.com/acgetchell/delaunay/pull/450)
+- Add vertex construction macro [#469](https://github.com/acgetchell/delaunay/pull/469)
+- Box nested FlipError payloads [#406](https://github.com/acgetchell/delaunay/pull/406) [#435](https://github.com/acgetchell/delaunay/pull/435)
+- Adopt la-stack 0.4.3 API [#424](https://github.com/acgetchell/delaunay/pull/424) [#438](https://github.com/acgetchell/delaunay/pull/438)
+- Require refined generator and ordering parameters [#439](https://github.com/acgetchell/delaunay/pull/439)
+- Parse coordinate inputs into validated types [#440](https://github.com/acgetchell/delaunay/pull/440) [#444](https://github.com/acgetchell/delaunay/pull/444)
+- Require validated generator and Hilbert inputs [#452](https://github.com/acgetchell/delaunay/pull/452)
+- Require validated coordinate topology API [#442](https://github.com/acgetchell/delaunay/pull/442) [#455](https://github.com/acgetchell/delaunay/pull/455)
+- Return fallible facet iterators [#458](https://github.com/acgetchell/delaunay/pull/458)
+- Hydrate TDS through validated UUID snapshots [#454](https://github.com/acgetchell/delaunay/pull/454) [#460](https://github.com/acgetchell/delaunay/pull/460)
+- Normalize fallible constructors [#459](https://github.com/acgetchell/delaunay/pull/459) [#464](https://github.com/acgetchell/delaunay/pull/464)
+- Reject stale adjacency indexes [#451](https://github.com/acgetchell/delaunay/pull/451) [#463](https://github.com/acgetchell/delaunay/pull/463)
+- Update tooling to Rust 1.96.0 [#430](https://github.com/acgetchell/delaunay/pull/430) [#431](https://github.com/acgetchell/delaunay/pull/431)
+
+### Merged Pull Requests
+
+- Add vertex construction macro [#469](https://github.com/acgetchell/delaunay/pull/469)
+- Preserve setup failure messages [#468](https://github.com/acgetchell/delaunay/pull/468)
+- Refactor/443 329 typed validation errors [#465](https://github.com/acgetchell/delaunay/pull/465)
+- Normalize fallible constructors [#459](https://github.com/acgetchell/delaunay/pull/459) [#464](https://github.com/acgetchell/delaunay/pull/464)
+- Reject stale adjacency indexes [#451](https://github.com/acgetchell/delaunay/pull/451) [#463](https://github.com/acgetchell/delaunay/pull/463)
+- Bump the uv group across 1 directory with 3 updates [#462](https://github.com/acgetchell/delaunay/pull/462)
+- Hydrate TDS through validated UUID snapshots [#454](https://github.com/acgetchell/delaunay/pull/454) [#460](https://github.com/acgetchell/delaunay/pull/460)
+- Return fallible facet iterators [#458](https://github.com/acgetchell/delaunay/pull/458)
+- Bump codecov/codecov-action from 6.0.1 to 7.0.0 [#457](https://github.com/acgetchell/delaunay/pull/457)
+- Bump actions/checkout from 6.0.2 to 6.0.3 [#456](https://github.com/acgetchell/delaunay/pull/456)
+- Require validated coordinate topology API [#442](https://github.com/acgetchell/delaunay/pull/442) [#455](https://github.com/acgetchell/delaunay/pull/455)
+- Require validated generator and Hilbert inputs [#452](https://github.com/acgetchell/delaunay/pull/452)
+- Validate toroidal domains at parse boundaries [#437](https://github.com/acgetchell/delaunay/pull/437) [#450](https://github.com/acgetchell/delaunay/pull/450)
+- Parse coordinate inputs into validated types [#440](https://github.com/acgetchell/delaunay/pull/440) [#444](https://github.com/acgetchell/delaunay/pull/444)
+- Require refined generator and ordering parameters [#439](https://github.com/acgetchell/delaunay/pull/439)
+- Adopt la-stack 0.4.3 API [#424](https://github.com/acgetchell/delaunay/pull/424) [#438](https://github.com/acgetchell/delaunay/pull/438)
+- Box nested FlipError payloads [#406](https://github.com/acgetchell/delaunay/pull/406) [#435](https://github.com/acgetchell/delaunay/pull/435)
+- Harden support tooling for Python 3.13 [#433](https://github.com/acgetchell/delaunay/pull/433)
+- Expand public flip benchmark coverage [#432](https://github.com/acgetchell/delaunay/pull/432)
+- Update tooling to Rust 1.96.0 [#430](https://github.com/acgetchell/delaunay/pull/430) [#431](https://github.com/acgetchell/delaunay/pull/431)
+- Bump starlette in the uv group across 1 directory [#428](https://github.com/acgetchell/delaunay/pull/428)
+- Bump taiki-e/install-action from 2.79.1 to 2.81.1 [#427](https://github.com/acgetchell/delaunay/pull/427)
+- Bump the dependencies group across 1 directory with 4 updates [#426](https://github.com/acgetchell/delaunay/pull/426)
+
+### Added
+
+- [**breaking**] Validate toroidal domains at parse boundaries [#437](https://github.com/acgetchell/delaunay/pull/437)
+  [#450](https://github.com/acgetchell/delaunay/pull/450) [`b1c52b6`](https://github.com/acgetchell/delaunay/commit/b1c52b605c57be5ea58018b787f1fba7244c1ee3)
+
+  - Add ToroidalDomain and ToroidalDomainError so toroidal periods are finite,
+    strictly positive, and validated before storage.
+
+  - Add fallible raw-period constructors for GlobalTopology, ToroidalSpace, and
+    ToroidalModel while keeping builder toroidal helpers ergonomic.
+
+  - Align shared development tooling pins with causal-triangulations and harden
+    benchmark baseline metadata parsing.
+
+- [**breaking**] Add vertex construction macro [#469](https://github.com/acgetchell/delaunay/pull/469)
+  [`63228a0`](https://github.com/acgetchell/delaunay/commit/63228a06ffca2ee8d68806823995d92ebfa84525)
+
+  - Add `vertex!` as a fallible constructor for coordinate-only and data-bearing vertices.
+  - Export the macro through the root, construction, and triangulation preludes.
+  - Migrate public docs, examples, and benchmark setup to prefer `vertex!` for incidental vertex construction.
+  - Retire the Semgrep rule that banned `vertex!` and document the new Rust style guidance.
+
+### Changed
+
+- [**breaking**] Box nested FlipError payloads [#406](https://github.com/acgetchell/delaunay/pull/406) [#435](https://github.com/acgetchell/delaunay/pull/435)
+  [`2f310d9`](https://github.com/acgetchell/delaunay/commit/2f310d91e0b600fefdc488f2117dc6413b907b25)
+
+  - Box nested typed `FlipError` payloads and the inserted-simplex witness while keeping scalar and key diagnostics inline.
+  - Preserve typed inspection through `Error::source` , `reason.as_ref()` , and `source.as_ref()` for flip context, predicate, adjacency, simplex,
+    neighbor-wiring, and mutation failures.
+
+  - Add repository Semgrep checks for the boxed-source policy and document the tooling rationale.
+  - Preserve padded changelog category headings during post-processing.
+- [**breaking**] Adopt la-stack 0.4.3 API [#424](https://github.com/acgetchell/delaunay/pull/424) [#438](https://github.com/acgetchell/delaunay/pull/438)
+  [`8e58d57`](https://github.com/acgetchell/delaunay/commit/8e58d57fa2439dd1ec04490a527b8c00b20a091b)
+
+  - Route stack-matrix dispatch, checked access, determinant filters, and
+    singular tolerances through the local geometry matrix shim.
+
+  - Preserve typed la-stack solve and factorization errors in geometry error paths
+    instead of stringifying backend diagnostics.
+
+  - Use rounded exact solve fallback for circumcenters and reject non-finite
+    predicate matrices at construction boundaries.
+
+  - Make `.toroidal()` the periodic image-point constructor and move wrapping-only
+    construction to `.canonicalized_toroidal()`.
+
+  - Align pinned just, rumdl, taplo, dprint, and typos setup through cargo installs
+    instead of Homebrew.
+
+  - Disable la-stack default features explicitly while selecting exact arithmetic.
+- [**breaking**] Require refined generator and ordering parameters [#439](https://github.com/acgetchell/delaunay/pull/439)
+  [`ca95380`](https://github.com/acgetchell/delaunay/commit/ca95380b4f6ae1a736f34e3badbc899475feac84)
+
+  - Add `HilbertBitDepth` for validated Hilbert ordering precision and route public ordering helpers through it.
+  - Require `NonZeroUsize` for grid and random triangulation generation counts.
+  - Remove the random generator's zero-count empty-triangulation path so empty triangulations stay on explicit constructors.
+- [**breaking**] Parse coordinate inputs into validated types [#440](https://github.com/acgetchell/delaunay/pull/440)
+  [#444](https://github.com/acgetchell/delaunay/pull/444) [`f0252e5`](https://github.com/acgetchell/delaunay/commit/f0252e539ff4ac6c5059bd755ba34ca655977a79)
+
+  - Add CoordinateRange and route generator and Hilbert range inputs through
+    typed boundary parsing before internal use.
+
+  - Replace stringly numeric diagnostics with typed coordinate, count, range, and
+    error-reason payloads across geometry and generator APIs.
+
+  - Restrict the public coordinate scalar contract to f64 while documenting future
+    exact-coordinate support as an explicit API addition.
+
+  - Move geometry and generator error types into their owning modules and update
+    prelude exports, docs, examples, and semgrep guardrails accordingly.
+- [**breaking**] Require validated generator and Hilbert inputs [#452](https://github.com/acgetchell/delaunay/pull/452)
+  [`2319f03`](https://github.com/acgetchell/delaunay/commit/2319f0379a2f1c1bb50b213bfd20ca6bec1822f7)
+
+  - Rename raw-bound generator and Hilbert ordering APIs to `try_*` names so fallible parsing is visible at call sites.
+  - Add `CoordinateRange`-based and prevalidated Hilbert batch APIs for callers that already carry validation evidence.
+  - Replace Hilbert debug-only invariants with proof-carrying index modes and typed permutation errors.
+  - Bound ball rejection sampling with a typed `BallSamplingFailed` error instead of relying on unbounded retry.
+  - Update preludes, examples, benches, and tests to exercise the refined API surface.
+- [**breaking**] Require validated coordinate topology API [#442](https://github.com/acgetchell/delaunay/pull/442)
+  [#455](https://github.com/acgetchell/delaunay/pull/455) [`da82604`](https://github.com/acgetchell/delaunay/commit/da82604480cbf04f6cb7e609a151e0c757d9174d)
+
+  - Store coordinates through validated finite-coordinate types and remove the public coordinate-scalar parameter from core geometry, TDS, hull, and
+    triangulation APIs.
+
+  - Replace macro and infallible raw constructors with explicit fallible smart constructors for points, vertices, simplices, edges, facets, and flip handles.
+  - Serialize topology relationships through stable vertex and simplex UUIDs instead of process-local slotmap keys.
+  - Add semgrep guardrails and update docs, examples, benches, and tests for the validated-coordinate API.
+- [**breaking**] Return fallible facet iterators [#458](https://github.com/acgetchell/delaunay/pull/458)
+  [`739aba0`](https://github.com/acgetchell/delaunay/commit/739aba043f135f58f3346ec58ee8b20812b234db)
+
+  - Make all-facet and boundary-facet traversal yield `Result&lt;FacetView, FacetError&gt;` so corrupted facet views and invalid boundary incidence are surfaced
+    instead of skipped.
+
+  - Route boundary-facet consumers, hull extraction, Euler counting, examples, benches, and prelude coverage through explicit item-error handling.
+  - Use `SimplexKeyBuffer` for local repair and topology frontiers, and add a Semgrep guard for future raw `Vec&lt;SimplexKey&gt;` regressions.
+  - Add a compact 2D-5D timing summary to `just perf-large-scale-smoke`.
+- [**breaking**] Hydrate TDS through validated UUID snapshots [#454](https://github.com/acgetchell/delaunay/pull/454)
+  [#460](https://github.com/acgetchell/delaunay/pull/460) [`87eb8b1`](https://github.com/acgetchell/delaunay/commit/87eb8b197fe5f7a826f196f3adde4919d0f60ff9)
+
+  - Route TDS serialization through a validated UUID snapshot boundary that carries vertex, simplex, neighbor, and periodic-offset relationships without
+    storage-local slotmap handles.
+
+  - Rebuild runtime TDS storage only from validated snapshots, with fresh slotmap keys and full topology validation before exposing hydrated state.
+  - Keep standalone simplex records from becoming an alternate hydration path, so simplex connectivity is resolved only in the TDS snapshot context.
+  - Update repository guards and documentation to describe snapshot-based persistence as the serialization boundary.
+- [**breaking**] Normalize fallible constructors [#459](https://github.com/acgetchell/delaunay/pull/459) [#464](https://github.com/acgetchell/delaunay/pull/464)
+  [`0fb6607`](https://github.com/acgetchell/delaunay/commit/0fb6607551df4d359aa3ae46a92c942f8ef69737)
+
+  - Rename fallible Delaunay triangulation and convex hull constructors to explicit `try_*` forms while keeping infallible constructors for validated inputs.
+  - Remove the raw-array validated-coordinate constructor path in favor of `Point::try_new` and validated coordinate proofs.
+  - Update documentation, examples, benchmarks, and Semgrep guardrails for the constructor naming contract and panic-free public snippets.
+  - Report generated simplex counts in the large-scale smoke benchmark output.
+- Refactor/443 329 typed validation errors [#465](https://github.com/acgetchell/delaunay/pull/465)
+  [`f6a85e8`](https://github.com/acgetchell/delaunay/commit/f6a85e84d43a81f1d5fdd8ec4c20e65e303dfe40)
+
+### Dependencies
+
+- Bump support tooling and smallvec [`1799d3c`](https://github.com/acgetchell/delaunay/commit/1799d3cbd4a5c01a10c490fffe15cc28b1f3784d)
+
+### Fixed
+
+- [**breaking**] Reject stale adjacency indexes [#451](https://github.com/acgetchell/delaunay/pull/451) [#463](https://github.com/acgetchell/delaunay/pull/463)
+  [`bda1cd5`](https://github.com/acgetchell/delaunay/commit/bda1cd508cec667d63e01001900d175a0f661bbe)
+
+  - Validate caller-supplied AdjacencyIndex values against the originating TDS identity and generation before indexed topology queries.
+  - Keep AdjacencyIndex internals immutable to downstream callers and route public use through accessor methods.
+  - Convert several debug-only invariant checks into typed errors for malformed topology, predicate matrix arity, and cavity replacement mismatches.
+  - Avoid release-mode coherent-orientation scans in flip hot paths while preserving structured debug/test diagnostics.
+  - Refresh README badges to use Badgen endpoints.
+- Preserve setup failure messages [#468](https://github.com/acgetchell/delaunay/pull/468)
+  [`fe3ed92`](https://github.com/acgetchell/delaunay/commit/fe3ed92a79684feb6302e03b27887b7ad10f1dfe)
+
+  - Replace benchmark setup unwrap helpers with postfix abort adapters that keep the original Result error text.
+  - Keep Option setup failures explicit with caller-provided context.
+  - Report abort messages without bench-logging so setup failures are visible in every benchmark build.
+
+### Maintenance
+
+- Bump starlette in the uv group across 1 directory [#428](https://github.com/acgetchell/delaunay/pull/428)
+  [`1cde3ee`](https://github.com/acgetchell/delaunay/commit/1cde3ee62e23065d657a5cc9f8a438fe72933632)
+
+  Bumps the uv group with 1 update in the / directory: [starlette](https://github.com/Kludex/starlette).
+
+  Updates `starlette` from 1.0.0 to 1.0.1
+
+  - [Release notes](https://github.com/Kludex/starlette/releases)
+  - [Changelog](https://github.com/Kludex/starlette/blob/main/docs/release-notes.md)
+  - [Commits](https://github.com/Kludex/starlette/compare/1.0.0...1.0.1)
+
+---
+
+  updated-dependencies:
+
+- dependency-name: starlette
+  dependency-version: 1.0.1
+  dependency-type: indirect
+  dependency-group: uv
+  ...
+
+- Bump taiki-e/install-action from 2.79.1 to 2.81.1 [#427](https://github.com/acgetchell/delaunay/pull/427)
+  [`3798932`](https://github.com/acgetchell/delaunay/commit/37989328340d1fcc6c8fc0a8be5adf03b31f7fcd)
+
+  Bumps [taiki-e/install-action](https://github.com/taiki-e/install-action) from 2.79.1 to 2.81.1.
+
+  - [Release notes](https://github.com/taiki-e/install-action/releases)
+  - [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/taiki-e/install-action/compare/b550161ef8a7bc4f2a671c0b03a18ac9ccedea1e...e49978b799e49ff429d162b7a30601a569ab6538)
+
+---
+
+  updated-dependencies:
+
+- dependency-name: taiki-e/install-action
+  dependency-version: 2.81.1
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
+  ...
+
+- Bump the dependencies group across 1 directory with 4 updates [#426](https://github.com/acgetchell/delaunay/pull/426)
+  [`daabc99`](https://github.com/acgetchell/delaunay/commit/daabc99f012f4c35789f71777d77e3e2b08593aa)
+
+  Bumps the dependencies group with 4 updates in the / directory: [uuid](https://github.com/uuid-rs/uuid) , [pastey](https://github.com/as1100k/pastey) ,
+  [serde_json](https://github.com/serde-rs/json) and [sysinfo](https://github.com/GuillaumeGomez/sysinfo) .
+
+  Updates `uuid` from 1.23.1 to 1.23.2
+
+  - [Release notes](https://github.com/uuid-rs/uuid/releases)
+  - [Commits](https://github.com/uuid-rs/uuid/compare/v1.23.1...v1.23.2)
+
+  Updates `pastey` from 0.2.2 to 0.2.3
+
+  - [Release notes](https://github.com/as1100k/pastey/releases)
+  - [Changelog](https://github.com/AS1100K/pastey/blob/master/CHANGELOG.md)
+  - [Commits](https://github.com/as1100k/pastey/compare/v0.2.2...v0.2.3)
+
+  Updates `serde_json` from 1.0.149 to 1.0.150
+
+  - [Release notes](https://github.com/serde-rs/json/releases)
+  - [Commits](https://github.com/serde-rs/json/compare/v1.0.149...v1.0.150)
+
+  Updates `sysinfo` from 0.39.2 to 0.39.3
+
+  - [Changelog](https://github.com/GuillaumeGomez/sysinfo/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/GuillaumeGomez/sysinfo/compare/v0.39.2...v0.39.3)
+
+---
+
+  updated-dependencies:
+
+- dependency-name: uuid
+  dependency-version: 1.23.2
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
+  dependency-group: dependencies
+
+- dependency-name: pastey
+  dependency-version: 0.2.3
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
+  dependency-group: dependencies
+
+- dependency-name: serde_json
+  dependency-version: 1.0.150
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
+  dependency-group: dependencies
+
+- dependency-name: sysinfo
+  dependency-version: 0.39.3
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
+  dependency-group: dependencies
+  ...
+
+- [**breaking**] Update tooling to Rust 1.96.0 [#430](https://github.com/acgetchell/delaunay/pull/430) [#431](https://github.com/acgetchell/delaunay/pull/431)
+  [`1ec1d5a`](https://github.com/acgetchell/delaunay/commit/1ec1d5ac6ab02ecefee37495bf9b82fbc434f645)
+
+  - Bump the crate MSRV, pinned toolchain, clippy MSRV, and contributor docs to Rust 1.96.0.
+  - Align pinned developer tools and install Cargo tools through cache-cargo-install-action where appropriate.
+  - Add the Zizmor workflow and tighten workflow/Semgrep policy for checkout credentials, GitHub script interpolation, doctest error handling, and subprocess
+    wrappers.
+
+  - Replace doctest and test assert-matches patterns with std::assert_matches! / assert_matches! diagnostics.
+
+- Harden support tooling for Python 3.13 [#433](https://github.com/acgetchell/delaunay/pull/433)
+  [`289b9b7`](https://github.com/acgetchell/delaunay/commit/289b9b76cadda9201748357c536031131a8ddb26)
+
+  - Move Python support scripts to the Python 3.13 baseline and let Ruff/Ty infer the configured target.
+  - Parse SARIF, Criterion estimates, benchmark metrics, and baseline fetch options into validated boundary models before use.
+  - Align changelog archive and postprocessing helpers with sibling repository behavior for archive links and release-heading detection.
+  - Add repository-owned Semgrep guardrails for strict CI JSON handling and positive benchmark metric counts.
+
+- Bump codecov/codecov-action from 6.0.1 to 7.0.0 [#457](https://github.com/acgetchell/delaunay/pull/457)
+  [`7b017a0`](https://github.com/acgetchell/delaunay/commit/7b017a041090918efbc2bda0ee786070353a4605)
+
+  Bumps [codecov/codecov-action](https://github.com/codecov/codecov-action) from 6.0.1 to 7.0.0.
+
+  - [Release notes](https://github.com/codecov/codecov-action/releases)
+  - [Changelog](https://github.com/codecov/codecov-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/codecov/codecov-action/compare/e79a6962e0d4c0c17b229090214935d2e33f8354...fb8b3582c8e4def4969c97caa2f19720cb33a72f)
+
+---
+
+  updated-dependencies:
+
+- dependency-name: codecov/codecov-action
+  dependency-version: 7.0.0
+  dependency-type: direct:production
+  update-type: version-update:semver-major
+  ...
+
+- Bump actions/checkout from 6.0.2 to 6.0.3 [#456](https://github.com/acgetchell/delaunay/pull/456)
+  [`b41393e`](https://github.com/acgetchell/delaunay/commit/b41393e0f6598e3598e1d533a7ca59f5bb195b46)
+
+  Bumps [actions/checkout](https://github.com/actions/checkout) from 6.0.2 to 6.0.3.
+
+  - [Release notes](https://github.com/actions/checkout/releases)
+  - [Changelog](https://github.com/actions/checkout/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/actions/checkout/compare/de0fac2e4500dabe0009e67214ff5f5447ce83dd...df4cb1c069e1874edd31b4311f1884172cec0e10)
+
+---
+
+  updated-dependencies:
+
+- dependency-name: actions/checkout
+  dependency-version: 6.0.3
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
+  ...
+- Harden GHAS security workflows [`add3dea`](https://github.com/acgetchell/delaunay/commit/add3deab592415e28f95faeb197bac099facf792)
+
+  - Restrict manual performance-baseline materialization to main and semver tags instead of checking out arbitrary validated branches.
+
+  - Pin CodeQL actions to the documented v4.36.2 commit so hash comments verify cleanly.
+
+  - Rename benchmark Cargo-mode metadata to avoid CodeQL treating benchmark profile strings as clear-text secret storage.
+- Avoid CodeQL benchmark metadata false positive [`9b16822`](https://github.com/acgetchell/delaunay/commit/9b1682299f0254c42f7c305dd4fc889d1ade862e)
+
+  - Rename the internal benchmark build-flavor constant so CodeQL no longer treats the perf label as sensitive data.
+  - Preserve baseline metadata output and benchmark command behavior.
+- Bump the uv group across 1 directory with 3 updates [#462](https://github.com/acgetchell/delaunay/pull/462)
+  [`4fbc838`](https://github.com/acgetchell/delaunay/commit/4fbc8383c7ea07fef943e3e0fe677d819b1d4761)
+
+  Bumps the uv group with 3 updates in the / directory: [cryptography](https://github.com/pyca/cryptography) ,
+  [python-multipart](https://github.com/Kludex/python-multipart) and [starlette](https://github.com/Kludex/starlette) .
+
+  Updates `cryptography` from 46.0.7 to 48.0.1
+
+  - [Changelog](https://github.com/pyca/cryptography/blob/main/CHANGELOG.rst)
+  - [Commits](https://github.com/pyca/cryptography/compare/46.0.7...48.0.1)
+
+  Updates `python-multipart` from 0.0.27 to 0.0.31
+
+  - [Release notes](https://github.com/Kludex/python-multipart/releases)
+  - [Changelog](https://github.com/Kludex/python-multipart/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/Kludex/python-multipart/compare/0.0.27...0.0.31)
+
+  Updates `starlette` from 1.0.1 to 1.3.1
+
+  - [Release notes](https://github.com/Kludex/starlette/releases)
+  - [Changelog](https://github.com/Kludex/starlette/blob/main/docs/release-notes.md)
+  - [Commits](https://github.com/Kludex/starlette/compare/1.0.1...1.3.1)
+
+---
+
+  updated-dependencies:
+
+- dependency-name: cryptography
+  dependency-version: 48.0.1
+  dependency-type: indirect
+  dependency-group: uv
+
+- dependency-name: python-multipart
+  dependency-version: 0.0.31
+  dependency-type: indirect
+  dependency-group: uv
+
+- dependency-name: starlette
+  dependency-version: 1.3.1
+  dependency-type: indirect
+  dependency-group: uv
+  ...
+
+### Performance
+
+- Expand public flip benchmark coverage [#432](https://github.com/acgetchell/delaunay/pull/432)
+  [`ea2f580`](https://github.com/acgetchell/delaunay/commit/ea2f5806dfa9fb2b8cb2bc072a7992c71f5fba32)
+
+  - Add stable 2D, 3D, and 5D PL-manifold fixtures for public bistellar flip benchmarks.
+  - Extend the benchmark manifest to cover k=1, k=2, and k=3 flip workflows across 2D-5D.
+  - Document the all-platform `just ci` timing baseline for future CI-shape evaluation.
+
+#### Performance: Add release baselines and adversarial flips
+
+- Archive perf-profile Criterion baselines as GitHub Release assets and compare CI runs against the latest released Ubuntu baseline.
+- Add local ref comparison support with `just perf-vs-ref` and baseline packaging from existing Criterion results.
+- Expand public bistellar flip benchmarks with stable and adversarial fixtures that enforce exact n=1 roundtrip recovery.
+- Document release benchmark storage, local same-machine comparisons, and the flip ergodicity invariant.
+
+#### Maintenance: Isolate Semgrep test settings
+
+- Route `semgrep-test` through a temporary Semgrep settings file to avoid runner home-directory permission failures.
+
+#### Performance: Harden release benchmarks and ridge flip coverage
+
+- Compare CI performance against the latest release benchmark asset and keep manual baseline artifacts for ad-hoc parity checks.
+- Fail release benchmark summaries when fresh runs fall back to reference data, and require ci_performance_suite results before writing baselines.
+- Add validated ridge-star support so k=3 flip benchmarks inspect the full incident support with typed ridge errors.
+- Align Codacy Markdownlint exclusions with the repository release checklist policy.
+
 ## [0.7.8] - 2026-05-21
 
 ### ⚠️ Breaking Changes
@@ -20,6 +436,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Merged Pull Requests
 
+- Roll back failed topology repair [#418](https://github.com/acgetchell/delaunay/pull/418)
 - Validate compact 3D toroidal quotients [#417](https://github.com/acgetchell/delaunay/pull/417)
 - Enforce 10-second default test budget [#415](https://github.com/acgetchell/delaunay/pull/415)
 - Run slow correctness cases through slow-tests [#412](https://github.com/acgetchell/delaunay/pull/412)
@@ -208,6 +625,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Select periodic quotient candidates by circumcenter ownership instead of barycenter ownership.
   - Add a typed UnsupportedPeriodicDimension guardrail so 4D/5D periodic quotient construction fails fast pending scalable follow-up work in #416.
   - Refresh toroidal periodic docs to state the 2D/compact 3D release boundary and high-dimensional guardrails.
+- Roll back failed topology repair [#418](https://github.com/acgetchell/delaunay/pull/418)
+  [`8a9cbf3`](https://github.com/acgetchell/delaunay/commit/8a9cbf3510ebc16b884951791f2de20412cf6c36)
+
+  - Restore the incoming triangulation when topology repair fails before fallback rebuild can recover.
+  - Add a regression for partial topology-repair mutation that exhausts its iteration budget.
+  - Update the v0.7.8 release metadata, roadmap, benchmark summary, changelog, and citation data.
+  - Tighten the doctest `.expect(` release guard to the current zero-count baseline.
 
 ### Maintenance
 
@@ -3743,6 +4167,7 @@ Older releases are archived by minor series:
 - [0.3.x](docs/archive/changelog/0.3.md)
 - [0.2.x](docs/archive/changelog/0.2.md)
 
+[Unreleased]: https://github.com/acgetchell/delaunay/compare/v0.7.8...HEAD
 [0.7.8]: https://github.com/acgetchell/delaunay/compare/v0.7.7...v0.7.8
 [0.7.7]: https://github.com/acgetchell/delaunay/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/acgetchell/delaunay/compare/v0.7.5...v0.7.6
