@@ -15,7 +15,7 @@
 //! ```
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee, Vertex};
+use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee, vertex};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::CoordinateRange;
 use delaunay::prelude::repair::DelaunayRepairPolicy;
@@ -56,7 +56,7 @@ fn bench_dimension<const D: usize>(
                 .or_abort();
         let vertices = points
             .into_iter()
-            .map(|p| Vertex::<(), _>::try_new(p.into()).or_abort())
+            .map(|p| vertex!(p.into()).or_abort())
             .collect::<Vec<_>>();
 
         group.bench_with_input(

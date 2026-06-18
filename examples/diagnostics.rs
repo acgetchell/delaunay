@@ -12,7 +12,7 @@
 use delaunay::prelude::DelaunayValidationError;
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::construction::{
-    DelaunayTriangulation, DelaunayTriangulationConstructionError,
+    DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
 };
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::diagnostics::{
@@ -74,10 +74,10 @@ fn init_tracing() {
 #[cfg(feature = "diagnostics")]
 fn report_valid_triangulation() -> Result<(), DiagnosticsExampleError> {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
     ];
     let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::try_new(&vertices)?;
 
@@ -122,13 +122,13 @@ fn report_non_delaunay_triangulation() -> Result<(), DiagnosticsExampleError> {
 fn build_non_delaunay_triangulation_2d()
 -> Result<DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2>, DiagnosticsExampleError> {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([4.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([4.0, 4.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 4.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 2.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([3.0, 1.0])?,
+        vertex![0.0, 0.0]?,
+        vertex![4.0, 0.0]?,
+        vertex![4.0, 4.0]?,
+        vertex![0.0, 4.0]?,
+        vertex![2.0, 2.0]?,
+        vertex![1.0, 1.0]?,
+        vertex![3.0, 1.0]?,
     ];
     let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::try_new(&vertices)?;
 

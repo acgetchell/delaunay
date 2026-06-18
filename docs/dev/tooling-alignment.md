@@ -361,6 +361,15 @@ The following previously deferred checks are now repository-owned Semgrep rules:
   boundaries, and other deliberately heap-backed collections should remain
   `Vec`.
 
+## Retired Repository Rules
+
+- `delaunay.rust.no-vertex-macro` was removed for #466. The new `vertex!`
+  macro expands directly to `Vertex::try_new` or `Vertex::try_new_with_data`,
+  returns the same typed coordinate-conversion errors, and keeps callers using
+  `?` at the construction boundary. The old rule correctly guarded the
+  post-#443 migration while no honest macro existed, but it would now block the
+  intended ergonomic public construction form instead of preserving an invariant.
+
 ## Public Sample Error Handling
 
 Examples, benchmarks, and public API integration tests should model the same

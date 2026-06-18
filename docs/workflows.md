@@ -19,7 +19,7 @@ For most use cases, construction is a single call:
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
 use delaunay::prelude::geometry::CoordinateConversionError;
 
@@ -33,10 +33,10 @@ enum ExampleError {
 
 fn main() -> Result<(), ExampleError> {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
     ];
 
     let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -119,7 +119,7 @@ You can also run a global repair pass manually:
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::repair::DelaunayRepairError;
@@ -136,10 +136,10 @@ enum RepairExampleError {
 
 fn main() -> Result<(), RepairExampleError> {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
     ];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -183,7 +183,7 @@ detections, etc.).
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::repair::DelaunayRepairError;
@@ -198,10 +198,10 @@ enum RepairExampleError {
 
 fn main() -> Result<(), RepairExampleError> {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
     ];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -238,7 +238,7 @@ from the current vertex set.
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::repair::{DelaunayRepairError, DelaunayRepairHeuristicConfig};
@@ -255,10 +255,10 @@ enum RepairExampleError {
 
 fn main() -> Result<(), RepairExampleError> {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
     ];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -282,7 +282,7 @@ uses the image-point method to build a true periodic quotient in the validated
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::insertion::InsertionError;
@@ -300,9 +300,9 @@ enum ToroidalExampleError {
 fn main() -> Result<(), ToroidalExampleError> {
     // 2D canonicalized toroidal triangulation with unit square domain
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.1, 0.1])?,
-        Vertex::<(), _>::try_new([0.9, 0.9])?,
-        Vertex::<(), _>::try_new([0.5, 0.5])?,
+        vertex![0.1, 0.1]?,
+        vertex![0.9, 0.9]?,
+        vertex![0.5, 0.5]?,
     ];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices)
@@ -311,8 +311,8 @@ fn main() -> Result<(), ToroidalExampleError> {
         .build::<()>()?;
 
     // Insert more points - they'll be wrapped to [0,1)×[0,1)
-    dt.insert(Vertex::<(), _>::try_new([1.2, 0.3])?)?; // wraps to [0.2, 0.3]
-    dt.insert(Vertex::<(), _>::try_new([-0.1, 0.7])?)?; // wraps to [0.9, 0.7]
+    dt.insert(vertex![1.2, 0.3]?)?; // wraps to [0.2, 0.3]
+    dt.insert(vertex![-0.1, 0.7]?)?; // wraps to [0.9, 0.7]
     Ok(())
 }
 ```
@@ -333,12 +333,12 @@ For more details, see `docs/topology.md` and the toroidal section in the main `R
 ## Builder API: auxiliary vertex and simplex data
 
 Vertices and simplices can carry user-defined auxiliary data (`U` for vertices, `V` for simplices).
-Data is attached at construction time via `Vertex::try_new_with_data()`, read via the `data()` accessor,
-and modified post-construction via `set_vertex_data` / `set_simplex_data`.
+Vertex data is attached at construction time via `vertex![...; data = ...]`, read via the `data()`
+accessor, and modified post-construction via `set_vertex_data` / `set_simplex_data`.
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex, vertex,
 };
 use delaunay::prelude::geometry::CoordinateConversionError;
 
@@ -353,9 +353,9 @@ enum DataExampleError {
 fn main() -> Result<(), DataExampleError> {
     // Attach integer labels at construction time
     let vertices: [Vertex<i32, 2>; 3] = [
-        Vertex::<_, _>::try_new_with_data([0.0, 0.0], 10i32)?,
-        Vertex::<_, _>::try_new_with_data([1.0, 0.0], 20)?,
-        Vertex::<_, _>::try_new_with_data([0.0, 1.0], 30)?,
+        vertex![0.0, 0.0; data = 10i32]?,
+        vertex![1.0, 0.0; data = 20]?,
+        vertex![0.0, 1.0; data = 30]?,
     ];
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
@@ -409,7 +409,7 @@ want to keep going after skipped vertices, use the explicitly best-effort
 `insert_best_effort_with_statistics()`.
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulation, Vertex};
+use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::insertion::{InsertionError, InsertionOutcome};
 
@@ -424,8 +424,7 @@ enum InsertionStatsExampleError {
 fn main() -> Result<(), InsertionStatsExampleError> {
     let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 
-    let (outcome, stats) =
-        dt.insert_best_effort_with_statistics(Vertex::<(), _>::try_new([0.5, 0.5, 0.5])?)?;
+    let (outcome, stats) = dt.insert_best_effort_with_statistics(vertex![0.5, 0.5, 0.5]?)?;
 
     if stats.used_perturbation() {
         println!("used perturbation (attempts={})", stats.attempts);
@@ -455,7 +454,7 @@ the operation rolls back to the pre-removal triangulation.
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::tds::InvariantError;
@@ -472,11 +471,11 @@ enum RemovalExampleError {
 
 fn main() -> Result<(), RemovalExampleError> {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
-        Vertex::<(), _>::try_new([0.2, 0.2, 0.2])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
+        vertex![0.2, 0.2, 0.2]?,
     ];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -517,7 +516,7 @@ See [`api_design.md`](api_design.md) for the full Builder vs Edit API design.
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
 use delaunay::prelude::flips::*;
 use delaunay::prelude::geometry::CoordinateConversionError;
@@ -534,10 +533,10 @@ enum FlipExampleError {
 
 fn main() -> Result<(), FlipExampleError> {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
     ];
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
@@ -545,7 +544,7 @@ fn main() -> Result<(), FlipExampleError> {
     let Some((simplex_key, _)) = dt.simplices().next() else {
         return Ok(());
     };
-    let info = dt.flip_k1_insert(simplex_key, Vertex::<(), _>::try_new([0.1, 0.1, 0.1])?)?;
+    let info = dt.flip_k1_insert(simplex_key, vertex![0.1, 0.1, 0.1]?)?;
     let inserted_vertex = info.inserted_face_vertices[0];
 
     // k=1 inverse: remove the inserted vertex (collapse its star).

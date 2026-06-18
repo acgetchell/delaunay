@@ -512,31 +512,6 @@ rules:
         - "/README.md"
     pattern-regex: '\bCoordinateScalar\b'
 
-  - id: delaunay.rust.no-vertex-macro
-    languages:
-      - generic
-    severity: WARNING
-    message: "Use Vertex::try_new or Vertex::try_new_with_data so coordinate validation remains explicit."
-    metadata:
-      category: correctness
-      tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
-      rationale: >-
-        The vertex! macro hid a fallible coordinate-construction boundary behind
-        macro syntax. Vertex construction should now flow through the named
-        smart constructors that return typed validation errors.
-    paths:
-      include:
-        - "/src/**/*.rs"
-        - "/tests/**/*.rs"
-        - "/benches/**/*.rs"
-        - "/examples/**/*.rs"
-        - "/docs/**/*.md"
-        - "/README.md"
-      exclude:
-        - "/docs/archive/**"
-        - "/tests/semgrep/**"
-    pattern-regex: '\bvertex!\s*(?:\(|\[)'
-
   - id: delaunay.rust.no-vertex-empty-constructor
     languages:
       - generic

@@ -48,9 +48,9 @@ pub enum DeduplicationError {
 /// use delaunay::prelude::{Vertex};
 ///
 /// # fn main() -> Result<(), delaunay::prelude::geometry::CoordinateConversionError> {
-/// let v1: Vertex<(), 2> = delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?;
-/// let v2: Vertex<(), 2> = delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?; // Duplicate
-/// let v3: Vertex<(), 2> = delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0])?;
+/// let v1: Vertex<(), 2> = delaunay::vertex![0.0, 0.0]?;
+/// let v2: Vertex<(), 2> = delaunay::vertex![0.0, 0.0]?; // Duplicate
+/// let v3: Vertex<(), 2> = delaunay::vertex![1.0, 1.0]?;
 ///
 /// let vertices = vec![v1, v2, v3];
 /// let unique = dedup_vertices_exact(&vertices);
@@ -112,9 +112,9 @@ where
 /// use delaunay::prelude::{Vertex};
 ///
 /// # fn main() -> Result<(), delaunay::prelude::geometry::CoordinateConversionError> {
-/// let v1: Vertex<(), 2> = delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?;
-/// let v2: Vertex<(), 2> = delaunay::prelude::Vertex::<(), _>::try_new([1e-11, 1e-11])?; // Near duplicate
-/// let v3: Vertex<(), 2> = delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0])?;
+/// let v1: Vertex<(), 2> = delaunay::vertex![0.0, 0.0]?;
+/// let v2: Vertex<(), 2> = delaunay::vertex![1e-11, 1e-11]?; // Near duplicate
+/// let v3: Vertex<(), 2> = delaunay::vertex![1.0, 1.0]?;
 ///
 /// let vertices = vec![v1, v2, v3];
 /// let unique = dedup_vertices_epsilon(&vertices, 1e-10);
@@ -165,9 +165,9 @@ where
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
+///     delaunay::vertex![0.0, 0.0]?,
+///     delaunay::vertex![0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0]?,
 /// ];
 ///
 /// let deduped = try_dedup_vertices_epsilon(&vertices, 1e-9)?;
@@ -249,8 +249,8 @@ where
 /// use delaunay::prelude::{Vertex};
 ///
 /// # fn main() -> Result<(), delaunay::prelude::geometry::CoordinateConversionError> {
-/// let v1: Vertex<(), 2> = delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?;
-/// let v2: Vertex<(), 2> = delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0])?;
+/// let v1: Vertex<(), 2> = delaunay::vertex![0.0, 0.0]?;
+/// let v2: Vertex<(), 2> = delaunay::vertex![1.0, 1.0]?;
 ///
 /// let reference = vec![v1]; // Exclude origin
 /// let vertices = vec![v1, v2];

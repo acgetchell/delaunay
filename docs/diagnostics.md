@@ -70,7 +70,7 @@ For most validation work, start with the always-available APIs:
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
 use delaunay::prelude::geometry::CoordinateConversionError;
 
@@ -84,10 +84,10 @@ enum DiagnosticsExampleError {
 
 fn main() -> Result<(), DiagnosticsExampleError> {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
@@ -127,7 +127,7 @@ empty-circumsphere violations:
 ```rust
 use delaunay::prelude::diagnostics::delaunay_violation_report;
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::DelaunayValidationError;
@@ -144,10 +144,10 @@ enum DiagnosticsExampleError {
 
 fn main() -> Result<(), DiagnosticsExampleError> {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 

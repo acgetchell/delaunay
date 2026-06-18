@@ -770,11 +770,11 @@ pub(crate) struct LocateTrace {
 /// # fn main() -> Result<(), ExampleError> {
 /// // Create a 4D simplex (5 vertices)
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0])?,
+///     delaunay::vertex![0.0, 0.0, 0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0, 0.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0, 0.0, 0.0]?,
+///     delaunay::vertex![0.0, 0.0, 1.0, 0.0]?,
+///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let kernel = FastKernel::<f64>::new();
@@ -816,11 +816,11 @@ pub(crate) struct LocateTrace {
 /// # fn main() -> Result<(), ExampleError> {
 /// // Create a 4D simplex
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0])?,
+///     delaunay::vertex![0.0, 0.0, 0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0, 0.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0, 0.0, 0.0]?,
+///     delaunay::vertex![0.0, 0.0, 1.0, 0.0]?,
+///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let kernel = RobustKernel::<f64>::default();
@@ -880,9 +880,9 @@ where
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+///     delaunay::vertex![0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0]?,
 /// ];
 /// let dt: DelaunayTriangulation<_, (), (), 2> =
 ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1250,11 +1250,11 @@ const fn conflict_simplex_points_error(
 /// # fn main() -> Result<(), ExampleError> {
 /// // Create a 4D simplex (5 vertices forming a 4-simplex)
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0])?,
+///     delaunay::vertex![0.0, 0.0, 0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0, 0.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0, 0.0, 0.0]?,
+///     delaunay::vertex![0.0, 0.0, 1.0, 0.0]?,
+///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
@@ -1669,11 +1669,11 @@ where
 /// # fn main() -> Result<(), ExampleError> {
 /// // Create a 4D simplex
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0])?,
+///     delaunay::vertex![0.0, 0.0, 0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0, 0.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0, 0.0, 0.0]?,
+///     delaunay::vertex![0.0, 0.0, 1.0, 0.0]?,
+///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///

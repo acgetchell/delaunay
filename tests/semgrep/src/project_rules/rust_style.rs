@@ -185,13 +185,11 @@ pub struct ValidatedCoordinates<const D: usize> {
     values: [f64; D],
 }
 
-pub fn vertex_macro_bad() {
-    // ruleid: delaunay.rust.no-vertex-macro
+pub fn vertex_macro_ok() {
     let _vertex = vertex![1.0, 2.0, 3.0];
 }
 
 pub fn vertex_try_new_ok() {
-    // ok: delaunay.rust.no-vertex-macro
     let _vertex = Vertex::<(), 3>::try_new([1.0, 2.0, 3.0]);
 }
 

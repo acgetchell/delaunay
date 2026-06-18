@@ -42,7 +42,7 @@ use delaunay::prelude::construction::{
     SimplexValidationError,
     SpatialIndexConstructionFailure as ConstructionSpatialIndexConstructionFailure,
     TopologyGuarantee, ToroidalDomain as ConstructionToroidalDomain, Vertex, VertexValidationError,
-    try_vertices_from_points as construction_try_vertices_from_points,
+    try_vertices_from_points as construction_try_vertices_from_points, vertex,
 };
 use delaunay::prelude::delaunayize::{
     DelaunayTriangulationBuilder as DelaunayizeDelaunayTriangulationBuilder, DelaunayizeConfig,
@@ -126,7 +126,7 @@ use delaunay::prelude::triangulation::{
     Triangulation as GenericTriangulation,
     TriangulationConstructionError as GenericTriangulationConstructionError,
     ValidationConfigurationError as TriangulationValidationConfigurationError,
-    ValidationPolicy as TriangulationValidationPolicy,
+    ValidationPolicy as TriangulationValidationPolicy, vertex as triangulation_vertex,
 };
 use delaunay::prelude::try_vertices_from_points as prelude_try_vertices_from_points;
 use delaunay::prelude::validation::{
@@ -137,7 +137,7 @@ use delaunay::prelude::validation::{
 use delaunay::prelude::{
     CoordinateRange as RootCoordinateRange,
     FlipOrientationCheckStage as RootFlipOrientationCheckStage, SecureHashMap, SecureHashSet,
-    ValidationConfigurationError as RootValidationConfigurationError,
+    ValidationConfigurationError as RootValidationConfigurationError, vertex as root_vertex,
 };
 use delaunay::query::{
     AllFacetsIter as QueryFacadeAllFacetsIter, BoundaryFacetsIter as QueryFacadeBoundaryFacetsIter,
@@ -209,6 +209,38 @@ fn construction_prelude_covers_dedup_policy() {
     );
     let dedup_policy = DedupPolicy::epsilon(DedupTolerance::try_new(0.0).unwrap());
     assert_matches!(dedup_policy, DedupPolicy::Epsilon { .. });
+}
+
+#[test]
+fn construction_prelude_covers_vertex_macro() -> Result<(), PreludeExportTestError> {
+    let vertex: Vertex<(), 2> = vertex![0.0, 0.0]?;
+    let bracketed: Vertex<(), 2> = vertex!([1.0, 0.0])?;
+    let labeled: Vertex<&str, 2> = vertex![0.0, 1.0; data = "boundary"]?;
+    let bracketed_labeled: Vertex<String, 2> = vertex!([1.0, 1.0]; data = String::from("corner"),)?;
+    let root: Vertex<(), 2> = root_vertex![0.25, 0.75]?;
+    let crate_root: Vertex<(), 2> = delaunay::vertex![0.5, 0.5]?;
+
+    assert_relative_eq!(vertex.point().coords().as_slice(), [0.0, 0.0].as_slice());
+    assert_relative_eq!(bracketed.point().coords().as_slice(), [1.0, 0.0].as_slice());
+    assert_eq!(labeled.data(), Some(&"boundary"));
+    assert_relative_eq!(
+        bracketed_labeled.point().coords().as_slice(),
+        [1.0, 1.0].as_slice()
+    );
+    assert_eq!(bracketed_labeled.data().map(String::as_str), Some("corner"));
+    assert_relative_eq!(root.point().coords().as_slice(), [0.25, 0.75].as_slice());
+    assert_relative_eq!(
+        crate_root.point().coords().as_slice(),
+        [0.5, 0.5].as_slice()
+    );
+    std::assert_matches!(
+        vertex![f64::NAN, 0.0],
+        Err(CoordinateConversionError::NonFiniteValue {
+            coordinate_index: 0,
+            ..
+        })
+    );
+    Ok(())
 }
 
 #[test]
@@ -857,9 +889,9 @@ fn topology_spaces_prelude_covers_toroidal_domain_api() -> Result<(), PreludeExp
 #[test]
 fn triangulation_prelude_covers_generic_layer() -> Result<(), PreludeExportTestError> {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+        triangulation_vertex![0.0, 0.0]?,
+        triangulation_vertex![1.0, 0.0]?,
+        triangulation_vertex![0.0, 1.0]?,
     ];
     let tds =
         GenericTriangulation::<TriangulationFastKernel<f64>, (), (), 2>::build_initial_simplex(

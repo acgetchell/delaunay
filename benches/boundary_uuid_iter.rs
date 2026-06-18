@@ -7,7 +7,7 @@
 //! preserving the quick performance probes.
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use delaunay::prelude::construction::{DelaunayTriangulation, Vertex};
+use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::CoordinateRange;
 use delaunay::prelude::query::BoundaryAnalysis;
@@ -96,10 +96,10 @@ fn bench_boundary_facets_micro(c: &mut Criterion) {
 fn uuid_iter_source()
 -> DelaunayTriangulation<delaunay::prelude::geometry::AdaptiveKernel<f64>, (), (), 3> {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).or_abort(),
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).or_abort(),
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).or_abort(),
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).or_abort(),
+        vertex![0.0, 0.0, 0.0].or_abort(),
+        vertex![1.0, 0.0, 0.0].or_abort(),
+        vertex![0.0, 1.0, 0.0].or_abort(),
+        vertex![0.0, 0.0, 1.0].or_abort(),
     ];
     DelaunayTriangulation::try_new(&vertices).or_abort()
 }
