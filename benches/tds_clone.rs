@@ -26,7 +26,7 @@ use std::time::Duration;
 /// Shared benchmark setup error helpers.
 #[path = "common/bench_utils.rs"]
 pub mod bench_utils;
-use bench_utils::bench_result;
+use bench_utils::OrAbort;
 
 const SEED_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
 const SAMPLE_SIZE: usize = 10;
@@ -36,10 +36,7 @@ const MEASUREMENT_TIME: Duration = Duration::from_secs(2);
 type BenchTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
 
 fn benchmark_bounds() -> CoordinateRange<f64> {
-    bench_result(
-        CoordinateRange::try_new(-100.0_f64, 100.0),
-        "clone benchmark bounds must be valid",
-    )
+    CoordinateRange::try_new(-100.0_f64, 100.0).or_abort()
 }
 
 struct CloneSource<const D: usize> {
@@ -50,34 +47,24 @@ struct CloneSource<const D: usize> {
 
 /// Derive a deterministic, dimension-specific seed for one benchmark case.
 fn seed_for_case<const D: usize>(requested_vertices: usize, seed_base: u64) -> u64 {
-    let vertices = bench_result(
-        u64::try_from(requested_vertices),
-        "vertex count does not fit in u64",
-    );
-    let dimension = bench_result(u64::try_from(D), "dimension does not fit in u64");
+    let vertices = u64::try_from(requested_vertices).or_abort();
+    let dimension = u64::try_from(D).or_abort();
     seed_base ^ vertices.wrapping_mul(SEED_SALT) ^ dimension.rotate_left(32)
 }
 
 /// Generate a reproducible vertex set for one clone-cost benchmark fixture.
 fn generate_vertices<const D: usize>(requested_vertices: usize, seed: u64) -> Vec<Vertex<(), D>> {
-    let points = bench_result(
-        generate_random_points_in_range_seeded::<D>(requested_vertices, benchmark_bounds(), seed),
-        "failed to generate clone benchmark points",
-    );
-    bench_result(
-        try_vertices_from_points(&points),
-        "failed to create clone benchmark vertices",
-    )
+    let points =
+        generate_random_points_in_range_seeded::<D>(requested_vertices, benchmark_bounds(), seed)
+            .or_abort();
+    try_vertices_from_points(&points).or_abort()
 }
 
 /// Build the triangulation snapshot that each benchmark iteration clones.
 fn build_clone_source<const D: usize>(requested_vertices: usize, seed_base: u64) -> CloneSource<D> {
     let seed = seed_for_case::<D>(requested_vertices, seed_base);
     let vertices = generate_vertices::<D>(requested_vertices, seed);
-    let triangulation: BenchTriangulation<D> = bench_result(
-        DelaunayTriangulation::try_new(&vertices),
-        format!("failed to build {D}D benchmark triangulation"),
-    );
+    let triangulation: BenchTriangulation<D> = DelaunayTriangulation::try_new(&vertices).or_abort();
     let tds = triangulation.tds().clone();
 
     CloneSource {
@@ -90,10 +77,7 @@ fn build_clone_source<const D: usize>(requested_vertices: usize, seed_base: u64)
 /// Report benchmark throughput in total stored vertices plus simplices.
 fn tds_element_count<const D: usize>(source: &CloneSource<D>) -> u64 {
     let total_elements = source.vertex_count + source.simplex_count;
-    bench_result(
-        u64::try_from(total_elements),
-        "TDS element count does not fit in u64",
-    )
+    u64::try_from(total_elements).or_abort()
 }
 
 /// Register the clone-cost cases for one dimension and input-size schedule.

@@ -478,7 +478,7 @@ pub fn build_flip_dt<const D: usize>(
 ) -> FlipWorkflowResult<FlipTriangulation<D>> {
     let vertices = points
         .iter()
-        .map(|coords| delaunay::prelude::Vertex::<(), _>::try_new(*coords))
+        .map(|coords| Vertex::<(), _>::try_new(*coords))
         .collect::<Result<Vec<Vertex<(), D>>, _>>()?;
     let options =
         ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
@@ -894,8 +894,7 @@ pub fn roundtrip_k1<const D: usize>(
     dt: &mut FlipTriangulation<D>,
     simplex_key: SimplexKey,
 ) -> FlipWorkflowResult<()> {
-    let new_vertex =
-        delaunay::prelude::Vertex::<(), _>::try_new(simplex_centroid(dt, simplex_key)?)?;
+    let new_vertex = Vertex::<(), _>::try_new(simplex_centroid(dt, simplex_key)?)?;
     let new_uuid = new_vertex.uuid();
     dt.flip_k1_insert(simplex_key, new_vertex)
         .map_err(|source| FlipWorkflowError::FlipFailed {

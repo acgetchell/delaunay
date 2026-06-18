@@ -1,11 +1,14 @@
-use std::{fmt::Display, process};
+//! Shared benchmark setup helpers for fatal setup failures.
+//!
+//! Criterion benchmark targets cannot return [`Result`] from ordinary setup
+//! helpers. These adapters keep benchmark setup code concise while preserving
+//! the original error message from fallible constructors and setup routines.
 
-#[cfg(feature = "bench-logging")]
-use std::sync::Once;
-#[cfg(feature = "bench-logging")]
+use std::{fmt::Display, process, sync::Once};
+
 use tracing_subscriber::EnvFilter;
 
-#[cfg(feature = "bench-logging")]
+/// Installs a default error-level tracing subscriber for fatal setup diagnostics.
 fn init_tracing() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
@@ -14,29 +17,46 @@ fn init_tracing() {
     });
 }
 
-/// Logs a benchmark setup failure when bench logging is enabled, then exits.
-#[cfg(feature = "bench-logging")]
+/// Emits a benchmark setup failure through tracing and exits with failure.
 pub fn abort_benchmark(message: impl Display) -> ! {
     init_tracing();
     tracing::error!("{message}");
     process::exit(1);
 }
 
-/// Exits after a benchmark setup failure when bench logging is disabled.
-#[cfg(not(feature = "bench-logging"))]
-pub fn abort_benchmark(_message: impl Display) -> ! {
-    process::exit(1);
+/// Converts fallible [`Result`] benchmark setup values into abort-on-failure values.
+pub trait OrAbort {
+    /// The successful setup value.
+    type Output;
+
+    /// Returns the setup value or aborts the benchmark with the underlying error.
+    fn or_abort(self) -> Self::Output;
 }
 
-/// Unwraps a benchmark setup result or aborts with context.
-pub fn bench_result<T, E: Display>(result: Result<T, E>, context: impl Display) -> T {
-    match result {
-        Ok(value) => value,
-        Err(error) => abort_benchmark(format_args!("{context}: {error}")),
+impl<T, E: Display> OrAbort for Result<T, E> {
+    type Output = T;
+
+    fn or_abort(self) -> Self::Output {
+        match self {
+            Ok(value) => value,
+            Err(error) => abort_benchmark(error),
+        }
     }
 }
 
-/// Unwraps a benchmark setup option or aborts with context.
-pub fn bench_option<T>(option: Option<T>, context: impl Display) -> T {
-    option.unwrap_or_else(|| abort_benchmark(context))
+/// Converts optional [`Option`] benchmark setup values into abort-on-missing values.
+pub trait OrAbortWithContext {
+    /// The successful setup value.
+    type Output;
+
+    /// Returns the setup value or aborts the benchmark with context.
+    fn or_abort(self, context: impl Display) -> Self::Output;
+}
+
+impl<T> OrAbortWithContext for Option<T> {
+    type Output = T;
+
+    fn or_abort(self, context: impl Display) -> Self::Output {
+        self.unwrap_or_else(|| abort_benchmark(context))
+    }
 }
