@@ -17,13 +17,13 @@
 //! # Examples
 //!
 //! ```rust
-//! use delaunay::prelude::Vertex;
+//! use delaunay::prelude::construction::{Vertex, vertex};
 //!
 //! // Create a simple vertex
-//! let vertex = Vertex::<(), 3>::try_new([1.0, 2.0, 3.0])?;
+//! let vertex: Vertex<(), 3> = vertex![1.0, 2.0, 3.0]?;
 //!
 //! // Create vertex with data
-//! let vertex_with_data = Vertex::<i32, 2>::try_new_with_data([1.0, 2.0], 42)?;
+//! let vertex_with_data: Vertex<i32, 2> = vertex![1.0, 2.0; data = 42]?;
 //! # Ok::<(), delaunay::prelude::geometry::CoordinateConversionError>(())
 //! ```
 
@@ -90,6 +90,70 @@ pub enum VertexValidationError {
 }
 
 // =============================================================================
+// CONVENIENCE MACROS AND HELPERS
+// =============================================================================
+
+/// Creates a [`Vertex`] through the existing fallible smart constructors.
+///
+/// The macro is intentionally thin: it does not unwrap, allocate hidden
+/// topology state, or bypass coordinate validation. Callers still handle the
+/// same [`CoordinateConversionError`] returned by [`Vertex::try_new`] and
+/// [`Vertex::try_new_with_data`].
+///
+/// When using `; data = ...`, the data expression is stored as the exact
+/// vertex payload type inferred for `U`; convert owned payloads before invoking
+/// the macro when needed.
+///
+/// # Errors
+///
+/// Expands to [`Vertex::try_new`] or [`Vertex::try_new_with_data`], so it
+/// returns [`CoordinateConversionError`] when any coordinate cannot be converted
+/// to a finite `f64`.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::construction::{Vertex, vertex};
+/// use delaunay::prelude::geometry::CoordinateConversionError;
+///
+/// # fn main() -> Result<(), CoordinateConversionError> {
+/// let vertex: Vertex<(), 2> = vertex![0.0, 1.0]?;
+/// let bracketed: Vertex<(), 2> = vertex!([1.0, 0.0])?;
+///
+/// assert_eq!(vertex.point().coords(), &[0.0, 1.0]);
+/// assert_eq!(bracketed.point().coords(), &[1.0, 0.0]);
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ```rust
+/// use delaunay::prelude::construction::{Vertex, vertex};
+/// use delaunay::prelude::geometry::CoordinateConversionError;
+///
+/// # fn main() -> Result<(), CoordinateConversionError> {
+/// let vertex: Vertex<&str, 2> = vertex![0.0, 1.0; data = "boundary"]?;
+///
+/// assert_eq!(vertex.data(), Some(&"boundary"));
+/// # Ok(())
+/// # }
+/// ```
+#[macro_export]
+macro_rules! vertex {
+    ($coords:expr; data = $data:expr $(,)?) => {
+        $crate::tds::Vertex::<_, _>::try_new_with_data($coords, $data)
+    };
+    ($($coord:expr),+; data = $data:expr $(,)?) => {
+        $crate::tds::Vertex::<_, _>::try_new_with_data([$($coord),+], $data)
+    };
+    ($coords:expr $(,)?) => {
+        $crate::tds::Vertex::<(), _>::try_new($coords)
+    };
+    ($($coord:expr),+ $(,)?) => {
+        $crate::tds::Vertex::<(), _>::try_new([$($coord),+])
+    };
+}
+
+// =============================================================================
 // VERTEX STRUCT DEFINITION
 // =============================================================================
 
@@ -119,8 +183,8 @@ pub enum VertexValidationError {
 ///
 /// # Usage
 ///
-/// Vertices are typically created from raw coordinates with [`Vertex::try_new`]
-/// or [`Vertex::try_new_with_data`].
+/// Vertices are typically created from raw coordinates with [`vertex!`],
+/// [`Vertex::try_new`], or [`Vertex::try_new_with_data`].
 ///
 /// ```rust
 /// use delaunay::prelude::Vertex;
@@ -430,6 +494,10 @@ impl<U, const D: usize> Vertex<U, D> {
 
     /// Tries to create a vertex with user data from raw coordinate values.
     ///
+    /// The `data` argument is stored as the exact vertex payload type `U`.
+    /// Convert owned payloads before calling when needed; coordinate parsing is
+    /// the only fallible conversion performed by this constructor.
+    ///
     /// # Errors
     ///
     /// Returns [`CoordinateConversionError`] when any coordinate cannot be
@@ -443,6 +511,10 @@ impl<U, const D: usize> Vertex<U, D> {
     ///
     /// let vertex = Vertex::<_, 2>::try_new_with_data([0.0, 1.0], "boundary")?;
     /// assert_eq!(vertex.data(), Some(&"boundary"));
+    ///
+    /// let owned: Vertex<String, 2> =
+    ///     Vertex::try_new_with_data([1.0, 0.0], String::from("owned-label"))?;
+    /// assert_eq!(owned.data().map(String::as_str), Some("owned-label"));
     /// # Ok::<(), CoordinateConversionError>(())
     /// ```
     ///
@@ -456,14 +528,11 @@ impl<U, const D: usize> Vertex<U, D> {
     /// );
     /// ```
     #[inline]
-    pub fn try_new_with_data<T>(
-        coords: [T; D],
-        data: impl Into<U>,
-    ) -> Result<Self, CoordinateConversionError>
+    pub fn try_new_with_data<T>(coords: [T; D], data: U) -> Result<Self, CoordinateConversionError>
     where
         T: num_traits::cast::NumCast + Copy + fmt::Debug + PartialEq,
     {
-        Point::try_from(coords).map(|point| Self::from_validated_point(point, Some(data.into())))
+        Point::try_from(coords).map(|point| Self::from_validated_point(point, Some(data)))
     }
 
     /// Converts vertices into a [`HashMap`] keyed by stable vertex [`Uuid`].
@@ -838,7 +907,7 @@ mod tests {
     }
 
     #[test]
-    fn test_vertex_try_new_with_data_accepts_non_data_type_metadata() {
+    fn test_vertex_try_new_with_data_stores_exact_metadata_type() {
         let v: Vertex<String, 2> =
             Vertex::try_new_with_data([0.0, 1.0], String::from("standalone-label"))
                 .expect("finite point coordinates");

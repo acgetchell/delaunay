@@ -53,10 +53,10 @@ use crate::triangulation::DelaunayTriangulation;
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+///     delaunay::vertex![0.0, 0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0, 0.0]?,
+///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
 /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
 ///     .topology_guarantee(TopologyGuarantee::PLManifold)
@@ -66,7 +66,7 @@ use crate::triangulation::DelaunayTriangulation;
 /// };
 ///
 /// // Split a simplex by inserting a vertex (k=1 move).
-/// let _info = dt.flip_k1_insert(simplex_key, delaunay::prelude::Vertex::<(), _>::try_new([0.1, 0.1, 0.1])?)?;
+/// let _info = dt.flip_k1_insert(simplex_key, delaunay::vertex![0.1, 0.1, 0.1]?)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -98,10 +98,10 @@ pub trait BistellarFlips<const D: usize> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
@@ -111,7 +111,7 @@ pub trait BistellarFlips<const D: usize> {
     /// };
     ///
     /// // Insert a vertex into the simplex
-    /// let info = dt.flip_k1_insert(simplex_key, delaunay::prelude::Vertex::<(), _>::try_new([0.25, 0.25, 0.25])?)?;
+    /// let info = dt.flip_k1_insert(simplex_key, delaunay::vertex![0.25, 0.25, 0.25]?)?;
     /// assert!(!info.new_simplices.is_empty());
     /// # Ok(())
     /// # }
@@ -146,10 +146,10 @@ pub trait BistellarFlips<const D: usize> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
@@ -157,7 +157,7 @@ pub trait BistellarFlips<const D: usize> {
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
-    /// let inserted = dt.flip_k1_insert(simplex_key, delaunay::prelude::Vertex::<(), _>::try_new([0.25, 0.25, 0.25])?)?;
+    /// let inserted = dt.flip_k1_insert(simplex_key, delaunay::vertex![0.25, 0.25, 0.25]?)?;
     /// let inserted_vertex = inserted.inserted_face_vertices[0];
     ///
     /// // Remove the inserted vertex
@@ -192,11 +192,11 @@ pub trait BistellarFlips<const D: usize> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.3])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
+    ///     delaunay::vertex![0.5, 0.5, 0.3]?,
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
@@ -239,11 +239,11 @@ pub trait BistellarFlips<const D: usize> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
+    ///     delaunay::vertex![1.0, 1.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///

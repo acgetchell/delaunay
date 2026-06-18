@@ -70,9 +70,9 @@ pub enum EdgeKeyError {
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = [
-///     Vertex::<(), _>::try_new([0.0, 0.0])?,
-///     Vertex::<(), _>::try_new([1.0, 0.0])?,
-///     Vertex::<(), _>::try_new([0.0, 1.0])?,
+///     delaunay::vertex![0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0]?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let Some((_simplex_key, simplex)) = dt.simplices().next() else {
@@ -122,9 +122,9 @@ impl EdgeKey {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     Vertex::<(), _>::try_new([0.0, 0.0])?,
-    ///     Vertex::<(), _>::try_new([1.0, 0.0])?,
-    ///     Vertex::<(), _>::try_new([0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((_simplex_key, simplex)) = dt.simplices().next() else {
@@ -199,9 +199,9 @@ impl EdgeKey {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     Vertex::<(), _>::try_new([0.0, 0.0])?,
-    ///     Vertex::<(), _>::try_new([1.0, 0.0])?,
-    ///     Vertex::<(), _>::try_new([0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((_simplex_key, simplex)) = dt.simplices().next() else {
@@ -242,9 +242,9 @@ impl EdgeKey {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     Vertex::<(), _>::try_new([0.0, 0.0])?,
-    ///     Vertex::<(), _>::try_new([1.0, 0.0])?,
-    ///     Vertex::<(), _>::try_new([0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((_simplex_key, simplex)) = dt.simplices().next() else {
@@ -285,9 +285,9 @@ impl EdgeKey {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     Vertex::<(), _>::try_new([0.0, 0.0])?,
-    ///     Vertex::<(), _>::try_new([1.0, 0.0])?,
-    ///     Vertex::<(), _>::try_new([0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((_simplex_key, simplex)) = dt.simplices().next() else {

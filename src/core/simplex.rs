@@ -29,10 +29,10 @@
 //! # fn main() -> Result<(), ExampleError> {
 //! // Create vertices for a tetrahedron
 //! let vertices = vec![
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+//!     delaunay::vertex![0.0, 0.0, 0.0]?,
+//!     delaunay::vertex![1.0, 0.0, 0.0]?,
+//!     delaunay::vertex![0.0, 1.0, 0.0]?,
+//!     delaunay::vertex![0.0, 0.0, 1.0]?,
 //! ];
 //!
 //! // Create a 3D triangulation with simplices
@@ -46,6 +46,15 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! ## Construction Macros
+//!
+//! There is intentionally no public `simplex!` macro. A [`Simplex`] stores
+//! TDS-local vertex keys, not coordinate-bearing vertices, and its fallible
+//! constructors are crate-private so the owning [`Tds`] can validate key
+//! locality and topology relationships. Public callers should construct
+//! triangulations from vertices or explicit index lists through the builder APIs
+//! rather than manufacturing standalone simplex records.
 
 #![allow(clippy::similar_names)]
 #![forbid(unsafe_code)]
@@ -308,9 +317,9 @@ impl NeighborSlot {
 /// # fn main() -> Result<(), ExampleError> {
 /// // Create a triangulation with some vertices
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+///     delaunay::vertex![0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0]?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
@@ -672,9 +681,9 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((_, simplex)) = dt.simplices().next() else {
@@ -719,10 +728,10 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    ///     delaunay::vertex![1.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let mut simplices_iter = dt.simplices().map(|(_, simplex)| simplex);
@@ -764,9 +773,9 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((_, simplex)) = dt.simplices().next() else {
@@ -812,9 +821,9 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((_, simplex)) = dt.simplices().next() else {
@@ -900,9 +909,9 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let mut tds = dt.tds().clone();
@@ -958,9 +967,9 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((_, simplex)) = dt.simplices().next() else {
@@ -1188,10 +1197,10 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
@@ -1237,10 +1246,10 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1279,9 +1288,9 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<i32>()?;
     /// let Some((_, simplex)) = dt.simplices().next() else {
@@ -1327,9 +1336,9 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices = vec![
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+    /// #     delaunay::vertex![0.0, 0.0]?,
+    /// #     delaunay::vertex![1.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 1.0]?,
     /// # ];
     /// # let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// // Note: clear_all_neighbors() is a Tds method, not on DelaunayTriangulation
@@ -1388,10 +1397,10 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
@@ -1458,9 +1467,9 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
@@ -1514,10 +1523,10 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1572,16 +1581,16 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create two separate triangulations
     /// let vertices1 = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
     /// ];
     /// let vertices2 = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0, 1.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([2.0, 1.0, 1.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0, 1.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0, 2.0])?,
+    ///     delaunay::vertex![1.0, 1.0, 1.0]?,
+    ///     delaunay::vertex![2.0, 1.0, 1.0]?,
+    ///     delaunay::vertex![1.0, 2.0, 1.0]?,
+    ///     delaunay::vertex![1.0, 1.0, 2.0]?,
     /// ];
     /// let dt1: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices1).build::<()>()?;
@@ -1693,10 +1702,10 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1844,10 +1853,10 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, _, _, 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1929,9 +1938,9 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # fn main() -> Result<(), ExampleError> {
     /// // Example 1: Comparing simplices from different TDS instances with same coordinates
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let dt1: DelaunayTriangulation<_, _, _, 2> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1972,14 +1981,14 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # fn main() -> Result<(), ExampleError> {
     /// // Example 2: Comparing simplices with different coordinates returns false
     /// let vertices1 = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let vertices2 = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0])?,  // Different coordinate
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 2.0])?,  // Different coordinate
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![2.0, 0.0]?,  // Different coordinate
+    ///     delaunay::vertex![0.0, 2.0]?,  // Different coordinate
     /// ];
     /// let dt1: DelaunayTriangulation<_, _, _, 2> =
     ///     DelaunayTriangulationBuilder::new(&vertices1).build::<()>()?;
@@ -2081,10 +2090,10 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, _, _, 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -2126,10 +2135,10 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, _, _, 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -2308,7 +2317,7 @@ mod tests {
     ///
     /// ```ignore
     /// test_simplex_dimensions! {
-    ///     simplex_2d => 2 => vec![delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?, delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?, delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?],
+    ///     simplex_2d => 2 => vec![delaunay::vertex![0.0, 0.0]?, delaunay::vertex![1.0, 0.0]?, delaunay::vertex![0.0, 1.0]?],
     /// }
     /// ```
     macro_rules! test_simplex_dimensions {
@@ -2475,12 +2484,11 @@ mod tests {
         ]
     }
 
-    // Tests covering the simplex! macro functionality to ensure it works correctly
-    // with different scenarios including vertex arrays and optional data.
+    // Tests covering simplex construction through the owning TDS context.
 
     #[test]
-    fn simplex_macro_without_data() {
-        // Test the simplex! macro without data (explicit type annotation required)
+    fn simplex_from_triangulation_without_data() {
+        // Public callers obtain simplices from a triangulation, not a standalone macro.
         let vertices = vec![
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
@@ -2567,8 +2575,8 @@ mod tests {
     }
 
     #[test]
-    fn simplex_macro_with_data() {
-        // Test the simplex! macro with data by creating TDS, cloning simplex, and modifying
+    fn simplex_from_triangulation_with_data() {
+        // Exercise simplex data by creating a TDS-backed simplex and modifying a clone.
         let vertices = vec![
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
@@ -2621,7 +2629,6 @@ mod tests {
     #[test]
     fn simplex_with_vertex_data() {
         // Test simplices with vertex data through TDS.
-        // Don't use simplex! macro since we need TDS context for vertex data access
         let vertices = vec![
             crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 1).unwrap(),
             crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 2).unwrap(),

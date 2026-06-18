@@ -30,10 +30,10 @@
 //! # }
 //! # fn main() -> Result<(), ExampleError> {
 //! let vertices = vec![
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-//!     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-//!     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+//!     delaunay::vertex![0.0, 0.0, 0.0]?,
+//!     delaunay::vertex![1.0, 0.0, 0.0]?,
+//!     delaunay::vertex![0.0, 1.0, 0.0]?,
+//!     delaunay::vertex![0.0, 0.0, 1.0]?,
 //! ];
 //! let dt: DelaunayTriangulation<_, (), (), 3> =
 //!     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -321,16 +321,16 @@ pub enum ConvexHullConstructionError {
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// # let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulationBuilder::new(&vec![
-/// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-/// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-/// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-/// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+/// #     delaunay::vertex![0.0, 0.0, 0.0]?,
+/// #     delaunay::vertex![1.0, 0.0, 0.0]?,
+/// #     delaunay::vertex![0.0, 1.0, 0.0]?,
+/// #     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// # ]).build::<()>()?;
 /// let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())?;
 /// assert!(hull.is_valid_for_triangulation(dt.as_triangulation())); // Valid initially
 ///
 /// // Hull extension is now implemented - inserting outside points works!
-/// dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([2.0, 2.0, 2.0])?)?;
+/// dt.insert(delaunay::vertex![2.0, 2.0, 2.0]?)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -365,10 +365,10 @@ pub enum ConvexHullConstructionError {
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulationBuilder::new(&vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+///     delaunay::vertex![0.0, 0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0, 0.0]?,
+///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ]).build::<()>()?;
 ///
 /// // Create initial hull (note: immutable binding)
@@ -378,7 +378,7 @@ pub enum ConvexHullConstructionError {
 ///
 /// // Hull extension is now implemented - inserting outside points works!
 /// // Note: The hull becomes invalid after modification and needs to be recreated
-/// let new_vertex = delaunay::prelude::Vertex::<(), _>::try_new([2.0, 2.0, 2.0])?;
+/// let new_vertex = delaunay::vertex![2.0, 2.0, 2.0]?;
 /// dt.insert(new_vertex)?; // Now works with hull extension!
 /// assert!(!hull.is_valid_for_triangulation(dt.as_triangulation())); // Hull is stale
 /// # Ok(())
@@ -482,10 +482,10 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -533,10 +533,10 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -581,10 +581,10 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -638,10 +638,10 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     ///
     /// // Non-empty hull
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -682,9 +682,9 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create different dimensional hulls
     /// let vertices_2d: Vec<_> = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let dt_2d: DelaunayTriangulation<_, (), (), 2> =
     ///     DelaunayTriangulationBuilder::new(&vertices_2d).build::<()>()?;
@@ -693,10 +693,10 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     /// assert_eq!(hull_2d.dimension(), 2);
     ///
     /// let vertices_3d: Vec<_> = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt_3d: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices_3d).build::<()>()?;
@@ -751,10 +751,10 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulationBuilder::new(&vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ]).build::<()>()?;
     ///
     /// // Create hull and verify it's valid
@@ -949,10 +949,10 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1025,10 +1025,10 @@ where
     /// # fn main() -> Result<(), ExampleError> {
     /// // 3D example
     /// let vertices_3d: Vec<_> = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt_3d: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices_3d).build::<()>()?;
@@ -1038,11 +1038,11 @@ where
     ///
     /// // 4D example
     /// let vertices_4d: Vec<_> = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
     /// ];
     /// let dt_4d: DelaunayTriangulation<_, (), (), 4> =
     ///     DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
@@ -1188,10 +1188,10 @@ where
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1582,10 +1582,10 @@ where
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1676,10 +1676,10 @@ where
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1815,10 +1815,10 @@ where
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -1881,10 +1881,10 @@ where
     /// # fn main() -> Result<(), ExampleError> {
     /// // Create a valid 3D tetrahedron
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -2118,7 +2118,7 @@ mod tests {
     /// ```ignore
     /// test_hull_dimensions! {
     ///     hull_2d => 2 => "triangle" => 3 =>
-    ///         vec![delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?, delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?, delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?],
+    ///         vec![delaunay::vertex![0.0, 0.0]?, delaunay::vertex![1.0, 0.0]?, delaunay::vertex![0.0, 1.0]?],
     /// }
     /// ```
     ///

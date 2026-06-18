@@ -123,15 +123,15 @@ kernel, use the explicit-kernel constructors:
 
 ```rust
 use delaunay::prelude::geometry::RobustKernel;
-use delaunay::prelude::construction::{DelaunayTriangulation, Vertex};
+use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
 
 let kernel = RobustKernel::<f64>::new();
 
 let vertices = vec![
-    Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    vertex![0.0, 0.0, 0.0]?,
+    vertex![1.0, 0.0, 0.0]?,
+    vertex![0.0, 1.0, 0.0]?,
+    vertex![0.0, 0.0, 1.0]?,
 ];
 
 let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
@@ -202,13 +202,13 @@ cases involve cavity/topology failures rather than predicate degeneracies.
 Use `insert_best_effort_with_statistics()` to observe this behavior:
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulation, Vertex};
+use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
 use delaunay::prelude::insertion::InsertionOutcome;
 
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 
 let (outcome, stats) = dt
-    .insert_best_effort_with_statistics(Vertex::<(), _>::try_new([0.5, 0.5, 0.5])?)?;
+    .insert_best_effort_with_statistics(vertex![0.5, 0.5, 0.5]?)?;
 
 if stats.used_perturbation() {
     println!("used perturbation (attempts={})", stats.attempts);

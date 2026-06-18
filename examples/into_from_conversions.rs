@@ -19,6 +19,7 @@
 //!
 //! Run this example with: `cargo run --example into_from_conversions`
 
+use delaunay::prelude::construction::vertex;
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::query::*;
 
@@ -29,7 +30,7 @@ use delaunay::prelude::query::*;
 /// to explicitly calling `.to_array()`.
 fn main() -> Result<(), CoordinateConversionError> {
     // Create a vertex with 3D coordinates
-    let vertex: Vertex<(), 3> = delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0, 3.0])?;
+    let vertex: Vertex<(), 3> = vertex![1.0, 2.0, 3.0]?;
 
     // Before: You had to call .to_array() explicitly
     let coords_explicit: [f64; 3] = vertex.point().to_array();
@@ -40,8 +41,7 @@ fn main() -> Result<(), CoordinateConversionError> {
     println!("Into/From conversion from vertex: {coords_from_vertex:?}");
 
     // Create another vertex for reference conversion
-    let another_vertex: Vertex<(), 3> =
-        delaunay::prelude::Vertex::<(), _>::try_new([4.0, 5.0, 6.0])?;
+    let another_vertex: Vertex<(), 3> = vertex![4.0, 5.0, 6.0]?;
 
     // You can also convert from a reference to preserve the original vertex
     let coords_from_ref: [f64; 3] = (&another_vertex).into();

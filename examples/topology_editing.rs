@@ -25,6 +25,7 @@
 
 use delaunay::prelude::construction::{
     DelaunayTriangulation, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+    vertex,
 };
 use delaunay::prelude::flips::*;
 use delaunay::prelude::geometry::{
@@ -110,11 +111,7 @@ fn builder_api_2d() -> ExampleResult {
     println!("------------------------------------------------\n");
 
     // Build initial triangulation
-    let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([4.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 3.0])?,
-    ];
+    let vertices = vec![vertex![0.0, 0.0]?, vertex![4.0, 0.0]?, vertex![2.0, 3.0]?];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
@@ -125,11 +122,7 @@ fn builder_api_2d() -> ExampleResult {
 
     // Insert vertices using Builder API
     println!("Inserting 3 vertices using Builder API:");
-    let new_vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 1.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.5])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([3.0, 1.5])?,
-    ];
+    let new_vertices = vec![vertex![2.0, 1.0]?, vertex![1.0, 1.5]?, vertex![3.0, 1.5]?];
 
     for (i, v) in new_vertices.into_iter().enumerate() {
         dt.insert(v)?;
@@ -152,11 +145,7 @@ fn edit_api_2d_k1() -> ExampleResult {
     println!("2D Edit API: k=1 Flips (Simplex Split/Merge)");
     println!("------------------------------------------\n");
 
-    let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([3.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.5, 2.5])?,
-    ];
+    let vertices = vec![vertex![0.0, 0.0]?, vertex![3.0, 0.0]?, vertex![1.5, 2.5]?];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
@@ -209,10 +198,7 @@ fn edit_api_2d_k1() -> ExampleResult {
         circumcenter_coords[0], circumcenter_coords[1]
     );
 
-    let flip_info = dt.flip_k1_insert(
-        simplex_key,
-        delaunay::prelude::Vertex::<(), _>::try_new(circumcenter_coords)?,
-    )?;
+    let flip_info = dt.flip_k1_insert(simplex_key, vertex!(circumcenter_coords)?)?;
 
     println!("After k=1 forward:");
     print_stats_2d(&dt);
@@ -245,10 +231,10 @@ fn edit_api_2d_k2() -> ExampleResult {
 
     // Create a square with diagonal (2 triangles)
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 2.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 2.0])?,
+        vertex![0.0, 0.0]?,
+        vertex![2.0, 0.0]?,
+        vertex![2.0, 2.0]?,
+        vertex![0.0, 2.0]?,
     ];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -319,10 +305,10 @@ fn builder_api_3d() -> ExampleResult {
     println!("------------------------------------------------\n");
 
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.5, 1.5])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![2.0, 0.0, 0.0]?,
+        vertex![1.0, 2.0, 0.0]?,
+        vertex![1.0, 0.5, 1.5]?,
     ];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -334,10 +320,7 @@ fn builder_api_3d() -> ExampleResult {
 
     // Insert vertices using Builder API
     println!("Inserting 2 vertices using Builder API:");
-    let new_vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.5, 0.5])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.8, 0.8, 0.8])?,
-    ];
+    let new_vertices = vec![vertex![1.0, 0.5, 0.5]?, vertex![0.8, 0.8, 0.8]?];
 
     for (i, v) in new_vertices.into_iter().enumerate() {
         dt.insert(v)?;
@@ -360,10 +343,10 @@ fn edit_api_3d_k1() -> ExampleResult {
     println!("------------------------------------------\n");
 
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.5, 1.5])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![2.0, 0.0, 0.0]?,
+        vertex![1.0, 2.0, 0.0]?,
+        vertex![1.0, 0.5, 1.5]?,
     ];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -417,10 +400,7 @@ fn edit_api_3d_k1() -> ExampleResult {
         "\nApplying k=1 flip (split tetrahedron at circumcenter [{:.2}, {:.2}, {:.2}]):",
         circumcenter_coords[0], circumcenter_coords[1], circumcenter_coords[2]
     );
-    let flip_info = dt.flip_k1_insert(
-        simplex_key,
-        delaunay::prelude::Vertex::<(), _>::try_new(circumcenter_coords)?,
-    )?;
+    let flip_info = dt.flip_k1_insert(simplex_key, vertex!(circumcenter_coords)?)?;
 
     println!("After k=1 forward:");
     print_stats_3d(&dt);
@@ -451,11 +431,11 @@ fn edit_api_3d_k2() -> ExampleResult {
 
     // Build a simple regular tetrahedron and add one interior point
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.8, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.6, 1.6])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.6, 0.4])?, // Interior point
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![2.0, 0.0, 0.0]?,
+        vertex![1.0, 1.8, 0.0]?,
+        vertex![1.0, 0.6, 1.6]?,
+        vertex![1.0, 0.6, 0.4]?, // Interior point
     ];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -526,10 +506,10 @@ fn edit_api_3d_k3() -> ExampleResult {
 
     println!("Building a simple 3D triangulation...");
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.7, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.6, 1.4])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![2.0, 0.0, 0.0]?,
+        vertex![1.0, 1.7, 0.0]?,
+        vertex![1.0, 0.6, 1.4]?,
     ];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;

@@ -20,7 +20,7 @@
 //! cargo run --example delaunayize_repair
 //! ```
 
-use delaunay::prelude::construction::DelaunayTriangulationConstructionError;
+use delaunay::prelude::construction::{DelaunayTriangulationConstructionError, vertex};
 use delaunay::prelude::delaunayize::*;
 use delaunay::prelude::flips::*;
 use delaunay::prelude::geometry::CoordinateConversionError;
@@ -79,11 +79,11 @@ fn already_delaunay_3d() -> Result<(), DelaunayizeRepairExampleError> {
     println!("--------------------------------------------\n");
 
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.5])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
+        vertex![0.5, 0.5, 0.5]?,
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::try_new(&vertices)?;
 
@@ -111,12 +111,12 @@ fn already_delaunay_4d() -> Result<(), DelaunayizeRepairExampleError> {
     println!("--------------------------------------------\n");
 
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.25, 0.25, 0.25, 0.25])?,
+        vertex![0.0, 0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 0.0, 1.0]?,
+        vertex![0.25, 0.25, 0.25, 0.25]?,
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 4> = DelaunayTriangulation::try_new(&vertices)?;
 
@@ -146,13 +146,13 @@ fn flip_then_repair_2d() -> Result<(), DelaunayizeRepairExampleError> {
     println!("-------------------------------------------------------\n");
 
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([4.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([4.0, 4.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 4.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 2.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([3.0, 1.0])?,
+        vertex![0.0, 0.0]?,
+        vertex![4.0, 0.0]?,
+        vertex![4.0, 4.0]?,
+        vertex![0.0, 4.0]?,
+        vertex![2.0, 2.0]?,
+        vertex![1.0, 1.0]?,
+        vertex![3.0, 1.0]?,
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::try_new(&vertices)?;
 
@@ -222,11 +222,11 @@ fn custom_config_2d() -> Result<(), DelaunayizeRepairExampleError> {
     println!("----------------------------------------------\n");
 
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5])?,
+        vertex![0.0, 0.0]?,
+        vertex![1.0, 0.0]?,
+        vertex![0.0, 1.0]?,
+        vertex![1.0, 1.0]?,
+        vertex![0.5, 0.5]?,
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::try_new(&vertices)?;
 

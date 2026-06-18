@@ -342,6 +342,34 @@ temporarily assembled state, then consume validation proof before converting to
 the final domain type. Other infallible `from_*` names remain acceptable only
 for total conversions, passive report/view extraction, or proof-bearing input.
 
+### Vertex construction in public samples
+
+Prefer `vertex!` for user-facing vertex construction examples. This includes
+`README.md`, active workflow/design docs, crate-level examples, doctests,
+integration-style examples under `examples/`, and benchmarks where vertex
+construction is incidental setup.
+
+Use the direct constructors only when they are the subject of the example:
+
+- API docs for `Vertex::try_new`, `Vertex::try_new_with_data`, and related
+  constructor semantics.
+- Tests that specifically exercise constructor behavior, type inference, error
+  propagation, coordinate parsing, UUID handling, or vertex-data storage.
+- Explanatory text that compares `vertex!` with the constructor it expands to.
+- Internal invariant tests where direct constructor calls make the tested
+  boundary clearer than macro syntax.
+
+The public sample default should look like:
+
+```rust
+let vertex = vertex![0.0, 1.0]?;
+let labeled: Vertex<&str, 2> = vertex![0.0, 1.0; data = "boundary"]?;
+```
+
+Keep `Vertex::try_new` and `Vertex::try_new_with_data` visible in their own
+rustdocs so users can still see the fallible smart constructors and the typed
+errors that the macro preserves.
+
 ---
 
 ## Panic Policy

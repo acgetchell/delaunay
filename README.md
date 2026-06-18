@@ -121,7 +121,7 @@ prelude map and namespace policy, see the
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
 use delaunay::prelude::geometry::CoordinateConversionError;
 
@@ -135,12 +135,12 @@ enum ExampleError {
 
 fn main() -> Result<(), ExampleError> {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0])?,
-        Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2])?,
+        vertex![0.0, 0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 0.0, 1.0]?,
+        vertex![0.2, 0.2, 0.2, 0.2]?,
     ];
 
     let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -156,6 +156,23 @@ fn main() -> Result<(), ExampleError> {
 }
 ```
 
+The method form `Vertex::<(), _>::try_new([..])?` is equivalent and remains
+documented in the `Vertex` rustdocs.
+
+Vertex data is supported directly in the macro with `; data = ...`:
+
+```rust
+use delaunay::prelude::construction::{Vertex, vertex};
+use delaunay::prelude::geometry::CoordinateConversionError;
+
+fn main() -> Result<(), CoordinateConversionError> {
+    let vertex: Vertex<&str, 2> = vertex![0.0, 1.0; data = "boundary"]?;
+
+    assert_eq!(vertex.data(), Some(&"boundary"));
+    Ok(())
+}
+```
+
 ### Toroidal Triangulations
 
 For coordinate wrapping on a toroidal domain, use
@@ -163,8 +180,9 @@ For coordinate wrapping on a toroidal domain, use
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyKind, Vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyKind,
     ToroidalDomainError,
+    vertex,
 };
 use delaunay::prelude::geometry::CoordinateConversionError;
 
@@ -180,11 +198,11 @@ enum ExampleError {
 
 fn main() -> Result<(), ExampleError> {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.1, 0.2])?,
-        Vertex::<(), _>::try_new([0.8, 0.3])?,
-        Vertex::<(), _>::try_new([0.5, 0.7])?,
+        vertex![0.1, 0.2]?,
+        vertex![0.8, 0.3]?,
+        vertex![0.5, 0.7]?,
         // Wraps to [0.2, 0.4].
-        Vertex::<(), _>::try_new([1.2, 0.4])?,
+        vertex![1.2, 0.4]?,
     ];
 
     let dt = DelaunayTriangulationBuilder::new(&vertices)

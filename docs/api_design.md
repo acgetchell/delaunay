@@ -66,7 +66,7 @@ For most use cases, the builder with default options is sufficient:
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::insertion::InsertionError;
@@ -87,15 +87,15 @@ enum ExampleError {
 fn main() -> Result<(), ExampleError> {
     // Simple construction from vertices (Euclidean space, default options)
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
     ];
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
     // Incremental insertion (maintains Delaunay property)
-    let new_vertex = Vertex::<(), _>::try_new([0.5, 0.5, 0.5])?;
+    let new_vertex = vertex![0.5, 0.5, 0.5]?;
     dt.insert(new_vertex)?;
 
     // Vertex removal (topology-preserving, with automatic repair when enabled)
@@ -114,7 +114,7 @@ use `DelaunayTriangulationBuilder`:
 ```rust
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
-    Vertex,
+    vertex,
 };
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::insertion::InsertionError;
@@ -133,9 +133,9 @@ enum ExampleError {
 fn main() -> Result<(), ExampleError> {
     // Canonicalized toroidal triangulation in 2D
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.1, 0.1])?,
-        Vertex::<(), _>::try_new([0.9, 0.9])?,
-        Vertex::<(), _>::try_new([0.5, 0.5])?,
+        vertex![0.1, 0.1]?,
+        vertex![0.9, 0.9]?,
+        vertex![0.5, 0.5]?,
     ];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices)
@@ -147,7 +147,7 @@ fn main() -> Result<(), ExampleError> {
     dt.set_validation_policy(ValidationPolicy::Always);
 
     // Works like any other DelaunayTriangulation
-    dt.insert(Vertex::<(), _>::try_new([0.25, 0.75])?)?;
+    dt.insert(vertex![0.25, 0.75]?)?;
     Ok(())
 }
 ```
@@ -196,7 +196,7 @@ The Edit API is exposed through the `BistellarFlips` trait in `prelude::flips`:
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
 use delaunay::prelude::flips::*;
 use delaunay::prelude::geometry::CoordinateConversionError;
@@ -214,10 +214,10 @@ enum ExampleError {
 fn main() -> Result<(), ExampleError> {
     // Start with a valid triangulation
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
     ];
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
@@ -225,7 +225,7 @@ fn main() -> Result<(), ExampleError> {
     let Some((simplex_key, _)) = dt.simplices().next() else {
         return Ok(());
     };
-    let info = dt.flip_k1_insert(simplex_key, Vertex::<(), _>::try_new([0.25, 0.25, 0.25])?)?;
+    let info = dt.flip_k1_insert(simplex_key, vertex![0.25, 0.25, 0.25]?)?;
 
     // k=1 inverse: Remove a vertex (collapses its star)
     let vertex_key = info.inserted_face_vertices[0];
@@ -322,7 +322,7 @@ You can mix both APIs in the same workflow:
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
 use delaunay::prelude::flips::*;
 use delaunay::prelude::geometry::CoordinateConversionError;
@@ -343,15 +343,15 @@ enum ExampleError {
 fn main() -> Result<(), ExampleError> {
     // 1. Build initial triangulation (Builder API)
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
     ];
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
     // 2. Add vertices using Builder API (maintains Delaunay)
-    dt.insert(Vertex::<(), _>::try_new([0.5, 0.5, 0.5])?)?;
+    dt.insert(vertex![0.5, 0.5, 0.5]?)?;
 
     // 3. Make custom topology edits (Edit API)
     let facet = /* ... */;
@@ -435,7 +435,7 @@ common "repair topology then restore Delaunay" workflow:
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
 use delaunay::prelude::delaunayize::{
     DelaunayizeConfig, DelaunayizeError, delaunayize_by_flips,
@@ -454,10 +454,10 @@ enum ExampleError {
 
 fn main() -> Result<(), ExampleError> {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
     ];
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 

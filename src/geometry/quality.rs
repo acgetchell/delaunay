@@ -368,9 +368,9 @@ fn scale_aware_epsilon<const D: usize>(
 /// # fn main() -> Result<(), ExampleError> {
 /// // Create a 2D equilateral triangle
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.866])?, // approximately sqrt(3)/2
+///     delaunay::vertex![0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0]?,
+///     delaunay::vertex![0.5, 0.866]?, // approximately sqrt(3)/2
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let Some((simplex_key, _)) = dt.simplices().next() else {
@@ -480,9 +480,9 @@ where
 /// # fn main() -> Result<(), ExampleError> {
 /// // Create a 2D triangle
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+///     delaunay::vertex![0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0]?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let Some((simplex_key, _)) = dt.simplices().next() else {

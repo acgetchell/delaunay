@@ -389,9 +389,9 @@ pub enum RidgeVerticesError {
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+///     delaunay::vertex![0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0]?,
 /// ];
 /// let triangulation = DelaunayTriangulation::try_new(&vertices)?;
 /// let Some(v0) = triangulation.tds().vertex_keys().next() else {
@@ -440,10 +440,10 @@ impl<const D: usize> RidgeVertices<D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let triangulation = DelaunayTriangulation::try_new(&vertices)?;
     /// let keys = triangulation.tds().vertex_keys().collect::<Vec<_>>();
@@ -527,10 +527,10 @@ impl<const D: usize> RidgeVertices<D> {
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+///     delaunay::vertex![0.0, 0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0, 0.0]?,
+///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
 /// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices)?;
 /// let facet_to_simplices = tds.build_facet_to_simplices_map()?;
@@ -593,10 +593,10 @@ pub fn validate_facet_degree(
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+///     delaunay::vertex![0.0, 0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0, 0.0]?,
+///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
 /// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices)?;
 /// let facet_to_simplices = tds.build_facet_to_simplices_map()?;
@@ -1154,9 +1154,9 @@ fn simplex_link_simplices_from_star<U, V, const D: usize>(
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+///     delaunay::vertex![0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0]?,
 /// ];
 /// let triangulation = DelaunayTriangulation::try_new(&vertices)?;
 /// let Some(v0) = triangulation.tds().vertex_keys().next() else {
@@ -1596,10 +1596,10 @@ fn periodic_aware_ridge_star<U, V, const D: usize>(
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+///     delaunay::vertex![0.0, 0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0, 0.0]?,
+///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
 /// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices)?;
 ///
@@ -1680,10 +1680,10 @@ pub fn validate_ridge_links<U, V, const D: usize>(tds: &Tds<U, V, D>) -> Result<
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+///     delaunay::vertex![0.0, 0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0, 0.0]?,
+///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
 /// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices)?;
 /// let simplices: SimplexKeyBuffer = tds.simplices().map(|(k, _)| k).collect();
@@ -1775,10 +1775,10 @@ pub fn validate_ridge_links_for_simplices<U, V, const D: usize>(
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+///     delaunay::vertex![0.0, 0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0, 0.0]?,
+///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
 /// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices)?;
 /// let facet_to_simplices = tds.build_facet_to_simplices_map()?;

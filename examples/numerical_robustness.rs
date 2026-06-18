@@ -8,7 +8,7 @@
 //! default adaptive construction path on a small point set.
 
 use delaunay::prelude::construction::{
-    DelaunayTriangulation, DelaunayTriangulationConstructionError,
+    DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
 };
 use delaunay::prelude::geometry::{
     AdaptiveKernel, CircumcenterError, CoordinateConversionError, CoordinateValidationError,
@@ -99,11 +99,11 @@ fn compare_insphere_boundary_handling() -> Result<(), NumericalRobustnessExample
 /// Builds a small triangulation with the default exact adaptive kernel and validates it.
 fn build_with_adaptive_kernel() -> Result<(), NumericalRobustnessExampleError> {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.25, 0.25, 0.25])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
+        vertex![0.25, 0.25, 0.25]?,
     ];
 
     let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> =

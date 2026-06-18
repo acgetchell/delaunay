@@ -122,9 +122,9 @@ where
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices: [Vertex<i32, 2>; 3] = [
-    ///     delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 10i32)?,
-    ///     delaunay::prelude::Vertex::<_, _>::try_new_with_data([1.0, 0.0], 20)?,
-    ///     delaunay::prelude::Vertex::<_, _>::try_new_with_data([0.0, 1.0], 30)?,
+    ///     delaunay::vertex![0.0, 0.0; data = 10i32]?,
+    ///     delaunay::vertex![1.0, 0.0; data = 20]?,
+    ///     delaunay::vertex![0.0, 1.0; data = 30]?,
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let key = dt.vertices().next().ok_or(ExampleError::MissingVertex)?.0;
@@ -172,9 +172,9 @@ where
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<i32>()?;
     /// let key = dt.simplices().next().ok_or(ExampleError::MissingSimplex)?.0;

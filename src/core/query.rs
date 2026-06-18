@@ -48,10 +48,10 @@ static VERTEX_TO_SIMPLICES_SPILL_EVENTS: AtomicU64 = AtomicU64::new(0);
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+///     delaunay::vertex![0.0, 0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0, 0.0]?,
+///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
@@ -112,9 +112,9 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tri = dt.as_triangulation();
@@ -151,9 +151,9 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tri = dt.as_triangulation();
@@ -188,10 +188,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.as_triangulation().number_of_vertices(), 4);
@@ -221,10 +221,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.as_triangulation().number_of_simplices(), 1); // Single tetrahedron
@@ -259,10 +259,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///
     /// // 3D tetrahedron has dimension 3
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.as_triangulation().dim(), 3);
@@ -310,10 +310,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
@@ -360,10 +360,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
@@ -440,10 +440,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # fn main() -> Result<(), ExampleError> {
     /// // A single 3D tetrahedron has 6 unique edges.
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -486,10 +486,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # fn main() -> Result<(), ExampleError> {
     /// // A single 3D tetrahedron has 6 unique edges.
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -530,9 +530,9 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # fn main() -> Result<(), ExampleError> {
     /// // A single 2D triangle has 3 unique edges.
     /// let vertices = vec![
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 2> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -573,10 +573,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices = vec![
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    /// #     delaunay::vertex![0.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![1.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 1.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> =
     /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -630,10 +630,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices = vec![
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    /// #     delaunay::vertex![0.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![1.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 1.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> =
     /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -683,10 +683,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices = vec![
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    /// #     delaunay::vertex![0.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![1.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 1.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> =
     /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -751,10 +751,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices = vec![
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    /// #     delaunay::vertex![0.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![1.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 1.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> =
     /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -803,10 +803,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices = vec![
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    /// #     delaunay::vertex![0.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![1.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 1.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> =
     /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -863,10 +863,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices = vec![
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    /// #     delaunay::vertex![0.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![1.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 1.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> =
     /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -916,10 +916,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices = vec![
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    /// #     delaunay::vertex![0.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![1.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 1.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> =
     /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;

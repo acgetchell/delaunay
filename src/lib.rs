@@ -100,7 +100,7 @@
 //!
 //! ```rust
 //! use delaunay::prelude::construction::{
-//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
+//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 //! };
 //! use delaunay::prelude::geometry::CoordinateConversionError;
 //! use delaunay::prelude::insertion::InsertionError;
@@ -114,10 +114,10 @@
 //! # }
 //! # fn main() -> Result<(), ExampleError> {
 //! let vertices = vec![
-//!     Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-//!     Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-//!     Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-//!     Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+//!     vertex![0.0, 0.0, 0.0]?,
+//!     vertex![1.0, 0.0, 0.0]?,
+//!     vertex![0.0, 1.0, 0.0]?,
+//!     vertex![0.0, 0.0, 1.0]?,
 //! ];
 //! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
@@ -141,7 +141,7 @@
 //! ```rust
 //! use delaunay::prelude::construction::{
 //!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
-//!     Vertex,
+//!     vertex,
 //! };
 //! use delaunay::prelude::geometry::CoordinateConversionError;
 //! use delaunay::prelude::validation::ValidationPolicy;
@@ -155,10 +155,10 @@
 //! # }
 //! # fn main() -> Result<(), ExampleError> {
 //! let vertices = vec![
-//!     Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-//!     Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-//!     Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-//!     Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+//!     vertex![0.0, 0.0, 0.0]?,
+//!     vertex![1.0, 0.0, 0.0]?,
+//!     vertex![0.0, 1.0, 0.0]?,
+//!     vertex![0.0, 0.0, 1.0]?,
 //! ];
 //! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
@@ -178,7 +178,7 @@
 //!
 //! ```rust
 //! use delaunay::prelude::construction::{
-//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
+//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 //! };
 //! use delaunay::prelude::geometry::CoordinateConversionError;
 //! use delaunay::prelude::insertion::InsertionError;
@@ -192,9 +192,9 @@
 //! # }
 //! # fn main() -> Result<(), ExampleError> {
 //! let vertices = vec![
-//!     Vertex::<(), _>::try_new([0.0, 0.0])?,
-//!     Vertex::<(), _>::try_new([1.0, 0.0])?,
-//!     Vertex::<(), _>::try_new([0.0, 1.0])?,
+//!     vertex![0.0, 0.0]?,
+//!     vertex![1.0, 0.0]?,
+//!     vertex![0.0, 1.0]?,
 //! ];
 //! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
@@ -202,7 +202,7 @@
 //! let before_simplices = dt.number_of_simplices();
 //!
 //! // Duplicate coordinates are rejected.
-//! let result = dt.insert(Vertex::<(), _>::try_new([0.0, 0.0])?);
+//! let result = dt.insert(vertex![0.0, 0.0]?);
 //! std::assert_matches!(result, Err(InsertionError::DuplicateCoordinates { .. }));
 //!
 //! // On error, the triangulation is unchanged.
@@ -296,7 +296,7 @@
 //!
 //! ```rust
 //! use delaunay::prelude::construction::{
-//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
+//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 //! };
 //! use delaunay::prelude::geometry::CoordinateConversionError;
 //! use delaunay::prelude::insertion::InsertionError;
@@ -315,10 +315,10 @@
 //! # }
 //! # fn main() -> Result<(), ExampleError> {
 //! let vertices = vec![
-//!     Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-//!     Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-//!     Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-//!     Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+//!     vertex![0.0, 0.0, 0.0]?,
+//!     vertex![1.0, 0.0, 0.0]?,
+//!     vertex![0.0, 1.0, 0.0]?,
+//!     vertex![0.0, 0.0, 1.0]?,
 //! ];
 //! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
@@ -327,7 +327,7 @@
 //! dt.try_set_validation_policy(ValidationPolicy::ExplicitOnly)?;
 //!
 //! // Do incremental work...
-//! dt.insert(Vertex::<(), _>::try_new([0.2, 0.2, 0.2])?)?;
+//! dt.insert(vertex![0.2, 0.2, 0.2]?)?;
 //!
 //! // ...then explicitly validate the topology layer when you need a certificate.
 //! assert!(dt.as_triangulation().validate().is_ok());
@@ -360,7 +360,7 @@
 //!
 //! ```rust
 //! use delaunay::prelude::construction::{
-//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
+//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 //! };
 //! use delaunay::prelude::geometry::CoordinateConversionError;
 //!
@@ -373,10 +373,10 @@
 //! # }
 //! # fn main() -> Result<(), ExampleError> {
 //! let vertices = vec![
-//!     Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-//!     Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-//!     Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-//!     Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+//!     vertex![0.0, 0.0, 0.0]?,
+//!     vertex![1.0, 0.0, 0.0]?,
+//!     vertex![0.0, 1.0, 0.0]?,
+//!     vertex![0.0, 0.0, 1.0]?,
 //! ];
 //! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
@@ -389,7 +389,7 @@
 //!
 //! ```rust
 //! use delaunay::prelude::construction::{
-//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
+//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 //! };
 //! use delaunay::prelude::geometry::CoordinateConversionError;
 //!
@@ -402,10 +402,10 @@
 //! # }
 //! # fn main() -> Result<(), ExampleError> {
 //! let vertices = vec![
-//!     Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-//!     Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-//!     Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-//!     Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+//!     vertex![0.0, 0.0, 0.0]?,
+//!     vertex![1.0, 0.0, 0.0]?,
+//!     vertex![0.0, 1.0, 0.0]?,
+//!     vertex![0.0, 0.0, 1.0]?,
 //! ];
 //! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
@@ -888,7 +888,7 @@ pub fn try_vertices_from_points<const D: usize>(
 ///
 /// ```rust
 /// use delaunay::prelude::construction::{
-///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
+///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 /// };
 /// use delaunay::prelude::geometry::CoordinateConversionError;
 /// use delaunay::prelude::topology::validation;
@@ -904,10 +904,10 @@ pub fn try_vertices_from_points<const D: usize>(
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
-///     Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-///     Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-///     Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-///     Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+///     vertex![0.0, 0.0, 0.0]?,
+///     vertex![1.0, 0.0, 0.0]?,
+///     vertex![0.0, 1.0, 0.0]?,
+///     vertex![0.0, 0.0, 1.0]?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
@@ -1142,6 +1142,7 @@ pub mod prelude {
         DataSerialize, DataType, QueryError,
     };
     pub use crate::tds::*;
+    pub use crate::vertex;
     pub use crate::{
         ConstructionOptions, ConstructionSkipSample, ConstructionSlowInsertionSample,
         ConstructionStatistics, DedupPolicy, DedupTolerance, DelaunayCheckPolicy,
@@ -1241,7 +1242,7 @@ pub mod prelude {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex,
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
     /// };
     /// use delaunay::prelude::geometry::CoordinateConversionError;
     ///
@@ -1254,9 +1255,9 @@ pub mod prelude {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     Vertex::<(), _>::try_new([0.0, 0.0])?,
-    ///     Vertex::<(), _>::try_new([1.0, 0.0])?,
-    ///     Vertex::<(), _>::try_new([0.0, 1.0])?,
+    ///     vertex![0.0, 0.0]?,
+    ///     vertex![1.0, 0.0]?,
+    ///     vertex![0.0, 1.0]?,
     /// ];
     /// let triangulation = DelaunayTriangulationBuilder::new(&vertices)
     ///     .build::<()>()?;
@@ -1297,6 +1298,7 @@ pub mod prelude {
             DelaunayTriangulationValidationError, DelaunayVerificationError,
             DelaunayVerificationErrorKind,
         };
+        pub use crate::vertex;
         pub use crate::{
             CavityFillingError, CavityRepairStage, DelaunayTriangulation,
             FinalDelaunayValidationContext, FinalTopologyValidationContext,
@@ -1317,7 +1319,7 @@ pub mod prelude {
     ///
     /// ```rust
     /// use delaunay::prelude::triangulation::{
-    ///     FastKernel, Triangulation, TriangulationConstructionError, Vertex,
+    ///     FastKernel, Triangulation, TriangulationConstructionError, vertex,
     /// };
     /// use delaunay::prelude::geometry::CoordinateConversionError;
     ///
@@ -1330,9 +1332,9 @@ pub mod prelude {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
-    ///     Vertex::<(), _>::try_new([0.0, 0.0])?,
-    ///     Vertex::<(), _>::try_new([1.0, 0.0])?,
-    ///     Vertex::<(), _>::try_new([0.0, 1.0])?,
+    ///     vertex![0.0, 0.0]?,
+    ///     vertex![1.0, 0.0]?,
+    ///     vertex![0.0, 1.0]?,
     /// ];
     /// let tds = Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices)?;
     ///
@@ -1358,6 +1360,7 @@ pub mod prelude {
             TdsConstructionError, TdsError, TdsErrorKind, TdsMutationError,
             TriangulationValidationErrorKind, Vertex, VertexKey,
         };
+        pub use crate::vertex;
         pub use crate::{
             InsertionError, SpatialIndexConstructionFailure, TopologyGuarantee, Triangulation,
             TriangulationConstructionError, TriangulationValidationError,

@@ -86,12 +86,12 @@ pub enum AdjacencyIndexBuildError {
 /// // Two tetrahedra sharing a triangular facet.
 /// let vertices: Vec<_> = vec![
 ///     // Shared triangle
-///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0, 0.0])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0, 0.0])?,
+///     delaunay::vertex![0.0, 0.0, 0.0]?,
+///     delaunay::vertex![2.0, 0.0, 0.0]?,
+///     delaunay::vertex![1.0, 2.0, 0.0]?,
 ///     // Two apices
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.7, 1.5])?,
-///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.7, -1.5])?,
+///     delaunay::vertex![1.0, 0.7, 1.5]?,
+///     delaunay::vertex![1.0, 0.7, -1.5]?,
 /// ];
 ///
 /// let dt: DelaunayTriangulation<_, (), (), 3> =
@@ -150,12 +150,12 @@ impl AdjacencyIndex {
     /// // Two tetrahedra sharing a triangular facet.
     /// let vertices: Vec<_> = vec![
     ///     // Shared triangle
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0, 0.0])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0, 0.0])?,
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![2.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 2.0, 0.0]?,
     ///     // Two apices
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.7, 1.5])?,
-    ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.7, -1.5])?,
+    ///     delaunay::vertex![1.0, 0.7, 1.5]?,
+    ///     delaunay::vertex![1.0, 0.7, -1.5]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -202,12 +202,12 @@ impl AdjacencyIndex {
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices: Vec<_> = vec![
     /// #     // Shared triangle
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0, 0.0])?,
+    /// #     delaunay::vertex![0.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![2.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![1.0, 2.0, 0.0]?,
     /// #     // Two apices
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.7, 1.5])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.7, -1.5])?,
+    /// #     delaunay::vertex![1.0, 0.7, 1.5]?,
+    /// #     delaunay::vertex![1.0, 0.7, -1.5]?,
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> =
     /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -248,10 +248,10 @@ impl AdjacencyIndex {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices = vec![
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    /// #     delaunay::vertex![0.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![1.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 1.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> =
     /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -290,10 +290,10 @@ impl AdjacencyIndex {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices = vec![
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    /// #     delaunay::vertex![0.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![1.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 1.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> =
     /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -330,12 +330,12 @@ impl AdjacencyIndex {
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices: Vec<_> = vec![
     /// #     // Shared triangle
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0, 0.0])?,
+    /// #     delaunay::vertex![0.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![2.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![1.0, 2.0, 0.0]?,
     /// #     // Two apices
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.7, 1.5])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.7, -1.5])?,
+    /// #     delaunay::vertex![1.0, 0.7, 1.5]?,
+    /// #     delaunay::vertex![1.0, 0.7, -1.5]?,
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> =
     /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -375,12 +375,12 @@ impl AdjacencyIndex {
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices: Vec<_> = vec![
     /// #     // Shared triangle
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0, 0.0])?,
+    /// #     delaunay::vertex![0.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![2.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![1.0, 2.0, 0.0]?,
     /// #     // Two apices
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.7, 1.5])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.7, -1.5])?,
+    /// #     delaunay::vertex![1.0, 0.7, 1.5]?,
+    /// #     delaunay::vertex![1.0, 0.7, -1.5]?,
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> =
     /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -420,10 +420,10 @@ impl AdjacencyIndex {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices = vec![
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    /// #     delaunay::vertex![0.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![1.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 1.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> =
     /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -461,10 +461,10 @@ impl AdjacencyIndex {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices = vec![
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-    /// #     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+    /// #     delaunay::vertex![0.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![1.0, 0.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 1.0, 0.0]?,
+    /// #     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// # ];
     /// # let dt: DelaunayTriangulation<_, (), (), 3> =
     /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;

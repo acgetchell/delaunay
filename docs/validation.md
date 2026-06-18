@@ -95,7 +95,7 @@ deviates from the happy-path and trips internal **suspicion flags**, e.g.:
 ```rust
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
-    Vertex,
+    vertex,
 };
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::validation::{ValidationConfigurationError, ValidationPolicy};
@@ -112,10 +112,10 @@ enum ValidationExampleError {
 
 fn main() -> Result<(), ValidationExampleError> {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
     ];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -163,7 +163,7 @@ PL-manifoldness. You can trigger that final certification via
 ```rust
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
-    Vertex,
+    vertex,
 };
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::validation::ValidationPolicy;
@@ -178,10 +178,10 @@ enum ValidationExampleError {
 
 fn main() -> Result<(), ValidationExampleError> {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
     ];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -267,11 +267,11 @@ Validates basic data integrity of individual vertices and simplices.
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulation, TopologyGuarantee, Vertex,
+    DelaunayTriangulation, TopologyGuarantee, vertex,
 };
 use delaunay::prelude::validation::ValidationPolicy;
 
-let v = Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?;
+let v = vertex![0.0, 0.0, 0.0]?;
 assert!(v.is_valid().is_ok());
 ```
 
@@ -324,7 +324,7 @@ Validates the combinatorial structure of the Triangulation Data Structure.
 ```rust
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
-    Vertex,
+    vertex,
 };
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::validation::ValidationPolicy;
@@ -339,10 +339,10 @@ enum ValidationExampleError {
 
 fn main() -> Result<(), ValidationExampleError> {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
@@ -418,7 +418,7 @@ Validates that the triangulation forms a valid topological manifold.
 ```rust
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
-    Vertex,
+    vertex,
 };
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::validation::ValidationPolicy;
@@ -433,11 +433,11 @@ enum ValidationExampleError {
 
 fn main() -> Result<(), ValidationExampleError> {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
-        Vertex::<(), _>::try_new([0.25, 0.25, 0.25])?, // Interior point
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
+        vertex![0.25, 0.25, 0.25]?, // Interior point
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
@@ -499,7 +499,7 @@ Validates the geometric optimality of the triangulation.
 ```rust
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
-    Vertex,
+    vertex,
 };
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::validation::ValidationPolicy;
@@ -514,10 +514,10 @@ enum ValidationExampleError {
 
 fn main() -> Result<(), ValidationExampleError> {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
