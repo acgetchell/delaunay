@@ -29,7 +29,7 @@ fn init_tracing() {
 )]
 const fn init_tracing() {}
 
-/// Emits a benchmark setup failure through tracing and exits with failure.
+/// Emits a benchmark setup failure through tracing when `bench-logging` is enabled, then exits.
 pub fn abort_benchmark(message: impl Display) -> ! {
     #[cfg(feature = "bench-logging")]
     {

@@ -13,9 +13,9 @@ export PATH := cargo_home + "/bin" + path_separator + env_var("PATH")
 
 cargo_llvm_cov_version := "0.8.7"
 dprint_version := "0.54.0"
-just_version := "1.52.0"
+just_version := "1.53.0"
 nextest_version := "0.9.137"
-rumdl_version := "0.2.17"
+rumdl_version := "0.2.20"
 taplo_version := "0.10.0"
 typos_version := "1.47.2"
 zizmor_version := "1.25.2"

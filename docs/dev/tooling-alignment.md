@@ -54,11 +54,11 @@ The useful updates ported in this pass are:
   which is still shared across the repositories.
 - CI command-runner, Markdown, and spelling tool pins now track the newer
   sibling-repository versions used by `causal-triangulations` and `la-stack`:
-  `just` 1.52.0, `rumdl` 0.2.17, and `typos-cli` 1.47.2. The `rumdl` bump keeps
+  `just` 1.53.0, `rumdl` 0.2.20, and `typos-cli` 1.47.2. The `rumdl` bump keeps
   Delaunay on the sibling repository's current Markdown linter release after
   local `just check` exposed the older 0.2.10 pin as stale.
 - uv-managed Python support-tool pins now use exact reviewed versions for the
-  shared dev tools: `ruff` 0.15.17, `semgrep` 1.166.0, and `ty` 0.0.49.
+  shared dev tools: `ruff` 0.15.17, `semgrep` 1.167.0, and `ty` 0.0.49.
   Semgrep is intentionally ahead of the older sibling baseline so its transitive
   dependency graph stays on the current reviewed toolchain baseline. Delaunay
   previously used lower-bound specifiers for those tools, which allowed local
@@ -205,7 +205,7 @@ The useful updates ported in this pass are:
   rather than Homebrew so local setup cannot drift from CI pins. The CI build
   matrix runs `just ci` on Linux, macOS, and Windows after syncing the locked uv
   dev group and installing the pinned Cargo tools. All uv-backed workflows use
-  uv 0.11.20 to match the local Python tooling bootstrap.
+  uv 0.11.22 to match the local Python tooling bootstrap.
 - `.codecov.yml` now ratchets Delaunay's coverage policy above the older
   causal-triangulations baseline without copying la-stack's near-total
   threshold. Project coverage targets the current 90% line with only 1%

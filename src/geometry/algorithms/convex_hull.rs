@@ -5918,20 +5918,12 @@ mod tests {
                     &test_point,
                 );
 
-                match result {
-                    Ok(is_visible) => {
-                        test_debug!(
-                            "    Distance {distance:.6} (multiplier {multiplier}): visible = {is_visible}"
-                        );
-                        (multiplier, distance, is_visible)
-                    }
-                    Err(e) => {
-                        test_debug!(
-                            "    Distance {distance:.6} (multiplier {multiplier}): error = {e:?}"
-                        );
-                        (multiplier, distance, false)
-                    }
-                }
+                let is_visible =
+                    result.expect("valid threshold test point should have a visibility result");
+                test_debug!(
+                    "    Distance {distance:.6} (multiplier {multiplier}): visible = {is_visible}"
+                );
+                (multiplier, distance, is_visible)
             })
             .collect();
 
