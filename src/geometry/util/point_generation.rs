@@ -12,6 +12,7 @@ use crate::geometry::coordinate_range::{
 };
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateValidationError};
+use core::array;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 use std::{any::type_name, env, num::NonZeroUsize};
@@ -355,6 +356,22 @@ where
     point_from_generated_coords(coords)
 }
 
+/// Preserves the public Poisson spacing guarantee by accepting a candidate only when its
+/// Euclidean distance from every accepted point is at least `min_distance`.
+fn is_poisson_candidate_spaced<const D: usize>(
+    candidate: &Point<D>,
+    points: &[Point<D>],
+    min_distance: f64,
+) -> bool {
+    let candidate_coords = *candidate.coords();
+    points.iter().all(|existing_point| {
+        let existing_coords = *existing_point.coords();
+        let diff_coords: [f64; D] = array::from_fn(|i| candidate_coords[i] - existing_coords[i]);
+        let distance = hypot(&diff_coords);
+        distance >= min_distance
+    })
+}
+
 /// Generates points after proving the validated range is safe for uniform sampling.
 fn generate_random_points_in_range_with_rng<R, const D: usize>(
     n_points: usize,
@@ -365,13 +382,11 @@ where
     R: rand::Rng + ?Sized,
 {
     let range = SamplerRange::try_new(range)?;
-    let mut points = Vec::with_capacity(n_points);
 
-    for _ in 0..n_points {
+    (0..n_points).try_fold(Vec::with_capacity(n_points), |mut points, _| {
         points.push(sample_point_in_range(range, rng)?);
-    }
-
-    Ok(points)
+        Ok(points)
+    })
 }
 
 /// Parsed Poisson disk spacing policy for public Poisson generators.
@@ -754,14 +769,12 @@ pub fn generate_random_points_periodic<const D: usize>(
     }
 
     let mut rng = StdRng::seed_from_u64(seed);
-    let mut points = Vec::with_capacity(n_points);
 
-    for _ in 0..n_points {
-        let coords = core::array::from_fn(|axis| rng.random_range(0.0..periods[axis].get()));
+    (0..n_points).try_fold(Vec::with_capacity(n_points), |mut points, _| {
+        let coords = array::from_fn(|axis| rng.random_range(0.0..periods[axis].get()));
         points.push(point_from_generated_coords(coords)?);
-    }
-
-    Ok(points)
+        Ok(points)
+    })
 }
 
 /// Generates ball samples through an injected RNG after validating the public radius input.
@@ -1244,26 +1257,7 @@ pub fn generate_poisson_points_in_range<const D: usize>(
         // Generate candidate point
         let candidate = sample_point_in_range(bounds, &mut rng)?;
 
-        // Check distance to all existing points
-        let mut valid = true;
-        let candidate_coords: [f64; D] = *candidate.coords();
-        for existing_point in &points {
-            let existing_coords: [f64; D] = *existing_point.coords();
-
-            // Calculate distance using hypot for numerical stability
-            let mut diff_coords = [0.0; D];
-            for i in 0..D {
-                diff_coords[i] = candidate_coords[i] - existing_coords[i];
-            }
-            let distance = hypot(&diff_coords);
-
-            if distance < min_distance {
-                valid = false;
-                break;
-            }
-        }
-
-        if valid {
+        if is_poisson_candidate_spaced(&candidate, &points, min_distance) {
             points.push(candidate);
         }
     }

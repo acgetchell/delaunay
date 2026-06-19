@@ -4,11 +4,15 @@
 //! helpers. These adapters keep benchmark setup code concise while preserving
 //! the original error message from fallible constructors and setup routines.
 
-use std::{fmt::Display, process, sync::Once};
+use std::{fmt::Display, process};
 
+#[cfg(feature = "bench-logging")]
+use std::sync::Once;
+#[cfg(feature = "bench-logging")]
 use tracing_subscriber::EnvFilter;
 
 /// Installs a default error-level tracing subscriber for fatal setup diagnostics.
+#[cfg(feature = "bench-logging")]
 fn init_tracing() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
@@ -17,10 +21,23 @@ fn init_tracing() {
     });
 }
 
+/// Leaves benchmark tracing disabled when the `bench-logging` feature is off.
+#[cfg(not(feature = "bench-logging"))]
+#[expect(
+    dead_code,
+    reason = "no-op cfg counterpart documents that tracing setup is intentionally disabled"
+)]
+const fn init_tracing() {}
+
 /// Emits a benchmark setup failure through tracing and exits with failure.
 pub fn abort_benchmark(message: impl Display) -> ! {
-    init_tracing();
-    tracing::error!("{message}");
+    #[cfg(feature = "bench-logging")]
+    {
+        init_tracing();
+        tracing::error!("{message}");
+    }
+    #[cfg(not(feature = "bench-logging"))]
+    let _ = message;
     process::exit(1);
 }
 

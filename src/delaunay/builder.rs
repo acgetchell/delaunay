@@ -1148,20 +1148,11 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
-    ///     ExplicitConstructionError,
+    ///     DelaunayResult, DelaunayTriangulationBuilder,
+    ///     DelaunayTriangulationConstructionError, ExplicitConstructionError,
     /// };
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Source(#[from] DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Explicit(#[from] ExplicitConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
     ///     delaunay::vertex![0.0, 0.0]?,
     ///     delaunay::vertex![1.0, 0.0]?,
@@ -1170,7 +1161,8 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// ];
     /// let simplices = vec![vec![0, 1, 2], vec![0, 2, 3]];
     ///
-    /// let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)?
+    /// let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+    ///     .map_err(DelaunayTriangulationConstructionError::from)?
     ///     .build::<()>()?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 4);
@@ -1220,19 +1212,11 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, Vertex,
+    ///     DelaunayResult, DelaunayTriangulationBuilder,
+    ///     DelaunayTriangulationConstructionError, Vertex,
     /// };
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Explicit(#[from] delaunay::prelude::construction::ExplicitConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices: Vec<Vertex<(), 2>> = vec![
     ///     Vertex::try_new([0.0, 0.0])?,
     ///     Vertex::try_new([1.0, 0.0])?,
@@ -1240,7 +1224,8 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// ];
     /// let simplices = vec![vec![0, 1, 2]];
     ///
-    /// let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices_generic(&vertices, &simplices)?
+    /// let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices_generic(&vertices, &simplices)
+    ///     .map_err(DelaunayTriangulationConstructionError::from)?
     ///     .build::<()>()?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 3);
@@ -1490,21 +1475,11 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, GlobalTopology, ToroidalConstructionMode,
+    ///     DelaunayResult, DelaunayTriangulationBuilder,
+    ///     DelaunayTriangulationConstructionError, GlobalTopology, ToroidalConstructionMode,
     /// };
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Explicit(#[from] delaunay::prelude::construction::ExplicitConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// #     #[error(transparent)]
-    /// #     Topology(#[from] delaunay::prelude::construction::ToroidalDomainError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
     ///     delaunay::vertex![0.0, 0.0]?,
     ///     delaunay::vertex![1.0, 0.0]?,
@@ -1517,7 +1492,8 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     ///     ToroidalConstructionMode::Explicit,
     /// )
     /// ?;
-    /// let result = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)?
+    /// let result = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+    ///     .map_err(DelaunayTriangulationConstructionError::from)?
     ///     .global_topology(topology)
     ///     .build::<()>();
     ///

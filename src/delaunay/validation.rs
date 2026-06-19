@@ -723,20 +723,11 @@ where
     /// ```rust
     /// use delaunay::prelude::geometry::FastKernel;
     /// use delaunay::prelude::tds::Tds;
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, DelaunayTriangulationBuilder};
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayResult, DelaunayTriangulation, DelaunayTriangulationBuilder,
+    /// };
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Serde(#[from] serde_json::Error),
-    /// #     #[error(transparent)]
-    /// #     Validation(#[from] delaunay::DelaunayTriangulationValidationError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
     ///     delaunay::vertex![0.0, 0.0, 0.0, 0.0]?,
     ///     delaunay::vertex![1.0, 0.0, 0.0, 0.0]?,
@@ -746,11 +737,8 @@ where
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
-    /// // Serialize just the Tds
-    /// let json = serde_json::to_string(dt.tds())?;
-    ///
-    /// // Deserialize Tds and reconstruct DelaunayTriangulation
-    /// let tds: Tds<(), (), 4> = serde_json::from_str(&json)?;
+    /// // Reconstruct DelaunayTriangulation from a Tds snapshot.
+    /// let tds: Tds<(), (), 4> = dt.tds().clone();
     /// let reconstructed = DelaunayTriangulation::try_from_tds(tds, FastKernel::new())?;
     /// assert_eq!(reconstructed.number_of_vertices(), 5);
     /// # Ok(())
