@@ -10,6 +10,8 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
+use core::array;
+
 use delaunay::prelude::geometry::*;
 use proptest::prelude::*;
 
@@ -73,17 +75,14 @@ macro_rules! test_geometry_properties {
                 ) {
                     if let Ok(center) = circumcenter(&simplex_points) {
                         let center_coords = *center.coords();
-                        let mut distances = Vec::new();
-                        for point in &simplex_points {
+                        let mut distances = simplex_points.iter().map(|point| {
                             let point_coords = *point.coords();
-                            let mut diff = [0.0; $dim];
-                            for i in 0..$dim {
-                                diff[i] = point_coords[i] - center_coords[i];
-                            }
-                            distances.push(hypot(&diff));
-                        }
-                        if let Some(&first_dist) = distances.first() {
-                            for &dist in &distances[1..] {
+                            let diff: [f64; $dim] =
+                                array::from_fn(|i| point_coords[i] - center_coords[i]);
+                            hypot(&diff)
+                        });
+                        if let Some(first_dist) = distances.next() {
+                            for dist in distances {
                                 prop_assert!(
                                     (dist - first_dist).abs() < 1e-6 * first_dist.max(1.0)
                                 );

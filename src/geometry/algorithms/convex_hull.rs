@@ -2660,7 +2660,7 @@ mod tests {
             extract_facet_vertices(hull.facet(0).unwrap(), dt.as_triangulation()).unwrap();
 
         // Test with points at various distances to verify scale-adaptive threshold
-        let distance_test_points = vec![
+        let distance_test_points = [
             (
                 Point::try_new([0.1, 0.1, 0.1]).expect("finite point coordinates"),
                 "Very close to centroid",
@@ -2679,17 +2679,18 @@ mod tests {
             ),
         ];
 
-        let mut visibility_results = Vec::new();
-        for (point, description) in &distance_test_points {
-            let is_visible =
-                ConvexHull::<(), (), 3>::fallback_visibility_test(&test_facet_vertices, point)
-                    .unwrap();
-            visibility_results.push(is_visible);
-            let coords = point.coords();
-            test_debug!("    Point {coords:?} ({description}) - Visible: {is_visible}");
-        }
-
-        let visible_count = visibility_results.iter().filter(|&&v| v).count();
+        let visible_count = distance_test_points
+            .iter()
+            .map(|(point, description)| {
+                let is_visible =
+                    ConvexHull::<(), (), 3>::fallback_visibility_test(&test_facet_vertices, point)
+                        .unwrap();
+                let coords = point.coords();
+                test_debug!("    Point {coords:?} ({description}) - Visible: {is_visible}");
+                is_visible
+            })
+            .filter(|&is_visible| is_visible)
+            .count();
         assert!(
             visible_count > 0,
             "At least some points should be visible with fallback"
@@ -3965,10 +3966,7 @@ mod tests {
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
 
         // Test that facets() iterator produces the same results as facet
-        let mut iter_facets = Vec::new();
-        for facet in hull.facets() {
-            iter_facets.push(facet);
-        }
+        let iter_facets: Vec<_> = hull.facets().collect();
 
         assert_eq!(iter_facets.len(), hull.number_of_facets());
 
@@ -5906,35 +5904,28 @@ mod tests {
 
         // Test points at increasing distances to understand threshold behavior
         let base_distance = 0.1;
-        let multipliers = vec![0.001, 0.01, 0.1, 1.0, 2.0, 5.0, 10.0, 50.0, 100.0];
+        let multipliers = [0.001, 0.01, 0.1, 1.0, 2.0, 5.0, 10.0, 50.0, 100.0];
 
-        let mut visibility_results = Vec::new();
+        let visibility_results: Vec<_> = multipliers
+            .iter()
+            .map(|&multiplier| {
+                let distance = base_distance * multiplier;
+                let test_point = Point::try_new([distance, distance, distance])
+                    .expect("finite point coordinates");
 
-        for &multiplier in &multipliers {
-            let distance = base_distance * multiplier;
-            let test_point =
-                Point::try_new([distance, distance, distance]).expect("finite point coordinates");
+                let result = ConvexHull::<(), (), 3>::fallback_visibility_test(
+                    &test_facet_vertices,
+                    &test_point,
+                );
 
-            let result = ConvexHull::<(), (), 3>::fallback_visibility_test(
-                &test_facet_vertices,
-                &test_point,
-            );
-
-            match result {
-                Ok(is_visible) => {
-                    visibility_results.push((multiplier, distance, is_visible));
-                    test_debug!(
-                        "    Distance {distance:.6} (multiplier {multiplier}): visible = {is_visible}"
-                    );
-                }
-                Err(e) => {
-                    test_debug!(
-                        "    Distance {distance:.6} (multiplier {multiplier}): error = {e:?}"
-                    );
-                    visibility_results.push((multiplier, distance, false)); // Treat error as not visible
-                }
-            }
-        }
+                let is_visible =
+                    result.expect("valid threshold test point should have a visibility result");
+                test_debug!(
+                    "    Distance {distance:.6} (multiplier {multiplier}): visible = {is_visible}"
+                );
+                (multiplier, distance, is_visible)
+            })
+            .collect();
 
         test_debug!("  Analyzing threshold behavior patterns...");
 

@@ -82,7 +82,7 @@ fn main() -> DelaunayResult<()> {
 
     assert!(dt.validate().is_ok());
     let report = dt.validation_report();
-    assert!(report.is_valid());
+    assert!(report.is_ok());
     Ok(())
 }
 ```

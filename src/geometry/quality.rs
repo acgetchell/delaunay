@@ -44,7 +44,7 @@ use crate::geometry::{
     traits::coordinate::CoordinateConversionValue,
     util::{CircumcenterError, circumradius, hypot, inradius as simplex_inradius, simplex_volume},
 };
-use core::fmt;
+use core::{array, fmt};
 use num_traits::One;
 use thiserror::Error;
 
@@ -286,27 +286,22 @@ where
 /// A tuple of `(avg_edge_length, epsilon)` where:
 /// - `avg_edge_length`: Translation-invariant geometric scale
 /// - `epsilon`: Relative tolerance (1e-8 × `avg_edge_length`) with 1e-12 floor
-///
-/// # Errors
-///
-/// Returns `QualityError` if edge count conversion or epsilon conversion fails.
 fn scale_aware_epsilon<const D: usize>(
     points: &SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>,
 ) -> (f64, f64) {
-    let mut total_edge_length = 0.0;
-    let mut edge_count = 0;
-
-    for i in 0..points.len() {
-        for j in (i + 1)..points.len() {
-            let mut diff_coords = [0.0; D];
-            for (idx, diff) in diff_coords.iter_mut().enumerate() {
-                *diff = points[i].coords()[idx] - points[j].coords()[idx];
-            }
-            let dist = hypot(&diff_coords);
-            total_edge_length += dist;
-            edge_count += 1;
-        }
-    }
+    let (total_edge_length, edge_count) = points
+        .iter()
+        .enumerate()
+        .flat_map(|(i, point_i)| {
+            points.iter().skip(i + 1).map(move |point_j| {
+                let diff_coords: [f64; D] =
+                    array::from_fn(|idx| point_i.coords()[idx] - point_j.coords()[idx]);
+                hypot(&diff_coords)
+            })
+        })
+        .fold((0.0, 0_u32), |(total, count), dist| {
+            (total + dist, count + 1)
+        });
 
     // If there are no edges (e.g., D == 0), fall back to floor epsilon.
     if edge_count == 0 {
