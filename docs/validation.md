@@ -94,23 +94,11 @@ deviates from the happy-path and trips internal **suspicion flags**, e.g.:
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
-    vertex,
+    DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
 };
-use delaunay::prelude::geometry::CoordinateConversionError;
-use delaunay::prelude::validation::{ValidationConfigurationError, ValidationPolicy};
+use delaunay::prelude::validation::ValidationPolicy;
 
-#[derive(Debug, thiserror::Error)]
-enum ValidationExampleError {
-    #[error(transparent)]
-    Construction(#[from] DelaunayTriangulationConstructionError),
-    #[error(transparent)]
-    Coordinate(#[from] CoordinateConversionError),
-    #[error(transparent)]
-    Configuration(#[from] ValidationConfigurationError),
-}
-
-fn main() -> Result<(), ValidationExampleError> {
+fn main() -> DelaunayResult<()> {
     let vertices = vec![
         vertex![0.0, 0.0, 0.0]?,
         vertex![1.0, 0.0, 0.0]?,
@@ -162,21 +150,11 @@ PL-manifoldness. You can trigger that final certification via
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
-    vertex,
+    DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
 };
-use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::validation::ValidationPolicy;
 
-#[derive(Debug, thiserror::Error)]
-enum ValidationExampleError {
-    #[error(transparent)]
-    Construction(#[from] DelaunayTriangulationConstructionError),
-    #[error(transparent)]
-    Coordinate(#[from] CoordinateConversionError),
-}
-
-fn main() -> Result<(), ValidationExampleError> {
+fn main() -> DelaunayResult<()> {
     let vertices = vec![
         vertex![0.0, 0.0, 0.0]?,
         vertex![1.0, 0.0, 0.0]?,
@@ -323,21 +301,11 @@ Validates the combinatorial structure of the Triangulation Data Structure.
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
-    vertex,
+    DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
 };
-use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::validation::ValidationPolicy;
 
-#[derive(Debug, thiserror::Error)]
-enum ValidationExampleError {
-    #[error(transparent)]
-    Construction(#[from] DelaunayTriangulationConstructionError),
-    #[error(transparent)]
-    Coordinate(#[from] CoordinateConversionError),
-}
-
-fn main() -> Result<(), ValidationExampleError> {
+fn main() -> DelaunayResult<()> {
     let vertices = vec![
         vertex![0.0, 0.0, 0.0]?,
         vertex![1.0, 0.0, 0.0]?,
@@ -417,21 +385,11 @@ Validates that the triangulation forms a valid topological manifold.
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
-    vertex,
+    DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
 };
-use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::validation::ValidationPolicy;
 
-#[derive(Debug, thiserror::Error)]
-enum ValidationExampleError {
-    #[error(transparent)]
-    Construction(#[from] DelaunayTriangulationConstructionError),
-    #[error(transparent)]
-    Coordinate(#[from] CoordinateConversionError),
-}
-
-fn main() -> Result<(), ValidationExampleError> {
+fn main() -> DelaunayResult<()> {
     let vertices = vec![
         vertex![0.0, 0.0, 0.0]?,
         vertex![1.0, 0.0, 0.0]?,
@@ -498,21 +456,11 @@ Validates the geometric optimality of the triangulation.
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
-    vertex,
+    DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
 };
-use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::validation::ValidationPolicy;
 
-#[derive(Debug, thiserror::Error)]
-enum ValidationExampleError {
-    #[error(transparent)]
-    Construction(#[from] DelaunayTriangulationConstructionError),
-    #[error(transparent)]
-    Coordinate(#[from] CoordinateConversionError),
-}
-
-fn main() -> Result<(), ValidationExampleError> {
+fn main() -> DelaunayResult<()> {
     let vertices = vec![
         vertex![0.0, 0.0, 0.0]?,
         vertex![1.0, 0.0, 0.0]?,

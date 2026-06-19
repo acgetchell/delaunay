@@ -16,19 +16,11 @@
 //!
 //! ```rust
 //! use delaunay::prelude::construction::{
-//!     ConstructionOptions, DelaunayTriangulationBuilder,
-//!     DelaunayTriangulationConstructionError, InitialSimplexStrategy,
-//!     InsertionOrderStrategy, Vertex,
+//!     ConstructionOptions, DelaunayResult, DelaunayTriangulationBuilder,
+//!     InitialSimplexStrategy, InsertionOrderStrategy,
 //! };
 //!
-//! # #[derive(Debug, thiserror::Error)]
-//! # enum ExampleError {
-//! #     #[error(transparent)]
-//! #     Source(#[from] DelaunayTriangulationConstructionError),
-//! #     #[error(transparent)]
-//! #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-//! # }
-//! # fn main() -> Result<(), ExampleError> {
+//! # fn main() -> DelaunayResult<()> {
 //! let vertices = vec![
 //!     delaunay::vertex![0.0, 0.0]?,
 //!     delaunay::vertex![1.0, 0.0]?,
@@ -83,19 +75,23 @@ use crate::core::util::{
     DeduplicationError, HilbertBitDepth, coords_equal_exact, coords_within_epsilon,
     hilbert_quantize_batch_in_range, stable_hash_u64_slice,
 };
-use crate::core::validation::{TopologyGuarantee, TriangulationValidationError, ValidationPolicy};
+use crate::core::validation::{
+    TopologyGuarantee, TriangulationValidationError, ValidationConfigurationError, ValidationPolicy,
+};
 use crate::core::vertex::Vertex;
 use crate::diagnostics::{BatchLocalRepairTrigger, ConstructionTelemetry, LocalRepairSample};
 use crate::geometry::coordinate_range::CoordinateRange;
 use crate::geometry::kernel::{AdaptiveKernel, Kernel};
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{CoordinateValidationError, CoordinateValues};
+use crate::geometry::traits::coordinate::{
+    CoordinateConversionError, CoordinateValidationError, CoordinateValues,
+};
 use crate::geometry::util::{RandomPointGenerationError, safe_usize_to_scalar, simplex_volume};
 use crate::locality::{
     accumulate_live_simplex_seeds, clear_simplex_seed_set, retain_live_simplex_seeds,
 };
 use crate::repair::DelaunayRepairPolicy;
-use crate::topology::traits::{GlobalTopology, GlobalTopologyModelError};
+use crate::topology::traits::{GlobalTopology, GlobalTopologyModelError, ToroidalDomainError};
 use crate::triangulation::DelaunayTriangulation;
 use crate::validation::DelaunayTriangulationValidationError;
 use core::{cmp::Ordering, fmt};
@@ -200,6 +196,100 @@ pub(crate) mod test_hooks {
         }
     }
 }
+
+/// Common errors for user-facing Delaunay triangulation workflows.
+///
+/// This convenience error covers the fallible path most examples use:
+/// converting caller coordinates into vertices, constructing a
+/// [`DelaunayTriangulation`], editing it through
+/// the Delaunay insertion API, and validating its Delaunay invariants. More
+/// specialized workflows such as convex hull extraction, bistellar flips,
+/// repair, and delaunayize continue to expose their narrower error types
+/// directly.
+///
+/// # Examples
+///
+/// Use [`DelaunayResult`] for examples, binaries, and quick workflows whose
+/// fallible operations stay inside coordinate conversion, construction,
+/// insertion, and validation:
+///
+/// ```rust
+/// use delaunay::prelude::construction::{
+///     DelaunayResult, DelaunayTriangulationBuilder, vertex,
+/// };
+///
+/// fn main() -> DelaunayResult<()> {
+///     let vertices = vec![
+///         vertex![0.0, 0.0]?,
+///         vertex![1.0, 0.0]?,
+///         vertex![0.0, 1.0]?,
+///     ];
+///
+///     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+///     dt.insert(vertex![0.25, 0.25]?)?;
+///     dt.validate()?;
+///
+///     Ok(())
+/// }
+/// ```
+#[derive(Clone, Debug, Error, PartialEq)]
+#[non_exhaustive]
+pub enum DelaunayError {
+    /// Delaunay triangulation construction failed.
+    #[error(transparent)]
+    Construction {
+        /// Underlying construction failure.
+        #[from]
+        source: DelaunayTriangulationConstructionError,
+    },
+
+    /// Coordinate conversion or validation failed before construction.
+    #[error(transparent)]
+    CoordinateConversion {
+        /// Underlying coordinate conversion failure.
+        #[from]
+        source: CoordinateConversionError,
+    },
+
+    /// Incremental Delaunay insertion failed.
+    #[error(transparent)]
+    Insertion {
+        /// Underlying insertion failure.
+        #[from]
+        source: InsertionError,
+    },
+
+    /// Validation policy configuration failed.
+    #[error(transparent)]
+    ValidationConfiguration {
+        /// Underlying validation configuration failure.
+        #[from]
+        source: ValidationConfigurationError,
+    },
+
+    /// Delaunay triangulation validation failed.
+    #[error(transparent)]
+    Validation {
+        /// Underlying validation failure.
+        #[from]
+        source: DelaunayTriangulationValidationError,
+    },
+
+    /// Toroidal-domain setup failed.
+    #[error(transparent)]
+    ToroidalDomain {
+        /// Underlying toroidal-domain validation failure.
+        #[from]
+        source: ToroidalDomainError,
+    },
+}
+
+/// Result alias for common user-facing Delaunay triangulation workflows.
+///
+/// This is equivalent to `Result<T, DelaunayError>` with [`DelaunayError`] as
+/// the error type, and is intended for caller-facing examples and applications
+/// that use the standard construction, insertion, and validation APIs.
+pub type DelaunayResult<T> = Result<T, DelaunayError>;
 
 /// Errors that can occur during Delaunay triangulation construction.
 #[derive(Clone, Debug, Error, PartialEq)]
@@ -2101,16 +2191,9 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::DelaunayTriangulation;
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulation};
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
     ///     delaunay::vertex![0.0, 0.0, 0.0]?,
     ///     delaunay::vertex![1.0, 0.0, 0.0]?,
@@ -2274,17 +2357,11 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     ConstructionOptions, DedupPolicy, DelaunayTriangulation, InsertionOrderStrategy,
+    ///     ConstructionOptions, DedupPolicy, DelaunayResult, DelaunayTriangulation,
+    ///     InsertionOrderStrategy,
     /// };
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
     ///     delaunay::vertex![0.0, 0.0, 0.0]?,
     ///     delaunay::vertex![1.0, 0.0, 0.0]?,
@@ -2330,17 +2407,10 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulation, TopologyGuarantee,
+    ///     DelaunayResult, DelaunayTriangulation, TopologyGuarantee,
     /// };
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![delaunay::vertex![0.0, 0.0]?, delaunay::vertex![1.0, 0.0]?, delaunay::vertex![0.0, 1.0]?];
     /// let dt: DelaunayTriangulation<_, (), (), 2> =
     ///     DelaunayTriangulation::try_new_with_topology_guarantee(
@@ -2404,16 +2474,9 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![delaunay::vertex![0.0, 0.0]?, delaunay::vertex![1.0, 0.0]?, delaunay::vertex![0.0, 1.0]?];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.number_of_vertices(), 3);
@@ -4091,17 +4154,10 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::DelaunayTriangulation;
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulation};
     /// use delaunay::prelude::geometry::RobustKernel;
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
     ///     delaunay::vertex![0.0, 0.0, 0.0]?,
     ///     delaunay::vertex![1.0, 0.0, 0.0]?,
@@ -4138,18 +4194,11 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulation, TopologyGuarantee,
+    ///     DelaunayResult, DelaunayTriangulation, TopologyGuarantee,
     /// };
     /// use delaunay::prelude::geometry::RobustKernel;
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
     ///     delaunay::vertex![0.0, 0.0, 0.0]?,
     ///     delaunay::vertex![1.0, 0.0, 0.0]?,
@@ -4195,18 +4244,11 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     ConstructionOptions, DelaunayTriangulation, TopologyGuarantee,
+    ///     ConstructionOptions, DelaunayResult, DelaunayTriangulation, TopologyGuarantee,
     /// };
     /// use delaunay::prelude::geometry::RobustKernel;
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
     ///     delaunay::vertex![0.0, 0.0, 0.0]?,
     ///     delaunay::vertex![1.0, 0.0, 0.0]?,

@@ -18,20 +18,9 @@ snippets into an application.
 For most use cases, construction is a single call:
 
 ```rust
-use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
-};
-use delaunay::prelude::geometry::CoordinateConversionError;
+use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder, vertex};
 
-#[derive(Debug, thiserror::Error)]
-enum ExampleError {
-    #[error(transparent)]
-    Construction(#[from] DelaunayTriangulationConstructionError),
-    #[error(transparent)]
-    Coordinate(#[from] CoordinateConversionError),
-}
-
-fn main() -> Result<(), ExampleError> {
+fn main() -> DelaunayResult<()> {
     let vertices = vec![
         vertex![0.0, 0.0, 0.0]?,
         vertex![1.0, 0.0, 0.0]?,
@@ -183,20 +172,11 @@ detections, etc.).
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    DelaunayResult, DelaunayTriangulationBuilder, vertex,
 };
-use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::repair::DelaunayRepairError;
 
-#[derive(Debug, thiserror::Error)]
-enum RepairExampleError {
-    #[error(transparent)]
-    Construction(#[from] DelaunayTriangulationConstructionError),
-    #[error(transparent)]
-    Coordinate(#[from] CoordinateConversionError),
-}
-
-fn main() -> Result<(), RepairExampleError> {
+fn main() -> DelaunayResult<()> {
     let vertices = vec![
         vertex![0.0, 0.0, 0.0]?,
         vertex![1.0, 0.0, 0.0]?,
@@ -282,22 +262,10 @@ uses the image-point method to build a true periodic quotient in the validated
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    DelaunayResult, DelaunayTriangulationBuilder, vertex,
 };
-use delaunay::prelude::geometry::CoordinateConversionError;
-use delaunay::prelude::insertion::InsertionError;
 
-#[derive(Debug, thiserror::Error)]
-enum ToroidalExampleError {
-    #[error(transparent)]
-    Construction(#[from] DelaunayTriangulationConstructionError),
-    #[error(transparent)]
-    Insertion(#[from] InsertionError),
-    #[error(transparent)]
-    Coordinate(#[from] CoordinateConversionError),
-}
-
-fn main() -> Result<(), ToroidalExampleError> {
+fn main() -> DelaunayResult<()> {
     // 2D canonicalized toroidal triangulation with unit square domain
     let vertices = vec![
         vertex![0.1, 0.1]?,
@@ -338,19 +306,10 @@ accessor, and modified post-construction via `set_vertex_data` / `set_simplex_da
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex, vertex,
+    DelaunayResult, DelaunayTriangulationBuilder, Vertex, vertex,
 };
-use delaunay::prelude::geometry::CoordinateConversionError;
 
-#[derive(Debug, thiserror::Error)]
-enum DataExampleError {
-    #[error(transparent)]
-    Construction(#[from] DelaunayTriangulationConstructionError),
-    #[error(transparent)]
-    Coordinate(#[from] CoordinateConversionError),
-}
-
-fn main() -> Result<(), DataExampleError> {
+fn main() -> DelaunayResult<()> {
     // Attach integer labels at construction time
     let vertices: [Vertex<i32, 2>; 3] = [
         vertex![0.0, 0.0; data = 10i32]?,
@@ -409,19 +368,10 @@ want to keep going after skipped vertices, use the explicitly best-effort
 `insert_best_effort_with_statistics()`.
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
-use delaunay::prelude::geometry::CoordinateConversionError;
-use delaunay::prelude::insertion::{InsertionError, InsertionOutcome};
+use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulation, vertex};
+use delaunay::prelude::insertion::InsertionOutcome;
 
-#[derive(Debug, thiserror::Error)]
-enum InsertionStatsExampleError {
-    #[error(transparent)]
-    Insertion(#[from] InsertionError),
-    #[error(transparent)]
-    Coordinate(#[from] CoordinateConversionError),
-}
-
-fn main() -> Result<(), InsertionStatsExampleError> {
+fn main() -> DelaunayResult<()> {
     let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 
     let (outcome, stats) = dt.insert_best_effort_with_statistics(vertex![0.5, 0.5, 0.5]?)?;

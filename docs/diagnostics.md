@@ -69,20 +69,9 @@ delaunay = { version = "...", features = ["diagnostics"] }
 For most validation work, start with the always-available APIs:
 
 ```rust
-use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
-};
-use delaunay::prelude::geometry::CoordinateConversionError;
+use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder, vertex};
 
-#[derive(Debug, thiserror::Error)]
-enum DiagnosticsExampleError {
-    #[error(transparent)]
-    Construction(#[from] DelaunayTriangulationConstructionError),
-    #[error(transparent)]
-    Coordinate(#[from] CoordinateConversionError),
-}
-
-fn main() -> Result<(), DiagnosticsExampleError> {
+fn main() -> DelaunayResult<()> {
     let vertices = vec![
         vertex![0.0, 0.0, 0.0]?,
         vertex![1.0, 0.0, 0.0]?,

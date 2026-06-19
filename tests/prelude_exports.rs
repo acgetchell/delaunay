@@ -13,6 +13,8 @@
 use std::{assert_matches, num::NonZeroUsize};
 
 use approx::assert_relative_eq;
+use slotmap::KeyData;
+
 use delaunay::geometry::CoordinateRange as GeometryCoordinateRange;
 use delaunay::prelude::DelaunayValidationError;
 use delaunay::prelude::algorithms::LocateResult;
@@ -26,8 +28,9 @@ use delaunay::prelude::construction::{
     ConstructionSlowInsertionSample, CoordinateRangeError as ConstructionCoordinateRangeError,
     CoordinateRangeOrdering as ConstructionCoordinateRangeOrdering,
     CoordinateValidationError as ConstructionCoordinateValidationError, DedupPolicy,
-    DedupTolerance, DeduplicationError, DelaunayConstructionFailure, DelaunayRepairPolicy,
-    DelaunayTriangulation, DelaunayTriangulationConstructionError,
+    DedupTolerance, DeduplicationError, DelaunayConstructionFailure, DelaunayError,
+    DelaunayRepairPolicy, DelaunayResult, DelaunayTriangulation, DelaunayTriangulationBuilder,
+    DelaunayTriangulationConstructionError,
     DelaunayTriangulationValidationError as ConstructionDelaunayTriangulationValidationError,
     DelaunayVerificationError as ConstructionDelaunayVerificationError,
     DelaunayVerificationErrorKind as ConstructionDelaunayVerificationErrorKind,
@@ -105,8 +108,8 @@ use delaunay::prelude::repair::{
 use delaunay::prelude::tds::Tds;
 use delaunay::prelude::tds::{
     AllFacetsIter as TdsAllFacetsIter, BoundaryFacetsIter as TdsBoundaryFacetsIter, FacetError,
-    FacetHandle, FacetView, InvariantErrorSummaryDetail, NeighborSlot, TdsError, TdsErrorKind,
-    VertexKey,
+    FacetHandle, FacetView, InvariantErrorSummaryDetail, NeighborSlot, SimplexKey, TdsError,
+    TdsErrorKind, VertexKey,
 };
 use delaunay::prelude::topology::spaces::{
     GlobalTopology, GlobalTopologyModelError, TopologyKind, ToroidalConstructionMode,
@@ -135,7 +138,8 @@ use delaunay::prelude::validation::{
     ValidationPolicy as FocusedValidationPolicy,
 };
 use delaunay::prelude::{
-    CoordinateRange as RootCoordinateRange,
+    CoordinateRange as RootCoordinateRange, DelaunayError as RootDelaunayError,
+    DelaunayResult as RootDelaunayResult,
     FlipOrientationCheckStage as RootFlipOrientationCheckStage, SecureHashMap, SecureHashSet,
     ValidationConfigurationError as RootValidationConfigurationError, vertex as root_vertex,
 };
@@ -200,6 +204,90 @@ const fn assert_root_bistellar_flips(_: &impl delaunay::flips::BistellarFlips<3,
 }
 
 const fn assert_send_sync_unpin<T: Send + Sync + Unpin>() {}
+
+#[test]
+fn construction_prelude_exports_common_delaunay_error_aliases() {
+    let source = CoordinateConversionError::InvalidSimplexPointCount {
+        actual: 2,
+        expected: 3,
+        dimension: 2,
+    };
+
+    let focused_error = DelaunayError::from(source.clone());
+    assert_matches!(
+        focused_error,
+        DelaunayError::CoordinateConversion { source: err } if err == source
+    );
+
+    let root_error = RootDelaunayError::from(source.clone());
+    assert_matches!(
+        root_error,
+        RootDelaunayError::CoordinateConversion { source: err } if err == source
+    );
+
+    let no_vertices: [Vertex<(), 2>; 0] = [];
+    let construction = DelaunayTriangulationBuilder::new(&no_vertices)
+        .build::<()>()
+        .expect_err("empty Delaunay construction should fail");
+    assert_matches!(
+        DelaunayError::from(construction),
+        DelaunayError::Construction {
+            source: DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::InsufficientVertices { dimension: 2, .. }
+            )
+        }
+    );
+
+    let insertion = InsertionError::DuplicateCoordinates {
+        coordinates: CoordinateValues::from([0.0, 0.0]),
+    };
+    assert_matches!(
+        DelaunayError::from(insertion.clone()),
+        DelaunayError::Insertion { source: err } if err == insertion
+    );
+
+    let configuration =
+        FocusedValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
+            topology_guarantee: TopologyGuarantee::PLManifold,
+            validation_policy: FocusedValidationPolicy::Never,
+        };
+    let expected_configuration =
+        FocusedValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
+            topology_guarantee: TopologyGuarantee::PLManifold,
+            validation_policy: FocusedValidationPolicy::Never,
+        };
+    assert_matches!(
+        DelaunayError::from(configuration),
+        DelaunayError::ValidationConfiguration { source: err }
+            if err == expected_configuration
+    );
+
+    let toroidal_domain = ToroidalDomainError::InvalidPeriod {
+        axis: 0,
+        period: 0.0,
+    };
+    assert_matches!(
+        DelaunayError::from(toroidal_domain),
+        DelaunayError::ToroidalDomain {
+            source: ToroidalDomainError::InvalidPeriod { axis, period }
+        } if axis == 0 && period.to_bits() == 0.0_f64.to_bits()
+    );
+
+    let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
+    let validation = ConstructionDelaunayTriangulationValidationError::VerificationFailed {
+        source: Box::new(ConstructionDelaunayVerificationError::from(
+            DelaunayValidationError::DelaunayViolation { simplex_key },
+        )),
+    };
+    assert_matches!(
+        DelaunayError::from(validation.clone()),
+        DelaunayError::Validation { source: err } if err == validation
+    );
+
+    let focused_result: DelaunayResult<()> = Ok(());
+    let root_result: RootDelaunayResult<()> = focused_result;
+    assert!(root_result.is_ok());
+}
 
 #[test]
 fn construction_prelude_covers_dedup_policy() {
@@ -484,6 +572,7 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     assert_send_sync_unpin::<NeighborRebuildError>();
     assert_send_sync_unpin::<ConstructionSkipSample>();
     assert_send_sync_unpin::<ConstructionSlowInsertionSample>();
+    assert_send_sync_unpin::<DelaunayError>();
     assert_send_sync_unpin::<CoordinateConversionError>();
     assert_send_sync_unpin::<DegenerateSimplexReason>();
     assert_send_sync_unpin::<LaError>();

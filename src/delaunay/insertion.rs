@@ -123,17 +123,9 @@ where
     /// Incremental insertion from empty triangulation:
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation};
-    /// use delaunay::prelude::insertion::InsertionError;
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulation};
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Source(#[from] InsertionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// // Start with empty triangulation
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
     /// assert_eq!(dt.number_of_vertices(), 0);
@@ -162,18 +154,9 @@ where
     /// Using batch construction (traditional approach):
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Insertion(#[from] delaunay::InsertionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// // Create initial triangulation with 5 vertices (4-simplex)
     /// let vertices = vec![
     ///     delaunay::vertex![0.0, 0.0, 0.0, 0.0]?,
@@ -289,17 +272,10 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation};
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulation};
     /// use delaunay::prelude::insertion::{InsertionError, InsertionOutcome};
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Coordinates(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// #     #[error(transparent)]
-    /// #     Insertion(#[from] InsertionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
     ///
     /// let vertex = delaunay::vertex![0.0, 0.0, 0.0]?;
@@ -345,17 +321,10 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation};
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulation};
     /// use delaunay::prelude::insertion::InsertionOutcome;
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Source(#[from] delaunay::InsertionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
     ///
     /// let (outcome, stats) = dt
