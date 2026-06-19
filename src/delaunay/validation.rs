@@ -298,17 +298,10 @@ impl From<&DelaunayVerificationError> for DelaunayVerificationErrorKind {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
+/// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
 /// use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 ///
-/// # #[derive(Debug, thiserror::Error)]
-/// # enum ExampleError {
-/// #     #[error(transparent)]
-/// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
-/// #     #[error(transparent)]
-/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-/// # }
-/// # fn main() -> Result<(), ExampleError> {
+/// # fn main() -> DelaunayResult<()> {
 /// let vertices = vec![
 ///     delaunay::vertex![0.0, 0.0, 0.0]?,
 ///     delaunay::vertex![1.0, 0.0, 0.0]?,
@@ -506,17 +499,10 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::*;
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices_4d = [
     ///     delaunay::vertex![0.0, 0.0, 0.0, 0.0]?,
     ///     delaunay::vertex![1.0, 0.0, 0.0, 0.0]?,
@@ -555,17 +541,10 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::*;
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
     ///     delaunay::vertex![0.0, 0.0, 0.0]?,
     ///     delaunay::vertex![1.0, 0.0, 0.0]?,
@@ -598,17 +577,10 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::*;
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices_4d = [
     ///     delaunay::vertex![0.0, 0.0, 0.0, 0.0]?,
     ///     delaunay::vertex![1.0, 0.0, 0.0, 0.0]?,
@@ -649,17 +621,10 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::*;
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices = [
     ///     delaunay::vertex![0.0, 0.0, 0.0]?,
     ///     delaunay::vertex![1.0, 0.0, 0.0]?,
@@ -818,19 +783,10 @@ where
     /// ```rust
     /// use delaunay::prelude::geometry::FastKernel;
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulation, DelaunayTriangulationBuilder, TopologyGuarantee,
+    ///     DelaunayResult, DelaunayTriangulation, DelaunayTriangulationBuilder, TopologyGuarantee,
     /// };
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Validation(#[from] delaunay::DelaunayTriangulationValidationError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
     ///     delaunay::vertex![0.0, 0.0]?,
     ///     delaunay::vertex![1.0, 0.0]?,
@@ -880,19 +836,11 @@ where
     /// ```rust
     /// use delaunay::prelude::geometry::FastKernel;
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulation, DelaunayTriangulationBuilder, GlobalTopology, TopologyGuarantee,
+    ///     DelaunayResult, DelaunayTriangulation, DelaunayTriangulationBuilder, GlobalTopology,
+    ///     TopologyGuarantee,
     /// };
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Validation(#[from] delaunay::DelaunayTriangulationValidationError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
     ///     delaunay::vertex![0.0, 0.0]?,
     ///     delaunay::vertex![1.0, 0.0]?,

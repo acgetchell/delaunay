@@ -66,25 +66,10 @@ For most use cases, the builder with default options is sufficient:
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    DelaunayResult, DelaunayTriangulationBuilder, vertex,
 };
-use delaunay::prelude::geometry::CoordinateConversionError;
-use delaunay::prelude::insertion::InsertionError;
-use delaunay::prelude::tds::InvariantError;
 
-#[derive(Debug, thiserror::Error)]
-enum ExampleError {
-    #[error(transparent)]
-    Construction(#[from] DelaunayTriangulationConstructionError),
-    #[error(transparent)]
-    Insertion(#[from] InsertionError),
-    #[error(transparent)]
-    Topology(#[from] InvariantError),
-    #[error(transparent)]
-    Coordinate(#[from] CoordinateConversionError),
-}
-
-fn main() -> Result<(), ExampleError> {
+fn main() -> DelaunayResult<()> {
     // Simple construction from vertices (Euclidean space, default options)
     let vertices = vec![
         vertex![0.0, 0.0, 0.0]?,
@@ -113,24 +98,11 @@ use `DelaunayTriangulationBuilder`:
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
-    vertex,
+    DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
 };
-use delaunay::prelude::geometry::CoordinateConversionError;
-use delaunay::prelude::insertion::InsertionError;
 use delaunay::prelude::validation::ValidationPolicy;
 
-#[derive(Debug, thiserror::Error)]
-enum ExampleError {
-    #[error(transparent)]
-    Construction(#[from] DelaunayTriangulationConstructionError),
-    #[error(transparent)]
-    Insertion(#[from] InsertionError),
-    #[error(transparent)]
-    Coordinate(#[from] CoordinateConversionError),
-}
-
-fn main() -> Result<(), ExampleError> {
+fn main() -> DelaunayResult<()> {
     // Canonicalized toroidal triangulation in 2D
     let vertices = vec![
         vertex![0.1, 0.1]?,

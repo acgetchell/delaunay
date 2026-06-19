@@ -398,8 +398,11 @@ just verify-expect-counts
 The `verify-expect-counts` recipe tracks only that remaining doctest baseline.
 When extending the zero-tolerance Semgrep rule to doctests, prefer:
 
-- `fn main() -> Result<(), ExampleError>` in examples, with local
-  `#[derive(thiserror::Error)]` enums that wrap the crate's typed errors.
+- `fn main() -> DelaunayResult<()>` in examples whose fallible surface is
+  covered by `DelaunayError`.
+- Local `#[derive(thiserror::Error)]` enums only when examples also need
+  workflow-specific typed errors such as convex-hull, flip, repair, or
+  delaunayize failures.
 - Setup helpers returning typed `Result` values in benchmarks; Criterion entry
   points may still abort setup explicitly, but benchmark bodies should not hide
   fallible API calls behind panic-only setup.

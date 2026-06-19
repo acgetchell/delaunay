@@ -100,27 +100,13 @@ cargo add delaunay@0.7.8
 
 Use `cargo add delaunay` instead if you want Cargo to select the newest published release.
 
-`thiserror` is used in the example only to keep the local typed error wrapper compact; `delaunay` APIs
-return concrete typed errors. Requirements:
-
 - Rust 1.96.0 or newer, pinned by `Cargo.toml` and `rust-toolchain.toml`.
 - `f64` coordinates for caller-facing construction, predicate, validation, and generator APIs.
 
 ```rust
-use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
-};
-use delaunay::prelude::geometry::CoordinateConversionError;
+use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder, vertex};
 
-#[derive(Debug, thiserror::Error)]
-enum ExampleError {
-    #[error(transparent)]
-    Construction(#[from] DelaunayTriangulationConstructionError),
-    #[error(transparent)]
-    Coordinate(#[from] CoordinateConversionError),
-}
-
-fn main() -> Result<(), ExampleError> {
+fn main() -> DelaunayResult<()> {
     let vertices = vec![
         vertex![0.0, 0.0, 0.0]?,
         vertex![1.0, 0.0, 0.0]?,

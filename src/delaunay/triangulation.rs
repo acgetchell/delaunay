@@ -51,18 +51,9 @@ use crate::core::triangulation::Triangulation;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::construction::{
-///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
-/// };
+/// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
 ///
-/// # #[derive(Debug, thiserror::Error)]
-/// # enum ExampleError {
-/// #     #[error(transparent)]
-/// #     Source(#[from] DelaunayTriangulationConstructionError),
-/// #     #[error(transparent)]
-/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-/// # }
-/// # fn main() -> Result<(), ExampleError> {
+/// # fn main() -> DelaunayResult<()> {
 /// let vertices = vec![
 ///     delaunay::vertex![0.0, 0.0, 0.0]?,
 ///     delaunay::vertex![1.0, 0.0, 0.0]?,
