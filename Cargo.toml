@@ -68,7 +68,7 @@ count-allocations = [ "dep:allocation-counter" ] # Enable allocation counting th
 #
 # These features intentionally do not enable dependencies. They select optional
 # diagnostics, logging, or long-running tests through `#[cfg(feature = "...")]`.
-bench = [  ] # Compatibility no-op for existing `--features bench` invocations; benchmarks live under `benches/`.
+bench = [  ] # Enable doc-hidden internal fixtures needed by benchmarks for invalid-topology repair cases.
 bench-logging = [  ] # Enable extra benchmark logging for CI diagnostics.
 diagnostics = [  ] # Enable opt-in diagnostic helpers and verbose test diagnostics.
 slow-tests = [  ] # Enable correctness tests that exceed the default-suite 10-second budget.
@@ -112,6 +112,12 @@ harness = false
 name = "profiling_suite"
 path = "benches/profiling_suite.rs"
 harness = false
+
+[[bench]]
+name = "pl_manifold_repair"
+path = "benches/pl_manifold_repair.rs"
+harness = false
+required-features = [ "bench" ]
 
 [[bench]]
 name = "remove_vertex"

@@ -12,9 +12,7 @@ use delaunay::prelude::construction::{
 use delaunay::prelude::diagnostics::debug_print_first_delaunay_violation;
 use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
 use delaunay::prelude::geometry::{CoordinateRange, Point, RobustKernel};
-use delaunay::prelude::insertion::{
-    HullExtensionReason, InsertionError, InsertionErrorKind, InsertionErrorSummary,
-};
+use delaunay::prelude::insertion::{HullExtensionReason, InsertionError};
 use delaunay::prelude::ordering::{
     HilbertBitDepth, hilbert_indices_prequantized, hilbert_quantize_batch_in_range,
     hilbert_quantize_in_range,
@@ -226,23 +224,11 @@ fn regression_issue_120_minimal_failing_input_2d() {
 }
 
 #[test]
-fn regression_insertion_error_summary_preserves_top_level_retryability() {
+fn regression_insertion_error_preserves_top_level_retryability() {
     let source = InsertionError::HullExtension {
         reason: HullExtensionReason::NoVisibleFacets,
     };
     assert!(source.is_retryable());
-
-    let summary = InsertionErrorSummary::from(source);
-    assert_eq!(summary.kind, InsertionErrorKind::HullExtension);
-    assert!(summary.retryable);
-    assert!(summary.is_retryable());
-
-    let mut non_retryable = summary.clone();
-    non_retryable.retryable = false;
-    assert_ne!(
-        summary, non_retryable,
-        "summary equality must include retryability so compact retry paths preserve behavior"
-    );
 }
 
 #[test]

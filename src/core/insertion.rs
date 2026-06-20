@@ -1664,7 +1664,10 @@ where
         });
 
         // Remove conflict simplices (now that new simplices are wired up)
-        let _removed_count = self.tds.remove_simplices_by_keys(&conflict_simplices);
+        let _removed_count = self
+            .tds
+            .remove_simplices_by_keys(&conflict_simplices)
+            .map_err(|e| InsertionError::TopologyValidation(e.into_inner()))?;
 
         // Iteratively repair non-manifold topology until facet sharing is valid
         let mut total_removed = 0;

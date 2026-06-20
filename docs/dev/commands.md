@@ -191,6 +191,19 @@ compile, lint, test, documentation, example, or benchmark-harness build errors.
 Use `just bench-smoke` only for quick harness validation with minimal samples;
 do not treat smoke output as performance data.
 
+Workspace-wide benchmark recipes (`just bench`, `just bench-smoke`,
+`just bench-compile`, and the benchmark compile step inside `just test`) enable
+`--features bench` so feature-gated benchmark fixtures are compiled.
+
+Some repair benchmarks need feature-gated fixtures that deliberately construct
+invalid-but-structurally-coherent topology. Run those harnesses with
+`--features bench`; the `bench` feature exists only for benchmark fixtures and
+must not expose normal construction escape hatches:
+
+```bash
+cargo bench --profile perf --features bench --bench pl_manifold_repair -- --noplot
+```
+
 Use `just perf-large-scale-smoke [max_secs]` for a coarse local wall-clock guard
 over the release-mode large-scale debug harness. It runs the same 2D-5D defaults
 as `just debug-large-scale-{2,3,4,5}d`, caps each test runtime at 60 seconds by

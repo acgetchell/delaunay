@@ -840,6 +840,14 @@ Prefer:
 
 Avoid cloning large structures unless necessary.
 
+Repair benchmarks sometimes need topology states that ordinary construction
+must reject, such as codimension-1 facets incident to more than two simplices.
+Keep those states behind `#[cfg(feature = "bench")]` fixture helpers and type
+the fixture errors. Do not broaden normal public constructors or treat
+`TopologyGuarantee::Pseudomanifold` as an invalid-topology bypass; it still
+requires facet degree 1 or 2, boundary consistency, connectedness, isolated
+vertex checks, and Euler validation when Level 3 runs.
+
 ---
 
 ## External Dependencies

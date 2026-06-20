@@ -5,11 +5,14 @@ use std::hash::Hasher;
 use delaunay::DelaunayTriangulation;
 use delaunay::prelude::Triangulation;
 use delaunay::prelude::construction::{GlobalTopology, TopologyGuarantee, TopologyKind};
-use delaunay::prelude::geometry::{Coordinate, CoordinateValidationError, FastKernel};
+use delaunay::prelude::geometry::{Coordinate, CoordinateValidationError, FastKernel, Point};
 use delaunay::prelude::query::BoundaryAnalysis;
-use delaunay::prelude::tds::{Simplex, SimplexKey, Tds, VertexKey, verify_facet_index_consistency};
+use delaunay::prelude::tds::{
+    Simplex, SimplexKey, Tds, Vertex, VertexKey, verify_facet_index_consistency,
+};
 use delaunay::prelude::topology::validation::validate_triangulation_euler;
 use delaunay::query::{AdjacencyIndexBuildError, QueryError};
+use uuid::Uuid;
 
 struct Payload;
 struct NotAKernel;
@@ -75,6 +78,17 @@ fn coordinate_trait_has_minimal_bounds() {
 }
 
 #[test]
+fn vertex_uuid_constructor_accepts_non_datatype_payloads() {
+    let point = Point::<2>::try_new([1.0, 2.0]).unwrap();
+    let uuid = Uuid::from_u128(0x67e5_5044_10b1_426f_9247_bb68_0e5f_e0c8);
+
+    let vertex = Vertex::<Payload, 2>::try_new_with_uuid(point, uuid, Some(Payload)).unwrap();
+
+    assert_eq!(vertex.uuid(), uuid);
+    assert!(vertex.data().is_some());
+}
+
+#[test]
 fn triangulation_types_do_not_require_kernel_bounds() {
     let generic: Option<Triangulation<NotAKernel, Payload, Payload, 2>> = None;
     let delaunay: Option<DelaunayTriangulation<NotAKernel, Payload, Payload, 2>> = None;
@@ -110,6 +124,14 @@ fn read_only_topology_apis_accept_non_datatype_payloads() {
 
     let topology = validate_triangulation_euler(&tds).unwrap();
     assert!(topology.is_valid());
+}
+
+#[test]
+fn tds_equality_accepts_non_datatype_payloads() {
+    let left: Tds<Payload, Payload, 2> = Tds::empty();
+    let right: Tds<Payload, Payload, 2> = Tds::empty();
+
+    assert!(left == right);
 }
 
 #[test]

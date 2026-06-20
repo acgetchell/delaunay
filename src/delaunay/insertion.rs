@@ -23,8 +23,7 @@ use crate::core::algorithms::flips::{
     repair_delaunay_with_flips_k2_k3, repair_delaunay_with_flips_k2_k3_run,
 };
 use crate::core::algorithms::incremental_insertion::{
-    DelaunayRepairErrorSummary, DelaunayRepairFailureContext, InsertionError,
-    InsertionTopologyValidationContext,
+    DelaunayRepairFailureContext, InsertionError, InsertionTopologyValidationContext,
 };
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::collections::{FastHashSet, SimplexKeyBuffer};
@@ -518,7 +517,7 @@ where
                     .map_err(|robust_err| InsertionError::DelaunayRepairFailed {
                         source: Box::new(robust_err),
                         context: DelaunayRepairFailureContext::LocalRepairRobustFallback {
-                            initial: DelaunayRepairErrorSummary::from(&e),
+                            initial: Box::new(e),
                         },
                     })?;
                 self.validate_ridge_links_after_repair(topology, &robust_run)?;

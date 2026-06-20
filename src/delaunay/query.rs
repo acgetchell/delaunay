@@ -1000,7 +1000,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # }
     /// ```
     #[inline]
-    pub fn build_adjacency_index(&self) -> Result<AdjacencyIndex, AdjacencyIndexBuildError> {
+    pub fn build_adjacency_index(&self) -> Result<AdjacencyIndex<'_>, AdjacencyIndexBuildError> {
         self.as_triangulation().build_adjacency_index()
     }
 
@@ -1090,7 +1090,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// ```
     pub fn edges_with_index<'a>(
         &self,
-        index: &'a AdjacencyIndex,
+        index: &'a AdjacencyIndex<'_>,
     ) -> Result<impl Iterator<Item = EdgeKey> + 'a, QueryError> {
         self.as_triangulation().edges_with_index(index)
     }
@@ -1190,7 +1190,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// ```
     pub fn incident_edges_with_index<'a>(
         &self,
-        index: &'a AdjacencyIndex,
+        index: &'a AdjacencyIndex<'_>,
         v: VertexKey,
     ) -> Result<impl Iterator<Item = EdgeKey> + 'a, QueryError> {
         self.as_triangulation().incident_edges_with_index(index, v)
@@ -1294,7 +1294,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// ```
     pub fn simplex_neighbors_with_index<'a>(
         &self,
-        index: &'a AdjacencyIndex,
+        index: &'a AdjacencyIndex<'_>,
         c: SimplexKey,
     ) -> Result<impl Iterator<Item = SimplexKey> + 'a, QueryError> {
         self.as_triangulation()
@@ -1892,7 +1892,7 @@ mod tests {
     }
 
     #[test]
-    fn public_edges_with_index_rejects_stale_index_after_insert() {
+    fn public_edges_with_index_rejects_generation_mismatch() {
         init_tracing();
         let vertices = vec![
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
@@ -1901,12 +1901,10 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
 
-        let mut dt: DelaunayTriangulation<_, (), (), 3> =
+        let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
-        let index = dt.build_adjacency_index().unwrap();
-
-        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2]).unwrap())
-            .unwrap();
+        let mut index = dt.build_adjacency_index().unwrap();
+        index.tds_generation = index.tds_generation.wrapping_sub(1);
 
         assert_matches!(
             dt.edges_with_index(&index).map(drop),

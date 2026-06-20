@@ -24,7 +24,7 @@ neighbor slots; it does not require coordinate predicates.
 
 Implementation entry points:
 
-- [`Tds::is_coherently_oriented`](../src/core/tds.rs) returns `true` when all
+- [`Tds::is_coherently_oriented`](../src/core/tds/storage.rs) returns `true` when all
   non-periodic adjacent simplex pairs satisfy the facet-parity convention.
 - `Tds::validate_coherent_orientation()` is called by `Tds::is_valid()` and by
   `Tds::validation_report()` as `InvariantKind::CoherentOrientation`.
@@ -131,7 +131,7 @@ them when a periodic-aware caller needs lifted facet identity.
 
 ### TDS Layer
 
-`src/core/tds.rs` owns the combinatorial invariant:
+`src/core/tds/storage.rs` owns the combinatorial invariant:
 
 - `TdsError::OrientationViolation`
 - `InvariantKind::CoherentOrientation`
@@ -232,7 +232,7 @@ Focused orientation coverage lives in:
   explicit construction normalizes incoherent user simplex orderings.
 - [`tests/regressions.rs`](../tests/regressions.rs): regression coverage for the
   4D bulk-repair orientation cleanup that previously left negative simplices.
-- Unit tests inside `src/core/tds.rs`, `src/core/triangulation.rs`, and
+- Unit tests inside `src/core/tds/storage.rs`, `src/core/triangulation.rs`, and
   `src/core/algorithms/flips.rs`: parity helpers, normalization behavior,
   geometric-orientation diagnostics, and flip replacement orientation.
 
@@ -278,7 +278,7 @@ When adding or changing a path that creates, removes, rewires, or reorders simpl
   <https://doc.cgal.org/latest/Triangulation/index.html>
 - Orientation predicates: [`src/geometry/predicates.rs`](../src/geometry/predicates.rs)
   and [`src/geometry/robust_predicates.rs`](../src/geometry/robust_predicates.rs)
-- TDS orientation implementation: [`src/core/tds.rs`](../src/core/tds.rs)
+- TDS orientation implementation: [`src/core/tds/storage.rs`](../src/core/tds/storage.rs)
 - Geometric orientation promotion: [`src/core/triangulation.rs`](../src/core/triangulation.rs)
 - Flip replacement orientation: [`src/core/algorithms/flips.rs`](../src/core/algorithms/flips.rs)
 - Permutation parity: <https://en.wikipedia.org/wiki/Parity_of_a_permutation>

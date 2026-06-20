@@ -6,23 +6,28 @@
 //! over. Mutation-heavy insertion and repair orchestration remain implemented
 //! with the triangulation type until they can be split into narrower modules.
 
+use crate::core::algorithms::flips::DelaunayRepairError;
 use crate::core::algorithms::incremental_insertion::{
-    CavityFillingError, HullExtensionReason, InsertionTopologyValidationContext,
-    SpatialIndexConstructionFailure,
+    CavityFillingError, DelaunayRepairFailureContext, HullExtensionReason, InsertionError,
+    InsertionTopologyValidationContext, NeighborWiringError, SpatialIndexConstructionFailure,
 };
 use crate::core::algorithms::locate::{ConflictError, LocateError};
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::core::simplex::{Simplex, SimplexValidationError};
-use crate::core::tds::{InvariantErrorSummary, Tds, TdsConstructionError, TdsError, VertexKey};
+use crate::core::tds::{
+    InvariantError, SimplexKey, Tds, TdsConstructionError, TdsError, VertexKey,
+};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
+use crate::core::util::PeriodicFacetKeyDerivationError;
 use crate::core::validation::TriangulationValidationError;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
-use crate::geometry::traits::coordinate::CoordinateValues;
+use crate::geometry::traits::coordinate::{CoordinateValidationError, CoordinateValues};
+use crate::topology::traits::topological_space::TopologyKind;
 use crate::validation::DelaunayTriangulationValidationError;
 use thiserror::Error;
 
@@ -87,6 +92,60 @@ impl std::fmt::Display for FinalDelaunayValidationContext {
     }
 }
 
+/// Structured reason periodic quotient facet-key derivation failed.
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PeriodicQuotientFacetKeyDerivationFailure {
+    /// The lifted simplex does not have the expected simplex arity (`D + 1` vertices).
+    #[error("invalid lifted simplex arity: expected {expected} vertices, got {actual}")]
+    InvalidLiftedSimplexArity {
+        /// Expected number of lifted vertices (`D + 1`).
+        expected: usize,
+        /// Actual lifted vertex count provided by the caller.
+        actual: usize,
+    },
+
+    /// The requested facet index exceeds the lifted-vertex count.
+    #[error("facet index {facet_index} out of bounds for lifted vertex count {vertex_count}")]
+    FacetIndexOutOfBounds {
+        /// Requested facet index.
+        facet_index: usize,
+        /// Number of lifted vertices available.
+        vertex_count: usize,
+    },
+
+    /// Relative periodic offset component is outside the encodable byte-delta range.
+    #[error(
+        "periodic offset component {component} (axis {axis}) is out of encodable range 0..=255"
+    )]
+    RelativeOffsetOutOfRange {
+        /// Axis whose shifted component failed.
+        axis: usize,
+        /// Shifted component value.
+        component: i16,
+    },
+}
+
+impl From<PeriodicFacetKeyDerivationError> for PeriodicQuotientFacetKeyDerivationFailure {
+    fn from(source: PeriodicFacetKeyDerivationError) -> Self {
+        match source {
+            PeriodicFacetKeyDerivationError::InvalidLiftedSimplexArity { expected, actual } => {
+                Self::InvalidLiftedSimplexArity { expected, actual }
+            }
+            PeriodicFacetKeyDerivationError::FacetIndexOutOfBounds {
+                facet_index,
+                vertex_count,
+            } => Self::FacetIndexOutOfBounds {
+                facet_index,
+                vertex_count,
+            },
+            PeriodicFacetKeyDerivationError::RelativeOffsetOutOfRange { axis, component } => {
+                Self::RelativeOffsetOutOfRange { axis, component }
+            }
+        }
+    }
+}
+
 /// Errors that can occur during triangulation construction.
 ///
 /// # Examples
@@ -129,12 +188,72 @@ pub enum TriangulationConstructionError {
         message: String,
     },
 
+    /// Failed to create a simplex while reconstructing a periodic quotient.
+    #[error("Failed to create periodic quotient simplex during construction: {source}")]
+    PeriodicQuotientSimplexCreation {
+        /// Underlying simplex validation error.
+        #[source]
+        source: SimplexValidationError,
+    },
+
+    /// Periodic quotient facet-key derivation failed.
+    #[error("Periodic quotient facet-key derivation failed for facet {facet_index}: {reason}")]
+    PeriodicQuotientFacetKeyDerivation {
+        /// Requested facet index.
+        facet_index: usize,
+        /// Structured derivation failure.
+        #[source]
+        reason: PeriodicQuotientFacetKeyDerivationFailure,
+    },
+
     /// Cavity filling failed during incremental construction.
     #[error("Cavity filling failed during insertion: {source}")]
     InsertionCavityFilling {
         /// Underlying cavity-filling error.
         #[source]
         source: CavityFillingError,
+    },
+
+    /// Neighbor wiring failed during incremental construction.
+    #[error("Neighbor wiring failed during insertion: {source}")]
+    InsertionNeighborWiring {
+        /// Underlying neighbor-wiring error.
+        #[source]
+        source: NeighborWiringError,
+    },
+
+    /// Flip-based Delaunay repair failed during incremental construction.
+    #[error("Delaunay repair failed during insertion ({context}): {source}")]
+    InsertionDelaunayRepair {
+        /// Operational context describing the repair path that failed.
+        context: DelaunayRepairFailureContext,
+        /// Underlying typed repair failure.
+        #[source]
+        source: Box<DelaunayRepairError>,
+    },
+
+    /// Perturbation retry generated coordinates that violate point invariants.
+    #[error("Perturbation retry produced invalid coordinates during insertion: {source}")]
+    InsertionPerturbedCoordinateInvalid {
+        /// Underlying coordinate validation failure.
+        #[source]
+        source: CoordinateValidationError,
+    },
+
+    /// Post-construction orientation canonicalization failed due to input geometry.
+    #[error("Geometric orientation canonicalization failed after construction: {source}")]
+    OrientationCanonicalizationGeometric {
+        /// Typed insertion-layer source that failed during orientation canonicalization.
+        #[source]
+        source: Box<InsertionError>,
+    },
+
+    /// Post-construction orientation canonicalization failed due to an internal invariant.
+    #[error("Internal orientation canonicalization failed after construction: {source}")]
+    OrientationCanonicalizationInternal {
+        /// Typed insertion-layer source that failed during orientation canonicalization.
+        #[source]
+        source: Box<InsertionError>,
     },
 
     /// Insufficient vertices to create a triangulation.
@@ -165,6 +284,185 @@ pub enum TriangulationConstructionError {
         max_validated_dimension: usize,
         /// Tracking issue for extending periodic quotient support.
         tracking_issue: u32,
+    },
+
+    /// Periodic image-point construction was requested for an unsupported topology.
+    #[error(
+        "Periodic image-point construction requires periodic facet signatures, but {topology:?} topology does not support them"
+    )]
+    PeriodicImageUnsupportedTopology {
+        /// Topology kind that does not support periodic facet signatures.
+        topology: TopologyKind,
+    },
+
+    /// Periodic image-point construction could not obtain a periodic domain.
+    #[error(
+        "Periodic image-point construction requires a periodic domain, but {topology:?} topology does not expose one"
+    )]
+    PeriodicImageMissingDomain {
+        /// Topology kind that did not expose a periodic domain.
+        topology: TopologyKind,
+    },
+
+    /// Periodic image-point construction received too few canonical vertices.
+    #[error(
+        "Periodic {dimension}D triangulation requires at least {minimum_vertex_count} points, got {actual_vertex_count}"
+    )]
+    PeriodicImageInsufficientVertices {
+        /// Requested periodic dimension.
+        dimension: usize,
+        /// Minimum canonical vertex count required by the construction.
+        minimum_vertex_count: usize,
+        /// Actual canonical vertex count provided by the caller.
+        actual_vertex_count: usize,
+    },
+
+    /// Periodic image generation produced coordinates that violate point invariants.
+    #[error(
+        "Periodic image coordinates for canonical vertex {canonical_vertex_index} image {image_index} violated point invariants: {source}"
+    )]
+    PeriodicImageCoordinateValidation {
+        /// Zero-based canonical vertex index.
+        canonical_vertex_index: usize,
+        /// Zero-based periodic image index.
+        image_index: usize,
+        /// Underlying coordinate validation failure.
+        #[source]
+        source: CoordinateValidationError,
+    },
+
+    /// Periodic image construction lost at least one canonical vertex in the expanded DT.
+    #[error(
+        "Periodic expanded DT is missing at least one canonical vertex out of {canonical_vertex_count}"
+    )]
+    PeriodicImageMissingCanonicalVertices {
+        /// Number of canonical vertices that should be present in the expanded DT.
+        canonical_vertex_count: usize,
+    },
+
+    /// Periodic image construction failed while canonicalizing simplex orientation.
+    #[error("Periodic image construction failed to canonicalize orientation after build: {source}")]
+    PeriodicImageOrientationCanonicalization {
+        /// Underlying insertion/orientation failure.
+        #[source]
+        source: Box<InsertionError>,
+    },
+
+    /// Periodic image construction failed geometric simplex-orientation validation.
+    #[error(
+        "Periodic image construction failed geometric orientation validation after build: {source}"
+    )]
+    PeriodicImageGeometricOrientationValidation {
+        /// Underlying TDS orientation validation failure.
+        #[source]
+        source: Box<TdsError>,
+    },
+
+    /// Periodic quotient reconstruction produced no representative simplices.
+    #[error("Periodic quotient reconstruction produced no surviving representative simplices")]
+    PeriodicQuotientEmptyReconstruction,
+
+    /// Periodic quotient candidate extraction found no usable image simplices.
+    #[error(
+        "Periodic quotient candidate extraction found no usable image simplices among {full_simplex_count} full-image simplices for {canonical_vertex_count} canonical vertices"
+    )]
+    PeriodicQuotientNoCandidates {
+        /// Number of simplices in the full image triangulation.
+        full_simplex_count: usize,
+        /// Number of canonical vertices that needed quotient coverage.
+        canonical_vertex_count: usize,
+    },
+
+    /// Periodic quotient selection failed to select any candidate simplex.
+    #[error(
+        "Periodic quotient selection chose no candidate simplices from {candidate_count} candidates after {search_attempts} attempts"
+    )]
+    PeriodicQuotientSelectionEmpty {
+        /// Number of candidate quotient simplices.
+        candidate_count: usize,
+        /// Number of deterministic search attempts.
+        search_attempts: usize,
+    },
+
+    /// Periodic quotient selection left boundary facets in a 2D quotient.
+    #[error(
+        "Periodic quotient selection left {boundary_facet_count} boundary facets after {search_attempts} attempts"
+    )]
+    PeriodicQuotientSelectionBoundaryFacets {
+        /// Number of unmatched boundary facets.
+        boundary_facet_count: usize,
+        /// Number of deterministic search attempts.
+        search_attempts: usize,
+        /// Number of vertices in the full image triangulation.
+        full_vertex_count: usize,
+        /// Number of simplices in the full image triangulation.
+        full_simplex_count: usize,
+        /// Number of canonical vertices that needed quotient coverage.
+        canonical_vertex_count: usize,
+        /// Number of candidate quotient simplices.
+        candidate_count: usize,
+        /// Number of candidate simplices selected by the best attempt.
+        selected_simplex_count: usize,
+    },
+
+    /// Periodic quotient selection did not reach χ = 0 in 2D.
+    #[error(
+        "Periodic quotient selection could not reach χ = 0 in 2D; best |χ|={best_abs_chi} after {search_attempts} attempts"
+    )]
+    PeriodicQuotientSelectionEulerCharacteristic {
+        /// Best absolute Euler-characteristic residual observed.
+        best_abs_chi: i64,
+        /// Number of deterministic search attempts.
+        search_attempts: usize,
+    },
+
+    /// Periodic quotient selection did not cover every canonical vertex.
+    #[error(
+        "Periodic quotient selection covered only {covered_vertex_count} of {canonical_vertex_count} canonical vertices in {dimension}D"
+    )]
+    PeriodicQuotientSelectionIncompleteCoverage {
+        /// Requested quotient dimension.
+        dimension: usize,
+        /// Number of canonical vertices covered by selected simplices.
+        covered_vertex_count: usize,
+        /// Number of canonical vertices that needed quotient coverage.
+        canonical_vertex_count: usize,
+    },
+
+    /// Periodic quotient reconstruction over-shared one or more facets.
+    #[error(
+        "Periodic quotient reconstruction over-shared {overloaded_facet_count} facets across {selected_simplex_count} selected simplices"
+    )]
+    PeriodicQuotientOverloadedFacets {
+        /// Number of periodic facet signatures with multiplicity greater than two.
+        overloaded_facet_count: usize,
+        /// Number of selected representative quotient simplices.
+        selected_simplex_count: usize,
+    },
+
+    /// Periodic quotient reconstruction found an invalid facet multiplicity.
+    #[error(
+        "Periodic quotient facet signature has {occurrence_count} occurrences, expected 1 or 2"
+    )]
+    PeriodicQuotientFacetMultiplicity {
+        /// Number of simplices/facets sharing the periodic facet signature.
+        occurrence_count: usize,
+    },
+
+    /// Periodic quotient reconstruction left neighbor slots unmatched.
+    #[error(
+        "Periodic quotient reconstruction left {unmatched_neighbor_slots} unmatched neighbor slots"
+    )]
+    PeriodicQuotientUnmatchedNeighbors {
+        /// Number of neighbor slots that were not paired by symbolic facet signatures.
+        unmatched_neighbor_slots: usize,
+    },
+
+    /// Periodic quotient reconstruction lost a temporary neighbor-update buffer.
+    #[error("Missing neighbor vector for periodic quotient simplex {simplex_key:?}")]
+    PeriodicQuotientMissingNeighborVector {
+        /// Quotient simplex whose neighbor vector was missing.
+        simplex_key: SimplexKey,
     },
 
     /// Conflict-region extraction failed during incremental construction.
@@ -241,7 +539,7 @@ pub enum TriangulationConstructionError {
         context: FinalTopologyValidationContext,
         /// Underlying validation error.
         #[source]
-        source: InvariantErrorSummary,
+        source: Box<InvariantError>,
     },
 
     /// Final Delaunay validation failed after construction.

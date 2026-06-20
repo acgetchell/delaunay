@@ -117,9 +117,7 @@ use crate::construction::{
     ConstructionOptions, DelaunayConstructionFailure, DelaunayTriangulationConstructionError,
     InitialSimplexStrategy, RetryPolicy,
 };
-use crate::core::algorithms::incremental_insertion::{
-    DelaunayRepairErrorKind, InsertionError, InsertionErrorSourceKind,
-};
+use crate::core::algorithms::incremental_insertion::InsertionError;
 use crate::core::collections::{
     FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, PeriodicOffsetBuffer, SmallBuffer, Uuid,
     VertexKeySet,
@@ -130,9 +128,8 @@ use crate::core::construction::{
 use crate::core::operations::InsertionOutcome;
 use crate::core::simplex::{Simplex, SimplexValidationError};
 use crate::core::tds::{
-    InvariantError, InvariantErrorSummaryDetail, SimplexKey, Tds, TdsConstructionError, TdsError,
-    TdsErrorKind, TdsMutationError, TriangulationConstructionState,
-    TriangulationValidationErrorKind, VertexKey,
+    InvariantError, SimplexKey, Tds, TdsConstructionError, TdsError, TdsMutationError,
+    TriangulationConstructionState, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
 use crate::core::util::periodic_facet_key_from_lifted_vertices;
@@ -149,7 +146,7 @@ use crate::topology::traits::topological_space::{
 use crate::triangulation::DelaunayTriangulation;
 use crate::validation::{
     DelaunayTriangulationCandidate, DelaunayTriangulationValidationError,
-    DelaunayTriangulationValidationProof, DelaunayVerificationErrorKind,
+    DelaunayTriangulationValidationProof,
 };
 use num_traits::ToPrimitive;
 use rand::SeedableRng;
@@ -305,469 +302,20 @@ fn search_closed_2d_selection(
     dfs.search(0, 0).then_some(dfs.selected)
 }
 
+/// Preserves periodic-quotient TDS mutation failures as typed construction errors.
+///
+/// Quotient reconstruction mutates an already-built image TDS. If those
+/// relation edits fail, the source is still a TDS validation/mutation failure,
+/// not a stringly internal inconsistency.
+fn periodic_quotient_tds_mutation_error(
+    source: TdsMutationError,
+) -> TriangulationConstructionError {
+    TriangulationConstructionError::Tds(TdsConstructionError::ValidationError(source.into()))
+}
+
 // =============================================================================
 // ERROR TYPES
 // =============================================================================
-
-/// TDS failure category preserved by explicit construction without retaining a
-/// large by-value source error.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
-pub enum ExplicitTdsErrorKind {
-    /// A vertex failed validation.
-    InvalidVertex,
-    /// A simplex failed validation.
-    InvalidSimplex,
-    /// Neighbor relationships were invalid.
-    InvalidNeighbors,
-    /// Adjacent simplices violated coherent orientation.
-    OrientationViolation,
-    /// Duplicate maximal simplices were detected.
-    DuplicateSimplices,
-    /// A facet would be incident to too many simplices.
-    FacetSharingViolation,
-    /// An entity UUID was duplicated during TDS assembly.
-    DuplicateUuid,
-    /// Simplex creation failed.
-    FailedToCreateSimplex,
-    /// Expected neighbor relation was absent.
-    NotNeighbors,
-    /// UUID-to-key mapping was inconsistent.
-    MappingInconsistency,
-    /// Simplex vertex-key lookup failed.
-    VertexKeyRetrievalFailed,
-    /// A referenced simplex key was missing.
-    SimplexNotFound,
-    /// A referenced vertex key was missing.
-    VertexNotFound,
-    /// A dimension/count invariant was violated.
-    DimensionMismatch,
-    /// An index exceeded its valid bound.
-    IndexOutOfBounds,
-    /// Internal TDS state was inconsistent.
-    InconsistentDataStructure,
-    /// A geometric validation failure occurred.
-    Geometric,
-    /// A facet operation failed.
-    FacetError,
-    /// A simplex contained duplicate coordinates.
-    DuplicateCoordinatesInSimplex,
-}
-
-/// Compact summary of a TDS construction, mutation, or validation failure used
-/// by explicit construction.
-///
-/// The conversion preserves the [`ExplicitTdsErrorKind`] and rendered
-/// diagnostic text while dropping the full typed payload. Use this type when
-/// explicit construction needs a small source error; keep the original
-/// [`TdsError`], [`TdsConstructionError`], or [`TdsMutationError`] when callers
-/// need source-chain or payload inspection.
-///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::tds::TdsError;
-/// use delaunay::prelude::construction::{ExplicitTdsError, ExplicitTdsErrorKind};
-///
-/// let source = TdsError::InconsistentDataStructure {
-///     message: "dangling simplex key".to_string(),
-/// };
-/// let summary = ExplicitTdsError::from(source);
-///
-/// assert_eq!(summary.kind, ExplicitTdsErrorKind::InconsistentDataStructure);
-/// ```
-#[must_use]
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
-#[error("{message}")]
-pub struct ExplicitTdsError {
-    /// Structured TDS failure category.
-    pub kind: ExplicitTdsErrorKind,
-    /// Full diagnostic text from the original TDS error.
-    pub message: String,
-}
-
-impl From<TdsError> for ExplicitTdsError {
-    fn from(source: TdsError) -> Self {
-        let kind = match &source {
-            TdsError::InvalidVertex { .. } => ExplicitTdsErrorKind::InvalidVertex,
-            TdsError::InvalidSimplex { .. } => ExplicitTdsErrorKind::InvalidSimplex,
-            TdsError::InvalidNeighbors { .. } => ExplicitTdsErrorKind::InvalidNeighbors,
-            TdsError::OrientationViolation { .. } => ExplicitTdsErrorKind::OrientationViolation,
-            TdsError::DuplicateSimplices { .. } => ExplicitTdsErrorKind::DuplicateSimplices,
-            TdsError::FacetSharingViolation { .. } => ExplicitTdsErrorKind::FacetSharingViolation,
-            TdsError::FailedToCreateSimplex { .. } => ExplicitTdsErrorKind::FailedToCreateSimplex,
-            TdsError::NotNeighbors { .. } => ExplicitTdsErrorKind::NotNeighbors,
-            TdsError::MappingInconsistency { .. } => ExplicitTdsErrorKind::MappingInconsistency,
-            TdsError::VertexKeyRetrievalFailed { .. } => {
-                ExplicitTdsErrorKind::VertexKeyRetrievalFailed
-            }
-            TdsError::SimplexNotFound { .. } => ExplicitTdsErrorKind::SimplexNotFound,
-            TdsError::VertexNotFound { .. } => ExplicitTdsErrorKind::VertexNotFound,
-            TdsError::DimensionMismatch { .. } => ExplicitTdsErrorKind::DimensionMismatch,
-            TdsError::IndexOutOfBounds { .. } => ExplicitTdsErrorKind::IndexOutOfBounds,
-            TdsError::InconsistentDataStructure { .. } => {
-                ExplicitTdsErrorKind::InconsistentDataStructure
-            }
-            TdsError::Geometric(_) => ExplicitTdsErrorKind::Geometric,
-            TdsError::FacetError(_) => ExplicitTdsErrorKind::FacetError,
-            TdsError::DuplicateCoordinatesInSimplex { .. } => {
-                ExplicitTdsErrorKind::DuplicateCoordinatesInSimplex
-            }
-        };
-        Self {
-            kind,
-            message: source.to_string(),
-        }
-    }
-}
-
-impl From<TdsConstructionError> for ExplicitTdsError {
-    fn from(source: TdsConstructionError) -> Self {
-        match source {
-            TdsConstructionError::ValidationError(source) => source.into(),
-            duplicate @ TdsConstructionError::DuplicateUuid { .. } => Self {
-                kind: ExplicitTdsErrorKind::DuplicateUuid,
-                message: duplicate.to_string(),
-            },
-        }
-    }
-}
-
-impl From<TdsMutationError> for ExplicitTdsError {
-    fn from(source: TdsMutationError) -> Self {
-        TdsError::from(source).into()
-    }
-}
-
-/// Incremental-insertion failure category preserved by explicit construction
-/// without retaining a large by-value source error.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
-pub enum ExplicitInsertionErrorKind {
-    /// Conflict-region search failed.
-    ConflictRegion,
-    /// Point location failed.
-    Location,
-    /// Cavity filling failed.
-    CavityFilling,
-    /// Neighbor wiring failed.
-    NeighborWiring,
-    /// Non-manifold topology was detected.
-    NonManifoldTopology,
-    /// Hull extension failed.
-    HullExtension,
-    /// Delaunay validation failed after insertion.
-    DelaunayValidationFailed,
-    /// Flip-based Delaunay repair failed.
-    DelaunayRepairFailed,
-    /// Duplicate coordinates were supplied.
-    DuplicateCoordinates,
-    /// Duplicate UUID was supplied.
-    DuplicateUuid,
-    /// TDS topology validation failed.
-    TopologyValidation,
-    /// Triangulation-layer topology validation failed.
-    TopologyValidationFailed,
-    /// Local repair would exceed its simplex-removal budget.
-    MaxSimplicesRemovedExceeded,
-    /// Spatial index construction failed.
-    SpatialIndexConstruction,
-    /// Perturbation retry produced invalid coordinates.
-    PerturbedCoordinateInvalid,
-}
-
-/// Compact summary of an [`InsertionError`] used by explicit construction.
-///
-/// The conversion preserves the [`ExplicitInsertionErrorKind`], an optional
-/// nested [`InsertionErrorSourceKind`] for wrapped validation or repair errors,
-/// and rendered diagnostic text. It intentionally drops bulky typed payloads and
-/// source chains; keep the original [`InsertionError`] when callers need full
-/// structured insertion context.
-///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::construction::{
-///     ExplicitInsertionError, ExplicitInsertionErrorKind,
-/// };
-/// use delaunay::prelude::geometry::CoordinateValues;
-/// use delaunay::prelude::insertion::InsertionError;
-///
-/// let source = InsertionError::DuplicateCoordinates {
-///     coordinates: CoordinateValues::from([0.0, 0.0]),
-/// };
-/// let summary = ExplicitInsertionError::from(source);
-///
-/// assert_eq!(summary.kind, ExplicitInsertionErrorKind::DuplicateCoordinates);
-/// assert!(summary.source_kind.is_none());
-/// ```
-#[must_use]
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
-#[error("{message}")]
-pub struct ExplicitInsertionError {
-    /// Structured insertion failure category.
-    pub kind: ExplicitInsertionErrorKind,
-    /// Nested structured source kind when insertion wraps another validation layer.
-    pub source_kind: Option<InsertionErrorSourceKind>,
-    /// Full diagnostic text from the original insertion error.
-    pub message: String,
-}
-
-impl From<InsertionError> for ExplicitInsertionError {
-    fn from(source: InsertionError) -> Self {
-        let kind = match &source {
-            InsertionError::ConflictRegion(_) => ExplicitInsertionErrorKind::ConflictRegion,
-            InsertionError::Location(_) => ExplicitInsertionErrorKind::Location,
-            InsertionError::CavityFilling { .. } => ExplicitInsertionErrorKind::CavityFilling,
-            InsertionError::NeighborWiring { .. } => ExplicitInsertionErrorKind::NeighborWiring,
-            InsertionError::NonManifoldTopology { .. } => {
-                ExplicitInsertionErrorKind::NonManifoldTopology
-            }
-            InsertionError::HullExtension { .. } => ExplicitInsertionErrorKind::HullExtension,
-            InsertionError::DelaunayValidationFailed { .. } => {
-                ExplicitInsertionErrorKind::DelaunayValidationFailed
-            }
-            InsertionError::DelaunayRepairFailed { .. } => {
-                ExplicitInsertionErrorKind::DelaunayRepairFailed
-            }
-            InsertionError::DuplicateCoordinates { .. } => {
-                ExplicitInsertionErrorKind::DuplicateCoordinates
-            }
-            InsertionError::DuplicateUuid { .. } => ExplicitInsertionErrorKind::DuplicateUuid,
-            InsertionError::TopologyValidation(_) => ExplicitInsertionErrorKind::TopologyValidation,
-            InsertionError::TopologyValidationFailed { .. } => {
-                ExplicitInsertionErrorKind::TopologyValidationFailed
-            }
-            InsertionError::MaxSimplicesRemovedExceeded { .. } => {
-                ExplicitInsertionErrorKind::MaxSimplicesRemovedExceeded
-            }
-            InsertionError::SpatialIndexConstruction { .. } => {
-                ExplicitInsertionErrorKind::SpatialIndexConstruction
-            }
-            InsertionError::PerturbedCoordinateInvalid { .. } => {
-                ExplicitInsertionErrorKind::PerturbedCoordinateInvalid
-            }
-        };
-        let source_kind = match &source {
-            InsertionError::DelaunayValidationFailed { source } => {
-                Some(InsertionErrorSourceKind::Delaunay(source.into()))
-            }
-            InsertionError::DelaunayRepairFailed { source, .. } => Some(
-                InsertionErrorSourceKind::DelaunayRepair(source.as_ref().into()),
-            ),
-            InsertionError::TopologyValidation(source) => {
-                Some(InsertionErrorSourceKind::Tds(source.into()))
-            }
-            InsertionError::TopologyValidationFailed { source, .. } => {
-                Some(InsertionErrorSourceKind::Triangulation(source.into()))
-            }
-            _ => None,
-        };
-        Self {
-            kind,
-            source_kind,
-            message: source.to_string(),
-        }
-    }
-}
-
-/// Validation-layer category preserved by explicit construction without
-/// retaining a large by-value source error.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
-pub enum ExplicitInvariantErrorKind {
-    /// Level 1-2 TDS validation failed.
-    Tds,
-    /// Level 3 triangulation topology validation failed.
-    Triangulation,
-    /// Level 4 Delaunay validation failed.
-    Delaunay,
-}
-
-/// Compact summary of an [`InvariantError`] used by explicit construction.
-///
-/// The conversion preserves the validation layer in
-/// [`ExplicitInvariantErrorKind`], the nested typed discriminant in
-/// [`InvariantErrorSummaryDetail`], and rendered diagnostic text. It
-/// intentionally drops bulky typed payloads and source chains; keep the original
-/// [`InvariantError`] when callers need full validation context.
-///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::tds::{
-///     InvariantError, InvariantErrorSummaryDetail, TdsError, TdsErrorKind,
-/// };
-/// use delaunay::prelude::construction::{
-///     ExplicitInvariantError, ExplicitInvariantErrorKind,
-/// };
-///
-/// let source = InvariantError::Tds(TdsError::InconsistentDataStructure {
-///     message: "dangling simplex key".to_string(),
-/// });
-/// let summary = ExplicitInvariantError::from(source);
-///
-/// assert_eq!(summary.kind, ExplicitInvariantErrorKind::Tds);
-/// assert_eq!(
-///     summary.detail,
-///     InvariantErrorSummaryDetail::Tds(TdsErrorKind::InconsistentDataStructure),
-/// );
-/// ```
-#[must_use]
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
-#[error("{message}")]
-pub struct ExplicitInvariantError {
-    /// Structured validation-layer category.
-    pub kind: ExplicitInvariantErrorKind,
-    /// Nested structured validation error kind.
-    pub detail: InvariantErrorSummaryDetail,
-    /// Full diagnostic text from the original invariant error.
-    pub message: String,
-}
-
-impl From<InvariantError> for ExplicitInvariantError {
-    fn from(source: InvariantError) -> Self {
-        let kind = match &source {
-            InvariantError::Tds(_) => ExplicitInvariantErrorKind::Tds,
-            InvariantError::Triangulation(_) => ExplicitInvariantErrorKind::Triangulation,
-            InvariantError::Delaunay(_) => ExplicitInvariantErrorKind::Delaunay,
-        };
-        let detail = match &source {
-            InvariantError::Tds(source) => InvariantErrorSummaryDetail::Tds(source.into()),
-            InvariantError::Triangulation(source) => {
-                InvariantErrorSummaryDetail::Triangulation(source.into())
-            }
-            InvariantError::Delaunay(source) => {
-                InvariantErrorSummaryDetail::Delaunay(source.into())
-            }
-        };
-        Self {
-            kind,
-            detail,
-            message: source.to_string(),
-        }
-    }
-}
-
-/// Delaunay validation category preserved by explicit construction without
-/// retaining a large by-value source error.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
-pub enum ExplicitDelaunayValidationErrorKind {
-    /// Lower-layer TDS validation failed.
-    Tds,
-    /// Lower-layer topology validation failed.
-    Triangulation,
-    /// Level 4 Delaunay verification failed.
-    VerificationFailed,
-    /// Typed repair validation failed.
-    RepairOperationFailed,
-}
-
-/// Nested source category preserved by explicit Delaunay validation summaries.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
-pub enum ExplicitDelaunayValidationSourceKind {
-    /// Lower-layer TDS validation failed.
-    Tds(TdsErrorKind),
-    /// Lower-layer topology validation failed.
-    Triangulation(TriangulationValidationErrorKind),
-    /// Level 4 verification failed in a specific verification path.
-    Verification(DelaunayVerificationErrorKind),
-    /// Typed flip repair failed during a mutating operation.
-    Repair(DelaunayRepairErrorKind),
-}
-
-/// Compact summary of a [`DelaunayTriangulationValidationError`] used by
-/// explicit construction.
-///
-/// The conversion preserves the [`ExplicitDelaunayValidationErrorKind`], an
-/// optional nested [`ExplicitDelaunayValidationSourceKind`] for wrapped
-/// validation or repair errors, and rendered diagnostic text. It intentionally
-/// drops bulky typed payloads and source chains; keep the original
-/// [`DelaunayTriangulationValidationError`] when callers need full validation
-/// context.
-///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::construction::{
-///     DelaunayTriangulationValidationError, DelaunayVerificationError,
-///     DelaunayVerificationErrorKind, ExplicitDelaunayValidationError,
-///     ExplicitDelaunayValidationErrorKind, ExplicitDelaunayValidationSourceKind,
-/// };
-/// use delaunay::prelude::repair::{
-///     DelaunayRepairError, DelaunayRepairPostconditionFailure,
-/// };
-///
-/// let source = DelaunayTriangulationValidationError::VerificationFailed {
-///     source: DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
-///         reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
-///     })
-///     .into(),
-/// };
-/// let summary = ExplicitDelaunayValidationError::from(source);
-///
-/// assert_eq!(
-///     summary.kind,
-///     ExplicitDelaunayValidationErrorKind::VerificationFailed,
-/// );
-/// assert_eq!(
-///     summary.source_kind,
-///     Some(ExplicitDelaunayValidationSourceKind::Verification(
-///         DelaunayVerificationErrorKind::FlipPredicates,
-///     )),
-/// );
-/// ```
-#[must_use]
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
-#[error("{message}")]
-pub struct ExplicitDelaunayValidationError {
-    /// Structured Delaunay validation category.
-    pub kind: ExplicitDelaunayValidationErrorKind,
-    /// Nested structured source kind when validation wraps another layer.
-    pub source_kind: Option<ExplicitDelaunayValidationSourceKind>,
-    /// Full diagnostic text from the original Delaunay validation error.
-    pub message: String,
-}
-
-impl From<DelaunayTriangulationValidationError> for ExplicitDelaunayValidationError {
-    fn from(source: DelaunayTriangulationValidationError) -> Self {
-        let kind = match &source {
-            DelaunayTriangulationValidationError::Tds(_) => {
-                ExplicitDelaunayValidationErrorKind::Tds
-            }
-            DelaunayTriangulationValidationError::Triangulation(_) => {
-                ExplicitDelaunayValidationErrorKind::Triangulation
-            }
-            DelaunayTriangulationValidationError::VerificationFailed { .. } => {
-                ExplicitDelaunayValidationErrorKind::VerificationFailed
-            }
-            DelaunayTriangulationValidationError::RepairOperationFailed { .. } => {
-                ExplicitDelaunayValidationErrorKind::RepairOperationFailed
-            }
-        };
-        let source_kind = match &source {
-            DelaunayTriangulationValidationError::Tds(source) => Some(
-                ExplicitDelaunayValidationSourceKind::Tds(source.as_ref().into()),
-            ),
-            DelaunayTriangulationValidationError::Triangulation(source) => Some(
-                ExplicitDelaunayValidationSourceKind::Triangulation(source.as_ref().into()),
-            ),
-            DelaunayTriangulationValidationError::VerificationFailed { source } => Some(
-                ExplicitDelaunayValidationSourceKind::Verification(source.as_ref().into()),
-            ),
-            DelaunayTriangulationValidationError::RepairOperationFailed { source, .. } => Some(
-                ExplicitDelaunayValidationSourceKind::Repair(source.as_ref().into()),
-            ),
-        };
-        Self {
-            kind,
-            source_kind,
-            message: source.to_string(),
-        }
-    }
-}
 
 /// Errors from explicit triangulation construction.
 ///
@@ -867,7 +415,7 @@ pub enum ExplicitConstructionError {
     TdsAssembly {
         /// Underlying TDS construction or mutation error.
         #[source]
-        source: ExplicitTdsError,
+        source: Box<TdsConstructionError>,
     },
     /// Toroidal topology is incompatible with explicit simplex construction.
     #[error("Toroidal topology cannot be combined with explicit simplex construction")]
@@ -889,49 +437,49 @@ pub enum ExplicitConstructionError {
     NeighborAssignment {
         /// Underlying TDS validation error.
         #[source]
-        source: ExplicitTdsError,
+        source: Box<TdsError>,
     },
     /// Orientation normalization or positive-orientation promotion failed.
     #[error("Orientation normalization failed during explicit construction: {source}")]
     OrientationNormalization {
         /// Underlying insertion/orientation error.
         #[source]
-        source: ExplicitInsertionError,
+        source: Box<InsertionError>,
     },
     /// Level 1–2 TDS structural validation failed after assembly.
     #[error("Structural validation failed during explicit construction: {source}")]
     StructuralValidation {
         /// Underlying TDS validation error.
         #[source]
-        source: ExplicitTdsError,
+        source: Box<TdsError>,
     },
     /// Level 3 topology validation failed after assembly.
     #[error("Topology validation failed during explicit construction: {source}")]
     TopologyValidation {
         /// Underlying cumulative validation error.
         #[source]
-        source: ExplicitInvariantError,
+        source: Box<InvariantError>,
     },
     /// Completion-time PL-manifold validation failed after assembly.
     #[error("PL-manifold completion validation failed during explicit construction: {source}")]
     CompletionValidation {
         /// Underlying cumulative validation error.
         #[source]
-        source: ExplicitInvariantError,
+        source: Box<InvariantError>,
     },
     /// Geometric nondegeneracy validation failed after assembly.
     #[error("Geometric nondegeneracy validation failed during explicit construction: {source}")]
     GeometricNondegeneracy {
         /// Underlying TDS/geometric validation error.
         #[source]
-        source: ExplicitTdsError,
+        source: Box<TdsError>,
     },
     /// Level 4 Delaunay validation failed before returning the wrapper.
     #[error("Delaunay validation failed during explicit construction: {source}")]
     DelaunayValidation {
         /// Underlying Delaunay validation error.
         #[source]
-        source: ExplicitDelaunayValidationError,
+        source: Box<DelaunayTriangulationValidationError>,
     },
     /// Explicit quotient connectivity is not supported for the requested topology.
     #[error(
@@ -1588,8 +1136,7 @@ where
         })
     }
 
-    /// Derives a periodic facet key from a lifted simplex and maps derivation
-    /// failures into construction-level geometric-degeneracy errors.
+    /// Derives a periodic facet key from a lifted simplex and maps derivation failures.
     ///
     /// This helper centralizes error conversion for
     /// [`periodic_facet_key_from_lifted_vertices`] so all call sites produce
@@ -1604,17 +1151,17 @@ where
     /// # Errors
     ///
     /// Returns [`DelaunayTriangulationConstructionError`] wrapping
-    /// [`TriangulationConstructionError::GeometricDegeneracy`] when periodic
-    /// facet key derivation fails (e.g., invalid arity/index or offset encoding).
+    /// [`TriangulationConstructionError::PeriodicQuotientFacetKeyDerivation`]
+    /// when periodic facet key derivation fails (e.g., invalid arity/index or
+    /// offset encoding).
     fn derive_periodic_facet_key(
         lifted_ordered: &[(VertexKey, [i8; D])],
         facet_idx: usize,
     ) -> Result<PeriodicFacetKey, DelaunayTriangulationConstructionError> {
         periodic_facet_key_from_lifted_vertices::<D>(lifted_ordered, facet_idx).map_err(|error| {
-            TriangulationConstructionError::GeometricDegeneracy {
-                message: format!(
-                    "Failed to derive periodic candidate facet signature for index {facet_idx}: {error}",
-                ),
+            TriangulationConstructionError::PeriodicQuotientFacetKeyDerivation {
+                facet_index: facet_idx,
+                reason: error.into(),
             }
             .into()
         })
@@ -1844,13 +1391,12 @@ where
                 let topology_model = topology.model();
                 Self::validate_topology_model(&topology_model)?;
                 if !topology_model.supports_periodic_facet_signatures() {
-                    return Err(TriangulationConstructionError::GeometricDegeneracy {
-                        message: format!(
-                            "Topology {:?} does not support periodic facet signatures required for periodic image-point construction",
-                            topology_model.kind(),
-                        ),
-                    }
-                    .into());
+                    return Err(
+                        TriangulationConstructionError::PeriodicImageUnsupportedTopology {
+                            topology: topology_model.kind(),
+                        }
+                        .into(),
+                    );
                 }
                 // Periodic toroidal construction: canonicalize then apply 3^D image-point method.
                 let canonical = Self::canonicalize_vertices(self.vertices, &topology_model)?;
@@ -1864,22 +1410,22 @@ where
                 dt.set_global_topology(topology);
                 dt.tri
                     .normalize_and_promote_positive_orientation()
-                    .map_err(|e| TriangulationConstructionError::GeometricDegeneracy {
-                        message: format!(
-                            "Failed to canonicalize periodic orientation after build: {e}",
-                        ),
+                    .map_err(|source| {
+                        TriangulationConstructionError::PeriodicImageOrientationCanonicalization {
+                            source: Box::new(source),
+                        }
                     })?;
                 dt.as_triangulation()
                     .validate_geometric_simplex_orientation()
-                    .map_err(|e| TriangulationConstructionError::GeometricDegeneracy {
-                        message: format!(
-                            "Periodic geometric orientation validation failed after build: {e}",
-                        ),
+                    .map_err(|source| {
+                        TriangulationConstructionError::PeriodicImageGeometricOrientationValidation {
+                            source: Box::new(source),
+                        }
                     })?;
                 dt.as_triangulation().validate().map_err(|e| {
                     TriangulationConstructionError::FinalTopologyValidation {
                         context: FinalTopologyValidationContext::PeriodicQuotientTopology,
-                        source: e.into(),
+                        source: Box::new(e),
                     }
                 })?;
                 dt.is_valid().map_err(|e| {
@@ -1942,7 +1488,7 @@ where
         for v in vertices {
             let vk = tds.insert_vertex_with_mapping(*v).map_err(|source| {
                 ExplicitConstructionError::TdsAssembly {
-                    source: source.into(),
+                    source: Box::new(source),
                 }
             })?;
             index_to_key.push(vk);
@@ -1960,7 +1506,7 @@ where
             })?;
             tds.insert_simplex_with_mapping(simplex).map_err(|source| {
                 ExplicitConstructionError::TdsAssembly {
-                    source: source.into(),
+                    source: Box::new(source),
                 }
             })?;
         }
@@ -1971,13 +1517,13 @@ where
         // --- Compute adjacency ---
         tds.assign_neighbors()
             .map_err(|source| ExplicitConstructionError::NeighborAssignment {
-                source: source.into(),
+                source: Box::new(source),
             })?;
 
         // --- Assign incident simplices ---
         tds.assign_incident_simplices().map_err(|source| {
             ExplicitConstructionError::TdsAssembly {
-                source: source.into(),
+                source: Box::new(TdsConstructionError::ValidationError(source.into())),
             }
         })?;
 
@@ -2006,16 +1552,17 @@ where
             .normalize_and_promote_positive_orientation()
             .map_err(
                 |source| ExplicitConstructionError::OrientationNormalization {
-                    source: source.into(),
+                    source: Box::new(source),
                 },
             )?;
 
         // Level 1–2: TDS structural validation (mappings, neighbors, facet
         // sharing, coherent orientation, etc.).
         if let Err(e) = candidate.validate_tds_structure() {
-            return Err(
-                ExplicitConstructionError::StructuralValidation { source: e.into() }.into(),
-            );
+            return Err(ExplicitConstructionError::StructuralValidation {
+                source: Box::new(e),
+            }
+            .into());
         }
 
         // Level 3 (topology, excluding geometric orientation): connectedness,
@@ -2025,14 +1572,18 @@ where
         // the only check we intentionally omit is
         // `validate_geometric_simplex_orientation`.
         if let Err(e) = candidate.validate_topology_only() {
-            return Err(ExplicitConstructionError::TopologyValidation { source: e.into() }.into());
+            return Err(ExplicitConstructionError::TopologyValidation {
+                source: Box::new(e),
+            }
+            .into());
         }
 
         // Completion-time PL-manifold check (vertex links) if required.
         if let Err(e) = candidate.validate_at_completion() {
-            return Err(
-                ExplicitConstructionError::CompletionValidation { source: e.into() }.into(),
-            );
+            return Err(ExplicitConstructionError::CompletionValidation {
+                source: Box::new(e),
+            }
+            .into());
         }
 
         // --- Geometric nondegeneracy ---
@@ -2043,9 +1594,10 @@ where
         // explicit construction should not silently accept geometrically
         // collapsed simplices supplied by the user.
         if let Err(e) = candidate.validate_geometric_nondegeneracy() {
-            return Err(
-                ExplicitConstructionError::GeometricNondegeneracy { source: e.into() }.into(),
-            );
+            return Err(ExplicitConstructionError::GeometricNondegeneracy {
+                source: Box::new(e),
+            }
+            .into());
         }
 
         let proof = Self::enforce_explicit_delaunay_property(&candidate)?;
@@ -2068,7 +1620,7 @@ where
     {
         candidate.validate_delaunay_property().map_err(|source| {
             ExplicitConstructionError::DelaunayValidation {
-                source: source.into(),
+                source: Box::new(source),
             }
             .into()
         })
@@ -2130,21 +1682,17 @@ where
         // Keep `build_periodic` self-protecting even if future call paths bypass outer validation.
         Self::validate_topology_model(topology_model)?;
         if !topology_model.supports_periodic_facet_signatures() {
-            return Err(TriangulationConstructionError::GeometricDegeneracy {
-                message: format!(
-                    "Topology {:?} does not support periodic facet signatures required for periodic image-point construction",
-                    topology_model.kind(),
-                ),
-            }
-            .into());
+            return Err(
+                TriangulationConstructionError::PeriodicImageUnsupportedTopology {
+                    topology: topology_model.kind(),
+                }
+                .into(),
+            );
         }
 
         let domain = topology_model.periodic_domain().ok_or_else(|| {
-            TriangulationConstructionError::GeometricDegeneracy {
-                message: format!(
-                    "Topology {:?} does not expose a periodic domain required for periodic image-point construction",
-                    topology_model.kind(),
-                ),
+            TriangulationConstructionError::PeriodicImageMissingDomain {
+                topology: topology_model.kind(),
             }
         })?;
         if D > 3 {
@@ -2160,12 +1708,14 @@ where
         let n = canonical_vertices.len();
         let min_points = 2 * D + 1;
         if n < min_points {
-            return Err(TriangulationConstructionError::GeometricDegeneracy {
-                message: format!(
-                    "Periodic {D}D triangulation requires at least {min_points} points, got {n}"
-                ),
-            }
-            .into());
+            return Err(
+                TriangulationConstructionError::PeriodicImageInsufficientVertices {
+                    dimension: D,
+                    minimum_vertex_count: min_points,
+                    actual_vertex_count: n,
+                }
+                .into(),
+            );
         }
 
         // 3^D offset grid; zero-offset index = (3^D - 1) / 2.
@@ -2250,11 +1800,11 @@ where
                     };
                     new_coords[i] = canonical_f64[canon_idx][i] + shift_f64 + jitter_f64;
                 }
-                let new_point = Point::try_new(new_coords).map_err(|error| {
-                    TriangulationConstructionError::GeometricDegeneracy {
-                        message: format!(
-                            "Periodic image coordinates for vertex {canon_idx} image {k} violated point invariants: {error}",
-                        ),
+                let new_point = Point::try_new(new_coords).map_err(|source| {
+                    TriangulationConstructionError::PeriodicImageCoordinateValidation {
+                        canonical_vertex_index: canon_idx,
+                        image_index: k,
+                        source,
                     }
                 })?;
                 if is_canonical {
@@ -2306,8 +1856,6 @@ where
                     };
 
                     let mut built: Option<DelaunayTriangulation<K, U, V, D>> = None;
-                    let mut last_insert_error: Option<String> = None;
-                    let mut last_skipped_insertion: Option<String> = None;
                     let mut best_fallback_stats: (usize, usize, usize, usize) = (0, 0, 0, 0);
                     let mut insertion_order: Vec<usize> = Vec::with_capacity(expanded.len());
                     let canonical_start = zero_offset_idx * n;
@@ -2349,15 +1897,11 @@ where
                                 }
                                 Ok((InsertionOutcome::Skipped { error }, _stats)) => {
                                     skipped = skipped.saturating_add(1);
-                                    last_skipped_insertion = Some(format!(
-                                        "attempt={attempt_idx} insert_idx={insert_idx} source_idx={source_idx}: {error}",
-                                    ));
+                                    let _ = (error, insert_idx, source_idx);
                                 }
                                 Err(err) => {
                                     hard_errors = hard_errors.saturating_add(1);
-                                    last_insert_error = Some(format!(
-                                        "attempt={attempt_idx} insert_idx={insert_idx} source_idx={source_idx}: {err}",
-                                    ));
+                                    let _ = (err, insert_idx, source_idx);
                                 }
                             }
                         }
@@ -2386,21 +1930,18 @@ where
                     if let Some(dt) = built {
                         dt
                     } else {
-                        let canonical_vertex_uuid_sample: Vec<Uuid> = canonical_vertices
-                            .iter()
-                            .take(3)
-                            .map(Vertex::uuid)
-                            .collect();
-                        return Err(TriangulationConstructionError::GeometricDegeneracy {
-                            message: format!(
-                                "Periodic expanded DT construction failed (no fallback): canonical_vertices_len={}, canonical_vertex_uuid_sample={canonical_vertex_uuid_sample:?}, primary_err={primary_err}, last_insert_error={:?}, last_skipped_insertion={:?}, best_fallback_stats(canonical_present,inserted,skipped,hard_errors)={:?}, topology_guarantee={topology_guarantee:?}, construction_options={construction_options:?}",
-                                canonical_vertices.len(),
-                                last_insert_error,
-                                last_skipped_insertion,
-                                best_fallback_stats,
-                            ),
-                        }
-                        .into());
+                        return Err(DelaunayTriangulationConstructionError::Triangulation(
+                            DelaunayConstructionFailure::PeriodicImageExpandedConstructionFailure {
+                                primary_error: Box::new(primary_err),
+                                canonical_vertex_count: canonical_vertices.len(),
+                                expanded_vertex_count: expanded.len(),
+                                retry_attempts: total_attempts,
+                                best_canonical_vertex_count: best_fallback_stats.0,
+                                best_inserted_count: best_fallback_stats.1,
+                                best_skipped_count: best_fallback_stats.2,
+                                best_hard_error_count: best_fallback_stats.3,
+                            },
+                        ));
                     }
                 }
                 Err(err) => return Err(err),
@@ -2414,13 +1955,12 @@ where
             .map(|uuid| tds_ref.vertex_key_from_uuid(uuid))
             .collect::<Option<Vec<_>>>()
         else {
-            return Err(TriangulationConstructionError::GeometricDegeneracy {
-                message: format!(
-                    "Periodic expanded DT is missing at least one canonical vertex: canonical_vertices_len={}",
-                    canonical_uuids.len()
-                ),
-            }
-            .into());
+            return Err(
+                TriangulationConstructionError::PeriodicImageMissingCanonicalVertices {
+                    canonical_vertex_count: canonical_uuids.len(),
+                }
+                .into(),
+            );
         };
         let central_key_set: VertexKeySet = central_keys.into_iter().collect();
 
@@ -2527,10 +2067,13 @@ where
         let mut candidates: Vec<PeriodicCandidate<D>> =
             candidates_by_symbolic.into_values().collect();
         if candidates.is_empty() {
-            return Err(TriangulationConstructionError::GeometricDegeneracy {
-                message: "No quotient periodic simplices found in full image DT".to_owned(),
-            }
-            .into());
+            return Err(
+                TriangulationConstructionError::PeriodicQuotientNoCandidates {
+                    full_simplex_count: tds_ref.number_of_simplices(),
+                    canonical_vertex_count: central_key_set.len(),
+                }
+                .into(),
+            );
         }
         candidates.sort_by(|a, b| b.3.cmp(&a.3).then_with(|| a.0.cmp(&b.0)));
 
@@ -2809,43 +2352,47 @@ where
         }
 
         if best_selected.is_empty() {
-            return Err(TriangulationConstructionError::GeometricDegeneracy {
-                message: "Periodic quotient selection failed to pick any candidate simplices"
-                    .to_owned(),
-            }
-            .into());
+            return Err(
+                TriangulationConstructionError::PeriodicQuotientSelectionEmpty {
+                    candidate_count: candidates.len(),
+                    search_attempts,
+                }
+                .into(),
+            );
         }
         if D == 2 && best_boundary_count > 0 {
-            return Err(TriangulationConstructionError::GeometricDegeneracy {
-                message: format!(
-                    "Periodic quotient selection left {best_boundary_count} boundary facets after {search_attempts} attempts (full_vertices={}, full_simplices={}, canonical_vertices={}, candidates={}, selected_simplices={})",
-                    tds_ref.number_of_vertices(),
-                    tds_ref.number_of_simplices(),
-                    central_key_set.len(),
-                    candidates.len(),
-                    best_selected_count,
-                ),
-            }
-            .into());
+            return Err(
+                TriangulationConstructionError::PeriodicQuotientSelectionBoundaryFacets {
+                    boundary_facet_count: best_boundary_count,
+                    search_attempts,
+                    full_vertex_count: tds_ref.number_of_vertices(),
+                    full_simplex_count: tds_ref.number_of_simplices(),
+                    canonical_vertex_count: central_key_set.len(),
+                    candidate_count: candidates.len(),
+                    selected_simplex_count: best_selected_count,
+                }
+                .into(),
+            );
         }
         if D == 2 && best_abs_chi != 0 {
-            return Err(TriangulationConstructionError::GeometricDegeneracy {
-                message: format!(
-                    "Periodic quotient selection could not reach χ=0 in 2D (best |χ|={best_abs_chi}) after {search_attempts} attempts",
-                ),
-            }
-            .into());
+            return Err(
+                TriangulationConstructionError::PeriodicQuotientSelectionEulerCharacteristic {
+                    best_abs_chi,
+                    search_attempts,
+                }
+                .into(),
+            );
         }
         let has_full_canonical_coverage = best_coverage_count == central_key_set.len();
         if D > 2 && !has_full_canonical_coverage {
-            return Err(TriangulationConstructionError::GeometricDegeneracy {
-                message: format!(
-                    "Periodic quotient selection covered only {} of {} canonical vertices in {D}D",
-                    best_coverage_count,
-                    central_key_set.len(),
-                ),
-            }
-            .into());
+            return Err(
+                TriangulationConstructionError::PeriodicQuotientSelectionIncompleteCoverage {
+                    dimension: D,
+                    covered_vertex_count: best_coverage_count,
+                    canonical_vertex_count: central_key_set.len(),
+                }
+                .into(),
+            );
         }
         let mut representative_lifted_by_symbolic: FastHashMap<
             SymbolicSignature<D>,
@@ -2865,7 +2412,9 @@ where
 
         // Remove all simplices first.
         let all_simplices: Vec<SimplexKey> = tds_mut.simplex_keys().collect();
-        tds_mut.remove_simplices_by_keys(&all_simplices);
+        tds_mut
+            .remove_simplices_by_keys(&all_simplices)
+            .map_err(periodic_quotient_tds_mutation_error)?;
 
         // Remove all image vertices.
         let image_vertex_keys: Vec<VertexKey> = tds_mut
@@ -2873,11 +2422,9 @@ where
             .filter(|vk| !central_key_set.contains(vk))
             .collect();
         for &vk in &image_vertex_keys {
-            tds_mut.remove_vertex(vk).map_err(|e| {
-                TriangulationConstructionError::InternalInconsistency {
-                    message: format!("Failed to remove image vertex: {e}"),
-                }
-            })?;
+            tds_mut
+                .remove_vertex(vk)
+                .map_err(periodic_quotient_tds_mutation_error)?;
         }
 
         // Insert quotient simplices.
@@ -2897,30 +2444,21 @@ where
             let canonical_vertex_keys: Vec<VertexKey> =
                 lifted_vertices.iter().map(|(ck, _)| *ck).collect();
             let mut simplex = Simplex::try_new(canonical_vertex_keys).map_err(|e| {
-                TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!("Failed to create quotient periodic simplex: {e}"),
-                }
+                TriangulationConstructionError::PeriodicQuotientSimplexCreation { source: e }
             })?;
             let offsets: PeriodicOffsetBuffer<D> =
                 lifted_vertices.iter().map(|(_, offset)| *offset).collect();
             simplex.set_periodic_vertex_offsets(offsets).map_err(|e| {
-                TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!("Failed to set quotient periodic offsets: {e}"),
-                }
+                TriangulationConstructionError::PeriodicQuotientSimplexCreation { source: e }
             })?;
             let ck = tds_mut
                 .insert_simplex_with_mapping_trusted_vertices(simplex)
-                .map_err(|e| TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!("Failed to insert quotient periodic simplex: {e}"),
-                })?;
+                .map_err(TriangulationConstructionError::Tds)?;
             inserted_simplex_keys.push(ck);
             rep_lifted_by_key.insert(ck, lifted_vertices.clone());
         }
         if inserted_simplex_keys.is_empty() {
-            return Err(TriangulationConstructionError::GeometricDegeneracy {
-                message: "No simplices survived periodic quotient reconstruction".to_owned(),
-            }
-            .into());
+            return Err(TriangulationConstructionError::PeriodicQuotientEmptyReconstruction.into());
         }
 
         // Sanity-check periodic facet multiplicities before neighbor rewiring.
@@ -2938,15 +2476,13 @@ where
             .filter(|(_, count)| *count > 2)
             .collect();
         if !overloaded_facets.is_empty() {
-            return Err(TriangulationConstructionError::GeometricDegeneracy {
-                message: format!(
-                    "Periodic quotient selection overcounts periodic facets ({} overloaded); selected_simplices={}, sample={:?}",
-                    overloaded_facets.len(),
-                    rep_lifted_by_key.len(),
-                    overloaded_facets.iter().take(4).collect::<Vec<_>>(),
-                ),
-            }
-            .into());
+            return Err(
+                TriangulationConstructionError::PeriodicQuotientOverloadedFacets {
+                    overloaded_facet_count: overloaded_facets.len(),
+                    selected_simplex_count: rep_lifted_by_key.len(),
+                }
+                .into(),
+            );
         }
 
         // Rebuild neighbor pointers by pairing equal symbolic facet signatures in the quotient.
@@ -2976,38 +2512,31 @@ where
             match occurrences.as_slice() {
                 [(a_ck, a_idx), (b_ck, b_idx)] => {
                     neighbor_updates.get_mut(a_ck).ok_or_else(|| {
-                        TriangulationConstructionError::InternalInconsistency {
-                            message: format!(
-                                "missing neighbor vector for quotient simplex {a_ck:?}"
-                            ),
+                        TriangulationConstructionError::PeriodicQuotientMissingNeighborVector {
+                            simplex_key: *a_ck,
                         }
                     })?[*a_idx] = Some(*b_ck);
                     neighbor_updates.get_mut(b_ck).ok_or_else(|| {
-                        TriangulationConstructionError::InternalInconsistency {
-                            message: format!(
-                                "missing neighbor vector for quotient simplex {b_ck:?}"
-                            ),
+                        TriangulationConstructionError::PeriodicQuotientMissingNeighborVector {
+                            simplex_key: *b_ck,
                         }
                     })?[*b_idx] = Some(*a_ck);
                 }
                 [(a_ck, a_idx)] => {
                     // Self-identified periodic facet.
                     neighbor_updates.get_mut(a_ck).ok_or_else(|| {
-                        TriangulationConstructionError::InternalInconsistency {
-                            message: format!(
-                                "missing neighbor vector for quotient simplex {a_ck:?}"
-                            ),
+                        TriangulationConstructionError::PeriodicQuotientMissingNeighborVector {
+                            simplex_key: *a_ck,
                         }
                     })?[*a_idx] = Some(*a_ck);
                 }
                 _ => {
-                    return Err(TriangulationConstructionError::GeometricDegeneracy {
-                        message: format!(
-                            "Periodic quotient facet signature has {} occurrences (expected 1 or 2): {occurrences:?}",
-                            occurrences.len()
-                        ),
-                    }
-                    .into());
+                    return Err(
+                        TriangulationConstructionError::PeriodicQuotientFacetMultiplicity {
+                            occurrence_count: occurrences.len(),
+                        }
+                        .into(),
+                    );
                 }
             }
         }
@@ -3018,28 +2547,24 @@ where
             .filter(|n| n.is_none())
             .count();
         if unmatched_count > 0 {
-            return Err(TriangulationConstructionError::GeometricDegeneracy {
-                message: format!(
-                    "Periodic quotient reconstruction left {unmatched_count} unmatched neighbor slots"
-                ),
-            }
-            .into());
+            return Err(
+                TriangulationConstructionError::PeriodicQuotientUnmatchedNeighbors {
+                    unmatched_neighbor_slots: unmatched_count,
+                }
+                .into(),
+            );
         }
 
         // Apply neighbor updates.
         for &ck in &inserted_simplex_keys {
             let neighbors = neighbor_updates.remove(&ck).ok_or_else(|| {
-                TriangulationConstructionError::InternalInconsistency {
-                    message: format!(
-                        "missing neighbor vector for inserted quotient simplex {ck:?}"
-                    ),
+                TriangulationConstructionError::PeriodicQuotientMissingNeighborVector {
+                    simplex_key: ck,
                 }
             })?;
-            tds_mut.set_neighbors_by_key(ck, &neighbors).map_err(|e| {
-                TriangulationConstructionError::InternalInconsistency {
-                    message: format!("set_neighbors_by_key failed for {ck:?}: {e}"),
-                }
-            })?;
+            tds_mut
+                .set_neighbors_by_key(ck, &neighbors)
+                .map_err(periodic_quotient_tds_mutation_error)?;
         }
 
         // Canonicalize quotient-simplex orientation after symbolic neighbor reconstruction.
@@ -3056,14 +2581,13 @@ where
             );
         }
         // Rebuild incident-simplex pointers after topology surgery.
-        tds_mut.assign_incident_simplices().map_err(|e| {
-            TriangulationConstructionError::InternalInconsistency {
-                message: format!("assign_incident_simplices failed: {e}"),
-            }
-        })?;
+        tds_mut
+            .assign_incident_simplices()
+            .map_err(periodic_quotient_tds_mutation_error)?;
         if let Err(e) = tds_mut.is_valid() {
-            return Err(TriangulationConstructionError::GeometricDegeneracy {
-                message: format!("Periodic quotient TDS invalid before return: {e}"),
+            return Err(TriangulationConstructionError::FinalTopologyValidation {
+                context: FinalTopologyValidationContext::PeriodicQuotientTopology,
+                source: Box::new(InvariantError::Tds(e)),
             }
             .into());
         }
@@ -3071,8 +2595,9 @@ where
         let candidate =
             DelaunayTriangulationCandidate::assemble(tds_mut, kernel.clone(), topology_guarantee);
         let proof = candidate.validate_tds_structure().map_err(|e| {
-            TriangulationConstructionError::GeometricDegeneracy {
-                message: format!("Periodic quotient TDS invalid before return: {e}"),
+            TriangulationConstructionError::FinalTopologyValidation {
+                context: FinalTopologyValidationContext::PeriodicQuotientTopology,
+                source: Box::new(InvariantError::Tds(e)),
             }
         })?;
         Ok(candidate.into_structurally_valid_delaunay(proof))
@@ -3087,28 +2612,13 @@ where
 mod tests {
     use super::*;
     use crate::construction::{DelaunayConstructionFailure, InsertionOrderStrategy};
-    use crate::core::algorithms::flips::{
-        DelaunayRepairError, DelaunayRepairHeuristicRebuildFailure,
-        DelaunayRepairPostconditionFailure,
-    };
     use crate::core::algorithms::incremental_insertion::{
-        CavityFillingError, DelaunayRepairFailureContext, HullExtensionReason, NeighborWiringError,
-        SpatialIndexConstructionFailure,
+        TdsConstructionFailure, TdsValidationFailure,
     };
-    use crate::core::algorithms::locate::{ConflictError, LocateError};
-    use crate::core::facet::FacetError;
+    use crate::core::construction::PeriodicQuotientFacetKeyDerivationFailure;
     use crate::core::simplex::SimplexValidationError;
-    use crate::core::tds::{
-        DelaunayValidationErrorKind, EntityKind, GeometricError, NeighborValidationError,
-        SimplexKey, TdsConstructionError,
-    };
-    use crate::core::util::DelaunayValidationError;
-    use crate::core::util::uuid::UuidValidationError;
-    use crate::core::validation::TriangulationValidationError;
-    use crate::core::vertex::VertexValidationError;
+    use crate::core::tds::TdsConstructionError;
     use crate::geometry::kernel::RobustKernel;
-    use crate::geometry::traits::coordinate::{CoordinateConversionValue, CoordinateValues};
-    use crate::repair::DelaunayRepairOperation;
     use crate::topology::traits::GlobalTopologyModelError;
     use crate::topology::traits::global_topology_model::{
         EuclideanModel, GlobalTopologyModel, ToroidalModel,
@@ -3116,9 +2626,8 @@ mod tests {
     use crate::topology::traits::topological_space::{
         GlobalTopology, TopologyKind, ToroidalConstructionMode, ToroidalDomainError,
     };
-    use crate::validation::DelaunayVerificationError;
     use approx::assert_relative_eq;
-    use slotmap::{Key, KeyData};
+    use slotmap::Key;
     use std::assert_matches;
 
     fn toroidal_model<const D: usize>(
@@ -3138,20 +2647,6 @@ mod tests {
             ToroidalDomainError::InvalidPeriod { axis, period }
                 if axis == expected_axis && period.to_bits() == expected_period.to_bits()
         );
-    }
-
-    fn synthetic_delaunay_verification_error(
-        message: &str,
-    ) -> DelaunayTriangulationValidationError {
-        let _ = message;
-        DelaunayTriangulationValidationError::VerificationFailed {
-            source: DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
-                reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
-                    simplex_count: 1,
-                }),
-            })
-            .into(),
-        }
     }
 
     #[derive(Clone, Copy, Debug)]
@@ -3195,297 +2690,6 @@ mod tests {
     }
 
     #[test]
-    fn explicit_error_summaries_preserve_nested_source_kinds() {
-        let tds = ExplicitTdsError::from(TdsError::DuplicateSimplices {
-            message: "same vertex set appears twice".to_string(),
-        });
-        assert_eq!(tds.kind, ExplicitTdsErrorKind::DuplicateSimplices);
-        assert!(tds.message.contains("Duplicate simplices"));
-
-        let insertion = ExplicitInsertionError::from(InsertionError::TopologyValidation(
-            TdsError::InconsistentDataStructure {
-                message: "dangling neighbor".to_string(),
-            },
-        ));
-        assert_eq!(
-            insertion.source_kind,
-            Some(InsertionErrorSourceKind::Tds(
-                TdsErrorKind::InconsistentDataStructure,
-            ))
-        );
-
-        let invariant = ExplicitInvariantError::from(InvariantError::Triangulation(
-            TriangulationValidationError::Disconnected { simplex_count: 2 },
-        ));
-        assert_eq!(invariant.kind, ExplicitInvariantErrorKind::Triangulation);
-        assert_eq!(
-            invariant.detail,
-            InvariantErrorSummaryDetail::Triangulation(
-                TriangulationValidationErrorKind::Disconnected,
-            )
-        );
-
-        let delaunay = ExplicitDelaunayValidationError::from(
-            DelaunayTriangulationValidationError::RepairOperationFailed {
-                operation: DelaunayRepairOperation::VertexRemoval,
-                source: Box::new(DelaunayRepairError::HeuristicRebuildFailed {
-                    reason: Box::new(
-                        DelaunayRepairHeuristicRebuildFailure::RecursionDepthExceeded {
-                            max_depth: 1,
-                        },
-                    ),
-                }),
-            },
-        );
-        assert_eq!(
-            delaunay.source_kind,
-            Some(ExplicitDelaunayValidationSourceKind::Repair(
-                DelaunayRepairErrorKind::HeuristicRebuildFailed,
-            ))
-        );
-
-        let delaunay_verification = ExplicitDelaunayValidationError::from(
-            synthetic_delaunay_verification_error("non-Delaunay facet"),
-        );
-        assert_eq!(
-            delaunay_verification.source_kind,
-            Some(ExplicitDelaunayValidationSourceKind::Verification(
-                DelaunayVerificationErrorKind::FlipPredicates,
-            ))
-        );
-        let delaunay_empty_circumsphere = ExplicitDelaunayValidationError::from(
-            DelaunayTriangulationValidationError::VerificationFailed {
-                source: DelaunayVerificationError::from(
-                    DelaunayValidationError::DelaunayViolation {
-                        simplex_key: SimplexKey::default(),
-                    },
-                )
-                .into(),
-            },
-        );
-        assert_eq!(
-            delaunay_empty_circumsphere.source_kind,
-            Some(ExplicitDelaunayValidationSourceKind::Verification(
-                DelaunayVerificationErrorKind::EmptyCircumsphere,
-            ))
-        );
-
-        let delaunay_tds = ExplicitDelaunayValidationError::from(
-            DelaunayTriangulationValidationError::from(TdsError::InconsistentDataStructure {
-                message: "dangling simplex".to_string(),
-            }),
-        );
-        assert_eq!(delaunay_tds.kind, ExplicitDelaunayValidationErrorKind::Tds);
-        assert_eq!(
-            delaunay_tds.source_kind,
-            Some(ExplicitDelaunayValidationSourceKind::Tds(
-                TdsErrorKind::InconsistentDataStructure,
-            ))
-        );
-
-        let delaunay_topology =
-            ExplicitDelaunayValidationError::from(DelaunayTriangulationValidationError::from(
-                TriangulationValidationError::Disconnected { simplex_count: 2 },
-            ));
-        assert_eq!(
-            delaunay_topology.kind,
-            ExplicitDelaunayValidationErrorKind::Triangulation,
-        );
-        assert_eq!(
-            delaunay_topology.source_kind,
-            Some(ExplicitDelaunayValidationSourceKind::Triangulation(
-                TriangulationValidationErrorKind::Disconnected,
-            ))
-        );
-    }
-
-    fn assert_explicit_tds_error_kind(source: TdsError, expected_kind: ExplicitTdsErrorKind) {
-        let summary = ExplicitTdsError::from(source);
-        assert_eq!(summary.kind, expected_kind);
-        assert!(!summary.message.is_empty());
-    }
-
-    #[test]
-    fn explicit_tds_error_preserves_validation_error_kinds() {
-        let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
-        let other_simplex_key = SimplexKey::from(KeyData::from_ffi(2));
-        let vertex_key = VertexKey::from(KeyData::from_ffi(3));
-        let uuid = Uuid::new_v4();
-
-        assert_explicit_tds_error_kind(
-            TdsError::InvalidVertex {
-                vertex_id: uuid,
-                source: VertexValidationError::InvalidUuid {
-                    source: UuidValidationError::NilUuid,
-                },
-            },
-            ExplicitTdsErrorKind::InvalidVertex,
-        );
-        assert_explicit_tds_error_kind(
-            TdsError::InvalidSimplex {
-                simplex_id: uuid,
-                source: SimplexValidationError::DuplicateVertices,
-            },
-            ExplicitTdsErrorKind::InvalidSimplex,
-        );
-        assert_explicit_tds_error_kind(
-            TdsError::InvalidNeighbors {
-                reason: NeighborValidationError::NonPeriodicSelfNeighbor {
-                    simplex_key,
-                    simplex_uuid: uuid,
-                    facet_index: 0,
-                },
-            },
-            ExplicitTdsErrorKind::InvalidNeighbors,
-        );
-        assert_explicit_tds_error_kind(
-            TdsError::OrientationViolation {
-                simplex1_key: simplex_key,
-                simplex1_uuid: uuid,
-                simplex2_key: other_simplex_key,
-                simplex2_uuid: Uuid::new_v4(),
-                simplex1_facet_index: 0,
-                simplex2_facet_index: 1,
-                facet_vertices: vec![vertex_key],
-                simplex2_facet_vertices: vec![vertex_key],
-                observed_odd_permutation: false,
-                expected_odd_permutation: true,
-            },
-            ExplicitTdsErrorKind::OrientationViolation,
-        );
-        assert_explicit_tds_error_kind(
-            TdsError::Geometric(GeometricError::DegenerateOrientation {
-                message: "zero determinant".to_string(),
-            }),
-            ExplicitTdsErrorKind::Geometric,
-        );
-        assert_explicit_tds_error_kind(
-            TdsError::FacetError(FacetError::InvalidFacetIndex {
-                index: 4,
-                facet_count: 4,
-            }),
-            ExplicitTdsErrorKind::FacetError,
-        );
-        assert_explicit_tds_error_kind(
-            TdsError::DuplicateCoordinatesInSimplex {
-                simplex_id: uuid,
-                message: "two vertices share coordinates".to_string(),
-            },
-            ExplicitTdsErrorKind::DuplicateCoordinatesInSimplex,
-        );
-    }
-
-    #[test]
-    fn explicit_tds_error_preserves_lookup_and_operation_error_kinds() {
-        let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
-        let vertex_key = VertexKey::from(KeyData::from_ffi(3));
-        let uuid = Uuid::new_v4();
-
-        assert_explicit_tds_error_kind(
-            TdsError::DuplicateSimplices {
-                message: "duplicate simplex vertex set".to_string(),
-            },
-            ExplicitTdsErrorKind::DuplicateSimplices,
-        );
-        assert_explicit_tds_error_kind(
-            TdsError::FacetSharingViolation {
-                facet_key: 42,
-                existing_incident_count: 2,
-                attempted_incident_count: 3,
-                max_incident_count: 2,
-                candidate_simplex_uuid: uuid,
-                candidate_facet_index: 1,
-            },
-            ExplicitTdsErrorKind::FacetSharingViolation,
-        );
-        assert_explicit_tds_error_kind(
-            TdsError::FailedToCreateSimplex {
-                message: "simplex validation failed".to_string(),
-            },
-            ExplicitTdsErrorKind::FailedToCreateSimplex,
-        );
-        assert_explicit_tds_error_kind(
-            TdsError::NotNeighbors {
-                simplex1: uuid,
-                simplex2: Uuid::new_v4(),
-            },
-            ExplicitTdsErrorKind::NotNeighbors,
-        );
-        assert_explicit_tds_error_kind(
-            TdsError::MappingInconsistency {
-                entity: EntityKind::Simplex,
-                message: "uuid mapping was stale".to_string(),
-            },
-            ExplicitTdsErrorKind::MappingInconsistency,
-        );
-        assert_explicit_tds_error_kind(
-            TdsError::VertexKeyRetrievalFailed {
-                simplex_id: uuid,
-                message: "simplex vertices unavailable".to_string(),
-            },
-            ExplicitTdsErrorKind::VertexKeyRetrievalFailed,
-        );
-        assert_explicit_tds_error_kind(
-            TdsError::SimplexNotFound {
-                simplex_key,
-                context: "simplex lookup".to_string(),
-            },
-            ExplicitTdsErrorKind::SimplexNotFound,
-        );
-        assert_explicit_tds_error_kind(
-            TdsError::VertexNotFound {
-                vertex_key,
-                context: "vertex lookup".to_string(),
-            },
-            ExplicitTdsErrorKind::VertexNotFound,
-        );
-        assert_explicit_tds_error_kind(
-            TdsError::DimensionMismatch {
-                expected: 4,
-                actual: 3,
-                context: "simplex arity".to_string(),
-            },
-            ExplicitTdsErrorKind::DimensionMismatch,
-        );
-        assert_explicit_tds_error_kind(
-            TdsError::IndexOutOfBounds {
-                index: 4,
-                bound: 4,
-                context: "facet index".to_string(),
-            },
-            ExplicitTdsErrorKind::IndexOutOfBounds,
-        );
-        assert_explicit_tds_error_kind(
-            TdsError::InconsistentDataStructure {
-                message: "dangling neighbor".to_string(),
-            },
-            ExplicitTdsErrorKind::InconsistentDataStructure,
-        );
-    }
-
-    #[test]
-    fn explicit_tds_error_preserves_construction_and_mutation_wrappers() {
-        let uuid = Uuid::new_v4();
-        let duplicate = ExplicitTdsError::from(TdsConstructionError::DuplicateUuid {
-            entity: EntityKind::Simplex,
-            uuid,
-        });
-        assert_eq!(duplicate.kind, ExplicitTdsErrorKind::DuplicateUuid);
-        assert!(duplicate.message.contains(&uuid.to_string()));
-
-        let mutation = ExplicitTdsError::from(TdsMutationError::from(
-            TdsError::InconsistentDataStructure {
-                message: "incident simplex assignment failed".to_string(),
-            },
-        ));
-        assert_eq!(
-            mutation.kind,
-            ExplicitTdsErrorKind::InconsistentDataStructure
-        );
-        assert!(mutation.message.contains("incident simplex assignment"));
-    }
-
-    #[test]
     fn explicit_simplex_creation_error_preserves_typed_source() {
         let err = ExplicitConstructionError::SimplexCreation {
             simplex_index: 7,
@@ -3504,140 +2708,6 @@ mod tests {
         assert_eq!(*source, SimplexValidationError::DuplicateVertices);
         assert!(err.to_string().contains("Simplex 7"));
         assert!(err.to_string().contains("Duplicate vertices"));
-    }
-
-    fn assert_explicit_insertion_error(
-        source: InsertionError,
-        expected_kind: ExplicitInsertionErrorKind,
-        expected_source_kind: Option<InsertionErrorSourceKind>,
-    ) {
-        let summary = ExplicitInsertionError::from(source);
-        assert_eq!(summary.kind, expected_kind);
-        assert_eq!(summary.source_kind, expected_source_kind);
-        assert!(!summary.message.is_empty());
-    }
-
-    #[test]
-    fn explicit_insertion_error_preserves_stage_kinds_without_nested_sources() {
-        let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
-        let uuid = Uuid::new_v4();
-
-        assert_explicit_insertion_error(
-            InsertionError::ConflictRegion(ConflictError::InvalidStartSimplex { simplex_key }),
-            ExplicitInsertionErrorKind::ConflictRegion,
-            None,
-        );
-        assert_explicit_insertion_error(
-            InsertionError::Location(LocateError::EmptyTriangulation),
-            ExplicitInsertionErrorKind::Location,
-            None,
-        );
-        assert_explicit_insertion_error(
-            InsertionError::CavityFilling {
-                reason: CavityFillingError::MissingBoundarySimplex { simplex_key },
-            },
-            ExplicitInsertionErrorKind::CavityFilling,
-            None,
-        );
-        assert_explicit_insertion_error(
-            InsertionError::NeighborWiring {
-                reason: NeighborWiringError::MissingSimplex { simplex_key },
-            },
-            ExplicitInsertionErrorKind::NeighborWiring,
-            None,
-        );
-        assert_explicit_insertion_error(
-            InsertionError::NonManifoldTopology {
-                facet_hash: 0xabc,
-                simplex_count: 3,
-            },
-            ExplicitInsertionErrorKind::NonManifoldTopology,
-            None,
-        );
-        assert_explicit_insertion_error(
-            InsertionError::HullExtension {
-                reason: HullExtensionReason::NoVisibleFacets,
-            },
-            ExplicitInsertionErrorKind::HullExtension,
-            None,
-        );
-        assert_explicit_insertion_error(
-            InsertionError::DuplicateCoordinates {
-                coordinates: CoordinateValues::from([0.0, 0.0]),
-            },
-            ExplicitInsertionErrorKind::DuplicateCoordinates,
-            None,
-        );
-        assert_explicit_insertion_error(
-            InsertionError::DuplicateUuid {
-                entity: EntityKind::Vertex,
-                uuid,
-            },
-            ExplicitInsertionErrorKind::DuplicateUuid,
-            None,
-        );
-        assert_explicit_insertion_error(
-            InsertionError::SpatialIndexConstruction {
-                reason: SpatialIndexConstructionFailure::NonPositiveCellSize {
-                    value: CoordinateConversionValue::from_f64(0.0),
-                },
-            },
-            ExplicitInsertionErrorKind::SpatialIndexConstruction,
-            None,
-        );
-    }
-
-    #[test]
-    fn explicit_insertion_error_preserves_nested_validation_source_kinds() {
-        assert_explicit_insertion_error(
-            InsertionError::DelaunayValidationFailed {
-                source: synthetic_delaunay_verification_error("non-Delaunay facet"),
-            },
-            ExplicitInsertionErrorKind::DelaunayValidationFailed,
-            Some(InsertionErrorSourceKind::Delaunay(
-                DelaunayValidationErrorKind::VerificationFailed,
-            )),
-        );
-        assert_explicit_insertion_error(
-            InsertionError::DelaunayRepairFailed {
-                source: Box::new(DelaunayRepairError::PostconditionFailed {
-                    reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
-                        simplex_count: 1,
-                    }),
-                }),
-                context: DelaunayRepairFailureContext::LocalRepair,
-            },
-            ExplicitInsertionErrorKind::DelaunayRepairFailed,
-            Some(InsertionErrorSourceKind::DelaunayRepair(
-                DelaunayRepairErrorKind::PostconditionFailed,
-            )),
-        );
-        assert_explicit_insertion_error(
-            InsertionError::TopologyValidation(TdsError::Geometric(
-                GeometricError::DegenerateOrientation {
-                    message: "zero determinant".to_string(),
-                },
-            )),
-            ExplicitInsertionErrorKind::TopologyValidation,
-            Some(InsertionErrorSourceKind::Tds(TdsErrorKind::Geometric)),
-        );
-        assert_explicit_insertion_error(
-            InsertionError::TopologyValidationFailed {
-                source: TriangulationValidationError::RidgeLinkNotManifold {
-                    ridge_key: 0xdef,
-                    link_vertex_count: 4,
-                    link_edge_count: 2,
-                    max_degree: 3,
-                    degree_one_vertices: 1,
-                    connected: false,
-                },
-                context: crate::InsertionTopologyValidationContext::PostInsertion,
-            },
-            ExplicitInsertionErrorKind::TopologyValidationFailed,
-            Some(InsertionErrorSourceKind::Triangulation(
-                TriangulationValidationErrorKind::RidgeLinkNotManifold,
-            )),
-        );
     }
 
     #[derive(Clone, Copy, Debug)]
@@ -4044,7 +3114,7 @@ mod tests {
     }
 
     #[test]
-    fn test_derive_periodic_facet_key_maps_errors_to_geometric_degeneracy() {
+    fn test_derive_periodic_facet_key_maps_errors_to_typed_quotient_variant() {
         let lifted_ordered = vec![
             (VertexKey::null(), [-128_i8, 0_i8]),
             (VertexKey::null(), [0_i8, 0_i8]),
@@ -4054,19 +3124,46 @@ mod tests {
             DelaunayTriangulationBuilder::<(), 2>::derive_periodic_facet_key(&lifted_ordered, 1)
                 .unwrap_err();
         let DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::GeometricDegeneracy { message },
+            DelaunayConstructionFailure::PeriodicQuotientFacetKeyDerivation {
+                facet_index,
+                reason,
+            },
         ) = err
         else {
-            panic!("expected GeometricDegeneracy mapping, got: {err:?}");
+            panic!("expected PeriodicQuotientFacetKeyDerivation mapping, got: {err:?}");
         };
 
-        assert!(
-            message.contains("Failed to derive periodic candidate facet signature for index 1"),
-            "unexpected message prefix: {message}"
+        assert_eq!(facet_index, 1);
+        assert_matches!(
+            reason,
+            PeriodicQuotientFacetKeyDerivationFailure::RelativeOffsetOutOfRange {
+                axis: 0,
+                component: 383,
+            }
         );
-        assert!(
-            message.contains("out of encodable range"),
-            "expected wrapped derivation detail in message: {message}"
+    }
+
+    #[test]
+    fn test_periodic_quotient_tds_mutation_error_preserves_typed_tds_source() {
+        let source = TdsError::InconsistentDataStructure {
+            message: "incidence rollback failed".to_owned(),
+        };
+        let err = periodic_quotient_tds_mutation_error(TdsMutationError::from(source.clone()));
+
+        assert_matches!(
+            &err,
+            TriangulationConstructionError::Tds(TdsConstructionError::ValidationError(tds_source))
+                if tds_source == &source
+        );
+
+        let public_failure = DelaunayConstructionFailure::from(err);
+        assert_matches!(
+            public_failure,
+            DelaunayConstructionFailure::Tds {
+                reason: TdsConstructionFailure::Validation {
+                    reason: TdsValidationFailure::InconsistentDataStructure { message },
+                },
+            } if message == "incidence rollback failed"
         );
     }
 
@@ -4195,9 +3292,14 @@ mod tests {
             ConstructionOptions::default(),
         );
         let err = result.expect_err("missing periodic domain must fail");
-        assert!(err.to_string().contains(
-            "does not expose a periodic domain required for periodic image-point construction"
-        ));
+        assert_matches!(
+            err,
+            DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::PeriodicImageMissingDomain {
+                    topology: TopologyKind::Toroidal,
+                }
+            )
+        );
     }
 
     #[test]

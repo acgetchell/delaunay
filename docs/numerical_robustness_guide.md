@@ -332,7 +332,7 @@ If violated, the error is
 `TdsError::DuplicateCoordinatesInSimplex { simplex_id, message }`.
 
 See `validate_simplex_coordinate_uniqueness` in
-[`src/core/tds.rs`](../src/core/tds.rs).
+[`src/core/tds/storage.rs`](../src/core/tds/storage.rs).
 
 ### User-facing dedup utilities
 

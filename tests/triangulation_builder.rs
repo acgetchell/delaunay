@@ -5,22 +5,21 @@
 
 #![forbid(unsafe_code)]
 
+use std::assert_matches;
 use std::collections::HashMap;
 use std::f64::consts::TAU;
 
 use delaunay::prelude::construction::{
     ConstructionOptions, DelaunayConstructionFailure, DelaunayTriangulation,
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
-    ExplicitConstructionError, ExplicitInsertionError, ExplicitInsertionErrorKind,
-    ExplicitInvariantError, ExplicitInvariantErrorKind, ExplicitTdsErrorKind,
-    InsertionOrderStrategy, TopologyGuarantee, Vertex,
+    ExplicitConstructionError, InsertionOrderStrategy, TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::geometry::RobustKernel;
-use delaunay::prelude::insertion::InsertionErrorSourceKind;
-use delaunay::prelude::tds::{InvariantErrorSummaryDetail, TriangulationValidationErrorKind};
+use delaunay::prelude::insertion::InsertionError;
+use delaunay::prelude::tds::{InvariantError, TdsConstructionError, TdsError, VertexKey};
 use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
 use delaunay::prelude::topology::validation::{count_simplices, euler_characteristic};
-use delaunay::prelude::validation::ValidationPolicy;
+use delaunay::prelude::validation::{TriangulationValidationError, ValidationPolicy};
 
 // =============================================================================
 // Euclidean path
@@ -609,26 +608,22 @@ fn test_explicit_toroidal_torus_euler_mismatch_without_override() {
         DelaunayTriangulationConstructionError::ExplicitConstruction(
             ExplicitConstructionError::TopologyValidation { source },
         ) => {
-            assert_eq!(source.kind, ExplicitInvariantErrorKind::Triangulation);
-            assert_eq!(
-                source.detail,
-                InvariantErrorSummaryDetail::Triangulation(
-                    TriangulationValidationErrorKind::EulerCharacteristicMismatch,
-                ),
+            assert_matches!(
+                source.as_ref(),
+                InvariantError::Triangulation(
+                    TriangulationValidationError::EulerCharacteristicMismatch { .. }
+                )
             );
         }
         DelaunayTriangulationConstructionError::ExplicitConstruction(
             ExplicitConstructionError::OrientationNormalization { source },
         ) => {
-            assert_eq!(
-                source.kind,
-                ExplicitInsertionErrorKind::TopologyValidationFailed
-            );
-            assert_eq!(
-                source.source_kind,
-                Some(InsertionErrorSourceKind::Triangulation(
-                    TriangulationValidationErrorKind::OrientationPromotionNonConvergence,
-                )),
+            assert_matches!(
+                source.as_ref(),
+                InsertionError::TopologyValidationFailed {
+                    source: TriangulationValidationError::OrientationPromotionNonConvergence { .. },
+                    ..
+                }
             );
         }
         other => {
@@ -1173,9 +1168,14 @@ fn test_explicit_error_variant_non_manifold_facet() {
         panic!("Expected explicit TDS assembly failure, got: {err}");
     };
 
-    assert_eq!(source.kind, ExplicitTdsErrorKind::FacetSharingViolation);
-    assert!(source.message.contains("observed 3 incident simplices"));
-    assert!(source.message.contains("max 2"));
+    assert_matches!(
+        source.as_ref(),
+        TdsConstructionError::ValidationError(TdsError::FacetSharingViolation {
+            attempted_incident_count: 3,
+            max_incident_count: 2,
+            ..
+        })
+    );
 }
 
 /// Error variant: duplicate vertex returns ExplicitConstruction(DuplicateVertexInSimplex { .. }).
@@ -1278,7 +1278,10 @@ fn test_explicit_error_variant_duplicate_simplices_structural_validation() {
         panic!("expected explicit TDS assembly failure, got {err:?}");
     };
 
-    assert_eq!(source.kind, ExplicitTdsErrorKind::DuplicateSimplices);
+    assert_matches!(
+        source.as_ref(),
+        TdsConstructionError::ValidationError(TdsError::DuplicateSimplices { .. })
+    );
 }
 
 /// Error variant: degenerate explicit simplices fail geometric nondegeneracy validation.
@@ -1299,7 +1302,7 @@ fn test_explicit_error_variant_geometric_nondegeneracy() {
     match err {
         DelaunayTriangulationConstructionError::ExplicitConstruction(
             ExplicitConstructionError::GeometricNondegeneracy { source },
-        ) => assert_eq!(source.kind, ExplicitTdsErrorKind::Geometric),
+        ) => assert_matches!(source.as_ref(), TdsError::Geometric(_)),
         other => panic!("expected explicit geometric nondegeneracy failure, got {other:?}"),
     }
 }
@@ -1308,23 +1311,26 @@ fn test_explicit_error_variant_geometric_nondegeneracy() {
 #[test]
 fn test_explicit_error_variant_completion_validation_summary() {
     let err = ExplicitConstructionError::CompletionValidation {
-        source: ExplicitInvariantError {
-            kind: ExplicitInvariantErrorKind::Triangulation,
-            detail: InvariantErrorSummaryDetail::Triangulation(
-                TriangulationValidationErrorKind::VertexLinkNotManifold,
-            ),
-            message: "vertex link is disconnected".to_string(),
-        },
+        source: Box::new(InvariantError::Triangulation(
+            TriangulationValidationError::VertexLinkNotManifold {
+                vertex_key: VertexKey::default(),
+                link_vertex_count: 0,
+                link_simplex_count: 0,
+                boundary_facet_count: 0,
+                max_degree: 0,
+                connected: false,
+                interior_vertex: false,
+            },
+        )),
     };
 
     match err {
         ExplicitConstructionError::CompletionValidation { source } => {
-            assert_eq!(source.kind, ExplicitInvariantErrorKind::Triangulation);
-            assert_eq!(
-                source.detail,
-                InvariantErrorSummaryDetail::Triangulation(
-                    TriangulationValidationErrorKind::VertexLinkNotManifold,
-                ),
+            assert_matches!(
+                source.as_ref(),
+                InvariantError::Triangulation(
+                    TriangulationValidationError::VertexLinkNotManifold { .. }
+                )
             );
         }
         other => panic!("expected explicit completion validation failure, got {other:?}"),
@@ -1335,16 +1341,20 @@ fn test_explicit_error_variant_completion_validation_summary() {
 #[test]
 fn test_explicit_error_variant_orientation_normalization_summary() {
     let source = ExplicitConstructionError::OrientationNormalization {
-        source: ExplicitInsertionError {
-            kind: ExplicitInsertionErrorKind::TopologyValidation,
-            source_kind: None,
-            message: "orientation normalization could not establish coherent simplices".to_string(),
-        },
+        source: Box::new(InsertionError::TopologyValidation(
+            TdsError::InconsistentDataStructure {
+                message: "orientation normalization could not establish coherent simplices"
+                    .to_string(),
+            },
+        )),
     };
 
     match source {
         ExplicitConstructionError::OrientationNormalization { source } => {
-            assert_eq!(source.kind, ExplicitInsertionErrorKind::TopologyValidation);
+            assert_matches!(
+                source.as_ref(),
+                InsertionError::TopologyValidation(TdsError::InconsistentDataStructure { .. })
+            );
             assert!(source.to_string().contains("coherent simplices"));
         }
         other => panic!("expected orientation-normalization variant, got {other:?}"),

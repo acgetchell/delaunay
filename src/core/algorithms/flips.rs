@@ -42,7 +42,9 @@ use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, FacetError, FacetHandle, facet_key_from_vertices};
 use crate::core::operations::TopologicalOperation;
 use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
-use crate::core::tds::{EntityKind, NeighborValidationError, SimplexKey, Tds, VertexKey};
+use crate::core::tds::{
+    EntityKind, NeighborValidationError, SimplexKey, Tds, TdsMutationError, VertexKey,
+};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::util::stable_hash_u64_slice;
@@ -572,7 +574,9 @@ where
     )
     .map_err(FlipNeighborWiringError::from)?;
 
-    trial.remove_simplices_by_keys(removed_simplices);
+    trial
+        .remove_simplices_by_keys(removed_simplices)
+        .map_err(|source| FlipError::from(FlipMutationError::SimplexRemoval { source }))?;
 
     let validation_result = match validation_scope {
         FlipValidationScope::FullTds => trial.is_valid().map_err(TdsValidationFailure::from),
@@ -1142,9 +1146,8 @@ where
     V: DataType,
 {
     let first = *simplex_vertices.first()?;
-    let candidates = tds.find_simplices_containing_vertex_by_key(first);
 
-    for simplex_key in candidates {
+    for simplex_key in tds.simplex_keys_containing_vertex(first) {
         if removed_simplices.contains(&simplex_key) {
             continue;
         }
@@ -3415,6 +3418,13 @@ pub enum FlipMutationError {
         #[source]
         source: TdsConstructionFailure,
     },
+    /// Removed-simplex deletion failed.
+    #[error("simplex removal failed: {source}")]
+    SimplexRemoval {
+        /// Underlying TDS mutation error.
+        #[source]
+        source: TdsMutationError,
+    },
     /// Trial TDS validation failed before committing a flip.
     #[error(
         "trial TDS validation failed after bistellar flip (k={k_move}, direction={direction:?}): {source}"
@@ -5192,7 +5202,7 @@ where
     }
 
     let mut removed_simplices: SimplexKeyBuffer = SimplexKeyBuffer::new();
-    for simplex_key in tds.find_simplices_containing_vertex(v0) {
+    for simplex_key in tds.simplex_keys_containing_vertex(v0) {
         let simplex = tds
             .simplex(simplex_key)
             .ok_or(FlipError::MissingSimplex { simplex_key })?;
@@ -5315,7 +5325,8 @@ where
         return Err(FlipError::MissingVertex { vertex_key });
     }
 
-    let removed_simplices = tds.find_simplices_containing_vertex_by_key(vertex_key);
+    let removed_simplices: SimplexKeyBuffer =
+        tds.simplex_keys_containing_vertex(vertex_key).collect();
     let expected = D + 1;
     if removed_simplices.len() != expected {
         return Err(FlipError::InvalidVertexMultiplicity {
@@ -5878,7 +5889,7 @@ where
     }
 
     let mut removed_simplices: SimplexKeyBuffer = SimplexKeyBuffer::new();
-    for simplex_key in tds.find_simplices_containing_vertex(a) {
+    for simplex_key in tds.simplex_keys_containing_vertex(a) {
         let simplex = tds
             .simplex(simplex_key)
             .ok_or(FlipError::MissingSimplex { simplex_key })?;
@@ -11327,7 +11338,11 @@ mod tests {
                     let external_simplex_key = tds
                         .insert_simplex_with_mapping(Simplex::try_new_with_data(simplex_vertices.clone(), None).unwrap())
                         .unwrap();
-                    assert_eq!(tds.remove_simplices_by_keys(&[external_simplex_key]), 1);
+                    assert_eq!(
+                        tds.remove_simplices_by_keys(&[external_simplex_key])
+                            .unwrap(),
+                        1
+                    );
 
                     let mut replacement_simplices = vec![vertex_key_buffer(&simplex_vertices)];
                     let mut replacement_offsets: Vec<Option<PeriodicOffsetBuffer<$dim>>> =
@@ -13396,7 +13411,10 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(tds.remove_simplices_by_keys(&[dangling_neighbor]), 1);
+        assert_eq!(
+            tds.remove_simplices_by_keys(&[dangling_neighbor]).unwrap(),
+            1
+        );
         tds.simplex_mut(simplex)
             .expect("test simplex should exist")
             .set_neighbors_from_keys([Some(dangling_neighbor), None, None, None])

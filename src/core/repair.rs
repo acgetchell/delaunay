@@ -283,7 +283,10 @@ where
             return Ok(0); // Vertex not found, nothing to remove
         }
 
-        let simplices_to_remove = self.tds.find_simplices_containing_vertex(vertex_key);
+        let simplices_to_remove: SimplexKeyBuffer = self
+            .tds
+            .simplex_keys_containing_vertex(vertex_key)
+            .collect();
 
         if simplices_to_remove.is_empty() {
             // Vertex exists but has no incident simplices; remove it only if the
@@ -361,7 +364,10 @@ where
             // Remove the simplices containing the vertex (now that new simplices are wired up)
             // Note: remove_simplices_by_keys() automatically clears neighbor pointers in surviving
             // simplices that reference removed simplices (sets them to None/boundary)
-            let mut simplices_removed = self.tds.remove_simplices_by_keys(simplices_to_remove);
+            let mut simplices_removed = self
+                .tds
+                .remove_simplices_by_keys(simplices_to_remove)
+                .map_err(|e| InvariantError::Tds(e.into_inner()))?;
             let max_repair_simplices_removed = simplices_to_remove.len();
             let mut post_repair_frontier = SimplexKeyBuffer::new();
 
@@ -1075,7 +1081,10 @@ where
             });
         }
         let frontier_simplices = self.collect_local_repair_frontier(issues, &to_remove);
-        let removed_count = self.tds.remove_simplices_by_keys(&to_remove);
+        let removed_count = self
+            .tds
+            .remove_simplices_by_keys(&to_remove)
+            .map_err(|e| InsertionError::TopologyValidation(e.into_inner()))?;
 
         Ok(LocalFacetRepairOutcome {
             removed_count,

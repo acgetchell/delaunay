@@ -274,26 +274,31 @@ where
         }
 
         // Snapshot simplices before removal (sorted by UUID for determinism).
-        let mut keys: Vec<SimplexKey> = removal_candidates.into_iter().collect();
-        keys.sort_by(|a, b| {
-            let uuid_a = tds.simplex(*a).map(Simplex::uuid);
-            let uuid_b = tds.simplex(*b).map(Simplex::uuid);
-            uuid_a.cmp(&uuid_b)
-        });
-        for &ck in &keys {
+        // Precompute UUID keys once so sorting does not repeatedly probe TDS storage.
+        let mut removals: Vec<(Option<Uuid>, SimplexKey)> = removal_candidates
+            .into_iter()
+            .map(|simplex_key| (tds.simplex(simplex_key).map(Simplex::uuid), simplex_key))
+            .collect();
+        removals.sort_unstable_by_key(|(uuid, _)| *uuid);
+
+        let mut keys = Vec::with_capacity(removals.len());
+        for (_, ck) in removals {
             if let Some(simplex) = tds.simplex(ck) {
                 stats.removed_simplices.push(simplex.clone());
             }
+            keys.push(ck);
         }
 
         // Remove the batch. `remove_simplices_by_keys` handles local neighbor
         // back-reference clearing and incident-simplex repair. Full neighbor
         // rebuild is deferred to after the loop to avoid O(simplices²) work.
-        let removed = tds.remove_simplices_by_keys(&keys);
+        let removed = tds
+            .remove_simplices_by_keys(&keys)
+            .map_err(|e| PlManifoldRepairError::Tds(e.into_inner()))?;
         stats.simplices_removed += removed;
 
         // Remove orphaned vertices (required for PL-manifold validity).
-        remove_orphaned_vertices(tds, &mut stats);
+        remove_orphaned_vertices(tds, &mut stats)?;
 
         // Check if the invariant now holds.
         let facet_map = tds.build_facet_to_simplices_map()?;
@@ -472,13 +477,18 @@ where
 fn remove_orphaned_vertices<U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     stats: &mut PlManifoldRepairStats<U, V, D>,
-) where
+) -> Result<(), PlManifoldRepairError>
+where
     U: DataType,
     V: DataType,
 {
     let mut orphaned: Vec<(VertexKey, Uuid)> = tds
         .vertices()
-        .filter(|(_, v)| v.incident_simplex().is_none())
+        .filter(|(vertex_key, _)| {
+            tds.simplex_keys_containing_vertex(*vertex_key)
+                .next()
+                .is_none()
+        })
         .map(|(k, v)| (k, v.uuid()))
         .collect();
     orphaned.sort_by_key(|(_, uuid)| *uuid);
@@ -487,8 +497,11 @@ fn remove_orphaned_vertices<U, V, const D: usize>(
         if let Some(vertex) = tds.vertex(vk) {
             stats.removed_vertices.push(*vertex);
         }
-        tds.remove_isolated_vertex(vk);
+        tds.remove_isolated_vertex(vk)
+            .map_err(|e| PlManifoldRepairError::Tds(e.into_inner()))?;
     }
+
+    Ok(())
 }
 
 // =============================================================================

@@ -108,6 +108,27 @@ pub fn public_expect_bypass(value: Option<u8>) -> u8 {
     value.expect("public APIs should return typed errors instead")
 }
 
+pub struct RawBenchmarkFixture;
+pub struct BenchmarkFixtureError;
+
+// ruleid: delaunay.rust.no-public-raw-bench-fixture-builders
+pub fn overshared_facet_orphan_cleanup_fixture(
+) -> Result<RawBenchmarkFixture, BenchmarkFixtureError> {
+    todo!()
+}
+
+// ok: delaunay.rust.no-public-raw-bench-fixture-builders
+pub fn validated_overshared_facet_orphan_cleanup_fixture(
+) -> Result<RawBenchmarkFixture, BenchmarkFixtureError> {
+    todo!()
+}
+
+// ok: delaunay.rust.no-public-raw-bench-fixture-builders
+fn overshared_facet_orphan_cleanup_fixture_private(
+) -> Result<RawBenchmarkFixture, BenchmarkFixtureError> {
+    todo!()
+}
+
 pub fn public_panic_bypass() {
     // ruleid: delaunay.rust.no-production-unwrap-panic, delaunay.rust.no-public-surface-unwrap-panic
     panic!("public APIs should return typed errors instead");

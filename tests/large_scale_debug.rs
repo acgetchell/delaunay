@@ -313,7 +313,7 @@ impl<const D: usize> From<ConstructionStatistics> for InsertionSummary<D> {
                     uuid: s.uuid,
                     coords,
                     attempts: s.attempts,
-                    error: s.error,
+                    error: s.error.to_string(),
                 }
             })
             .collect();

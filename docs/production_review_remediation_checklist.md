@@ -32,7 +32,7 @@ Treat partial items as still open until their acceptance notes are satisfied.
   `core/triangulation.rs` and the Delaunay-facing layer have been split into
   orthogonal construction, insertion, query, repair, orientation, validation,
   and serialization modules. The remaining large-file targets are
-  `core/algorithms/flips.rs` and `core/tds.rs`.
+  `core/algorithms/flips.rs` and `core/tds/storage.rs`.
 - [ ] **7. Replace full-TDS clone rollback with journaled or localized rollback.**
   This remains the largest performance opportunity. Tracked for v0.8.0 in
   #364.
@@ -150,7 +150,7 @@ Treat partial items as still open until their acceptance notes are satisfied.
 - [x] **B. Remove stale deprecated-warning comment in `lib.rs`.**
   The crate-level migration comment was removed along with the deprecated
   mutable triangulation escape hatch.
-- [x] **C. Relabel safe-code `SAFETY` comments in `tds.rs`.**
+- [x] **C. Relabel safe-code `SAFETY` comments in `tds/storage.rs`.**
   UUID index-map consistency comments now use `INVARIANT` where no unsafe
   reasoning is involved.
 - [x] **D. Remove allocation from `geometry/sos.rs` predicate helper.**

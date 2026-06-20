@@ -6,7 +6,7 @@
 
 use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
 use crate::core::collections::{
-    FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, VertexToSimplicesMap,
+    FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
     fast_hash_map_with_capacity, fast_hash_set_with_capacity,
 };
 use crate::core::edge::EdgeKey;
@@ -16,11 +16,6 @@ use crate::core::tds::{SimplexKey, TdsError, VertexKey};
 use crate::core::triangulation::Triangulation;
 use crate::core::vertex::Vertex;
 use std::sync::Arc;
-#[cfg(debug_assertions)]
-use std::sync::atomic::{AtomicU64, Ordering};
-
-#[cfg(debug_assertions)]
-static VERTEX_TO_SIMPLICES_SPILL_EVENTS: AtomicU64 = AtomicU64::new(0);
 
 /// Errors returned by read-only triangulation queries.
 ///
@@ -399,7 +394,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// The identity check catches cross-triangulation reuse, while the generation
     /// check catches stale same-triangulation indexes after mutation.
     #[inline]
-    fn validate_adjacency_index_matches(&self, index: &AdjacencyIndex) -> Result<(), QueryError> {
+    fn validate_adjacency_index_matches(
+        &self,
+        index: &AdjacencyIndex<'_>,
+    ) -> Result<(), QueryError> {
         let identity_matches = Arc::ptr_eq(&index.tds_identity, self.tds.identity());
         let expected_generation = self.tds.generation();
         if identity_matches && index.tds_generation == expected_generation {
@@ -505,7 +503,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// ```
     pub fn edges_with_index<'a>(
         &self,
-        index: &'a AdjacencyIndex,
+        index: &'a AdjacencyIndex<'_>,
     ) -> Result<impl Iterator<Item = EdgeKey> + 'a, QueryError> {
         self.validate_adjacency_index_matches(index)?;
         Ok(index.edges())
@@ -589,7 +587,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn number_of_edges_with_index(&self, index: &AdjacencyIndex) -> Result<usize, QueryError> {
+    pub fn number_of_edges_with_index(
+        &self,
+        index: &AdjacencyIndex<'_>,
+    ) -> Result<usize, QueryError> {
         self.validate_adjacency_index_matches(index)?;
         Ok(index.number_of_edges())
     }
@@ -600,9 +601,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///
     /// Iteration order is not specified.
     pub fn adjacent_simplices(&self, v: VertexKey) -> impl Iterator<Item = SimplexKey> + '_ {
-        self.tds
-            .find_simplices_containing_vertex_by_key(v)
-            .into_iter()
+        self.tds.simplex_keys_containing_vertex(v)
     }
 
     /// Returns an iterator over all simplices adjacent (incident) to a vertex using a precomputed
@@ -651,7 +650,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// ```
     pub fn adjacent_simplices_with_index<'a>(
         &self,
-        index: &'a AdjacencyIndex,
+        index: &'a AdjacencyIndex<'_>,
         v: VertexKey,
     ) -> Result<impl Iterator<Item = SimplexKey> + 'a, QueryError> {
         self.validate_adjacency_index_matches(index)?;
@@ -704,7 +703,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// ```
     pub fn number_of_adjacent_simplices_with_index(
         &self,
-        index: &AdjacencyIndex,
+        index: &AdjacencyIndex<'_>,
         v: VertexKey,
     ) -> Result<usize, QueryError> {
         self.validate_adjacency_index_matches(index)?;
@@ -772,7 +771,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// ```
     pub fn simplex_neighbors_with_index<'a>(
         &self,
-        index: &'a AdjacencyIndex,
+        index: &'a AdjacencyIndex<'_>,
         c: SimplexKey,
     ) -> Result<impl Iterator<Item = SimplexKey> + 'a, QueryError> {
         self.validate_adjacency_index_matches(index)?;
@@ -824,7 +823,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// ```
     pub fn number_of_simplex_neighbors_with_index(
         &self,
-        index: &AdjacencyIndex,
+        index: &AdjacencyIndex<'_>,
         c: SimplexKey,
     ) -> Result<usize, QueryError> {
         self.validate_adjacency_index_matches(index)?;
@@ -884,7 +883,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// ```
     pub fn incident_edges_with_index<'a>(
         &self,
-        index: &'a AdjacencyIndex,
+        index: &'a AdjacencyIndex<'_>,
         v: VertexKey,
     ) -> Result<impl Iterator<Item = EdgeKey> + 'a, QueryError> {
         self.validate_adjacency_index_matches(index)?;
@@ -937,7 +936,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// ```
     pub fn number_of_incident_edges_with_index(
         &self,
-        index: &AdjacencyIndex,
+        index: &AdjacencyIndex<'_>,
         v: VertexKey,
     ) -> Result<usize, QueryError> {
         self.validate_adjacency_index_matches(index)?;
@@ -978,6 +977,8 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///
     /// - No sorted-order guarantees are provided for the values.
     /// - The returned collections are optimized for performance.
+    /// - Vertex→simplices incidence is borrowed from the maintained TDS index; edge and
+    ///   neighbor maps are derived for this snapshot.
     /// - The maps include an entry for every vertex currently stored in the triangulation.
     ///   During the bootstrap phase (before the initial simplex is created), vertices have empty
     ///   adjacency lists because no simplices exist yet. This is expected and not an error condition.
@@ -992,11 +993,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///
     /// Returns an error if the triangulation data structure is internally inconsistent
     /// (e.g., a simplex references a missing vertex key or a missing neighbor simplex key).
-    pub fn build_adjacency_index(&self) -> Result<AdjacencyIndex, AdjacencyIndexBuildError> {
+    pub fn build_adjacency_index(&self) -> Result<AdjacencyIndex<'_>, AdjacencyIndexBuildError> {
         let vertex_cap = self.tds.number_of_vertices();
         let simplex_cap = self.tds.number_of_simplices();
 
-        let mut vertex_to_simplices: VertexToSimplicesMap = fast_hash_map_with_capacity(vertex_cap);
         let mut simplex_to_neighbors: FastHashMap<
             SimplexKey,
             SmallBuffer<SimplexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
@@ -1019,20 +1019,6 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
                         simplex_key,
                         vertex_key: vk,
                     });
-                }
-                let entry = vertex_to_simplices.entry(vk).or_default();
-                #[cfg(debug_assertions)]
-                let was_spilled = entry.spilled();
-                entry.push(simplex_key);
-                #[cfg(debug_assertions)]
-                if !was_spilled && entry.spilled() {
-                    let spill_count =
-                        VERTEX_TO_SIMPLICES_SPILL_EVENTS.fetch_add(1, Ordering::Relaxed) + 1;
-                    tracing::debug!(
-                        "VertexToSimplicesMap spill #{spill_count}: vertex={vk:?} len={} cap={} (MAX_PRACTICAL_DIMENSION_SIZE={MAX_PRACTICAL_DIMENSION_SIZE})",
-                        entry.len(),
-                        entry.capacity()
-                    );
                 }
             }
 
@@ -1075,9 +1061,14 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         }
 
         for (vk, _) in self.tds.vertices() {
-            vertex_to_simplices.entry(vk).or_default();
             vertex_to_edges.entry(vk).or_default();
         }
+
+        self.tds
+            .validate_vertex_to_simplices_index()
+            .map_err(|source| AdjacencyIndexBuildError::InvalidVertexIncidenceIndex { source })?;
+
+        let vertex_to_simplices = self.tds.vertex_to_simplices_index();
 
         Ok(AdjacencyIndex {
             tds_identity: Arc::clone(self.tds.identity()),
@@ -1496,8 +1487,8 @@ mod tests {
         }
 
         for (vertex_key, _) in tri.vertices() {
-            let simplices = index.vertex_to_simplices.get(&vertex_key).unwrap();
-            assert!(!simplices.is_empty());
+            assert!(index.vertex_to_simplices.contains_vertex(vertex_key));
+            assert!(index.vertex_to_simplices.number_of_simplices(vertex_key) > 0);
 
             let edges = index.vertex_to_edges.get(&vertex_key).unwrap();
             assert!(!edges.is_empty());
@@ -1538,11 +1529,12 @@ mod tests {
             .unwrap();
         let index = tri.build_adjacency_index().unwrap();
 
-        assert!(
+        assert!(index.vertex_to_simplices.contains_vertex(isolated_vertex));
+        assert_eq!(
             index
                 .vertex_to_simplices
-                .get(&isolated_vertex)
-                .is_some_and(SmallBuffer::is_empty)
+                .number_of_simplices(isolated_vertex),
+            0
         );
         assert!(
             index
@@ -1550,6 +1542,29 @@ mod tests {
                 .get(&isolated_vertex)
                 .is_some_and(SmallBuffer::is_empty)
         );
+    }
+
+    #[test]
+    fn build_adjacency_index_errors_on_stale_vertex_incidence_index() {
+        let vertices = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        ];
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        let vertex_key = tri.tds.vertex_keys().next().unwrap();
+
+        tri.tds.clear_vertex_incidence_for_test(vertex_key);
+
+        match tri.build_adjacency_index() {
+            Err(AdjacencyIndexBuildError::InvalidVertexIncidenceIndex { source }) => {
+                assert_matches!(source, TdsError::InconsistentDataStructure { .. });
+            }
+            other => panic!("Expected InvalidVertexIncidenceIndex, got {other:?}"),
+        }
     }
 
     #[test]
@@ -1777,7 +1792,7 @@ mod tests {
     }
 
     #[test]
-    fn adjacency_index_rejects_stale_generation() {
+    fn adjacency_index_rejects_generation_mismatch() {
         let vertices = [
             Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
             Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
@@ -1786,10 +1801,9 @@ mod tests {
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
-        let mut tri = dt.as_triangulation().clone();
-        let index = tri.build_adjacency_index().unwrap();
-
-        tri.tds.clear_all_neighbors();
+        let tri = dt.as_triangulation();
+        let mut index = tri.build_adjacency_index().unwrap();
+        index.tds_generation = index.tds_generation.wrapping_sub(1);
 
         assert_matches!(
             tri.number_of_edges_with_index(&index),

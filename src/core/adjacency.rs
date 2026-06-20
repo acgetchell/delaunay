@@ -1,21 +1,21 @@
 //! Optional, opt-in adjacency index for fast topology queries.
 //!
-//! The triangulation does **not** store a persistent adjacency cache internally.
-//! Instead, downstream code can build an `AdjacencyIndex` on demand for repeated
-//! queries (e.g. mesh analysis, FEM assembly, graph algorithms).
+//! The TDS maintains the canonical vertex→simplices incidence relation internally.
+//! `AdjacencyIndex` borrows that relation and derives additional maps on demand
+//! for repeated richer queries (e.g. mesh analysis, FEM assembly, graph algorithms).
 //!
 //! This index is:
 //! - immutable once built
-//! - built from the current triangulation snapshot
+//! - built as a read-only view over the current triangulation snapshot
 //! - never stored inside the triangulation (no interior mutability)
+//! - lifetime-bound to the borrowed TDS incidence index
 
 #![forbid(unsafe_code)]
 
-use crate::core::collections::{
-    FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, VertexToSimplicesMap,
-};
+use crate::core::collections::{FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::core::edge::EdgeKey;
-use crate::core::tds::{SimplexKey, VertexKey};
+use crate::core::tds::incidence::VertexIncidenceIndex;
+use crate::core::tds::{SimplexKey, TdsError, VertexKey};
 use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
@@ -34,7 +34,7 @@ use uuid::Uuid;
 /// let err = AdjacencyIndexBuildError::MissingVertexKey { simplex_key, vertex_key };
 /// std::assert_matches!(err, AdjacencyIndexBuildError::MissingVertexKey { .. });
 /// ```
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum AdjacencyIndexBuildError {
     /// A simplex references a vertex key that does not exist in vertex storage.
@@ -54,9 +54,17 @@ pub enum AdjacencyIndexBuildError {
         /// The missing neighbor simplex key.
         neighbor_key: SimplexKey,
     },
+
+    /// The maintained vertex-to-simplices incidence relation is inconsistent.
+    #[error("Vertex-to-simplices incidence index is inconsistent: {source}")]
+    InvalidVertexIncidenceIndex {
+        /// Underlying TDS invariant failure.
+        #[source]
+        source: TdsError,
+    },
 }
 
-/// Immutable adjacency maps for topology traversal.
+/// Immutable adjacency maps and borrowed incidence for topology traversal.
 ///
 /// This is an *opt-in* structure returned by
 /// [`Triangulation::build_adjacency_index`](crate::prelude::triangulation::Triangulation::build_adjacency_index).
@@ -64,9 +72,9 @@ pub enum AdjacencyIndexBuildError {
 /// ## Notes
 /// - No sorted-order guarantees are provided for the values.
 /// - The collections are optimized for performance (FxHasher-backed).
-/// - An index is tied to the triangulation snapshot that built it. Rebuild it
-///   after mutating the triangulation, and do not share it across
-///   triangulations.
+/// - An index is tied to the triangulation snapshot that built it. Because it
+///   borrows the TDS incidence index, Rust prevents mutation through the same
+///   owner while the index is alive.
 ///
 /// # Examples
 ///
@@ -108,7 +116,7 @@ pub enum AdjacencyIndexBuildError {
 /// ```
 #[derive(Clone, Debug)]
 #[non_exhaustive]
-pub struct AdjacencyIndex {
+pub struct AdjacencyIndex<'tds> {
     /// Runtime identity of the TDS snapshot this index was built from.
     pub(crate) tds_identity: Arc<Uuid>,
 
@@ -119,18 +127,19 @@ pub struct AdjacencyIndex {
     pub(crate) vertex_to_edges:
         FastHashMap<VertexKey, SmallBuffer<EdgeKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
 
-    /// Vertex → incident simplices.
-    pub(crate) vertex_to_simplices: VertexToSimplicesMap,
+    /// Borrowed canonical vertex → incident simplices relation.
+    pub(crate) vertex_to_simplices: &'tds VertexIncidenceIndex,
 
     /// Simplex → neighboring simplices (boundary facets omitted).
     pub(crate) simplex_to_neighbors:
         FastHashMap<SimplexKey, SmallBuffer<SimplexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
 }
 
-impl AdjacencyIndex {
+impl AdjacencyIndex<'_> {
     /// Returns an iterator over all simplices incident to `v`.
     ///
     /// If `v` is not present in this index, the iterator is empty.
+    /// Iteration order is not specified.
     ///
     /// # Examples
     ///
@@ -176,10 +185,7 @@ impl AdjacencyIndex {
     #[must_use = "this iterator is lazy and does nothing unless consumed"]
     #[inline]
     pub fn adjacent_simplices(&self, v: VertexKey) -> impl Iterator<Item = SimplexKey> + '_ {
-        self.vertex_to_simplices
-            .get(&v)
-            .into_iter()
-            .flat_map(|simplices| simplices.iter().copied())
+        self.vertex_to_simplices.simplex_keys(v)
     }
 
     /// Returns the number of simplices incident to `v`.
@@ -226,7 +232,7 @@ impl AdjacencyIndex {
     #[must_use]
     #[inline]
     pub fn number_of_adjacent_simplices(&self, v: VertexKey) -> usize {
-        self.vertex_to_simplices.get(&v).map_or(0, SmallBuffer::len)
+        self.vertex_to_simplices.number_of_simplices(v)
     }
 
     /// Returns an iterator over all unique edges incident to `v`.
@@ -513,7 +519,7 @@ mod tests {
     #[test]
     fn adjacency_index_is_send_sync_unpin() {
         fn assert_auto_traits<T: Send + Sync + Unpin>() {}
-        assert_auto_traits::<AdjacencyIndex>();
+        assert_auto_traits::<AdjacencyIndex<'static>>();
     }
 
     #[test]

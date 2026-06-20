@@ -9,6 +9,7 @@
 //!
 //! Dimension coverage: 2D–5D via `gen_dedup_batch_tests!`.
 
+use delaunay::construction::DelaunayConstructionRetryFailure;
 use delaunay::prelude::construction::{
     ConstructionOptions, DedupPolicy, DelaunayConstructionFailure, DelaunayTriangulation,
     DelaunayTriangulationConstructionError, InsertionOrderStrategy, Vertex,
@@ -28,6 +29,32 @@ fn init_tracing() {
             .with_test_writer()
             .try_init();
     });
+}
+
+/// Return whether construction failed with a direct geometric degeneracy error.
+const fn is_geometric_degeneracy_error(error: &DelaunayTriangulationConstructionError) -> bool {
+    matches!(
+        error,
+        DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::GeometricDegeneracy { .. }
+        )
+    )
+}
+
+/// Accept direct degeneracy failures and retry exhaustion wrapping that same typed source.
+fn is_geometric_degeneracy_or_retry_exhausted(
+    error: &DelaunayTriangulationConstructionError,
+) -> bool {
+    match error {
+        DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::ShuffledRetryExhausted { source, .. },
+        ) => matches!(
+            source.as_ref(),
+            DelaunayConstructionRetryFailure::Construction { source }
+                if is_geometric_degeneracy_error(source)
+        ),
+        other => is_geometric_degeneracy_error(other),
+    }
 }
 
 /// Build D+1 standard simplex vertices: origin + D unit vectors.
@@ -143,12 +170,9 @@ macro_rules! gen_dedup_batch_tests {
                     DelaunayTriangulation::try_new(&vertices);
 
                 assert!(
-                    matches!(
-                        result,
-                        Err(DelaunayTriangulationConstructionError::Triangulation(
-                            DelaunayConstructionFailure::GeometricDegeneracy { .. }
-                        ))
-                    ),
+                    result
+                        .as_ref()
+                        .is_err_and(is_geometric_degeneracy_or_retry_exhausted),
                     "{}D: all-duplicate input without explicit dedup should fail as degenerate",
                     $dim
                 );
