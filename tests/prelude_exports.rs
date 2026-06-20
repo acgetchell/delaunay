@@ -85,8 +85,9 @@ use delaunay::prelude::ordering::{
     try_hilbert_sort_by_stable, try_hilbert_sort_by_unstable, try_hilbert_sorted_indices,
 };
 use delaunay::prelude::query::{
-    AllFacetsIter as QueryAllFacetsIter, BoundaryFacetsIter as QueryBoundaryFacetsIter, ConvexHull,
-    QueryError,
+    AdjacencyIndexBuildError, AllFacetsIter as QueryAllFacetsIter,
+    BoundaryFacetsIter as QueryBoundaryFacetsIter, ConvexHull, QueryError,
+    TriangulationAdjacency as QueryTriangulationAdjacency,
 };
 use delaunay::prelude::repair::{
     DelaunayCheckPolicy, DelaunayRepairDiagnostics, DelaunayRepairError,
@@ -95,7 +96,7 @@ use delaunay::prelude::repair::{
     DelaunayRepairOrientationCanonicalizationFailure,
     DelaunayRepairOrientationCanonicalizationFailureKind, DelaunayRepairOutcome,
     DelaunayRepairPostconditionFailure, DelaunayRepairStats, DelaunayRepairVerificationContext,
-    DelaunayTriangulationValidationError, FlipEdgeAdjacencyError, FlipError,
+    DelaunayTriangulationValidationError, FlipEdgeAdjacencyError, FlipError, FlipFailureKind,
     FlipOrientationCheckStage as RepairFlipOrientationCheckStage, FlipTriangleAdjacencyError,
     FlipVertexAdjacencyError, RepairQueueOrder, verify_delaunay_for_triangulation,
 };
@@ -121,7 +122,7 @@ use delaunay::prelude::triangulation::{
     InsertionError as TriangulationInsertionError, QueryError as TriangulationQueryError,
     SpatialIndexConstructionFailure as GenericSpatialIndexConstructionFailure,
     TdsError as TriangulationTdsError, TopologyGuarantee as TriangulationTopologyGuarantee,
-    Triangulation as GenericTriangulation,
+    Triangulation as GenericTriangulation, TriangulationAdjacency as GenericTriangulationAdjacency,
     TriangulationConstructionError as GenericTriangulationConstructionError,
     ValidationConfigurationError as TriangulationValidationConfigurationError,
     ValidationPolicy as TriangulationValidationPolicy, vertex as triangulation_vertex,
@@ -134,12 +135,14 @@ use delaunay::prelude::validation::{
 };
 use delaunay::prelude::{
     CoordinateRange as RootCoordinateRange, DelaunayError as RootDelaunayError,
-    DelaunayResult as RootDelaunayResult,
+    DelaunayResult as RootDelaunayResult, FlipFailureKind as RootFlipFailureKind,
     FlipOrientationCheckStage as RootFlipOrientationCheckStage, SecureHashMap, SecureHashSet,
+    TriangulationAdjacency as RootTriangulationAdjacency,
     ValidationConfigurationError as RootValidationConfigurationError, vertex as root_vertex,
 };
 use delaunay::query::{
     AllFacetsIter as QueryFacadeAllFacetsIter, BoundaryFacetsIter as QueryFacadeBoundaryFacetsIter,
+    TriangulationAdjacency as QueryFacadeTriangulationAdjacency,
 };
 #[derive(Debug, thiserror::Error)]
 enum RootApiExportTestError {
@@ -181,6 +184,8 @@ enum PreludeExportTestError {
     Manifold(#[from] ManifoldError),
     #[error(transparent)]
     Query(#[from] QueryError),
+    #[error(transparent)]
+    Adjacency(#[from] AdjacencyIndexBuildError),
     #[error(transparent)]
     Facet(#[from] FacetError),
     #[error(transparent)]
@@ -656,6 +661,37 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
 
     let telemetry = ConstructionTelemetry::default();
     assert!(!telemetry.has_data());
+    Ok(())
+}
+
+#[test]
+fn query_preludes_cover_borrowed_adjacency_view() -> Result<(), PreludeExportTestError> {
+    let vertices: Vec<Vertex<(), 3>> = vec![
+        Vertex::try_new([0.0, 0.0, 0.0])?,
+        Vertex::try_new([1.0, 0.0, 0.0])?,
+        Vertex::try_new([0.0, 1.0, 0.0])?,
+        Vertex::try_new([0.0, 0.0, 1.0])?,
+    ];
+    let dt = DelaunayTriangulation::try_new(&vertices)?;
+
+    let query_adjacency: QueryTriangulationAdjacency<'_> = dt.adjacency()?;
+    let generic_adjacency: GenericTriangulationAdjacency<'_> = dt.as_triangulation().adjacency()?;
+    let facade_adjacency: QueryFacadeTriangulationAdjacency<'_> = dt.adjacency()?;
+    let root_adjacency: RootTriangulationAdjacency<'_> = dt.adjacency()?;
+
+    assert_eq!(query_adjacency.number_of_edges(), 6);
+    assert_eq!(
+        generic_adjacency.number_of_edges(),
+        query_adjacency.number_of_edges()
+    );
+    assert_eq!(
+        facade_adjacency.number_of_edges(),
+        query_adjacency.number_of_edges()
+    );
+    assert_eq!(
+        root_adjacency.number_of_edges(),
+        query_adjacency.number_of_edges()
+    );
     Ok(())
 }
 
@@ -1242,6 +1278,22 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
     assert_matches!(
         DelaunayRepairError::from(FlipError::DegenerateSimplex),
         DelaunayRepairError::Flip { .. }
+    );
+    assert_eq!(
+        FlipFailureKind::from(&FlipError::DegenerateSimplex),
+        FlipFailureKind::DegenerateSimplex
+    );
+    let dangling_vertex_incidence = FlipError::DanglingVertexIncidence {
+        vertex_key: VertexKey::from(slotmap::KeyData::from_ffi(1)),
+        simplex_key: SimplexKey::from(slotmap::KeyData::from_ffi(2)),
+    };
+    assert_eq!(
+        RootFlipFailureKind::from(&dangling_vertex_incidence),
+        RootFlipFailureKind::DanglingVertexIncidence
+    );
+    assert_eq!(
+        delaunay::flips::FlipFailureKind::from(&dangling_vertex_incidence),
+        delaunay::flips::FlipFailureKind::DanglingVertexIncidence
     );
     let orientation_reason = DelaunayRepairOrientationCanonicalizationFailure::AfterFlipRepair {
         source: Box::new(InsertionError::DuplicateCoordinates {

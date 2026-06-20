@@ -33,17 +33,16 @@ fn simplex_uuid_sort_entries<U, V, const D: usize>(
         .collect()
 }
 
-/// Orders coordinate arrays for deterministic equality comparison while
-/// preserving an explicit incomparable branch for malformed internal state.
-#[expect(
-    clippy::option_if_let_else,
-    reason = "Semgrep requires an explicit incomparable partial_cmp branch"
-)]
+/// Orders coordinate arrays using the same total f64 ordering as geometric
+/// primitives.
 fn compare_coords<const D: usize>(left: &[f64; D], right: &[f64; D]) -> CmpOrdering {
-    match left.partial_cmp(right) {
-        Some(ordering) => ordering,
-        None => CmpOrdering::Equal,
-    }
+    left.iter()
+        .zip(right)
+        .find_map(|(left, right)| {
+            let ordering = left.total_cmp(right);
+            (ordering != CmpOrdering::Equal).then_some(ordering)
+        })
+        .unwrap_or(CmpOrdering::Equal)
 }
 
 /// Manual implementation of `PartialEq` for Tds
@@ -74,7 +73,8 @@ impl<U, V, const D: usize> PartialEq for Tds<U, V, D> {
         let mut other_vertices: Vec<_> = other.vertices.values().collect();
 
         // Sort vertices by their coordinates for consistent comparison
-        // f64-backed vertices provide PartialOrd; NaN validation occurs at construction time
+        // NaN validation occurs at construction time; total ordering keeps corrupted
+        // internal states deterministic in tests and diagnostics.
         self_vertices.sort_by(|a, b| {
             let a_coords = *a.point().coords();
             let b_coords = *b.point().coords();
@@ -135,11 +135,79 @@ impl<U, V, const D: usize> Eq for Tds<U, V, D> {}
 #[cfg(test)]
 mod tests {
     use crate::DelaunayTriangulation;
+    use crate::core::collections::PeriodicOffsetBuffer;
+    use crate::core::tds::VertexKey;
     use crate::core::vertex::Vertex;
+    use slotmap::KeyData;
+    use std::cmp::Ordering as CmpOrdering;
 
     // =========================================================================
     // VALIDATION ERROR PATHS
     // =========================================================================
+
+    #[test]
+    fn compare_coords_uses_total_coordinate_ordering() {
+        assert_eq!(
+            super::compare_coords(&[f64::NAN, 1.0], &[0.0, 1.0]),
+            CmpOrdering::Greater
+        );
+    }
+
+    #[test]
+    fn test_tds_partial_eq_different_counts_not_equal() {
+        let verts_a = [
+            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        ];
+        let verts_b = [
+            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+        ];
+        let dt_a: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::try_new(&verts_a).unwrap();
+        let dt_b: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::try_new(&verts_b).unwrap();
+
+        assert_ne!(dt_a.tds(), dt_b.tds());
+    }
+
+    #[test]
+    fn test_tds_partial_eq_rejects_dangling_simplex_vertex_key() {
+        let verts = [
+            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::try_new(&verts).unwrap();
+        let valid = dt.tds().clone();
+        let mut corrupted = dt.tds().clone();
+        let dangling_vertex = VertexKey::from(KeyData::from_ffi(9999));
+        corrupted.push_first_simplex_vertex_key_storage_only_for_test(dangling_vertex);
+
+        assert_ne!(corrupted, valid);
+    }
+
+    #[test]
+    fn test_tds_partial_eq_rejects_misaligned_periodic_offsets() {
+        let verts = [
+            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::try_new(&verts).unwrap();
+        let valid = dt.tds().clone();
+        let mut corrupted = dt.tds().clone();
+        corrupted.set_first_simplex_periodic_offsets_storage_only_for_test(Some(
+            PeriodicOffsetBuffer::new(),
+        ));
+
+        assert_ne!(corrupted, valid);
+    }
 
     #[test]
     fn test_tds_partial_eq_different_structures_not_equal() {

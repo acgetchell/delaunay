@@ -81,6 +81,19 @@ impl VertexIncidenceIndex {
             .flat_map(|simplices| simplices.iter().copied())
     }
 
+    /// Returns one simplex incident to `vertex_key`, when the vertex is not isolated.
+    ///
+    /// The returned key is a canonical incidence-index lookup, not a scan of
+    /// simplex storage. Callers that need to expose the key as a vertex hint
+    /// should still validate that the simplex exists before storing it.
+    #[must_use]
+    #[inline]
+    pub(in crate::core) fn first_simplex(&self, vertex_key: VertexKey) -> Option<SimplexKey> {
+        self.map
+            .get(&vertex_key)
+            .and_then(|simplices| simplices.first().copied())
+    }
+
     /// Returns the number of incident simplices for `vertex_key`.
     #[must_use]
     pub(in crate::core) fn number_of_simplices(&self, vertex_key: VertexKey) -> usize {
@@ -336,6 +349,19 @@ mod tests {
     }
 
     #[test]
+    fn insert_vertex_rejects_duplicate_entry() {
+        let mut index = VertexIncidenceIndex::default();
+        let vertex = vertex_key(1);
+        index.insert_vertex(vertex).unwrap();
+
+        let err = index.insert_vertex(vertex).unwrap_err();
+
+        assert!(matches!(err, TdsError::InconsistentDataStructure { .. }));
+        assert!(index.contains_vertex(vertex));
+        assert_eq!(index.number_of_simplices(vertex), 0);
+    }
+
+    #[test]
     fn insert_simplex_rejects_missing_vertex_entry() {
         let mut index = VertexIncidenceIndex::default();
         let err = index
@@ -376,6 +402,24 @@ mod tests {
     }
 
     #[test]
+    fn first_simplex_returns_one_incident_simplex_without_scanning() {
+        let mut index = VertexIncidenceIndex::default();
+        let vertex = vertex_key(1);
+        let isolated = vertex_key(2);
+        let first = simplex_key(1);
+        let second = simplex_key(2);
+        index.insert_vertex(vertex).unwrap();
+        index.insert_vertex(isolated).unwrap();
+
+        index.insert_simplex(first, &[vertex]).unwrap();
+        index.insert_simplex(second, &[vertex]).unwrap();
+
+        assert_eq!(index.first_simplex(vertex), Some(first));
+        assert_eq!(index.first_simplex(isolated), None);
+        assert_eq!(index.first_simplex(vertex_key(3)), None);
+    }
+
+    #[test]
     fn remove_isolated_vertex_rejects_non_isolated_entry() {
         let mut index = VertexIncidenceIndex::default();
         let vertex = vertex_key(1);
@@ -385,6 +429,35 @@ mod tests {
 
         let err = index.remove_isolated_vertex(vertex).unwrap_err();
         assert!(matches!(err, TdsError::InconsistentDataStructure { .. }));
+    }
+
+    #[test]
+    fn remove_isolated_vertex_rejects_missing_entry() {
+        let mut index = VertexIncidenceIndex::default();
+
+        let err = index.remove_isolated_vertex(vertex_key(1)).unwrap_err();
+
+        assert!(matches!(err, TdsError::VertexNotFound { .. }));
+        assert!(index.is_empty());
+    }
+
+    #[test]
+    fn remove_simplex_rejects_duplicate_vertices_before_mutating_incidence() {
+        let mut index = VertexIncidenceIndex::default();
+        let vertex = vertex_key(1);
+        let simplex = simplex_key(1);
+        index.insert_vertex(vertex).unwrap();
+        index.insert_simplex(simplex, &[vertex]).unwrap();
+
+        let err = index
+            .remove_simplex(simplex, &[vertex, vertex])
+            .unwrap_err();
+
+        assert!(matches!(err, TdsError::InconsistentDataStructure { .. }));
+        assert_eq!(
+            index.simplex_keys(vertex).collect::<Vec<_>>(),
+            vec![simplex]
+        );
     }
 
     #[test]

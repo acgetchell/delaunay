@@ -1122,6 +1122,14 @@ mod tests {
     }
 
     #[test]
+    fn triangulation_construction_state_default_is_empty_incomplete() {
+        assert_eq!(
+            TriangulationConstructionState::default(),
+            TriangulationConstructionState::Incomplete(0)
+        );
+    }
+
+    #[test]
     fn tds_error_kind_from_error_preserves_validation_variants() {
         let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
         let other_simplex_key = SimplexKey::from(KeyData::from_ffi(2));

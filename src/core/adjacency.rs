@@ -3,6 +3,9 @@
 //! The TDS maintains the canonical vertex→simplices incidence relation internally.
 //! `AdjacencyIndex` borrows that relation and derives additional maps on demand
 //! for repeated richer queries (e.g. mesh analysis, FEM assembly, graph algorithms).
+//! `TriangulationAdjacency` is the ergonomic borrowed view for callers that want
+//! to build those maps once and query them without repeatedly pairing a detached
+//! index with its triangulation.
 //!
 //! This index is:
 //! - immutable once built
@@ -118,21 +121,157 @@ pub enum AdjacencyIndexBuildError {
 #[non_exhaustive]
 pub struct AdjacencyIndex<'tds> {
     /// Runtime identity of the TDS snapshot this index was built from.
-    pub(crate) tds_identity: Arc<Uuid>,
+    pub(in crate::core) tds_identity: Arc<Uuid>,
 
     /// Generation of the TDS snapshot this index was built from.
-    pub(crate) tds_generation: u64,
+    pub(in crate::core) tds_generation: u64,
 
     /// Vertex → incident edges.
-    pub(crate) vertex_to_edges:
+    pub(in crate::core) vertex_to_edges:
         FastHashMap<VertexKey, SmallBuffer<EdgeKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
 
+    /// Number of unique edges in the triangulation snapshot.
+    pub(in crate::core) edge_count: usize,
+
     /// Borrowed canonical vertex → incident simplices relation.
-    pub(crate) vertex_to_simplices: &'tds VertexIncidenceIndex,
+    pub(in crate::core) vertex_to_simplices: &'tds VertexIncidenceIndex,
 
     /// Simplex → neighboring simplices (boundary facets omitted).
-    pub(crate) simplex_to_neighbors:
+    pub(in crate::core) simplex_to_neighbors:
         FastHashMap<SimplexKey, SmallBuffer<SimplexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
+}
+
+/// Borrowed adjacency view for one triangulation snapshot.
+///
+/// The view owns the derived edge and simplex-neighbor maps, while the contained
+/// [`AdjacencyIndex`] borrows the canonical TDS vertex-to-simplices incidence
+/// relation for `'tds`. Holding this value therefore keeps the source
+/// triangulation immutably borrowed, so Rust prevents mutation through the same
+/// owner while callers are traversing adjacency.
+///
+/// Prefer this type over manually passing an [`AdjacencyIndex`] back into
+/// `*_with_index` query helpers when all queries are against the triangulation
+/// that built the index. Detached-index helpers remain available for advanced
+/// call sites and keep runtime identity/generation checks.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::*;
+///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Adjacency(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
+/// let vertices = vec![
+///     delaunay::vertex![0.0, 0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0, 0.0]?,
+///     delaunay::vertex![0.0, 0.0, 1.0]?,
+/// ];
+/// let dt: DelaunayTriangulation<_, (), (), 3> =
+///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let adjacency = dt.as_triangulation().adjacency()?;
+///
+/// assert_eq!(adjacency.number_of_edges(), 6);
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct TriangulationAdjacency<'tds> {
+    /// Lifetime-bound adjacency index for the source triangulation snapshot.
+    index: AdjacencyIndex<'tds>,
+}
+
+impl<'tds> TriangulationAdjacency<'tds> {
+    /// Wraps a freshly built adjacency index as the lifetime-bound view API.
+    #[inline]
+    pub(in crate::core) const fn from_index(index: AdjacencyIndex<'tds>) -> Self {
+        Self { index }
+    }
+
+    /// Returns an iterator over all simplices incident to `v`.
+    ///
+    /// If `v` is not present in this view, the iterator is empty. Iteration
+    /// order is not specified.
+    #[must_use = "this iterator is lazy and does nothing unless consumed"]
+    #[inline]
+    pub fn adjacent_simplices(&self, v: VertexKey) -> impl Iterator<Item = SimplexKey> + '_ {
+        self.index.adjacent_simplices(v)
+    }
+
+    /// Returns the number of simplices incident to `v`.
+    ///
+    /// If `v` is not present in this view, returns 0.
+    #[must_use]
+    #[inline]
+    pub fn number_of_adjacent_simplices(&self, v: VertexKey) -> usize {
+        self.index.number_of_adjacent_simplices(v)
+    }
+
+    /// Returns an iterator over all unique edges incident to `v`.
+    ///
+    /// If `v` is not present in this view, the iterator is empty. Iteration
+    /// order is not specified.
+    #[must_use = "this iterator is lazy and does nothing unless consumed"]
+    #[inline]
+    pub fn incident_edges(&self, v: VertexKey) -> impl Iterator<Item = EdgeKey> + '_ {
+        self.index.incident_edges(v)
+    }
+
+    /// Returns the number of unique edges incident to `v`.
+    ///
+    /// If `v` is not present in this view, returns 0.
+    #[must_use]
+    #[inline]
+    pub fn number_of_incident_edges(&self, v: VertexKey) -> usize {
+        self.index.number_of_incident_edges(v)
+    }
+
+    /// Returns an iterator over all neighbors of a simplex.
+    ///
+    /// If `c` is not present in this view, the iterator is empty. Boundary
+    /// facets are omitted because they have no neighboring simplex.
+    #[must_use = "this iterator is lazy and does nothing unless consumed"]
+    #[inline]
+    pub fn simplex_neighbors(&self, c: SimplexKey) -> impl Iterator<Item = SimplexKey> + '_ {
+        self.index.simplex_neighbors(c)
+    }
+
+    /// Returns the number of neighbors of a simplex.
+    ///
+    /// If `c` is not present in this view, returns 0.
+    #[must_use]
+    #[inline]
+    pub fn number_of_simplex_neighbors(&self, c: SimplexKey) -> usize {
+        self.index.number_of_simplex_neighbors(c)
+    }
+
+    /// Returns an iterator over all unique edges in the triangulation snapshot.
+    ///
+    /// Iteration order is not specified.
+    #[must_use = "this iterator is lazy and does nothing unless consumed"]
+    #[inline]
+    pub fn edges(&self) -> impl Iterator<Item = EdgeKey> + '_ {
+        self.index.edges()
+    }
+
+    /// Returns the number of unique edges in the triangulation snapshot.
+    ///
+    /// This is equivalent to `self.edges().count()`, but uses the count
+    /// computed while building the immutable index.
+    #[must_use]
+    #[inline]
+    pub const fn number_of_edges(&self) -> usize {
+        self.index.number_of_edges()
+    }
 }
 
 impl AdjacencyIndex<'_> {
@@ -481,8 +620,17 @@ impl AdjacencyIndex<'_> {
     /// # }
     /// ```
     #[must_use]
-    pub fn number_of_edges(&self) -> usize {
-        self.edges().count()
+    pub const fn number_of_edges(&self) -> usize {
+        self.edge_count
+    }
+}
+
+#[cfg(test)]
+impl AdjacencyIndex<'_> {
+    /// Corrupts the stored generation so stale-index rejection tests can exercise
+    /// the runtime provenance boundary without exposing mutable fields crate-wide.
+    pub(crate) fn rewind_generation_for_test(&mut self) {
+        self.tds_generation = self.tds_generation.wrapping_sub(1);
     }
 }
 
@@ -520,6 +668,7 @@ mod tests {
     fn adjacency_index_is_send_sync_unpin() {
         fn assert_auto_traits<T: Send + Sync + Unpin>() {}
         assert_auto_traits::<AdjacencyIndex<'static>>();
+        assert_auto_traits::<TriangulationAdjacency<'static>>();
     }
 
     #[test]

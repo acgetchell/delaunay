@@ -2254,12 +2254,6 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         &self.vertex_to_simplices
     }
 
-    /// Clears one vertex incidence buffer for tests that need corrupted storage.
-    #[cfg(test)]
-    pub(in crate::core) fn clear_vertex_incidence_for_test(&mut self, vertex_key: VertexKey) {
-        self.vertex_to_simplices.clear_vertex_for_test(vertex_key);
-    }
-
     /// Returns every simplex key whose simplex contains `vertex_key`.
     ///
     /// This is an exact lookup against the maintained vertex-to-simplices incidence
@@ -2271,6 +2265,73 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         vertex_key: VertexKey,
     ) -> impl Iterator<Item = SimplexKey> + '_ {
         self.vertex_to_simplices.simplex_keys(vertex_key)
+    }
+
+    /// Returns one simplex key incident to `vertex_key` from the maintained incidence index.
+    ///
+    /// This is the O(1) hint form of
+    /// [`Self::simplex_keys_containing_vertex`]. It preserves the distinction
+    /// between canonical incidence lookup and full simplex-storage scans.
+    #[inline]
+    pub(crate) fn first_simplex_containing_vertex(
+        &self,
+        vertex_key: VertexKey,
+    ) -> Option<SimplexKey> {
+        self.vertex_to_simplices.first_simplex(vertex_key)
+    }
+}
+
+#[cfg(test)]
+mod test_support {
+    use super::Tds;
+    use crate::core::collections::PeriodicOffsetBuffer;
+    use crate::core::tds::{SimplexKey, VertexKey};
+
+    impl<U, V, const D: usize> Tds<U, V, D> {
+        /// Clears one vertex incidence buffer for tests that need corrupted storage.
+        pub(in crate::core) fn clear_vertex_incidence_for_test(&mut self, vertex_key: VertexKey) {
+            self.vertex_to_simplices.clear_vertex_for_test(vertex_key);
+        }
+
+        /// Removes a simplex from storage while deliberately preserving incidence.
+        ///
+        /// Tests use this to model stale vertex-to-simplices entries that normal TDS
+        /// mutation APIs must never create, then assert callers fail with typed
+        /// structural errors instead of silently accepting the corruption.
+        pub(in crate::core) fn remove_simplex_storage_only_for_test(
+            &mut self,
+            simplex_key: SimplexKey,
+        ) {
+            self.simplices.remove(simplex_key);
+            self.uuid_to_simplex_key
+                .retain(|_, mapped_key| *mapped_key != simplex_key);
+        }
+
+        /// Appends a vertex key to the first stored simplex without updating mappings.
+        ///
+        /// Tests use this to model malformed simplex vertex storage while keeping
+        /// the corruption explicit and local to TDS test fixtures.
+        pub(in crate::core) fn push_first_simplex_vertex_key_storage_only_for_test(
+            &mut self,
+            vertex_key: VertexKey,
+        ) {
+            if let Some(simplex) = self.simplices.values_mut().next() {
+                simplex.push_vertex_key(vertex_key);
+            }
+        }
+
+        /// Replaces periodic offsets on the first stored simplex without validation.
+        ///
+        /// Tests use this to model offset/storage mismatches that normal simplex
+        /// constructors and setters must reject.
+        pub(in crate::core) fn set_first_simplex_periodic_offsets_storage_only_for_test(
+            &mut self,
+            offsets: Option<PeriodicOffsetBuffer<D>>,
+        ) {
+            if let Some(simplex) = self.simplices.values_mut().next() {
+                simplex.periodic_vertex_offsets = offsets;
+            }
+        }
     }
 }
 

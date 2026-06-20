@@ -5123,8 +5123,12 @@ where
         })
     }
 
-    /// Returns `true` if the construction error is deterministic and should not
-    /// be masked by shuffled retry logic (e.g. duplicate UUIDs, internal bugs).
+    /// Returns whether a construction error should stop shuffled retries.
+    ///
+    /// Deterministic structural failures, including orientation canonicalization
+    /// internals and insertion neighbor wiring, are not made safer by retrying a
+    /// different vertex order. Classifying them here preserves their typed source
+    /// error instead of masking the failure behind retry exhaustion.
     pub(crate) fn is_non_retryable_construction_error(
         err: &DelaunayTriangulationConstructionError,
     ) -> bool {
@@ -5135,6 +5139,8 @@ where
                     reason: TdsConstructionFailure::DuplicateUuid { .. }
                         | TdsConstructionFailure::Validation { .. },
                 } | DelaunayConstructionFailure::InternalInconsistency { .. }
+                    | DelaunayConstructionFailure::OrientationCanonicalizationInternal { .. }
+                    | DelaunayConstructionFailure::InsertionNeighborWiring { .. }
                     | DelaunayConstructionFailure::UnsupportedPeriodicDimension { .. }
                     | DelaunayConstructionFailure::SpatialIndexConstruction { .. }
                     | DelaunayConstructionFailure::InsertionTopologyValidation { .. }
@@ -5550,10 +5556,12 @@ mod tests {
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::{
         CoordinateConversionError, CoordinateConversionValue, CoordinateValues,
+        InvalidCoordinateValue,
     };
     use crate::geometry::util::RandomPointGenerationError;
     use crate::repair::DelaunayRepairPolicy;
     use crate::topology::characteristics::euler::TopologyClassification;
+    use crate::topology::traits::topological_space::TopologyKind;
     use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
     use slotmap::KeyData;
     use std::assert_matches;
@@ -7914,6 +7922,131 @@ mod tests {
     }
 
     #[test]
+    fn test_delaunay_construction_failure_preserves_periodic_error_sources() {
+        let failure = DelaunayConstructionFailure::from(
+            TriangulationConstructionError::PeriodicImageUnsupportedTopology {
+                topology: TopologyKind::Euclidean,
+            },
+        );
+        assert_matches!(
+            failure,
+            DelaunayConstructionFailure::PeriodicImageUnsupportedTopology {
+                topology: TopologyKind::Euclidean,
+            }
+        );
+
+        let coordinate_source = CoordinateValidationError::InvalidCoordinate {
+            coordinate_index: 1,
+            coordinate_value: InvalidCoordinateValue::Nan,
+            dimension: 2,
+        };
+        let failure = DelaunayConstructionFailure::from(
+            TriangulationConstructionError::PeriodicImageCoordinateValidation {
+                canonical_vertex_index: 3,
+                image_index: 4,
+                source: coordinate_source.clone(),
+            },
+        );
+        assert_matches!(
+            failure,
+            DelaunayConstructionFailure::PeriodicImageCoordinateValidation {
+                canonical_vertex_index: 3,
+                image_index: 4,
+                source,
+            } if source == coordinate_source
+        );
+
+        let orientation_source = InsertionError::DuplicateUuid {
+            entity: EntityKind::Simplex,
+            uuid: Uuid::nil(),
+        };
+        let failure = DelaunayConstructionFailure::from(
+            TriangulationConstructionError::PeriodicImageOrientationCanonicalization {
+                source: Box::new(orientation_source.clone()),
+            },
+        );
+        assert_matches!(
+            failure,
+            DelaunayConstructionFailure::PeriodicImageOrientationCanonicalization {
+                source,
+            } if *source == orientation_source
+        );
+
+        let tds_source = TdsError::InconsistentDataStructure {
+            message: "periodic orientation validation".to_string(),
+        };
+        let failure = DelaunayConstructionFailure::from(
+            TriangulationConstructionError::PeriodicImageGeometricOrientationValidation {
+                source: Box::new(tds_source.clone()),
+            },
+        );
+        assert_matches!(
+            failure,
+            DelaunayConstructionFailure::PeriodicImageGeometricOrientationValidation {
+                source,
+            } if *source == tds_source
+        );
+    }
+
+    #[test]
+    fn test_delaunay_construction_failure_preserves_periodic_quotient_error_sources() {
+        let failure = DelaunayConstructionFailure::from(
+            TriangulationConstructionError::PeriodicQuotientFacetKeyDerivation {
+                facet_index: 2,
+                reason: PeriodicQuotientFacetKeyDerivationFailure::FacetIndexOutOfBounds {
+                    facet_index: 2,
+                    vertex_count: 1,
+                },
+            },
+        );
+        assert_matches!(
+            failure,
+            DelaunayConstructionFailure::PeriodicQuotientFacetKeyDerivation {
+                facet_index: 2,
+                reason: PeriodicQuotientFacetKeyDerivationFailure::FacetIndexOutOfBounds {
+                    facet_index: 2,
+                    vertex_count: 1,
+                },
+            }
+        );
+
+        let failure = DelaunayConstructionFailure::from(
+            TriangulationConstructionError::PeriodicQuotientSelectionBoundaryFacets {
+                boundary_facet_count: 5,
+                search_attempts: 8,
+                full_vertex_count: 27,
+                full_simplex_count: 9,
+                canonical_vertex_count: 4,
+                candidate_count: 6,
+                selected_simplex_count: 3,
+            },
+        );
+        assert_matches!(
+            failure,
+            DelaunayConstructionFailure::PeriodicQuotientSelectionBoundaryFacets {
+                boundary_facet_count: 5,
+                search_attempts: 8,
+                full_vertex_count: 27,
+                full_simplex_count: 9,
+                canonical_vertex_count: 4,
+                candidate_count: 6,
+                selected_simplex_count: 3,
+            }
+        );
+
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(7));
+        let failure = DelaunayConstructionFailure::from(
+            TriangulationConstructionError::PeriodicQuotientMissingNeighborVector { simplex_key },
+        );
+        assert_matches!(
+            failure,
+            DelaunayConstructionFailure::PeriodicQuotientMissingNeighborVector {
+                simplex_key: preserved_key,
+            } if preserved_key == simplex_key
+        );
+    }
+
+    #[test]
     fn test_map_insertion_error_hard_repair_is_internal() {
         let error = InsertionError::DelaunayRepairFailed {
             source: Box::new(DelaunayRepairError::from(FlipError::UnsupportedDimension {
@@ -8078,6 +8211,35 @@ mod tests {
         assert!(
             TestDelaunay::<3>::is_non_retryable_construction_error(&err),
             "Spatial index construction failures should be non-retryable"
+        );
+    }
+
+    #[test]
+    fn test_is_non_retryable_construction_error_internal_orientation_and_wiring() {
+        let orientation_err: DelaunayTriangulationConstructionError =
+            TriangulationConstructionError::OrientationCanonicalizationInternal {
+                source: Box::new(InsertionError::TopologyValidation(
+                    TdsError::InconsistentDataStructure {
+                        message: "dangling incidence".to_string(),
+                    },
+                )),
+            }
+            .into();
+        let wiring_err: DelaunayTriangulationConstructionError =
+            TriangulationConstructionError::InsertionNeighborWiring {
+                source: NeighborWiringError::MissingSimplex {
+                    simplex_key: SimplexKey::from(KeyData::from_ffi(1)),
+                },
+            }
+            .into();
+
+        assert!(
+            TestDelaunay::<3>::is_non_retryable_construction_error(&orientation_err),
+            "OrientationCanonicalizationInternal should be non-retryable"
+        );
+        assert!(
+            TestDelaunay::<3>::is_non_retryable_construction_error(&wiring_err),
+            "InsertionNeighborWiring should be non-retryable"
         );
     }
 

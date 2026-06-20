@@ -79,7 +79,9 @@ Key combinatorial objects:
   vertex.
 - **Adjacency / neighbors**: two simplices are neighbors if they share a facet. The triangulation data
   structure (TDS) stores neighbor pointers across facets (see
-  [`src/core/tds/storage.rs`](../src/core/tds/storage.rs) and CGAL’s
+  [`src/core/tds/storage.rs`](../src/core/tds/storage.rs),
+  [`src/core/tds/mutation.rs`](../src/core/tds/mutation.rs),
+  [`src/core/tds/validation.rs`](../src/core/tds/validation.rs), and CGAL’s
   [TDS_3](https://doc.cgal.org/latest/TDS_3/index.html)).[^cgal-tds3][^impl-tds]
 - **Boundary vs interior facets**:
   - An **interior facet** is incident to exactly two simplices.
@@ -469,7 +471,10 @@ For the project-wide bibliography (including references not cited here), see [`R
     DOI: <https://doi.org/10.1017/CBO9780511530067>.
 [^cgal-tds3]: CGAL Project. *Triangulation Data Structure* (TDS_3) documentation.
     <https://doc.cgal.org/latest/TDS_3/index.html>.
-[^impl-tds]: Implementation: [src/core/tds/storage.rs](../src/core/tds/storage.rs).
+[^impl-tds]: Implementation: [src/core/tds/storage.rs](../src/core/tds/storage.rs),
+    [src/core/tds/mutation.rs](../src/core/tds/mutation.rs),
+    [src/core/tds/incidence.rs](../src/core/tds/incidence.rs), and
+    [src/core/tds/validation.rs](../src/core/tds/validation.rs).
 [^deberg2008]: Mark de Berg, Otfried Cheong, Marc van Kreveld, Mark Overmars.
     *Computational Geometry: Algorithms and Applications*, 3rd ed. Springer, 2008.
     DOI: <https://doi.org/10.1007/978-3-540-77974-2>.

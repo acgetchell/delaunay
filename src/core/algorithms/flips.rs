@@ -343,7 +343,14 @@ where
         .collect()
 }
 
-/// Apply a bistellar flip using explicit k and vertex/simplex slices.
+/// Applies a bistellar flip using explicit k and vertex/simplex slices.
+///
+/// # Errors
+///
+/// Returns [`FlipError::DanglingVertexIncidence`] if the maintained incidence
+/// index references a simplex that is no longer present, or another
+/// [`FlipError`] when the move is invalid, geometrically degenerate,
+/// non-manifold, or cannot be applied atomically.
 #[expect(
     clippy::too_many_arguments,
     reason = "Flip mutation needs explicit move, cavity, policy, and validation inputs"
@@ -428,7 +435,7 @@ where
     if k_move >= 2
         && k_move < D
         && let Some(existing_simplex) =
-            find_simplex_containing_simplex(tds, inserted_face_vertices, removed_simplices)
+            find_simplex_containing_simplex(tds, inserted_face_vertices, removed_simplices)?
     {
         if repair_trace_enabled() || env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
             tracing::debug!(
@@ -1134,18 +1141,25 @@ fn flip_trial_neighbor_orientation_parity<V, const D: usize>(
     ))
 }
 
-/// Detects replacement simplices that already exist outside the flip cavity so
-/// a flip cannot silently duplicate a simplex.
+/// Detects replacement simplices that already exist outside the flip cavity.
+///
+/// This protects the bistellar link condition while also treating stale
+/// incidence entries as structural corruption instead of silently ignoring
+/// them.
+///
+/// # Errors
+///
+/// Returns [`FlipError::DanglingVertexIncidence`] if
+/// [`Tds::simplex_keys_containing_vertex`] yields a simplex key that is no
+/// longer present in storage.
 fn find_simplex_containing_simplex<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     simplex_vertices: &[VertexKey],
     removed_simplices: &[SimplexKey],
-) -> Option<SimplexKey>
-where
-    U: DataType,
-    V: DataType,
-{
-    let first = *simplex_vertices.first()?;
+) -> Result<Option<SimplexKey>, FlipError> {
+    let Some(&first) = simplex_vertices.first() else {
+        return Ok(None);
+    };
 
     for simplex_key in tds.simplex_keys_containing_vertex(first) {
         if removed_simplices.contains(&simplex_key) {
@@ -1153,7 +1167,10 @@ where
         }
 
         let Some(simplex) = tds.simplex(simplex_key) else {
-            continue;
+            return Err(FlipError::DanglingVertexIncidence {
+                vertex_key: first,
+                simplex_key,
+            });
         };
 
         if simplex_vertices
@@ -1161,11 +1178,11 @@ where
             .copied()
             .all(|vk| simplex.contains_vertex(vk))
         {
-            return Some(simplex_key);
+            return Ok(Some(simplex_key));
         }
     }
 
-    None
+    Ok(None)
 }
 
 /// Chooses replacement-simplex parity from the oriented cavity boundary.
@@ -2154,8 +2171,8 @@ where
 /// # Errors
 ///
 /// Returns a [`FlipError`] if the flip would be degenerate, duplicate an existing simplex,
-/// create non-manifold topology, if predicate evaluation fails, or if underlying TDS
-/// mutations fail.
+/// create non-manifold topology, if the incidence index references a missing simplex,
+/// if predicate evaluation fails, or if underlying TDS mutations fail.
 pub(crate) fn apply_bistellar_flip<U, V, const D: usize, const K_MOVE: usize>(
     tds: &mut Tds<U, V, D>,
     context: &FlipContext<D, K_MOVE>,
@@ -2182,8 +2199,8 @@ where
 /// # Errors
 ///
 /// Returns a [`FlipError`] if the flip would be degenerate, duplicate an existing simplex,
-/// create non-manifold topology, if predicate evaluation fails, or if underlying TDS
-/// mutations fail.
+/// create non-manifold topology, if the incidence index references a missing simplex,
+/// if predicate evaluation fails, or if underlying TDS mutations fail.
 pub(crate) fn apply_bistellar_flip_dynamic<U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     k_move: usize,
@@ -2850,6 +2867,9 @@ pub enum FlipFailureKind {
     /// Missing simplex.
     #[error("missing simplex")]
     MissingSimplex,
+    /// Dangling vertex-to-simplex incidence reference.
+    #[error("dangling vertex incidence")]
+    DanglingVertexIncidence,
     /// Missing vertex.
     #[error("missing vertex")]
     MissingVertex,
@@ -3605,6 +3625,14 @@ pub enum FlipError {
         /// Missing simplex key.
         simplex_key: SimplexKey,
     },
+    /// The vertex-to-simplices incidence index references a missing simplex.
+    #[error("Vertex incidence index for {vertex_key:?} references missing simplex {simplex_key:?}")]
+    DanglingVertexIncidence {
+        /// Vertex whose incidence list contains the dangling simplex key.
+        vertex_key: VertexKey,
+        /// Missing simplex key referenced by the incidence index.
+        simplex_key: SimplexKey,
+    },
     /// The referenced vertex was not found.
     #[error("Vertex not found: {vertex_key:?}")]
     MissingVertex {
@@ -3870,6 +3898,7 @@ impl From<&FlipError> for FlipFailureKind {
             FlipError::UnsupportedDimension { .. } => Self::UnsupportedDimension,
             FlipError::BoundaryFacet { .. } => Self::BoundaryFacet,
             FlipError::MissingSimplex { .. } => Self::MissingSimplex,
+            FlipError::DanglingVertexIncidence { .. } => Self::DanglingVertexIncidence,
             FlipError::MissingVertex { .. } => Self::MissingVertex,
             FlipError::MissingNeighbor { .. } => Self::MissingNeighbor,
             FlipError::DanglingRidgeNeighbor { .. } => Self::DanglingRidgeNeighbor,
@@ -5171,6 +5200,22 @@ fn increment_vertex_count(
     }
 }
 
+/// Resolves a simplex key that came from a vertex incidence list.
+///
+/// A miss here means the maintained vertex-to-simplices index is stale, not
+/// that the caller supplied an arbitrary missing simplex key.
+fn simplex_from_vertex_incidence<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    vertex_key: VertexKey,
+    simplex_key: SimplexKey,
+) -> Result<&Simplex<V, D>, FlipError> {
+    tds.simplex(simplex_key)
+        .ok_or(FlipError::DanglingVertexIncidence {
+            vertex_key,
+            simplex_key,
+        })
+}
+
 /// Build inverse k=2 flip context from an edge and its incident simplices.
 ///
 /// # Errors
@@ -5203,9 +5248,7 @@ where
 
     let mut removed_simplices: SimplexKeyBuffer = SimplexKeyBuffer::new();
     for simplex_key in tds.simplex_keys_containing_vertex(v0) {
-        let simplex = tds
-            .simplex(simplex_key)
-            .ok_or(FlipError::MissingSimplex { simplex_key })?;
+        let simplex = simplex_from_vertex_incidence(tds, v0, simplex_key)?;
         if simplex.contains_vertex(v1) {
             removed_simplices.push(simplex_key);
         }
@@ -5327,6 +5370,10 @@ where
 
     let removed_simplices: SimplexKeyBuffer =
         tds.simplex_keys_containing_vertex(vertex_key).collect();
+    for &simplex_key in &removed_simplices {
+        simplex_from_vertex_incidence(tds, vertex_key, simplex_key)?;
+    }
+
     let expected = D + 1;
     if removed_simplices.len() != expected {
         return Err(FlipError::InvalidVertexMultiplicity {
@@ -5338,9 +5385,7 @@ where
     let mut counts: FastHashMap<VertexKey, usize> = FastHashMap::default();
     let mut removed_simplices_buf: SimplexKeyBuffer = SimplexKeyBuffer::new();
     for &simplex_key in &removed_simplices {
-        let simplex = tds
-            .simplex(simplex_key)
-            .ok_or(FlipError::MissingSimplex { simplex_key })?;
+        let simplex = simplex_from_vertex_incidence(tds, vertex_key, simplex_key)?;
         if !simplex.contains_vertex(vertex_key) {
             return Err(FlipVertexAdjacencyError::SimplexMissingVertex {
                 simplex_key,
@@ -5890,9 +5935,7 @@ where
 
     let mut removed_simplices: SimplexKeyBuffer = SimplexKeyBuffer::new();
     for simplex_key in tds.simplex_keys_containing_vertex(a) {
-        let simplex = tds
-            .simplex(simplex_key)
-            .ok_or(FlipError::MissingSimplex { simplex_key })?;
+        let simplex = simplex_from_vertex_incidence(tds, a, simplex_key)?;
         if simplex.contains_vertex(b) && simplex.contains_vertex(c) {
             removed_simplices.push(simplex_key);
         }
@@ -14809,6 +14852,15 @@ mod tests {
             FlipFailureKind::from(&dangling_ridge_neighbor),
             FlipFailureKind::DanglingRidgeNeighbor
         );
+
+        let dangling_vertex_incidence = FlipError::DanglingVertexIncidence {
+            vertex_key: VertexKey::from(KeyData::from_ffi(1)),
+            simplex_key: SimplexKey::from(KeyData::from_ffi(2)),
+        };
+        assert_eq!(
+            FlipFailureKind::from(&dangling_vertex_incidence),
+            FlipFailureKind::DanglingVertexIncidence
+        );
     }
 
     fn assert_hull_extension_failure_kind(
@@ -15634,6 +15686,71 @@ mod tests {
     ) -> SimplexKey {
         tds.insert_simplex_with_mapping(Simplex::try_new_with_data(vertices, None).unwrap())
             .unwrap()
+    }
+
+    fn assert_dangling_vertex_incidence(
+        err: &FlipError,
+        expected_vertex: VertexKey,
+        expected_simplex: SimplexKey,
+    ) {
+        assert_matches!(
+            err,
+            FlipError::DanglingVertexIncidence {
+                vertex_key,
+                simplex_key,
+            } if *vertex_key == expected_vertex && *simplex_key == expected_simplex
+        );
+    }
+
+    #[test]
+    fn find_simplex_containing_simplex_rejects_stale_incidence_key() {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let vertices = insert_standard_simplex_vertices(&mut tds);
+        let stale_simplex = insert_plain_simplex(&mut tds, vertices.clone());
+        tds.remove_simplex_storage_only_for_test(stale_simplex);
+
+        let err = find_simplex_containing_simplex(&tds, &vertices[..2], &SimplexKeyBuffer::new())
+            .unwrap_err();
+
+        assert_dangling_vertex_incidence(&err, vertices[0], stale_simplex);
+    }
+
+    #[test]
+    fn build_k1_inverse_context_rejects_stale_incidence_before_multiplicity() {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let vertices = insert_standard_simplex_vertices(&mut tds);
+        let stale_simplex = insert_plain_simplex(&mut tds, vertices.clone());
+        tds.remove_simplex_storage_only_for_test(stale_simplex);
+
+        let err = build_k1_inverse_context(&tds, vertices[0]).unwrap_err();
+
+        assert_dangling_vertex_incidence(&err, vertices[0], stale_simplex);
+    }
+
+    #[test]
+    fn build_k2_inverse_context_rejects_stale_incidence_key() {
+        let mut tds: Tds<(), (), 3> = Tds::empty();
+        let vertices = insert_standard_simplex_vertices(&mut tds);
+        let stale_simplex = insert_plain_simplex(&mut tds, vertices.clone());
+        tds.remove_simplex_storage_only_for_test(stale_simplex);
+
+        let edge = EdgeKey::from_validated_endpoints(vertices[0], vertices[1]);
+        let err = build_k2_flip_context_from_edge(&tds, edge).unwrap_err();
+
+        assert_dangling_vertex_incidence(&err, vertices[0], stale_simplex);
+    }
+
+    #[test]
+    fn build_k3_inverse_context_rejects_stale_incidence_key() {
+        let mut tds: Tds<(), (), 4> = Tds::empty();
+        let vertices = insert_standard_simplex_vertices(&mut tds);
+        let stale_simplex = insert_plain_simplex(&mut tds, vertices.clone());
+        tds.remove_simplex_storage_only_for_test(stale_simplex);
+
+        let triangle = TriangleHandle::try_new(vertices[0], vertices[1], vertices[2]).unwrap();
+        let err = build_k3_flip_context_from_triangle(&tds, triangle).unwrap_err();
+
+        assert_dangling_vertex_incidence(&err, vertices[0], stale_simplex);
     }
 
     fn periodic_helper_vertices<const D: usize>(

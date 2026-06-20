@@ -1091,7 +1091,7 @@ pub mod query {
     pub use crate::geometry::{insphere, insphere_distance, insphere_lifted};
     pub use crate::tds::{
         AdjacencyIndex, AdjacencyIndexBuildError, AllFacetsIter, BoundaryFacetsIter, EdgeKey,
-        EdgeKeyError, FacetView, Simplex, SimplexKey, Vertex, VertexKey,
+        EdgeKeyError, FacetView, Simplex, SimplexKey, TriangulationAdjacency, Vertex, VertexKey,
     };
     pub use crate::{DelaunayTriangulation, Triangulation};
 }
@@ -1174,12 +1174,12 @@ pub mod prelude {
         DelaunayRepairOrientationCanonicalizationFailure,
         DelaunayRepairOrientationCanonicalizationFailureKind, DelaunayRepairPostconditionFailure,
         DelaunayRepairStats, DelaunayRepairVerificationContext, FlipContextError,
-        FlipEdgeAdjacencyError, FlipError, FlipMutationError, FlipNeighborCavityFailureKind,
-        FlipNeighborDelaunayValidationFailureKind, FlipNeighborHullExtensionFailureKind,
-        FlipNeighborRepairDiagnostics, FlipNeighborRepairFailure, FlipNeighborWiringError,
-        FlipOrientationCheckStage, FlipPredicateError, FlipPredicateOperation,
-        FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder,
-        TriangleHandleError,
+        FlipEdgeAdjacencyError, FlipError, FlipFailureKind, FlipMutationError,
+        FlipNeighborCavityFailureKind, FlipNeighborDelaunayValidationFailureKind,
+        FlipNeighborHullExtensionFailureKind, FlipNeighborRepairDiagnostics,
+        FlipNeighborRepairFailure, FlipNeighborWiringError, FlipOrientationCheckStage,
+        FlipPredicateError, FlipPredicateOperation, FlipTriangleAdjacencyError,
+        FlipVertexAdjacencyError, RepairQueueOrder, TriangleHandleError,
     };
 
     // Re-export commonly used collection types from the public collections facade.
@@ -1304,6 +1304,7 @@ pub mod prelude {
             AdjacencyIndex, AdjacencyIndexBuildError, AllFacetsIter, BoundaryAnalysis,
             BoundaryFacetsIter, DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde,
             DataSerialize, DataType, EdgeKey, EdgeKeyError, FacetView, QueryError,
+            TriangulationAdjacency,
         };
         pub use crate::tds::{
             FacetHandle, InvariantError, NeighborSlot, Simplex, SimplexKey, Tds,
@@ -1389,7 +1390,7 @@ pub mod prelude {
             DelaunayRepairOrientationCanonicalizationFailureKind,
             DelaunayRepairPostconditionFailure, DelaunayRepairStats,
             DelaunayRepairVerificationContext, FlipContextError, FlipEdgeAdjacencyError, FlipError,
-            FlipMutationError, FlipNeighborCavityFailureKind,
+            FlipFailureKind, FlipMutationError, FlipNeighborCavityFailureKind,
             FlipNeighborDelaunayValidationFailureKind, FlipNeighborHullExtensionFailureKind,
             FlipNeighborRepairDiagnostics, FlipNeighborRepairFailure, FlipNeighborWiringError,
             FlipOrientationCheckStage, FlipPredicateError, FlipPredicateOperation,
@@ -1609,7 +1610,9 @@ pub mod prelude {
     /// Includes:
     /// - Topology traversal: [`DelaunayTriangulation::edges`], [`DelaunayTriangulation::incident_edges`],
     ///   [`DelaunayTriangulation::simplex_neighbors`]
-    /// - Fast repeated queries: [`DelaunayTriangulation::build_adjacency_index`] and [`AdjacencyIndex`]
+    /// - Fast repeated queries: [`DelaunayTriangulation::adjacency`] and [`TriangulationAdjacency`]
+    ///   for lifetime-bound traversal, or [`DelaunayTriangulation::build_adjacency_index`]
+    ///   and [`AdjacencyIndex`] when a detached index is required
     /// - Zero-allocation geometry accessors: [`DelaunayTriangulation::vertex_coords`],
     ///   [`DelaunayTriangulation::simplex_vertices`]
     /// - Convex hull extraction: [`ConvexHull::try_from_triangulation`]
@@ -1633,7 +1636,8 @@ pub mod prelude {
     pub mod query {
         // Core read-only traversal / adjacency
         pub use crate::tds::{
-            AdjacencyIndex, AdjacencyIndexBuildError, EdgeKey, EdgeKeyError, SimplexKey, VertexKey,
+            AdjacencyIndex, AdjacencyIndexBuildError, EdgeKey, EdgeKeyError, SimplexKey,
+            TriangulationAdjacency, VertexKey,
         };
         pub use crate::{DelaunayTriangulation, Triangulation};
 
@@ -1787,8 +1791,12 @@ mod tests {
     use crate::{
         DelaunayTriangulation,
         core::{
-            adjacency::AdjacencyIndex, edge::EdgeKey, simplex::Simplex, tds::Tds,
-            triangulation::Triangulation, vertex::Vertex,
+            adjacency::{AdjacencyIndex, TriangulationAdjacency},
+            edge::EdgeKey,
+            simplex::Simplex,
+            tds::Tds,
+            triangulation::Triangulation,
+            vertex::Vertex,
         },
         geometry::{
             Point, algorithms::convex_hull::ConvexHull, kernel::AdaptiveKernel, kernel::FastKernel,
@@ -1828,6 +1836,7 @@ mod tests {
         assert!(is_normal::<ConvexHull<(), (), 3>>());
         assert!(is_normal::<EdgeKey>());
         assert!(is_normal::<AdjacencyIndex<'static>>());
+        assert!(is_normal::<TriangulationAdjacency<'static>>());
         assert!(is_normal::<DelaunayizeConfig>());
         assert!(is_normal::<DelaunayizeOutcome<(), (), 3>>());
         assert!(is_normal::<DelaunayizeError>());

@@ -4588,6 +4588,7 @@ mod tests {
         InvalidCoordinateValue,
     };
     use crate::topology::characteristics::euler::TopologyClassification;
+    use crate::topology::traits::topological_space::TopologyKind;
     use slotmap::KeyData;
     use std::assert_matches;
 
@@ -5713,6 +5714,46 @@ mod tests {
                 max_validated_dimension: 3,
                 tracking_issue: 416,
             }
+        );
+    }
+
+    #[test]
+    fn test_initial_simplex_construction_error_buckets_periodic_image_sources() {
+        let source = TriangulationConstructionError::PeriodicImageUnsupportedTopology {
+            topology: TopologyKind::Euclidean,
+        };
+
+        let converted = InitialSimplexConstructionError::from(source);
+
+        assert_matches!(
+            converted,
+            InitialSimplexConstructionError::UnexpectedPeriodicImage { source }
+                if matches!(
+                    source.as_ref(),
+                    TriangulationConstructionError::PeriodicImageUnsupportedTopology {
+                        topology: TopologyKind::Euclidean,
+                    }
+                )
+        );
+    }
+
+    #[test]
+    fn test_initial_simplex_construction_error_buckets_periodic_quotient_sources() {
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(11));
+        let source =
+            TriangulationConstructionError::PeriodicQuotientMissingNeighborVector { simplex_key };
+
+        let converted = InitialSimplexConstructionError::from(source);
+
+        assert_matches!(
+            converted,
+            InitialSimplexConstructionError::UnexpectedPeriodicQuotient { source }
+                if matches!(
+                    source.as_ref(),
+                    TriangulationConstructionError::PeriodicQuotientMissingNeighborVector {
+                        simplex_key: preserved_key,
+                    } if *preserved_key == simplex_key
+                )
         );
     }
 

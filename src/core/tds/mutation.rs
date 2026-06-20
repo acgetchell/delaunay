@@ -3,11 +3,13 @@
 use super::errors::{
     EntityKind, NeighborValidationError, TdsConstructionError, TdsError, TdsMutationError,
 };
+use super::incidence::SimplexIncidenceRemoval;
 use super::storage::{SimplexUuidSortKey, Tds};
 use super::{SimplexKey, VertexKey};
 use crate::core::collections::{
-    Entry, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, SimplexKeySet,
-    SimplexRemovalBuffer, SmallBuffer, VertexKeySet, fast_hash_map_with_capacity,
+    CLEANUP_OPERATION_BUFFER_SIZE, Entry, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE,
+    NeighborBuffer, SimplexKeySet, SimplexRemovalBuffer, SmallBuffer, VertexKeySet,
+    fast_hash_map_with_capacity, fast_hash_set_with_capacity,
 };
 use crate::core::simplex::{NeighborSlot, Simplex};
 use crate::core::vertex::Vertex;
@@ -24,6 +26,178 @@ enum SimplexInsertionTopologyCheck {
     Checked,
     /// Skip global topology scans because the caller validated the local cavity.
     Prechecked,
+}
+
+type SimplexRemovalRecord = (
+    SimplexKey,
+    SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+);
+type SimplexRemovalRecords = SmallBuffer<SimplexRemovalRecord, CLEANUP_OPERATION_BUFFER_SIZE>;
+type SimplexIncidenceRemovalRecords =
+    SmallBuffer<SimplexIncidenceRemoval, CLEANUP_OPERATION_BUFFER_SIZE>;
+type IncidentSimplexUpdates =
+    SmallBuffer<(VertexKey, Option<SimplexKey>), CLEANUP_OPERATION_BUFFER_SIZE>;
+
+/// Membership test for a pending simplex-removal batch.
+///
+/// Small conflict regions stay inline to avoid per-insertion hash allocation;
+/// large batches fall back to a hash set so bulk cleanup keeps O(1) membership.
+enum RemovedSimplexMembership<'a> {
+    Inline(&'a [SimplexRemovalRecord]),
+    Hashed(SimplexKeySet),
+}
+
+impl<'a> RemovedSimplexMembership<'a> {
+    /// Builds membership over removals without allocating for ordinary small cavities.
+    fn from_removals(simplex_removals: &'a [SimplexRemovalRecord]) -> Self {
+        if simplex_removals.len() <= CLEANUP_OPERATION_BUFFER_SIZE {
+            return Self::Inline(simplex_removals);
+        }
+
+        let mut simplex_keys = fast_hash_set_with_capacity(simplex_removals.len());
+        simplex_keys.extend(simplex_removals.iter().map(|(simplex_key, _)| *simplex_key));
+        Self::Hashed(simplex_keys)
+    }
+
+    /// Returns whether `simplex_key` is in the removal batch.
+    fn contains(&self, simplex_key: SimplexKey) -> bool {
+        match self {
+            Self::Inline(simplex_removals) => simplex_removals
+                .iter()
+                .any(|(removed_key, _)| *removed_key == simplex_key),
+            Self::Hashed(simplex_keys) => simplex_keys.contains(&simplex_key),
+        }
+    }
+}
+
+/// Unique affected vertices from a simplex-removal batch.
+///
+/// Small cavities use a compact inline list; larger maintenance operations use
+/// the existing hash-set representation to preserve scaling behavior.
+enum AffectedVertexRecords {
+    Inline(SmallBuffer<VertexKey, CLEANUP_OPERATION_BUFFER_SIZE>),
+    Hashed(VertexKeySet),
+}
+
+impl AffectedVertexRecords {
+    /// Creates a unique-vertex accumulator sized for the expected removal frontier.
+    fn with_expected_len(expected_len: usize) -> Self {
+        if expected_len <= CLEANUP_OPERATION_BUFFER_SIZE {
+            return Self::Inline(SmallBuffer::with_capacity(expected_len));
+        }
+
+        Self::Hashed(fast_hash_set_with_capacity(expected_len))
+    }
+
+    /// Inserts a vertex once, preserving set semantics for repair traversal.
+    fn insert(&mut self, vertex_key: VertexKey) {
+        match self {
+            Self::Inline(vertices) => {
+                if !vertices.contains(&vertex_key) {
+                    vertices.push(vertex_key);
+                }
+            }
+            Self::Hashed(vertices) => {
+                vertices.insert(vertex_key);
+            }
+        }
+    }
+
+    /// Returns the number of unique affected vertices.
+    fn len(&self) -> usize {
+        match self {
+            Self::Inline(vertices) => vertices.len(),
+            Self::Hashed(vertices) => vertices.len(),
+        }
+    }
+
+    /// Visits each affected vertex exactly once, independent of the backing storage.
+    fn for_each(&self, mut visit: impl FnMut(VertexKey)) {
+        match self {
+            Self::Inline(vertices) => {
+                for &vertex_key in vertices {
+                    visit(vertex_key);
+                }
+            }
+            Self::Hashed(vertices) => {
+                for &vertex_key in vertices {
+                    visit(vertex_key);
+                }
+            }
+        }
+    }
+
+    /// Visits each affected vertex exactly once, stopping on the first error.
+    fn try_for_each<E>(&self, mut visit: impl FnMut(VertexKey) -> Result<(), E>) -> Result<(), E> {
+        match self {
+            Self::Inline(vertices) => {
+                for &vertex_key in vertices {
+                    visit(vertex_key)?;
+                }
+            }
+            Self::Hashed(vertices) => {
+                for &vertex_key in vertices {
+                    visit(vertex_key)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Candidate surviving incident simplices keyed by affected vertex.
+///
+/// This is deliberately map-like without forcing a hash allocation for the
+/// common one-to-few simplex removal performed during insertion.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "inline small-cavity candidate storage avoids hot-path allocations; large batches use the hash-backed variant"
+)]
+enum CandidateIncidentRecords {
+    Inline(SmallBuffer<(VertexKey, SimplexKey), CLEANUP_OPERATION_BUFFER_SIZE>),
+    Hashed(FastHashMap<VertexKey, SimplexKey>),
+}
+
+impl CandidateIncidentRecords {
+    /// Creates a candidate map with inline storage for ordinary small cavities.
+    fn with_expected_len(expected_len: usize) -> Self {
+        if expected_len <= CLEANUP_OPERATION_BUFFER_SIZE {
+            return Self::Inline(SmallBuffer::with_capacity(expected_len));
+        }
+
+        Self::Hashed(fast_hash_map_with_capacity(expected_len))
+    }
+
+    /// Records the first surviving incident simplex discovered for a vertex.
+    fn insert_if_absent(&mut self, vertex_key: VertexKey, simplex_key: SimplexKey) {
+        match self {
+            Self::Inline(candidates) => {
+                if !candidates
+                    .iter()
+                    .any(|(candidate_vertex, _)| *candidate_vertex == vertex_key)
+                {
+                    candidates.push((vertex_key, simplex_key));
+                }
+            }
+            Self::Hashed(candidates) => {
+                candidates.entry(vertex_key).or_insert(simplex_key);
+            }
+        }
+    }
+
+    /// Returns a candidate surviving incident simplex for `vertex_key`.
+    fn get(&self, vertex_key: VertexKey) -> Option<SimplexKey> {
+        match self {
+            Self::Inline(candidates) => {
+                candidates
+                    .iter()
+                    .find_map(|(candidate_vertex, simplex_key)| {
+                        (*candidate_vertex == vertex_key).then_some(*simplex_key)
+                    })
+            }
+            Self::Hashed(candidates) => candidates.get(&vertex_key).copied(),
+        }
+    }
 }
 
 impl<U, V, const D: usize> Tds<U, V, D> {
@@ -691,18 +865,15 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             return Ok(0);
         }
 
+        self.validate_incidence_for_simplex_removal_vertices(&simplex_removals)?;
         self.remove_simplices_from_vertex_incidence_transactionally(&simplex_removals)?;
 
-        // Build a set for O(1) membership tests.
-        let simplices_to_remove: SimplexKeySet = simplex_removals
-            .iter()
-            .map(|(simplex_key, _)| *simplex_key)
-            .collect();
+        let simplices_to_remove = RemovedSimplexMembership::from_removals(&simplex_removals);
 
         // 1) Clear neighbor back-references in surviving simplices and collect candidate incidence.
         let (affected_vertices, candidate_incident) = self
             .collect_removal_frontier_and_clear_neighbor_back_references(
-                &simplices_to_remove,
+                &simplex_removals,
                 &simplices_to_remove,
             );
 
@@ -733,12 +904,9 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// error restores every previously touched vertex buffer.
     fn remove_simplices_from_vertex_incidence_transactionally(
         &mut self,
-        simplex_removals: &[(
-            SimplexKey,
-            SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-        )],
+        simplex_removals: &[SimplexRemovalRecord],
     ) -> Result<(), TdsMutationError> {
-        let mut incidence_removals = Vec::with_capacity(simplex_removals.len());
+        let mut incidence_removals = SimplexIncidenceRemovalRecords::new();
         for (simplex_key, vertices) in simplex_removals {
             match self
                 .vertex_to_simplices
@@ -767,23 +935,86 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     fn collect_existing_simplex_removals(
         &self,
         simplex_keys: &[SimplexKey],
-    ) -> Vec<(
-        SimplexKey,
-        SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-    )> {
-        let mut seen = SimplexKeySet::default();
-        simplex_keys
-            .iter()
-            .copied()
-            .filter_map(|simplex_key| {
-                if !seen.insert(simplex_key) {
-                    return None;
+    ) -> SimplexRemovalRecords {
+        let mut seen_large = (simplex_keys.len() > CLEANUP_OPERATION_BUFFER_SIZE)
+            .then(|| fast_hash_set_with_capacity(simplex_keys.len()));
+        let mut simplex_removals = SimplexRemovalRecords::new();
+
+        for &simplex_key in simplex_keys {
+            let duplicate = seen_large.as_mut().map_or_else(
+                || {
+                    simplex_removals
+                        .iter()
+                        .any(|(removed_key, _)| *removed_key == simplex_key)
+                },
+                |seen| !seen.insert(simplex_key),
+            );
+
+            if duplicate {
+                continue;
+            }
+
+            let Some(simplex) = self.simplices.get(simplex_key) else {
+                continue;
+            };
+
+            let vertices = simplex.vertices().iter().copied().collect();
+            simplex_removals.push((simplex_key, vertices));
+        }
+
+        simplex_removals
+    }
+
+    /// Checks canonical incidence for vertices whose hints may be repaired by removal.
+    ///
+    /// The later repair fallback reads from `vertex_to_simplices`; validating
+    /// the affected entries up front ensures stale canonical incidence fails
+    /// before any storage, neighbor, or incidence mutation is observable.
+    fn validate_incidence_for_simplex_removal_vertices(
+        &self,
+        simplex_removals: &[SimplexRemovalRecord],
+    ) -> Result<(), TdsMutationError> {
+        let expected_vertices = simplex_removals.len().saturating_mul(D.saturating_add(1));
+        let mut affected_vertices = AffectedVertexRecords::with_expected_len(expected_vertices);
+
+        for (_, vertices) in simplex_removals {
+            for &vertex_key in vertices {
+                affected_vertices.insert(vertex_key);
+            }
+        }
+
+        affected_vertices.try_for_each(|vertex_key| {
+            if !self.vertices.contains_key(vertex_key) {
+                return Err(TdsError::VertexNotFound {
+                    vertex_key,
+                    context: "simplex-removal incidence preflight".to_string(),
                 }
-                let simplex = self.simplices.get(simplex_key)?;
-                let vertices = simplex.vertices().iter().copied().collect();
-                Some((simplex_key, vertices))
-            })
-            .collect()
+                .into());
+            }
+
+            for simplex_key in self.simplex_keys_containing_vertex(vertex_key) {
+                let Some(simplex) = self.simplices.get(simplex_key) else {
+                    return Err(TdsError::SimplexNotFound {
+                        simplex_key,
+                        context: format!(
+                            "vertex-to-simplices incidence preflight for vertex {vertex_key:?}"
+                        ),
+                    }
+                    .into());
+                };
+
+                if !simplex.contains_vertex(vertex_key) {
+                    return Err(TdsError::InconsistentDataStructure {
+                        message: format!(
+                            "Vertex-to-simplices index lists simplex {simplex_key:?} for vertex {vertex_key:?}, but the simplex does not contain the vertex"
+                        ),
+                    }
+                    .into());
+                }
+            }
+
+            Ok(())
+        })
     }
 
     /// Captures the surviving neighborhood around a removal batch before storage deletion.
@@ -794,35 +1025,30 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// are still readable.
     fn collect_removal_frontier_and_clear_neighbor_back_references(
         &mut self,
-        simplex_keys: &SimplexKeySet,
-        simplices_to_remove: &SimplexKeySet,
-    ) -> (VertexKeySet, FastHashMap<VertexKey, SimplexKey>) {
-        let mut affected_vertices: VertexKeySet = VertexKeySet::default();
-        let mut candidate_incident: FastHashMap<VertexKey, SimplexKey> =
-            fast_hash_map_with_capacity(simplex_keys.len().saturating_mul(D.saturating_add(1)));
+        simplex_removals: &[SimplexRemovalRecord],
+        simplices_to_remove: &RemovedSimplexMembership<'_>,
+    ) -> (AffectedVertexRecords, CandidateIncidentRecords) {
+        let expected_frontier_len = simplex_removals.len().saturating_mul(D.saturating_add(1));
+        let mut affected_vertices = AffectedVertexRecords::with_expected_len(expected_frontier_len);
+        let mut candidate_incident =
+            CandidateIncidentRecords::with_expected_len(expected_frontier_len);
 
-        for &simplex_key in simplex_keys {
-            let Some((vertices, neighbors)) = self.simplices.get(simplex_key).map(|simplex| {
-                let mut vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-                    SmallBuffer::with_capacity(simplex.number_of_vertices());
-                vertices.extend(simplex.vertices().iter().copied());
-
-                let mut neighbors: SmallBuffer<Option<SimplexKey>, MAX_PRACTICAL_DIMENSION_SIZE> =
-                    SmallBuffer::with_capacity(vertices.len());
-                neighbors.resize(vertices.len(), None);
-
-                if let Some(simplex_neighbors) = simplex.neighbor_keys() {
-                    for (slot, neighbor_opt) in neighbors.iter_mut().zip(simplex_neighbors) {
-                        *slot = neighbor_opt;
-                    }
-                }
-
-                (vertices, neighbors)
-            }) else {
+        for (simplex_key, vertices) in simplex_removals {
+            let Some(simplex) = self.simplices.get(*simplex_key) else {
                 continue;
             };
 
-            for &vk in &vertices {
+            let mut neighbors: SmallBuffer<Option<SimplexKey>, MAX_PRACTICAL_DIMENSION_SIZE> =
+                SmallBuffer::with_capacity(vertices.len());
+            neighbors.resize(vertices.len(), None);
+
+            if let Some(simplex_neighbors) = simplex.neighbor_keys() {
+                for (slot, neighbor_opt) in neighbors.iter_mut().zip(simplex_neighbors) {
+                    *slot = neighbor_opt;
+                }
+            }
+
+            for &vk in vertices {
                 affected_vertices.insert(vk);
             }
 
@@ -831,7 +1057,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                     continue;
                 };
 
-                if simplices_to_remove.contains(neighbor_key) {
+                if simplices_to_remove.contains(*neighbor_key) {
                     continue; // neighbor is also being removed
                 }
 
@@ -841,7 +1067,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                     if vertex_index == facet_idx {
                         continue;
                     }
-                    candidate_incident.entry(vkey).or_insert(*neighbor_key);
+                    candidate_incident.insert_if_absent(vkey, *neighbor_key);
                 }
 
                 let Some(neighbor_simplex) = self.simplices.get_mut(*neighbor_key) else {
@@ -853,7 +1079,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 
                 // Clear the back-reference in the neighbor simplex's neighbor buffer.
                 for slot in neighbors_buf.iter_mut() {
-                    if slot.simplex_key() == Some(simplex_key) {
+                    if slot.simplex_key() == Some(*simplex_key) {
                         *slot = NeighborSlot::Boundary;
                     }
                 }
@@ -870,10 +1096,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// removed, so failed batches can leave storage and generation untouched.
     fn remove_simplices_and_update_uuid_mappings(
         &mut self,
-        simplex_removals: &[(
-            SimplexKey,
-            SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-        )],
+        simplex_removals: &[SimplexRemovalRecord],
     ) -> usize {
         let mut removed_count = 0;
 
@@ -889,56 +1112,64 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 
     fn repair_incident_simplices_after_simplex_removal(
         &mut self,
-        affected_vertices: &VertexKeySet,
-        simplices_to_remove: &SimplexKeySet,
-        candidate_incident: &FastHashMap<VertexKey, SimplexKey>,
+        affected_vertices: &AffectedVertexRecords,
+        simplices_to_remove: &RemovedSimplexMembership<'_>,
+        candidate_incident: &CandidateIncidentRecords,
     ) {
         // Compute updates first so immutable lookup and mutable vertex writes
         // stay in separate borrow phases.
-        let mut incident_updates: Vec<(VertexKey, Option<SimplexKey>)> =
-            Vec::with_capacity(affected_vertices.len());
+        let mut incident_updates = IncidentSimplexUpdates::with_capacity(affected_vertices.len());
 
-        for &vk in affected_vertices {
-            // We only need to consider vertices that appeared in removed simplices.
-            let needs_repair = {
-                let Some(v) = self.vertices.get(vk) else {
-                    continue;
-                };
-
-                match v.incident_simplex() {
-                    None => true,
-                    Some(simplex_key) => {
-                        simplices_to_remove.contains(&simplex_key)
-                            || !self.simplices.contains_key(simplex_key)
-                    }
-                }
-            };
-
-            if !needs_repair {
-                continue;
+        affected_vertices.for_each(|vk| {
+            if let Some(update) =
+                self.incident_simplex_repair_update(vk, simplices_to_remove, candidate_incident)
+            {
+                incident_updates.push(update);
             }
-
-            // Prefer a candidate simplex discovered on the boundary of the removed region.
-            let mut new_incident = candidate_incident.get(&vk).copied().filter(|&ck| {
-                self.simplices
-                    .get(ck)
-                    .is_some_and(|simplex| simplex.contains_vertex(vk))
-            });
-
-            // Conservative fallback: pick the first remaining simplex that contains this vertex.
-            // This is only hit if neighbor pointers were missing or the boundary had no surviving simplex.
-            if new_incident.is_none() {
-                new_incident = self.simplex_keys_containing_vertex(vk).next();
-            }
-
-            incident_updates.push((vk, new_incident));
-        }
+        });
 
         for (vk, new_incident) in incident_updates {
             if let Some(vertex) = self.vertices.get_mut(vk) {
                 vertex.set_incident_simplex(new_incident);
             }
         }
+    }
+
+    /// Computes the replacement `incident_simplex` for one affected vertex.
+    ///
+    /// Separating this read-only phase from the later vertex writes lets removal
+    /// repair use borrowed incidence and simplex storage without aliasing
+    /// mutable vertex access.
+    fn incident_simplex_repair_update(
+        &self,
+        vertex_key: VertexKey,
+        simplices_to_remove: &RemovedSimplexMembership<'_>,
+        candidate_incident: &CandidateIncidentRecords,
+    ) -> Option<(VertexKey, Option<SimplexKey>)> {
+        let vertex = self.vertices.get(vertex_key)?;
+
+        let needs_repair = vertex.incident_simplex().is_none_or(|simplex_key| {
+            simplices_to_remove.contains(simplex_key) || !self.simplices.contains_key(simplex_key)
+        });
+
+        if !needs_repair {
+            return None;
+        }
+
+        // Prefer a candidate simplex discovered on the boundary of the removed region.
+        let mut new_incident = candidate_incident.get(vertex_key).filter(|&simplex_key| {
+            self.simplices
+                .get(simplex_key)
+                .is_some_and(|simplex| simplex.contains_vertex(vertex_key))
+        });
+
+        // Conservative fallback: pick the first remaining simplex that contains this vertex.
+        // This is only hit if neighbor pointers were missing or the boundary had no surviving simplex.
+        if new_incident.is_none() {
+            new_incident = self.simplex_keys_containing_vertex(vertex_key).next();
+        }
+
+        Some((vertex_key, new_incident))
     }
 
     pub(crate) fn remove_vertex(
@@ -2563,6 +2794,56 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_remove_simplices_by_keys_errors_before_mutation_on_stale_incidence() {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let a = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
+        let d = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            )
+            .unwrap();
+
+        let stale = tds
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, c], None).unwrap())
+            .unwrap();
+        let requested = tds
+            .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![b, d, c], None).unwrap())
+            .unwrap();
+        let incidence_before = tds
+            .vertex_to_simplices_index()
+            .simplex_keys(b)
+            .collect::<Vec<_>>();
+        let generation_before = tds.generation();
+
+        tds.remove_simplex_storage_only_for_test(stale);
+        let err = tds.remove_simplices_by_keys(&[requested]).unwrap_err();
+
+        assert_matches!(err.as_tds_error(), TdsError::SimplexNotFound { .. });
+        assert!(tds.contains_simplex_key(requested));
+        assert_eq!(tds.generation(), generation_before);
+        assert_eq!(
+            tds.vertex_to_simplices_index()
+                .simplex_keys(b)
+                .collect::<Vec<_>>(),
+            incidence_before
+        );
     }
 
     #[test]

@@ -211,9 +211,12 @@ delaunay/
 │   │   ├── tds/
 │   │   │   ├── equality.rs
 │   │   │   ├── errors.rs
+│   │   │   ├── incidence.rs
 │   │   │   ├── keys.rs
+│   │   │   ├── mutation.rs
 │   │   │   ├── snapshot.rs
-│   │   │   └── storage.rs
+│   │   │   ├── storage.rs
+│   │   │   └── validation.rs
 │   │   ├── triangulation.rs
 │   │   ├── validation.rs
 │   │   └── vertex.rs
@@ -450,6 +453,7 @@ paths instead.
 - `tds/storage.rs` - Main `Tds` struct, storage accessors, identity helpers, and construction tests
 - `tds/errors.rs` - TDS error/report vocabulary re-export boundary
 - `tds/equality.rs` - TDS equality implementation and stable simplex identity helpers
+- `tds/incidence.rs` - Invariant-bearing vertex-to-simplices incidence index
 - `tds/keys.rs` - Slotmap-backed `VertexKey` and `SimplexKey` handle types
 - `tds/mutation.rs` - TDS topology mutation, orientation repair, and neighbor maintenance
 - `tds/snapshot.rs` - TDS persistence boundary: raw codec records parse into a validated UUID snapshot before hydration
@@ -469,7 +473,8 @@ paths instead.
   Delaunay Level 4 with `src/delaunay/validation.rs`
 - `vertex.rs`, `simplex.rs`, `facet.rs` - Core geometric primitives
 - `edge.rs` - Canonical `EdgeKey` for topology traversal
-- `adjacency.rs` - Optional `AdjacencyIndex` builder outputs (opt-in)
+- `adjacency.rs` - Optional `AdjacencyIndex` builder outputs and
+  lifetime-bound `TriangulationAdjacency` views (opt-in)
 - `collections/` - Optimized collection types and spatial acceleration structures
   - `spatial_hash_grid.rs` - Hash-grid spatial index for duplicate detection and locate-hint selection
 - `boundary.rs` - Boundary detection and analysis
