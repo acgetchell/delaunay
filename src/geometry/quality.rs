@@ -261,7 +261,7 @@ where
 
     // Use SmallBuffer to avoid heap allocation (simplices have D+1 vertices, D ≤ MAX_PRACTICAL_DIMENSION_SIZE)
     let mut points = SmallBuffer::new();
-    for &vkey in &vertex_keys {
+    for &vkey in vertex_keys {
         let point = tri
             .tds
             .vertex(vkey)

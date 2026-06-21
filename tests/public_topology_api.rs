@@ -10,6 +10,7 @@ use delaunay::prelude::DelaunayTriangulationConstructionError;
 use delaunay::prelude::TopologyGuarantee;
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::query::*;
+use delaunay::prelude::tds::TdsError;
 use std::collections::HashSet;
 
 #[derive(Debug, thiserror::Error)]
@@ -26,8 +27,8 @@ enum PublicTopologyApiTestError {
     EmptySingleTetrahedronSimplices,
     #[error("single simplex triangulation has no simplices")]
     EmptySingleSimplexSimplices,
-    #[error("simplex key from triangulation has no vertices")]
-    MissingSimplexVertices,
+    #[error(transparent)]
+    Tds(#[from] TdsError),
     #[error("double tetrahedron did not contain the expected shared vertex")]
     MissingExpectedSharedVertex,
 }
@@ -174,12 +175,7 @@ fn edges_and_incident_edges_on_single_tetrahedron() -> Result<(), PublicTopology
         dt.simplex_vertices(simplex_key),
         tri.simplex_vertices(simplex_key)
     );
-    assert_eq!(
-        dt.simplex_vertices(simplex_key)
-            .ok_or(PublicTopologyApiTestError::MissingSimplexVertices)?
-            .len(),
-        4
-    );
+    assert_eq!(dt.simplex_vertices(simplex_key)?.len(), 4);
     Ok(())
 }
 

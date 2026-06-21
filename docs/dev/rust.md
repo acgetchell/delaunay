@@ -212,6 +212,30 @@ and either borrow canonical relations for `'tds` or carry a lifetime tie to the
 source snapshot for derived maps, so mutation through the same owner is
 impossible while the view is alive.
 
+Names should match ownership. A `*View` type or a method described as returning
+views must borrow the canonical owner, or return values lifetime-bound to that
+owner, so the view cannot outlive the data it observes. Detached, copyable
+runtime references should be named `*Handle` or `*Key` instead, and APIs that
+turn handles back into views must revalidate the handle against a live owner at
+the conversion boundary. For example, `ConvexHull::facets(triangulation)`
+returns borrowed `FacetView<'_>` values, while `ConvexHull::facet_handles()`
+exposes the stored `FacetHandle`s explicitly.
+
+Borrowed slices over canonical topology storage follow the same convention:
+return `&[Key]` when the slice lives in the owner and the caller should not keep
+it across mutation. For example, `Tds::simplex_vertices(simplex_key)` validates
+the relation and lends the simplex's stored `&[VertexKey]`.
+
+Algorithm implementations should use borrowed views for read-only observation,
+classification, and validation phases. Mutation APIs that change canonical
+topology should take `&mut Tds`/`&mut Triangulation` directly, or expose a guard
+that holds that mutable borrow for the whole mutation or rollback window. This
+ties existence and aliasing to the real owner: missing topology fails at view or
+guard construction, and Rust prevents mutation while immutable views remain
+live. Inside the mutable scope, collapse short-lived views into validated
+`*Handle`/`*Key` commit identifiers before mutating; a live view must not span a
+topology mutation.
+
 Keep runtime identity or generation checks for detached handles, separately
 supplied indexes, serialization boundaries, and tests that intentionally corrupt
 metadata. Those checks complement lifetimes at API boundaries where Rust cannot

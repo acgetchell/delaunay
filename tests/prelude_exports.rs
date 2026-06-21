@@ -44,7 +44,7 @@ use delaunay::prelude::construction::{
 };
 use delaunay::prelude::delaunayize::{
     DelaunayTriangulationBuilder as DelaunayizeDelaunayTriangulationBuilder, DelaunayizeConfig,
-    DelaunayizeError, DelaunayizeOutcome, delaunayize_by_flips,
+    DelaunayizeError, DelaunayizeOutcome, SimplexDataRestoreError, delaunayize_by_flips,
 };
 use delaunay::prelude::diagnostics::ConstructionTelemetry;
 #[cfg(feature = "diagnostics")]
@@ -86,8 +86,8 @@ use delaunay::prelude::ordering::{
 };
 use delaunay::prelude::query::{
     AllFacetsIter as QueryAllFacetsIter, BoundaryFacetsIter as QueryBoundaryFacetsIter, ConvexHull,
-    EdgeIndex as QueryEdgeIndex, IncidenceView as QueryIncidenceView, QueryError,
-    SimplexNeighborIndex as QuerySimplexNeighborIndex, TopologyIndexBuildError,
+    ConvexHullConstructionError, EdgeIndex as QueryEdgeIndex, IncidenceView as QueryIncidenceView,
+    QueryError, SimplexNeighborIndex as QuerySimplexNeighborIndex, TopologyIndexBuildError,
     TriangulationAdjacency as QueryTriangulationAdjacency,
 };
 use delaunay::prelude::repair::{
@@ -190,6 +190,8 @@ enum PreludeExportTestError {
     Manifold(#[from] ManifoldError),
     #[error(transparent)]
     Query(#[from] QueryError),
+    #[error(transparent)]
+    ConvexHull(#[from] ConvexHullConstructionError),
     #[error(transparent)]
     TopologyIndex(#[from] TopologyIndexBuildError),
     #[error(transparent)]
@@ -606,7 +608,12 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
             })
     })?;
     assert!(boundary_facet_count > 0);
-    let _hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
+    let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())?;
+    assert_eq!(hull.facet_handles().count(), boundary_facet_count);
+    let hull_facet_view_count = hull
+        .facets(dt.as_triangulation())?
+        .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
+    assert_eq!(hull_facet_view_count, boundary_facet_count);
     dt.validate().unwrap();
     assert_bistellar_flips(&dt);
 
@@ -1402,6 +1409,7 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
     assert!(!outcome.used_fallback_rebuild);
     let _typed_outcome: DelaunayizeOutcome<(), (), 3> = outcome;
     let _typed_error: Option<DelaunayizeError> = None;
+    assert_send_sync_unpin::<SimplexDataRestoreError>();
     Ok(())
 }
 

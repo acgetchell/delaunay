@@ -2,13 +2,12 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::facet::{FacetError, FacetView};
+use crate::core::facet::FacetError;
 use crate::core::tds::Tds;
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
-use crate::geometry::algorithms::convex_hull::ConvexHull;
-use crate::geometry::kernel::Kernel;
+use crate::geometry::algorithms::convex_hull::{ConvexHull, ConvexHullConstructionError};
 use crate::geometry::point::Point;
 use std::collections::HashSet;
 use std::fmt::Debug;
@@ -416,11 +415,12 @@ where
 ///
 /// # Returns
 ///
-/// A `Result` containing a `HashSet` of facet identifiers, or a `FacetError`
+/// A `Result` containing a `HashSet` of facet identifiers.
 ///
 /// # Errors
 ///
-/// Returns `FacetError` if facet views cannot be created or facet keys cannot be computed
+/// Returns [`ConvexHullConstructionError`] if the hull is stale for `tri`, belongs to a
+/// different triangulation identity, or if borrowed facet views cannot be created or keyed.
 ///
 /// # Examples
 ///
@@ -458,21 +458,14 @@ where
 pub fn extract_hull_facet_set<K, U, V, const D: usize>(
     hull: &ConvexHull<U, V, D>,
     tri: &Triangulation<K, U, V, D>,
-) -> Result<HashSet<u64>, FacetError>
-where
-    K: Kernel<D>,
-    U: DataType,
-    V: DataType,
-{
-    let tds = &tri.tds;
+) -> Result<HashSet<u64>, ConvexHullConstructionError> {
     let mut facet_ids = HashSet::new();
 
-    for facet_handle in hull.facets() {
-        // Create FacetView using simplex_key() and facet_index() methods from FacetHandle
-        let facet_view =
-            FacetView::try_new(tds, facet_handle.simplex_key(), facet_handle.facet_index())?;
-        // Use the existing FacetView::key() method
-        let facet_id = facet_view.key()?;
+    for facet_view in hull.facets(tri)? {
+        let facet_id = facet_view
+            .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })?
+            .key()
+            .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })?;
         facet_ids.insert(facet_id);
     }
 

@@ -498,10 +498,15 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
 
     /// Returns a slice view of a simplex's vertex keys.
     ///
-    /// This is a zero-allocation accessor. If `c` is not present, returns `None`.
-    #[must_use]
-    pub fn simplex_vertices(&self, c: SimplexKey) -> Option<&[VertexKey]> {
-        self.tds.simplex(c).map(Simplex::vertices)
+    /// This is a zero-allocation accessor that validates the simplex key and
+    /// referenced vertex keys before lending the canonical slice.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TdsError`] if `c` does not identify a simplex in this
+    /// triangulation, or if the simplex references a missing vertex key.
+    pub fn simplex_vertices(&self, c: SimplexKey) -> Result<&[VertexKey], TdsError> {
+        self.tds.simplex_vertices(c)
     }
 
     /// Returns a slice view of a vertex's coordinates.
@@ -1082,7 +1087,10 @@ mod tests {
             neighbor_index.number_of_simplex_neighbors(missing_simplex_key),
             0
         );
-        assert!(tri.simplex_vertices(missing_simplex_key).is_none());
+        assert_matches!(
+            tri.simplex_vertices(missing_simplex_key),
+            Err(TdsError::SimplexNotFound { .. })
+        );
     }
 
     #[test]
@@ -1464,9 +1472,9 @@ mod tests {
             assert_eq!(coords.len(), 3);
         }
 
-        assert!(
-            tri.simplex_vertices(SimplexKey::from(KeyData::from_ffi(0xDEAD)))
-                .is_none()
+        assert_matches!(
+            tri.simplex_vertices(SimplexKey::from(KeyData::from_ffi(0xDEAD))),
+            Err(TdsError::SimplexNotFound { .. })
         );
         assert!(
             tri.vertex_coords(VertexKey::from(KeyData::from_ffi(0xBEEF)))

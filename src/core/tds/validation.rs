@@ -91,7 +91,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 
             for i in 0..vertices.len() {
                 let facet_key =
-                    Self::periodic_facet_key_from_simplex_vertices(simplex, &vertices, i)?;
+                    Self::periodic_facet_key_from_simplex_vertices(simplex, vertices, i)?;
                 let Ok(facet_index_u8) = usize_to_u8(i, vertices.len()) else {
                     return Err(TdsError::IndexOutOfBounds {
                         index: i,
@@ -424,7 +424,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         for (simplex_key, _simplex) in &self.simplices {
             let vertices = self.simplex_vertices(simplex_key)?;
             let vertex_uuid_offsets =
-                self.build_periodic_vertex_uuid_offsets(simplex_key, &vertices)?;
+                self.build_periodic_vertex_uuid_offsets(simplex_key, vertices)?;
 
             if let Some(existing_simplex_key) = unique_simplices.get(&vertex_uuid_offsets) {
                 duplicates.push((

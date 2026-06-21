@@ -8,7 +8,7 @@ use delaunay::prelude::construction::{GlobalTopology, TopologyGuarantee, Topolog
 use delaunay::prelude::geometry::{Coordinate, CoordinateValidationError, FastKernel, Point};
 use delaunay::prelude::query::BoundaryAnalysis;
 use delaunay::prelude::tds::{
-    Simplex, SimplexKey, Tds, Vertex, VertexKey, verify_facet_index_consistency,
+    Simplex, SimplexKey, Tds, TdsError, Vertex, VertexKey, verify_facet_index_consistency,
 };
 use delaunay::prelude::topology::validation::validate_triangulation_euler;
 use delaunay::query::{QueryError, TopologyIndexBuildError};
@@ -162,7 +162,10 @@ fn delaunay_empty_query_wrappers_accept_non_datatype_payloads()
     assert_eq!(dt.edges().count(), 0);
     assert_eq!(dt.incident_edges(VertexKey::default()).count(), 0);
     assert_eq!(dt.simplex_neighbors(SimplexKey::default()).count(), 0);
-    assert_eq!(dt.simplex_vertices(SimplexKey::default()), None);
+    assert!(matches!(
+        dt.simplex_vertices(SimplexKey::default()),
+        Err(TdsError::SimplexNotFound { .. })
+    ));
     assert_eq!(dt.vertex_coords(VertexKey::default()), None);
 
     let incidence = dt.incidence()?;

@@ -350,7 +350,7 @@ mod allocation_contracts {
             |b| {
                 b.iter(|| {
                     let (vertex_count, info) = measure_with_result(|| {
-                        tds.simplex_vertices(simplex_key).map(|keys| keys.len())
+                        tds.simplex_vertices(simplex_key).map(<[VertexKey]>::len)
                     });
                     assert_eq!(vertex_count.or_abort(), D + 1);
                     assert_zero_allocations(&info, "Tds::simplex_vertices");

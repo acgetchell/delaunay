@@ -433,7 +433,8 @@ pub struct ConvexHull<U, V, const D: usize> {
     /// Use `is_valid_for_triangulation()` to check validity before use.
     ///
     /// This field is private to prevent external mutation. Use the provided read-only
-    /// accessors (`facets()`, `facet()`, `number_of_facets()`) to access hull facets.
+    /// accessors (`facets(triangulation)`, `facet_handles()`, `facet()`, `number_of_facets()`)
+    /// to access hull facets.
     hull_facets: Vec<FacetHandle>,
     /// Cache for the facet-to-simplices mapping to avoid rebuilding it for each facet check
     /// Uses `ArcSwapOption` for lock-free atomic updates when cache needs invalidation
@@ -555,7 +556,11 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
         self.hull_facets.get(index)
     }
 
-    /// Returns an iterator over the hull facets
+    /// Returns an iterator over the hull facet handles.
+    ///
+    /// These handles are detached, runtime-local references into the TDS state
+    /// captured when the hull was built. Use [`Self::facets`] when callers need
+    /// borrowed [`FacetView`] access with hull freshness checked at the boundary.
     ///
     /// # Examples
     ///
@@ -592,22 +597,84 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     ///     ConvexHull::try_from_triangulation(dt.as_triangulation())?;
     ///
     /// // Iterate over all hull facets
-    /// let facet_count = hull.facets().count();
+    /// let facet_count = hull.facet_handles().count();
     /// assert_eq!(facet_count, 4); // Tetrahedron has 4 faces
     ///
-    /// // Check that all facets have the expected number of vertices
-    /// // Note: facets() returns FacetHandle structs - need to create FacetView to access vertices
-    /// use delaunay::prelude::tds::FacetView;
-    /// for facet_handle in hull.facets() {
-    ///     if let Ok(facet_view) = FacetView::try_new(&dt.tds(), facet_handle.simplex_key(), facet_handle.facet_index()) {
-    ///         assert_eq!(facet_view.vertices()?.count(), 3); // 3D facets have 3 vertices
-    ///     }
+    /// // Check that all facets have the expected number of vertices.
+    /// for facet_view in hull.facets(dt.as_triangulation())? {
+    ///     assert_eq!(facet_view?.vertices()?.count(), 3); // 3D facets have 3 vertices
     /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub fn facets(&self) -> std::slice::Iter<'_, FacetHandle> {
+    pub fn facet_handles(&self) -> std::slice::Iter<'_, FacetHandle> {
         self.hull_facets.iter()
+    }
+
+    /// Returns borrowed facet views for this hull in a live triangulation.
+    ///
+    /// This is the borrowed-view counterpart to [`Self::facet_handles`]. It first
+    /// verifies that the hull still belongs to `tri` and that the triangulation
+    /// generation matches the hull's creation generation, then yields
+    /// [`FacetView`] values lifetime-bound to the supplied triangulation. Holding
+    /// any returned view therefore keeps the source triangulation immutably
+    /// borrowed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConvexHullConstructionError::StaleHull`] or
+    /// [`ConvexHullConstructionError::IdentityMismatch`] if the hull no longer
+    /// matches `tri`. Individual iterator items return [`FacetError`] if a
+    /// stored handle no longer resolves to a valid facet despite the freshness
+    /// check.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
+    /// use delaunay::prelude::query::ConvexHull;
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::prelude::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = vec![
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())?;
+    ///
+    /// for facet in hull.facets(dt.as_triangulation())? {
+    ///     assert_eq!(facet?.vertices()?.count(), 3);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn facets<'tds, K>(
+        &'tds self,
+        tri: &'tds Triangulation<K, U, V, D>,
+    ) -> Result<
+        impl Iterator<Item = Result<FacetView<'tds, U, V, D>, FacetError>> + 'tds,
+        ConvexHullConstructionError,
+    > {
+        self.ensure_current_for_construction(tri)?;
+        let tds = &tri.tds;
+        Ok(self
+            .hull_facets
+            .iter()
+            .map(move |handle| (*handle).view(tds)))
     }
 
     /// Returns true if the convex hull is empty (has no facets)
@@ -768,10 +835,7 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     /// # }
     /// ```
     #[must_use]
-    pub fn is_valid_for_triangulation<K>(&self, tri: &Triangulation<K, U, V, D>) -> bool
-    where
-        K: Kernel<D>,
-    {
+    pub fn is_valid_for_triangulation<K>(&self, tri: &Triangulation<K, U, V, D>) -> bool {
         // Use creation_generation (immutable) for validity check, not cached_generation (mutable)
         // Empty hull (with creation_generation unset) is always valid - it has no facets to be stale
         let Some(&creation_generation) = self.creation_generation.get() else {
@@ -784,85 +848,95 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
             && Arc::ptr_eq(creation_identity, tri.tds.identity())
     }
 
+    /// Returns the TDS identity captured by this hull, or nil for uninitialized empty hulls.
+    ///
+    /// This keeps validation and construction errors diagnosable without
+    /// exposing the private `Arc<Uuid>` identity token used for same-owner
+    /// freshness checks.
     fn hull_identity_uuid(&self) -> uuid::Uuid {
         self.creation_identity
             .get()
             .map_or_else(uuid::Uuid::nil, |identity| *identity.as_ref())
     }
 
-    fn tds_identity_uuid<K>(tri: &Triangulation<K, U, V, D>) -> uuid::Uuid
-    where
-        K: Kernel<D>,
-    {
+    /// Returns the runtime identity of the TDS currently owned by `tri`.
+    ///
+    /// Generation counters are meaningful only within a single TDS identity, so
+    /// public hull view conversion reports both identities when a detached hull
+    /// is supplied with the wrong triangulation.
+    fn tds_identity_uuid<K>(tri: &Triangulation<K, U, V, D>) -> uuid::Uuid {
         *tri.tds.identity().as_ref()
     }
 
-    /// Helper to construct a `StaleHull` error with generation info
+    /// Builds a validation stale-hull error from the immutable creation generation.
     ///
-    /// Centralizes the error construction pattern to avoid duplication.
+    /// Validation and borrowed-view entry points use the same generation
+    /// comparison, so this helper keeps their diagnostic payloads aligned.
     #[inline]
-    fn stale_hull_error<K>(&self, tri: &Triangulation<K, U, V, D>) -> ConvexHullValidationError
-    where
-        K: Kernel<D>,
-    {
+    fn stale_hull_error<K>(&self, tri: &Triangulation<K, U, V, D>) -> ConvexHullValidationError {
         ConvexHullValidationError::StaleHull {
             hull_generation: self.creation_generation.get().copied().unwrap_or(0),
             tds_generation: tri.tds.generation(),
         }
     }
 
+    /// Builds a validation identity-mismatch error for a hull used with the wrong TDS.
+    ///
+    /// Borrowed hull views must be derived from the same canonical owner that
+    /// produced the detached handles. This diagnostic preserves both identities
+    /// when that same-owner condition fails.
     #[inline]
     fn identity_mismatch_error<K>(
         &self,
         tri: &Triangulation<K, U, V, D>,
-    ) -> ConvexHullValidationError
-    where
-        K: Kernel<D>,
-    {
+    ) -> ConvexHullValidationError {
         ConvexHullValidationError::IdentityMismatch {
             hull_identity: self.hull_identity_uuid(),
             tds_identity: Self::tds_identity_uuid(tri),
         }
     }
 
-    /// Helper to construct a `StaleHull` construction error with generation info
+    /// Builds a construction stale-hull error from the immutable creation generation.
     ///
-    /// Centralizes the error construction pattern to avoid duplication.
+    /// Construction-facing APIs return [`ConvexHullConstructionError`], but they
+    /// enforce the same freshness invariant as validation.
     #[inline]
     fn stale_hull_construction_error<K>(
         &self,
         tri: &Triangulation<K, U, V, D>,
-    ) -> ConvexHullConstructionError
-    where
-        K: Kernel<D>,
-    {
+    ) -> ConvexHullConstructionError {
         ConvexHullConstructionError::StaleHull {
             hull_generation: self.creation_generation.get().copied().unwrap_or(0),
             tds_generation: tri.tds.generation(),
         }
     }
 
+    /// Builds a construction identity-mismatch error for a hull used with the wrong TDS.
+    ///
+    /// This is the construction-error counterpart to
+    /// [`Self::identity_mismatch_error`] for APIs such as [`Self::facets`] that
+    /// return borrowed views after checking same-owner freshness.
     #[inline]
     fn identity_mismatch_construction_error<K>(
         &self,
         tri: &Triangulation<K, U, V, D>,
-    ) -> ConvexHullConstructionError
-    where
-        K: Kernel<D>,
-    {
+    ) -> ConvexHullConstructionError {
         ConvexHullConstructionError::IdentityMismatch {
             hull_identity: self.hull_identity_uuid(),
             tds_identity: Self::tds_identity_uuid(tri),
         }
     }
 
+    /// Verifies that construction-facing borrowed views can safely resolve this hull.
+    ///
+    /// Empty synthetic hulls without recorded creation metadata are accepted.
+    /// Otherwise the live triangulation must match both the stored generation
+    /// and the stored TDS identity before detached handles are converted into
+    /// borrowed [`FacetView`] values.
     fn ensure_current_for_construction<K>(
         &self,
         tri: &Triangulation<K, U, V, D>,
-    ) -> Result<(), ConvexHullConstructionError>
-    where
-        K: Kernel<D>,
-    {
+    ) -> Result<(), ConvexHullConstructionError> {
         if self.is_empty() && self.creation_generation.get().is_none() {
             return Ok(());
         }
@@ -879,13 +953,15 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
         Ok(())
     }
 
+    /// Verifies that validation-facing queries still observe the hull's source TDS.
+    ///
+    /// This mirrors [`Self::ensure_current_for_construction`] while preserving
+    /// the validation-specific error type used by
+    /// [`Self::is_valid_for_triangulation`].
     fn ensure_current_for_validation<K>(
         &self,
         tri: &Triangulation<K, U, V, D>,
-    ) -> Result<(), ConvexHullValidationError>
-    where
-        K: Kernel<D>,
-    {
+    ) -> Result<(), ConvexHullValidationError> {
         if self.is_empty() && self.creation_generation.get().is_none() {
             return Ok(());
         }
@@ -1078,8 +1154,8 @@ where
             ConvexHullConstructionError::BoundaryFacetExtractionFailed { source }
         })?;
 
-        // Collect facet handles (SimplexKey, facet_index) for storage
-        // These can be used to reconstruct FacetViews when needed
+        // Collect detached facet handles for storage. Borrowed FacetViews are
+        // reconstructed later through ConvexHull::facets after freshness checks.
         let hull_facets: Vec<_> = hull_facets_iter
             .map(|facet_view| {
                 let facet_view = facet_view.map_err(|source| {
@@ -2105,7 +2181,7 @@ mod tests {
     ///    - `is_empty()` returns false for non-empty hull
     ///
     /// 2. **Facet access test** (via `pastey::paste`) - Tests:
-    ///    - `facets()` iterator returns correct count
+    ///    - `facet_handles()` iterator returns correct count
     ///    - `facet(0)` returns Some for valid index
     ///    - `facet(out_of_bounds)` returns None
     ///
@@ -2179,11 +2255,11 @@ mod tests {
                         let hull: ConvexHull<(), (), $dim> =
                             ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
 
-                        // Test facet iterator
+                        // Test detached facet-handle iterator
                         assert_eq!(
-                            hull.facets().count(),
+                            hull.facet_handles().count(),
                             $expected_facets,
-                            "{}D facets iterator should return {} facets",
+                            "{}D facet-handle iterator should return {} facets",
                             $dim,
                             $expected_facets
                         );
@@ -2314,9 +2390,9 @@ mod tests {
             "Empty hull should not have facets"
         );
         assert_eq!(
-            empty_hull.facets().count(),
+            empty_hull.facet_handles().count(),
             0,
-            "Empty hull's facets iterator should be empty"
+            "Empty hull's facet-handle iterator should be empty"
         );
 
         // Test cache behavior on empty hull
@@ -2483,7 +2559,7 @@ mod tests {
         }
 
         // Test individual facet visibility for each facet
-        for (i, facet) in hull_3d.facets().enumerate() {
+        for (i, facet) in hull_3d.facet_handles().enumerate() {
             let visibility_result = hull_3d.is_facet_visible_from_point(
                 facet,
                 &far_outside_point,
@@ -3409,22 +3485,17 @@ mod tests {
             "Very large index should return None"
         );
 
-        // Test iterator
-        let facet_count_via_iter = hull.facets().count();
+        // Test detached facet-handle iterator
+        let facet_count_via_iter = hull.facet_handles().count();
         assert_eq!(
             facet_count_via_iter,
             hull.number_of_facets(),
-            "Iterator count should match facet_count"
+            "Handle iterator count should match facet_count"
         );
 
-        // Verify all facets in iterator are valid - create FacetView to check vertices
-        for facet_handle in hull.facets() {
-            let facet_view = FacetView::try_new(
-                &dt.as_triangulation().tds,
-                facet_handle.simplex_key(),
-                facet_handle.facet_index(),
-            )
-            .unwrap();
+        // Verify all borrowed facet views are valid.
+        for facet_view in hull.facets(dt.as_triangulation()).unwrap() {
+            let facet_view = facet_view.unwrap();
             let vertex_count = facet_view.vertices().unwrap().count();
             assert!(vertex_count > 0, "Each facet should have vertices");
         }
@@ -3869,8 +3940,8 @@ mod tests {
         assert!(hull.facet(4).is_none());
         assert!(hull.facet(100).is_none());
 
-        // Test facets iterator
-        let facet_count = hull.facets().count();
+        // Test detached facet-handle iterator
+        let facet_count = hull.facet_handles().count();
         assert_eq!(facet_count, 4);
     }
 
@@ -3965,8 +4036,8 @@ mod tests {
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
 
-        // Test that facets() iterator produces the same results as facet
-        let iter_facets: Vec<_> = hull.facets().collect();
+        // Test that facet_handles() iterator produces the same results as facet
+        let iter_facets: Vec<_> = hull.facet_handles().collect();
 
         assert_eq!(iter_facets.len(), hull.number_of_facets());
 
@@ -3977,8 +4048,8 @@ mod tests {
         }
 
         // Test multiple iterations produce same results
-        let first_iteration: Vec<_> = hull.facets().collect();
-        let second_iteration: Vec<_> = hull.facets().collect();
+        let first_iteration: Vec<_> = hull.facet_handles().collect();
+        let second_iteration: Vec<_> = hull.facet_handles().collect();
         assert_eq!(first_iteration.len(), second_iteration.len());
 
         for (i, (f1, f2)) in first_iteration
@@ -7394,6 +7465,16 @@ mod tests {
                 Err(ConvexHullConstructionError::StaleHull { .. })
             ),
             "is_point_outside should fail with StaleHull error"
+        );
+
+        test_debug!("  Testing facets...");
+        let facets_result = hull.facets(dt.as_triangulation());
+        assert!(
+            matches!(
+                facets_result,
+                Err(ConvexHullConstructionError::StaleHull { .. })
+            ),
+            "facets should fail with StaleHull error"
         );
 
         test_debug!("  Testing validate...");

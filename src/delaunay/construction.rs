@@ -69,7 +69,7 @@ use crate::core::operations::{
     InsertionTelemetryMode, RepairDecision, TopologicalOperation,
 };
 use crate::core::simplex::SimplexValidationError;
-use crate::core::tds::{InvariantError, SimplexKey};
+use crate::core::tds::{InvariantError, SimplexKey, TdsMutationError};
 use crate::core::tds::{TdsConstructionError, TdsError, TriangulationConstructionState};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
@@ -206,8 +206,9 @@ pub(crate) mod test_hooks {
 /// This convenience error covers the fallible path most examples use:
 /// converting caller coordinates into vertices, constructing a
 /// [`DelaunayTriangulation`], editing it through
-/// the Delaunay insertion API, and validating its Delaunay invariants. More
-/// specialized workflows such as convex hull extraction, bistellar flips,
+/// the Delaunay insertion API, updating auxiliary vertex/simplex data through
+/// checked keys, and validating its Delaunay invariants. More specialized
+/// workflows such as convex hull extraction, bistellar flips,
 /// repair, and delaunayize continue to expose their narrower error types
 /// directly.
 ///
@@ -215,7 +216,7 @@ pub(crate) mod test_hooks {
 ///
 /// Use [`DelaunayResult`] for examples, binaries, and quick workflows whose
 /// fallible operations stay inside coordinate conversion, construction,
-/// insertion, and validation:
+/// checked auxiliary-data mutation, insertion, and validation:
 ///
 /// ```rust
 /// use delaunay::prelude::construction::{
@@ -263,6 +264,14 @@ pub enum DelaunayError {
         source: InsertionError,
     },
 
+    /// User-data mutation through a checked TDS key failed.
+    #[error(transparent)]
+    TdsMutation {
+        /// Underlying TDS mutation failure.
+        #[from]
+        source: TdsMutationError,
+    },
+
     /// Validation policy configuration failed.
     #[error(transparent)]
     ValidationConfiguration {
@@ -292,7 +301,8 @@ pub enum DelaunayError {
 ///
 /// This is equivalent to `Result<T, DelaunayError>` with [`DelaunayError`] as
 /// the error type, and is intended for caller-facing examples and applications
-/// that use the standard construction, insertion, and validation APIs.
+/// that use the standard construction, checked auxiliary-data mutation,
+/// insertion, and validation APIs.
 pub type DelaunayResult<T> = Result<T, DelaunayError>;
 
 /// Errors that can occur during Delaunay triangulation construction.

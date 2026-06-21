@@ -1627,7 +1627,9 @@ pub fn validate_ridge_links<U, V, const D: usize>(tds: &Tds<U, V, D>) -> Result<
                     Vec::with_capacity(star.star_simplices.len());
                 for &simplex_key in &star.star_simplices {
                     match tds.simplex_vertices(simplex_key) {
-                        Ok(vertices) => star_simplex_vertices.push((simplex_key, vertices)),
+                        Ok(vertices) => {
+                            star_simplex_vertices.push((simplex_key, vertices.into()));
+                        }
                         Err(_) => star_simplex_vertices.push((simplex_key, VertexKeyBuffer::new())),
                     }
                 }
@@ -1712,7 +1714,9 @@ pub fn validate_ridge_links_for_simplices<U, V, const D: usize>(
                     Vec::with_capacity(star.star_simplices.len());
                 for &simplex_key in &star.star_simplices {
                     match tds.simplex_vertices(simplex_key) {
-                        Ok(vertices) => star_simplex_vertices.push((simplex_key, vertices)),
+                        Ok(vertices) => {
+                            star_simplex_vertices.push((simplex_key, vertices.into()));
+                        }
                         Err(_) => star_simplex_vertices.push((simplex_key, VertexKeyBuffer::new())),
                     }
                 }
