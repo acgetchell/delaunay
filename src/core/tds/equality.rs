@@ -201,12 +201,6 @@ impl<U, V, const D: usize> PartialEq for Tds<U, V, D> {
     }
 }
 
-/// Eq implementation for Tds
-///
-/// This is a marker trait implementation that relies on the `PartialEq` implementation.
-/// Since Tds represents a well-defined mathematical structure (triangulation),
-/// the `PartialEq` relation is indeed an equivalence relation.
-impl<U, V, const D: usize> Eq for Tds<U, V, D> {}
 #[cfg(test)]
 mod tests {
     use crate::DelaunayTriangulation;

@@ -738,12 +738,75 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::tds::Tds;
     use crate::geometry::kernel::FastKernel;
     use crate::triangulation::DelaunayTriangulation;
 
     use slotmap::KeyData;
     use std::assert_matches;
     use std::collections::HashSet;
+
+    /// Builds two D-simplices sharing one facet so split topology indexes can be
+    /// tested without depending on Delaunay construction tie-breaking.
+    fn split_topology_fixture<const D: usize>() -> Triangulation<FastKernel<f64>, (), (), D> {
+        let mut tds = Tds::empty();
+        let mut shared_vertex_keys = Vec::with_capacity(D);
+        for point_idx in 0..D {
+            let mut coords = [0.0; D];
+            if point_idx > 0 {
+                coords[point_idx - 1] = 1.0;
+            }
+            let vertex_key = tds
+                .insert_vertex_with_mapping(Vertex::<(), _>::try_new(coords).unwrap())
+                .unwrap();
+            shared_vertex_keys.push(vertex_key);
+        }
+
+        let mut positive_apex = [0.2; D];
+        positive_apex[D - 1] = 1.0;
+        let positive_apex_key = tds
+            .insert_vertex_with_mapping(Vertex::<(), _>::try_new(positive_apex).unwrap())
+            .unwrap();
+
+        let mut negative_apex = [0.2; D];
+        negative_apex[D - 1] = -1.0;
+        let negative_apex_key = tds
+            .insert_vertex_with_mapping(Vertex::<(), _>::try_new(negative_apex).unwrap())
+            .unwrap();
+
+        let mut positive_simplex_vertices = shared_vertex_keys.clone();
+        positive_simplex_vertices.push(positive_apex_key);
+        let positive_simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::try_new(positive_simplex_vertices).unwrap())
+            .unwrap();
+
+        let mut negative_simplex_vertices = shared_vertex_keys;
+        negative_simplex_vertices.push(negative_apex_key);
+        let negative_simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::try_new(negative_simplex_vertices).unwrap())
+            .unwrap();
+
+        let mut neighbors = vec![None; D + 1];
+        neighbors[D] = Some(negative_simplex_key);
+        tds.set_neighbors_by_key(positive_simplex_key, &neighbors)
+            .unwrap();
+
+        Triangulation::new_with_tds(FastKernel::new(), tds)
+    }
+
+    /// Returns the edge count for two D-simplices sharing one facet.
+    const fn expected_split_topology_fixture_edges<const D: usize>() -> usize {
+        D * (D + 3) / 2
+    }
+
+    /// Finds one shared-facet vertex in the split topology fixture.
+    fn shared_fixture_vertex<const D: usize>(
+        tri: &Triangulation<FastKernel<f64>, (), (), D>,
+    ) -> VertexKey {
+        tri.vertices()
+            .find_map(|(vk, _)| (tri.vertex_coords(vk)? == [0.0; D]).then_some(vk))
+            .unwrap()
+    }
 
     /// Basic accessor tests across dimensions.
     macro_rules! test_basic_accessors {
@@ -952,32 +1015,22 @@ mod tests {
         }
     }
 
-    #[test]
-    fn split_topology_indexes_cover_independent_query_families() {
-        let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.7, 1.5]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.7, -1.5]).unwrap(),
-        ];
-
-        let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
-        let tri = dt.as_triangulation();
-        let base_vertex_key = tri
-            .vertices()
-            .find_map(|(vk, _)| (tri.vertex_coords(vk)? == [0.0, 0.0, 0.0]).then_some(vk))
-            .unwrap();
+    fn assert_split_topology_indexes_cover_independent_query_families<const D: usize>() {
+        let tri = split_topology_fixture::<D>();
+        let base_vertex_key = shared_fixture_vertex(&tri);
+        let expected_edges = expected_split_topology_fixture_edges::<D>();
 
         let incidence = tri.incidence().unwrap();
         assert_eq!(incidence.number_of_adjacent_simplices(base_vertex_key), 2);
         assert_eq!(incidence.adjacent_simplices(base_vertex_key).count(), 2);
 
         let edge_index = tri.build_edge_index().unwrap();
-        assert_eq!(edge_index.number_of_edges(), 9);
-        assert_eq!(edge_index.number_of_incident_edges(base_vertex_key), 4);
-        assert_eq!(edge_index.edges().collect::<HashSet<_>>().len(), 9);
+        assert_eq!(edge_index.number_of_edges(), expected_edges);
+        assert_eq!(edge_index.number_of_incident_edges(base_vertex_key), D + 1);
+        assert_eq!(
+            edge_index.edges().collect::<HashSet<_>>().len(),
+            expected_edges
+        );
 
         let neighbor_index = tri.build_simplex_neighbor_index().unwrap();
         for (simplex_key, _) in tri.simplices() {
@@ -1052,19 +1105,8 @@ mod tests {
         assert!(simplex_vertices.contains(&vertex_key));
     }
 
-    #[test]
-    fn split_topology_indexes_basic_invariants() {
-        let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.7, 1.5]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.7, -1.5]).unwrap(),
-        ];
-
-        let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
-        let tri = dt.as_triangulation();
+    fn assert_split_topology_indexes_basic_invariants<const D: usize>() {
+        let tri = split_topology_fixture::<D>();
         let incidence = tri.incidence().unwrap();
         let edge_index = tri.build_edge_index().unwrap();
         let neighbor_index = tri.build_simplex_neighbor_index().unwrap();
@@ -1097,6 +1139,113 @@ mod tests {
             ));
         }
     }
+
+    fn assert_split_topology_indexes_match_direct_queries<const D: usize>() {
+        let tri = split_topology_fixture::<D>();
+        let incidence = tri.incidence().unwrap();
+        let edge_index = tri.build_edge_index().unwrap();
+        let neighbor_index = tri.build_simplex_neighbor_index().unwrap();
+
+        let idx_edges: HashSet<_> = edge_index.edges().collect();
+        let direct_edges: HashSet<_> = tri.edges().collect();
+        assert_eq!(idx_edges, direct_edges);
+        assert_eq!(edge_index.number_of_edges(), tri.number_of_edges());
+
+        let vertex_key = tri.vertices().next().unwrap().0;
+        let idx_adj: HashSet<_> = incidence.adjacent_simplices(vertex_key).collect();
+        let direct_adj: HashSet<_> = tri.adjacent_simplices(vertex_key).collect();
+        assert_eq!(idx_adj, direct_adj);
+        assert_eq!(
+            incidence.number_of_adjacent_simplices(vertex_key),
+            direct_adj.len()
+        );
+
+        let simplex_key = tri.simplices().next().unwrap().0;
+        let direct_neighbors: Vec<_> = tri.simplex_neighbors(simplex_key).collect();
+        assert_eq!(
+            neighbor_index.simplex_neighbors(simplex_key).count(),
+            direct_neighbors.len()
+        );
+        assert_eq!(
+            neighbor_index.number_of_simplex_neighbors(simplex_key),
+            direct_neighbors.len()
+        );
+
+        let idx_incident: HashSet<_> = edge_index.incident_edges(vertex_key).collect();
+        let direct_incident: HashSet<_> = tri.incident_edges(vertex_key).collect();
+        assert_eq!(idx_incident, direct_incident);
+        assert_eq!(
+            edge_index.number_of_incident_edges(vertex_key),
+            direct_incident.len()
+        );
+    }
+
+    fn assert_triangulation_adjacency_view_methods_match_direct_queries<const D: usize>() {
+        let tri = split_topology_fixture::<D>();
+        let adjacency = tri.adjacency().unwrap();
+
+        let view_edges: HashSet<_> = adjacency.edges().collect();
+        let direct_edges: HashSet<_> = tri.edges().collect();
+        assert_eq!(view_edges, direct_edges);
+        assert_eq!(adjacency.number_of_edges(), direct_edges.len());
+
+        let vertex_key = tri.vertices().next().unwrap().0;
+        let view_adjacent: HashSet<_> = adjacency.adjacent_simplices(vertex_key).collect();
+        let direct_adjacent: HashSet<_> = tri.adjacent_simplices(vertex_key).collect();
+        assert_eq!(view_adjacent, direct_adjacent);
+        assert_eq!(
+            adjacency.number_of_adjacent_simplices(vertex_key),
+            direct_adjacent.len()
+        );
+
+        let view_incident: HashSet<_> = adjacency.incident_edges(vertex_key).collect();
+        let direct_incident: HashSet<_> = tri.incident_edges(vertex_key).collect();
+        assert_eq!(view_incident, direct_incident);
+        assert_eq!(
+            adjacency.number_of_incident_edges(vertex_key),
+            direct_incident.len()
+        );
+
+        let simplex_key = tri.simplices().next().unwrap().0;
+        let view_neighbors: HashSet<_> = adjacency.simplex_neighbors(simplex_key).collect();
+        let direct_neighbors: HashSet<_> = tri.simplex_neighbors(simplex_key).collect();
+        assert_eq!(view_neighbors, direct_neighbors);
+        assert_eq!(
+            adjacency.number_of_simplex_neighbors(simplex_key),
+            direct_neighbors.len()
+        );
+    }
+
+    macro_rules! gen_split_topology_index_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<split_topology_indexes_cover_independent_query_families_ $dim d>]() {
+                    assert_split_topology_indexes_cover_independent_query_families::<$dim>();
+                }
+
+                #[test]
+                fn [<split_topology_indexes_basic_invariants_ $dim d>]() {
+                    assert_split_topology_indexes_basic_invariants::<$dim>();
+                }
+
+                #[test]
+                fn [<split_topology_indexes_match_direct_queries_ $dim d>]() {
+                    assert_split_topology_indexes_match_direct_queries::<$dim>();
+                }
+
+                #[test]
+                fn [<triangulation_adjacency_view_methods_match_direct_queries_ $dim d>]() {
+                    assert_triangulation_adjacency_view_methods_match_direct_queries::<$dim>();
+                }
+            }
+        };
+    }
+
+    gen_split_topology_index_tests!(2);
+    gen_split_topology_index_tests!(3);
+    gen_split_topology_index_tests!(4);
+    gen_split_topology_index_tests!(5);
 
     #[test]
     fn split_topology_indexes_empty_triangulation_is_empty() {
@@ -1329,102 +1478,6 @@ mod tests {
         assert_eq!(
             tri.number_of_incident_edges(vertex_key),
             incident_edges.len()
-        );
-    }
-
-    #[test]
-    fn split_topology_indexes_match_direct_queries() {
-        let vertices = [
-            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(),
-        ];
-        let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
-        let tri = dt.as_triangulation();
-        let incidence = tri.incidence().unwrap();
-        let edge_index = tri.build_edge_index().unwrap();
-        let neighbor_index = tri.build_simplex_neighbor_index().unwrap();
-
-        let idx_edges: HashSet<_> = edge_index.edges().collect();
-        let direct_edges: HashSet<_> = tri.edges().collect();
-        assert_eq!(idx_edges, direct_edges);
-        assert_eq!(edge_index.number_of_edges(), tri.number_of_edges());
-
-        let vertex_key = tri.vertices().next().unwrap().0;
-        let idx_adj: HashSet<_> = incidence.adjacent_simplices(vertex_key).collect();
-        let direct_adj: HashSet<_> = tri.adjacent_simplices(vertex_key).collect();
-        assert_eq!(idx_adj, direct_adj);
-        assert_eq!(
-            incidence.number_of_adjacent_simplices(vertex_key),
-            direct_adj.len()
-        );
-
-        let simplex_key = tri.simplices().next().unwrap().0;
-        let direct_neighbors: Vec<_> = tri.simplex_neighbors(simplex_key).collect();
-        assert_eq!(
-            neighbor_index.simplex_neighbors(simplex_key).count(),
-            direct_neighbors.len()
-        );
-        assert_eq!(
-            neighbor_index.number_of_simplex_neighbors(simplex_key),
-            direct_neighbors.len()
-        );
-
-        let idx_incident: HashSet<_> = edge_index.incident_edges(vertex_key).collect();
-        let direct_incident: HashSet<_> = tri.incident_edges(vertex_key).collect();
-        assert_eq!(idx_incident, direct_incident);
-        assert_eq!(
-            edge_index.number_of_incident_edges(vertex_key),
-            direct_incident.len()
-        );
-    }
-
-    #[test]
-    fn triangulation_adjacency_view_methods_match_direct_queries() {
-        let vertices = [
-            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(),
-        ];
-        let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
-        let tri = dt.as_triangulation();
-        let adjacency = tri.adjacency().unwrap();
-
-        let view_edges: HashSet<_> = adjacency.edges().collect();
-        let direct_edges: HashSet<_> = tri.edges().collect();
-        assert_eq!(view_edges, direct_edges);
-        assert_eq!(adjacency.number_of_edges(), direct_edges.len());
-
-        let vertex_key = tri.vertices().next().unwrap().0;
-        let view_adjacent: HashSet<_> = adjacency.adjacent_simplices(vertex_key).collect();
-        let direct_adjacent: HashSet<_> = tri.adjacent_simplices(vertex_key).collect();
-        assert_eq!(view_adjacent, direct_adjacent);
-        assert_eq!(
-            adjacency.number_of_adjacent_simplices(vertex_key),
-            direct_adjacent.len()
-        );
-
-        let view_incident: HashSet<_> = adjacency.incident_edges(vertex_key).collect();
-        let direct_incident: HashSet<_> = tri.incident_edges(vertex_key).collect();
-        assert_eq!(view_incident, direct_incident);
-        assert_eq!(
-            adjacency.number_of_incident_edges(vertex_key),
-            direct_incident.len()
-        );
-
-        let simplex_key = tri.simplices().next().unwrap().0;
-        let view_neighbors: HashSet<_> = adjacency.simplex_neighbors(simplex_key).collect();
-        let direct_neighbors: HashSet<_> = tri.simplex_neighbors(simplex_key).collect();
-        assert_eq!(view_neighbors, direct_neighbors);
-        assert_eq!(
-            adjacency.number_of_simplex_neighbors(simplex_key),
-            direct_neighbors.len()
         );
     }
 }
