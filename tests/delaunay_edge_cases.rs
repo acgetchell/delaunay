@@ -8,6 +8,7 @@
 //!
 //! Converted from legacy `Tds::new()` tests to use the new `DelaunayTriangulation` API.
 
+use delaunay::construction::DelaunayConstructionRetryFailure;
 use delaunay::prelude::construction::{
     DelaunayConstructionFailure, DelaunayTriangulation, DelaunayTriangulationConstructionError,
     TopologyGuarantee, Vertex,
@@ -42,6 +43,32 @@ fn init_tracing() {
             .with_test_writer()
             .try_init();
     });
+}
+
+/// Return whether construction failed with a direct geometric degeneracy error.
+const fn is_geometric_degeneracy_error(error: &DelaunayTriangulationConstructionError) -> bool {
+    matches!(
+        error,
+        DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::GeometricDegeneracy { .. }
+        )
+    )
+}
+
+/// Accept direct degeneracy failures and retry exhaustion wrapping that same typed source.
+fn is_geometric_degeneracy_or_retry_exhausted(
+    error: &DelaunayTriangulationConstructionError,
+) -> bool {
+    match error {
+        DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::ShuffledRetryExhausted { source, .. },
+        ) => matches!(
+            source.as_ref(),
+            DelaunayConstructionRetryFailure::Construction { source }
+                if is_geometric_degeneracy_error(source)
+        ),
+        other => is_geometric_degeneracy_error(other),
+    }
 }
 
 macro_rules! test_debug_info {
@@ -887,14 +914,13 @@ fn test_collinear_points_2d() {
             TopologyGuarantee::PLManifold,
         );
 
-    // Verify it fails with GeometricDegeneracy due to collinear simplex
+    // Verify it fails with GeometricDegeneracy due to collinear simplex.
+    // The default retry policy may wrap the final typed degeneracy once all
+    // shuffled retries are exhausted.
     assert!(
-        matches!(
-            result,
-            Err(DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::GeometricDegeneracy { .. },
-            ))
-        ),
+        result
+            .as_ref()
+            .is_err_and(is_geometric_degeneracy_or_retry_exhausted),
         "Expected GeometricDegeneracy error for collinear points, got: {result:?}"
     );
 }

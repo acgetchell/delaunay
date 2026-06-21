@@ -27,6 +27,7 @@
 
 use super::{
     SimplexKey, Tds, TdsError, TdsMutationError, TriangulationConstructionState, VertexKey,
+    incidence::VertexIncidenceIndex,
 };
 use crate::core::{
     collections::{
@@ -871,6 +872,7 @@ impl<U, V, const D: usize> TdsSnapshot<U, V, D> {
             simplices,
             uuid_to_vertex_key,
             uuid_to_simplex_key,
+            vertex_to_simplices: VertexIncidenceIndex::default(),
             construction_state: TriangulationConstructionState::Constructed,
             generation: Arc::new(AtomicU64::new(0)),
             identity: Arc::new(Uuid::new_v4()),

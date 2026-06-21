@@ -17,7 +17,9 @@ use crate::core::algorithms::locate::{
     find_conflict_region, locate_by_scan, locate_with_stats, locate_with_trace,
 };
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
-use crate::core::collections::{CavityBoundaryBuffer, SimplexKeyBuffer};
+use crate::core::collections::{
+    CLEANUP_OPERATION_BUFFER_SIZE, CavityBoundaryBuffer, SimplexKeyBuffer, SmallBuffer,
+};
 use crate::core::facet::FacetHandle;
 use crate::core::operations::{
     InsertionOutcome, InsertionResult, InsertionStatistics, InsertionTelemetry,
@@ -1663,8 +1665,23 @@ where
             }
         });
 
+        let mut incident_repair_vertices =
+            SmallBuffer::<VertexKey, CLEANUP_OPERATION_BUFFER_SIZE>::new();
+        Self::push_incident_repair_vertex(&mut incident_repair_vertices, v_key);
+        self.extend_incident_repair_vertices_from_simplices(
+            &conflict_simplices,
+            &mut incident_repair_vertices,
+        );
+        self.extend_incident_repair_vertices_from_simplices(
+            &new_simplices,
+            &mut incident_repair_vertices,
+        );
+
         // Remove conflict simplices (now that new simplices are wired up)
-        let _removed_count = self.tds.remove_simplices_by_keys(&conflict_simplices);
+        let _removed_count = self
+            .tds
+            .remove_simplices_by_keys(&conflict_simplices)
+            .map_err(|e| InsertionError::TopologyValidation(e.into_inner()))?;
 
         // Iteratively repair non-manifold topology until facet sharing is valid
         let mut total_removed = 0;
@@ -1704,6 +1721,9 @@ where
                 let repair =
                     self.repair_local_facet_issues_with_frontier(&issues, repair_budget_remaining)?;
                 let removed = repair.removed_count;
+                for &vertex_key in &repair.affected_vertices {
+                    Self::push_incident_repair_vertex(&mut incident_repair_vertices, vertex_key);
+                }
 
                 // Early exit if repair made no progress
                 if removed == 0 {
@@ -1771,6 +1791,10 @@ where
             suspicion.neighbor_pointers_rebuilt = repaired > 0;
             delaunay_repair_required = true;
         }
+        self.extend_incident_repair_vertices_from_simplices(
+            &neighbor_repair_frontier,
+            &mut incident_repair_vertices,
+        );
 
         // New cavity simplices were canonicalized on creation; validate the local
         // orientation frontier without scanning the whole triangulation.
@@ -1820,7 +1844,7 @@ where
 
         // Repair stale incident-simplex pointers (e.g. pointing to deleted conflict-region
         // simplices) and error only for truly isolated vertices (in zero simplices).
-        self.repair_stale_incident_simplices()?;
+        self.repair_stale_incident_simplices(&incident_repair_vertices)?;
 
         // Connectedness guard (STRUCTURAL SAFETY, NOT Level 3 validation)
         self.validate_connectedness(&new_simplices)?;
@@ -2421,6 +2445,13 @@ where
                     }
                 };
                 self.canonicalize_positive_orientation_for_simplices(&new_simplices)?;
+                let mut incident_repair_vertices =
+                    SmallBuffer::<VertexKey, CLEANUP_OPERATION_BUFFER_SIZE>::new();
+                Self::push_incident_repair_vertex(&mut incident_repair_vertices, v_key);
+                self.extend_incident_repair_vertices_from_simplices(
+                    &new_simplices,
+                    &mut incident_repair_vertices,
+                );
                 #[cfg(debug_assertions)]
                 if env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
                     tracing::debug!(
@@ -2521,6 +2552,12 @@ where
                             repair_budget_remaining,
                         )?;
                         let removed = repair.removed_count;
+                        for &vertex_key in &repair.affected_vertices {
+                            Self::push_incident_repair_vertex(
+                                &mut incident_repair_vertices,
+                                vertex_key,
+                            );
+                        }
 
                         // Early exit if repair made no progress
                         if removed == 0 {
@@ -2577,6 +2614,10 @@ where
                     )?;
                     suspicion.neighbor_pointers_rebuilt = repaired > 0;
                 }
+                self.extend_incident_repair_vertices_from_simplices(
+                    &neighbor_repair_frontier,
+                    &mut incident_repair_vertices,
+                );
 
                 // New hull simplices were canonicalized on creation; validate the
                 // local orientation frontier without scanning the whole TDS.
@@ -2624,7 +2665,7 @@ where
 
                 // Repair stale incident-simplex pointers (e.g. pointing to deleted
                 // conflict-region simplices) and error only for truly isolated vertices.
-                self.repair_stale_incident_simplices()?;
+                self.repair_stale_incident_simplices(&incident_repair_vertices)?;
 
                 // Connectedness guard (localized): ensure the newly created simplex set is internally
                 // connected and attached to the existing triangulation.

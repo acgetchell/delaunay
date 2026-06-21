@@ -179,6 +179,44 @@ costs and should only be done when ownership transfer is required.
 
 Only return owned values (`Vec`, `String`, etc.) when necessary.
 
+### Lifetime-bound views and query helpers
+
+Use Rust lifetimes to encode same-owner freshness whenever an API consults a
+data structure or derived view. If a function returns an iterator, view, or
+borrowed result over canonical storage, its signature should tie that result to
+the lifetime of the storage it reads instead of relying only on runtime checks.
+
+Prefer:
+
+```rust
+fn incident_simplices<'tds>(
+    &'tds self,
+    index: &'tds IncidenceView<'tds>,
+) -> impl Iterator<Item = SimplexKey> + 'tds
+```
+
+or, when the returned iterator only borrows a derived index whose internal data
+borrows the owner:
+
+```rust
+fn indexed_edges<'idx, 'tds>(
+    index: &'idx EdgeIndex<'tds>,
+) -> impl Iterator<Item = EdgeKey> + 'idx
+```
+
+Prefer first-class borrowed views such as `IncidenceView<'tds>`,
+`EdgeIndex<'tds>`, `SimplexNeighborIndex<'tds>`, and composite
+`TriangulationAdjacency<'tds>` when a caller should build derived traversal
+state once and query it many times. The view should own only the data it needs
+and either borrow canonical relations for `'tds` or carry a lifetime tie to the
+source snapshot for derived maps, so mutation through the same owner is
+impossible while the view is alive.
+
+Keep runtime identity or generation checks for detached handles, separately
+supplied indexes, serialization boundaries, and tests that intentionally corrupt
+metadata. Those checks complement lifetimes at API boundaries where Rust cannot
+prove that two borrowed values came from the same owner.
+
 ---
 
 ## Error Handling
@@ -839,6 +877,14 @@ Prefer:
 - fixed‑size containers
 
 Avoid cloning large structures unless necessary.
+
+Repair benchmarks sometimes need topology states that ordinary construction
+must reject, such as codimension-1 facets incident to more than two simplices.
+Keep those states behind `#[cfg(feature = "bench")]` fixture helpers and type
+the fixture errors. Do not broaden normal public constructors or treat
+`TopologyGuarantee::Pseudomanifold` as an invalid-topology bypass; it still
+requires facet degree 1 or 2, boundary consistency, connectedness, isolated
+vertex checks, and Euler validation when Level 3 runs.
 
 ---
 

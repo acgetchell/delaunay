@@ -560,7 +560,7 @@ mod tests {
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
         let simplex_key = tri.tds.simplex_keys().next().unwrap();
-        assert_eq!(tri.tds.remove_simplices_by_keys(&[simplex_key]), 1);
+        assert_eq!(tri.tds.remove_simplices_by_keys(&[simplex_key]).unwrap(), 1);
 
         match tri.validate_geometric_simplex_orientation_for_simplices(&[simplex_key]) {
             Err(TdsError::SimplexNotFound {

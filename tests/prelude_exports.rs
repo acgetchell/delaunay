@@ -21,23 +21,18 @@ use delaunay::prelude::algorithms::LocateResult;
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::collections::SimplexKeyBuffer;
 use delaunay::prelude::collections::{
-    SecureHashMap as ScopedSecureHashMap, SecureHashSet as ScopedSecureHashSet,
+    SecureHashMap as ScopedSecureHashMap, SecureHashSet as ScopedSecureHashSet, Uuid,
 };
 use delaunay::prelude::construction::{
     CavityFillingError, CavityRepairStage, ConstructionOptions, ConstructionSkipSample,
     ConstructionSlowInsertionSample, CoordinateRangeError as ConstructionCoordinateRangeError,
     CoordinateRangeOrdering as ConstructionCoordinateRangeOrdering,
     CoordinateValidationError as ConstructionCoordinateValidationError, DedupPolicy,
-    DedupTolerance, DeduplicationError, DelaunayConstructionFailure, DelaunayError,
-    DelaunayRepairPolicy, DelaunayResult, DelaunayTriangulation, DelaunayTriangulationBuilder,
-    DelaunayTriangulationConstructionError,
+    DedupTolerance, DeduplicationError, DelaunayConstructionFailure,
+    DelaunayConstructionRetryFailure, DelaunayError, DelaunayRepairPolicy, DelaunayResult,
+    DelaunayTriangulation, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
     DelaunayTriangulationValidationError as ConstructionDelaunayTriangulationValidationError,
-    DelaunayVerificationError as ConstructionDelaunayVerificationError,
-    DelaunayVerificationErrorKind as ConstructionDelaunayVerificationErrorKind,
-    ExplicitConstructionError, ExplicitDelaunayValidationError,
-    ExplicitDelaunayValidationErrorKind, ExplicitDelaunayValidationSourceKind,
-    ExplicitInsertionError, ExplicitInsertionErrorKind, ExplicitInvariantError,
-    ExplicitInvariantErrorKind, ExplicitTdsError, ExplicitTdsErrorKind,
+    DelaunayVerificationError as ConstructionDelaunayVerificationError, ExplicitConstructionError,
     FinalDelaunayValidationContext, FinalTopologyValidationContext,
     GlobalTopologyModelError as ConstructionGlobalTopologyModelError, InsertionOrderStrategy,
     InvalidCoordinateValue as ConstructionInvalidCoordinateValue,
@@ -91,7 +86,9 @@ use delaunay::prelude::ordering::{
 };
 use delaunay::prelude::query::{
     AllFacetsIter as QueryAllFacetsIter, BoundaryFacetsIter as QueryBoundaryFacetsIter, ConvexHull,
-    QueryError,
+    EdgeIndex as QueryEdgeIndex, IncidenceView as QueryIncidenceView, QueryError,
+    SimplexNeighborIndex as QuerySimplexNeighborIndex, TopologyIndexBuildError,
+    TriangulationAdjacency as QueryTriangulationAdjacency,
 };
 use delaunay::prelude::repair::{
     DelaunayCheckPolicy, DelaunayRepairDiagnostics, DelaunayRepairError,
@@ -100,7 +97,7 @@ use delaunay::prelude::repair::{
     DelaunayRepairOrientationCanonicalizationFailure,
     DelaunayRepairOrientationCanonicalizationFailureKind, DelaunayRepairOutcome,
     DelaunayRepairPostconditionFailure, DelaunayRepairStats, DelaunayRepairVerificationContext,
-    DelaunayTriangulationValidationError, FlipEdgeAdjacencyError, FlipError,
+    DelaunayTriangulationValidationError, FlipEdgeAdjacencyError, FlipError, FlipFailureKind,
     FlipOrientationCheckStage as RepairFlipOrientationCheckStage, FlipTriangleAdjacencyError,
     FlipVertexAdjacencyError, RepairQueueOrder, verify_delaunay_for_triangulation,
 };
@@ -108,8 +105,8 @@ use delaunay::prelude::repair::{
 use delaunay::prelude::tds::Tds;
 use delaunay::prelude::tds::{
     AllFacetsIter as TdsAllFacetsIter, BoundaryFacetsIter as TdsBoundaryFacetsIter, FacetError,
-    FacetHandle, FacetView, InvariantErrorSummaryDetail, NeighborSlot, SimplexKey, TdsError,
-    TdsErrorKind, VertexKey,
+    FacetHandle, FacetView, InvariantError, NeighborSlot, SimplexKey, TdsConstructionError,
+    TdsError, VertexKey,
 };
 use delaunay::prelude::topology::spaces::{
     GlobalTopology, GlobalTopologyModelError, TopologyKind, ToroidalConstructionMode,
@@ -121,12 +118,13 @@ use delaunay::prelude::topology::validation::{
 };
 use delaunay::prelude::triangulation::{
     AllFacetsIter as TriangulationAllFacetsIter,
-    BoundaryFacetsIter as TriangulationBoundaryFacetsIter,
+    BoundaryFacetsIter as TriangulationBoundaryFacetsIter, EdgeIndex as GenericEdgeIndex,
     FacetIssuesMap as TriangulationFacetIssuesMap, FastKernel as TriangulationFastKernel,
-    InsertionError as TriangulationInsertionError, QueryError as TriangulationQueryError,
+    IncidenceView as GenericIncidenceView, InsertionError as TriangulationInsertionError,
+    QueryError as TriangulationQueryError, SimplexNeighborIndex as GenericSimplexNeighborIndex,
     SpatialIndexConstructionFailure as GenericSpatialIndexConstructionFailure,
     TdsError as TriangulationTdsError, TopologyGuarantee as TriangulationTopologyGuarantee,
-    Triangulation as GenericTriangulation,
+    Triangulation as GenericTriangulation, TriangulationAdjacency as GenericTriangulationAdjacency,
     TriangulationConstructionError as GenericTriangulationConstructionError,
     ValidationConfigurationError as TriangulationValidationConfigurationError,
     ValidationPolicy as TriangulationValidationPolicy, vertex as triangulation_vertex,
@@ -139,12 +137,18 @@ use delaunay::prelude::validation::{
 };
 use delaunay::prelude::{
     CoordinateRange as RootCoordinateRange, DelaunayError as RootDelaunayError,
-    DelaunayResult as RootDelaunayResult,
-    FlipOrientationCheckStage as RootFlipOrientationCheckStage, SecureHashMap, SecureHashSet,
+    DelaunayResult as RootDelaunayResult, EdgeIndex as RootEdgeIndex,
+    FlipFailureKind as RootFlipFailureKind,
+    FlipOrientationCheckStage as RootFlipOrientationCheckStage, IncidenceView as RootIncidenceView,
+    SecureHashMap, SecureHashSet, SimplexNeighborIndex as RootSimplexNeighborIndex,
+    TriangulationAdjacency as RootTriangulationAdjacency,
     ValidationConfigurationError as RootValidationConfigurationError, vertex as root_vertex,
 };
 use delaunay::query::{
     AllFacetsIter as QueryFacadeAllFacetsIter, BoundaryFacetsIter as QueryFacadeBoundaryFacetsIter,
+    EdgeIndex as QueryFacadeEdgeIndex, IncidenceView as QueryFacadeIncidenceView,
+    SimplexNeighborIndex as QueryFacadeSimplexNeighborIndex,
+    TriangulationAdjacency as QueryFacadeTriangulationAdjacency,
 };
 #[derive(Debug, thiserror::Error)]
 enum RootApiExportTestError {
@@ -186,6 +190,8 @@ enum PreludeExportTestError {
     Manifold(#[from] ManifoldError),
     #[error(transparent)]
     Query(#[from] QueryError),
+    #[error(transparent)]
+    TopologyIndex(#[from] TopologyIndexBuildError),
     #[error(transparent)]
     Facet(#[from] FacetError),
     #[error(transparent)]
@@ -426,6 +432,47 @@ fn construction_prelude_covers_typed_construction_failure_variants() {
 }
 
 #[test]
+fn construction_prelude_covers_retry_exhaustion_source() {
+    let retry_failure = DelaunayConstructionFailure::ShuffledRetryExhausted {
+        attempt_count: 7,
+        source: Box::new(DelaunayConstructionRetryFailure::Construction {
+            source: Box::new(DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::GeometricDegeneracy {
+                    message: "collinear".to_string(),
+                },
+            )),
+        }),
+    };
+
+    assert_matches!(
+        &retry_failure,
+        DelaunayConstructionFailure::ShuffledRetryExhausted {
+            attempt_count: 7,
+            source,
+        } if matches!(
+            source.as_ref(),
+            DelaunayConstructionRetryFailure::Construction { source }
+                if matches!(
+                    source.as_ref(),
+                    DelaunayTriangulationConstructionError::Triangulation(
+                        DelaunayConstructionFailure::GeometricDegeneracy { message }
+                    ) if message == "collinear"
+                )
+        )
+    );
+    assert!(
+        retry_failure
+            .to_string()
+            .contains("7 construction attempts, including the initial input order")
+    );
+    assert!(
+        !retry_failure
+            .to_string()
+            .contains("shuffled reconstruction attempts")
+    );
+}
+
+#[test]
 fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestError> {
     use delaunay::builder::DelaunayTriangulationBuilder as BuilderModuleBuilder;
     use delaunay::construction::{
@@ -437,7 +484,8 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
     use delaunay::repair::{DelaunayCheckPolicy, DelaunayRepairPolicy};
     use delaunay::validation::{DelaunayTriangulationValidationError, ValidationCadence};
     use delaunay::{
-        ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder,
+        ConstructionOptions, DelaunayConstructionRetryFailure as RootConstructionRetryFailure,
+        DelaunayTriangulation, DelaunayTriangulationBuilder,
         InitialSimplexUnexpectedInsertionStage as RootInitialSimplexUnexpectedInsertionStage,
         TopologyGuarantee, ValidationPolicy,
     };
@@ -466,6 +514,16 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
             facet_hash: 0x00C0_FFEE,
             simplex_count: 3
         }
+    );
+    assert_matches!(
+        RootConstructionRetryFailure::Construction {
+            source: Box::new(DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::GeometricDegeneracy {
+                    message: "synthetic".to_string(),
+                },
+            )),
+        },
+        RootConstructionRetryFailure::Construction { .. }
     );
     assert_matches!(
         ValidationCadence::from_optional_every(Some(2)),
@@ -613,6 +671,93 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
 }
 
 #[test]
+fn query_preludes_cover_borrowed_adjacency_view() -> Result<(), PreludeExportTestError> {
+    let vertices: Vec<Vertex<(), 3>> = vec![
+        Vertex::try_new([0.0, 0.0, 0.0])?,
+        Vertex::try_new([1.0, 0.0, 0.0])?,
+        Vertex::try_new([0.0, 1.0, 0.0])?,
+        Vertex::try_new([0.0, 0.0, 1.0])?,
+    ];
+    let dt = DelaunayTriangulation::try_new(&vertices)?;
+
+    let query_adjacency: QueryTriangulationAdjacency<'_> = dt.adjacency()?;
+    let generic_adjacency: GenericTriangulationAdjacency<'_> = dt.as_triangulation().adjacency()?;
+    let facade_adjacency: QueryFacadeTriangulationAdjacency<'_> = dt.adjacency()?;
+    let root_adjacency: RootTriangulationAdjacency<'_> = dt.adjacency()?;
+    let query_incidence: QueryIncidenceView<'_> = dt.incidence()?;
+    let generic_incidence: GenericIncidenceView<'_> = dt.as_triangulation().incidence()?;
+    let facade_incidence: QueryFacadeIncidenceView<'_> = dt.incidence()?;
+    let root_incidence: RootIncidenceView<'_> = dt.incidence()?;
+    let query_edges: QueryEdgeIndex<'_> = dt.build_edge_index()?;
+    let generic_edges: GenericEdgeIndex<'_> = dt.as_triangulation().build_edge_index()?;
+    let facade_edges: QueryFacadeEdgeIndex<'_> = dt.build_edge_index()?;
+    let root_edges: RootEdgeIndex<'_> = dt.build_edge_index()?;
+    let query_neighbors: QuerySimplexNeighborIndex<'_> = dt.build_simplex_neighbor_index()?;
+    let generic_neighbors: GenericSimplexNeighborIndex<'_> =
+        dt.as_triangulation().build_simplex_neighbor_index()?;
+    let facade_neighbors: QueryFacadeSimplexNeighborIndex<'_> =
+        dt.build_simplex_neighbor_index()?;
+    let root_neighbors: RootSimplexNeighborIndex<'_> = dt.build_simplex_neighbor_index()?;
+    let Some((vertex_key, _)) = dt.vertices().next() else {
+        return Ok(());
+    };
+    let Some((simplex_key, _)) = dt.simplices().next() else {
+        return Ok(());
+    };
+
+    assert_eq!(query_adjacency.number_of_edges(), 6);
+    assert_eq!(
+        generic_adjacency.number_of_edges(),
+        query_adjacency.number_of_edges()
+    );
+    assert_eq!(
+        facade_adjacency.number_of_edges(),
+        query_adjacency.number_of_edges()
+    );
+    assert_eq!(
+        root_adjacency.number_of_edges(),
+        query_adjacency.number_of_edges()
+    );
+    assert_eq!(query_incidence.number_of_adjacent_simplices(vertex_key), 1);
+    assert_eq!(
+        generic_incidence.number_of_adjacent_simplices(vertex_key),
+        query_incidence.number_of_adjacent_simplices(vertex_key)
+    );
+    assert_eq!(
+        facade_incidence.number_of_adjacent_simplices(vertex_key),
+        query_incidence.number_of_adjacent_simplices(vertex_key)
+    );
+    assert_eq!(
+        root_incidence.number_of_adjacent_simplices(vertex_key),
+        query_incidence.number_of_adjacent_simplices(vertex_key)
+    );
+    assert_eq!(query_edges.number_of_edges(), 6);
+    assert_eq!(
+        generic_edges.number_of_edges(),
+        query_edges.number_of_edges()
+    );
+    assert_eq!(
+        facade_edges.number_of_edges(),
+        query_edges.number_of_edges()
+    );
+    assert_eq!(root_edges.number_of_edges(), query_edges.number_of_edges());
+    assert_eq!(query_neighbors.number_of_simplex_neighbors(simplex_key), 0);
+    assert_eq!(
+        generic_neighbors.number_of_simplex_neighbors(simplex_key),
+        query_neighbors.number_of_simplex_neighbors(simplex_key)
+    );
+    assert_eq!(
+        facade_neighbors.number_of_simplex_neighbors(simplex_key),
+        query_neighbors.number_of_simplex_neighbors(simplex_key)
+    );
+    assert_eq!(
+        root_neighbors.number_of_simplex_neighbors(simplex_key),
+        query_neighbors.number_of_simplex_neighbors(simplex_key)
+    );
+    Ok(())
+}
+
+#[test]
 fn insertion_prelude_covers_initial_simplex_stage_errors() {
     let stage = InitialSimplexUnexpectedInsertionStage::NonManifoldTopology {
         facet_hash: 0xABCD,
@@ -739,22 +884,28 @@ fn generator_prelude_covers_validated_coordinate_ranges() -> Result<(), PreludeE
 }
 
 #[test]
-fn construction_prelude_covers_explicit_error_summaries() {
-    let explicit_tds = ExplicitTdsError {
-        kind: ExplicitTdsErrorKind::FacetSharingViolation,
-        message: "facet sharing violation".to_string(),
-    };
+fn construction_prelude_covers_typed_explicit_errors() {
     let explicit_construction = ExplicitConstructionError::StructuralValidation {
-        source: explicit_tds,
+        source: Box::new(TdsError::FacetSharingViolation {
+            facet_key: 42,
+            existing_incident_count: 2,
+            attempted_incident_count: 3,
+            max_incident_count: 2,
+            candidate_simplex_uuid: Uuid::default(),
+            candidate_facet_index: 0,
+        }),
     };
     assert_matches!(
         explicit_construction,
         ExplicitConstructionError::StructuralValidation {
-            source: ExplicitTdsError {
-                kind: ExplicitTdsErrorKind::FacetSharingViolation,
+            source
+        } if matches!(
+            source.as_ref(),
+            TdsError::FacetSharingViolation {
+                attempted_incident_count: 3,
                 ..
             }
-        }
+        )
     );
 
     let simplex_creation = ExplicitConstructionError::SimplexCreation {
@@ -769,33 +920,57 @@ fn construction_prelude_covers_explicit_error_summaries() {
         }
     );
 
-    let explicit_insertion = ExplicitInsertionError {
-        kind: ExplicitInsertionErrorKind::TopologyValidation,
-        source_kind: None,
-        message: "topology validation failed".to_string(),
+    let explicit_insertion = ExplicitConstructionError::OrientationNormalization {
+        source: Box::new(InsertionError::TopologyValidation(
+            TdsError::InconsistentDataStructure {
+                message: "topology validation failed".to_string(),
+            },
+        )),
     };
-    assert_eq!(
-        explicit_insertion.kind,
-        ExplicitInsertionErrorKind::TopologyValidation
+    assert_matches!(
+        explicit_insertion,
+        ExplicitConstructionError::OrientationNormalization { source }
+            if matches!(
+                source.as_ref(),
+                InsertionError::TopologyValidation(TdsError::InconsistentDataStructure { .. })
+            )
     );
 
-    let explicit_invariant = ExplicitInvariantError {
-        kind: ExplicitInvariantErrorKind::Tds,
-        detail: InvariantErrorSummaryDetail::Tds(TdsErrorKind::FacetSharingViolation),
-        message: "tds validation failed".to_string(),
+    let explicit_invariant = ExplicitConstructionError::TopologyValidation {
+        source: Box::new(InvariantError::Tds(TdsError::FacetSharingViolation {
+            facet_key: 42,
+            existing_incident_count: 2,
+            attempted_incident_count: 3,
+            max_incident_count: 2,
+            candidate_simplex_uuid: Uuid::default(),
+            candidate_facet_index: 0,
+        })),
     };
-    assert_eq!(explicit_invariant.kind, ExplicitInvariantErrorKind::Tds);
+    assert_matches!(
+        explicit_invariant,
+        ExplicitConstructionError::TopologyValidation { source }
+            if matches!(source.as_ref(), InvariantError::Tds(TdsError::FacetSharingViolation { .. }))
+    );
 
-    let explicit_delaunay_validation = ExplicitDelaunayValidationError {
-        kind: ExplicitDelaunayValidationErrorKind::Tds,
-        source_kind: Some(ExplicitDelaunayValidationSourceKind::Tds(
-            TdsErrorKind::FacetSharingViolation,
+    let explicit_tds_construction = ExplicitConstructionError::TdsAssembly {
+        source: Box::new(TdsConstructionError::ValidationError(
+            TdsError::FacetSharingViolation {
+                facet_key: 42,
+                existing_incident_count: 2,
+                attempted_incident_count: 3,
+                max_incident_count: 2,
+                candidate_simplex_uuid: Uuid::default(),
+                candidate_facet_index: 0,
+            },
         )),
-        message: "delaunay validation failed".to_string(),
     };
-    assert_eq!(
-        explicit_delaunay_validation.kind,
-        ExplicitDelaunayValidationErrorKind::Tds
+    assert_matches!(
+        explicit_tds_construction,
+        ExplicitConstructionError::TdsAssembly { source }
+            if matches!(
+                source.as_ref(),
+                TdsConstructionError::ValidationError(TdsError::FacetSharingViolation { .. })
+            )
     );
 }
 
@@ -1108,23 +1283,20 @@ fn construction_prelude_covers_random_point_generation_failure_variant()
         } if source.to_string().contains("disconnected the triangulation")
     );
 
-    let validation_summary = ExplicitDelaunayValidationError::from(
-        ConstructionDelaunayTriangulationValidationError::VerificationFailed {
-            source: ConstructionDelaunayVerificationError::from(
-                DelaunayRepairError::PostconditionFailed {
-                    reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
-                        simplex_count: 1,
-                    }),
-                },
-            )
-            .into(),
-        },
-    );
-    assert_eq!(
-        validation_summary.source_kind,
-        Some(ExplicitDelaunayValidationSourceKind::Verification(
-            ConstructionDelaunayVerificationErrorKind::FlipPredicates,
-        ))
+    let validation_error = ConstructionDelaunayTriangulationValidationError::VerificationFailed {
+        source: ConstructionDelaunayVerificationError::from(
+            DelaunayRepairError::PostconditionFailed {
+                reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
+                    simplex_count: 1,
+                }),
+            },
+        )
+        .into(),
+    };
+    assert_matches!(
+        validation_error,
+        ConstructionDelaunayTriangulationValidationError::VerificationFailed { source }
+            if source.to_string().contains("disconnected the triangulation")
     );
 
     Ok(())
@@ -1168,6 +1340,22 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
     assert_matches!(
         DelaunayRepairError::from(FlipError::DegenerateSimplex),
         DelaunayRepairError::Flip { .. }
+    );
+    assert_eq!(
+        FlipFailureKind::from(&FlipError::DegenerateSimplex),
+        FlipFailureKind::DegenerateSimplex
+    );
+    let dangling_vertex_incidence = FlipError::DanglingVertexIncidence {
+        vertex_key: VertexKey::from(slotmap::KeyData::from_ffi(1)),
+        simplex_key: SimplexKey::from(slotmap::KeyData::from_ffi(2)),
+    };
+    assert_eq!(
+        RootFlipFailureKind::from(&dangling_vertex_incidence),
+        RootFlipFailureKind::DanglingVertexIncidence
+    );
+    assert_eq!(
+        delaunay::flips::FlipFailureKind::from(&dangling_vertex_incidence),
+        delaunay::flips::FlipFailureKind::DanglingVertexIncidence
     );
     let orientation_reason = DelaunayRepairOrientationCanonicalizationFailure::AfterFlipRepair {
         source: Box::new(InsertionError::DuplicateCoordinates {

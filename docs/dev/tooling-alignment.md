@@ -205,7 +205,7 @@ The useful updates ported in this pass are:
   rather than Homebrew so local setup cannot drift from CI pins. The CI build
   matrix runs `just ci` on Linux, macOS, and Windows after syncing the locked uv
   dev group and installing the pinned Cargo tools. All uv-backed workflows use
-  uv 0.11.22 to match the local Python tooling bootstrap.
+  uv 0.11.23 to match the local Python tooling bootstrap.
 - `.codecov.yml` now ratchets Delaunay's coverage policy above the older
   causal-triangulations baseline without copying la-stack's near-total
   threshold. Project coverage targets the current 90% line with only 1%
@@ -360,6 +360,12 @@ The following previously deferred checks are now repository-owned Semgrep rules:
   unbounded full-TDS snapshots, public/error payloads, serialization
   boundaries, and other deliberately heap-backed collections should remain
   `Vec`.
+- `delaunay.rust.no-public-raw-bench-fixture-builders` keeps benchmark-only
+  invalid-topology fixture builders behind a validated public constructor
+  convention. Raw fixture assembly may remain private inside
+  `src/bench_fixtures.rs`, while public fixture-returning helpers must use the
+  `validated_` prefix so Criterion harnesses receive fixtures whose repair
+  contract has already been checked.
 
 ## Retired Repository Rules
 

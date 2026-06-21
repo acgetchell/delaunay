@@ -71,7 +71,7 @@ use super::{
     util::{UuidValidationError, make_uuid, usize_to_u8, validate_uuid},
 };
 use crate::core::collections::{
-    FastHashMap, FastHashSet, NeighborBuffer, PeriodicOffsetBuffer, SimplexVertexKeyBuffer,
+    FastHashMap, NeighborBuffer, PeriodicOffsetBuffer, SimplexVertexKeyBuffer,
     SimplexVertexUuidBuffer, fast_hash_map_with_capacity,
 };
 use crate::geometry::matrix::StackMatrixDispatchError;
@@ -613,10 +613,9 @@ impl<V, const D: usize> Simplex<V, D> {
             });
         }
 
-        // Check for duplicate vertices early
-        let mut seen: FastHashSet<VertexKey> = FastHashSet::default();
-        for &vkey in &vertices {
-            if !seen.insert(vkey) {
+        // D is intentionally small in this crate; a fixed-size scan avoids a hash allocation.
+        for (index, &vkey) in vertices.iter().enumerate() {
+            if vertices[..index].contains(&vkey) {
                 return Err(SimplexValidationError::DuplicateVertices);
             }
         }
@@ -1310,50 +1309,13 @@ impl<V, const D: usize> Simplex<V, D> {
     ///
     /// **Internal API**: This method is `pub(crate)` to enforce that all neighbor
     /// modifications go through validated TDS methods. External code should use
-    /// [`Tds::clear_all_neighbors()`](crate::prelude::tds::Tds::clear_all_neighbors)
-    /// which properly invalidates caches and maintains triangulation consistency.
+    /// triangulation-level repair or rebuild APIs rather than clearing neighbor state.
     ///
     /// This method sets the `neighbors` field to `None`, effectively removing all
     /// neighbor relationships. This is useful for benchmarking neighbor assignment
     /// or when rebuilding neighbor relationships from scratch.
     ///
-    /// # Example
-    ///
-    /// ```
-    /// # use delaunay::prelude::*;
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
-    /// #     #[error(transparent)]
-    /// #     Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
-    /// #     #[error(transparent)]
-    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// # let vertices = vec![
-    /// #     delaunay::vertex![0.0, 0.0]?,
-    /// #     delaunay::vertex![1.0, 0.0]?,
-    /// #     delaunay::vertex![0.0, 1.0]?,
-    /// # ];
-    /// # let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-    /// // Note: clear_all_neighbors() is a Tds method, not on DelaunayTriangulation
-    /// // This example is conceptual - actual usage requires accessing tds directly
-    /// # let Some((simplex_key, _)) = dt.simplices().next() else {
-    /// #     return Ok(());
-    /// # };
-    /// # let tds = dt.tds();
-    /// # // if let Some(simplex) = tds.simplex(simplex_key) {
-    /// # //     assert!(simplex.neighbors().is_none());
-    /// # // }
-    /// # let _ = (simplex_key, tds);
-    /// # Ok(())
-    /// # }
-    /// ```
+    #[cfg(test)]
     #[inline]
     pub(crate) fn clear_neighbors(&mut self) {
         self.neighbors = None;
@@ -1729,10 +1691,9 @@ impl<V, const D: usize> Simplex<V, D> {
             });
         }
 
-        // Check that all vertex keys are distinct
-        let mut seen: FastHashSet<VertexKey> = FastHashSet::default();
-        for &vkey in &self.vertices {
-            if !seen.insert(vkey) {
+        // D is intentionally small in this crate; a fixed-size scan avoids a hash allocation.
+        for (index, &vkey) in self.vertices.iter().enumerate() {
+            if self.vertices[..index].contains(&vkey) {
                 return Err(SimplexValidationError::DuplicateVertices);
             }
         }
@@ -2825,7 +2786,7 @@ mod tests {
                 let simplex_a = simplices[i];
                 let simplex_b = simplices[j];
 
-                let shared: FastHashSet<VertexKey> = simplex_a
+                let shared: crate::core::collections::FastHashSet<VertexKey> = simplex_a
                     .vertices()
                     .iter()
                     .copied()

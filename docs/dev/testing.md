@@ -373,9 +373,12 @@ The test suite has two routine correctness buckets:
 
 Do not mark deterministic slow correctness tests with `#[ignore]`; that makes
 them invisible to `just test-slow`. Benchmark-style tests should live in
-`benches/`, not as `#[cfg(feature = "bench")]` unit tests. Known limitations
-should be asserted explicitly or tracked outside the routine test suite rather
-than hidden behind `#[ignore]`.
+`benches/`, not as `#[cfg(feature = "bench")]` unit tests. Feature-gated
+`bench` helpers are acceptable only as fixture builders for Criterion harnesses,
+especially when measuring repair paths that need deliberately invalid topology.
+Those helpers should still have focused unit tests for their fixture contract.
+Known limitations should be asserted explicitly or tracked outside the routine
+test suite rather than hidden behind `#[ignore]`.
 
 Run standard tests:
 

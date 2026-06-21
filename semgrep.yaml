@@ -1308,6 +1308,26 @@ rules:
       - pattern: $VALUE.unwrap()
       - pattern: $VALUE.expect(...)
 
+  - id: delaunay.rust.no-public-raw-bench-fixture-builders
+    languages:
+      - generic
+    severity: WARNING
+    message: >-
+      Expose only validated benchmark fixture builders; keep raw
+      invalid-topology fixture builders private.
+    metadata:
+      category: correctness
+      rationale: >-
+        Benchmark fixtures may deliberately construct invalid topology that
+        normal public constructors reject. Public fixture constructors should
+        validate the repair contract before handing the TDS to Criterion.
+    paths:
+      include:
+        - "/src/bench_fixtures.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: >-
+      (?ms)^\s*pub\s+fn\s+(?!validated_)[A-Za-z0-9_]+\s*\([^{};]*?\)\s*->\s*Result\s*<\s*[A-Za-z0-9_:<> ,]*Fixture[A-Za-z0-9_:<> ,]*\s*,
+
   - id: delaunay.rust.no-box-dyn-error-in-examples-benches
     languages:
       - rust

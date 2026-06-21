@@ -41,9 +41,9 @@ use crate::core::construction::{
 use crate::core::facet::{FacetError, FacetHandle};
 use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
 use crate::core::tds::{
-    DelaunayValidationErrorKind, EntityKind, GeometricError, InvariantErrorSummary,
-    InvariantErrorSummaryDetail, NeighborValidationError, SimplexKey, Tds, TdsConstructionError,
-    TdsError, TdsErrorKind, TriangulationValidationErrorKind, VertexKey,
+    DelaunayValidationErrorKind, EntityKind, GeometricError, InvariantError,
+    NeighborValidationError, SimplexKey, Tds, TdsConstructionError, TdsError, TdsErrorKind,
+    TriangulationValidationErrorKind, VertexKey,
 };
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
@@ -325,6 +325,28 @@ pub enum TdsValidationFailure {
         context: String,
     },
 
+    /// Canonical vertex incidence still references a simplex removed by a mutation.
+    #[error(
+        "vertex-to-simplices index still lists removed simplex {simplex_key:?} for vertex {vertex_key:?}"
+    )]
+    RemovedSimplexStillIncident {
+        /// Vertex whose canonical incidence retained the removed simplex.
+        vertex_key: VertexKey,
+        /// Removed simplex still present in the vertex incidence set.
+        simplex_key: SimplexKey,
+    },
+
+    /// Canonical vertex incidence disagrees with simplex vertex membership.
+    #[error(
+        "vertex-to-simplices index lists simplex {simplex_key:?} for vertex {vertex_key:?}, but the simplex does not contain the vertex"
+    )]
+    VertexIncidenceMismatch {
+        /// Vertex listed in the canonical incidence relation.
+        vertex_key: VertexKey,
+        /// Simplex listed for the vertex but missing that vertex in storage.
+        simplex_key: SimplexKey,
+    },
+
     /// Internal TDS consistency failed.
     #[error("internal data structure inconsistency: {message}")]
     InconsistentDataStructure {
@@ -457,6 +479,20 @@ impl From<TdsError> for TdsValidationFailure {
                 bound,
                 context,
             },
+            TdsError::RemovedSimplexStillIncident {
+                vertex_key,
+                simplex_key,
+            } => Self::RemovedSimplexStillIncident {
+                vertex_key,
+                simplex_key,
+            },
+            TdsError::VertexIncidenceMismatch {
+                vertex_key,
+                simplex_key,
+            } => Self::VertexIncidenceMismatch {
+                vertex_key,
+                simplex_key,
+            },
             TdsError::InconsistentDataStructure { message } => {
                 Self::InconsistentDataStructure { message }
             }
@@ -520,6 +556,40 @@ pub enum InitialSimplexUnexpectedInsertionStage {
         source: Box<CavityFillingError>,
     },
 
+    /// Neighbor wiring escaped initial-simplex construction.
+    #[error("neighbor wiring failed during insertion: {source}")]
+    NeighborWiring {
+        /// Underlying neighbor-wiring error.
+        #[source]
+        source: NeighborWiringError,
+    },
+
+    /// Flip-based Delaunay repair escaped initial-simplex construction.
+    #[error("Delaunay repair failed during insertion ({context}): {source}")]
+    DelaunayRepair {
+        /// Operational context describing the repair path that failed.
+        context: DelaunayRepairFailureContext,
+        /// Underlying typed repair failure.
+        #[source]
+        source: Box<DelaunayRepairError>,
+    },
+
+    /// Perturbation retry escaped initial-simplex construction.
+    #[error("perturbation retry produced invalid coordinates during insertion: {source}")]
+    PerturbedCoordinateInvalid {
+        /// Underlying coordinate validation failure.
+        #[source]
+        source: CoordinateValidationError,
+    },
+
+    /// Orientation canonicalization escaped initial-simplex construction.
+    #[error("orientation canonicalization failed after construction: {source}")]
+    OrientationCanonicalization {
+        /// Typed insertion-layer source that failed during orientation canonicalization.
+        #[source]
+        source: Box<InsertionError>,
+    },
+
     /// Conflict-region extraction escaped initial-simplex construction.
     #[error("conflict region failed during insertion: {source}")]
     ConflictRegion {
@@ -576,9 +646,9 @@ pub enum InitialSimplexUnexpectedInsertionStage {
     FinalTopologyValidation {
         /// Finalization phase that failed.
         context: FinalTopologyValidationContext,
-        /// Underlying final topology validation summary.
+        /// Underlying final topology validation error.
         #[source]
-        source: InvariantErrorSummary,
+        source: Box<InvariantError>,
     },
 
     /// Final Delaunay validation escaped initial-simplex construction.
@@ -683,6 +753,26 @@ pub enum InitialSimplexConstructionError {
         tracking_issue: u32,
     },
 
+    /// A periodic-quotient-only construction error escaped initial-simplex construction.
+    #[error(
+        "unexpected periodic quotient construction error while building initial simplex: {source}"
+    )]
+    UnexpectedPeriodicQuotient {
+        /// Structured periodic quotient construction failure.
+        #[source]
+        source: Box<TriangulationConstructionError>,
+    },
+
+    /// A periodic-image-only construction error escaped initial-simplex construction.
+    #[error(
+        "unexpected periodic image construction error while building initial simplex: {source}"
+    )]
+    UnexpectedPeriodicImage {
+        /// Structured periodic image construction failure.
+        #[source]
+        source: Box<TriangulationConstructionError>,
+    },
+
     /// An insertion-stage-only construction error escaped initial-simplex construction.
     #[error(
         "unexpected insertion-stage construction error while building initial simplex: {reason}"
@@ -725,6 +815,40 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
                     }),
                 }
             }
+            TriangulationConstructionError::InsertionNeighborWiring { source } => {
+                Self::UnexpectedInsertionStage {
+                    reason: Box::new(InitialSimplexUnexpectedInsertionStage::NeighborWiring {
+                        source,
+                    }),
+                }
+            }
+            TriangulationConstructionError::InsertionDelaunayRepair { context, source } => {
+                Self::UnexpectedInsertionStage {
+                    reason: Box::new(InitialSimplexUnexpectedInsertionStage::DelaunayRepair {
+                        context,
+                        source,
+                    }),
+                }
+            }
+            TriangulationConstructionError::InsertionPerturbedCoordinateInvalid { source } => {
+                Self::UnexpectedInsertionStage {
+                    reason: Box::new(
+                        InitialSimplexUnexpectedInsertionStage::PerturbedCoordinateInvalid {
+                            source,
+                        },
+                    ),
+                }
+            }
+            TriangulationConstructionError::OrientationCanonicalizationGeometric { source }
+            | TriangulationConstructionError::OrientationCanonicalizationInternal { source } => {
+                Self::UnexpectedInsertionStage {
+                    reason: Box::new(
+                        InitialSimplexUnexpectedInsertionStage::OrientationCanonicalization {
+                            source,
+                        },
+                    ),
+                }
+            }
             TriangulationConstructionError::InsufficientVertices { dimension, source } => {
                 Self::InsufficientVertices { dimension, source }
             }
@@ -740,6 +864,37 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
                 max_validated_dimension,
                 tracking_issue,
             },
+            TriangulationConstructionError::PeriodicImageUnsupportedTopology { .. }
+            | TriangulationConstructionError::PeriodicImageMissingDomain { .. }
+            | TriangulationConstructionError::PeriodicImageInsufficientVertices { .. }
+            | TriangulationConstructionError::PeriodicImageCoordinateValidation { .. }
+            | TriangulationConstructionError::PeriodicImageMissingCanonicalVertices { .. }
+            | TriangulationConstructionError::PeriodicImageOrientationCanonicalization { .. }
+            | TriangulationConstructionError::PeriodicImageGeometricOrientationValidation {
+                ..
+            } => Self::UnexpectedPeriodicImage {
+                source: Box::new(source),
+            },
+            TriangulationConstructionError::PeriodicQuotientSimplexCreation { .. }
+            | TriangulationConstructionError::PeriodicQuotientFacetKeyDerivation { .. }
+            | TriangulationConstructionError::PeriodicQuotientEmptyReconstruction
+            | TriangulationConstructionError::PeriodicQuotientNoCandidates { .. }
+            | TriangulationConstructionError::PeriodicQuotientSelectionEmpty { .. }
+            | TriangulationConstructionError::PeriodicQuotientSelectionBoundaryFacets { .. }
+            | TriangulationConstructionError::PeriodicQuotientSelectionEulerCharacteristic {
+                ..
+            }
+            | TriangulationConstructionError::PeriodicQuotientSelectionIncompleteCoverage {
+                ..
+            }
+            | TriangulationConstructionError::PeriodicQuotientOverloadedFacets { .. }
+            | TriangulationConstructionError::PeriodicQuotientFacetMultiplicity { .. }
+            | TriangulationConstructionError::PeriodicQuotientUnmatchedNeighbors { .. }
+            | TriangulationConstructionError::PeriodicQuotientMissingNeighborVector { .. } => {
+                Self::UnexpectedPeriodicQuotient {
+                    source: Box::new(source),
+                }
+            }
             TriangulationConstructionError::InternalInconsistency { message } => {
                 Self::InternalInconsistency { message }
             }
@@ -865,63 +1020,7 @@ impl From<&DelaunayRepairError> for DelaunayRepairErrorKind {
     }
 }
 
-/// Compact summary of a [`DelaunayRepairError`] for small by-value error payloads.
-///
-/// The conversion preserves the top-level [`DelaunayRepairErrorKind`] and the
-/// rendered diagnostic text. It intentionally drops bulky typed payloads, source
-/// chains, and repair diagnostics; keep the original [`DelaunayRepairError`]
-/// when callers need to inspect that data.
-///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::repair::{
-///     DelaunayRepairError, DelaunayRepairErrorKind, DelaunayRepairErrorSummary,
-///     DelaunayRepairPostconditionFailure,
-/// };
-///
-/// let source = DelaunayRepairError::PostconditionFailed {
-///     reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
-/// };
-/// let summary = DelaunayRepairErrorSummary::from(&source);
-///
-/// assert_eq!(summary.kind, DelaunayRepairErrorKind::PostconditionFailed);
-/// assert!(summary.message.contains("disconnected the triangulation"));
-/// ```
-#[must_use]
-#[derive(Debug, Clone, thiserror::Error)]
-#[error("{message}")]
-pub struct DelaunayRepairErrorSummary {
-    /// Structured repair failure category.
-    pub kind: DelaunayRepairErrorKind,
-    /// Full diagnostic text from the original repair error.
-    pub message: String,
-}
-
-impl PartialEq for DelaunayRepairErrorSummary {
-    fn eq(&self, other: &Self) -> bool {
-        self.kind == other.kind
-    }
-}
-
-impl Eq for DelaunayRepairErrorSummary {}
-
-impl From<&DelaunayRepairError> for DelaunayRepairErrorSummary {
-    fn from(source: &DelaunayRepairError) -> Self {
-        Self {
-            kind: source.into(),
-            message: source.to_string(),
-        }
-    }
-}
-
-impl From<DelaunayRepairError> for DelaunayRepairErrorSummary {
-    fn from(source: DelaunayRepairError) -> Self {
-        Self::from(&source)
-    }
-}
-
-/// Insertion failure category used by compact error summaries.
+/// Insertion failure category used by typed diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum InsertionErrorKind {
@@ -957,7 +1056,7 @@ pub enum InsertionErrorKind {
     PerturbedCoordinateInvalid,
 }
 
-/// Nested discriminant preserved by an [`InsertionErrorSummary`].
+/// Nested discriminant for insertion errors that wrap another validation layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum InsertionErrorSourceKind {
@@ -971,175 +1070,14 @@ pub enum InsertionErrorSourceKind {
     DelaunayRepair(DelaunayRepairErrorKind),
 }
 
-/// Compact summary of an [`InsertionError`] for small by-value error payloads.
-///
-/// The conversion preserves the top-level [`InsertionErrorKind`], an optional
-/// nested [`InsertionErrorSourceKind`] for wrapped validation or repair errors,
-/// the original retryability decision, and the rendered diagnostic text. It
-/// intentionally drops bulky typed payloads and source chains; keep the original
-/// [`InsertionError`] when callers need the full structured context.
-///
-/// Equality compares the structured kind, nested source kind, and retryability
-/// flag while ignoring [`Self::message`], so summary comparisons remain stable
-/// across display-text changes.
-///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::insertion::{
-///     DelaunayRepairErrorKind, DelaunayRepairFailureContext, HullExtensionReason,
-///     InsertionError, InsertionErrorKind, InsertionErrorSourceKind,
-///     InsertionErrorSummary,
-/// };
-/// use delaunay::prelude::repair::{
-///     DelaunayRepairError, DelaunayRepairPostconditionFailure,
-/// };
-///
-/// let source = InsertionError::DelaunayRepairFailed {
-///     source: Box::new(DelaunayRepairError::PostconditionFailed {
-///         reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
-///     }),
-///     context: DelaunayRepairFailureContext::LocalRepair,
-/// };
-/// let summary = InsertionErrorSummary::from(source);
-///
-/// assert_eq!(summary.kind, InsertionErrorKind::DelaunayRepairFailed);
-/// assert_eq!(
-///     summary.source_kind,
-///     Some(InsertionErrorSourceKind::DelaunayRepair(
-///         DelaunayRepairErrorKind::PostconditionFailed,
-///     )),
-/// );
-/// assert!(!summary.retryable);
-///
-/// let retryable = InsertionErrorSummary::from(InsertionError::HullExtension {
-///     reason: HullExtensionReason::NoVisibleFacets,
-/// });
-/// assert!(retryable.retryable);
-/// ```
-#[must_use]
-#[derive(Debug, Clone, thiserror::Error)]
-#[error("{message}")]
-pub struct InsertionErrorSummary {
-    /// Structured insertion failure category.
-    pub kind: InsertionErrorKind,
-    /// Nested structured source kind when the insertion error wraps another layer.
-    pub source_kind: Option<InsertionErrorSourceKind>,
-    /// Whether the original insertion error was retryable via perturbation.
-    pub retryable: bool,
-    /// Full diagnostic text from the original insertion error.
-    pub message: String,
-}
-
-impl PartialEq for InsertionErrorSummary {
-    fn eq(&self, other: &Self) -> bool {
-        self.kind == other.kind
-            && self.source_kind == other.source_kind
-            && self.retryable == other.retryable
-    }
-}
-
-impl Eq for InsertionErrorSummary {}
-
-impl InsertionErrorSummary {
-    /// Returns true when the original insertion failure was retryable via perturbation.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::tds::TriangulationValidationErrorKind;
-    /// use delaunay::prelude::insertion::{
-    ///     InsertionErrorKind, InsertionErrorSourceKind, InsertionErrorSummary,
-    /// };
-    ///
-    /// let retryable = InsertionErrorSummary {
-    ///     kind: InsertionErrorKind::TopologyValidationFailed,
-    ///     source_kind: Some(InsertionErrorSourceKind::Triangulation(
-    ///         TriangulationValidationErrorKind::ManifoldFacetMultiplicity,
-    ///     )),
-    ///     retryable: true,
-    ///     message: "facet shared by too many simplices".to_string(),
-    /// };
-    /// assert!(retryable.is_retryable());
-    ///
-    /// let structural = InsertionErrorSummary {
-    ///     kind: InsertionErrorKind::TopologyValidationFailed,
-    ///     source_kind: Some(InsertionErrorSourceKind::Triangulation(
-    ///         TriangulationValidationErrorKind::Disconnected,
-    ///     )),
-    ///     retryable: false,
-    ///     message: "simplex graph disconnected".to_string(),
-    /// };
-    /// assert!(!structural.is_retryable());
-    /// ```
-    #[must_use]
-    pub const fn is_retryable(&self) -> bool {
-        self.retryable
-    }
-}
-
-impl From<InsertionError> for InsertionErrorSummary {
-    fn from(source: InsertionError) -> Self {
-        let retryable = source.is_retryable();
-        let kind = match &source {
-            InsertionError::ConflictRegion(_) => InsertionErrorKind::ConflictRegion,
-            InsertionError::Location(_) => InsertionErrorKind::Location,
-            InsertionError::CavityFilling { .. } => InsertionErrorKind::CavityFilling,
-            InsertionError::NeighborWiring { .. } => InsertionErrorKind::NeighborWiring,
-            InsertionError::NonManifoldTopology { .. } => InsertionErrorKind::NonManifoldTopology,
-            InsertionError::HullExtension { .. } => InsertionErrorKind::HullExtension,
-            InsertionError::DelaunayValidationFailed { .. } => {
-                InsertionErrorKind::DelaunayValidationFailed
-            }
-            InsertionError::DelaunayRepairFailed { .. } => InsertionErrorKind::DelaunayRepairFailed,
-            InsertionError::DuplicateCoordinates { .. } => InsertionErrorKind::DuplicateCoordinates,
-            InsertionError::DuplicateUuid { .. } => InsertionErrorKind::DuplicateUuid,
-            InsertionError::TopologyValidation(_) => InsertionErrorKind::TopologyValidation,
-            InsertionError::TopologyValidationFailed { .. } => {
-                InsertionErrorKind::TopologyValidationFailed
-            }
-            InsertionError::MaxSimplicesRemovedExceeded { .. } => {
-                InsertionErrorKind::MaxSimplicesRemovedExceeded
-            }
-            InsertionError::SpatialIndexConstruction { .. } => {
-                InsertionErrorKind::SpatialIndexConstruction
-            }
-            InsertionError::PerturbedCoordinateInvalid { .. } => {
-                InsertionErrorKind::PerturbedCoordinateInvalid
-            }
-        };
-        let source_kind = match &source {
-            InsertionError::DelaunayValidationFailed { source } => {
-                Some(InsertionErrorSourceKind::Delaunay(source.into()))
-            }
-            InsertionError::DelaunayRepairFailed { source, .. } => Some(
-                InsertionErrorSourceKind::DelaunayRepair(source.as_ref().into()),
-            ),
-            InsertionError::TopologyValidation(source) => {
-                Some(InsertionErrorSourceKind::Tds(source.into()))
-            }
-            InsertionError::TopologyValidationFailed { source, .. } => {
-                Some(InsertionErrorSourceKind::Triangulation(source.into()))
-            }
-            _ => None,
-        };
-        Self {
-            kind,
-            source_kind,
-            retryable,
-            message: source.to_string(),
-        }
-    }
-}
-
 /// Insertion-stage context for flip-based Delaunay repair failures.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum DelaunayRepairFailureContext {
     /// Local repair failed and the robust-kernel fallback also failed.
     LocalRepairRobustFallback {
         /// Original local repair failure that triggered the robust fallback.
-        initial: DelaunayRepairErrorSummary,
+        initial: Box<DelaunayRepairError>,
     },
     /// Local repair failed with a non-recoverable repair error.
     LocalRepairNonRecoverable,
@@ -1219,7 +1157,7 @@ pub enum NeighborRebuildError {
     Unexpected {
         /// Insertion-layer error that did not map to a neighbor repair category.
         #[source]
-        source: InsertionErrorSummary,
+        source: Box<InsertionError>,
     },
 }
 
@@ -1825,7 +1763,7 @@ impl From<InsertionError> for NeighborRebuildError {
                 reason: source.into(),
             },
             other => Self::Unexpected {
-                source: other.into(),
+                source: Box::new(other),
             },
         }
     }
@@ -1869,7 +1807,7 @@ impl InsertionError {
     /// assert!(hull.is_retryable());
     /// ```
     #[must_use]
-    pub const fn is_retryable(&self) -> bool {
+    pub fn is_retryable(&self) -> bool {
         match self {
             // Non-manifold topology detected during wiring is retryable (geometry degeneracy).
             Self::NonManifoldTopology { .. } => true,
@@ -1959,7 +1897,7 @@ impl InsertionError {
     }
 
     /// Check whether a cavity-filling failure is safe to retry after rollback.
-    const fn is_cavity_filling_error_retryable(err: &CavityFillingError) -> bool {
+    fn is_cavity_filling_error_retryable(err: &CavityFillingError) -> bool {
         match err {
             CavityFillingError::InvalidFacetSharingAfterRepair { .. } => true,
             CavityFillingError::SimplexInsertion { reason } => match reason {
@@ -1979,7 +1917,9 @@ impl InsertionError {
                 | InitialSimplexConstructionError::InternalInconsistency { .. }
                 | InitialSimplexConstructionError::DuplicateCoordinates { .. }
                 | InitialSimplexConstructionError::LocalRepairBudgetExceeded { .. }
-                | InitialSimplexConstructionError::UnsupportedPeriodicDimension { .. } => false,
+                | InitialSimplexConstructionError::UnsupportedPeriodicDimension { .. }
+                | InitialSimplexConstructionError::UnexpectedPeriodicImage { .. }
+                | InitialSimplexConstructionError::UnexpectedPeriodicQuotient { .. } => false,
                 InitialSimplexConstructionError::UnexpectedInsertionStage { reason } => {
                     Self::is_unexpected_initial_simplex_stage_retryable(reason)
                 }
@@ -2008,7 +1948,7 @@ impl InsertionError {
     }
 
     /// Check whether an insertion-stage error that escaped bootstrap construction is retryable.
-    const fn is_unexpected_initial_simplex_stage_retryable(
+    fn is_unexpected_initial_simplex_stage_retryable(
         err: &InitialSimplexUnexpectedInsertionStage,
     ) -> bool {
         match err {
@@ -2036,26 +1976,30 @@ impl InsertionError {
                 Self::is_level3_error_retryable(source)
             }
             InitialSimplexUnexpectedInsertionStage::FinalTopologyValidation { source, .. } => {
-                Self::is_invariant_error_summary_retryable(source)
+                Self::is_invariant_error_retryable(source.as_ref())
             }
             InitialSimplexUnexpectedInsertionStage::FinalDelaunayValidation { .. }
+            | InitialSimplexUnexpectedInsertionStage::NeighborWiring { .. }
+            | InitialSimplexUnexpectedInsertionStage::DelaunayRepair { .. }
+            | InitialSimplexUnexpectedInsertionStage::PerturbedCoordinateInvalid { .. }
+            | InitialSimplexUnexpectedInsertionStage::OrientationCanonicalization { .. }
             | InitialSimplexUnexpectedInsertionStage::Location { .. }
             | InitialSimplexUnexpectedInsertionStage::DelaunayValidation { .. }
             | InitialSimplexUnexpectedInsertionStage::SpatialIndexConstruction { .. } => false,
         }
     }
 
-    /// Check whether a compact final validation summary is perturbation-retryable.
-    const fn is_invariant_error_summary_retryable(err: &InvariantErrorSummary) -> bool {
-        match err.detail {
-            InvariantErrorSummaryDetail::Tds(kind) => matches!(
-                kind,
+    /// Check whether a final validation error is perturbation-retryable.
+    fn is_invariant_error_retryable(err: &InvariantError) -> bool {
+        match err {
+            InvariantError::Tds(source) => matches!(
+                TdsErrorKind::from(source),
                 TdsErrorKind::Geometric
                     | TdsErrorKind::OrientationViolation
                     | TdsErrorKind::FacetSharingViolation
             ),
-            InvariantErrorSummaryDetail::Triangulation(kind) => matches!(
-                kind,
+            InvariantError::Triangulation(source) => matches!(
+                TriangulationValidationErrorKind::from(source),
                 TriangulationValidationErrorKind::ManifoldFacetMultiplicity
                     | TriangulationValidationErrorKind::BoundaryRidgeMultiplicity
                     | TriangulationValidationErrorKind::RidgeLinkNotManifold
@@ -2063,7 +2007,7 @@ impl InsertionError {
                     | TriangulationValidationErrorKind::OrientationPromotionNonConvergence
                     | TriangulationValidationErrorKind::IsolatedVertex
             ),
-            InvariantErrorSummaryDetail::Delaunay(_) => false,
+            InvariantError::Delaunay(_) => false,
         }
     }
 
@@ -3154,10 +3098,8 @@ where
 ///     return Ok(());
 /// };
 ///
-/// tds.clear_all_neighbors();
-///
 /// let repaired = repair_neighbor_pointers_local(&mut tds, &[simplex_key], Some(&[neighbor_key]))?;
-/// assert!(repaired >= 2);
+/// assert_eq!(repaired, 0);
 /// assert_eq!(
 ///     tds.simplex(simplex_key)
 ///         .and_then(|simplex| simplex.neighbor_key(facet_idx).flatten()),
@@ -3830,7 +3772,8 @@ where
             external_facets.iter().copied(),
             Some(&conflict_simplices),
         )?;
-        let _ = tds.remove_simplices_by_keys(&conflict_simplices);
+        tds.remove_simplices_by_keys(&conflict_simplices)
+            .map_err(|e| InsertionError::TopologyValidation(e.into_inner()))?;
 
         return Ok(new_simplices);
     }
@@ -4681,7 +4624,7 @@ mod tests {
         InvalidCoordinateValue,
     };
     use crate::topology::characteristics::euler::TopologyClassification;
-    use crate::validation::DelaunayVerificationError;
+    use crate::topology::traits::topological_space::TopologyKind;
     use slotmap::KeyData;
     use std::assert_matches;
 
@@ -5468,7 +5411,7 @@ mod tests {
     }
 
     #[test]
-    fn test_neighbor_rebuild_error_unexpected_preserves_source_summary() {
+    fn test_neighbor_rebuild_error_unexpected_preserves_typed_source() {
         let source = InsertionError::DuplicateCoordinates {
             coordinates: CoordinateValues::from([0.0, 0.0]),
         };
@@ -5476,10 +5419,8 @@ mod tests {
         let err = NeighborRebuildError::from(source.clone());
 
         match err {
-            NeighborRebuildError::Unexpected { source: summary } => {
-                assert_eq!(summary.kind, InsertionErrorKind::DuplicateCoordinates);
-                assert_eq!(summary.source_kind, None);
-                assert_eq!(summary.message, source.to_string());
+            NeighborRebuildError::Unexpected { source: observed } => {
+                assert_eq!(observed.as_ref(), &source);
             }
             other => panic!("expected unexpected neighbor repair error, got {other:?}"),
         }
@@ -5498,13 +5439,11 @@ mod tests {
             } if value.get() == 0.0
         );
 
-        let summary = InsertionErrorSummary::from(err);
-        assert_eq!(summary.kind, InsertionErrorKind::SpatialIndexConstruction);
-        assert!(!summary.is_retryable());
+        assert!(!err.is_retryable());
     }
 
     #[test]
-    fn perturbed_coordinate_error_summary_preserves_kind_and_retryability() {
+    fn perturbed_coordinate_error_is_not_retryable() {
         let source = CoordinateValidationError::InvalidCoordinate {
             coordinate_index: 0,
             coordinate_value: InvalidCoordinateValue::Nan,
@@ -5512,12 +5451,6 @@ mod tests {
         };
         let err = InsertionError::PerturbedCoordinateInvalid { source };
 
-        let summary = InsertionErrorSummary::from(err.clone());
-
-        assert_eq!(summary.kind, InsertionErrorKind::PerturbedCoordinateInvalid);
-        assert_eq!(summary.source_kind, None);
-        assert_eq!(summary.message, err.to_string());
-        assert!(!summary.is_retryable());
         assert!(!err.is_retryable());
     }
 
@@ -5562,22 +5495,8 @@ mod tests {
         }
     }
 
-    fn synthetic_delaunay_verification_error(
-        message: &str,
-    ) -> DelaunayTriangulationValidationError {
-        let _ = message;
-        DelaunayTriangulationValidationError::VerificationFailed {
-            source: DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
-                reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected {
-                    simplex_count: 1,
-                }),
-            })
-            .into(),
-        }
-    }
-
     #[test]
-    fn test_delaunay_repair_error_summary_covers_all_kinds() {
+    fn test_delaunay_repair_error_kind_covers_all_variants() {
         let cases = [
             (
                 DelaunayRepairError::NonConvergent {
@@ -5638,124 +5557,42 @@ mod tests {
         ];
 
         for (source, expected_kind) in cases {
-            let summary = DelaunayRepairErrorSummary::from(&source);
-            assert_eq!(summary.kind, expected_kind);
-            assert_eq!(summary.message, source.to_string());
+            assert_eq!(DelaunayRepairErrorKind::from(&source), expected_kind);
         }
     }
 
     #[test]
-    fn test_insertion_error_summary_preserves_nested_source_kind() {
-        let cases = [
-            (
-                InsertionError::TopologyValidation(TdsError::InconsistentDataStructure {
-                    message: "dangling neighbor".to_string(),
-                }),
-                InsertionErrorKind::TopologyValidation,
-                Some(InsertionErrorSourceKind::Tds(
-                    TdsErrorKind::InconsistentDataStructure,
-                )),
-            ),
-            (
-                InsertionError::TopologyValidationFailed {
-                    context: InsertionTopologyValidationContext::PostInsertion,
-                    source: TriangulationValidationError::Disconnected { simplex_count: 2 },
-                },
-                InsertionErrorKind::TopologyValidationFailed,
-                Some(InsertionErrorSourceKind::Triangulation(
-                    TriangulationValidationErrorKind::Disconnected,
-                )),
-            ),
-            (
-                InsertionError::DelaunayValidationFailed {
-                    source: synthetic_delaunay_verification_error("non-Delaunay facet"),
-                },
-                InsertionErrorKind::DelaunayValidationFailed,
-                Some(InsertionErrorSourceKind::Delaunay(
-                    DelaunayValidationErrorKind::VerificationFailed,
-                )),
-            ),
-            (
-                InsertionError::DelaunayRepairFailed {
-                    source: Box::new(DelaunayRepairError::HeuristicRebuildFailed {
-                        reason: Box::new(
-                            DelaunayRepairHeuristicRebuildFailure::RecursionDepthExceeded {
-                                max_depth: 1,
-                            },
-                        ),
-                    }),
-                    context: DelaunayRepairFailureContext::LocalRepair,
-                },
-                InsertionErrorKind::DelaunayRepairFailed,
-                Some(InsertionErrorSourceKind::DelaunayRepair(
-                    DelaunayRepairErrorKind::HeuristicRebuildFailed,
-                )),
-            ),
-        ];
-
-        for (source, expected_kind, expected_source_kind) in cases {
-            let summary = InsertionErrorSummary::from(source.clone());
-            assert_eq!(summary.kind, expected_kind);
-            assert_eq!(summary.source_kind, expected_source_kind);
-            assert_eq!(summary.message, source.to_string());
-        }
-    }
-
-    #[test]
-    fn test_insertion_error_summary_preserves_repair_budget_error() {
+    fn test_repair_budget_error_is_not_retryable() {
         let source = InsertionError::MaxSimplicesRemovedExceeded {
             max_simplices_removed: 2,
             attempted: 3,
         };
-        let summary = InsertionErrorSummary::from(source.clone());
 
-        assert_eq!(
-            summary.kind,
-            InsertionErrorKind::MaxSimplicesRemovedExceeded
-        );
-        assert_eq!(summary.source_kind, None);
-        assert_eq!(summary.message, source.to_string());
-        assert!(!summary.retryable);
         assert!(!source.is_retryable());
     }
 
     #[test]
-    fn test_insertion_error_summary_retryability_covers_tds_source_kinds() {
-        let geometric = InsertionErrorSummary {
-            kind: InsertionErrorKind::TopologyValidation,
-            source_kind: Some(InsertionErrorSourceKind::Tds(TdsErrorKind::Geometric)),
-            retryable: true,
-            message: String::new(),
-        };
-        let orientation = InsertionErrorSummary {
-            kind: InsertionErrorKind::TopologyValidation,
-            source_kind: Some(InsertionErrorSourceKind::Tds(
-                TdsErrorKind::OrientationViolation,
-            )),
-            retryable: true,
-            message: String::new(),
-        };
-        let structural = InsertionErrorSummary {
-            kind: InsertionErrorKind::TopologyValidation,
-            source_kind: Some(InsertionErrorSourceKind::Tds(
-                TdsErrorKind::InconsistentDataStructure,
-            )),
-            retryable: false,
-            message: String::new(),
-        };
+    fn test_insertion_retryability_covers_tds_source_kinds() {
+        let geometric = InsertionError::TopologyValidation(TdsError::Geometric(
+            GeometricError::DegenerateOrientation {
+                message: "det=0".to_string(),
+            },
+        ));
+        let structural = InsertionError::TopologyValidation(TdsError::InconsistentDataStructure {
+            message: "dangling neighbor".to_string(),
+        });
 
         assert!(geometric.is_retryable());
-        assert!(orientation.is_retryable());
         assert!(!structural.is_retryable());
     }
 
     #[test]
-    fn test_robust_fallback_context_preserves_initial_repair_summary() {
+    fn test_robust_fallback_context_preserves_initial_repair_source() {
         let initial = DelaunayRepairError::PostconditionFailed {
             reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
         };
         let context = DelaunayRepairFailureContext::LocalRepairRobustFallback {
-            initial: DelaunayRepairErrorSummary::from(&initial),
+            initial: Box::new(initial),
         };
 
         let msg = context.to_string();
@@ -5913,6 +5750,46 @@ mod tests {
                 max_validated_dimension: 3,
                 tracking_issue: 416,
             }
+        );
+    }
+
+    #[test]
+    fn test_initial_simplex_construction_error_buckets_periodic_image_sources() {
+        let source = TriangulationConstructionError::PeriodicImageUnsupportedTopology {
+            topology: TopologyKind::Euclidean,
+        };
+
+        let converted = InitialSimplexConstructionError::from(source);
+
+        assert_matches!(
+            converted,
+            InitialSimplexConstructionError::UnexpectedPeriodicImage { source }
+                if matches!(
+                    source.as_ref(),
+                    TriangulationConstructionError::PeriodicImageUnsupportedTopology {
+                        topology: TopologyKind::Euclidean,
+                    }
+                )
+        );
+    }
+
+    #[test]
+    fn test_initial_simplex_construction_error_buckets_periodic_quotient_sources() {
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(11));
+        let source =
+            TriangulationConstructionError::PeriodicQuotientMissingNeighborVector { simplex_key };
+
+        let converted = InitialSimplexConstructionError::from(source);
+
+        assert_matches!(
+            converted,
+            InitialSimplexConstructionError::UnexpectedPeriodicQuotient { source }
+                if matches!(
+                    source.as_ref(),
+                    TriangulationConstructionError::PeriodicQuotientMissingNeighborVector {
+                        simplex_key: preserved_key,
+                    } if *preserved_key == simplex_key
+                )
         );
     }
 

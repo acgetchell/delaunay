@@ -567,7 +567,21 @@ mod core {
     pub mod query;
     /// Local topology repair for generic triangulations.
     pub mod repair;
-    pub mod tds;
+    /// Triangulation data structure internals.
+    pub mod tds {
+        mod equality;
+        pub mod errors;
+        pub(crate) mod incidence;
+        mod keys;
+        mod mutation;
+        mod snapshot;
+        mod storage;
+        mod validation;
+
+        pub use errors::*;
+        pub use keys::{SimplexKey, VertexKey};
+        pub use storage::Tds;
+    }
     /// Generic triangulation combining kernel + Tds.
     pub mod triangulation;
     /// Generic validation orchestration for triangulations.
@@ -614,6 +628,10 @@ mod core {
     // `crate::tds`, `crate::collections`, `crate::algorithms`, and
     // `crate::query`.
 }
+
+#[cfg(feature = "bench")]
+#[doc(hidden)]
+pub mod bench_fixtures;
 
 /// Contains geometric types including the `Point` struct and geometry predicates.
 ///
@@ -723,18 +741,18 @@ pub use crate::builder::DelaunayTriangulationBuilder;
 pub use crate::construction::{
     ConstructionOptions, ConstructionSkipSample, ConstructionSlowInsertionSample,
     ConstructionStatistics, DedupPolicy, DedupTolerance, DelaunayConstructionFailure,
-    DelaunayConstructionRepairPhase, DelaunayError, DelaunayResult,
-    DelaunayTriangulationConstructionError, DelaunayTriangulationConstructionErrorWithStatistics,
-    InitialSimplexStrategy, InsertionOrderStrategy, RetryPolicy,
+    DelaunayConstructionRepairPhase, DelaunayConstructionRetryFailure, DelaunayError,
+    DelaunayResult, DelaunayTriangulationConstructionError,
+    DelaunayTriangulationConstructionErrorWithStatistics, InitialSimplexStrategy,
+    InsertionOrderStrategy, RetryPolicy,
 };
 pub use crate::core::algorithms::incremental_insertion::{
-    CavityFillingError, CavityRepairStage, DelaunayRepairErrorKind, DelaunayRepairErrorSummary,
-    DelaunayRepairFailureContext, HullExtensionReason, InitialSimplexConstructionError,
-    InitialSimplexUnexpectedInsertionStage, InsertionError, InsertionErrorKind,
-    InsertionErrorSourceKind, InsertionErrorSummary, InsertionTopologyValidationContext,
-    NeighborRebuildError, NeighborWiringError, SpatialIndexConstructionFailure,
-    TdsConstructionFailure, TdsValidationFailure, extend_hull, fill_cavity,
-    repair_neighbor_pointers, repair_neighbor_pointers_local, wire_cavity_neighbors,
+    CavityFillingError, CavityRepairStage, DelaunayRepairErrorKind, DelaunayRepairFailureContext,
+    HullExtensionReason, InitialSimplexConstructionError, InitialSimplexUnexpectedInsertionStage,
+    InsertionError, InsertionErrorKind, InsertionErrorSourceKind,
+    InsertionTopologyValidationContext, NeighborRebuildError, NeighborWiringError,
+    SpatialIndexConstructionFailure, TdsConstructionFailure, TdsValidationFailure, extend_hull,
+    fill_cavity, repair_neighbor_pointers, repair_neighbor_pointers_local, wire_cavity_neighbors,
 };
 pub use crate::core::algorithms::pl_manifold_repair::{
     PlManifoldRepairError, PlManifoldRepairStats,
@@ -1072,8 +1090,9 @@ pub mod query {
     pub use crate::geometry::traits::coordinate::Coordinate;
     pub use crate::geometry::{insphere, insphere_distance, insphere_lifted};
     pub use crate::tds::{
-        AdjacencyIndex, AdjacencyIndexBuildError, AllFacetsIter, BoundaryFacetsIter, EdgeKey,
-        EdgeKeyError, FacetView, Simplex, SimplexKey, Vertex, VertexKey,
+        AllFacetsIter, BoundaryFacetsIter, EdgeIndex, EdgeKey, EdgeKeyError, FacetView,
+        IncidenceView, Simplex, SimplexKey, SimplexNeighborIndex, TopologyIndexBuildError,
+        TriangulationAdjacency, Vertex, VertexKey,
     };
     pub use crate::{DelaunayTriangulation, Triangulation};
 }
@@ -1091,10 +1110,11 @@ pub mod prelude {
     pub use crate::{
         ConstructionOptions, ConstructionSkipSample, ConstructionSlowInsertionSample,
         ConstructionStatistics, DedupPolicy, DedupTolerance, DelaunayCheckPolicy,
-        DelaunayConstructionFailure, DelaunayConstructionRepairPhase, DelaunayError,
-        DelaunayRepairHeuristicConfig, DelaunayRepairHeuristicSeeds, DelaunayRepairOperation,
-        DelaunayRepairOutcome, DelaunayRepairPolicy, DelaunayResult, DelaunayTriangulation,
-        DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+        DelaunayConstructionFailure, DelaunayConstructionRepairPhase,
+        DelaunayConstructionRetryFailure, DelaunayError, DelaunayRepairHeuristicConfig,
+        DelaunayRepairHeuristicSeeds, DelaunayRepairOperation, DelaunayRepairOutcome,
+        DelaunayRepairPolicy, DelaunayResult, DelaunayTriangulation, DelaunayTriangulationBuilder,
+        DelaunayTriangulationConstructionError,
         DelaunayTriangulationConstructionErrorWithStatistics, DelaunayTriangulationValidationError,
         DelaunayVerificationError, DelaunayVerificationErrorKind, DuplicateDetectionMetrics,
         FinalDelaunayValidationContext, FinalTopologyValidationContext, InitialSimplexStrategy,
@@ -1139,12 +1159,12 @@ pub mod prelude {
 
     // Re-export incremental insertion types
     pub use crate::{
-        CavityFillingError, CavityRepairStage, DelaunayRepairErrorKind, DelaunayRepairErrorSummary,
+        CavityFillingError, CavityRepairStage, DelaunayRepairErrorKind,
         DelaunayRepairFailureContext, HullExtensionReason, InitialSimplexConstructionError,
         InitialSimplexUnexpectedInsertionStage, InsertionError, InsertionErrorKind,
-        InsertionErrorSourceKind, InsertionErrorSummary, InsertionTopologyValidationContext,
-        NeighborRebuildError, NeighborWiringError, SpatialIndexConstructionFailure,
-        TdsConstructionFailure, TdsValidationFailure,
+        InsertionErrorSourceKind, InsertionTopologyValidationContext, NeighborRebuildError,
+        NeighborWiringError, SpatialIndexConstructionFailure, TdsConstructionFailure,
+        TdsValidationFailure,
     };
     pub use crate::{InsertionOutcome, InsertionStatistics, SuspicionFlags};
 
@@ -1155,12 +1175,12 @@ pub mod prelude {
         DelaunayRepairOrientationCanonicalizationFailure,
         DelaunayRepairOrientationCanonicalizationFailureKind, DelaunayRepairPostconditionFailure,
         DelaunayRepairStats, DelaunayRepairVerificationContext, FlipContextError,
-        FlipEdgeAdjacencyError, FlipError, FlipMutationError, FlipNeighborCavityFailureKind,
-        FlipNeighborDelaunayValidationFailureKind, FlipNeighborHullExtensionFailureKind,
-        FlipNeighborRepairDiagnostics, FlipNeighborRepairFailure, FlipNeighborWiringError,
-        FlipOrientationCheckStage, FlipPredicateError, FlipPredicateOperation,
-        FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder,
-        TriangleHandleError,
+        FlipEdgeAdjacencyError, FlipError, FlipFailureKind, FlipMutationError,
+        FlipNeighborCavityFailureKind, FlipNeighborDelaunayValidationFailureKind,
+        FlipNeighborHullExtensionFailureKind, FlipNeighborRepairDiagnostics,
+        FlipNeighborRepairFailure, FlipNeighborWiringError, FlipOrientationCheckStage,
+        FlipPredicateError, FlipPredicateOperation, FlipTriangleAdjacencyError,
+        FlipVertexAdjacencyError, RepairQueueOrder, TriangleHandleError,
     };
 
     // Re-export commonly used collection types from the public collections facade.
@@ -1204,18 +1224,12 @@ pub mod prelude {
     /// # }
     /// ```
     pub mod construction {
-        pub use crate::builder::{
-            DelaunayTriangulationBuilder, ExplicitConstructionError,
-            ExplicitDelaunayValidationError, ExplicitDelaunayValidationErrorKind,
-            ExplicitDelaunayValidationSourceKind, ExplicitInsertionError,
-            ExplicitInsertionErrorKind, ExplicitInvariantError, ExplicitInvariantErrorKind,
-            ExplicitTdsError, ExplicitTdsErrorKind,
-        };
+        pub use crate::builder::{DelaunayTriangulationBuilder, ExplicitConstructionError};
         pub use crate::construction::{
             ConstructionOptions, ConstructionSkipSample, ConstructionSlowInsertionSample,
             ConstructionStatistics, DedupPolicy, DedupTolerance, DelaunayConstructionFailure,
-            DelaunayConstructionRepairPhase, DelaunayError, DelaunayResult,
-            DelaunayTriangulationConstructionError,
+            DelaunayConstructionRepairPhase, DelaunayConstructionRetryFailure, DelaunayError,
+            DelaunayResult, DelaunayTriangulationConstructionError,
             DelaunayTriangulationConstructionErrorWithStatistics, InitialSimplexStrategy,
             InsertionOrderStrategy, RetryPolicy,
         };
@@ -1288,13 +1302,13 @@ pub mod prelude {
         };
         pub use crate::geometry::point::Point;
         pub use crate::query::{
-            AdjacencyIndex, AdjacencyIndexBuildError, AllFacetsIter, BoundaryAnalysis,
-            BoundaryFacetsIter, DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde,
-            DataSerialize, DataType, EdgeKey, EdgeKeyError, FacetView, QueryError,
+            AllFacetsIter, BoundaryAnalysis, BoundaryFacetsIter, DataCopy, DataDebug,
+            DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType, EdgeIndex, EdgeKey,
+            EdgeKeyError, FacetView, IncidenceView, QueryError, SimplexNeighborIndex,
+            TopologyIndexBuildError, TriangulationAdjacency,
         };
         pub use crate::tds::{
-            FacetHandle, InvariantError, InvariantErrorSummary, InvariantErrorSummaryDetail,
-            InvariantErrorSummaryKind, NeighborSlot, Simplex, SimplexKey, Tds,
+            FacetHandle, InvariantError, NeighborSlot, Simplex, SimplexKey, Tds,
             TdsConstructionError, TdsError, TdsErrorKind, TdsMutationError,
             TriangulationValidationErrorKind, Vertex, VertexKey,
         };
@@ -1330,26 +1344,18 @@ pub mod prelude {
     }
 
     /// Incremental insertion building blocks and diagnostics.
-    ///
-    /// Includes compact [`InsertionErrorSummary`] and [`InsertionErrorKind`]
-    /// exports for callers that need small by-value diagnostics instead of full insertion
-    /// error payloads.
-    ///
-    /// [`InsertionErrorSummary`]: crate::prelude::insertion::InsertionErrorSummary
-    /// [`InsertionErrorKind`]: crate::prelude::insertion::InsertionErrorKind
     pub mod insertion {
         pub use crate::collections::SimplexKeyBuffer;
         pub use crate::tds::FacetHandle;
         pub use crate::tds::{SimplexKey, Tds, TdsMutationError, VertexKey};
         pub use crate::{
             CavityFillingError, CavityRepairStage, DelaunayRepairErrorKind,
-            DelaunayRepairErrorSummary, DelaunayRepairFailureContext, HullExtensionReason,
-            InitialSimplexConstructionError, InitialSimplexUnexpectedInsertionStage,
-            InsertionError, InsertionErrorKind, InsertionErrorSourceKind, InsertionErrorSummary,
-            InsertionTopologyValidationContext, NeighborRebuildError, NeighborWiringError,
-            SpatialIndexConstructionFailure, TdsConstructionFailure, TdsValidationFailure,
-            extend_hull, fill_cavity, repair_neighbor_pointers, repair_neighbor_pointers_local,
-            wire_cavity_neighbors,
+            DelaunayRepairFailureContext, HullExtensionReason, InitialSimplexConstructionError,
+            InitialSimplexUnexpectedInsertionStage, InsertionError, InsertionErrorKind,
+            InsertionErrorSourceKind, InsertionTopologyValidationContext, NeighborRebuildError,
+            NeighborWiringError, SpatialIndexConstructionFailure, TdsConstructionFailure,
+            TdsValidationFailure, extend_hull, fill_cavity, repair_neighbor_pointers,
+            repair_neighbor_pointers_local, wire_cavity_neighbors,
         };
         pub use crate::{InsertionOutcome, InsertionResult, InsertionStatistics};
     }
@@ -1363,13 +1369,6 @@ pub mod prelude {
     }
 
     /// Flip-based Delaunay repair, diagnostics, and Level 4 validation.
-    ///
-    /// Includes compact [`DelaunayRepairErrorSummary`] and [`DelaunayRepairErrorKind`]
-    /// exports for APIs that need repair categories without retaining full repair
-    /// diagnostics.
-    ///
-    /// [`DelaunayRepairErrorSummary`]: crate::prelude::repair::DelaunayRepairErrorSummary
-    /// [`DelaunayRepairErrorKind`]: crate::prelude::repair::DelaunayRepairErrorKind
     ///
     /// ```rust
     /// use delaunay::prelude::repair::{
@@ -1392,7 +1391,7 @@ pub mod prelude {
             DelaunayRepairOrientationCanonicalizationFailureKind,
             DelaunayRepairPostconditionFailure, DelaunayRepairStats,
             DelaunayRepairVerificationContext, FlipContextError, FlipEdgeAdjacencyError, FlipError,
-            FlipMutationError, FlipNeighborCavityFailureKind,
+            FlipFailureKind, FlipMutationError, FlipNeighborCavityFailureKind,
             FlipNeighborDelaunayValidationFailureKind, FlipNeighborHullExtensionFailureKind,
             FlipNeighborRepairDiagnostics, FlipNeighborRepairFailure, FlipNeighborWiringError,
             FlipOrientationCheckStage, FlipPredicateError, FlipPredicateOperation,
@@ -1405,8 +1404,8 @@ pub mod prelude {
             DelaunayRepairOutcome, DelaunayRepairPolicy,
         };
         pub use crate::{
-            DelaunayRepairErrorKind, DelaunayRepairErrorSummary, DelaunayRepairOperation,
-            DelaunayTriangulation, DelaunayTriangulationValidationError, DelaunayVerificationError,
+            DelaunayRepairErrorKind, DelaunayRepairOperation, DelaunayTriangulation,
+            DelaunayTriangulationValidationError, DelaunayVerificationError,
             DelaunayVerificationErrorKind,
         };
         pub use crate::{DelaunayValidationError, find_delaunay_violations};
@@ -1419,7 +1418,7 @@ pub mod prelude {
     ///
     /// Self-contained: a single `use delaunay::prelude::delaunayize::*`
     /// import brings in [`DelaunayTriangulationBuilder`], [`DelaunayTriangulation`],
-    /// [`DelaunayTriangulation`], and all delaunayize-specific types.
+    /// PL-manifold repair types, and all delaunayize-specific types.
     pub mod delaunayize {
         pub use crate::delaunayize::*;
         pub use crate::{DelaunayTriangulation, DelaunayTriangulationBuilder};
@@ -1612,7 +1611,9 @@ pub mod prelude {
     /// Includes:
     /// - Topology traversal: [`DelaunayTriangulation::edges`], [`DelaunayTriangulation::incident_edges`],
     ///   [`DelaunayTriangulation::simplex_neighbors`]
-    /// - Fast repeated queries: [`DelaunayTriangulation::build_adjacency_index`] and [`AdjacencyIndex`]
+    /// - Fast repeated queries: [`DelaunayTriangulation::incidence`], [`DelaunayTriangulation::build_edge_index`],
+    ///   [`DelaunayTriangulation::build_simplex_neighbor_index`], and composite
+    ///   [`DelaunayTriangulation::adjacency`] / [`TriangulationAdjacency`]
     /// - Zero-allocation geometry accessors: [`DelaunayTriangulation::vertex_coords`],
     ///   [`DelaunayTriangulation::simplex_vertices`]
     /// - Convex hull extraction: [`ConvexHull::try_from_triangulation`]
@@ -1636,7 +1637,8 @@ pub mod prelude {
     pub mod query {
         // Core read-only traversal / adjacency
         pub use crate::tds::{
-            AdjacencyIndex, AdjacencyIndexBuildError, EdgeKey, EdgeKeyError, SimplexKey, VertexKey,
+            EdgeIndex, EdgeKey, EdgeKeyError, IncidenceView, SimplexKey, SimplexNeighborIndex,
+            TopologyIndexBuildError, TriangulationAdjacency, VertexKey,
         };
         pub use crate::{DelaunayTriangulation, Triangulation};
 
@@ -1790,7 +1792,7 @@ mod tests {
     use crate::{
         DelaunayTriangulation,
         core::{
-            adjacency::AdjacencyIndex, edge::EdgeKey, simplex::Simplex, tds::Tds,
+            adjacency::TriangulationAdjacency, edge::EdgeKey, simplex::Simplex, tds::Tds,
             triangulation::Triangulation, vertex::Vertex,
         },
         geometry::{
@@ -1830,7 +1832,7 @@ mod tests {
         assert!(is_normal::<DelaunayTriangulation<FastKernel<f64>, (), (), 3>>());
         assert!(is_normal::<ConvexHull<(), (), 3>>());
         assert!(is_normal::<EdgeKey>());
-        assert!(is_normal::<AdjacencyIndex>());
+        assert!(is_normal::<TriangulationAdjacency<'static>>());
         assert!(is_normal::<DelaunayizeConfig>());
         assert!(is_normal::<DelaunayizeOutcome<(), (), 3>>());
         assert!(is_normal::<DelaunayizeError>());

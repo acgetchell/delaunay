@@ -191,7 +191,7 @@ action-lint: _ensure-actionlint
 
 # Benchmark recipes that produce performance numbers use Cargo's perf profile.
 bench:
-    cargo bench --workspace --profile perf
+    cargo bench --workspace --profile perf --features bench
 
 # Allocation-contract microbenchmarks for public hot paths.
 bench-allocations:
@@ -204,7 +204,7 @@ bench-ci:
 # Compile benchmarks without running them. Manifest lints enforce the warning
 # policy without using RUSTFLAGS that fragment Cargo artifact caches.
 bench-compile:
-    cargo bench --workspace --no-run
+    cargo bench --workspace --no-run --features bench
 
 # Generate performance summary with fresh perf-profile benchmark runs (for releases)
 bench-perf-summary: _ensure-uv
@@ -213,13 +213,13 @@ bench-perf-summary: _ensure-uv
 # Smoke-test benchmark harnesses with minimal samples; not for performance data.
 # Criterion requires sample_size >= 10; use the minimum with short measurement/warm-up windows.
 bench-smoke:
-    CRIT_SAMPLE_SIZE=10 CRIT_MEASUREMENT_MS=500 CRIT_WARMUP_MS=200 cargo bench --workspace --profile perf
+    CRIT_SAMPLE_SIZE=10 CRIT_MEASUREMENT_MS=500 CRIT_WARMUP_MS=200 cargo bench --workspace --profile perf --features bench
 
 # Compile benchmarks and integration tests without running. This catches
 # release-profile-only warnings (e.g. cfg-gated unused-mut) that debug-mode
 # clippy/test won't see.
 bench-test-compile: _ensure-nextest
-    cargo bench --workspace --no-run
+    cargo bench --workspace --no-run --features bench
     cargo nextest run --release --tests --no-run
 
 # Build commands

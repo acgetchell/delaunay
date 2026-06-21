@@ -1006,7 +1006,7 @@ mod tests {
         .collect();
         let missing = vertex_keys[0];
         let simplex = Simplex::try_new_with_data(vertex_keys, Some(7)).unwrap();
-        tds.remove_isolated_vertex(missing);
+        tds.remove_isolated_vertex(missing).unwrap();
 
         let err = simplex_vertex_uuids(&tds, &simplex).unwrap_err();
 

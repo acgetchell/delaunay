@@ -19,7 +19,7 @@ mod bench_utils;
 #[cfg(feature = "count-allocations")]
 mod allocation_contracts {
     use allocation_counter::AllocationInfo;
-    use criterion::{BenchmarkGroup, BenchmarkId, Criterion, measurement::WallTime};
+    use criterion::{BatchSize, BenchmarkGroup, BenchmarkId, Criterion, measurement::WallTime};
     use delaunay::prelude::algorithms::{LocateResult, locate_with_stats};
     use delaunay::prelude::construction::{
         ConstructionOptions, DelaunayTriangulation, RetryPolicy, Vertex,
@@ -29,7 +29,7 @@ mod allocation_contracts {
         AdaptiveKernel, CoordinateRange, FastKernel, Point, simplex_volume,
     };
     use delaunay::prelude::query::measure_with_result;
-    use delaunay::prelude::tds::{SimplexKey, TdsError, VertexKey, facet_key_from_vertices};
+    use delaunay::prelude::tds::{SimplexKey, Tds, TdsError, VertexKey, facet_key_from_vertices};
     use delaunay::try_vertices_from_points;
     use std::assert_matches;
     use std::{hint::black_box, num::NonZeroUsize, time::Duration};
@@ -46,8 +46,11 @@ mod allocation_contracts {
     const CANARY_SEED_4D: u64 = 531;
     const CANARY_SEED_5D: u64 = 816;
     const SAMPLE_SIZE: usize = 32;
+    const REMOVAL_BATCH_SIZES: [usize; 6] = [1, 2, 4, 8, 16, 32];
+    const INLINE_REMOVAL_RECORD_CAPACITY: usize = 16;
 
     type BenchTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
+    type BenchTds<const D: usize> = Tds<(), (), D>;
 
     fn finite_point<const D: usize>(coords: [f64; D]) -> Point<D> {
         Point::try_new(coords).unwrap_or_else(|_| std::process::abort())
@@ -81,6 +84,7 @@ mod allocation_contracts {
     struct DimensionFixture<const D: usize> {
         dt: BenchTriangulation<D>,
         simplex_key: SimplexKey,
+        removal_keys: Vec<SimplexKey>,
         facet_vertices: [VertexKey; D],
         query: Point<D>,
         simplex_count: usize,
@@ -205,6 +209,7 @@ mod allocation_contracts {
         });
         let dt = BenchTriangulation::<D>::try_new_with_options(&vertices, options).or_abort();
         let simplex_key = representative_simplex_key(&dt).or_abort();
+        let removal_keys = dt.tds().simplex_keys().take(32).collect();
         let facet_vertices = first_facet_vertices(&dt, simplex_key).or_abort();
         let query = simplex_barycenter(&dt, simplex_key).or_abort();
         let simplex_count = dt.tds().simplices().count();
@@ -213,6 +218,7 @@ mod allocation_contracts {
         DimensionFixture {
             dt,
             simplex_key,
+            removal_keys,
             facet_vertices,
             query,
             simplex_count,
@@ -260,6 +266,24 @@ mod allocation_contracts {
             4 => 2_000,
             5 => 4_000,
             _ => 10_000,
+        }
+    }
+
+    const fn remove_simplices_allocation_budget<const D: usize>(batch_size: usize) -> u64 {
+        let expected_frontier_len = batch_size * (D + 1);
+        if batch_size <= INLINE_REMOVAL_RECORD_CAPACITY
+            && expected_frontier_len <= INLINE_REMOVAL_RECORD_CAPACITY
+        {
+            return 0;
+        }
+
+        // Larger frontiers intentionally use hash-backed affected-vertex and
+        // candidate maps. Batches beyond the inline removal capacity also need
+        // hash membership, duplicate tracking, and heap-backed removal records.
+        if batch_size <= INLINE_REMOVAL_RECORD_CAPACITY {
+            3
+        } else {
+            7
         }
     }
 
@@ -384,6 +408,47 @@ mod allocation_contracts {
         );
     }
 
+    fn bench_tds_remove_simplices_by_keys<const D: usize>(
+        group: &mut BenchmarkGroup<'_, WallTime>,
+        fixture: &DimensionFixture<D>,
+    ) {
+        for batch_size in REMOVAL_BATCH_SIZES {
+            if fixture.removal_keys.len() < batch_size {
+                continue;
+            }
+
+            let removal_keys = &fixture.removal_keys[..batch_size];
+            let allocation_budget = remove_simplices_allocation_budget::<D>(batch_size);
+
+            group.bench_function(
+                BenchmarkId::new(
+                    format!("bounded_alloc/tds_remove_simplices_by_keys_{D}d"),
+                    format!(
+                        "vertices_{}_simplices_{}_batch_{}",
+                        fixture.vertex_count, fixture.simplex_count, batch_size
+                    ),
+                ),
+                |b| {
+                    b.iter_batched(
+                        || fixture.dt.tds().clone(),
+                        |mut tds: BenchTds<D>| {
+                            let (removed, info) =
+                                measure_with_result(|| tds.remove_simplices_by_keys(removal_keys));
+                            assert_eq!(removed.or_abort(), batch_size);
+                            assert_allocation_budget(
+                                &info,
+                                "Tds::remove_simplices_by_keys",
+                                allocation_budget,
+                            );
+                            black_box(tds);
+                        },
+                        BatchSize::SmallInput,
+                    );
+                },
+            );
+        }
+    }
+
     fn bench_locate_with_hint_fast_path<const D: usize>(
         group: &mut BenchmarkGroup<'_, WallTime>,
         fixture: &DimensionFixture<D>,
@@ -427,6 +492,7 @@ mod allocation_contracts {
         bench_tds_simplex_vertices(group, &fixture);
         bench_simplex_vertex_uuid_iter(group, &fixture);
         bench_facet_key_from_vertices(group, &fixture);
+        bench_tds_remove_simplices_by_keys(group, &fixture);
         bench_locate_with_hint_fast_path(group, &fixture);
     }
 

@@ -49,8 +49,9 @@ use crate::core::algorithms::flips::{
     repair_delaunay_with_flips_k2_k3,
 };
 use crate::core::algorithms::incremental_insertion::{
-    CavityFillingError, HullExtensionReason, InsertionError, InsertionTopologyValidationContext,
-    SpatialIndexConstructionFailure, TdsConstructionFailure,
+    CavityFillingError, DelaunayRepairFailureContext, HullExtensionReason, InsertionError,
+    InsertionTopologyValidationContext, NeighborWiringError, SpatialIndexConstructionFailure,
+    TdsConstructionFailure,
 };
 use crate::core::algorithms::locate::{ConflictError, LocateError};
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
@@ -59,7 +60,8 @@ use crate::core::collections::{
     SmallBuffer,
 };
 use crate::core::construction::{
-    FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
+    FinalDelaunayValidationContext, FinalTopologyValidationContext,
+    PeriodicQuotientFacetKeyDerivationFailure, TriangulationConstructionError,
 };
 use crate::core::insertion::record_duplicate_detection_metrics;
 use crate::core::operations::{
@@ -67,7 +69,7 @@ use crate::core::operations::{
     InsertionTelemetryMode, RepairDecision, TopologicalOperation,
 };
 use crate::core::simplex::SimplexValidationError;
-use crate::core::tds::SimplexKey;
+use crate::core::tds::{InvariantError, SimplexKey};
 use crate::core::tds::{TdsConstructionError, TdsError, TriangulationConstructionState};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
@@ -91,9 +93,11 @@ use crate::locality::{
     accumulate_live_simplex_seeds, clear_simplex_seed_set, retain_live_simplex_seeds,
 };
 use crate::repair::DelaunayRepairPolicy;
-use crate::topology::traits::{GlobalTopology, GlobalTopologyModelError, ToroidalDomainError};
+use crate::topology::traits::{
+    GlobalTopology, GlobalTopologyModelError, TopologyKind, ToroidalDomainError,
+};
 use crate::triangulation::DelaunayTriangulation;
-use crate::validation::DelaunayTriangulationValidationError;
+use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
 use core::{cmp::Ordering, fmt};
 use num_traits::ToPrimitive;
 use rand::SeedableRng;
@@ -332,6 +336,54 @@ impl fmt::Display for DelaunayConstructionRepairPhase {
     }
 }
 
+/// Last retryable failure observed before shuffled construction exhausted attempts.
+///
+/// This is the typed source for
+/// [`DelaunayConstructionFailure::ShuffledRetryExhausted`]. It preserves whether
+/// the final retry failed while constructing topology or while validating the
+/// Delaunay property of a constructed candidate.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::construction::{
+///     DelaunayConstructionFailure, DelaunayConstructionRetryFailure,
+///     DelaunayTriangulationConstructionError,
+/// };
+///
+/// let source = DelaunayConstructionRetryFailure::Construction {
+///     source: Box::new(DelaunayTriangulationConstructionError::Triangulation(
+///         DelaunayConstructionFailure::GeometricDegeneracy {
+///             message: String::from("collinear input"),
+///         },
+///     )),
+/// };
+///
+/// std::assert_matches!(
+///     source,
+///     DelaunayConstructionRetryFailure::Construction { .. }
+/// );
+/// ```
+#[derive(Clone, Debug, Error, PartialEq)]
+#[non_exhaustive]
+pub enum DelaunayConstructionRetryFailure {
+    /// A retryable construction error occurred.
+    #[error("construction failed: {source}")]
+    Construction {
+        /// Last retryable construction error.
+        #[source]
+        source: Box<DelaunayTriangulationConstructionError>,
+    },
+
+    /// Construction produced a triangulation that failed flip-based Delaunay validation.
+    #[error("Delaunay property violated after construction: {source}")]
+    DelaunayValidation {
+        /// Final flip-based Delaunay validation failure.
+        #[source]
+        source: Box<DelaunayRepairError>,
+    },
+}
+
 /// Pattern-matchable summary of a lower-layer construction failure.
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
@@ -351,12 +403,72 @@ pub enum DelaunayConstructionFailure {
         message: String,
     },
 
+    /// Failed to create a simplex while reconstructing a periodic quotient.
+    #[error("failed to create periodic quotient simplex during construction: {source}")]
+    PeriodicQuotientSimplexCreation {
+        /// Underlying simplex validation error.
+        #[source]
+        source: SimplexValidationError,
+    },
+
+    /// Periodic quotient facet-key derivation failed.
+    #[error("periodic quotient facet-key derivation failed for facet {facet_index}: {reason}")]
+    PeriodicQuotientFacetKeyDerivation {
+        /// Requested facet index.
+        facet_index: usize,
+        /// Structured derivation failure.
+        #[source]
+        reason: PeriodicQuotientFacetKeyDerivationFailure,
+    },
+
     /// Cavity filling failed during insertion.
     #[error("cavity filling failed during insertion: {source}")]
     InsertionCavityFilling {
         /// Structured cavity-filling failure.
         #[source]
         source: CavityFillingError,
+    },
+
+    /// Neighbor wiring failed during insertion.
+    #[error("neighbor wiring failed during insertion: {source}")]
+    InsertionNeighborWiring {
+        /// Structured neighbor-wiring failure.
+        #[source]
+        source: NeighborWiringError,
+    },
+
+    /// Flip-based Delaunay repair failed during insertion.
+    #[error("Delaunay repair failed during insertion ({context}): {source}")]
+    InsertionDelaunayRepair {
+        /// Operational context describing the repair path that failed.
+        context: DelaunayRepairFailureContext,
+        /// Underlying typed repair failure.
+        #[source]
+        source: Box<DelaunayRepairError>,
+    },
+
+    /// Perturbation retry generated coordinates that violate point invariants.
+    #[error("perturbation retry produced invalid coordinates during insertion: {source}")]
+    InsertionPerturbedCoordinateInvalid {
+        /// Underlying coordinate validation failure.
+        #[source]
+        source: CoordinateValidationError,
+    },
+
+    /// Post-construction orientation canonicalization failed due to input geometry.
+    #[error("geometric orientation canonicalization failed after construction: {source}")]
+    OrientationCanonicalizationGeometric {
+        /// Typed insertion-layer source that failed during orientation canonicalization.
+        #[source]
+        source: Box<InsertionError>,
+    },
+
+    /// Post-construction orientation canonicalization failed due to an internal invariant.
+    #[error("internal orientation canonicalization failed after construction: {source}")]
+    OrientationCanonicalizationInternal {
+        /// Typed insertion-layer source that failed during orientation canonicalization.
+        #[source]
+        source: Box<InsertionError>,
     },
 
     /// Insufficient vertices were provided.
@@ -425,6 +537,209 @@ pub enum DelaunayConstructionFailure {
         tracking_issue: u32,
     },
 
+    /// Periodic image-point construction was requested for an unsupported topology.
+    #[error(
+        "periodic image-point construction requires periodic facet signatures, but {topology:?} topology does not support them"
+    )]
+    PeriodicImageUnsupportedTopology {
+        /// Topology kind that does not support periodic facet signatures.
+        topology: TopologyKind,
+    },
+
+    /// Periodic image-point construction could not obtain a periodic domain.
+    #[error(
+        "periodic image-point construction requires a periodic domain, but {topology:?} topology does not expose one"
+    )]
+    PeriodicImageMissingDomain {
+        /// Topology kind that did not expose a periodic domain.
+        topology: TopologyKind,
+    },
+
+    /// Periodic image-point construction received too few canonical vertices.
+    #[error(
+        "periodic {dimension}D triangulation requires at least {minimum_vertex_count} points, got {actual_vertex_count}"
+    )]
+    PeriodicImageInsufficientVertices {
+        /// Requested periodic dimension.
+        dimension: usize,
+        /// Minimum canonical vertex count required by the construction.
+        minimum_vertex_count: usize,
+        /// Actual canonical vertex count provided by the caller.
+        actual_vertex_count: usize,
+    },
+
+    /// Periodic image generation produced coordinates that violate point invariants.
+    #[error(
+        "periodic image coordinates for canonical vertex {canonical_vertex_index} image {image_index} violated point invariants: {source}"
+    )]
+    PeriodicImageCoordinateValidation {
+        /// Zero-based canonical vertex index.
+        canonical_vertex_index: usize,
+        /// Zero-based periodic image index.
+        image_index: usize,
+        /// Underlying coordinate validation failure.
+        #[source]
+        source: CoordinateValidationError,
+    },
+
+    /// Periodic expanded-DT construction failed after deterministic fallback attempts.
+    #[error(
+        "periodic expanded DT construction failed after {retry_attempts} fallback attempts; best canonical coverage {best_canonical_vertex_count}/{canonical_vertex_count}, inserted={best_inserted_count}, skipped={best_skipped_count}, hard_errors={best_hard_error_count}: {primary_error}"
+    )]
+    PeriodicImageExpandedConstructionFailure {
+        /// Primary expanded-DT construction error before fallback attempts.
+        #[source]
+        primary_error: Box<DelaunayTriangulationConstructionError>,
+        /// Canonical vertex count expected in the expanded DT.
+        canonical_vertex_count: usize,
+        /// Expanded image vertex count attempted.
+        expanded_vertex_count: usize,
+        /// Number of deterministic fallback attempts.
+        retry_attempts: usize,
+        /// Best canonical vertex coverage reached by fallback attempts.
+        best_canonical_vertex_count: usize,
+        /// Best inserted vertex count reached by fallback attempts.
+        best_inserted_count: usize,
+        /// Skipped insertion count from the best fallback attempt.
+        best_skipped_count: usize,
+        /// Hard insertion error count from the best fallback attempt.
+        best_hard_error_count: usize,
+    },
+
+    /// Periodic image construction lost at least one canonical vertex in the expanded DT.
+    #[error(
+        "periodic expanded DT is missing at least one canonical vertex out of {canonical_vertex_count}"
+    )]
+    PeriodicImageMissingCanonicalVertices {
+        /// Number of canonical vertices that should be present in the expanded DT.
+        canonical_vertex_count: usize,
+    },
+
+    /// Periodic image construction failed while canonicalizing simplex orientation.
+    #[error("periodic image construction failed to canonicalize orientation after build: {source}")]
+    PeriodicImageOrientationCanonicalization {
+        /// Underlying insertion/orientation failure.
+        #[source]
+        source: Box<InsertionError>,
+    },
+
+    /// Periodic image construction failed geometric simplex-orientation validation.
+    #[error(
+        "periodic image construction failed geometric orientation validation after build: {source}"
+    )]
+    PeriodicImageGeometricOrientationValidation {
+        /// Underlying TDS orientation validation failure.
+        #[source]
+        source: Box<TdsError>,
+    },
+
+    /// Periodic quotient reconstruction produced no representative simplices.
+    #[error("periodic quotient reconstruction produced no surviving representative simplices")]
+    PeriodicQuotientEmptyReconstruction,
+
+    /// Periodic quotient candidate extraction found no usable image simplices.
+    #[error(
+        "periodic quotient candidate extraction found no usable image simplices among {full_simplex_count} full-image simplices for {canonical_vertex_count} canonical vertices"
+    )]
+    PeriodicQuotientNoCandidates {
+        /// Number of simplices in the full image triangulation.
+        full_simplex_count: usize,
+        /// Number of canonical vertices that needed quotient coverage.
+        canonical_vertex_count: usize,
+    },
+
+    /// Periodic quotient selection failed to select any candidate simplex.
+    #[error(
+        "periodic quotient selection chose no candidate simplices from {candidate_count} candidates after {search_attempts} attempts"
+    )]
+    PeriodicQuotientSelectionEmpty {
+        /// Number of candidate quotient simplices.
+        candidate_count: usize,
+        /// Number of deterministic search attempts.
+        search_attempts: usize,
+    },
+
+    /// Periodic quotient selection left boundary facets in a 2D quotient.
+    #[error(
+        "periodic quotient selection left {boundary_facet_count} boundary facets after {search_attempts} attempts"
+    )]
+    PeriodicQuotientSelectionBoundaryFacets {
+        /// Number of unmatched boundary facets.
+        boundary_facet_count: usize,
+        /// Number of deterministic search attempts.
+        search_attempts: usize,
+        /// Number of vertices in the full image triangulation.
+        full_vertex_count: usize,
+        /// Number of simplices in the full image triangulation.
+        full_simplex_count: usize,
+        /// Number of canonical vertices that needed quotient coverage.
+        canonical_vertex_count: usize,
+        /// Number of candidate quotient simplices.
+        candidate_count: usize,
+        /// Number of candidate simplices selected by the best attempt.
+        selected_simplex_count: usize,
+    },
+
+    /// Periodic quotient selection did not reach χ = 0 in 2D.
+    #[error(
+        "periodic quotient selection could not reach χ = 0 in 2D; best |χ|={best_abs_chi} after {search_attempts} attempts"
+    )]
+    PeriodicQuotientSelectionEulerCharacteristic {
+        /// Best absolute Euler-characteristic residual observed.
+        best_abs_chi: i64,
+        /// Number of deterministic search attempts.
+        search_attempts: usize,
+    },
+
+    /// Periodic quotient selection did not cover every canonical vertex.
+    #[error(
+        "periodic quotient selection covered only {covered_vertex_count} of {canonical_vertex_count} canonical vertices in {dimension}D"
+    )]
+    PeriodicQuotientSelectionIncompleteCoverage {
+        /// Requested quotient dimension.
+        dimension: usize,
+        /// Number of canonical vertices covered by selected simplices.
+        covered_vertex_count: usize,
+        /// Number of canonical vertices that needed quotient coverage.
+        canonical_vertex_count: usize,
+    },
+
+    /// Periodic quotient reconstruction over-shared one or more facets.
+    #[error(
+        "periodic quotient reconstruction over-shared {overloaded_facet_count} facets across {selected_simplex_count} selected simplices"
+    )]
+    PeriodicQuotientOverloadedFacets {
+        /// Number of periodic facet signatures with multiplicity greater than two.
+        overloaded_facet_count: usize,
+        /// Number of selected representative quotient simplices.
+        selected_simplex_count: usize,
+    },
+
+    /// Periodic quotient reconstruction found an invalid facet multiplicity.
+    #[error(
+        "periodic quotient facet signature has {occurrence_count} occurrences, expected 1 or 2"
+    )]
+    PeriodicQuotientFacetMultiplicity {
+        /// Number of simplices/facets sharing the periodic facet signature.
+        occurrence_count: usize,
+    },
+
+    /// Periodic quotient reconstruction left neighbor slots unmatched.
+    #[error(
+        "periodic quotient reconstruction left {unmatched_neighbor_slots} unmatched neighbor slots"
+    )]
+    PeriodicQuotientUnmatchedNeighbors {
+        /// Number of neighbor slots that were not paired by symbolic facet signatures.
+        unmatched_neighbor_slots: usize,
+    },
+
+    /// Periodic quotient reconstruction lost a temporary neighbor-update buffer.
+    #[error("missing neighbor vector for periodic quotient simplex {simplex_key:?}")]
+    PeriodicQuotientMissingNeighborVector {
+        /// Quotient simplex whose neighbor vector was missing.
+        simplex_key: SimplexKey,
+    },
+
     /// Internal construction invariant failed.
     #[error("internal inconsistency during construction: {message}")]
     InternalInconsistency {
@@ -440,6 +755,18 @@ pub enum DelaunayConstructionFailure {
         /// Underlying typed repair failure.
         #[source]
         source: Box<DelaunayRepairError>,
+    },
+
+    /// Construction exhausted the initial attempt and all configured shuffled retries.
+    #[error(
+        "Delaunay construction failed after {attempt_count} construction attempts, including the initial input order: {source}"
+    )]
+    ShuffledRetryExhausted {
+        /// Number of attempts, including the initial unshuffled attempt.
+        attempt_count: usize,
+        /// Last retryable failure observed.
+        #[source]
+        source: Box<DelaunayConstructionRetryFailure>,
     },
 
     /// Duplicate coordinates were detected.
@@ -528,7 +855,7 @@ pub enum DelaunayConstructionFailure {
         context: FinalTopologyValidationContext,
         /// Underlying validation error.
         #[source]
-        source: crate::core::tds::InvariantErrorSummary,
+        source: Box<InvariantError>,
     },
 
     /// Final Delaunay-property validation failed after construction.
@@ -543,6 +870,10 @@ pub enum DelaunayConstructionFailure {
 }
 
 impl From<TriangulationConstructionError> for DelaunayConstructionFailure {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "public construction failure mirror must exhaustively preserve typed variants"
+    )]
     fn from(source: TriangulationConstructionError) -> Self {
         match source {
             TriangulationConstructionError::Tds(source) => Self::Tds {
@@ -551,8 +882,33 @@ impl From<TriangulationConstructionError> for DelaunayConstructionFailure {
             TriangulationConstructionError::FailedToCreateSimplex { message } => {
                 Self::FailedToCreateSimplex { message }
             }
+            TriangulationConstructionError::PeriodicQuotientSimplexCreation { source } => {
+                Self::PeriodicQuotientSimplexCreation { source }
+            }
+            TriangulationConstructionError::PeriodicQuotientFacetKeyDerivation {
+                facet_index,
+                reason,
+            } => Self::PeriodicQuotientFacetKeyDerivation {
+                facet_index,
+                reason,
+            },
             TriangulationConstructionError::InsertionCavityFilling { source } => {
                 Self::InsertionCavityFilling { source }
+            }
+            TriangulationConstructionError::InsertionNeighborWiring { source } => {
+                Self::InsertionNeighborWiring { source }
+            }
+            TriangulationConstructionError::InsertionDelaunayRepair { context, source } => {
+                Self::InsertionDelaunayRepair { context, source }
+            }
+            TriangulationConstructionError::InsertionPerturbedCoordinateInvalid { source } => {
+                Self::InsertionPerturbedCoordinateInvalid { source }
+            }
+            TriangulationConstructionError::OrientationCanonicalizationGeometric { source } => {
+                Self::OrientationCanonicalizationGeometric { source }
+            }
+            TriangulationConstructionError::OrientationCanonicalizationInternal { source } => {
+                Self::OrientationCanonicalizationInternal { source }
             }
             TriangulationConstructionError::InsufficientVertices { dimension, source } => {
                 Self::InsufficientVertices { dimension, source }
@@ -569,6 +925,109 @@ impl From<TriangulationConstructionError> for DelaunayConstructionFailure {
                 max_validated_dimension,
                 tracking_issue,
             },
+            TriangulationConstructionError::PeriodicImageUnsupportedTopology { topology } => {
+                Self::PeriodicImageUnsupportedTopology { topology }
+            }
+            TriangulationConstructionError::PeriodicImageMissingDomain { topology } => {
+                Self::PeriodicImageMissingDomain { topology }
+            }
+            TriangulationConstructionError::PeriodicImageInsufficientVertices {
+                dimension,
+                minimum_vertex_count,
+                actual_vertex_count,
+            } => Self::PeriodicImageInsufficientVertices {
+                dimension,
+                minimum_vertex_count,
+                actual_vertex_count,
+            },
+            TriangulationConstructionError::PeriodicImageCoordinateValidation {
+                canonical_vertex_index,
+                image_index,
+                source,
+            } => Self::PeriodicImageCoordinateValidation {
+                canonical_vertex_index,
+                image_index,
+                source,
+            },
+            TriangulationConstructionError::PeriodicImageMissingCanonicalVertices {
+                canonical_vertex_count,
+            } => Self::PeriodicImageMissingCanonicalVertices {
+                canonical_vertex_count,
+            },
+            TriangulationConstructionError::PeriodicImageOrientationCanonicalization { source } => {
+                Self::PeriodicImageOrientationCanonicalization { source }
+            }
+            TriangulationConstructionError::PeriodicImageGeometricOrientationValidation {
+                source,
+            } => Self::PeriodicImageGeometricOrientationValidation { source },
+            TriangulationConstructionError::PeriodicQuotientEmptyReconstruction => {
+                Self::PeriodicQuotientEmptyReconstruction
+            }
+            TriangulationConstructionError::PeriodicQuotientNoCandidates {
+                full_simplex_count,
+                canonical_vertex_count,
+            } => Self::PeriodicQuotientNoCandidates {
+                full_simplex_count,
+                canonical_vertex_count,
+            },
+            TriangulationConstructionError::PeriodicQuotientSelectionEmpty {
+                candidate_count,
+                search_attempts,
+            } => Self::PeriodicQuotientSelectionEmpty {
+                candidate_count,
+                search_attempts,
+            },
+            TriangulationConstructionError::PeriodicQuotientSelectionBoundaryFacets {
+                boundary_facet_count,
+                search_attempts,
+                full_vertex_count,
+                full_simplex_count,
+                canonical_vertex_count,
+                candidate_count,
+                selected_simplex_count,
+            } => Self::PeriodicQuotientSelectionBoundaryFacets {
+                boundary_facet_count,
+                search_attempts,
+                full_vertex_count,
+                full_simplex_count,
+                canonical_vertex_count,
+                candidate_count,
+                selected_simplex_count,
+            },
+            TriangulationConstructionError::PeriodicQuotientSelectionEulerCharacteristic {
+                best_abs_chi,
+                search_attempts,
+            } => Self::PeriodicQuotientSelectionEulerCharacteristic {
+                best_abs_chi,
+                search_attempts,
+            },
+            TriangulationConstructionError::PeriodicQuotientSelectionIncompleteCoverage {
+                dimension,
+                covered_vertex_count,
+                canonical_vertex_count,
+            } => Self::PeriodicQuotientSelectionIncompleteCoverage {
+                dimension,
+                covered_vertex_count,
+                canonical_vertex_count,
+            },
+            TriangulationConstructionError::PeriodicQuotientOverloadedFacets {
+                overloaded_facet_count,
+                selected_simplex_count,
+            } => Self::PeriodicQuotientOverloadedFacets {
+                overloaded_facet_count,
+                selected_simplex_count,
+            },
+            TriangulationConstructionError::PeriodicQuotientFacetMultiplicity {
+                occurrence_count,
+            } => Self::PeriodicQuotientFacetMultiplicity { occurrence_count },
+            TriangulationConstructionError::PeriodicQuotientUnmatchedNeighbors {
+                unmatched_neighbor_slots,
+            } => Self::PeriodicQuotientUnmatchedNeighbors {
+                unmatched_neighbor_slots,
+            },
+            TriangulationConstructionError::PeriodicQuotientMissingNeighborVector {
+                simplex_key,
+            } => Self::PeriodicQuotientMissingNeighborVector { simplex_key },
             TriangulationConstructionError::InternalInconsistency { message } => {
                 Self::InternalInconsistency { message }
             }
@@ -631,6 +1090,11 @@ fn is_geometric_repair_error(repair_err: &DelaunayRepairError) -> bool {
         | DelaunayRepairError::InvalidTopology { .. }
         | DelaunayRepairError::HeuristicRebuildFailed { .. } => false,
     }
+}
+
+/// Returns true when a repair error is deterministic structural failure.
+fn is_non_retryable_repair_error(repair_err: &DelaunayRepairError) -> bool {
+    !is_geometric_repair_error(repair_err)
 }
 
 /// Returns true for flip errors caused by geometric predicates or degenerate
@@ -1012,8 +1476,11 @@ pub struct ConstructionSkipSample {
     pub coords_available: bool,
     /// Number of insertion attempts for this vertex.
     pub attempts: usize,
-    /// Human-readable error message.
-    pub error: String,
+    /// Typed insertion failure that caused this vertex to be skipped.
+    ///
+    /// Callers can pattern-match this value for diagnostics or recovery; format
+    /// it with [`ToString::to_string`] only when preparing human-readable output.
+    pub error: InsertionError,
 }
 
 /// A slow transactional insertion sample captured during batch construction.
@@ -2539,7 +3006,7 @@ where
 
         // Attempt 0: original order, no extra perturbation salt.
         log_construction_retry_result(0, None, 0_u64, "started", None, None);
-        let mut last_error: String = match Self::build_with_kernel_inner_seeded(
+        let mut last_failure = match Self::build_with_kernel_inner_seeded(
             <K as Clone>::clone(kernel),
             vertices,
             topology_guarantee,
@@ -2554,7 +3021,22 @@ where
                     log_construction_retry_result(0, None, 0_u64, "succeeded", None, None);
                     return Ok(candidate);
                 }
-                Err(err) => format!("Delaunay property violated after construction: {err}"),
+                Err(source) if is_non_retryable_repair_error(&source) => {
+                    let err = Self::map_final_delaunay_repair_error(source);
+                    let err_string = err.to_string();
+                    log_construction_retry_result(
+                        0,
+                        None,
+                        0_u64,
+                        "failed",
+                        Some(&err_string),
+                        None,
+                    );
+                    return Err(err);
+                }
+                Err(source) => DelaunayConstructionRetryFailure::DelaunayValidation {
+                    source: Box::new(source),
+                },
             },
             Err(err) => {
                 let err_string = err.to_string();
@@ -2569,9 +3051,12 @@ where
                     );
                     return Err(err);
                 }
-                err_string
+                DelaunayConstructionRetryFailure::Construction {
+                    source: Box::new(err),
+                }
             }
         };
+        let mut last_error = last_failure.to_string();
 
         #[cfg(debug_assertions)]
         if log_shuffle {
@@ -2632,9 +3117,24 @@ where
                         );
                         return Ok(candidate);
                     }
-                    Err(err) => {
-                        last_error =
-                            format!("Delaunay property violated after construction: {err}");
+                    Err(source) => {
+                        if is_non_retryable_repair_error(&source) {
+                            let err = Self::map_final_delaunay_repair_error(source);
+                            let err_string = err.to_string();
+                            log_construction_retry_result(
+                                attempt,
+                                Some(attempt_seed),
+                                perturbation_seed,
+                                "failed",
+                                Some(&err_string),
+                                None,
+                            );
+                            return Err(err);
+                        }
+                        last_failure = DelaunayConstructionRetryFailure::DelaunayValidation {
+                            source: Box::new(source),
+                        };
+                        last_error = last_failure.to_string();
                     }
                 },
                 Err(err) => {
@@ -2650,7 +3150,10 @@ where
                         );
                         return Err(err);
                     }
-                    last_error = err_string;
+                    last_failure = DelaunayConstructionRetryFailure::Construction {
+                        source: Box::new(err),
+                    };
+                    last_error = last_failure.to_string();
                 }
             }
 
@@ -2676,12 +3179,12 @@ where
 
         // Treat persistent construction failures or Delaunay violations as hard construction
         // errors so callers can deterministically reject.
-        Err(TriangulationConstructionError::GeometricDegeneracy {
-            message: format!(
-                "Delaunay construction failed after shuffled reconstruction attempts: {last_error}"
-            ),
-        }
-        .into())
+        Err(DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::ShuffledRetryExhausted {
+                attempt_count: attempts.get().saturating_add(1),
+                source: Box::new(last_failure),
+            },
+        ))
     }
 
     /// Mirrors shuffled retry construction while preserving per-attempt
@@ -2729,7 +3232,7 @@ where
 
         // Attempt 0: original order, no extra perturbation salt.
         log_construction_retry_result(0, None, 0_u64, "started", None, None);
-        let mut last_error: String =
+        let mut last_failure =
             match Self::build_with_kernel_inner_seeded_with_construction_statistics(
                 <K as Clone>::clone(kernel),
                 vertices,
@@ -2764,7 +3267,25 @@ where
                         Err(err) => {
                             aggregate_stats.merge_from(&stats);
                             last_stats.replace(stats);
-                            format!("Delaunay property violated after construction: {err}")
+                            if is_non_retryable_repair_error(&err) {
+                                let error = Self::map_final_delaunay_repair_error(err);
+                                let last_error = error.to_string();
+                                log_construction_retry_result(
+                                    0,
+                                    None,
+                                    0_u64,
+                                    "failed",
+                                    Some(&last_error),
+                                    last_stats.as_ref(),
+                                );
+                                return Err(DelaunayTriangulationConstructionErrorWithStatistics {
+                                    error,
+                                    statistics: aggregate_stats,
+                                });
+                            }
+                            DelaunayConstructionRetryFailure::DelaunayValidation {
+                                source: Box::new(err),
+                            }
                         }
                     }
                 }
@@ -2788,9 +3309,12 @@ where
                         });
                     }
                     last_stats.replace(statistics);
-                    error.to_string()
+                    DelaunayConstructionRetryFailure::Construction {
+                        source: Box::new(error),
+                    }
                 }
             };
+        let mut last_error = last_failure.to_string();
 
         #[cfg(debug_assertions)]
         if log_shuffle {
@@ -2870,8 +3394,26 @@ where
                         Err(err) => {
                             aggregate_stats.merge_from(&stats);
                             last_stats.replace(stats);
-                            last_error =
-                                format!("Delaunay property violated after construction: {err}");
+                            if is_non_retryable_repair_error(&err) {
+                                let error = Self::map_final_delaunay_repair_error(err);
+                                let last_error = error.to_string();
+                                log_construction_retry_result(
+                                    attempt,
+                                    Some(attempt_seed),
+                                    perturbation_seed,
+                                    "failed",
+                                    Some(&last_error),
+                                    last_stats.as_ref(),
+                                );
+                                return Err(DelaunayTriangulationConstructionErrorWithStatistics {
+                                    error,
+                                    statistics: aggregate_stats,
+                                });
+                            }
+                            last_failure = DelaunayConstructionRetryFailure::DelaunayValidation {
+                                source: Box::new(err),
+                            };
+                            last_error = last_failure.to_string();
                         }
                     }
                 }
@@ -2895,7 +3437,10 @@ where
                         });
                     }
                     last_stats.replace(statistics);
-                    last_error = error.to_string();
+                    last_failure = DelaunayConstructionRetryFailure::Construction {
+                        source: Box::new(error),
+                    };
+                    last_error = last_failure.to_string();
                 }
             }
 
@@ -2922,12 +3467,12 @@ where
         // Treat persistent construction failures or Delaunay violations as hard construction
         // errors so callers can deterministically reject.
         Err(DelaunayTriangulationConstructionErrorWithStatistics {
-            error: TriangulationConstructionError::GeometricDegeneracy {
-                message: format!(
-                    "Delaunay construction failed after shuffled reconstruction attempts: {last_error}"
-                ),
-            }
-            .into(),
+            error: DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::ShuffledRetryExhausted {
+                    attempt_count: attempts.get().saturating_add(1),
+                    source: Box::new(last_failure),
+                },
+            ),
             statistics: aggregate_stats,
         })
     }
@@ -3873,7 +4418,7 @@ where
                                 coords,
                                 coords_available,
                                 attempts: stats.attempts,
-                                error: error.to_string(),
+                                error: error.clone(),
                             });
 
                             // Keep going: this vertex was intentionally skipped (e.g. duplicate/near-duplicate
@@ -4000,7 +4545,7 @@ where
         if let Err(err) = validation_result {
             return Err(TriangulationConstructionError::FinalTopologyValidation {
                 context: FinalTopologyValidationContext::ConstructionFinalize,
-                source: err.into(),
+                source: Box::new(err),
             }
             .into());
         }
@@ -4041,11 +4586,7 @@ where
         seeded_error: &DelaunayRepairError,
     ) -> Result<(), DelaunayTriangulationConstructionError> {
         if !self.insertion_state.use_global_repair_fallback || !Self::can_soft_fail(seeded_error) {
-            let message = format!("Delaunay repair failed after construction: {seeded_error}");
-            return Err(Self::map_completion_repair_error(
-                message,
-                seeded_error.clone(),
-            ));
+            return Err(Self::map_completion_repair_error(seeded_error.clone()));
         }
 
         tracing::debug!(
@@ -4060,13 +4601,7 @@ where
         };
         match global_result {
             Ok(_) => Ok(()),
-            Err(global_error) => {
-                let message = format!(
-                    "Delaunay repair failed after construction: seeded local error: \
-                     {seeded_error}; global fallback: {global_error}"
-                );
-                Err(Self::map_completion_repair_error(message, global_error))
-            }
+            Err(global_error) => Err(Self::map_completion_repair_error(global_error)),
         }
     }
 }
@@ -4641,9 +5176,13 @@ where
         })
     }
 
-    /// Returns `true` if the construction error is deterministic and should not
-    /// be masked by shuffled retry logic (e.g. duplicate UUIDs, internal bugs).
-    pub(crate) const fn is_non_retryable_construction_error(
+    /// Returns whether a construction error should stop shuffled retries.
+    ///
+    /// Deterministic structural failures, including orientation canonicalization
+    /// internals and insertion neighbor wiring, are not made safer by retrying a
+    /// different vertex order. Classifying them here preserves their typed source
+    /// error instead of masking the failure behind retry exhaustion.
+    pub(crate) fn is_non_retryable_construction_error(
         err: &DelaunayTriangulationConstructionError,
     ) -> bool {
         matches!(
@@ -4653,14 +5192,22 @@ where
                     reason: TdsConstructionFailure::DuplicateUuid { .. }
                         | TdsConstructionFailure::Validation { .. },
                 } | DelaunayConstructionFailure::InternalInconsistency { .. }
+                    | DelaunayConstructionFailure::OrientationCanonicalizationInternal { .. }
+                    | DelaunayConstructionFailure::InsertionNeighborWiring { .. }
                     | DelaunayConstructionFailure::UnsupportedPeriodicDimension { .. }
                     | DelaunayConstructionFailure::SpatialIndexConstruction { .. }
-                    | DelaunayConstructionFailure::DelaunayRepair { .. }
                     | DelaunayConstructionFailure::InsertionTopologyValidation { .. }
                     | DelaunayConstructionFailure::LocalRepairBudgetExceeded { .. }
+                    | DelaunayConstructionFailure::ShuffledRetryExhausted { .. }
                     | DelaunayConstructionFailure::FinalTopologyValidation { .. }
                     | DelaunayConstructionFailure::FinalDelaunayValidation { .. },
             )
+        ) || matches!(
+            err,
+            DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::DelaunayRepair { source, .. }
+                    | DelaunayConstructionFailure::InsertionDelaunayRepair { source, .. },
+            ) if is_non_retryable_repair_error(source.as_ref())
         )
     }
 
@@ -4681,44 +5228,46 @@ where
         index: usize,
         repair_err: DelaunayRepairError,
     ) -> DelaunayTriangulationConstructionError {
-        let message =
-            format!("per-insertion Delaunay repair failed at index {index}: {repair_err}");
-        if is_geometric_repair_error(&repair_err) {
-            TriangulationConstructionError::GeometricDegeneracy { message }.into()
-        } else {
-            DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::DelaunayRepair {
-                    phase: DelaunayConstructionRepairPhase::BatchLocal { index },
-                    source: Box::new(repair_err),
-                },
-            )
-        }
+        DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::DelaunayRepair {
+                phase: DelaunayConstructionRepairPhase::BatchLocal { index },
+                source: Box::new(repair_err),
+            },
+        )
     }
 
     pub(crate) fn map_completion_repair_error(
-        message: String,
         repair_error: DelaunayRepairError,
     ) -> DelaunayTriangulationConstructionError {
-        if is_geometric_repair_error(&repair_error) {
-            TriangulationConstructionError::GeometricDegeneracy { message }.into()
-        } else {
-            DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::DelaunayRepair {
-                    phase: DelaunayConstructionRepairPhase::Completion,
-                    source: Box::new(repair_error),
+        DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::DelaunayRepair {
+                phase: DelaunayConstructionRepairPhase::Completion,
+                source: Box::new(repair_error),
+            },
+        )
+    }
+
+    pub(crate) fn map_final_delaunay_repair_error(
+        repair_error: DelaunayRepairError,
+    ) -> DelaunayTriangulationConstructionError {
+        DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::FinalDelaunayValidation {
+                context: FinalDelaunayValidationContext::ConstructionFinalize,
+                source: DelaunayTriangulationValidationError::VerificationFailed {
+                    source: Box::new(DelaunayVerificationError::from(repair_error)),
                 },
-            )
-        }
+            },
+        )
     }
 
     /// Map an [`InsertionError`] from post-construction orientation canonicalization
     /// into a [`TriangulationConstructionError`].
     ///
     /// Structural / data-structure errors (missing simplices, broken invariants) become
-    /// [`InternalInconsistency`](TriangulationConstructionError::InternalInconsistency)
+    /// [`OrientationCanonicalizationInternal`](TriangulationConstructionError::OrientationCanonicalizationInternal)
     /// because they indicate algorithmic bugs rather than bad input geometry.
     /// Geometry-related failures (degenerate predicates, conflict regions, etc.) become
-    /// [`GeometricDegeneracy`](TriangulationConstructionError::GeometricDegeneracy).
+    /// [`OrientationCanonicalizationGeometric`](TriangulationConstructionError::OrientationCanonicalizationGeometric).
     ///
     /// NOTE: This match is intentionally exhaustive over `InsertionError`.
     /// When adding new variants, decide whether the failure mode is an internal
@@ -4729,11 +5278,16 @@ where
         match error {
             // Geometric orientation errors (degenerate or negative) are
             // geometry problems, not internal bugs.
-            InsertionError::TopologyValidation(error @ TdsError::Geometric(_)) => {
-                TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!(
-                        "Failed to canonicalize orientation after post-construction repair: {error}"
-                    ),
+            source @ (InsertionError::TopologyValidation(TdsError::Geometric(_))
+            | InsertionError::ConflictRegion(_)
+            | InsertionError::Location(_)
+            | InsertionError::NonManifoldTopology { .. }
+            | InsertionError::HullExtension { .. }
+            | InsertionError::DelaunayValidationFailed { .. }
+            | InsertionError::DuplicateCoordinates { .. }
+            | InsertionError::PerturbedCoordinateInvalid { .. }) => {
+                TriangulationConstructionError::OrientationCanonicalizationGeometric {
+                    source: Box::new(source),
                 }
             }
             // Structural / data-structure errors indicate algorithmic bugs,
@@ -4745,15 +5299,13 @@ where
             // normalization algorithm failed its post-condition — an internal bug, not
             // bad input geometry. DegenerateOrientation / NegativeOrientation capture
             // the actual FP-related geometry failures.
-            error @ (InsertionError::TopologyValidation(_)
+            source @ (InsertionError::TopologyValidation(_)
             | InsertionError::TopologyValidationFailed { .. }
             | InsertionError::CavityFilling { .. }
             | InsertionError::NeighborWiring { .. }
             | InsertionError::DuplicateUuid { .. }) => {
-                TriangulationConstructionError::InternalInconsistency {
-                    message: format!(
-                        "Failed to canonicalize orientation after post-construction repair: {error}"
-                    ),
+                TriangulationConstructionError::OrientationCanonicalizationInternal {
+                    source: Box::new(source),
                 }
             }
             InsertionError::SpatialIndexConstruction { reason } => {
@@ -4767,28 +5319,12 @@ where
                 attempted,
             },
             InsertionError::DelaunayRepairFailed { source, context } => {
-                let message = format!(
-                    "Failed to canonicalize orientation after post-construction repair: \
-                     Delaunay repair failed ({context}): {source}"
-                );
-                if is_geometric_repair_error(&source) {
-                    TriangulationConstructionError::GeometricDegeneracy { message }
+                let is_geometric = is_geometric_repair_error(source.as_ref());
+                let source = Box::new(InsertionError::DelaunayRepairFailed { source, context });
+                if is_geometric {
+                    TriangulationConstructionError::OrientationCanonicalizationGeometric { source }
                 } else {
-                    TriangulationConstructionError::InternalInconsistency { message }
-                }
-            }
-            // Geometry-related failures (degenerate input, predicate issues).
-            error @ (InsertionError::ConflictRegion(_)
-            | InsertionError::Location(_)
-            | InsertionError::NonManifoldTopology { .. }
-            | InsertionError::HullExtension { .. }
-            | InsertionError::DelaunayValidationFailed { .. }
-            | InsertionError::DuplicateCoordinates { .. }
-            | InsertionError::PerturbedCoordinateInvalid { .. }) => {
-                TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!(
-                        "Failed to canonicalize orientation after post-construction repair: {error}"
-                    ),
+                    TriangulationConstructionError::OrientationCanonicalizationInternal { source }
                 }
             }
         }
@@ -4802,9 +5338,7 @@ where
                 TriangulationConstructionError::InsertionCavityFilling { source: reason }
             }
             InsertionError::NeighborWiring { reason } => {
-                TriangulationConstructionError::InternalInconsistency {
-                    message: format!("Neighbor wiring failed: {reason}"),
-                }
+                TriangulationConstructionError::InsertionNeighborWiring { source: reason }
             }
             InsertionError::TopologyValidation(source) => {
                 TriangulationConstructionError::from(TdsConstructionError::ValidationError(source))
@@ -4819,12 +5353,7 @@ where
                 TriangulationConstructionError::DuplicateCoordinates { coordinates }
             }
             InsertionError::DelaunayRepairFailed { source, context } => {
-                let message = format!("Delaunay repair failed ({context}): {source}");
-                if is_geometric_repair_error(&source) {
-                    TriangulationConstructionError::GeometricDegeneracy { message }
-                } else {
-                    TriangulationConstructionError::InternalInconsistency { message }
-                }
+                TriangulationConstructionError::InsertionDelaunayRepair { context, source }
             }
 
             InsertionError::ConflictRegion(source) => {
@@ -4860,9 +5389,7 @@ where
                 TriangulationConstructionError::SpatialIndexConstruction { reason }
             }
             InsertionError::PerturbedCoordinateInvalid { source } => {
-                TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!("Perturbation retry produced invalid coordinates: {source}"),
-                }
+                TriangulationConstructionError::InsertionPerturbedCoordinateInvalid { source }
             }
         }
     }
@@ -5093,11 +5620,13 @@ mod tests {
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel, RobustKernel};
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::{
-        CoordinateConversionError, CoordinateConversionValue,
+        CoordinateConversionError, CoordinateConversionValue, CoordinateValues,
+        InvalidCoordinateValue,
     };
     use crate::geometry::util::RandomPointGenerationError;
     use crate::repair::DelaunayRepairPolicy;
     use crate::topology::characteristics::euler::TopologyClassification;
+    use crate::topology::traits::topological_space::TopologyKind;
     use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
     use slotmap::KeyData;
     use std::assert_matches;
@@ -5699,7 +6228,13 @@ mod tests {
                 ],
                 coords_available: true,
                 attempts: index + 1,
-                error: format!("skip sample #{index}"),
+                error: InsertionError::DuplicateCoordinates {
+                    coordinates: CoordinateValues::from([
+                        coordinate_base,
+                        coordinate_base + 0.5,
+                        coordinate_base + 1.0,
+                    ]),
+                },
             });
         }
 
@@ -6708,7 +7243,11 @@ mod tests {
         assert_eq!(sample.coords, vec![0.0; D]);
         assert!(sample.coords_available);
         assert_eq!(sample.attempts, 1);
-        assert!(sample.error.contains("Duplicate coordinates"));
+        assert_matches!(
+            &sample.error,
+            InsertionError::DuplicateCoordinates { coordinates }
+                if *coordinates == CoordinateValues::from([0.0; D])
+        );
     }
 
     macro_rules! gen_constructor_statistics_tests {
@@ -6877,6 +7416,7 @@ mod tests {
             }),
         };
         assert!(!TestDelaunay::<4>::can_soft_fail(&verification_error));
+        assert!(is_non_retryable_repair_error(&verification_error));
 
         let canonicalization_error = DelaunayRepairError::OrientationCanonicalizationFailed {
             reason: Box::new(
@@ -6913,16 +7453,23 @@ mod tests {
         );
 
         let geometric_error = DelaunayRepairError::from(FlipError::DegenerateSimplex);
+        assert!(!is_non_retryable_repair_error(&geometric_error));
         let mapped_geometric = TestDelaunay::<4>::map_hard_repair_error(24, geometric_error);
         assert!(
             matches!(
-                mapped_geometric,
+                &mapped_geometric,
                 DelaunayTriangulationConstructionError::Triangulation(
-                    DelaunayConstructionFailure::GeometricDegeneracy { ref message }
-                ) if message.contains("per-insertion Delaunay repair failed at index 24")
-                    && message.contains("degenerate simplex")
+                    DelaunayConstructionFailure::DelaunayRepair {
+                        phase: DelaunayConstructionRepairPhase::BatchLocal { index: 24 },
+                        source,
+                    }
+                ) if matches!(
+                    source.as_ref(),
+                    DelaunayRepairError::Flip { source }
+                        if matches!(source.as_ref(), FlipError::DegenerateSimplex)
+                ) && !TestDelaunay::<4>::is_non_retryable_construction_error(&mapped_geometric)
             ),
-            "geometric hard D>=4 repair failures should remain retryable degeneracies: {mapped_geometric:?}"
+            "geometric hard D>=4 repair failures should remain typed and retryable: {mapped_geometric:?}"
         );
 
         let simplex_creation =
@@ -6931,13 +7478,18 @@ mod tests {
             TestDelaunay::<4>::map_hard_repair_error(25, simplex_creation);
         assert!(
             matches!(
-                mapped_simplex_creation,
+                &mapped_simplex_creation,
                 DelaunayTriangulationConstructionError::Triangulation(
-                    DelaunayConstructionFailure::GeometricDegeneracy { ref message }
-                ) if message.contains("per-insertion Delaunay repair failed at index 25")
-                    && message.contains("Degenerate simplex")
+                    DelaunayConstructionFailure::DelaunayRepair {
+                        phase: DelaunayConstructionRepairPhase::BatchLocal { index: 25 },
+                        source,
+                    }
+                ) if matches!(source.as_ref(), DelaunayRepairError::Flip { .. })
+                    && !TestDelaunay::<4>::is_non_retryable_construction_error(
+                        &mapped_simplex_creation
+                    )
             ),
-            "geometric simplex creation failures should remain retryable degeneracies: {mapped_simplex_creation:?}"
+            "geometric simplex creation failures should remain typed and retryable: {mapped_simplex_creation:?}"
         );
 
         let duplicate_simplex_creation =
@@ -6980,13 +7532,51 @@ mod tests {
         let mapped_predicate = TestDelaunay::<4>::map_hard_repair_error(27, predicate_verification);
         assert!(
             matches!(
-                mapped_predicate,
+                &mapped_predicate,
                 DelaunayTriangulationConstructionError::Triangulation(
-                    DelaunayConstructionFailure::GeometricDegeneracy { ref message }
-                ) if message.contains("per-insertion Delaunay repair failed at index 27")
-                    && message.contains("in_sphere failed")
+                    DelaunayConstructionFailure::DelaunayRepair {
+                        phase: DelaunayConstructionRepairPhase::BatchLocal { index: 27 },
+                        source,
+                    }
+                ) if matches!(source.as_ref(), DelaunayRepairError::VerificationFailed { .. })
+                    && !TestDelaunay::<4>::is_non_retryable_construction_error(&mapped_predicate)
             ),
-            "verification predicate failures should remain geometric: {mapped_predicate:?}"
+            "verification predicate failures should remain typed and retryable: {mapped_predicate:?}"
+        );
+    }
+
+    #[test]
+    fn test_map_final_delaunay_repair_error_preserves_typed_source() {
+        let mapped = TestDelaunay::<3>::map_final_delaunay_repair_error(DelaunayRepairError::from(
+            FlipError::UnsupportedDimension { dimension: 1 },
+        ));
+
+        assert!(
+            TestDelaunay::<3>::is_non_retryable_construction_error(&mapped),
+            "final Delaunay validation failures should stop shuffled retries: {mapped:?}"
+        );
+        assert_matches!(
+            mapped,
+            DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::FinalDelaunayValidation {
+                    context: FinalDelaunayValidationContext::ConstructionFinalize,
+                    source:
+                        DelaunayTriangulationValidationError::VerificationFailed {
+                            source,
+                        },
+                }
+            ) if matches!(
+                source.as_ref(),
+                DelaunayVerificationError::FlipPredicates { source }
+                    if matches!(
+                        source.as_ref(),
+                        DelaunayRepairError::Flip { source }
+                            if matches!(
+                                source.as_ref(),
+                                FlipError::UnsupportedDimension { dimension: 1 }
+                            )
+                    )
+            )
         );
     }
 
@@ -6999,9 +7589,9 @@ mod tests {
         assert!(
             matches!(
                 mapped,
-                TriangulationConstructionError::InternalInconsistency { .. }
+                TriangulationConstructionError::OrientationCanonicalizationInternal { .. }
             ),
-            "TopologyValidation should map to InternalInconsistency, got: {mapped:?}"
+            "TopologyValidation should map to typed internal orientation canonicalization, got: {mapped:?}"
         );
         let msg = mapped.to_string();
         assert!(
@@ -7021,9 +7611,9 @@ mod tests {
         assert!(
             matches!(
                 mapped,
-                TriangulationConstructionError::GeometricDegeneracy { .. }
+                TriangulationConstructionError::OrientationCanonicalizationGeometric { .. }
             ),
-            "DegenerateOrientation should map to GeometricDegeneracy, got: {mapped:?}"
+            "DegenerateOrientation should map to typed geometric orientation canonicalization, got: {mapped:?}"
         );
         let msg = mapped.to_string();
         assert!(
@@ -7043,9 +7633,9 @@ mod tests {
         assert!(
             matches!(
                 mapped,
-                TriangulationConstructionError::GeometricDegeneracy { .. }
+                TriangulationConstructionError::OrientationCanonicalizationGeometric { .. }
             ),
-            "NegativeOrientation should map to GeometricDegeneracy, got: {mapped:?}"
+            "NegativeOrientation should map to typed geometric orientation canonicalization, got: {mapped:?}"
         );
         let msg = mapped.to_string();
         assert!(
@@ -7067,9 +7657,9 @@ mod tests {
         assert!(
             matches!(
                 mapped,
-                TriangulationConstructionError::InternalInconsistency { .. }
+                TriangulationConstructionError::OrientationCanonicalizationInternal { .. }
             ),
-            "IsolatedVertex should map to InternalInconsistency, got: {mapped:?}"
+            "IsolatedVertex should map to typed internal orientation canonicalization, got: {mapped:?}"
         );
     }
 
@@ -7087,9 +7677,9 @@ mod tests {
         assert!(
             matches!(
                 mapped,
-                TriangulationConstructionError::InternalInconsistency { .. }
+                TriangulationConstructionError::OrientationCanonicalizationInternal { .. }
             ),
-            "TopologyValidationFailed should map to InternalInconsistency, got: {mapped:?}"
+            "TopologyValidationFailed should map to typed internal orientation canonicalization, got: {mapped:?}"
         );
     }
 
@@ -7101,7 +7691,7 @@ mod tests {
         let mapped = TestDelaunay::<3>::map_orientation_canonicalization_error(error);
         assert_matches!(
             mapped,
-            TriangulationConstructionError::InternalInconsistency { .. }
+            TriangulationConstructionError::OrientationCanonicalizationInternal { .. }
         );
     }
 
@@ -7115,7 +7705,7 @@ mod tests {
         let mapped = TestDelaunay::<3>::map_orientation_canonicalization_error(error);
         assert_matches!(
             mapped,
-            TriangulationConstructionError::InternalInconsistency { .. }
+            TriangulationConstructionError::OrientationCanonicalizationInternal { .. }
         );
     }
 
@@ -7144,7 +7734,7 @@ mod tests {
         let mapped = TestDelaunay::<3>::map_orientation_canonicalization_error(error);
         assert_matches!(
             mapped,
-            TriangulationConstructionError::InternalInconsistency { .. }
+            TriangulationConstructionError::OrientationCanonicalizationInternal { .. }
         );
     }
 
@@ -7180,9 +7770,9 @@ mod tests {
             assert!(
                 matches!(
                     mapped,
-                    TriangulationConstructionError::GeometricDegeneracy { .. }
+                    TriangulationConstructionError::OrientationCanonicalizationGeometric { .. }
                 ),
-                "{label} should map to GeometricDegeneracy, got: {mapped:?}"
+                "{label} should map to typed geometric orientation canonicalization, got: {mapped:?}"
             );
         }
     }
@@ -7202,11 +7792,17 @@ mod tests {
         assert!(
             matches!(
                 mapped,
-                TriangulationConstructionError::InternalInconsistency { ref message }
-                    if message.contains("orientation canonicalization")
-                        && message.contains("removed simplex frame")
+                TriangulationConstructionError::OrientationCanonicalizationInternal {
+                    ref source
+                } if matches!(
+                    source.as_ref(),
+                    InsertionError::DelaunayRepairFailed {
+                        context: DelaunayRepairFailureContext::OrientationCanonicalization,
+                        source,
+                    } if matches!(source.as_ref(), DelaunayRepairError::VerificationFailed { .. })
+                )
             ),
-            "hard repair errors during orientation canonicalization should be internal: {mapped:?}"
+            "hard repair errors during orientation canonicalization should preserve typed source: {mapped:?}"
         );
     }
 
@@ -7238,9 +7834,11 @@ mod tests {
         assert!(
             matches!(
                 mapped,
-                TriangulationConstructionError::InternalInconsistency { .. }
+                TriangulationConstructionError::InsertionNeighborWiring {
+                    source: NeighborWiringError::MissingSimplex { .. }
+                }
             ),
-            "NeighborWiring should map to InternalInconsistency, got: {mapped:?}"
+            "NeighborWiring should preserve typed source, got: {mapped:?}"
         );
     }
 
@@ -7426,6 +8024,131 @@ mod tests {
     }
 
     #[test]
+    fn test_delaunay_construction_failure_preserves_periodic_error_sources() {
+        let failure = DelaunayConstructionFailure::from(
+            TriangulationConstructionError::PeriodicImageUnsupportedTopology {
+                topology: TopologyKind::Euclidean,
+            },
+        );
+        assert_matches!(
+            failure,
+            DelaunayConstructionFailure::PeriodicImageUnsupportedTopology {
+                topology: TopologyKind::Euclidean,
+            }
+        );
+
+        let coordinate_source = CoordinateValidationError::InvalidCoordinate {
+            coordinate_index: 1,
+            coordinate_value: InvalidCoordinateValue::Nan,
+            dimension: 2,
+        };
+        let failure = DelaunayConstructionFailure::from(
+            TriangulationConstructionError::PeriodicImageCoordinateValidation {
+                canonical_vertex_index: 3,
+                image_index: 4,
+                source: coordinate_source.clone(),
+            },
+        );
+        assert_matches!(
+            failure,
+            DelaunayConstructionFailure::PeriodicImageCoordinateValidation {
+                canonical_vertex_index: 3,
+                image_index: 4,
+                source,
+            } if source == coordinate_source
+        );
+
+        let orientation_source = InsertionError::DuplicateUuid {
+            entity: EntityKind::Simplex,
+            uuid: Uuid::nil(),
+        };
+        let failure = DelaunayConstructionFailure::from(
+            TriangulationConstructionError::PeriodicImageOrientationCanonicalization {
+                source: Box::new(orientation_source.clone()),
+            },
+        );
+        assert_matches!(
+            failure,
+            DelaunayConstructionFailure::PeriodicImageOrientationCanonicalization {
+                source,
+            } if *source == orientation_source
+        );
+
+        let tds_source = TdsError::InconsistentDataStructure {
+            message: "periodic orientation validation".to_string(),
+        };
+        let failure = DelaunayConstructionFailure::from(
+            TriangulationConstructionError::PeriodicImageGeometricOrientationValidation {
+                source: Box::new(tds_source.clone()),
+            },
+        );
+        assert_matches!(
+            failure,
+            DelaunayConstructionFailure::PeriodicImageGeometricOrientationValidation {
+                source,
+            } if *source == tds_source
+        );
+    }
+
+    #[test]
+    fn test_delaunay_construction_failure_preserves_periodic_quotient_error_sources() {
+        let failure = DelaunayConstructionFailure::from(
+            TriangulationConstructionError::PeriodicQuotientFacetKeyDerivation {
+                facet_index: 2,
+                reason: PeriodicQuotientFacetKeyDerivationFailure::FacetIndexOutOfBounds {
+                    facet_index: 2,
+                    vertex_count: 1,
+                },
+            },
+        );
+        assert_matches!(
+            failure,
+            DelaunayConstructionFailure::PeriodicQuotientFacetKeyDerivation {
+                facet_index: 2,
+                reason: PeriodicQuotientFacetKeyDerivationFailure::FacetIndexOutOfBounds {
+                    facet_index: 2,
+                    vertex_count: 1,
+                },
+            }
+        );
+
+        let failure = DelaunayConstructionFailure::from(
+            TriangulationConstructionError::PeriodicQuotientSelectionBoundaryFacets {
+                boundary_facet_count: 5,
+                search_attempts: 8,
+                full_vertex_count: 27,
+                full_simplex_count: 9,
+                canonical_vertex_count: 4,
+                candidate_count: 6,
+                selected_simplex_count: 3,
+            },
+        );
+        assert_matches!(
+            failure,
+            DelaunayConstructionFailure::PeriodicQuotientSelectionBoundaryFacets {
+                boundary_facet_count: 5,
+                search_attempts: 8,
+                full_vertex_count: 27,
+                full_simplex_count: 9,
+                canonical_vertex_count: 4,
+                candidate_count: 6,
+                selected_simplex_count: 3,
+            }
+        );
+
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(7));
+        let failure = DelaunayConstructionFailure::from(
+            TriangulationConstructionError::PeriodicQuotientMissingNeighborVector { simplex_key },
+        );
+        assert_matches!(
+            failure,
+            DelaunayConstructionFailure::PeriodicQuotientMissingNeighborVector {
+                simplex_key: preserved_key,
+            } if preserved_key == simplex_key
+        );
+    }
+
+    #[test]
     fn test_map_insertion_error_hard_repair_is_internal() {
         let error = InsertionError::DelaunayRepairFailed {
             source: Box::new(DelaunayRepairError::from(FlipError::UnsupportedDimension {
@@ -7437,11 +8160,19 @@ mod tests {
         assert!(
             matches!(
                 mapped,
-                TriangulationConstructionError::InternalInconsistency { ref message }
-                    if message.contains("local repair")
-                        && message.contains("Bistellar flip not supported for D=1")
+                TriangulationConstructionError::InsertionDelaunayRepair {
+                    context: DelaunayRepairFailureContext::LocalRepair,
+                    ref source,
+                } if matches!(
+                    source.as_ref(),
+                    DelaunayRepairError::Flip { source }
+                        if matches!(
+                            source.as_ref(),
+                            FlipError::UnsupportedDimension { dimension: 1 }
+                        )
+                )
             ),
-            "hard repair errors during insertion should be internal: {mapped:?}"
+            "hard repair errors during insertion should preserve typed source: {mapped:?}"
         );
     }
 
@@ -7507,9 +8238,9 @@ mod tests {
         assert!(
             matches!(
                 mapped,
-                TriangulationConstructionError::InternalInconsistency { .. }
+                TriangulationConstructionError::OrientationCanonicalizationInternal { .. }
             ),
-            "OrientationViolation should map to InternalInconsistency (structural invariant breach, not geometry), got: {mapped:?}"
+            "OrientationViolation should map to typed internal orientation canonicalization (structural invariant breach, not geometry), got: {mapped:?}"
         );
     }
 
@@ -7523,9 +8254,9 @@ mod tests {
         assert!(
             matches!(
                 mapped,
-                TriangulationConstructionError::GeometricDegeneracy { .. }
+                TriangulationConstructionError::OrientationCanonicalizationGeometric { .. }
             ),
-            "ConflictRegion should map to GeometricDegeneracy, got: {mapped:?}"
+            "ConflictRegion should map to typed geometric orientation canonicalization, got: {mapped:?}"
         );
     }
 
@@ -7586,6 +8317,35 @@ mod tests {
     }
 
     #[test]
+    fn test_is_non_retryable_construction_error_internal_orientation_and_wiring() {
+        let orientation_err: DelaunayTriangulationConstructionError =
+            TriangulationConstructionError::OrientationCanonicalizationInternal {
+                source: Box::new(InsertionError::TopologyValidation(
+                    TdsError::InconsistentDataStructure {
+                        message: "dangling incidence".to_string(),
+                    },
+                )),
+            }
+            .into();
+        let wiring_err: DelaunayTriangulationConstructionError =
+            TriangulationConstructionError::InsertionNeighborWiring {
+                source: NeighborWiringError::MissingSimplex {
+                    simplex_key: SimplexKey::from(KeyData::from_ffi(1)),
+                },
+            }
+            .into();
+
+        assert!(
+            TestDelaunay::<3>::is_non_retryable_construction_error(&orientation_err),
+            "OrientationCanonicalizationInternal should be non-retryable"
+        );
+        assert!(
+            TestDelaunay::<3>::is_non_retryable_construction_error(&wiring_err),
+            "InsertionNeighborWiring should be non-retryable"
+        );
+    }
+
+    #[test]
     fn test_is_non_retryable_construction_error_tds_validation() {
         let err: DelaunayTriangulationConstructionError = TriangulationConstructionError::Tds(
             TdsConstructionError::ValidationError(TdsError::InconsistentDataStructure {
@@ -7614,13 +8374,12 @@ mod tests {
         let final_err: DelaunayTriangulationConstructionError =
             TriangulationConstructionError::FinalTopologyValidation {
                 context: FinalTopologyValidationContext::ConstructionFinalize,
-                source: InvariantError::Triangulation(
+                source: Box::new(InvariantError::Triangulation(
                     TriangulationValidationError::IsolatedVertex {
                         vertex_key,
                         vertex_uuid: Uuid::nil(),
                     },
-                )
-                .into(),
+                )),
             }
             .into();
         let final_delaunay_err = DelaunayTriangulationConstructionError::Triangulation(

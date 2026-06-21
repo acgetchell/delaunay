@@ -318,7 +318,8 @@ degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
   necessity, not by accident.
 - Feature flags isolate optional dependency weight. Default builds stay
   dep‑minimal. Known flags: `count-allocations`, `bench`, `bench-logging`,
-  `diagnostics`, `slow-tests`.
+  `diagnostics`, `slow-tests`. The `bench` flag is for benchmark-only fixtures,
+  not a normal API expansion.
 
 ### Idiomatic Rust as a proxy for mathematical clarity
 
@@ -330,8 +331,8 @@ degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
   for documented, debug‑only precondition violations; library code in
   `src/` must not panic on user input.
 - Borrow by default (`&T`, `&mut T`, `&[T]`); return borrowed views where
-  possible. `FacetView`, `AdjacencyIndex`, and the `simplices()`/`vertices()`
-  iterators are examples.
+  possible. `FacetView`, `IncidenceView`, `EdgeIndex`, `SimplexNeighborIndex`,
+  and the `simplices()`/`vertices()` iterators are examples.
 - Type and function names match the textbook vocabulary: `Triangulation`,
   `Vertex`, `Simplex`, `Facet`, `Ridge`, `InSphere`, `Orientation`,
   `insphere`, `circumcenter`, `circumradius`. Avoid Rust‑ecosystem
@@ -385,7 +386,13 @@ degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
 - Validate any performance claim against one of the benchmark suites in
   `benches/` (`ci_performance_suite`, `profiling_suite`,
   `cold_path_predicates`, `circumsphere_containment`,
-  `topology_guarantee_construction`, `tds_clone`) before relying on it.
+  `topology_guarantee_construction`, `tds_clone`,
+  `pl_manifold_repair`) before relying on it.
+- Benchmarks for repair paths that require deliberately invalid topology must
+  build that state through `#[cfg(feature = "bench")]` fixture helpers. Do not
+  loosen normal public constructors or reinterpret `TopologyGuarantee::Pseudomanifold`
+  as permission for over-shared facets; pseudomanifold topology still requires
+  codimension-1 facet degree 1 or 2.
 
 ### Testing mirrors the principles
 

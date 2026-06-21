@@ -13,6 +13,7 @@ predicates fast across 2D-5D.
 | `ci_performance_suite.rs` | Public workflow regression contract | Calibrated 2D-5D canaries | ~5-10 min | CI, baselines, `just perf-no-regressions` |
 | `circumsphere_containment.rs` | Compare circumsphere predicate methods | 2D-5D fixed, 3D random, edge cases | ~5 min | Predicate tuning, summaries |
 | `cold_path_predicates.rs` | Track hot/cold predicate paths | 2D-5D hot queries, near-boundary cases | ~2-5 min | Predicate optimization work |
+| `pl_manifold_repair.rs` | Over-shared facet repair plus orphan cleanup | 3D synthetic repair fixtures | <1 min | PL-manifold repair tuning |
 | `profiling_suite.rs` | Large-scale construction, memory, query, validation profiling | 2D/3D 10k, 4D 3k, 5D 1k | ~2-3 hr | Manual/monthly |
 | `remove_vertex.rs` | Vertex removal and rollback cost | 2D-5D fixed cases | ~1-5 min | Vertex removal |
 | `tds_clone.rs` | `Tds::clone()` snapshot cost | Deterministic 2D-5D triangulations | ~1-3 min | Rollback design baselines |
@@ -39,6 +40,7 @@ predicates fast across 2D-5D.
 | Boundary/UUID microbenchmarks | `cargo bench --profile perf --bench boundary_uuid_iter -- --noplot` |
 | Predicate comparison | `cargo bench --profile perf --bench circumsphere_containment -- --noplot` |
 | Predicate cold-path work | `cargo bench --profile perf --bench cold_path_predicates -- --noplot` |
+| PL-manifold repair path | `cargo bench --profile perf --features bench --bench pl_manifold_repair -- --noplot` |
 | Large-scale scaling suite | `cargo bench --profile perf --bench profiling_suite -- --noplot` |
 | Vertex removal mutation baseline | `cargo bench --profile perf --bench remove_vertex -- --noplot` |
 | One-dimension acceptance/profiling run | `just debug-large-scale-{2,3,4,5}d [n] [repair_every]` |
@@ -61,6 +63,9 @@ The `perf` profile inherits from release and restores ThinLTO with
 `codegen-units = 1`. `just ci` intentionally uses the normal validation path
 instead: it catches formatting, lint, test, documentation, example, and
 benchmark-harness compile errors rather than publishing benchmark data.
+Workspace-wide benchmark recipes enable `--features bench` so feature-gated
+repair fixtures are compiled; direct commands for those harnesses must pass the
+same feature explicitly.
 
 `just perf-large-scale-smoke [max_secs]` is a coarse local wall-clock guard for
 the release-mode large-scale harness. It runs the same 2D-5D cases as
@@ -309,6 +314,21 @@ This benchmark prebuilds deterministic 2D-5D triangulations and measures only
 `Tds::clone()` on the resulting topology snapshots. Use it when comparing
 rollback snapshot behavior against future journaled or localized rollback
 implementations.
+
+## PL-Manifold Repair
+
+```bash
+cargo bench --profile perf --features bench --bench pl_manifold_repair -- --noplot
+```
+
+This benchmark measures `repair_facet_oversharing` on controlled 3D fixtures
+where each cluster has one codimension-1 facet shared by three tetrahedra. The
+repair removes the deliberately skinny third tetrahedron and then removes its
+unique apex as an orphan vertex.
+
+The harness requires `--features bench` because normal public constructors must
+reject over-shared facets. `TopologyGuarantee::Pseudomanifold` is not a bypass
+for this fixture: pseudomanifold topology still requires facet degree 1 or 2.
 
 ## Topology Guarantee Construction
 

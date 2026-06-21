@@ -10,8 +10,8 @@ use crate::core::algorithms::incremental_insertion::{
 };
 use crate::core::algorithms::locate::extract_cavity_boundary;
 use crate::core::collections::{
-    FacetIssuesMap, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer, SimplexKeySet,
-    SmallBuffer, VertexKeySet, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
+    CLEANUP_OPERATION_BUFFER_SIZE, FacetIssuesMap, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE,
+    SimplexKeyBuffer, SimplexKeySet, SmallBuffer, VertexKeySet, fast_hash_set_with_capacity,
 };
 use crate::core::facet::FacetHandle;
 use crate::core::tds::{InvariantError, SimplexKey, TdsError, VertexKey};
@@ -28,6 +28,34 @@ use uuid::Uuid;
 static FORCE_GLOBAL_NEIGHBOR_REBUILD_ENABLED: OnceLock<bool> = OnceLock::new();
 
 const ORIENTATION_NORMALIZATION_BUDGET: usize = 3;
+
+type IncidentSimplexRepairUpdates =
+    SmallBuffer<IncidentSimplexRepairUpdate, CLEANUP_OPERATION_BUFFER_SIZE>;
+
+/// Stack-first vertex frontier for incident-simplex hint repair.
+///
+/// Insertion and local repair usually touch only a handful of vertices. Keeping
+/// this scope as a small buffer preserves the explicit affected-vertex contract
+/// without adding hash-table allocation to every insertion.
+pub(crate) type IncidentRepairVertexBuffer = SmallBuffer<VertexKey, CLEANUP_OPERATION_BUFFER_SIZE>;
+
+/// Deferred vertex-hint update computed from the canonical incidence index.
+#[derive(Clone, Debug)]
+struct IncidentSimplexRepairUpdate {
+    vertex_key: VertexKey,
+    vertex_uuid: Uuid,
+    incident_simplex: Option<SimplexKey>,
+}
+
+/// Adds a vertex key to an incident-repair frontier without heap-backed hashing.
+fn push_incident_repair_vertex_once(
+    affected_vertices: &mut IncidentRepairVertexBuffer,
+    vertex_key: VertexKey,
+) {
+    if !affected_vertices.contains(&vertex_key) {
+        affected_vertices.push(vertex_key);
+    }
+}
 
 /// Returns whether local neighbor repair should be bypassed for regression isolation.
 fn force_global_neighbor_rebuild_enabled() -> bool {
@@ -91,6 +119,8 @@ pub(crate) struct LocalFacetRepairOutcome {
     pub(crate) removed_simplices: SimplexKeyBuffer,
     /// Surviving one-hop neighbors whose back-references may have been cleared.
     pub(crate) frontier_simplices: SimplexKeyBuffer,
+    /// Vertices touched by simplices removed during local repair.
+    pub(crate) affected_vertices: IncidentRepairVertexBuffer,
 }
 
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
@@ -99,73 +129,140 @@ where
     U: DataType,
     V: DataType,
 {
-    /// Repair stale incident-simplex pointers and detect truly isolated vertices.
+    /// Adds one vertex key to an incident repair scope.
+    pub(crate) fn push_incident_repair_vertex(
+        affected_vertices: &mut IncidentRepairVertexBuffer,
+        vertex_key: VertexKey,
+    ) {
+        push_incident_repair_vertex_once(affected_vertices, vertex_key);
+    }
+
+    /// Extends a vertex repair scope with vertices from currently live simplices.
+    pub(crate) fn extend_incident_repair_vertices_from_simplices(
+        &self,
+        simplex_keys: &[SimplexKey],
+        affected_vertices: &mut IncidentRepairVertexBuffer,
+    ) {
+        for &simplex_key in simplex_keys {
+            let Some(simplex) = self.tds.simplex(simplex_key) else {
+                continue;
+            };
+            for &vertex_key in simplex.vertices() {
+                push_incident_repair_vertex_once(affected_vertices, vertex_key);
+            }
+        }
+    }
+
+    /// Repair stale incident-simplex pointers and detect truly isolated affected vertices.
     ///
     /// After cavity filling and simplex removal, pre-existing boundary vertices may
     /// still reference deleted conflict-region simplices via a stale `incident_simplex`.
-    /// For vertices with stale or missing `incident_simplex` values, this scans
-    /// simplices once until it has found a live incident simplex for every stale
-    /// vertex. Returns an error only if a vertex is in zero simplices (truly
-    /// isolated).
-    pub(crate) fn repair_stale_incident_simplices(&mut self) -> Result<(), InsertionError> {
-        let stale_vertices: Vec<_> = {
-            let tds = &self.tds;
-            tds.vertices()
-                .filter(|(vk, v)| {
-                    !v.incident_simplex().is_some_and(|simplex_key| {
-                        tds.simplex(simplex_key)
-                            .is_some_and(|simplex| simplex.contains_vertex(*vk))
-                    })
-                })
-                .map(|(vk, v)| (vk, v.uuid()))
-                .collect()
-        };
-        if stale_vertices.is_empty() {
+    /// For affected vertices with stale or missing hints, this uses the
+    /// maintained vertex-to-simplices incidence index rather than scanning
+    /// simplex storage. Returns an error only if an affected vertex is in zero
+    /// simplices or the canonical incidence index is stale.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InsertionError::TopologyValidationFailed`] when an affected
+    /// vertex has no live incident simplex. Returns
+    /// [`InsertionError::TopologyValidation`] when the maintained incidence
+    /// index names a missing simplex or a simplex that does not contain the
+    /// affected vertex.
+    pub(crate) fn repair_stale_incident_simplices(
+        &mut self,
+        affected_vertices: &IncidentRepairVertexBuffer,
+    ) -> Result<(), InsertionError> {
+        if affected_vertices.is_empty() {
+            return Ok(());
+        }
+
+        let mut updates = IncidentSimplexRepairUpdates::new();
+        for &vertex_key in affected_vertices {
+            let Some(vertex) = self.tds.vertex(vertex_key) else {
+                continue;
+            };
+
+            let needs_repair = !vertex.incident_simplex().is_some_and(|simplex_key| {
+                self.tds
+                    .simplex(simplex_key)
+                    .is_some_and(|simplex| simplex.contains_vertex(vertex_key))
+            });
+            if !needs_repair {
+                continue;
+            }
+
+            updates.push(IncidentSimplexRepairUpdate {
+                vertex_key,
+                vertex_uuid: vertex.uuid(),
+                incident_simplex: self.first_indexed_incident_simplex(vertex_key)?,
+            });
+        }
+
+        if updates.is_empty() {
             return Ok(());
         }
 
         #[cfg(debug_assertions)]
         if env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
             tracing::debug!(
-                stale_count = stale_vertices.len(),
+                stale_count = updates.len(),
                 "repairing stale incident-simplex pointers"
             );
         }
 
-        let mut stale_vertex_keys = fast_hash_set_with_capacity(stale_vertices.len());
-        for &(vk, _) in &stale_vertices {
-            stale_vertex_keys.insert(vk);
-        }
-        let mut incident_simplex_by_vertex = fast_hash_map_with_capacity(stale_vertices.len());
-
-        'simplices: for (simplex_key, simplex) in self.tds.simplices() {
-            for &vertex_key in simplex.vertices() {
-                if stale_vertex_keys.remove(&vertex_key) {
-                    incident_simplex_by_vertex.insert(vertex_key, simplex_key);
-                    if stale_vertex_keys.is_empty() {
-                        break 'simplices;
-                    }
-                }
-            }
-        }
-
-        for &(vk, uuid) in &stale_vertices {
-            if let Some(&simplex_key) = incident_simplex_by_vertex.get(&vk) {
-                if let Some(vertex) = self.tds.vertex_mut(vk) {
+        for update in updates {
+            if let Some(simplex_key) = update.incident_simplex {
+                if let Some(vertex) = self.tds.vertex_mut(update.vertex_key) {
                     vertex.set_incident_simplex(Some(simplex_key));
                 }
             } else {
-                // Truly isolated: no simplex in the TDS contains this vertex.
                 return Err(InsertionError::TopologyValidationFailed {
                     context: InsertionTopologyValidationContext::StaleIncidentSimplexRepair,
                     source: TriangulationValidationError::IsolatedVertex {
-                        vertex_key: vk,
-                        vertex_uuid: uuid,
+                        vertex_key: update.vertex_key,
+                        vertex_uuid: update.vertex_uuid,
                     },
                 });
             }
         }
         Ok(())
+    }
+
+    /// Reads and verifies the canonical incidence hint before storing it on a vertex.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TdsError::SimplexNotFound`] when the incidence index names a
+    /// removed simplex. Returns [`TdsError::InconsistentDataStructure`] when
+    /// the indexed simplex does not actually contain `vertex_key`.
+    fn first_indexed_incident_simplex(
+        &self,
+        vertex_key: VertexKey,
+    ) -> Result<Option<SimplexKey>, TdsError> {
+        let Some(simplex_key) = self.tds.first_simplex_containing_vertex(vertex_key) else {
+            return Ok(None);
+        };
+
+        let simplex = self
+            .tds
+            .simplex(simplex_key)
+            .ok_or_else(|| TdsError::SimplexNotFound {
+                simplex_key,
+                context: format!(
+                    "repairing stale incident_simplex pointer for vertex {vertex_key:?}"
+                ),
+            })?;
+
+        if !simplex.contains_vertex(vertex_key) {
+            return Err(TdsError::InconsistentDataStructure {
+                message: format!(
+                    "Vertex-to-simplices index lists simplex {simplex_key:?} for vertex {vertex_key:?}, but the simplex does not contain that vertex"
+                ),
+            });
+        }
+
+        Ok(Some(simplex_key))
     }
 
     /// Repair neighbor pointers after local simplex removal without scanning the full TDS.
@@ -283,7 +380,10 @@ where
             return Ok(0); // Vertex not found, nothing to remove
         }
 
-        let simplices_to_remove = self.tds.find_simplices_containing_vertex(vertex_key);
+        let simplices_to_remove: SimplexKeyBuffer = self
+            .tds
+            .simplex_keys_containing_vertex(vertex_key)
+            .collect();
 
         if simplices_to_remove.is_empty() {
             // Vertex exists but has no incident simplices; remove it only if the
@@ -361,7 +461,10 @@ where
             // Remove the simplices containing the vertex (now that new simplices are wired up)
             // Note: remove_simplices_by_keys() automatically clears neighbor pointers in surviving
             // simplices that reference removed simplices (sets them to None/boundary)
-            let mut simplices_removed = self.tds.remove_simplices_by_keys(simplices_to_remove);
+            let mut simplices_removed = self
+                .tds
+                .remove_simplices_by_keys(simplices_to_remove)
+                .map_err(|e| InvariantError::Tds(e.into_inner()))?;
             let max_repair_simplices_removed = simplices_to_remove.len();
             let mut post_repair_frontier = SimplexKeyBuffer::new();
 
@@ -1074,13 +1177,19 @@ where
                 attempted,
             });
         }
+        let mut affected_vertices = IncidentRepairVertexBuffer::new();
+        self.extend_incident_repair_vertices_from_simplices(&to_remove, &mut affected_vertices);
         let frontier_simplices = self.collect_local_repair_frontier(issues, &to_remove);
-        let removed_count = self.tds.remove_simplices_by_keys(&to_remove);
+        let removed_count = self
+            .tds
+            .remove_simplices_by_keys(&to_remove)
+            .map_err(|e| InsertionError::TopologyValidation(e.into_inner()))?;
 
         Ok(LocalFacetRepairOutcome {
             removed_count,
             removed_simplices: to_remove,
             frontier_simplices,
+            affected_vertices,
         })
     }
 
@@ -1262,6 +1371,17 @@ mod tests {
         }
 
         (tri, [v0, v1, v2, v3], ck)
+    }
+
+    /// Builds the explicit vertex frontier consumed by stale incident-simplex repair.
+    fn incident_repair_scope(
+        vertices: impl IntoIterator<Item = VertexKey>,
+    ) -> IncidentRepairVertexBuffer {
+        let mut scope = IncidentRepairVertexBuffer::new();
+        for vertex_key in vertices {
+            push_incident_repair_vertex_once(&mut scope, vertex_key);
+        }
+        scope
     }
 
     /// Build a deliberately invalid 2D fixture with three triangles sharing
@@ -1558,7 +1678,9 @@ mod tests {
     #[test]
     fn test_repair_stale_incident_simplices_noop_when_all_valid() {
         let (mut tri, [v0, v1, v2, v3], ck) = build_single_tet();
-        assert!(tri.repair_stale_incident_simplices().is_ok());
+        let scope = incident_repair_scope([v0, v1, v2, v3]);
+
+        assert!(tri.repair_stale_incident_simplices(&scope).is_ok());
 
         // Pointers unchanged.
         for vk in [v0, v1, v2, v3] {
@@ -1572,8 +1694,9 @@ mod tests {
 
         // Corrupt v3 to have no incident simplex.
         tri.tds.vertex_mut(v3).unwrap().set_incident_simplex(None);
+        let scope = incident_repair_scope([v3]);
 
-        assert!(tri.repair_stale_incident_simplices().is_ok());
+        assert!(tri.repair_stale_incident_simplices(&scope).is_ok());
         assert_eq!(
             tri.tds.vertex_mut(v3).unwrap().incident_simplex(),
             Some(ck),
@@ -1591,8 +1714,9 @@ mod tests {
             .vertex_mut(v3)
             .unwrap()
             .set_incident_simplex(Some(stale));
+        let scope = incident_repair_scope([v3]);
 
-        assert!(tri.repair_stale_incident_simplices().is_ok());
+        assert!(tri.repair_stale_incident_simplices(&scope).is_ok());
         assert_eq!(
             tri.tds.vertex_mut(v3).unwrap().incident_simplex(),
             Some(ck),
@@ -1610,8 +1734,9 @@ mod tests {
             .vertex_mut(v2)
             .unwrap()
             .set_incident_simplex(Some(stale));
+        let scope = incident_repair_scope([v0, v2]);
 
-        assert!(tri.repair_stale_incident_simplices().is_ok());
+        assert!(tri.repair_stale_incident_simplices(&scope).is_ok());
         for vk in [v0, v1, v2, v3] {
             assert_eq!(
                 tri.tds.vertex(vk).unwrap().incident_simplex(),
@@ -1619,6 +1744,31 @@ mod tests {
                 "all vertices should point to the live tetrahedron after one repair pass"
             );
         }
+    }
+
+    #[test]
+    fn test_repair_stale_incident_simplices_only_repairs_supplied_scope() {
+        let (mut tri, [v0, _, v2, _], ck) = build_single_tet();
+
+        let stale = SimplexKey::from(KeyData::from_ffi(0xDEAD_BEEF));
+        tri.tds
+            .vertex_mut(v0)
+            .unwrap()
+            .set_incident_simplex(Some(stale));
+        tri.tds.vertex_mut(v2).unwrap().set_incident_simplex(None);
+        let scope = incident_repair_scope([v2]);
+
+        assert!(tri.repair_stale_incident_simplices(&scope).is_ok());
+        assert_eq!(
+            tri.tds.vertex(v2).unwrap().incident_simplex(),
+            Some(ck),
+            "scoped vertex should be repaired from canonical incidence"
+        );
+        assert_eq!(
+            tri.tds.vertex(v0).unwrap().incident_simplex(),
+            Some(stale),
+            "unscoped stale vertex should remain untouched"
+        );
     }
 
     #[test]
@@ -1633,7 +1783,8 @@ mod tests {
             )
             .unwrap();
 
-        let result = tri.repair_stale_incident_simplices();
+        let scope = incident_repair_scope([iso]);
+        let result = tri.repair_stale_incident_simplices(&scope);
         assert!(
             matches!(
                 &result,
@@ -1646,6 +1797,24 @@ mod tests {
                 )
             ),
             "Truly isolated vertex should produce IsolatedVertex error: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_repair_stale_incident_simplices_errors_on_stale_incidence_index() {
+        let (mut tri, [v0, _, _, _], ck) = build_single_tet();
+        tri.tds.remove_simplex_storage_only_for_test(ck);
+        tri.tds.vertex_mut(v0).unwrap().set_incident_simplex(None);
+        let scope = incident_repair_scope([v0]);
+
+        let result = tri.repair_stale_incident_simplices(&scope);
+
+        assert_matches!(
+            result,
+            Err(InsertionError::TopologyValidation(TdsError::SimplexNotFound {
+                simplex_key,
+                ..
+            })) if simplex_key == ck
         );
     }
 

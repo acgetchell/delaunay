@@ -208,8 +208,15 @@ delaunay/
 │   │   ├── query.rs
 │   │   ├── repair.rs
 │   │   ├── simplex.rs
-│   │   ├── tds.rs
-│   │   ├── tds_snapshot.rs
+│   │   ├── tds/
+│   │   │   ├── equality.rs
+│   │   │   ├── errors.rs
+│   │   │   ├── incidence.rs
+│   │   │   ├── keys.rs
+│   │   │   ├── mutation.rs
+│   │   │   ├── snapshot.rs
+│   │   │   ├── storage.rs
+│   │   │   └── validation.rs
 │   │   ├── triangulation.rs
 │   │   ├── validation.rs
 │   │   └── vertex.rs
@@ -443,9 +450,15 @@ paths instead.
 
 **`src/core/`** - Triangulation data structures and algorithms:
 
-- `tds.rs` - Main `Tds` struct
-- `tds_snapshot.rs` - TDS persistence boundary: raw codec records parse into a validated UUID snapshot before hydration
+- `tds/storage.rs` - Main `Tds` struct, storage accessors, identity helpers, and construction tests
+- `tds/errors.rs` - TDS error/report vocabulary re-export boundary
+- `tds/equality.rs` - TDS equality implementation and stable simplex identity helpers
+- `tds/incidence.rs` - Invariant-bearing vertex-to-simplices incidence index
+- `tds/keys.rs` - Slotmap-backed `VertexKey` and `SimplexKey` handle types
+- `tds/mutation.rs` - TDS topology mutation, orientation repair, and neighbor maintenance
+- `tds/snapshot.rs` - TDS persistence boundary: raw codec records parse into a validated UUID snapshot before hydration
   allocates fresh slotmap keys, preserving vertex and simplex payload data without serializing storage-local handles
+- `tds/validation.rs` - TDS Level 2 structural validation and adjacency consistency checks
 - `triangulation.rs` - Generic Triangulation layer with kernel
 - `construction.rs` - Generic triangulation construction helpers and initial-simplex setup
 - `insertion.rs` - Generic transactional insertion, duplicate detection, and insertion telemetry
@@ -456,11 +469,13 @@ paths instead.
 - `repair.rs` - Generic local topology repair, stale incident-simplex repair,
   and vertex-removal cavity retriangulation
 - `validation.rs` - Generic validation vocabulary and Level 3 orchestration;
-  Level 1 remains with `vertex.rs`/`simplex.rs`, Level 2 with `tds.rs`, and
+  Level 1 remains with `vertex.rs`/`simplex.rs`, Level 2 with `tds/validation.rs`, and
   Delaunay Level 4 with `src/delaunay/validation.rs`
 - `vertex.rs`, `simplex.rs`, `facet.rs` - Core geometric primitives
 - `edge.rs` - Canonical `EdgeKey` for topology traversal
-- `adjacency.rs` - Optional `AdjacencyIndex` builder outputs (opt-in)
+- `adjacency.rs` - Optional lifetime-bound topology indexes:
+  `IncidenceView`, `EdgeIndex`, `SimplexNeighborIndex`, and composite
+  `TriangulationAdjacency` view (opt-in)
 - `collections/` - Optimized collection types and spatial acceleration structures
   - `spatial_hash_grid.rs` - Hash-grid spatial index for duplicate detection and locate-hint selection
 - `boundary.rs` - Boundary detection and analysis

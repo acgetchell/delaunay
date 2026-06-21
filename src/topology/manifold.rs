@@ -84,10 +84,12 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(test)]
+use crate::core::collections::SimplexKeySet;
 use crate::core::{
     collections::{
-        FacetToSimplicesMap, FastHashMap, FastHashSet, FastHasher, SimplexKeySet, SmallBuffer,
-        VertexKeyBuffer, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
+        FacetToSimplicesMap, FastHashMap, FastHashSet, FastHasher, SmallBuffer, VertexKeyBuffer,
+        fast_hash_map_with_capacity, fast_hash_set_with_capacity,
     },
     facet::{FacetHandle, facet_key_from_vertices},
     tds::{SimplexKey, Tds, TdsError, VertexKey},
@@ -1018,12 +1020,8 @@ fn simplex_star_simplices<U, V, const D: usize>(
         }
     }
 
-    // Use the first simplex vertex to get a small candidate set (local star walk when possible).
-    let candidates: SimplexKeySet =
-        tds.find_simplices_containing_vertex_by_key(simplex_vertices[0]);
-
-    let mut star_simplices: SmallBuffer<SimplexKey, 8> =
-        SmallBuffer::with_capacity(candidates.len());
+    let candidates = tds.simplex_keys_containing_vertex(simplex_vertices[0]);
+    let mut star_simplices: SmallBuffer<SimplexKey, 8> = SmallBuffer::new();
 
     for simplex_key in candidates {
         let candidate_vertices = tds.simplex_vertices(simplex_key)?;
@@ -3625,7 +3623,7 @@ mod tests {
         let mut tds =
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
         let simplex_key = tds.simplex_keys().next().unwrap();
-        assert_eq!(tds.remove_simplices_by_keys(&[simplex_key]), 1);
+        assert_eq!(tds.remove_simplices_by_keys(&[simplex_key]).unwrap(), 1);
 
         match validate_local_pseudomanifold_for_simplices(&tds, &[simplex_key]) {
             Err(ManifoldError::Tds(TdsError::SimplexNotFound {

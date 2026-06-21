@@ -1,42 +1,42 @@
-//! Optional, opt-in adjacency index for fast topology queries.
+//! Optional, opt-in topology indexes for fast repeated topology queries.
 //!
-//! The triangulation does **not** store a persistent adjacency cache internally.
-//! Instead, downstream code can build an `AdjacencyIndex` on demand for repeated
+//! The TDS maintains the canonical vertex→simplices incidence relation internally.
+//! [`IncidenceView`] borrows that relation directly, while [`EdgeIndex`] and
+//! [`SimplexNeighborIndex`] derive only the maps needed for repeated richer
 //! queries (e.g. mesh analysis, FEM assembly, graph algorithms).
 //!
 //! This index is:
 //! - immutable once built
-//! - built from the current triangulation snapshot
+//! - built as a read-only view over the current triangulation snapshot
 //! - never stored inside the triangulation (no interior mutability)
+//! - lifetime-bound to the borrowed TDS incidence index
 
 #![forbid(unsafe_code)]
 
-use crate::core::collections::{
-    FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, VertexToSimplicesMap,
-};
+use crate::core::collections::{FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::core::edge::EdgeKey;
-use crate::core::tds::{SimplexKey, VertexKey};
-use std::sync::Arc;
+use crate::core::tds::incidence::VertexIncidenceIndex;
+use crate::core::tds::{SimplexKey, TdsError, VertexKey};
+use std::marker::PhantomData;
 use thiserror::Error;
-use uuid::Uuid;
 
-/// Errors that can occur while building an [`AdjacencyIndex`].
+/// Errors that can occur while building optional topology indexes.
 ///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::query::AdjacencyIndexBuildError;
+/// use delaunay::prelude::query::TopologyIndexBuildError;
 /// use delaunay::prelude::tds::{SimplexKey, VertexKey};
 /// use slotmap::KeyData;
 ///
 /// let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
 /// let vertex_key = VertexKey::from(KeyData::from_ffi(2));
-/// let err = AdjacencyIndexBuildError::MissingVertexKey { simplex_key, vertex_key };
-/// std::assert_matches!(err, AdjacencyIndexBuildError::MissingVertexKey { .. });
+/// let err = TopologyIndexBuildError::MissingVertexKey { simplex_key, vertex_key };
+/// std::assert_matches!(err, TopologyIndexBuildError::MissingVertexKey { .. });
 /// ```
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
-pub enum AdjacencyIndexBuildError {
+pub enum TopologyIndexBuildError {
     /// A simplex references a vertex key that does not exist in vertex storage.
     #[error("Simplex {simplex_key:?} references missing vertex key {vertex_key:?}")]
     MissingVertexKey {
@@ -54,19 +54,81 @@ pub enum AdjacencyIndexBuildError {
         /// The missing neighbor simplex key.
         neighbor_key: SimplexKey,
     },
+
+    /// The maintained vertex-to-simplices incidence relation is inconsistent.
+    #[error("Vertex-to-simplices incidence index is inconsistent: {source}")]
+    InvalidVertexIncidenceIndex {
+        /// Underlying TDS invariant failure.
+        #[source]
+        source: TdsError,
+    },
 }
 
-/// Immutable adjacency maps for topology traversal.
+/// Borrowed view over the canonical vertex→simplices incidence relation.
 ///
-/// This is an *opt-in* structure returned by
-/// [`Triangulation::build_adjacency_index`](crate::prelude::triangulation::Triangulation::build_adjacency_index).
+/// This view does not derive edge or simplex-neighbor maps. Use it for repeated
+/// vertex→simplex incidence queries when the canonical TDS relation is the only
+/// data structure needed. Build it with [`Triangulation::incidence`].
 ///
-/// ## Notes
-/// - No sorted-order guarantees are provided for the values.
-/// - The collections are optimized for performance (FxHasher-backed).
-/// - An index is tied to the triangulation snapshot that built it. Rebuild it
-///   after mutating the triangulation, and do not share it across
-///   triangulations.
+/// [`Triangulation::incidence`]: crate::Triangulation::incidence
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+#[must_use]
+pub struct IncidenceView<'tds> {
+    /// Borrowed canonical vertex → incident simplices relation.
+    pub(in crate::core) vertex_to_simplices: &'tds VertexIncidenceIndex,
+}
+
+/// Derived vertex→edge index for one triangulation snapshot.
+///
+/// This index owns the edge map it derives from simplex storage and remains
+/// lifetime-bound to the triangulation snapshot that produced it. Build it with
+/// [`Triangulation::build_edge_index`] when edge queries are needed without a
+/// composite [`TriangulationAdjacency`] value.
+///
+/// [`Triangulation::build_edge_index`]: crate::Triangulation::build_edge_index
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+#[must_use]
+pub struct EdgeIndex<'tds> {
+    /// Vertex → incident edges.
+    pub(in crate::core) vertex_to_edges:
+        FastHashMap<VertexKey, SmallBuffer<EdgeKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
+
+    /// Number of unique edges in the triangulation snapshot.
+    pub(in crate::core) edge_count: usize,
+
+    /// Ties this derived index to the borrowed source TDS snapshot.
+    pub(in crate::core) _tds: PhantomData<&'tds VertexIncidenceIndex>,
+}
+
+/// Derived simplex→neighbor index for one triangulation snapshot.
+///
+/// This index owns the neighbor map it derives from simplex neighbor slots and
+/// remains lifetime-bound to the triangulation snapshot that produced it. Build
+/// it with [`Triangulation::build_simplex_neighbor_index`] when simplex-neighbor
+/// queries are needed without edge indexing.
+///
+/// [`Triangulation::build_simplex_neighbor_index`]: crate::Triangulation::build_simplex_neighbor_index
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+#[must_use]
+pub struct SimplexNeighborIndex<'tds> {
+    /// Simplex → neighboring simplices (boundary facets omitted).
+    pub(in crate::core) simplex_to_neighbors:
+        FastHashMap<SimplexKey, SmallBuffer<SimplexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
+
+    /// Ties this derived index to the borrowed source TDS snapshot.
+    pub(in crate::core) _tds: PhantomData<&'tds VertexIncidenceIndex>,
+}
+
+/// Borrowed adjacency view for one triangulation snapshot.
+///
+/// The view owns the derived edge and simplex-neighbor indexes, while its
+/// [`IncidenceView`] borrows the canonical TDS vertex-to-simplices relation for
+/// `'tds`. Holding this value therefore keeps the source triangulation
+/// immutably borrowed, so Rust prevents mutation through the same owner while
+/// callers are traversing adjacency.
 ///
 /// # Examples
 ///
@@ -78,190 +140,154 @@ pub enum AdjacencyIndexBuildError {
 /// #     #[error(transparent)]
 /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
 /// #     #[error(transparent)]
-/// #     Adjacency(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
+/// #     Adjacency(#[from] delaunay::prelude::query::TopologyIndexBuildError),
 /// #     #[error(transparent)]
 /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
-/// // Two tetrahedra sharing a triangular facet.
-/// let vertices: Vec<_> = vec![
-///     // Shared triangle
+/// let vertices = vec![
 ///     delaunay::vertex![0.0, 0.0, 0.0]?,
-///     delaunay::vertex![2.0, 0.0, 0.0]?,
-///     delaunay::vertex![1.0, 2.0, 0.0]?,
-///     // Two apices
-///     delaunay::vertex![1.0, 0.7, 1.5]?,
-///     delaunay::vertex![1.0, 0.7, -1.5]?,
+///     delaunay::vertex![1.0, 0.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0, 0.0]?,
+///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-///
 /// let dt: DelaunayTriangulation<_, (), (), 3> =
 ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-/// let tri = dt.as_triangulation();
+/// let adjacency = dt.as_triangulation().adjacency()?;
 ///
-/// let index = tri.build_adjacency_index()?;
-///
-/// // Query incident simplices for some vertex key from the triangulation.
-/// let Some((vk, _)) = tri.vertices().next() else { return Ok(()); };
-/// assert!(index.number_of_adjacent_simplices(vk) > 0);
+/// assert_eq!(adjacency.number_of_edges(), 6);
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 #[non_exhaustive]
-pub struct AdjacencyIndex {
-    /// Runtime identity of the TDS snapshot this index was built from.
-    pub(crate) tds_identity: Arc<Uuid>,
-
-    /// Generation of the TDS snapshot this index was built from.
-    pub(crate) tds_generation: u64,
-
-    /// Vertex → incident edges.
-    pub(crate) vertex_to_edges:
-        FastHashMap<VertexKey, SmallBuffer<EdgeKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
-
-    /// Vertex → incident simplices.
-    pub(crate) vertex_to_simplices: VertexToSimplicesMap,
-
-    /// Simplex → neighboring simplices (boundary facets omitted).
-    pub(crate) simplex_to_neighbors:
-        FastHashMap<SimplexKey, SmallBuffer<SimplexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
+#[must_use]
+pub struct TriangulationAdjacency<'tds> {
+    /// Borrowed canonical vertex → incident simplices relation.
+    incidence: IncidenceView<'tds>,
+    /// Derived vertex → edge index.
+    edges: EdgeIndex<'tds>,
+    /// Derived simplex → neighbor index.
+    simplex_neighbors: SimplexNeighborIndex<'tds>,
 }
 
-impl AdjacencyIndex {
+impl<'tds> TriangulationAdjacency<'tds> {
+    /// Wraps the split topology views as the lifetime-bound composite API.
+    #[inline]
+    pub(in crate::core) const fn from_parts(
+        incidence: IncidenceView<'tds>,
+        edges: EdgeIndex<'tds>,
+        simplex_neighbors: SimplexNeighborIndex<'tds>,
+    ) -> Self {
+        Self {
+            incidence,
+            edges,
+            simplex_neighbors,
+        }
+    }
+
     /// Returns an iterator over all simplices incident to `v`.
     ///
-    /// If `v` is not present in this index, the iterator is empty.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::*;
-    ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Adjacency(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// // Two tetrahedra sharing a triangular facet.
-    /// let vertices: Vec<_> = vec![
-    ///     // Shared triangle
-    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![2.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![1.0, 2.0, 0.0]?,
-    ///     // Two apices
-    ///     delaunay::vertex![1.0, 0.7, 1.5]?,
-    ///     delaunay::vertex![1.0, 0.7, -1.5]?,
-    /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-    /// let tri = dt.as_triangulation();
-    ///
-    /// let Some(shared_vertex_key) = tri
-    ///     .vertices()
-    ///     .find_map(|(vk, _)| (tri.vertex_coords(vk)? == [0.0, 0.0, 0.0]).then_some(vk))
-    /// else {
-    ///     return Ok(());
-    /// };
-    ///
-    /// let index = tri.build_adjacency_index()?;
-    /// assert_eq!(index.adjacent_simplices(shared_vertex_key).count(), 2);
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// If `v` is not present in this view, the iterator is empty. Iteration
+    /// order is not specified.
     #[must_use = "this iterator is lazy and does nothing unless consumed"]
     #[inline]
     pub fn adjacent_simplices(&self, v: VertexKey) -> impl Iterator<Item = SimplexKey> + '_ {
-        self.vertex_to_simplices
-            .get(&v)
-            .into_iter()
-            .flat_map(|simplices| simplices.iter().copied())
+        self.incidence.adjacent_simplices(v)
     }
 
     /// Returns the number of simplices incident to `v`.
     ///
-    /// If `v` is not present in this index, returns 0.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use delaunay::prelude::*;
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Adjacency(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// # let vertices: Vec<_> = vec![
-    /// #     // Shared triangle
-    /// #     delaunay::vertex![0.0, 0.0, 0.0]?,
-    /// #     delaunay::vertex![2.0, 0.0, 0.0]?,
-    /// #     delaunay::vertex![1.0, 2.0, 0.0]?,
-    /// #     // Two apices
-    /// #     delaunay::vertex![1.0, 0.7, 1.5]?,
-    /// #     delaunay::vertex![1.0, 0.7, -1.5]?,
-    /// # ];
-    /// # let dt: DelaunayTriangulation<_, (), (), 3> =
-    /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-    /// # let tri = dt.as_triangulation();
-    /// # let Some(shared_vertex_key) = tri
-    /// #     .vertices()
-    /// #     .find_map(|(vk, _)| (tri.vertex_coords(vk)? == [0.0, 0.0, 0.0]).then_some(vk))
-    /// # else {
-    /// #     return Ok(());
-    /// # };
-    /// # let index = tri.build_adjacency_index()?;
-    /// assert_eq!(index.number_of_adjacent_simplices(shared_vertex_key), 2);
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// If `v` is not present in this view, returns 0.
     #[must_use]
     #[inline]
     pub fn number_of_adjacent_simplices(&self, v: VertexKey) -> usize {
-        self.vertex_to_simplices.get(&v).map_or(0, SmallBuffer::len)
+        self.incidence.number_of_adjacent_simplices(v)
     }
 
     /// Returns an iterator over all unique edges incident to `v`.
     ///
+    /// If `v` is not present in this view, the iterator is empty. Iteration
+    /// order is not specified.
+    #[must_use = "this iterator is lazy and does nothing unless consumed"]
+    #[inline]
+    pub fn incident_edges(&self, v: VertexKey) -> impl Iterator<Item = EdgeKey> + '_ {
+        self.edges.incident_edges(v)
+    }
+
+    /// Returns the number of unique edges incident to `v`.
+    ///
+    /// If `v` is not present in this view, returns 0.
+    #[must_use]
+    #[inline]
+    pub fn number_of_incident_edges(&self, v: VertexKey) -> usize {
+        self.edges.number_of_incident_edges(v)
+    }
+
+    /// Returns an iterator over all neighbors of a simplex.
+    ///
+    /// If `c` is not present in this view, the iterator is empty. Boundary
+    /// facets are omitted because they have no neighboring simplex.
+    #[must_use = "this iterator is lazy and does nothing unless consumed"]
+    #[inline]
+    pub fn simplex_neighbors(&self, c: SimplexKey) -> impl Iterator<Item = SimplexKey> + '_ {
+        self.simplex_neighbors.simplex_neighbors(c)
+    }
+
+    /// Returns the number of neighbors of a simplex.
+    ///
+    /// If `c` is not present in this view, returns 0.
+    #[must_use]
+    #[inline]
+    pub fn number_of_simplex_neighbors(&self, c: SimplexKey) -> usize {
+        self.simplex_neighbors.number_of_simplex_neighbors(c)
+    }
+
+    /// Returns an iterator over all unique edges in the triangulation snapshot.
+    ///
+    /// Iteration order is not specified.
+    #[must_use = "this iterator is lazy and does nothing unless consumed"]
+    #[inline]
+    pub fn edges(&self) -> impl Iterator<Item = EdgeKey> + '_ {
+        self.edges.edges()
+    }
+
+    /// Returns the number of unique edges in the triangulation snapshot.
+    ///
+    /// This is equivalent to `self.edges().count()`, but uses the count
+    /// computed while building the immutable index.
+    #[must_use]
+    #[inline]
+    pub const fn number_of_edges(&self) -> usize {
+        self.edges.number_of_edges()
+    }
+}
+
+impl IncidenceView<'_> {
+    /// Returns an iterator over all simplices incident to `v`.
+    ///
+    /// If `v` is not present in this view, the iterator is empty.
+    /// Iteration order is not specified.
+    #[must_use = "this iterator is lazy and does nothing unless consumed"]
+    #[inline]
+    pub fn adjacent_simplices(&self, v: VertexKey) -> impl Iterator<Item = SimplexKey> + '_ {
+        self.vertex_to_simplices.simplex_keys(v)
+    }
+
+    /// Returns the number of simplices incident to `v`.
+    ///
+    /// If `v` is not present in this view, returns 0.
+    #[must_use]
+    #[inline]
+    pub fn number_of_adjacent_simplices(&self, v: VertexKey) -> usize {
+        self.vertex_to_simplices.number_of_simplices(v)
+    }
+}
+
+impl EdgeIndex<'_> {
+    /// Returns an iterator over all unique edges incident to `v`.
+    ///
     /// If `v` is not present in this index, the iterator is empty.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use delaunay::prelude::*;
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Adjacency(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// # let vertices = vec![
-    /// #     delaunay::vertex![0.0, 0.0, 0.0]?,
-    /// #     delaunay::vertex![1.0, 0.0, 0.0]?,
-    /// #     delaunay::vertex![0.0, 1.0, 0.0]?,
-    /// #     delaunay::vertex![0.0, 0.0, 1.0]?,
-    /// # ];
-    /// # let dt: DelaunayTriangulation<_, (), (), 3> =
-    /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-    /// # let tri = dt.as_triangulation();
-    /// # let index = tri.build_adjacency_index()?;
-    /// let Some((v0, _)) = tri.vertices().next() else { return Ok(()); };
-    /// assert_eq!(index.incident_edges(v0).count(), 3);
-    /// # Ok(())
-    /// # }
-    /// ```
     #[must_use = "this iterator is lazy and does nothing unless consumed"]
     #[inline]
     pub fn incident_edges(&self, v: VertexKey) -> impl Iterator<Item = EdgeKey> + '_ {
@@ -274,78 +300,35 @@ impl AdjacencyIndex {
     /// Returns the number of unique edges incident to `v`.
     ///
     /// If `v` is not present in this index, returns 0.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use delaunay::prelude::*;
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Adjacency(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// # let vertices = vec![
-    /// #     delaunay::vertex![0.0, 0.0, 0.0]?,
-    /// #     delaunay::vertex![1.0, 0.0, 0.0]?,
-    /// #     delaunay::vertex![0.0, 1.0, 0.0]?,
-    /// #     delaunay::vertex![0.0, 0.0, 1.0]?,
-    /// # ];
-    /// # let dt: DelaunayTriangulation<_, (), (), 3> =
-    /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-    /// # let tri = dt.as_triangulation();
-    /// # let index = tri.build_adjacency_index()?;
-    /// let Some((v0, _)) = tri.vertices().next() else { return Ok(()); };
-    /// assert_eq!(index.number_of_incident_edges(v0), 3);
-    /// # Ok(())
-    /// # }
-    /// ```
     #[must_use]
     #[inline]
     pub fn number_of_incident_edges(&self, v: VertexKey) -> usize {
         self.vertex_to_edges.get(&v).map_or(0, SmallBuffer::len)
     }
 
+    /// Returns an iterator over all unique edges in the triangulation snapshot.
+    ///
+    /// This emits each edge exactly once by only yielding it from its canonical
+    /// `v0()` endpoint. Iteration order is not specified.
+    #[must_use = "this iterator is lazy and does nothing unless consumed"]
+    pub fn edges(&self) -> impl Iterator<Item = EdgeKey> + '_ {
+        self.vertex_to_edges.iter().flat_map(|(vk, edges)| {
+            let vk = *vk;
+            edges.iter().copied().filter(move |edge| edge.v0() == vk)
+        })
+    }
+
+    /// Returns the number of unique edges in the triangulation snapshot.
+    #[must_use]
+    pub const fn number_of_edges(&self) -> usize {
+        self.edge_count
+    }
+}
+
+impl SimplexNeighborIndex<'_> {
     /// Returns an iterator over all neighbors of a simplex.
     ///
     /// If `c` is not present in this index, the iterator is empty.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use delaunay::prelude::*;
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Adjacency(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// # let vertices: Vec<_> = vec![
-    /// #     // Shared triangle
-    /// #     delaunay::vertex![0.0, 0.0, 0.0]?,
-    /// #     delaunay::vertex![2.0, 0.0, 0.0]?,
-    /// #     delaunay::vertex![1.0, 2.0, 0.0]?,
-    /// #     // Two apices
-    /// #     delaunay::vertex![1.0, 0.7, 1.5]?,
-    /// #     delaunay::vertex![1.0, 0.7, -1.5]?,
-    /// # ];
-    /// # let dt: DelaunayTriangulation<_, (), (), 3> =
-    /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-    /// # let tri = dt.as_triangulation();
-    /// # let index = tri.build_adjacency_index()?;
-    /// let Some((simplex_key, _)) = tri.simplices().next() else { return Ok(()); };
-    /// assert_eq!(index.simplex_neighbors(simplex_key).count(), 1);
-    /// # Ok(())
-    /// # }
-    /// ```
     #[must_use = "this iterator is lazy and does nothing unless consumed"]
     #[inline]
     pub fn simplex_neighbors(&self, c: SimplexKey) -> impl Iterator<Item = SimplexKey> + '_ {
@@ -358,39 +341,6 @@ impl AdjacencyIndex {
     /// Returns the number of neighbors of a simplex.
     ///
     /// If `c` is not present in this index, returns 0.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use delaunay::prelude::*;
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Adjacency(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// # let vertices: Vec<_> = vec![
-    /// #     // Shared triangle
-    /// #     delaunay::vertex![0.0, 0.0, 0.0]?,
-    /// #     delaunay::vertex![2.0, 0.0, 0.0]?,
-    /// #     delaunay::vertex![1.0, 2.0, 0.0]?,
-    /// #     // Two apices
-    /// #     delaunay::vertex![1.0, 0.7, 1.5]?,
-    /// #     delaunay::vertex![1.0, 0.7, -1.5]?,
-    /// # ];
-    /// # let dt: DelaunayTriangulation<_, (), (), 3> =
-    /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-    /// # let tri = dt.as_triangulation();
-    /// # let index = tri.build_adjacency_index()?;
-    /// let Some((simplex_key, _)) = tri.simplices().next() else { return Ok(()); };
-    /// assert_eq!(index.number_of_simplex_neighbors(simplex_key), 1);
-    /// # Ok(())
-    /// # }
-    /// ```
     #[must_use]
     #[inline]
     pub fn number_of_simplex_neighbors(&self, c: SimplexKey) -> usize {
@@ -398,111 +348,32 @@ impl AdjacencyIndex {
             .get(&c)
             .map_or(0, SmallBuffer::len)
     }
-
-    /// Returns an iterator over all unique edges in the triangulation snapshot.
-    ///
-    /// This emits each edge exactly once by only yielding it from its canonical `v0()` endpoint.
-    ///
-    /// Iteration order is not specified.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use delaunay::prelude::*;
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Adjacency(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// # let vertices = vec![
-    /// #     delaunay::vertex![0.0, 0.0, 0.0]?,
-    /// #     delaunay::vertex![1.0, 0.0, 0.0]?,
-    /// #     delaunay::vertex![0.0, 1.0, 0.0]?,
-    /// #     delaunay::vertex![0.0, 0.0, 1.0]?,
-    /// # ];
-    /// # let dt: DelaunayTriangulation<_, (), (), 3> =
-    /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-    /// # let tri = dt.as_triangulation();
-    /// # let index = tri.build_adjacency_index()?;
-    /// let edges: std::collections::HashSet<_> = index.edges().collect();
-    /// assert_eq!(edges.len(), 6);
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[must_use = "this iterator is lazy and does nothing unless consumed"]
-    pub fn edges(&self) -> impl Iterator<Item = EdgeKey> + '_ {
-        self.vertex_to_edges.iter().flat_map(|(vk, edges)| {
-            let vk = *vk;
-            edges.iter().copied().filter(move |edge| edge.v0() == vk)
-        })
-    }
-
-    /// Returns the number of unique edges in the triangulation snapshot.
-    ///
-    /// This is equivalent to `self.edges().count()`.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use delaunay::prelude::*;
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Adjacency(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// # let vertices = vec![
-    /// #     delaunay::vertex![0.0, 0.0, 0.0]?,
-    /// #     delaunay::vertex![1.0, 0.0, 0.0]?,
-    /// #     delaunay::vertex![0.0, 1.0, 0.0]?,
-    /// #     delaunay::vertex![0.0, 0.0, 1.0]?,
-    /// # ];
-    /// # let dt: DelaunayTriangulation<_, (), (), 3> =
-    /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-    /// # let tri = dt.as_triangulation();
-    /// # let index = tri.build_adjacency_index()?;
-    /// assert_eq!(index.number_of_edges(), 6);
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[must_use]
-    pub fn number_of_edges(&self) -> usize {
-        self.edges().count()
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::DelaunayTriangulation;
+    use crate::core::vertex::Vertex;
     use slotmap::SlotMap;
     use std::collections::HashSet;
 
     #[test]
-    fn adjacency_index_build_error_display_is_informative() {
+    fn topology_index_build_error_display_is_informative() {
         let mut vertices: SlotMap<VertexKey, ()> = SlotMap::with_key();
         let mut simplices: SlotMap<SimplexKey, ()> = SlotMap::with_key();
 
         let vk = vertices.insert(());
         let ck = simplices.insert(());
 
-        let err = AdjacencyIndexBuildError::MissingVertexKey {
+        let err = TopologyIndexBuildError::MissingVertexKey {
             simplex_key: ck,
             vertex_key: vk,
         };
         let msg = err.to_string();
         assert!(msg.contains("references missing vertex key"));
 
-        let err = AdjacencyIndexBuildError::MissingNeighborSimplex {
+        let err = TopologyIndexBuildError::MissingNeighborSimplex {
             simplex_key: ck,
             neighbor_key: ck,
         };
@@ -511,28 +382,33 @@ mod tests {
     }
 
     #[test]
-    fn adjacency_index_is_send_sync_unpin() {
+    fn topology_indexes_are_send_sync_unpin() {
         fn assert_auto_traits<T: Send + Sync + Unpin>() {}
-        assert_auto_traits::<AdjacencyIndex>();
+        assert_auto_traits::<IncidenceView<'static>>();
+        assert_auto_traits::<EdgeIndex<'static>>();
+        assert_auto_traits::<SimplexNeighborIndex<'static>>();
+        assert_auto_traits::<TriangulationAdjacency<'static>>();
     }
 
     #[test]
-    fn adjacency_index_query_helpers_are_consistent() {
+    fn split_topology_query_helpers_are_consistent() {
         // Two tetrahedra sharing a triangular facet.
         let vertices: Vec<_> = vec![
             // Shared triangle
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 2.0, 0.0]).unwrap(),
             // Two apices
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.7, 1.5]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.7, -1.5]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.7, 1.5]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.7, -1.5]).unwrap(),
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
         let tri = dt.as_triangulation();
-        let index = tri.build_adjacency_index().unwrap();
+        let incidence = tri.incidence().unwrap();
+        let edge_index = tri.build_edge_index().unwrap();
+        let neighbor_index = tri.build_simplex_neighbor_index().unwrap();
 
         // Shared vertex is incident to both simplices.
         let shared_vertex_key = tri
@@ -541,37 +417,51 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            index.adjacent_simplices(shared_vertex_key).count(),
-            index.number_of_adjacent_simplices(shared_vertex_key)
+            incidence.adjacent_simplices(shared_vertex_key).count(),
+            incidence.number_of_adjacent_simplices(shared_vertex_key)
         );
 
         assert_eq!(
-            index.incident_edges(shared_vertex_key).count(),
-            index.number_of_incident_edges(shared_vertex_key)
+            edge_index.incident_edges(shared_vertex_key).count(),
+            edge_index.number_of_incident_edges(shared_vertex_key)
         );
-        assert!(index.number_of_incident_edges(shared_vertex_key) > 0);
+        assert!(edge_index.number_of_incident_edges(shared_vertex_key) > 0);
 
         // Each simplex has exactly one neighbor across the shared facet.
         let simplex_keys: Vec<_> = tri.simplices().map(|(ck, _)| ck).collect();
         for &ck in &simplex_keys {
             assert_eq!(
-                index.simplex_neighbors(ck).count(),
-                index.number_of_simplex_neighbors(ck)
+                neighbor_index.simplex_neighbors(ck).count(),
+                neighbor_index.number_of_simplex_neighbors(ck)
             );
-            assert_eq!(index.number_of_simplex_neighbors(ck), 1);
+            assert_eq!(neighbor_index.number_of_simplex_neighbors(ck), 1);
         }
 
         // Global edges view is consistent.
-        let edges: HashSet<_> = index.edges().collect();
-        assert_eq!(edges.len(), index.number_of_edges());
+        let edges: HashSet<_> = edge_index.edges().collect();
+        assert_eq!(edges.len(), edge_index.number_of_edges());
         assert!(edges.iter().all(|e| e.v0() <= e.v1()));
 
         // Missing keys yield empty iterators / zero counts.
-        assert_eq!(index.adjacent_simplices(VertexKey::default()).count(), 0);
-        assert_eq!(index.number_of_adjacent_simplices(VertexKey::default()), 0);
-        assert_eq!(index.incident_edges(VertexKey::default()).count(), 0);
-        assert_eq!(index.number_of_incident_edges(VertexKey::default()), 0);
-        assert_eq!(index.simplex_neighbors(SimplexKey::default()).count(), 0);
-        assert_eq!(index.number_of_simplex_neighbors(SimplexKey::default()), 0);
+        assert_eq!(
+            incidence.adjacent_simplices(VertexKey::default()).count(),
+            0
+        );
+        assert_eq!(
+            incidence.number_of_adjacent_simplices(VertexKey::default()),
+            0
+        );
+        assert_eq!(edge_index.incident_edges(VertexKey::default()).count(), 0);
+        assert_eq!(edge_index.number_of_incident_edges(VertexKey::default()), 0);
+        assert_eq!(
+            neighbor_index
+                .simplex_neighbors(SimplexKey::default())
+                .count(),
+            0
+        );
+        assert_eq!(
+            neighbor_index.number_of_simplex_neighbors(SimplexKey::default()),
+            0
+        );
     }
 }
