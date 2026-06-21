@@ -151,6 +151,7 @@ where
     }
     let mut touched_simplices = SimplexKeyBuffer::new();
     let mut touched_simplex_set = FastHashSet::<SimplexKey>::default();
+    let mut flip_workspace = Tds::empty();
 
     let mut prefer_secondary = false;
 
@@ -175,6 +176,7 @@ where
                 record_attempt_ridge,
                 run_next_ridge_repair_step(
                     tds,
+                    &mut flip_workspace,
                     kernel,
                     &mut queues,
                     &mut stats,
@@ -191,6 +193,7 @@ where
                     record_attempt_edge,
                     run_next_edge_repair_step(
                         tds,
+                        &mut flip_workspace,
                         kernel,
                         &mut queues,
                         &mut stats,
@@ -208,6 +211,7 @@ where
                     record_attempt_triangle,
                     run_next_triangle_repair_step(
                         tds,
+                        &mut flip_workspace,
                         kernel,
                         &mut queues,
                         &mut stats,
@@ -229,6 +233,7 @@ where
             record_attempt_facet,
             run_next_facet_repair_step(
                 tds,
+                &mut flip_workspace,
                 kernel,
                 &mut queues,
                 &mut stats,
@@ -248,6 +253,7 @@ where
             record_attempt_ridge,
             run_next_ridge_repair_step(
                 tds,
+                &mut flip_workspace,
                 kernel,
                 &mut queues,
                 &mut stats,
@@ -264,6 +270,7 @@ where
                 record_attempt_edge,
                 run_next_edge_repair_step(
                     tds,
+                    &mut flip_workspace,
                     kernel,
                     &mut queues,
                     &mut stats,
@@ -281,6 +288,7 @@ where
                 record_attempt_triangle,
                 run_next_triangle_repair_step(
                     tds,
+                    &mut flip_workspace,
                     kernel,
                     &mut queues,
                     &mut stats,
@@ -355,10 +363,6 @@ where
     clippy::too_many_arguments,
     reason = "Flip mutation needs explicit move, cavity, policy, and validation inputs"
 )]
-#[expect(
-    clippy::too_many_lines,
-    reason = "Keep flip construction, validation, and wiring together for clarity"
-)]
 fn apply_bistellar_flip_with_k<U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     k_move: usize,
@@ -368,6 +372,85 @@ fn apply_bistellar_flip_with_k<U, V, const D: usize>(
     direction: FlipDirection,
     orientation_policy: ReplacementOrientationPolicy,
     validation_scope: FlipValidationScope,
+) -> Result<AppliedFlip<D>, FlipError>
+where
+    U: DataType,
+    V: DataType,
+{
+    apply_bistellar_flip_with_k_inner(
+        tds,
+        k_move,
+        removed_face_vertices,
+        inserted_face_vertices,
+        removed_simplices,
+        direction,
+        orientation_policy,
+        validation_scope,
+        None,
+    )
+}
+
+/// Applies a bistellar flip with caller-owned rollback scratch storage.
+///
+/// This preserves the same failure-atomic public flip contract as
+/// [`apply_bistellar_flip_with_k`] while letting local repair loops reuse one
+/// trial TDS allocation across many candidate flips.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Flip mutation needs explicit move, cavity, policy, validation inputs, and scratch storage"
+)]
+fn apply_bistellar_flip_with_k_in_workspace<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
+    k_move: usize,
+    removed_face_vertices: &[VertexKey],
+    inserted_face_vertices: &[VertexKey],
+    removed_simplices: &SimplexKeyBuffer,
+    direction: FlipDirection,
+    orientation_policy: ReplacementOrientationPolicy,
+    validation_scope: FlipValidationScope,
+    trial_workspace: &mut Tds<U, V, D>,
+) -> Result<AppliedFlip<D>, FlipError>
+where
+    U: DataType,
+    V: DataType,
+{
+    apply_bistellar_flip_with_k_inner(
+        tds,
+        k_move,
+        removed_face_vertices,
+        inserted_face_vertices,
+        removed_simplices,
+        direction,
+        orientation_policy,
+        validation_scope,
+        Some(trial_workspace),
+    )
+}
+
+/// Shared implementation for failure-atomic bistellar mutation.
+///
+/// The original TDS is mutated only after the trial TDS has been fully rewired
+/// and locally validated. Passing `trial_workspace` lets hot repair paths reuse
+/// rollback storage; leaving it `None` keeps the standalone API's independent
+/// trial allocation behavior.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Flip mutation needs explicit move, cavity, policy, validation inputs, and optional scratch storage"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "Keep flip construction, validation, and wiring together for clarity"
+)]
+fn apply_bistellar_flip_with_k_inner<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
+    k_move: usize,
+    removed_face_vertices: &[VertexKey],
+    inserted_face_vertices: &[VertexKey],
+    removed_simplices: &SimplexKeyBuffer,
+    direction: FlipDirection,
+    orientation_policy: ReplacementOrientationPolicy,
+    validation_scope: FlipValidationScope,
+    trial_workspace: Option<&mut Tds<U, V, D>>,
 ) -> Result<AppliedFlip<D>, FlipError>
 where
     U: DataType,
@@ -449,7 +532,6 @@ where
         });
     }
 
-    let mut new_simplices = SimplexKeyBuffer::new();
     let mut new_simplex_vertices: SmallBuffer<
         SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
         MAX_PRACTICAL_DIMENSION_SIZE,
@@ -558,64 +640,83 @@ where
     // traces (see #204 investigation).
     let removed_simplex_vertices = snapshot_removed_simplex_vertices(tds, removed_simplices)?;
 
-    let mut trial = tds.clone_for_rollback();
+    let apply_to_trial = |trial: &mut Tds<U, V, D>| -> Result<SimplexKeyBuffer, FlipError> {
+        let mut new_simplices = SimplexKeyBuffer::new();
 
-    for (vertices, periodic_offsets) in new_simplex_vertices.into_iter().zip(new_simplex_offsets) {
-        let mut simplex = Simplex::try_new(vertices)?;
-        if let Some(offsets) = periodic_offsets {
-            simplex.set_periodic_vertex_offsets(offsets)?;
+        for (vertices, periodic_offsets) in
+            new_simplex_vertices.into_iter().zip(new_simplex_offsets)
+        {
+            let mut simplex = Simplex::try_new(vertices)?;
+            if let Some(offsets) = periodic_offsets {
+                simplex.set_periodic_vertex_offsets(offsets)?;
+            }
+            let simplex_key = trial
+                .insert_simplex_with_mapping_prechecked_topology(simplex)
+                .map_err(|source| FlipMutationError::SimplexInsertion {
+                    source: source.into(),
+                })?;
+            new_simplices.push(simplex_key);
         }
-        let simplex_key = trial
-            .insert_simplex_with_mapping_prechecked_topology(simplex)
-            .map_err(|source| FlipMutationError::SimplexInsertion {
-                source: source.into(),
-            })?;
-        new_simplices.push(simplex_key);
-    }
 
-    wire_cavity_neighbors(
-        &mut trial,
-        &new_simplices,
-        external_facets.iter().copied(),
-        Some(removed_simplices),
-    )
-    .map_err(FlipNeighborWiringError::from)?;
+        wire_cavity_neighbors(
+            trial,
+            &new_simplices,
+            external_facets.iter().copied(),
+            Some(removed_simplices),
+        )
+        .map_err(FlipNeighborWiringError::from)?;
 
-    trial
-        .remove_simplices_by_keys(removed_simplices)
-        .map_err(|source| FlipError::from(FlipMutationError::SimplexRemoval { source }))?;
+        trial
+            .remove_simplices_by_keys(removed_simplices)
+            .map_err(|source| FlipError::from(FlipMutationError::SimplexRemoval { source }))?;
 
-    let validation_result = match validation_scope {
-        FlipValidationScope::FullTds => trial.is_valid().map_err(TdsValidationFailure::from),
-        FlipValidationScope::LocalCavity => {
-            validate_flip_trial_cavity(&trial, &new_simplices, &external_facets, removed_simplices)
+        let validation_result = match validation_scope {
+            FlipValidationScope::FullTds => trial.is_valid().map_err(TdsValidationFailure::from),
+            FlipValidationScope::LocalCavity => validate_flip_trial_cavity(
+                trial,
+                &new_simplices,
+                &external_facets,
+                removed_simplices,
+            ),
+        };
+        validation_result.map_err(|source| {
+            FlipError::from(FlipMutationError::TrialValidation {
+                k_move,
+                direction,
+                source,
+            })
+        })?;
+
+        #[cfg(debug_assertions)]
+        {
+            // This is intentionally debug/test-only for the same reason as the
+            // pre-flip scan above: production validation already checks coherent
+            // orientation at explicit validation boundaries.
+            if !trial.is_coherently_oriented() {
+                return Err(FlipError::from(
+                    FlipMutationError::CoherentOrientationViolation {
+                        stage: FlipOrientationCheckStage::AfterTrialMutation,
+                        k_move,
+                        direction,
+                    },
+                ));
+            }
         }
+
+        Ok(new_simplices)
     };
-    validation_result.map_err(|source| {
-        FlipError::from(FlipMutationError::TrialValidation {
-            k_move,
-            direction,
-            source,
-        })
-    })?;
 
-    #[cfg(debug_assertions)]
-    {
-        // This is intentionally debug/test-only for the same reason as the
-        // pre-flip scan above: production validation already checks coherent
-        // orientation at explicit validation boundaries.
-        if !trial.is_coherently_oriented() {
-            return Err(FlipError::from(
-                FlipMutationError::CoherentOrientationViolation {
-                    stage: FlipOrientationCheckStage::AfterTrialMutation,
-                    k_move,
-                    direction,
-                },
-            ));
-        }
-    }
-
-    *tds = trial;
+    let new_simplices = if let Some(trial) = trial_workspace {
+        trial.clone_from_for_rollback(tds);
+        let new_simplices = apply_to_trial(trial)?;
+        std::mem::swap(tds, trial);
+        new_simplices
+    } else {
+        let mut trial = tds.clone_for_rollback();
+        let new_simplices = apply_to_trial(&mut trial)?;
+        *tds = trial;
+        new_simplices
+    };
 
     Ok(AppliedFlip {
         info: FlipInfo {
@@ -1162,16 +1263,16 @@ fn find_simplex_containing_simplex<U, V, const D: usize>(
     };
 
     for simplex_key in tds.simplex_keys_containing_vertex(first) {
-        if removed_simplices.contains(&simplex_key) {
-            continue;
-        }
-
         let Some(simplex) = tds.simplex(simplex_key) else {
             return Err(FlipError::DanglingVertexIncidence {
                 vertex_key: first,
                 simplex_key,
             });
         };
+
+        if removed_simplices.contains(&simplex_key) {
+            continue;
+        }
 
         if simplex_vertices
             .iter()
@@ -2244,16 +2345,47 @@ where
     )
 }
 
-/// Apply a k=3 Delaunay-repair move with positive replacement geometry.
-fn apply_delaunay_flip_k3<U, V, const D: usize>(
+/// Apply a k=2 Delaunay-repair move with reusable rollback storage.
+///
+/// This is the local-repair hot-path variant of [`apply_delaunay_flip_k2`]; it
+/// preserves positive replacement geometry and failure atomicity while avoiding
+/// a fresh whole-TDS allocation for each attempted flip.
+fn apply_delaunay_flip_k2_in_workspace<U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
-    context: &FlipContext<D, 3>,
+    context: &FlipContext<D, 2>,
+    trial_workspace: &mut Tds<U, V, D>,
 ) -> Result<AppliedFlip<D>, FlipError>
 where
     U: DataType,
     V: DataType,
 {
-    apply_bistellar_flip_with_k(
+    apply_bistellar_flip_with_k_in_workspace(
+        tds,
+        2,
+        &context.removed_face_vertices,
+        &context.inserted_face_vertices,
+        &context.removed_simplices,
+        context.direction,
+        ReplacementOrientationPolicy::RequirePositive,
+        FlipValidationScope::LocalCavity,
+        trial_workspace,
+    )
+}
+
+/// Apply a k=3 Delaunay-repair move with reusable rollback storage.
+///
+/// This preserves positive replacement geometry and failure atomicity while
+/// avoiding a fresh whole-TDS allocation for each attempted local-repair flip.
+fn apply_delaunay_flip_k3_in_workspace<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
+    context: &FlipContext<D, 3>,
+    trial_workspace: &mut Tds<U, V, D>,
+) -> Result<AppliedFlip<D>, FlipError>
+where
+    U: DataType,
+    V: DataType,
+{
+    apply_bistellar_flip_with_k_in_workspace(
         tds,
         3,
         &context.removed_face_vertices,
@@ -2262,20 +2394,26 @@ where
         context.direction,
         ReplacementOrientationPolicy::RequirePositive,
         FlipValidationScope::LocalCavity,
+        trial_workspace,
     )
 }
 
-/// Apply a runtime-k Delaunay-repair move with positive replacement geometry.
-fn apply_delaunay_flip_dynamic<U, V, const D: usize>(
+/// Apply a dynamic-size Delaunay-repair move with reusable rollback storage.
+///
+/// This variant is used when the repair search cannot statically name `k`; it
+/// still routes through the same validated, failure-atomic bistellar mutation
+/// path as the dimension-specific helpers.
+fn apply_delaunay_flip_dynamic_in_workspace<U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     k_move: usize,
     context: &FlipContextDyn<D>,
+    trial_workspace: &mut Tds<U, V, D>,
 ) -> Result<AppliedFlip<D>, FlipError>
 where
     U: DataType,
     V: DataType,
 {
-    apply_bistellar_flip_with_k(
+    apply_bistellar_flip_with_k_in_workspace(
         tds,
         k_move,
         &context.removed_face_vertices,
@@ -2284,6 +2422,7 @@ where
         context.direction,
         ReplacementOrientationPolicy::RequirePositive,
         FlipValidationScope::LocalCavity,
+        trial_workspace,
     )
 }
 
@@ -8351,6 +8490,7 @@ where
 )]
 fn run_next_ridge_repair_step<K, U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
+    trial_workspace: &mut Tds<U, V, D>,
     kernel: &K,
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
@@ -8493,7 +8633,7 @@ where
             );
         }
     };
-    let applied = match apply_delaunay_flip_k3(tds, &context) {
+    let applied = match apply_delaunay_flip_k3_in_workspace(tds, &context, trial_workspace) {
         Ok(applied) => applied,
         Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
             diagnostics.record_inserted_simplex_skip(InsertedSimplexSkipSample {
@@ -8550,6 +8690,7 @@ where
 )]
 fn run_next_edge_repair_step<K, U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
+    trial_workspace: &mut Tds<U, V, D>,
     kernel: &K,
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
@@ -8686,29 +8827,30 @@ where
             );
         }
     };
-    let applied = match apply_delaunay_flip_dynamic(tds, kind.k(), &context) {
-        Ok(applied) => applied,
-        Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
-            diagnostics.record_inserted_simplex_skip(InsertedSimplexSkipSample {
-                location: RepairSkipLocation::Edge(edge),
-                removed_face: vertex_key_list(&context.removed_face_vertices),
-                inserted_face: vertex_key_list(&context.inserted_face_vertices),
-            });
-            log_apply_skip(&err);
-            return Ok(true);
-        }
-        Err(
-            err @ (FlipError::DegenerateSimplex
-            | FlipError::NegativeOrientation { .. }
-            | FlipError::DuplicateSimplex
-            | FlipError::NonManifoldFacet
-            | FlipError::SimplexCreation(_)),
-        ) => {
-            log_apply_skip(&err);
-            return Ok(true);
-        }
-        Err(e) => return Err(e.into()),
-    };
+    let applied =
+        match apply_delaunay_flip_dynamic_in_workspace(tds, kind.k(), &context, trial_workspace) {
+            Ok(applied) => applied,
+            Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
+                diagnostics.record_inserted_simplex_skip(InsertedSimplexSkipSample {
+                    location: RepairSkipLocation::Edge(edge),
+                    removed_face: vertex_key_list(&context.removed_face_vertices),
+                    inserted_face: vertex_key_list(&context.inserted_face_vertices),
+                });
+                log_apply_skip(&err);
+                return Ok(true);
+            }
+            Err(
+                err @ (FlipError::DegenerateSimplex
+                | FlipError::NegativeOrientation { .. }
+                | FlipError::DuplicateSimplex
+                | FlipError::NonManifoldFacet
+                | FlipError::SimplexCreation(_)),
+            ) => {
+                log_apply_skip(&err);
+                return Ok(true);
+            }
+            Err(e) => return Err(e.into()),
+        };
     *last_applied_flip = Some(LastAppliedFlip::from_applied_flip(&applied));
     let info = applied.info;
     if repair_trace_enabled() {
@@ -8743,6 +8885,7 @@ where
 )]
 fn run_next_triangle_repair_step<K, U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
+    trial_workspace: &mut Tds<U, V, D>,
     kernel: &K,
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
@@ -8870,29 +9013,30 @@ where
             );
         }
     };
-    let applied = match apply_delaunay_flip_dynamic(tds, kind.k(), &context) {
-        Ok(applied) => applied,
-        Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
-            diagnostics.record_inserted_simplex_skip(InsertedSimplexSkipSample {
-                location: RepairSkipLocation::Triangle(triangle),
-                removed_face: vertex_key_list(&context.removed_face_vertices),
-                inserted_face: vertex_key_list(&context.inserted_face_vertices),
-            });
-            log_apply_skip(&err);
-            return Ok(true);
-        }
-        Err(
-            err @ (FlipError::DegenerateSimplex
-            | FlipError::NegativeOrientation { .. }
-            | FlipError::DuplicateSimplex
-            | FlipError::NonManifoldFacet
-            | FlipError::SimplexCreation(_)),
-        ) => {
-            log_apply_skip(&err);
-            return Ok(true);
-        }
-        Err(e) => return Err(e.into()),
-    };
+    let applied =
+        match apply_delaunay_flip_dynamic_in_workspace(tds, kind.k(), &context, trial_workspace) {
+            Ok(applied) => applied,
+            Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
+                diagnostics.record_inserted_simplex_skip(InsertedSimplexSkipSample {
+                    location: RepairSkipLocation::Triangle(triangle),
+                    removed_face: vertex_key_list(&context.removed_face_vertices),
+                    inserted_face: vertex_key_list(&context.inserted_face_vertices),
+                });
+                log_apply_skip(&err);
+                return Ok(true);
+            }
+            Err(
+                err @ (FlipError::DegenerateSimplex
+                | FlipError::NegativeOrientation { .. }
+                | FlipError::DuplicateSimplex
+                | FlipError::NonManifoldFacet
+                | FlipError::SimplexCreation(_)),
+            ) => {
+                log_apply_skip(&err);
+                return Ok(true);
+            }
+            Err(e) => return Err(e.into()),
+        };
     *last_applied_flip = Some(LastAppliedFlip::from_applied_flip(&applied));
     let info = applied.info;
     if repair_trace_enabled() {
@@ -8927,6 +9071,7 @@ where
 )]
 fn run_next_facet_repair_step<K, U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
+    trial_workspace: &mut Tds<U, V, D>,
     kernel: &K,
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
@@ -9059,7 +9204,7 @@ where
             );
         }
     };
-    let applied = match apply_delaunay_flip_k2(tds, &context) {
+    let applied = match apply_delaunay_flip_k2_in_workspace(tds, &context, trial_workspace) {
         Ok(applied) => applied,
         Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
             diagnostics.record_inserted_simplex_skip(InsertedSimplexSkipSample {
@@ -15702,56 +15847,89 @@ mod tests {
         );
     }
 
-    #[test]
-    fn find_simplex_containing_simplex_rejects_stale_incidence_key() {
-        let mut tds: Tds<(), (), 2> = Tds::empty();
-        let vertices = insert_standard_simplex_vertices(&mut tds);
-        let stale_simplex = insert_plain_simplex(&mut tds, vertices.clone());
-        tds.remove_simplex_storage_only_for_test(stale_simplex);
+    macro_rules! gen_stale_incidence_context_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<find_simplex_containing_simplex_rejects_stale_incidence_key_ $dim d>]() {
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
+                    let vertices = insert_standard_simplex_vertices(&mut tds);
+                    let stale_simplex = insert_plain_simplex(&mut tds, vertices.clone());
+                    tds.remove_simplex_storage_only_for_test(stale_simplex);
 
-        let err = find_simplex_containing_simplex(&tds, &vertices[..2], &SimplexKeyBuffer::new())
-            .unwrap_err();
+                    let err = find_simplex_containing_simplex(
+                        &tds,
+                        &vertices[..2],
+                        &SimplexKeyBuffer::new(),
+                    )
+                    .unwrap_err();
 
-        assert_dangling_vertex_incidence(&err, vertices[0], stale_simplex);
+                    assert_dangling_vertex_incidence(&err, vertices[0], stale_simplex);
+                }
+
+                #[test]
+                fn [<build_k1_inverse_context_rejects_stale_incidence_before_multiplicity_ $dim d>]() {
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
+                    let vertices = insert_standard_simplex_vertices(&mut tds);
+                    let stale_simplex = insert_plain_simplex(&mut tds, vertices.clone());
+                    tds.remove_simplex_storage_only_for_test(stale_simplex);
+
+                    let err = build_k1_inverse_context(&tds, vertices[0]).unwrap_err();
+
+                    assert_dangling_vertex_incidence(&err, vertices[0], stale_simplex);
+                }
+            }
+        };
     }
 
-    #[test]
-    fn build_k1_inverse_context_rejects_stale_incidence_before_multiplicity() {
-        let mut tds: Tds<(), (), 2> = Tds::empty();
-        let vertices = insert_standard_simplex_vertices(&mut tds);
-        let stale_simplex = insert_plain_simplex(&mut tds, vertices.clone());
-        tds.remove_simplex_storage_only_for_test(stale_simplex);
+    macro_rules! gen_k2_stale_incidence_context_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<build_k2_inverse_context_rejects_stale_incidence_key_ $dim d>]() {
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
+                    let vertices = insert_standard_simplex_vertices(&mut tds);
+                    let stale_simplex = insert_plain_simplex(&mut tds, vertices.clone());
+                    tds.remove_simplex_storage_only_for_test(stale_simplex);
 
-        let err = build_k1_inverse_context(&tds, vertices[0]).unwrap_err();
+                    let edge = EdgeKey::from_validated_endpoints(vertices[0], vertices[1]);
+                    let err = build_k2_flip_context_from_edge(&tds, edge).unwrap_err();
 
-        assert_dangling_vertex_incidence(&err, vertices[0], stale_simplex);
+                    assert_dangling_vertex_incidence(&err, vertices[0], stale_simplex);
+                }
+            }
+        };
     }
 
-    #[test]
-    fn build_k2_inverse_context_rejects_stale_incidence_key() {
-        let mut tds: Tds<(), (), 3> = Tds::empty();
-        let vertices = insert_standard_simplex_vertices(&mut tds);
-        let stale_simplex = insert_plain_simplex(&mut tds, vertices.clone());
-        tds.remove_simplex_storage_only_for_test(stale_simplex);
+    macro_rules! gen_k3_stale_incidence_context_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<build_k3_inverse_context_rejects_stale_incidence_key_ $dim d>]() {
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
+                    let vertices = insert_standard_simplex_vertices(&mut tds);
+                    let stale_simplex = insert_plain_simplex(&mut tds, vertices.clone());
+                    tds.remove_simplex_storage_only_for_test(stale_simplex);
 
-        let edge = EdgeKey::from_validated_endpoints(vertices[0], vertices[1]);
-        let err = build_k2_flip_context_from_edge(&tds, edge).unwrap_err();
+                    let triangle =
+                        TriangleHandle::try_new(vertices[0], vertices[1], vertices[2]).unwrap();
+                    let err = build_k3_flip_context_from_triangle(&tds, triangle).unwrap_err();
 
-        assert_dangling_vertex_incidence(&err, vertices[0], stale_simplex);
+                    assert_dangling_vertex_incidence(&err, vertices[0], stale_simplex);
+                }
+            }
+        };
     }
 
-    #[test]
-    fn build_k3_inverse_context_rejects_stale_incidence_key() {
-        let mut tds: Tds<(), (), 4> = Tds::empty();
-        let vertices = insert_standard_simplex_vertices(&mut tds);
-        let stale_simplex = insert_plain_simplex(&mut tds, vertices.clone());
-        tds.remove_simplex_storage_only_for_test(stale_simplex);
-
-        let triangle = TriangleHandle::try_new(vertices[0], vertices[1], vertices[2]).unwrap();
-        let err = build_k3_flip_context_from_triangle(&tds, triangle).unwrap_err();
-
-        assert_dangling_vertex_incidence(&err, vertices[0], stale_simplex);
-    }
+    gen_stale_incidence_context_tests!(2);
+    gen_stale_incidence_context_tests!(3);
+    gen_stale_incidence_context_tests!(4);
+    gen_stale_incidence_context_tests!(5);
+    gen_k2_stale_incidence_context_tests!(3);
+    gen_k2_stale_incidence_context_tests!(4);
+    gen_k2_stale_incidence_context_tests!(5);
+    gen_k3_stale_incidence_context_tests!(4);
+    gen_k3_stale_incidence_context_tests!(5);
 
     fn periodic_helper_vertices<const D: usize>(
         tds: &mut Tds<(), (), D>,

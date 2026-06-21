@@ -191,7 +191,7 @@ Prefer:
 ```rust
 fn incident_simplices<'tds>(
     &'tds self,
-    index: &'tds IncidenceIndex,
+    index: &'tds IncidenceView<'tds>,
 ) -> impl Iterator<Item = SimplexKey> + 'tds
 ```
 
@@ -199,16 +199,18 @@ or, when the returned iterator only borrows a derived index whose internal data
 borrows the owner:
 
 ```rust
-fn edges_with_index<'idx, 'tds>(
-    &'tds self,
-    index: &'idx AdjacencyIndex<'tds>,
+fn indexed_edges<'idx, 'tds>(
+    index: &'idx EdgeIndex<'tds>,
 ) -> impl Iterator<Item = EdgeKey> + 'idx
 ```
 
-Prefer first-class borrowed views such as `TriangulationAdjacency<'tds>` when a
-caller should build derived traversal state once and query it many times. The
-view should own only derived data and borrow canonical relations for `'tds`, so
-mutation through the same owner is impossible while the view is alive.
+Prefer first-class borrowed views such as `IncidenceView<'tds>`,
+`EdgeIndex<'tds>`, `SimplexNeighborIndex<'tds>`, and composite
+`TriangulationAdjacency<'tds>` when a caller should build derived traversal
+state once and query it many times. The view should own only the data it needs
+and either borrow canonical relations for `'tds` or carry a lifetime tie to the
+source snapshot for derived maps, so mutation through the same owner is
+impossible while the view is alive.
 
 Keep runtime identity or generation checks for detached handles, separately
 supplied indexes, serialization boundaries, and tests that intentionally corrupt

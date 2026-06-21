@@ -705,18 +705,40 @@ pub enum TdsError {
         /// Description of what was being accessed.
         context: String,
     },
+    /// Canonical vertex incidence still references a simplex that this mutation removed.
+    #[error(
+        "Vertex-to-simplices index still lists removed simplex {simplex_key:?} for vertex {vertex_key:?} after incidence removal"
+    )]
+    RemovedSimplexStillIncident {
+        /// Vertex whose canonical incidence retained the removed simplex.
+        vertex_key: VertexKey,
+        /// Removed simplex still present in the vertex incidence set.
+        simplex_key: SimplexKey,
+    },
+    /// Canonical vertex incidence disagrees with simplex vertex membership.
+    #[error(
+        "Vertex-to-simplices index lists simplex {simplex_key:?} for vertex {vertex_key:?}, but the simplex does not contain the vertex"
+    )]
+    VertexIncidenceMismatch {
+        /// Vertex listed in the canonical incidence relation.
+        vertex_key: VertexKey,
+        /// Simplex listed for the vertex but missing that vertex in storage.
+        simplex_key: SimplexKey,
+    },
     /// Internal data structure inconsistency.
     ///
     /// This is the fallback for structural invariant violations that carry
     /// open-ended diagnostic context and do not fit a more specific variant.
-    /// Prefer [`SimplexNotFound`],
-    /// [`VertexNotFound`], [`DimensionMismatch`], or [`IndexOutOfBounds`]
-    /// when applicable.
+    /// Prefer [`SimplexNotFound`], [`VertexNotFound`], [`DimensionMismatch`],
+    /// [`IndexOutOfBounds`], [`RemovedSimplexStillIncident`], or
+    /// [`VertexIncidenceMismatch`] when applicable.
     ///
     /// [`SimplexNotFound`]: TdsError::SimplexNotFound
     /// [`VertexNotFound`]: TdsError::VertexNotFound
     /// [`DimensionMismatch`]: TdsError::DimensionMismatch
     /// [`IndexOutOfBounds`]: TdsError::IndexOutOfBounds
+    /// [`RemovedSimplexStillIncident`]: TdsError::RemovedSimplexStillIncident
+    /// [`VertexIncidenceMismatch`]: TdsError::VertexIncidenceMismatch
     #[error("Internal data structure inconsistency: {message}")]
     InconsistentDataStructure {
         /// Description of the inconsistency.
@@ -779,6 +801,10 @@ pub enum TdsErrorKind {
     DimensionMismatch,
     /// An index exceeded its valid bound.
     IndexOutOfBounds,
+    /// Canonical incidence still referenced a removed simplex.
+    RemovedSimplexStillIncident,
+    /// Canonical incidence disagreed with simplex vertex membership.
+    VertexIncidenceMismatch,
     /// Internal TDS state was inconsistent.
     InconsistentDataStructure,
     /// A geometric validation failure occurred.
@@ -806,6 +832,8 @@ impl From<&TdsError> for TdsErrorKind {
             TdsError::VertexNotFound { .. } => Self::VertexNotFound,
             TdsError::DimensionMismatch { .. } => Self::DimensionMismatch,
             TdsError::IndexOutOfBounds { .. } => Self::IndexOutOfBounds,
+            TdsError::RemovedSimplexStillIncident { .. } => Self::RemovedSimplexStillIncident,
+            TdsError::VertexIncidenceMismatch { .. } => Self::VertexIncidenceMismatch,
             TdsError::InconsistentDataStructure { .. } => Self::InconsistentDataStructure,
             TdsError::Geometric(_) => Self::Geometric,
             TdsError::FacetError(_) => Self::FacetError,

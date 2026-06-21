@@ -97,7 +97,7 @@ use crate::topology::traits::{
     GlobalTopology, GlobalTopologyModelError, TopologyKind, ToroidalDomainError,
 };
 use crate::triangulation::DelaunayTriangulation;
-use crate::validation::DelaunayTriangulationValidationError;
+use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
 use core::{cmp::Ordering, fmt};
 use num_traits::ToPrimitive;
 use rand::SeedableRng;
@@ -1090,6 +1090,11 @@ fn is_geometric_repair_error(repair_err: &DelaunayRepairError) -> bool {
         | DelaunayRepairError::InvalidTopology { .. }
         | DelaunayRepairError::HeuristicRebuildFailed { .. } => false,
     }
+}
+
+/// Returns true when a repair error is deterministic structural failure.
+fn is_non_retryable_repair_error(repair_err: &DelaunayRepairError) -> bool {
+    !is_geometric_repair_error(repair_err)
 }
 
 /// Returns true for flip errors caused by geometric predicates or degenerate
@@ -3016,6 +3021,19 @@ where
                     log_construction_retry_result(0, None, 0_u64, "succeeded", None, None);
                     return Ok(candidate);
                 }
+                Err(source) if is_non_retryable_repair_error(&source) => {
+                    let err = Self::map_final_delaunay_repair_error(source);
+                    let err_string = err.to_string();
+                    log_construction_retry_result(
+                        0,
+                        None,
+                        0_u64,
+                        "failed",
+                        Some(&err_string),
+                        None,
+                    );
+                    return Err(err);
+                }
                 Err(source) => DelaunayConstructionRetryFailure::DelaunayValidation {
                     source: Box::new(source),
                 },
@@ -3100,6 +3118,19 @@ where
                         return Ok(candidate);
                     }
                     Err(source) => {
+                        if is_non_retryable_repair_error(&source) {
+                            let err = Self::map_final_delaunay_repair_error(source);
+                            let err_string = err.to_string();
+                            log_construction_retry_result(
+                                attempt,
+                                Some(attempt_seed),
+                                perturbation_seed,
+                                "failed",
+                                Some(&err_string),
+                                None,
+                            );
+                            return Err(err);
+                        }
                         last_failure = DelaunayConstructionRetryFailure::DelaunayValidation {
                             source: Box::new(source),
                         };
@@ -3236,6 +3267,22 @@ where
                         Err(err) => {
                             aggregate_stats.merge_from(&stats);
                             last_stats.replace(stats);
+                            if is_non_retryable_repair_error(&err) {
+                                let error = Self::map_final_delaunay_repair_error(err);
+                                let last_error = error.to_string();
+                                log_construction_retry_result(
+                                    0,
+                                    None,
+                                    0_u64,
+                                    "failed",
+                                    Some(&last_error),
+                                    last_stats.as_ref(),
+                                );
+                                return Err(DelaunayTriangulationConstructionErrorWithStatistics {
+                                    error,
+                                    statistics: aggregate_stats,
+                                });
+                            }
                             DelaunayConstructionRetryFailure::DelaunayValidation {
                                 source: Box::new(err),
                             }
@@ -3347,6 +3394,22 @@ where
                         Err(err) => {
                             aggregate_stats.merge_from(&stats);
                             last_stats.replace(stats);
+                            if is_non_retryable_repair_error(&err) {
+                                let error = Self::map_final_delaunay_repair_error(err);
+                                let last_error = error.to_string();
+                                log_construction_retry_result(
+                                    attempt,
+                                    Some(attempt_seed),
+                                    perturbation_seed,
+                                    "failed",
+                                    Some(&last_error),
+                                    last_stats.as_ref(),
+                                );
+                                return Err(DelaunayTriangulationConstructionErrorWithStatistics {
+                                    error,
+                                    statistics: aggregate_stats,
+                                });
+                            }
                             last_failure = DelaunayConstructionRetryFailure::DelaunayValidation {
                                 source: Box::new(err),
                             };
@@ -4523,11 +4586,7 @@ where
         seeded_error: &DelaunayRepairError,
     ) -> Result<(), DelaunayTriangulationConstructionError> {
         if !self.insertion_state.use_global_repair_fallback || !Self::can_soft_fail(seeded_error) {
-            let message = format!("Delaunay repair failed after construction: {seeded_error}");
-            return Err(Self::map_completion_repair_error(
-                message,
-                seeded_error.clone(),
-            ));
+            return Err(Self::map_completion_repair_error(seeded_error.clone()));
         }
 
         tracing::debug!(
@@ -4542,13 +4601,7 @@ where
         };
         match global_result {
             Ok(_) => Ok(()),
-            Err(global_error) => {
-                let message = format!(
-                    "Delaunay repair failed after construction: seeded local error: \
-                     {seeded_error}; global fallback: {global_error}"
-                );
-                Err(Self::map_completion_repair_error(message, global_error))
-            }
+            Err(global_error) => Err(Self::map_completion_repair_error(global_error)),
         }
     }
 }
@@ -5154,7 +5207,7 @@ where
             DelaunayTriangulationConstructionError::Triangulation(
                 DelaunayConstructionFailure::DelaunayRepair { source, .. }
                     | DelaunayConstructionFailure::InsertionDelaunayRepair { source, .. },
-            ) if !is_geometric_repair_error(source.as_ref())
+            ) if is_non_retryable_repair_error(source.as_ref())
         )
     }
 
@@ -5184,13 +5237,25 @@ where
     }
 
     pub(crate) fn map_completion_repair_error(
-        _message: String,
         repair_error: DelaunayRepairError,
     ) -> DelaunayTriangulationConstructionError {
         DelaunayTriangulationConstructionError::Triangulation(
             DelaunayConstructionFailure::DelaunayRepair {
                 phase: DelaunayConstructionRepairPhase::Completion,
                 source: Box::new(repair_error),
+            },
+        )
+    }
+
+    pub(crate) fn map_final_delaunay_repair_error(
+        repair_error: DelaunayRepairError,
+    ) -> DelaunayTriangulationConstructionError {
+        DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::FinalDelaunayValidation {
+                context: FinalDelaunayValidationContext::ConstructionFinalize,
+                source: DelaunayTriangulationValidationError::VerificationFailed {
+                    source: Box::new(DelaunayVerificationError::from(repair_error)),
+                },
             },
         )
     }
@@ -7351,6 +7416,7 @@ mod tests {
             }),
         };
         assert!(!TestDelaunay::<4>::can_soft_fail(&verification_error));
+        assert!(is_non_retryable_repair_error(&verification_error));
 
         let canonicalization_error = DelaunayRepairError::OrientationCanonicalizationFailed {
             reason: Box::new(
@@ -7387,6 +7453,7 @@ mod tests {
         );
 
         let geometric_error = DelaunayRepairError::from(FlipError::DegenerateSimplex);
+        assert!(!is_non_retryable_repair_error(&geometric_error));
         let mapped_geometric = TestDelaunay::<4>::map_hard_repair_error(24, geometric_error);
         assert!(
             matches!(
@@ -7475,6 +7542,41 @@ mod tests {
                     && !TestDelaunay::<4>::is_non_retryable_construction_error(&mapped_predicate)
             ),
             "verification predicate failures should remain typed and retryable: {mapped_predicate:?}"
+        );
+    }
+
+    #[test]
+    fn test_map_final_delaunay_repair_error_preserves_typed_source() {
+        let mapped = TestDelaunay::<3>::map_final_delaunay_repair_error(DelaunayRepairError::from(
+            FlipError::UnsupportedDimension { dimension: 1 },
+        ));
+
+        assert!(
+            TestDelaunay::<3>::is_non_retryable_construction_error(&mapped),
+            "final Delaunay validation failures should stop shuffled retries: {mapped:?}"
+        );
+        assert_matches!(
+            mapped,
+            DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::FinalDelaunayValidation {
+                    context: FinalDelaunayValidationContext::ConstructionFinalize,
+                    source:
+                        DelaunayTriangulationValidationError::VerificationFailed {
+                            source,
+                        },
+                }
+            ) if matches!(
+                source.as_ref(),
+                DelaunayVerificationError::FlipPredicates { source }
+                    if matches!(
+                        source.as_ref(),
+                        DelaunayRepairError::Flip { source }
+                            if matches!(
+                                source.as_ref(),
+                                FlipError::UnsupportedDimension { dimension: 1 }
+                            )
+                    )
+            )
         );
     }
 

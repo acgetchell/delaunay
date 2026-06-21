@@ -331,8 +331,8 @@ degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
   for documented, debug‑only precondition violations; library code in
   `src/` must not panic on user input.
 - Borrow by default (`&T`, `&mut T`, `&[T]`); return borrowed views where
-  possible. `FacetView`, `AdjacencyIndex`, and the `simplices()`/`vertices()`
-  iterators are examples.
+  possible. `FacetView`, `IncidenceView`, `EdgeIndex`, `SimplexNeighborIndex`,
+  and the `simplices()`/`vertices()` iterators are examples.
 - Type and function names match the textbook vocabulary: `Triangulation`,
   `Vertex`, `Simplex`, `Facet`, `Ridge`, `InSphere`, `Orientation`,
   `insphere`, `circumcenter`, `circumradius`. Avoid Rust‑ecosystem

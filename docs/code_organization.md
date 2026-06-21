@@ -473,8 +473,9 @@ paths instead.
   Delaunay Level 4 with `src/delaunay/validation.rs`
 - `vertex.rs`, `simplex.rs`, `facet.rs` - Core geometric primitives
 - `edge.rs` - Canonical `EdgeKey` for topology traversal
-- `adjacency.rs` - Optional `AdjacencyIndex` builder outputs and
-  lifetime-bound `TriangulationAdjacency` views (opt-in)
+- `adjacency.rs` - Optional lifetime-bound topology indexes:
+  `IncidenceView`, `EdgeIndex`, `SimplexNeighborIndex`, and composite
+  `TriangulationAdjacency` view (opt-in)
 - `collections/` - Optimized collection types and spatial acceleration structures
   - `spatial_hash_grid.rs` - Hash-grid spatial index for duplicate detection and locate-hint selection
 - `boundary.rs` - Boundary detection and analysis

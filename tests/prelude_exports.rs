@@ -85,8 +85,9 @@ use delaunay::prelude::ordering::{
     try_hilbert_sort_by_stable, try_hilbert_sort_by_unstable, try_hilbert_sorted_indices,
 };
 use delaunay::prelude::query::{
-    AdjacencyIndexBuildError, AllFacetsIter as QueryAllFacetsIter,
-    BoundaryFacetsIter as QueryBoundaryFacetsIter, ConvexHull, QueryError,
+    AllFacetsIter as QueryAllFacetsIter, BoundaryFacetsIter as QueryBoundaryFacetsIter, ConvexHull,
+    EdgeIndex as QueryEdgeIndex, IncidenceView as QueryIncidenceView, QueryError,
+    SimplexNeighborIndex as QuerySimplexNeighborIndex, TopologyIndexBuildError,
     TriangulationAdjacency as QueryTriangulationAdjacency,
 };
 use delaunay::prelude::repair::{
@@ -117,9 +118,10 @@ use delaunay::prelude::topology::validation::{
 };
 use delaunay::prelude::triangulation::{
     AllFacetsIter as TriangulationAllFacetsIter,
-    BoundaryFacetsIter as TriangulationBoundaryFacetsIter,
+    BoundaryFacetsIter as TriangulationBoundaryFacetsIter, EdgeIndex as GenericEdgeIndex,
     FacetIssuesMap as TriangulationFacetIssuesMap, FastKernel as TriangulationFastKernel,
-    InsertionError as TriangulationInsertionError, QueryError as TriangulationQueryError,
+    IncidenceView as GenericIncidenceView, InsertionError as TriangulationInsertionError,
+    QueryError as TriangulationQueryError, SimplexNeighborIndex as GenericSimplexNeighborIndex,
     SpatialIndexConstructionFailure as GenericSpatialIndexConstructionFailure,
     TdsError as TriangulationTdsError, TopologyGuarantee as TriangulationTopologyGuarantee,
     Triangulation as GenericTriangulation, TriangulationAdjacency as GenericTriangulationAdjacency,
@@ -135,13 +137,17 @@ use delaunay::prelude::validation::{
 };
 use delaunay::prelude::{
     CoordinateRange as RootCoordinateRange, DelaunayError as RootDelaunayError,
-    DelaunayResult as RootDelaunayResult, FlipFailureKind as RootFlipFailureKind,
-    FlipOrientationCheckStage as RootFlipOrientationCheckStage, SecureHashMap, SecureHashSet,
+    DelaunayResult as RootDelaunayResult, EdgeIndex as RootEdgeIndex,
+    FlipFailureKind as RootFlipFailureKind,
+    FlipOrientationCheckStage as RootFlipOrientationCheckStage, IncidenceView as RootIncidenceView,
+    SecureHashMap, SecureHashSet, SimplexNeighborIndex as RootSimplexNeighborIndex,
     TriangulationAdjacency as RootTriangulationAdjacency,
     ValidationConfigurationError as RootValidationConfigurationError, vertex as root_vertex,
 };
 use delaunay::query::{
     AllFacetsIter as QueryFacadeAllFacetsIter, BoundaryFacetsIter as QueryFacadeBoundaryFacetsIter,
+    EdgeIndex as QueryFacadeEdgeIndex, IncidenceView as QueryFacadeIncidenceView,
+    SimplexNeighborIndex as QueryFacadeSimplexNeighborIndex,
     TriangulationAdjacency as QueryFacadeTriangulationAdjacency,
 };
 #[derive(Debug, thiserror::Error)]
@@ -185,7 +191,7 @@ enum PreludeExportTestError {
     #[error(transparent)]
     Query(#[from] QueryError),
     #[error(transparent)]
-    Adjacency(#[from] AdjacencyIndexBuildError),
+    TopologyIndex(#[from] TopologyIndexBuildError),
     #[error(transparent)]
     Facet(#[from] FacetError),
     #[error(transparent)]
@@ -678,6 +684,26 @@ fn query_preludes_cover_borrowed_adjacency_view() -> Result<(), PreludeExportTes
     let generic_adjacency: GenericTriangulationAdjacency<'_> = dt.as_triangulation().adjacency()?;
     let facade_adjacency: QueryFacadeTriangulationAdjacency<'_> = dt.adjacency()?;
     let root_adjacency: RootTriangulationAdjacency<'_> = dt.adjacency()?;
+    let query_incidence: QueryIncidenceView<'_> = dt.incidence()?;
+    let generic_incidence: GenericIncidenceView<'_> = dt.as_triangulation().incidence()?;
+    let facade_incidence: QueryFacadeIncidenceView<'_> = dt.incidence()?;
+    let root_incidence: RootIncidenceView<'_> = dt.incidence()?;
+    let query_edges: QueryEdgeIndex<'_> = dt.build_edge_index()?;
+    let generic_edges: GenericEdgeIndex<'_> = dt.as_triangulation().build_edge_index()?;
+    let facade_edges: QueryFacadeEdgeIndex<'_> = dt.build_edge_index()?;
+    let root_edges: RootEdgeIndex<'_> = dt.build_edge_index()?;
+    let query_neighbors: QuerySimplexNeighborIndex<'_> = dt.build_simplex_neighbor_index()?;
+    let generic_neighbors: GenericSimplexNeighborIndex<'_> =
+        dt.as_triangulation().build_simplex_neighbor_index()?;
+    let facade_neighbors: QueryFacadeSimplexNeighborIndex<'_> =
+        dt.build_simplex_neighbor_index()?;
+    let root_neighbors: RootSimplexNeighborIndex<'_> = dt.build_simplex_neighbor_index()?;
+    let Some((vertex_key, _)) = dt.vertices().next() else {
+        return Ok(());
+    };
+    let Some((simplex_key, _)) = dt.simplices().next() else {
+        return Ok(());
+    };
 
     assert_eq!(query_adjacency.number_of_edges(), 6);
     assert_eq!(
@@ -691,6 +717,42 @@ fn query_preludes_cover_borrowed_adjacency_view() -> Result<(), PreludeExportTes
     assert_eq!(
         root_adjacency.number_of_edges(),
         query_adjacency.number_of_edges()
+    );
+    assert_eq!(query_incidence.number_of_adjacent_simplices(vertex_key), 1);
+    assert_eq!(
+        generic_incidence.number_of_adjacent_simplices(vertex_key),
+        query_incidence.number_of_adjacent_simplices(vertex_key)
+    );
+    assert_eq!(
+        facade_incidence.number_of_adjacent_simplices(vertex_key),
+        query_incidence.number_of_adjacent_simplices(vertex_key)
+    );
+    assert_eq!(
+        root_incidence.number_of_adjacent_simplices(vertex_key),
+        query_incidence.number_of_adjacent_simplices(vertex_key)
+    );
+    assert_eq!(query_edges.number_of_edges(), 6);
+    assert_eq!(
+        generic_edges.number_of_edges(),
+        query_edges.number_of_edges()
+    );
+    assert_eq!(
+        facade_edges.number_of_edges(),
+        query_edges.number_of_edges()
+    );
+    assert_eq!(root_edges.number_of_edges(), query_edges.number_of_edges());
+    assert_eq!(query_neighbors.number_of_simplex_neighbors(simplex_key), 0);
+    assert_eq!(
+        generic_neighbors.number_of_simplex_neighbors(simplex_key),
+        query_neighbors.number_of_simplex_neighbors(simplex_key)
+    );
+    assert_eq!(
+        facade_neighbors.number_of_simplex_neighbors(simplex_key),
+        query_neighbors.number_of_simplex_neighbors(simplex_key)
+    );
+    assert_eq!(
+        root_neighbors.number_of_simplex_neighbors(simplex_key),
+        query_neighbors.number_of_simplex_neighbors(simplex_key)
     );
     Ok(())
 }

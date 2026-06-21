@@ -5,24 +5,25 @@
 use delaunay::prelude::construction::{
     DelaunayTriangulation, DelaunayTriangulationConstructionError,
 };
+use delaunay::prelude::geometry::{CoordinateConversionError, CoordinateValidationError};
 use delaunay::prelude::query::{ConvexHull, Point, QueryError};
 
 #[test]
 fn triangulation_and_hull_workflow_remains_valid() -> Result<(), WorkflowTestError> {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.35, 0.25, 0.20]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.20, 0.60, 0.25]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.35, 0.25, 0.20])?,
+        delaunay::prelude::Vertex::<(), _>::try_new([0.20, 0.60, 0.25])?,
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::try_new(&vertices)?;
     dt.validate()?;
 
-    let index = dt.build_adjacency_index()?;
-    assert!(index.number_of_edges() > 0);
+    let edge_index = dt.build_edge_index()?;
+    assert!(edge_index.number_of_edges() > 0);
 
     let boundary_facets: Vec<_> = dt
         .boundary_facets()?
@@ -38,8 +39,8 @@ fn triangulation_and_hull_workflow_remains_valid() -> Result<(), WorkflowTestErr
     hull.validate(dt.as_triangulation())?;
     assert_eq!(hull.number_of_facets(), boundary_facets.len());
 
-    let inside = Point::try_new([0.25, 0.25, 0.25]).expect("finite point coordinates");
-    let outside = Point::try_new([2.0, 2.0, 2.0]).expect("finite point coordinates");
+    let inside = Point::try_new([0.25, 0.25, 0.25])?;
+    let outside = Point::try_new([2.0, 2.0, 2.0])?;
 
     assert!(!hull.is_point_outside(&inside, dt.as_triangulation())?);
     assert!(hull.is_point_outside(&outside, dt.as_triangulation())?);
@@ -61,9 +62,13 @@ enum WorkflowTestError {
     #[error(transparent)]
     Construction(#[from] DelaunayTriangulationConstructionError),
     #[error(transparent)]
+    CoordinateConversion(#[from] CoordinateConversionError),
+    #[error(transparent)]
+    CoordinateValidation(#[from] CoordinateValidationError),
+    #[error(transparent)]
     Validation(#[from] delaunay::prelude::validation::DelaunayTriangulationValidationError),
     #[error(transparent)]
-    AdjacencyIndex(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
+    TopologyIndex(#[from] delaunay::prelude::query::TopologyIndexBuildError),
     #[error(transparent)]
     Query(#[from] QueryError),
     #[error("convex hull construction failed: {source}")]

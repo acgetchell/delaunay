@@ -1090,8 +1090,9 @@ pub mod query {
     pub use crate::geometry::traits::coordinate::Coordinate;
     pub use crate::geometry::{insphere, insphere_distance, insphere_lifted};
     pub use crate::tds::{
-        AdjacencyIndex, AdjacencyIndexBuildError, AllFacetsIter, BoundaryFacetsIter, EdgeKey,
-        EdgeKeyError, FacetView, Simplex, SimplexKey, TriangulationAdjacency, Vertex, VertexKey,
+        AllFacetsIter, BoundaryFacetsIter, EdgeIndex, EdgeKey, EdgeKeyError, FacetView,
+        IncidenceView, Simplex, SimplexKey, SimplexNeighborIndex, TopologyIndexBuildError,
+        TriangulationAdjacency, Vertex, VertexKey,
     };
     pub use crate::{DelaunayTriangulation, Triangulation};
 }
@@ -1301,10 +1302,10 @@ pub mod prelude {
         };
         pub use crate::geometry::point::Point;
         pub use crate::query::{
-            AdjacencyIndex, AdjacencyIndexBuildError, AllFacetsIter, BoundaryAnalysis,
-            BoundaryFacetsIter, DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde,
-            DataSerialize, DataType, EdgeKey, EdgeKeyError, FacetView, QueryError,
-            TriangulationAdjacency,
+            AllFacetsIter, BoundaryAnalysis, BoundaryFacetsIter, DataCopy, DataDebug,
+            DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType, EdgeIndex, EdgeKey,
+            EdgeKeyError, FacetView, IncidenceView, QueryError, SimplexNeighborIndex,
+            TopologyIndexBuildError, TriangulationAdjacency,
         };
         pub use crate::tds::{
             FacetHandle, InvariantError, NeighborSlot, Simplex, SimplexKey, Tds,
@@ -1610,9 +1611,9 @@ pub mod prelude {
     /// Includes:
     /// - Topology traversal: [`DelaunayTriangulation::edges`], [`DelaunayTriangulation::incident_edges`],
     ///   [`DelaunayTriangulation::simplex_neighbors`]
-    /// - Fast repeated queries: [`DelaunayTriangulation::adjacency`] and [`TriangulationAdjacency`]
-    ///   for lifetime-bound traversal, or [`DelaunayTriangulation::build_adjacency_index`]
-    ///   and [`AdjacencyIndex`] when a detached index is required
+    /// - Fast repeated queries: [`DelaunayTriangulation::incidence`], [`DelaunayTriangulation::build_edge_index`],
+    ///   [`DelaunayTriangulation::build_simplex_neighbor_index`], and composite
+    ///   [`DelaunayTriangulation::adjacency`] / [`TriangulationAdjacency`]
     /// - Zero-allocation geometry accessors: [`DelaunayTriangulation::vertex_coords`],
     ///   [`DelaunayTriangulation::simplex_vertices`]
     /// - Convex hull extraction: [`ConvexHull::try_from_triangulation`]
@@ -1636,8 +1637,8 @@ pub mod prelude {
     pub mod query {
         // Core read-only traversal / adjacency
         pub use crate::tds::{
-            AdjacencyIndex, AdjacencyIndexBuildError, EdgeKey, EdgeKeyError, SimplexKey,
-            TriangulationAdjacency, VertexKey,
+            EdgeIndex, EdgeKey, EdgeKeyError, IncidenceView, SimplexKey, SimplexNeighborIndex,
+            TopologyIndexBuildError, TriangulationAdjacency, VertexKey,
         };
         pub use crate::{DelaunayTriangulation, Triangulation};
 
@@ -1791,12 +1792,8 @@ mod tests {
     use crate::{
         DelaunayTriangulation,
         core::{
-            adjacency::{AdjacencyIndex, TriangulationAdjacency},
-            edge::EdgeKey,
-            simplex::Simplex,
-            tds::Tds,
-            triangulation::Triangulation,
-            vertex::Vertex,
+            adjacency::TriangulationAdjacency, edge::EdgeKey, simplex::Simplex, tds::Tds,
+            triangulation::Triangulation, vertex::Vertex,
         },
         geometry::{
             Point, algorithms::convex_hull::ConvexHull, kernel::AdaptiveKernel, kernel::FastKernel,
@@ -1835,7 +1832,6 @@ mod tests {
         assert!(is_normal::<DelaunayTriangulation<FastKernel<f64>, (), (), 3>>());
         assert!(is_normal::<ConvexHull<(), (), 3>>());
         assert!(is_normal::<EdgeKey>());
-        assert!(is_normal::<AdjacencyIndex<'static>>());
         assert!(is_normal::<TriangulationAdjacency<'static>>());
         assert!(is_normal::<DelaunayizeConfig>());
         assert!(is_normal::<DelaunayizeOutcome<(), (), 3>>());

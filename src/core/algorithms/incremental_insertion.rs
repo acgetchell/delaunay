@@ -325,6 +325,28 @@ pub enum TdsValidationFailure {
         context: String,
     },
 
+    /// Canonical vertex incidence still references a simplex removed by a mutation.
+    #[error(
+        "vertex-to-simplices index still lists removed simplex {simplex_key:?} for vertex {vertex_key:?}"
+    )]
+    RemovedSimplexStillIncident {
+        /// Vertex whose canonical incidence retained the removed simplex.
+        vertex_key: VertexKey,
+        /// Removed simplex still present in the vertex incidence set.
+        simplex_key: SimplexKey,
+    },
+
+    /// Canonical vertex incidence disagrees with simplex vertex membership.
+    #[error(
+        "vertex-to-simplices index lists simplex {simplex_key:?} for vertex {vertex_key:?}, but the simplex does not contain the vertex"
+    )]
+    VertexIncidenceMismatch {
+        /// Vertex listed in the canonical incidence relation.
+        vertex_key: VertexKey,
+        /// Simplex listed for the vertex but missing that vertex in storage.
+        simplex_key: SimplexKey,
+    },
+
     /// Internal TDS consistency failed.
     #[error("internal data structure inconsistency: {message}")]
     InconsistentDataStructure {
@@ -456,6 +478,20 @@ impl From<TdsError> for TdsValidationFailure {
                 index,
                 bound,
                 context,
+            },
+            TdsError::RemovedSimplexStillIncident {
+                vertex_key,
+                simplex_key,
+            } => Self::RemovedSimplexStillIncident {
+                vertex_key,
+                simplex_key,
+            },
+            TdsError::VertexIncidenceMismatch {
+                vertex_key,
+                simplex_key,
+            } => Self::VertexIncidenceMismatch {
+                vertex_key,
+                simplex_key,
             },
             TdsError::InconsistentDataStructure { message } => {
                 Self::InconsistentDataStructure { message }

@@ -527,6 +527,27 @@ where
             identity: Arc::clone(&self.identity),
         }
     }
+
+    /// Replaces this storage with a rollback snapshot of `source`.
+    ///
+    /// This has the same cache and handle provenance semantics as
+    /// [`Self::clone_for_rollback`] while reusing existing backing allocations
+    /// where `clone_from` can do so. Hot mutation paths use it to recycle a
+    /// scratch TDS without weakening rollback isolation.
+    pub(crate) fn clone_from_for_rollback(&mut self, source: &Self) {
+        self.vertices.clone_from(&source.vertices);
+        self.simplices.clone_from(&source.simplices);
+        self.uuid_to_vertex_key
+            .clone_from(&source.uuid_to_vertex_key);
+        self.uuid_to_simplex_key
+            .clone_from(&source.uuid_to_simplex_key);
+        self.vertex_to_simplices
+            .clone_from(&source.vertex_to_simplices);
+        self.construction_state
+            .clone_from(&source.construction_state);
+        self.generation = Arc::new(AtomicU64::new(source.generation.load(Ordering::Relaxed)));
+        self.identity = Arc::clone(&source.identity);
+    }
 }
 
 // =============================================================================
@@ -2654,6 +2675,46 @@ mod tests {
                             snapshot.generation(),
                             snapshot_generation,
                             "rollback snapshots need an independent generation counter"
+                        );
+                    }
+
+                    #[test]
+                    fn [<test_clone_from_for_rollback_replaces_storage_and_preserves_identity_ $dim d>]() {
+                        let mut source: Tds<(), (), $dim> = Tds::empty();
+                        let source_vertex = source
+                            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0_f64; $dim]).unwrap())
+                            .unwrap();
+                        let source_generation = source.generation();
+
+                        let mut target: Tds<(), (), $dim> = Tds::empty();
+                        let _stale_vertex = target
+                            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0_f64; $dim]).unwrap())
+                            .unwrap();
+                        let _extra_stale_vertex = target
+                            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([2.0_f64; $dim]).unwrap())
+                            .unwrap();
+                        assert!(
+                            !Arc::ptr_eq(source.identity(), target.identity()),
+                            "source and scratch storage should start with distinct identities"
+                        );
+
+                        target.clone_from_for_rollback(&source);
+
+                        assert!(
+                            Arc::ptr_eq(source.identity(), target.identity()),
+                            "rollback scratch storage should adopt the source runtime identity"
+                        );
+                        assert_eq!(target.generation(), source_generation);
+                        assert_eq!(target.number_of_vertices(), source.number_of_vertices());
+                        assert_eq!(target.number_of_simplices(), source.number_of_simplices());
+                        assert!(target.vertex(source_vertex).is_some());
+
+                        source.mark_topology_modified();
+
+                        assert_eq!(
+                            target.generation(),
+                            source_generation,
+                            "clone_from_for_rollback must keep an independent generation counter"
                         );
                     }
                 )+

@@ -4,7 +4,7 @@
 //! - Global edge enumeration via [`DelaunayTriangulation::edges`]
 //! - Vertex incident edges via [`DelaunayTriangulation::incident_edges`]
 //! - Simplex neighborhood traversal via [`DelaunayTriangulation::simplex_neighbors`]
-//! - Building and validating the opt-in [`AdjacencyIndex`]
+//! - Building and validating opt-in split topology views
 
 use delaunay::prelude::DelaunayTriangulationConstructionError;
 use delaunay::prelude::TopologyGuarantee;
@@ -19,18 +19,99 @@ enum PublicTopologyApiTestError {
     #[error(transparent)]
     CoordinateConversion(#[from] CoordinateConversionError),
     #[error(transparent)]
-    AdjacencyIndex(#[from] AdjacencyIndexBuildError),
-    #[error(transparent)]
-    Query(#[from] QueryError),
+    TopologyIndex(#[from] TopologyIndexBuildError),
     #[error("single tetrahedron triangulation has no vertices")]
     EmptySingleTetrahedronVertices,
     #[error("single tetrahedron triangulation has no simplices")]
     EmptySingleTetrahedronSimplices,
+    #[error("single simplex triangulation has no simplices")]
+    EmptySingleSimplexSimplices,
     #[error("simplex key from triangulation has no vertices")]
     MissingSimplexVertices,
     #[error("double tetrahedron did not contain the expected shared vertex")]
     MissingExpectedSharedVertex,
 }
+
+/// Builds the vertices of a standard D-simplex for dimension-generic topology tests.
+fn standard_simplex_vertices<const D: usize>()
+-> Result<Vec<Vertex<(), D>>, CoordinateConversionError> {
+    let mut vertices = Vec::with_capacity(D + 1);
+    vertices.push(Vertex::<(), _>::try_new([0.0; D])?);
+    for axis in 0..D {
+        let mut coords = [0.0; D];
+        coords[axis] = 1.0;
+        vertices.push(Vertex::<(), _>::try_new(coords)?);
+    }
+    Ok(vertices)
+}
+
+/// Verifies split topology views against the closed-form topology of one simplex.
+fn assert_split_topology_single_simplex<const D: usize>() -> Result<(), PublicTopologyApiTestError>
+{
+    let vertices = standard_simplex_vertices::<D>()?;
+    let dt: DelaunayTriangulation<_, (), (), D> =
+        DelaunayTriangulation::try_new_with_topology_guarantee(
+            &vertices,
+            TopologyGuarantee::PLManifold,
+        )?;
+    let tri = dt.as_triangulation();
+    let expected_edges = D * (D + 1) / 2;
+
+    assert_eq!(tri.number_of_vertices(), D + 1);
+    assert_eq!(tri.number_of_simplices(), 1);
+    assert_eq!(tri.number_of_edges(), expected_edges);
+
+    let simplex_key = tri
+        .simplices()
+        .next()
+        .map(|(simplex_key, _)| simplex_key)
+        .ok_or(PublicTopologyApiTestError::EmptySingleSimplexSimplices)?;
+    let incidence = tri.incidence()?;
+    let edge_index = tri.build_edge_index()?;
+    let neighbor_index = tri.build_simplex_neighbor_index()?;
+    let adjacency = tri.adjacency()?;
+
+    assert_eq!(edge_index.number_of_edges(), expected_edges);
+    assert_eq!(adjacency.number_of_edges(), expected_edges);
+    assert_eq!(
+        edge_index.edges().collect::<HashSet<_>>().len(),
+        expected_edges
+    );
+    assert_eq!(
+        adjacency.edges().collect::<HashSet<_>>().len(),
+        expected_edges
+    );
+    assert_eq!(neighbor_index.number_of_simplex_neighbors(simplex_key), 0);
+    assert_eq!(adjacency.number_of_simplex_neighbors(simplex_key), 0);
+
+    for (vertex_key, _) in tri.vertices() {
+        assert_eq!(incidence.number_of_adjacent_simplices(vertex_key), 1);
+        assert_eq!(adjacency.number_of_adjacent_simplices(vertex_key), 1);
+        assert_eq!(edge_index.number_of_incident_edges(vertex_key), D);
+        assert_eq!(adjacency.number_of_incident_edges(vertex_key), D);
+
+        let adjacent: HashSet<_> = incidence.adjacent_simplices(vertex_key).collect();
+        assert_eq!(adjacent.len(), 1);
+        assert!(adjacent.contains(&simplex_key));
+    }
+
+    Ok(())
+}
+
+macro_rules! gen_split_topology_single_simplex_tests {
+    ($($dim:literal),+ $(,)?) => {
+        pastey::paste! {
+            $(
+                #[test]
+                fn [<split_topology_indexes_single_simplex_ $dim d>]() -> Result<(), PublicTopologyApiTestError> {
+                    assert_split_topology_single_simplex::<$dim>()
+                }
+            )+
+        }
+    };
+}
+
+gen_split_topology_single_simplex_tests!(2, 3, 4, 5);
 
 #[test]
 fn edges_and_incident_edges_on_single_tetrahedron() -> Result<(), PublicTopologyApiTestError> {
@@ -58,9 +139,9 @@ fn edges_and_incident_edges_on_single_tetrahedron() -> Result<(), PublicTopology
     let edges: HashSet<_> = dt.edges().collect();
     assert_eq!(edges.len(), 6);
 
-    let index = tri.build_adjacency_index()?;
-    let edges_with_index: HashSet<_> = dt.edges_with_index(&index)?.collect();
-    assert_eq!(edges_with_index, edges);
+    let edge_index = tri.build_edge_index()?;
+    let indexed_edges: HashSet<_> = edge_index.edges().collect();
+    assert_eq!(indexed_edges, edges);
 
     // Pick an arbitrary vertex; in a tetrahedron its degree is 3.
     let v0 = dt
@@ -69,7 +150,7 @@ fn edges_and_incident_edges_on_single_tetrahedron() -> Result<(), PublicTopology
         .map(|(vertex_key, _)| vertex_key)
         .ok_or(PublicTopologyApiTestError::EmptySingleTetrahedronVertices)?;
     assert_eq!(dt.incident_edges(v0).count(), 3);
-    assert_eq!(dt.incident_edges_with_index(&index, v0)?.count(), 3);
+    assert_eq!(edge_index.incident_edges(v0).count(), 3);
 
     let incident: HashSet<_> = dt.incident_edges(v0).collect();
     assert_eq!(incident.len(), 3);
@@ -81,11 +162,8 @@ fn edges_and_incident_edges_on_single_tetrahedron() -> Result<(), PublicTopology
         .map(|(simplex_key, _)| simplex_key)
         .ok_or(PublicTopologyApiTestError::EmptySingleTetrahedronSimplices)?;
     assert_eq!(dt.simplex_neighbors(simplex_key).count(), 0);
-    assert_eq!(
-        dt.simplex_neighbors_with_index(&index, simplex_key)?
-            .count(),
-        0
-    );
+    let neighbor_index = dt.build_simplex_neighbor_index()?;
+    assert_eq!(neighbor_index.simplex_neighbors(simplex_key).count(), 0);
 
     // Geometry accessors are zero-allocation and should succeed for keys from this triangulation.
     // They are also forwarded on `DelaunayTriangulation`.
@@ -106,7 +184,7 @@ fn edges_and_incident_edges_on_single_tetrahedron() -> Result<(), PublicTopology
 }
 
 #[test]
-fn adjacency_index_on_double_tetrahedron() -> Result<(), PublicTopologyApiTestError> {
+fn split_topology_indexes_on_double_tetrahedron() -> Result<(), PublicTopologyApiTestError> {
     // Two tetrahedra sharing a triangular facet.
     let vertices: Vec<_> = vec![
         // Shared triangle
@@ -151,71 +229,44 @@ fn adjacency_index_on_double_tetrahedron() -> Result<(), PublicTopologyApiTestEr
         assert_ne!(neighbors[0], ck);
     }
 
-    // Build opt-in adjacency index and validate key properties.
-    let index = tri.build_adjacency_index()?;
-
-    // Triangulation-level with_index helpers should match the index and the baseline APIs.
-    assert_eq!(
-        tri.adjacent_simplices_with_index(&index, shared_vertex_key)?
-            .count(),
-        2
-    );
-    assert_eq!(
-        tri.number_of_adjacent_simplices_with_index(&index, shared_vertex_key)?,
-        2
-    );
-
-    for &ck in &simplex_keys {
-        assert_eq!(dt.simplex_neighbors_with_index(&index, ck)?.count(), 1);
-    }
+    // Build opt-in split topology views and validate key properties.
+    let incidence = tri.incidence()?;
+    let edge_index = tri.build_edge_index()?;
+    let neighbor_index = dt.build_simplex_neighbor_index()?;
 
     // Shared vertex should have 2 incident simplices.
-    assert_eq!(index.number_of_adjacent_simplices(shared_vertex_key), 2);
-    assert_eq!(index.adjacent_simplices(shared_vertex_key).count(), 2);
+    assert_eq!(incidence.number_of_adjacent_simplices(shared_vertex_key), 2);
+    assert_eq!(incidence.adjacent_simplices(shared_vertex_key).count(), 2);
 
     // Shared vertex should have at least 3 incident edges (degree depends on geometry);
     // ensure the list is non-empty and contains canonical edges.
-    let incident_edges: Vec<_> = index.incident_edges(shared_vertex_key).collect();
+    let incident_edges: Vec<_> = edge_index.incident_edges(shared_vertex_key).collect();
     assert!(!incident_edges.is_empty());
     assert!(incident_edges.iter().all(|e| e.v0() <= e.v1()));
 
-    // Triangulation-level with_index helper should match index-based incident edges.
-    let incident_edges_with_index: HashSet<_> = dt
-        .incident_edges_with_index(&index, shared_vertex_key)?
-        .collect();
-    assert_eq!(incident_edges_with_index.len(), incident_edges.len());
-
-    // Each simplex should appear with exactly one neighbor in the index.
+    // Each simplex should appear with exactly one neighbor in the neighbor index.
     for &ck in &simplex_keys {
-        assert_eq!(index.number_of_simplex_neighbors(ck), 1);
-        assert_eq!(index.simplex_neighbors(ck).count(), 1);
+        assert_eq!(neighbor_index.number_of_simplex_neighbors(ck), 1);
+        assert_eq!(neighbor_index.simplex_neighbors(ck).count(), 1);
     }
 
     // Global edge iterator should yield each edge exactly once.
-    let edges: HashSet<_> = index.edges().collect();
+    let edges: HashSet<_> = edge_index.edges().collect();
     assert_eq!(edges.len(), tri.number_of_edges());
 
-    // Triangulation-level edges_with_index should match the index edges().
-    let edges_via_tri: HashSet<_> = tri.edges_with_index(&index)?.collect();
+    // Direct traversal should match the edge index.
+    let edges_via_tri: HashSet<_> = tri.edges().collect();
     assert_eq!(edges_via_tri, edges);
 
     // Missing keys should yield empty iterators.
-    assert_eq!(index.adjacent_simplices(VertexKey::default()).count(), 0);
-    assert_eq!(index.incident_edges(VertexKey::default()).count(), 0);
-    assert_eq!(index.simplex_neighbors(SimplexKey::default()).count(), 0);
-
     assert_eq!(
-        tri.adjacent_simplices_with_index(&index, VertexKey::default())?
-            .count(),
+        incidence.adjacent_simplices(VertexKey::default()).count(),
         0
     );
+    assert_eq!(edge_index.incident_edges(VertexKey::default()).count(), 0);
     assert_eq!(
-        dt.incident_edges_with_index(&index, VertexKey::default())?
-            .count(),
-        0
-    );
-    assert_eq!(
-        dt.simplex_neighbors_with_index(&index, SimplexKey::default())?
+        neighbor_index
+            .simplex_neighbors(SimplexKey::default())
             .count(),
         0
     );

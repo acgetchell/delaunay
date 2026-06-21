@@ -11,18 +11,18 @@ use delaunay::prelude::tds::{
     Simplex, SimplexKey, Tds, Vertex, VertexKey, verify_facet_index_consistency,
 };
 use delaunay::prelude::topology::validation::validate_triangulation_euler;
-use delaunay::query::{AdjacencyIndexBuildError, QueryError};
+use delaunay::query::{QueryError, TopologyIndexBuildError};
 use uuid::Uuid;
 
 struct Payload;
 struct NotAKernel;
 
-#[derive(Clone, Debug, thiserror::Error, PartialEq)]
+#[derive(Debug, thiserror::Error)]
 enum TraitBoundErgonomicsError {
     #[error(transparent)]
     Adjacency {
         #[from]
-        source: AdjacencyIndexBuildError,
+        source: TopologyIndexBuildError,
     },
     #[error(transparent)]
     Query {
@@ -112,11 +112,19 @@ fn read_only_topology_apis_accept_non_datatype_payloads() {
         0
     );
 
-    let index = tri.build_adjacency_index().unwrap();
-    assert_eq!(index.number_of_edges(), 0);
-    assert_eq!(index.number_of_adjacent_simplices(VertexKey::default()), 0);
-    assert_eq!(index.number_of_incident_edges(VertexKey::default()), 0);
-    assert_eq!(index.number_of_simplex_neighbors(SimplexKey::default()), 0);
+    let incidence = tri.incidence().unwrap();
+    let edge_index = tri.build_edge_index().unwrap();
+    let neighbor_index = tri.build_simplex_neighbor_index().unwrap();
+    assert_eq!(edge_index.number_of_edges(), 0);
+    assert_eq!(
+        incidence.number_of_adjacent_simplices(VertexKey::default()),
+        0
+    );
+    assert_eq!(edge_index.number_of_incident_edges(VertexKey::default()), 0);
+    assert_eq!(
+        neighbor_index.number_of_simplex_neighbors(SimplexKey::default()),
+        0
+    );
 
     let tds: Tds<Payload, Payload, 2> = Tds::empty();
     assert!(tds.build_facet_to_simplices_map().unwrap().is_empty());
@@ -157,15 +165,18 @@ fn delaunay_empty_query_wrappers_accept_non_datatype_payloads()
     assert_eq!(dt.simplex_vertices(SimplexKey::default()), None);
     assert_eq!(dt.vertex_coords(VertexKey::default()), None);
 
-    let index = dt.build_adjacency_index()?;
-    assert_eq!(dt.edges_with_index(&index)?.count(), 0);
+    let incidence = dt.incidence()?;
+    let edge_index = dt.build_edge_index()?;
+    let neighbor_index = dt.build_simplex_neighbor_index()?;
+    assert_eq!(edge_index.edges().count(), 0);
     assert_eq!(
-        dt.incident_edges_with_index(&index, VertexKey::default())?
-            .count(),
+        incidence.adjacent_simplices(VertexKey::default()).count(),
         0
     );
+    assert_eq!(edge_index.incident_edges(VertexKey::default()).count(), 0);
     assert_eq!(
-        dt.simplex_neighbors_with_index(&index, SimplexKey::default())?
+        neighbor_index
+            .simplex_neighbors(SimplexKey::default())
             .count(),
         0
     );

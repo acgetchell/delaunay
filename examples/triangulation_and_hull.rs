@@ -25,7 +25,7 @@ use delaunay::prelude::geometry::{
     CoordinateValidationError,
 };
 use delaunay::prelude::query::{
-    AdjacencyIndexBuildError, ConvexHull, ConvexHullConstructionError, Point, QueryError,
+    ConvexHull, ConvexHullConstructionError, Point, QueryError, TopologyIndexBuildError,
 };
 
 type WorkflowTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
@@ -37,7 +37,7 @@ enum WorkflowExampleError {
     #[error(transparent)]
     Construction(#[from] DelaunayTriangulationConstructionError),
     #[error(transparent)]
-    AdjacencyIndex(#[from] AdjacencyIndexBuildError),
+    TopologyIndex(#[from] TopologyIndexBuildError),
     #[error(transparent)]
     Query(#[from] QueryError),
     #[error("convex hull operation failed: {source}")]
@@ -94,8 +94,8 @@ fn run_case<const D: usize>(
     println!("  vertices:  {}", dt.number_of_vertices());
     println!("  simplices: {}", dt.number_of_simplices());
 
-    let index = dt.build_adjacency_index()?;
-    println!("  edges:     {}", index.number_of_edges());
+    let edge_index = dt.build_edge_index()?;
+    println!("  edges:     {}", edge_index.number_of_edges());
 
     let boundary_facet_count = dt.boundary_facets()?.try_fold(0_usize, |count, facet| {
         facet
