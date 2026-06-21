@@ -790,6 +790,10 @@ mod tests {
         neighbors[D] = Some(negative_simplex_key);
         tds.set_neighbors_by_key(positive_simplex_key, &neighbors)
             .unwrap();
+        let mut neighbors = vec![None; D + 1];
+        neighbors[D] = Some(positive_simplex_key);
+        tds.set_neighbors_by_key(negative_simplex_key, &neighbors)
+            .unwrap();
 
         Triangulation::new_with_tds(FastKernel::new(), tds)
     }
