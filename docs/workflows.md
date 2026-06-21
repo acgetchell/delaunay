@@ -327,21 +327,23 @@ fn main() -> DelaunayResult<()> {
     let Some((key, _)) = dt.vertices().next() else {
         return Ok(());
     };
-    let prev = dt.set_vertex_data(key, Some(99));
+    let prev = dt.set_vertex_data(key, Some(99))?;
     assert!(prev.is_some()); // returns the old Option<U>
 
     // Simplex data works the same way
     let Some((simplex_key, _)) = dt.simplices().next() else {
         return Ok(());
     };
-    dt.set_simplex_data(simplex_key, Some(42));
+    dt.set_simplex_data(simplex_key, Some(42))?;
     assert_eq!(dt.tds().simplex(simplex_key).map(|s| s.data()), Some(Some(&42)));
     Ok(())
 }
 ```
 
-`set_vertex_data` and `set_simplex_data` are safe O(1) operations — they modify only the
-user-data field and do not invalidate geometry, topology, or Delaunay invariants.
+`set_vertex_data` and `set_simplex_data` are checked O(1) operations — they modify only the
+user-data field, return the previous payload on success, and fail with a typed mutation error
+if the supplied key no longer exists. Successful calls do not invalidate geometry, topology, or
+Delaunay invariants.
 
 For algorithm-local state keyed by existing vertices or simplices, prefer the
 caller-owned secondary-map aliases instead of mutating stored user data:

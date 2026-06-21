@@ -152,8 +152,9 @@ for topology guarantee and validation policy details.
   Delaunay repair or orientation canonicalization fails, the triangulation and
   internal caches are restored to their pre-removal state.
 - **Auxiliary data**: Vertices and simplices carry optional user data (`U` / `V`). Read via `vertex.data()` /
-  `simplex.data()`, write via `dt.set_vertex_data(key, data)` / `dt.set_simplex_data(key, data)` (O(1),
-  invariant-preserving). See [`workflows.md`](workflows.md) for examples.
+  `simplex.data()`, write via checked `dt.set_vertex_data(key, data)?` /
+  `dt.set_simplex_data(key, data)?` calls (O(1), invariant-preserving, typed failure for stale keys).
+  See [`workflows.md`](workflows.md) for examples.
 - **Error handling**: Operations fail gracefully if they would violate invariants (see
   [`invariants.md`](invariants.md)). Mutating operations that invoke repair use
   typed repair diagnostics where available, for example
@@ -382,6 +383,52 @@ let report = dt.validation_report();
   and `core::algorithms::incremental_insertion`
 - **Edit API**: Implemented in `delaunay::flips` (public trait) and `core::algorithms::flips` (internal implementation)
 - **Low-level primitives**: Context builders and flip application functions are `pub(crate)` in `core::algorithms::flips`
+
+### Borrowed Views, Handles, Snapshots, And Rollback State
+
+Topology APIs use names to make ownership visible:
+
+- `*View` values borrow the canonical owner or are lifetime-bound to it, so they
+  cannot outlive the storage they observe. Examples include `FacetView<'tds>`,
+  `IncidenceView<'tds>`, `EdgeIndex<'tds>`, `SimplexNeighborIndex<'tds>`, and
+  `TriangulationAdjacency<'tds>`.
+- Borrowed slices over canonical storage follow the same rule. For example,
+  `Tds::simplex_vertices(simplex_key)` validates the key relation, then returns
+  the simplex's stored `&[VertexKey]` instead of copying detached keys into a
+  buffer.
+- `*Handle` and `*Key` values are detached, copyable runtime references. They
+  may be queued, stored, or returned from snapshots, but callers must validate
+  them against a live owner before reading through them. Examples include
+  `VertexKey`, `SimplexKey`, `FacetHandle`, `RidgeHandle`, `EdgeKey`, and
+  `TriangleHandle`.
+- Owned snapshots are allowed only when the data must cross a persistence,
+  detached-analysis, or cache boundary. `TdsSnapshot`/`RawTdsSnapshot` are the
+  durable UUID persistence boundary. `ConvexHull` is a logically immutable hull
+  snapshot that stores `FacetHandle`s, while `ConvexHull::facets(triangulation)`
+  returns borrowed `FacetView` values and `ConvexHull::facet_handles()` exposes
+  the detached handles explicitly.
+- Transactional rollback state may own cloned topology or exact mutation
+  records while an operation is in flight. `Tds::clone_for_rollback`,
+  `Tds::clone_from_for_rollback`, `SimplexIncidenceRemoval`, and flip trial
+  workspaces are rollback state, not long-lived public views. Replacing
+  full-TDS clone rollback with a journaled or localized design remains tracked
+  by #364.
+
+Runtime generation or identity checks remain appropriate for detached handles,
+owned snapshots, serialization boundaries, persistent performance caches, and
+tests that intentionally construct inconsistent topology. They should not be
+used as a substitute for lifetimes when a value is truly a view over live
+canonical storage.
+
+Algorithms follow the same phase split. Read-only traversal, classification,
+and validation should work through borrowed views or lifetime-bound indexes
+where practical. Mutating topology APIs should take `&mut Tds`/`&mut
+Triangulation` directly, or execute behind a transaction guard that holds that
+mutable borrow for the mutation or rollback window. Handles and keys may appear
+inside that guard as short-lived, validated commit identifiers; they are not
+proof that topology still exists by themselves. Keep views in lexical scopes
+that end before the mutation so Rust enforces both existence and mutable versus
+immutable access.
 
 ### Design Rationale
 

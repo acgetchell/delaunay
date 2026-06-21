@@ -12,7 +12,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::tds::{SimplexKey, Tds, VertexKey};
+use crate::core::tds::{SimplexKey, Tds, TdsMutationError, VertexKey};
 use crate::core::validation::{TopologyGuarantee, ValidationPolicy};
 use crate::geometry::kernel::Kernel;
 use crate::topology::traits::topological_space::GlobalTopology;
@@ -94,15 +94,19 @@ where
         }
     }
 
-    /// Sets the auxiliary data on a returning the previous value.
+    /// Sets the auxiliary data on a vertex, returning the previous value.
     ///
     /// Delegates to [`Tds::set_vertex_data`]. This is a safe O(1) operation
     /// that does not affect geometry, topology, or Delaunay invariants.
     ///
     /// # Returns
     ///
-    /// `None` if the key is not found. `Some(previous)` where `previous` is
-    /// the old `Option<U>` value if the key exists.
+    /// The old `Option<U>` value when the key exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TdsMutationError`] if `key` does not identify a vertex in the
+    /// underlying TDS.
     ///
     /// # Examples
     ///
@@ -119,6 +123,8 @@ where
     /// #     MissingVertex,
     /// #     #[error(transparent)]
     /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// #     #[error(transparent)]
+    /// #     TdsMutation(#[from] delaunay::prelude::tds::TdsMutationError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices: [Vertex<i32, 2>; 3] = [
@@ -128,19 +134,23 @@ where
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let key = dt.vertices().next().ok_or(ExampleError::MissingVertex)?.0;
-    /// let prev = dt.set_vertex_data(key, Some(99));
+    /// let prev = dt.set_vertex_data(key, Some(99))?;
     /// assert!(prev.is_some());
     ///
     /// // Clear data
-    /// let prev = dt.set_vertex_data(key, None);
-    /// assert_eq!(prev, Some(Some(99)));
+    /// let prev = dt.set_vertex_data(key, None)?;
+    /// assert_eq!(prev, Some(99));
     /// let vertex = dt.tds().vertex(key).ok_or(ExampleError::MissingVertex)?;
     /// assert_eq!(vertex.data(), None);
     /// # Ok(())
     /// # }
     /// ```
     #[inline]
-    pub fn set_vertex_data(&mut self, key: VertexKey, data: Option<U>) -> Option<Option<U>> {
+    pub fn set_vertex_data(
+        &mut self,
+        key: VertexKey,
+        data: Option<U>,
+    ) -> Result<Option<U>, TdsMutationError> {
         self.tds.set_vertex_data(key, data)
     }
 
@@ -151,8 +161,12 @@ where
     ///
     /// # Returns
     ///
-    /// `None` if the key is not found. `Some(previous)` where `previous` is
-    /// the old `Option<V>` value if the key exists.
+    /// The old `Option<V>` value when the key exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TdsMutationError`] if `key` does not identify a simplex in
+    /// the underlying TDS.
     ///
     /// # Examples
     ///
@@ -169,6 +183,8 @@ where
     /// #     MissingSimplex,
     /// #     #[error(transparent)]
     /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// #     #[error(transparent)]
+    /// #     TdsMutation(#[from] delaunay::prelude::tds::TdsMutationError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
@@ -178,19 +194,23 @@ where
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<i32>()?;
     /// let key = dt.simplices().next().ok_or(ExampleError::MissingSimplex)?.0;
-    /// let prev = dt.set_simplex_data(key, Some(42));
-    /// assert_eq!(prev, Some(None));
+    /// let prev = dt.set_simplex_data(key, Some(42))?;
+    /// assert_eq!(prev, None);
     ///
     /// // Clear data
-    /// let prev = dt.set_simplex_data(key, None);
-    /// assert_eq!(prev, Some(Some(42)));
+    /// let prev = dt.set_simplex_data(key, None)?;
+    /// assert_eq!(prev, Some(42));
     /// let simplex = dt.tds().simplex(key).ok_or(ExampleError::MissingSimplex)?;
     /// assert_eq!(simplex.data(), None);
     /// # Ok(())
     /// # }
     /// ```
     #[inline]
-    pub fn set_simplex_data(&mut self, key: SimplexKey, data: Option<V>) -> Option<Option<V>> {
+    pub fn set_simplex_data(
+        &mut self,
+        key: SimplexKey,
+        data: Option<V>,
+    ) -> Result<Option<V>, TdsMutationError> {
         self.tds.set_simplex_data(key, data)
     }
 }
@@ -198,8 +218,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::tds::TdsError;
     use crate::geometry::kernel::FastKernel;
     use slotmap::KeyData;
+    use std::assert_matches;
 
     #[test]
     fn new_empty_sets_default_topology_and_validation_policy() {
@@ -217,22 +239,24 @@ mod tests {
     }
 
     #[test]
-    fn set_vertex_data_returns_none_for_invalid_key() {
+    fn set_vertex_data_returns_error_for_invalid_key() {
         let mut tri: Triangulation<FastKernel<f64>, i32, (), 2> =
             Triangulation::new_empty(FastKernel::new());
         let stale = VertexKey::from(KeyData::from_ffi(0xDEAD_BEEF));
 
-        assert_eq!(tri.set_vertex_data(stale, Some(42)), None);
+        let err = tri.set_vertex_data(stale, Some(42)).unwrap_err();
+        assert_matches!(err.as_tds_error(), TdsError::VertexNotFound { .. });
         assert_eq!(tri.tds.number_of_vertices(), 0);
     }
 
     #[test]
-    fn set_simplex_data_returns_none_for_invalid_key() {
+    fn set_simplex_data_returns_error_for_invalid_key() {
         let mut tri: Triangulation<FastKernel<f64>, (), i32, 2> =
             Triangulation::new_empty(FastKernel::new());
         let stale = SimplexKey::from(KeyData::from_ffi(0xDEAD_BEEF));
 
-        assert_eq!(tri.set_simplex_data(stale, Some(42)), None);
+        let err = tri.set_simplex_data(stale, Some(42)).unwrap_err();
+        assert_matches!(err.as_tds_error(), TdsError::SimplexNotFound { .. });
         assert_eq!(tri.tds.number_of_simplices(), 0);
     }
 }

@@ -327,7 +327,7 @@
 
 use crate::core::collections::{
     MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeySet, SmallBuffer, StorageMap, UuidToSimplexKeyMap,
-    UuidToVertexKeyMap, VertexKeyBuffer,
+    UuidToVertexKeyMap,
 };
 use crate::core::tds::errors::{NeighborValidationError, TdsError, TriangulationConstructionState};
 use crate::core::tds::incidence::VertexIncidenceIndex;
@@ -771,7 +771,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                 simplex_key,
                 context: format!("deriving facet key for index {facet_index}"),
             })?;
-        Self::periodic_facet_key_from_simplex_vertices(simplex, &vertices, facet_index)
+        Self::periodic_facet_key_from_simplex_vertices(simplex, vertices, facet_index)
     }
 
     /// Returns an iterator over all simplices in the triangulation.
@@ -1566,16 +1566,17 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 impl<U, V, const D: usize> Tds<U, V, D> {}
 
 impl<U, V, const D: usize> Tds<U, V, D> {
-    /// Gets validated vertex keys for a simplex.
+    /// Returns a validated borrowed view of a simplex's vertex keys.
     ///
-    /// This performs O(D) validation and copying of the requested simplex's
-    /// vertex keys into a stack-friendly buffer.
+    /// This performs O(D) validation of the requested simplex's vertex keys and
+    /// returns the canonical slice stored by the simplex. The returned view is
+    /// borrowed from this TDS, so it cannot outlive the storage it observes.
     ///
     /// This method provides:
     /// - O(1) simplex lookup via storage map key
     /// - O(D) validation that all vertex keys exist in the triangulation
     /// - Direct key access without UUID→key lookups
-    /// - Stack-allocated buffer for D ≤ 7 to avoid heap allocation
+    /// - Zero allocation on success
     ///
     /// # Arguments
     ///
@@ -1583,19 +1584,19 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// # Returns
     ///
-    /// A `Result` containing a `VertexKeyBuffer` if the simplex exists and all vertices are valid,
-    /// or a `TdsError` if the simplex doesn't exist or vertices are missing.
+    /// A borrowed [`VertexKey`] slice if the [`SimplexKey`] exists and all
+    /// referenced vertices are valid.
     ///
     /// # Errors
     ///
-    /// Returns a `TdsError` if:
+    /// Returns [`TdsError`] if:
     /// - The simplex with the given key doesn't exist
     /// - A vertex key from the simplex doesn't exist in the vertex storage (TDS corruption)
     ///
     /// # Performance
     ///
     /// This uses direct storage map access with O(1) key lookup for the simplex and O(D)
-    /// validation for vertex keys. Uses stack-allocated buffer for D ≤ 7 to avoid heap
+    /// validation for vertex keys. It returns the stored slice directly and performs no
     /// allocation in the hot path.
     ///
     /// # Examples
@@ -1632,7 +1633,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # }
     /// ```
     #[inline]
-    pub fn simplex_vertices(&self, simplex_key: SimplexKey) -> Result<VertexKeyBuffer, TdsError> {
+    pub fn simplex_vertices(&self, simplex_key: SimplexKey) -> Result<&[VertexKey], TdsError> {
         let simplex = self
             .simplices
             .get(simplex_key)
@@ -1641,9 +1642,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                 context: "simplex_vertices lookup".to_string(),
             })?;
 
-        // Validate and collect keys in one pass to avoid redundant iteration.
+        // Validate keys in one pass before lending the canonical slice.
         let simplex_vertices = simplex.vertices();
-        let mut keys = VertexKeyBuffer::with_capacity(simplex_vertices.len());
         for (idx, &vertex_key) in simplex_vertices.iter().enumerate() {
             if !self.vertices.contains_key(vertex_key) {
                 return Err(TdsError::VertexNotFound {
@@ -1654,9 +1654,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                     ),
                 });
             }
-            keys.push(vertex_key);
         }
-        Ok(keys)
+        Ok(simplex_vertices)
     }
 
     /// Helper function to get a simplex key from a simplex UUID using the optimized UUID→Key mapping.

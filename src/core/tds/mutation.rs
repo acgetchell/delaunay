@@ -224,7 +224,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 
             for i in 0..vertices.len() {
                 let facet_key =
-                    Self::periodic_facet_key_from_simplex_vertices(simplex, &vertices, i)?;
+                    Self::periodic_facet_key_from_simplex_vertices(simplex, vertices, i)?;
                 let facet_entry = facet_map.entry(facet_key).or_default();
                 // Detect degenerate case early: more than 2 simplices sharing a facet
                 // Note: Check happens before push, so len() reflects current sharing count
@@ -542,7 +542,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         for (existing_simplex_key, _existing_simplex) in &self.simplices {
             let vertices = self.simplex_vertices(existing_simplex_key)?;
             let existing_identity =
-                self.build_periodic_vertex_uuid_offsets(existing_simplex_key, &vertices)?;
+                self.build_periodic_vertex_uuid_offsets(existing_simplex_key, vertices)?;
 
             if existing_identity == candidate_identity {
                 return Err(TdsError::DuplicateSimplices {
@@ -573,7 +573,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                 for existing_facet_idx in 0..existing_vertices.len() {
                     let existing_facet_key = Self::periodic_facet_key_from_simplex_vertices(
                         existing_simplex,
-                        &existing_vertices,
+                        existing_vertices,
                         existing_facet_idx,
                     )?;
                     if existing_facet_key == candidate_facet_key {
@@ -623,7 +623,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         self.insert_simplex_with_mapping_impl(simplex, SimplexInsertionTopologyCheck::Prechecked)
     }
 
-    /// Sets the auxiliary data on a returning the previous value.
+    /// Sets the auxiliary data on a vertex, returning the previous value.
     ///
     /// This is a safe O(1) operation that modifies only the user-data field.
     /// It does not affect geometry, topology, or Delaunay invariants.
@@ -635,8 +635,13 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// # Returns
     ///
-    /// `None` if the key is not found. `Some(previous)` where `previous` is
-    /// the old `Option<U>` value if the key exists.
+    /// The old `Option<U>` value when the key exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TdsMutationError`] if `key` does not identify a vertex in this
+    /// TDS. Detached keys are validated at the mutation boundary so stale
+    /// handles cannot be mistaken for an existing vertex with no payload.
     ///
     /// # Examples
     ///
@@ -669,8 +674,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// };
     ///
     /// // Replace existing data
-    /// let prev = tds.set_vertex_data(key, Some(99));
-    /// assert!(prev.is_some()); // key was found
+    /// let prev = tds.set_vertex_data(key, Some(99))?;
+    /// assert!(prev.is_some());
     ///
     /// // Verify new value
     /// let Some(vertex) = tds.vertex(key) else {
@@ -679,18 +684,27 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// assert_eq!(vertex.data(), Some(&99));
     ///
     /// // Clear data
-    /// let prev = tds.set_vertex_data(key, None);
-    /// assert_eq!(prev, Some(Some(99)));
+    /// let prev = tds.set_vertex_data(key, None)?;
+    /// assert_eq!(prev, Some(99));
     /// assert_eq!(tds.vertex(key).and_then(|vertex| vertex.data()), None);
     /// # Ok(())
     /// # }
     /// ```
     #[inline]
-    pub fn set_vertex_data(&mut self, key: VertexKey, data: Option<U>) -> Option<Option<U>> {
-        let vertex = self.vertices.get_mut(key)?;
+    pub fn set_vertex_data(
+        &mut self,
+        key: VertexKey,
+        data: Option<U>,
+    ) -> Result<Option<U>, TdsMutationError> {
+        let vertex = self.vertices.get_mut(key).ok_or_else(|| {
+            TdsMutationError::from(TdsError::VertexNotFound {
+                vertex_key: key,
+                context: "set_vertex_data".to_string(),
+            })
+        })?;
         let previous = vertex.data.take();
         vertex.data = data;
-        Some(previous)
+        Ok(previous)
     }
 
     /// Sets the auxiliary data on a simplex, returning the previous value.
@@ -705,8 +719,13 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// # Returns
     ///
-    /// `None` if the key is not found. `Some(previous)` where `previous` is
-    /// the old `Option<V>` value if the key exists.
+    /// The old `Option<V>` value when the key exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TdsMutationError`] if `key` does not identify a simplex in
+    /// this TDS. Detached keys are validated at the mutation boundary so stale
+    /// handles cannot be mistaken for an existing simplex with no payload.
     ///
     /// # Examples
     ///
@@ -739,8 +758,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// };
     ///
     /// // Set data on a simplex that had no data
-    /// let prev = tds.set_simplex_data(key, Some(42));
-    /// assert_eq!(prev, Some(None)); // key found, previous was None
+    /// let prev = tds.set_simplex_data(key, Some(42))?;
+    /// assert_eq!(prev, None);
     ///
     /// // Verify new value
     /// let Some(simplex) = tds.simplex(key) else {
@@ -749,18 +768,27 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// assert_eq!(simplex.data(), Some(&42));
     ///
     /// // Clear data
-    /// let prev = tds.set_simplex_data(key, None);
-    /// assert_eq!(prev, Some(Some(42)));
+    /// let prev = tds.set_simplex_data(key, None)?;
+    /// assert_eq!(prev, Some(42));
     /// assert_eq!(tds.simplex(key).and_then(|simplex| simplex.data()), None);
     /// # Ok(())
     /// # }
     /// ```
     #[inline]
-    pub fn set_simplex_data(&mut self, key: SimplexKey, data: Option<V>) -> Option<Option<V>> {
-        let simplex = self.simplices.get_mut(key)?;
+    pub fn set_simplex_data(
+        &mut self,
+        key: SimplexKey,
+        data: Option<V>,
+    ) -> Result<Option<V>, TdsMutationError> {
+        let simplex = self.simplices.get_mut(key).ok_or_else(|| {
+            TdsMutationError::from(TdsError::SimplexNotFound {
+                simplex_key: key,
+                context: "set_simplex_data".to_string(),
+            })
+        })?;
         let previous = simplex.data.take();
         simplex.data = data;
-        Some(previous)
+        Ok(previous)
     }
 
     /// Removes multiple simplices by their keys in a batch operation.
@@ -2109,7 +2137,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         for simplex_key in self.simplices.keys() {
             let vertices = self.simplex_vertices(simplex_key)?;
             let vertex_uuid_offsets =
-                self.build_periodic_vertex_uuid_offsets(simplex_key, &vertices)?;
+                self.build_periodic_vertex_uuid_offsets(simplex_key, vertices)?;
 
             match unique_simplices.entry(vertex_uuid_offsets) {
                 Entry::Occupied(_) => {
@@ -4157,9 +4185,9 @@ mod tests {
     #[test]
     fn test_set_vertex_data_replaces_existing() {
         let vertices: [Vertex<i32, 2>; 3] = [
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 10i32).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0], 20).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0], 30).unwrap(),
+            Vertex::<_, _>::try_new_with_data([0.0, 0.0], 10i32).unwrap(),
+            Vertex::<_, _>::try_new_with_data([1.0, 0.0], 20).unwrap(),
+            Vertex::<_, _>::try_new_with_data([0.0, 1.0], 30).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<()>()
@@ -4167,8 +4195,8 @@ mod tests {
         let mut tds = dt.tds().clone();
         let key = tds.vertex_keys().next().unwrap();
 
-        let prev = tds.set_vertex_data(key, Some(99));
-        assert!(prev.unwrap().is_some()); // had data before
+        let prev = tds.set_vertex_data(key, Some(99)).unwrap();
+        assert!(prev.is_some()); // had data before
         assert_eq!(tds.vertex(key).unwrap().data, Some(99));
     }
 
@@ -4176,33 +4204,34 @@ mod tests {
     fn test_set_vertex_data_on_no_data_vertex() {
         // Vertices without data have U = (), so set_vertex_data sets ().
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let mut tds = dt.tds().clone();
         let key = tds.vertex_keys().next().unwrap();
 
-        let prev = tds.set_vertex_data(key, Some(()));
+        let prev = tds.set_vertex_data(key, Some(())).unwrap();
         // Vertices constructed without explicit data have data = None
-        assert_eq!(prev, Some(None));
+        assert_eq!(prev, None);
         assert_eq!(tds.vertex(key).unwrap().data, Some(()));
     }
 
     #[test]
-    fn test_set_vertex_data_invalid_key_returns_none() {
+    fn test_set_vertex_data_invalid_key_returns_error() {
         let mut tds: Tds<i32, (), 2> = Tds::empty();
         let stale = VertexKey::from(KeyData::from_ffi(0xDEAD));
-        assert!(tds.set_vertex_data(stale, Some(1)).is_none());
+        let err = tds.set_vertex_data(stale, Some(1)).unwrap_err();
+        assert_matches!(err.as_tds_error(), TdsError::VertexNotFound { .. });
     }
 
     #[test]
     fn test_set_simplex_data_on_empty_simplex() {
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<i32>()
@@ -4210,17 +4239,17 @@ mod tests {
         let mut tds = dt.tds().clone();
         let key = tds.simplex_keys().next().unwrap();
 
-        let prev = tds.set_simplex_data(key, Some(42));
-        assert_eq!(prev, Some(None)); // key found, no previous data
+        let prev = tds.set_simplex_data(key, Some(42)).unwrap();
+        assert_eq!(prev, None); // key found, no previous data
         assert_eq!(tds.simplex(key).unwrap().data, Some(42));
     }
 
     #[test]
     fn test_set_simplex_data_replaces_existing() {
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<i32>()
@@ -4228,25 +4257,26 @@ mod tests {
         let mut tds = dt.tds().clone();
         let key = tds.simplex_keys().next().unwrap();
 
-        tds.set_simplex_data(key, Some(1));
-        let prev = tds.set_simplex_data(key, Some(2));
-        assert_eq!(prev, Some(Some(1)));
+        tds.set_simplex_data(key, Some(1)).unwrap();
+        let prev = tds.set_simplex_data(key, Some(2)).unwrap();
+        assert_eq!(prev, Some(1));
         assert_eq!(tds.simplex(key).unwrap().data, Some(2));
     }
 
     #[test]
-    fn test_set_simplex_data_invalid_key_returns_none() {
+    fn test_set_simplex_data_invalid_key_returns_error() {
         let mut tds: Tds<(), i32, 2> = Tds::empty();
         let stale = SimplexKey::from(KeyData::from_ffi(0xDEAD));
-        assert!(tds.set_simplex_data(stale, Some(1)).is_none());
+        let err = tds.set_simplex_data(stale, Some(1)).unwrap_err();
+        assert_matches!(err.as_tds_error(), TdsError::SimplexNotFound { .. });
     }
 
     #[test]
     fn test_set_vertex_data_preserves_triangulation_validity() {
         let vertices: [Vertex<i32, 2>; 3] = [
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 1i32).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0], 2).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0], 3).unwrap(),
+            Vertex::<_, _>::try_new_with_data([0.0, 0.0], 1i32).unwrap(),
+            Vertex::<_, _>::try_new_with_data([1.0, 0.0], 2).unwrap(),
+            Vertex::<_, _>::try_new_with_data([0.0, 1.0], 3).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<()>()
@@ -4255,7 +4285,7 @@ mod tests {
         // Mutate every vertex's data through the DT wrapper.
         let keys: Vec<_> = dt.vertices().map(|(k, _)| k).collect();
         for (key, i) in keys.iter().zip(0i32..) {
-            dt.set_vertex_data(*key, Some(i * 100));
+            dt.set_vertex_data(*key, Some(i * 100)).unwrap();
         }
 
         // Triangulation must remain fully valid.
@@ -4271,10 +4301,10 @@ mod tests {
     #[test]
     fn test_set_simplex_data_preserves_triangulation_validity() {
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.5, 0.5]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.5, 1.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.5, 0.5]).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<i32>()
@@ -4284,7 +4314,7 @@ mod tests {
         // Mutate every simplex's data through the DT wrapper.
         let keys: Vec<_> = dt.simplices().map(|(k, _)| k).collect();
         for (key, i) in keys.iter().zip(0i32..) {
-            dt.set_simplex_data(*key, Some(i));
+            dt.set_simplex_data(*key, Some(i)).unwrap();
         }
 
         // Triangulation must remain fully valid.
@@ -4300,9 +4330,9 @@ mod tests {
     #[test]
     fn test_set_vertex_data_via_delaunay_wrapper() {
         let vertices: [Vertex<i32, 2>; 3] = [
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 10i32).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0], 20).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0], 30).unwrap(),
+            Vertex::<_, _>::try_new_with_data([0.0, 0.0], 10i32).unwrap(),
+            Vertex::<_, _>::try_new_with_data([1.0, 0.0], 20).unwrap(),
+            Vertex::<_, _>::try_new_with_data([0.0, 1.0], 30).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<()>()
@@ -4310,22 +4340,47 @@ mod tests {
         let key = dt.vertices().next().unwrap().0;
 
         // Set via Delaunay wrapper
-        let prev = dt.set_vertex_data(key, Some(99));
-        assert!(prev.unwrap().is_some());
+        let prev = dt.set_vertex_data(key, Some(99)).unwrap();
+        assert!(prev.is_some());
         assert_eq!(dt.tds().vertex(key).unwrap().data, Some(99));
 
         // Clear via Delaunay wrapper
-        let prev = dt.set_vertex_data(key, None);
-        assert_eq!(prev, Some(Some(99)));
+        let prev = dt.set_vertex_data(key, None).unwrap();
+        assert_eq!(prev, Some(99));
         assert_eq!(dt.tds().vertex(key).unwrap().data, None);
+    }
+
+    #[test]
+    fn test_set_vertex_data_via_delaunay_wrapper_invalid_key_returns_error() {
+        let vertices: [Vertex<i32, 2>; 3] = [
+            Vertex::<_, _>::try_new_with_data([0.0, 0.0], 10i32).unwrap(),
+            Vertex::<_, _>::try_new_with_data([1.0, 0.0], 20).unwrap(),
+            Vertex::<_, _>::try_new_with_data([0.0, 1.0], 30).unwrap(),
+        ];
+        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+            .build::<()>()
+            .unwrap();
+        let live_key = dt.vertices().next().unwrap().0;
+        let stale = VertexKey::from(KeyData::from_ffi(0xFEED));
+
+        let err = dt.set_vertex_data(stale, Some(99)).unwrap_err();
+
+        assert_matches!(
+            err.as_tds_error(),
+            TdsError::VertexNotFound {
+                vertex_key,
+                ..
+            } if *vertex_key == stale
+        );
+        assert_eq!(dt.tds().vertex(live_key).unwrap().data, Some(10));
     }
 
     #[test]
     fn test_set_simplex_data_via_delaunay_wrapper() {
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<i32>()
@@ -4333,35 +4388,59 @@ mod tests {
         let key = dt.simplices().next().unwrap().0;
 
         // Set via Delaunay wrapper
-        let prev = dt.set_simplex_data(key, Some(42));
-        assert_eq!(prev, Some(None));
+        let prev = dt.set_simplex_data(key, Some(42)).unwrap();
+        assert_eq!(prev, None);
         assert_eq!(dt.tds().simplex(key).unwrap().data, Some(42));
 
         // Clear via Delaunay wrapper
-        let prev = dt.set_simplex_data(key, None);
-        assert_eq!(prev, Some(Some(42)));
+        let prev = dt.set_simplex_data(key, None).unwrap();
+        assert_eq!(prev, Some(42));
         assert_eq!(dt.tds().simplex(key).unwrap().data, None);
+    }
+
+    #[test]
+    fn test_set_simplex_data_via_delaunay_wrapper_invalid_key_returns_error() {
+        let vertices = [
+            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        ];
+        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+            .build::<i32>()
+            .unwrap();
+        let live_key = dt.simplices().next().unwrap().0;
+        let stale = SimplexKey::from(KeyData::from_ffi(0xFEED));
+
+        let err = dt.set_simplex_data(stale, Some(42)).unwrap_err();
+
+        assert_matches!(
+            err.as_tds_error(),
+            TdsError::SimplexNotFound {
+                simplex_key,
+                ..
+            } if *simplex_key == stale
+        );
+        assert_eq!(dt.tds().simplex(live_key).unwrap().data, None);
     }
 
     #[test]
     fn test_set_data_via_dt_does_not_invalidate_locate_hint() {
         let vertices: [Vertex<i32, 2>; 3] = [
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 0i32).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0], 0).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0], 0).unwrap(),
+            Vertex::<_, _>::try_new_with_data([0.0, 0.0], 0i32).unwrap(),
+            Vertex::<_, _>::try_new_with_data([1.0, 0.0], 0).unwrap(),
+            Vertex::<_, _>::try_new_with_data([0.0, 1.0], 0).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<()>()
             .unwrap();
 
         // Insert a new vertex so the locate hint is populated.
-        let extra =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.25, 0.25], 0i32).unwrap();
+        let extra = Vertex::<_, _>::try_new_with_data([0.25, 0.25], 0i32).unwrap();
         dt.insert(extra).unwrap();
 
         // Data mutation should NOT clear the insertion hint.
         let key = dt.vertices().next().unwrap().0;
-        let prev = dt.set_vertex_data(key, Some(999));
+        let prev = dt.set_vertex_data(key, Some(999)).unwrap();
         assert!(prev.is_some(), "set_vertex_data should find the key");
         assert_eq!(
             dt.tds().vertex(key).unwrap().data,
@@ -4370,8 +4449,7 @@ mod tests {
         );
 
         // A subsequent insert should still succeed (hint not invalidated).
-        let another =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.75, 0.1], 0i32).unwrap();
+        let another = Vertex::<_, _>::try_new_with_data([0.75, 0.1], 0i32).unwrap();
         assert!(dt.insert(another).is_ok());
         assert!(dt.validate().is_ok());
     }

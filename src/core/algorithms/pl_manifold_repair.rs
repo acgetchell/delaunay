@@ -676,8 +676,8 @@ mod tests {
 
         // Duplicate the first simplex → its facets go from degree 2 to degree 3.
         let simplex_key = tds.simplex_keys().next().unwrap();
-        let vkeys = tds.simplex_vertices(simplex_key).unwrap();
-        let dup_simplex = Simplex::try_new_with_data(vkeys.to_vec(), None).unwrap();
+        let vkeys = tds.simplex_vertices(simplex_key).unwrap().to_vec();
+        let dup_simplex = Simplex::try_new_with_data(vkeys, None).unwrap();
         tds.insert_simplex_bypassing_topology_checks_for_test(dup_simplex)
             .unwrap();
 
@@ -695,10 +695,10 @@ mod tests {
     fn make_multi_duplicate_overshared_tds() -> Tds<(), (), 3> {
         let mut tds = make_overshared_tds();
         let simplex_key = tds.simplex_keys().next().unwrap();
-        let vkeys = tds.simplex_vertices(simplex_key).unwrap();
+        let vkeys = tds.simplex_vertices(simplex_key).unwrap().to_vec();
 
         for _ in 0..5 {
-            let dup_simplex = Simplex::try_new_with_data(vkeys.to_vec(), None).unwrap();
+            let dup_simplex = Simplex::try_new_with_data(vkeys.clone(), None).unwrap();
             tds.insert_simplex_bypassing_topology_checks_for_test(dup_simplex)
                 .unwrap();
         }

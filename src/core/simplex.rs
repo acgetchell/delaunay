@@ -4398,7 +4398,7 @@ mod tests {
         assert_eq!(dt.tds().simplex(key).unwrap().data(), None);
 
         // Set data and verify via accessor
-        dt.set_simplex_data(key, Some(99));
+        dt.set_simplex_data(key, Some(99)).unwrap();
         assert_eq!(dt.tds().simplex(key).unwrap().data(), Some(&99));
     }
 }

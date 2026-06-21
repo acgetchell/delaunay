@@ -73,10 +73,10 @@ use crate::core::algorithms::pl_manifold_repair::{
 };
 use crate::core::collections::{Entry, FastHashMap, SimplexVertexUuidBuffer};
 use crate::core::simplex::Simplex;
-use crate::core::tds::{SimplexKey, Tds};
+use crate::core::tds::{SimplexKey, Tds, TdsMutationError};
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
-use crate::geometry::kernel::{ExactPredicates, Kernel};
+use crate::geometry::kernel::ExactPredicates;
 use crate::repair::DelaunayRepairHeuristicConfig;
 use crate::triangulation::DelaunayTriangulation;
 use thiserror::Error;
@@ -313,7 +313,7 @@ pub enum DelaunayizeError {
         #[source]
         source: PlManifoldRepairError,
         /// The simplex-data restoration error from the rebuilt triangulation.
-        restore_error: SimplexValidationError,
+        restore_error: SimplexDataRestoreError,
     },
 
     /// Delaunay flip repair failed; no fallback rebuild was attempted
@@ -360,7 +360,7 @@ pub enum DelaunayizeError {
         #[source]
         source: DelaunayRepairError,
         /// The simplex-data restoration error from the rebuilt triangulation.
-        restore_error: SimplexValidationError,
+        restore_error: SimplexDataRestoreError,
     },
 
     /// Fallback rebuild was enabled, but the pre-repair simplex-payload snapshot
@@ -379,6 +379,66 @@ pub enum DelaunayizeError {
 // HELPERS
 // =============================================================================
 
+/// Errors that can occur while restoring simplex payloads after a fallback rebuild.
+///
+/// Restoration first identifies rebuilt simplices by their sorted vertex UUID
+/// set, then commits payloads through checked TDS mutation APIs. These are
+/// separate failure modes so callers can distinguish corrupted simplex
+/// identity data from stale mutation handles.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::delaunayize::SimplexDataRestoreError;
+/// use delaunay::prelude::tds::{
+///     SimplexKey, TdsError, TdsMutationError, VertexKey, SimplexValidationError,
+/// };
+/// use slotmap::KeyData;
+///
+/// let identity_error = SimplexDataRestoreError::SimplexIdentity {
+///     source: SimplexValidationError::VertexKeyNotFound {
+///         key: VertexKey::from(KeyData::from_ffi(0xBAD)),
+///     },
+/// };
+/// std::assert_matches!(
+///     identity_error,
+///     SimplexDataRestoreError::SimplexIdentity { .. }
+/// );
+///
+/// let mutation_error = TdsMutationError::from(TdsError::SimplexNotFound {
+///     simplex_key: SimplexKey::from(KeyData::from_ffi(0xCAFE)),
+///     context: "restore simplex payload".to_string(),
+/// });
+/// let assignment_error = SimplexDataRestoreError::PayloadAssignment {
+///     source: mutation_error,
+/// };
+/// std::assert_matches!(
+///     assignment_error,
+///     SimplexDataRestoreError::PayloadAssignment { .. }
+/// );
+/// ```
+#[derive(Clone, Debug, Error, PartialEq)]
+#[non_exhaustive]
+pub enum SimplexDataRestoreError {
+    /// A rebuilt simplex could not resolve its vertex UUID identity.
+    #[error("rebuilt simplex identity lookup failed: {source}")]
+    SimplexIdentity {
+        /// The simplex validation failure encountered while reading vertex UUIDs.
+        #[from]
+        #[source]
+        source: SimplexValidationError,
+    },
+
+    /// A rebuilt simplex payload could not be assigned through the checked setter.
+    #[error("rebuilt simplex payload assignment failed: {source}")]
+    PayloadAssignment {
+        /// The TDS mutation failure encountered while assigning simplex data.
+        #[from]
+        #[source]
+        source: TdsMutationError,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum SimplexDataMatch<V> {
     Unique(Option<V>),
@@ -394,8 +454,8 @@ fn snapshot_rebuild_state<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
 ) -> Result<FallbackRebuildState<U, V, D>, SimplexValidationError>
 where
-    U: DataType,
-    V: DataType,
+    U: Copy,
+    V: Copy,
 {
     let vertices = tds
         .vertices()
@@ -411,8 +471,7 @@ fn collect_simplex_data<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
 ) -> Result<SimplexDataByVertexUuids<V>, SimplexValidationError>
 where
-    U: DataType,
-    V: DataType,
+    V: Copy,
 {
     let mut simplex_data = FastHashMap::default();
     for (_, simplex) in tds.simplices() {
@@ -434,11 +493,7 @@ where
 fn simplex_vertex_uuids<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     simplex: &Simplex<V, D>,
-) -> Result<SimplexVertexUuidBuffer, SimplexValidationError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<SimplexVertexUuidBuffer, SimplexValidationError> {
     let mut vertex_uuids = simplex
         .vertex_uuid_iter(tds)
         .collect::<Result<SimplexVertexUuidBuffer, SimplexValidationError>>()?;
@@ -451,11 +506,9 @@ where
 fn restore_simplex_data<K, U, V, const D: usize>(
     rebuilt: &mut DelaunayTriangulation<K, U, V, D>,
     original_simplex_data: &SimplexDataByVertexUuids<V>,
-) -> Result<(), SimplexValidationError>
+) -> Result<(), SimplexDataRestoreError>
 where
-    K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
+    V: Copy,
 {
     let mut assignments: Vec<(SimplexKey, V)> = Vec::new();
     for (simplex_key, simplex) in rebuilt.simplices() {
@@ -468,7 +521,7 @@ where
     }
 
     for (simplex_key, data) in assignments {
-        rebuilt.set_simplex_data(simplex_key, Some(data));
+        rebuilt.set_simplex_data(simplex_key, Some(data))?;
     }
 
     Ok(())
@@ -486,7 +539,7 @@ enum FallbackRebuildError {
     Restore {
         #[from]
         #[source]
-        source: SimplexValidationError,
+        source: SimplexDataRestoreError,
     },
 }
 
@@ -767,7 +820,7 @@ mod tests {
     use super::*;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::geometry::point::Point;
-    use crate::tds::VertexKey;
+    use crate::tds::{TdsError, VertexKey};
     use crate::try_vertices_from_points;
     use crate::{DelaunayTriangulationBuilder, TriangulationConstructionError};
     use slotmap::KeyData;
@@ -1078,8 +1131,10 @@ mod tests {
         let delaunay_source = DelaunayRepairError::PostconditionFailed {
             reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
         };
-        let restore_error = SimplexValidationError::VertexKeyNotFound {
-            key: VertexKey::from(KeyData::from_ffi(0xBAD)),
+        let restore_error = SimplexDataRestoreError::SimplexIdentity {
+            source: SimplexValidationError::VertexKeyNotFound {
+                key: VertexKey::from(KeyData::from_ffi(0xBAD)),
+            },
         };
 
         let topology_err = DelaunayizeError::TopologyRepairFailedWithRebuildRestore {
@@ -1112,6 +1167,27 @@ mod tests {
     }
 
     #[test]
+    fn test_payload_assignment_restore_error_source() {
+        let source = TdsMutationError::from(TdsError::SimplexNotFound {
+            simplex_key: SimplexKey::from(KeyData::from_ffi(0xCAFE)),
+            context: "restore simplex payload".to_string(),
+        });
+        let err = SimplexDataRestoreError::PayloadAssignment {
+            source: source.clone(),
+        };
+
+        assert_eq!(
+            err,
+            SimplexDataRestoreError::PayloadAssignment {
+                source: source.clone()
+            }
+        );
+        assert!(err.to_string().contains("payload assignment failed"));
+        let error_source = StdError::source(&err).unwrap();
+        assert_eq!(error_source.to_string(), source.to_string());
+    }
+
+    #[test]
     fn test_topology_rebuild_error_mapping() {
         let source = PlManifoldRepairError::NoProgress {
             over_shared_facets: 2,
@@ -1119,8 +1195,10 @@ mod tests {
             simplices_removed: 4,
         };
         let rebuild_error = construction_error();
-        let restore_error = SimplexValidationError::VertexKeyNotFound {
-            key: VertexKey::from(KeyData::from_ffi(0xBAD)),
+        let restore_error = SimplexDataRestoreError::SimplexIdentity {
+            source: SimplexValidationError::VertexKeyNotFound {
+                key: VertexKey::from(KeyData::from_ffi(0xBAD)),
+            },
         };
 
         let rebuild_err = topology_rebuild_error(
@@ -1168,8 +1246,10 @@ mod tests {
             reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
         };
         let rebuild_error = construction_error();
-        let restore_error = SimplexValidationError::VertexKeyNotFound {
-            key: VertexKey::from(KeyData::from_ffi(0xBAD)),
+        let restore_error = SimplexDataRestoreError::SimplexIdentity {
+            source: SimplexValidationError::VertexKeyNotFound {
+                key: VertexKey::from(KeyData::from_ffi(0xBAD)),
+            },
         };
 
         let rebuild_err = delaunay_rebuild_error(
@@ -1332,7 +1412,7 @@ mod tests {
             .build::<i32>()
             .unwrap();
         let original_simplex_key = dt.simplices().next().unwrap().0;
-        dt.set_simplex_data(original_simplex_key, Some(42));
+        dt.set_simplex_data(original_simplex_key, Some(42)).unwrap();
 
         let tds = &dt.as_triangulation().tds;
         let vertices: Vec<_> = tds

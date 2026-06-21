@@ -14,7 +14,7 @@ use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::query::QueryError;
 use crate::core::simplex::Simplex;
-use crate::core::tds::{SimplexKey, Tds, VertexKey};
+use crate::core::tds::{SimplexKey, Tds, TdsError, TdsMutationError, VertexKey};
 use crate::core::triangulation::Triangulation;
 use crate::core::validation::{TopologyGuarantee, ValidationConfigurationError, ValidationPolicy};
 use crate::core::vertex::Vertex;
@@ -220,7 +220,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
         self.tri.vertices()
     }
 
-    /// Sets the auxiliary data on a returning the previous value.
+    /// Sets the auxiliary data on a vertex, returning the previous value.
     ///
     /// This is a safe O(1) operation that modifies only the user-data field.
     /// It does not affect geometry, topology, or Delaunay invariants, so
@@ -228,8 +228,12 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///
     /// # Returns
     ///
-    /// `None` if the key is not found. `Some(previous)` where `previous` is
-    /// the old `Option<U>` value if the key exists.
+    /// The old `Option<U>` value when the key exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TdsMutationError`] if `key` does not identify a vertex in the
+    /// underlying TDS.
     ///
     /// # Examples
     ///
@@ -244,6 +248,8 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// #     #[error(transparent)]
+    /// #     TdsMutation(#[from] delaunay::prelude::tds::TdsMutationError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices: [Vertex<i32, 2>; 3] = [
@@ -256,18 +262,22 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     return Ok(());
     /// };
     ///
-    /// let prev = dt.set_vertex_data(key, Some(99));
+    /// let prev = dt.set_vertex_data(key, Some(99))?;
     /// assert!(prev.is_some());
     ///
     /// // Clear data
-    /// let prev = dt.set_vertex_data(key, None);
-    /// assert_eq!(prev, Some(Some(99)));
+    /// let prev = dt.set_vertex_data(key, None)?;
+    /// assert_eq!(prev, Some(99));
     /// assert_eq!(dt.tds().vertex(key).map(|v| v.data()), Some(None));
     /// # Ok(())
     /// # }
     /// ```
     #[inline]
-    pub fn set_vertex_data(&mut self, key: VertexKey, data: Option<U>) -> Option<Option<U>> {
+    pub fn set_vertex_data(
+        &mut self,
+        key: VertexKey,
+        data: Option<U>,
+    ) -> Result<Option<U>, TdsMutationError> {
         self.tri.tds.set_vertex_data(key, data)
     }
 
@@ -279,8 +289,12 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///
     /// # Returns
     ///
-    /// `None` if the key is not found. `Some(previous)` where `previous` is
-    /// the old `Option<V>` value if the key exists.
+    /// The old `Option<V>` value when the key exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TdsMutationError`] if `key` does not identify a simplex in
+    /// the underlying TDS.
     ///
     /// # Examples
     ///
@@ -293,6 +307,8 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// #     #[error(transparent)]
+    /// #     TdsMutation(#[from] delaunay::prelude::tds::TdsMutationError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
@@ -305,18 +321,22 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     return Ok(());
     /// };
     ///
-    /// let prev = dt.set_simplex_data(key, Some(42));
-    /// assert_eq!(prev, Some(None));
+    /// let prev = dt.set_simplex_data(key, Some(42))?;
+    /// assert_eq!(prev, None);
     ///
     /// // Clear data
-    /// let prev = dt.set_simplex_data(key, None);
-    /// assert_eq!(prev, Some(Some(42)));
+    /// let prev = dt.set_simplex_data(key, None)?;
+    /// assert_eq!(prev, Some(42));
     /// assert_eq!(dt.tds().simplex(key).map(|s| s.data()), Some(None));
     /// # Ok(())
     /// # }
     /// ```
     #[inline]
-    pub fn set_simplex_data(&mut self, key: SimplexKey, data: Option<V>) -> Option<Option<V>> {
+    pub fn set_simplex_data(
+        &mut self,
+        key: SimplexKey,
+        data: Option<V>,
+    ) -> Result<Option<V>, TdsMutationError> {
         self.tri.tds.set_simplex_data(key, data)
     }
 
@@ -482,7 +502,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///
     /// Returns [`QueryError::TriangulationCorrupted`] if facet-map construction
     /// detects invalid simplex or facet bookkeeping. The variant preserves the
-    /// lower-level [`TdsError`](crate::tds::TdsError) for diagnostics.
+    /// lower-level [`TdsError`] for diagnostics.
     /// Individual iterator items return [`FacetError`](crate::prelude::tds::FacetError)
     /// if a boundary facet cannot be created or keyed from the simplices.
     pub fn boundary_facets(&self) -> Result<BoundaryFacetsIter<'_, U, V, D>, QueryError> {
@@ -1171,10 +1191,16 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
 
     /// Returns a slice view of a simplex's vertex keys.
     ///
-    /// This is a zero-allocation accessor. If `c` is not present, returns `None`.
+    /// This is a zero-allocation accessor that validates the simplex key and
+    /// referenced vertex keys before lending the canonical slice.
     ///
     /// This is a convenience wrapper around
     /// [`Triangulation::simplex_vertices`](crate::Triangulation::simplex_vertices).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TdsError`] if `c` does not identify a simplex in this
+    /// triangulation, or if the simplex references a missing vertex key.
     ///
     /// # Examples
     ///
@@ -1186,6 +1212,8 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # enum ExampleError {
     /// #     #[error(transparent)]
     /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
     /// #     #[error(transparent)]
     /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
     /// # }
@@ -1200,15 +1228,12 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
-    /// let Some(simplex_vertices) = dt.simplex_vertices(simplex_key) else {
-    ///     return Ok(());
-    /// };
+    /// let simplex_vertices = dt.simplex_vertices(simplex_key)?;
     /// assert_eq!(simplex_vertices.len(), 3); // D+1 for a 2D simplex
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
-    pub fn simplex_vertices(&self, c: SimplexKey) -> Option<&[VertexKey]> {
+    pub fn simplex_vertices(&self, c: SimplexKey) -> Result<&[VertexKey], TdsError> {
         self.as_triangulation().simplex_vertices(c)
     }
 
@@ -1263,7 +1288,7 @@ mod tests {
     use crate::core::operations::DelaunayInsertionState;
     use crate::core::tds::TdsError;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
-    use std::{collections::HashSet, num::NonZeroUsize, sync::Once};
+    use std::{assert_matches, collections::HashSet, num::NonZeroUsize, sync::Once};
 
     struct Payload;
 
@@ -1773,6 +1798,9 @@ mod tests {
 
         // Missing keys should behave the same as on `Triangulation`.
         assert!(dt.vertex_coords(VertexKey::default()).is_none());
-        assert!(dt.simplex_vertices(SimplexKey::default()).is_none());
+        assert_matches!(
+            dt.simplex_vertices(SimplexKey::default()),
+            Err(TdsError::SimplexNotFound { .. })
+        );
     }
 }

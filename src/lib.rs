@@ -1803,7 +1803,7 @@ mod tests {
         prelude::delaunayize::{
             DelaunayTriangulationConstructionError, DelaunayizeConfig, DelaunayizeError,
             DelaunayizeOutcome, PlManifoldRepairError, PlManifoldRepairStats,
-            SimplexValidationError,
+            SimplexDataRestoreError, SimplexValidationError,
         },
         prelude::repair::{
             DelaunayCheckPolicy, DelaunayRepairError, DelaunayRepairOutcome, DelaunayRepairPolicy,
@@ -1840,6 +1840,7 @@ mod tests {
         assert!(is_normal::<DelaunayRepairStats>());
         assert!(is_normal::<PlManifoldRepairError>());
         assert!(is_normal::<PlManifoldRepairStats<(), (), 3>>());
+        assert!(is_normal::<SimplexDataRestoreError>());
         assert!(is_normal::<SimplexValidationError>());
         assert!(is_normal::<DelaunayError>());
         assert!(is_normal::<DelaunayTriangulationConstructionError>());
