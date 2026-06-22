@@ -18,6 +18,7 @@ Relevant modules (lexicographically sorted):
 ```text
 src/
 ├── core/
+│   ├── facet_incidence.rs
 │   ├── query.rs
 │   ├── triangulation.rs
 │   └── validation.rs
@@ -32,6 +33,7 @@ src/
 │   │   ├── euler.rs
 │   │   └── validation.rs
 │   ├── manifold.rs
+│   ├── ridge.rs
 │   ├── spaces/
 │   │   ├── euclidean.rs
 │   │   ├── spherical.rs
@@ -63,8 +65,10 @@ For cumulative validation, use `Triangulation::validate()` (Levels 1–3) or
 Level 3 always checks:
 
 - **Codimension-1 facet degree** (pseudomanifold / manifold-with-boundary):
-  every (D−1)-facet is incident to exactly 1 (boundary) or 2 (interior) D-simplices.
-  (`topology::manifold::validate_facet_degree`)
+  every (D−1)-facet is incident to exactly 1 or 2 D-simplices. This is parsed
+  into `FacetToSimplicesIndex` by `Tds::build_facet_to_simplices_index`.
+  Boundary classification additionally excludes admissible periodic
+  self-identifications, which are closed quotient topology rather than boundary.
 - **Codimension-2 boundary manifoldness**: if a boundary exists, it is closed
   ("no boundary of boundary"). (`topology::manifold::validate_closed_boundary`)
 - **Connectedness**: a single connected component in the simplex neighbor graph.
@@ -89,6 +93,35 @@ Implementation pointers:
 - Manifold validators: `src/topology/manifold.rs`
 - Euler characteristic helpers: `src/topology/characteristics/{euler.rs,validation.rs}`
 
+## Boundary semantics
+
+Facet incidence by itself does **not** prove that a facet is a manifold boundary.
+It only describes how many D-simplices share a canonical facet key in the TDS.
+The current API keeps this distinction explicit:
+
+- `Tds::one_sided_facets()` and `Tds::number_of_one_sided_facets()` report raw
+  one-sided facet incidence. This is a Level 1–2/TDS fact.
+- `Triangulation::boundary_facets()` and `DelaunayTriangulation::boundary_facets()`
+  report true boundary facets after interpreting the incidence under the
+  triangulation's `GlobalTopology`.
+- `topology::manifold::classify_boundary_facet` is the semantic boundary
+  classifier used by validation and query code.
+
+This matters for periodic quotient topology. In a true toroidal triangulation,
+a facet can be one-sided in the raw incidence index because the owning simplex
+has an admissible periodic self-neighbor. That facet is a closed
+self-identification, not a boundary. Conversely, an open one-sided facet in a
+closed topology (`Toroidal`, `Spherical`, or `Hyperbolic`) is an invariant error,
+not a valid boundary.
+
+The validation order is therefore:
+
+1. Parse facet incidence and reject non-manifold multiplicity.
+2. Classify one-sided incidences against `GlobalTopology`.
+3. Validate boundary closure, ridge links, vertex links, and connectedness.
+4. Use Euler characteristic as a compatibility check for the already classified
+   topology.
+
 ## Euler characteristic (`topology::characteristics`)
 
 Level 3 uses Euler characteristic (χ) as a global combinatorial consistency check.
@@ -109,16 +142,24 @@ The Euler characteristic is:
 `TopologyCheckResult` containing χ, an expected value (when known), a coarse
 classification, the full f-vector, and diagnostic notes.
 
-The expected χ is determined from a simple classification:
+The expected χ is determined from declared topology metadata plus the
+topology-aware boundary classification described above:
 
 - `Empty` (no simplices): expected χ = 0
 - `SingleSimplex(D)`: expected χ = 1
 - `Ball(D)` (has boundary): expected χ = 1
 - `ClosedSphere(D)` (no boundary): expected χ = 1 + (-1)^D
+- `ClosedToroid(D)` (periodic quotient): expected χ = 0
 - `Unknown`: no expected χ (treated as "can't decide")
 
 For most finite Delaunay triangulations in Euclidean space, the complex has a
 boundary (convex hull), so the expected classification is `Ball(D)` and χ = 1.
+
+Euler characteristic is not a topology detector by itself. It is an invariant
+used after the manifold and boundary checks above. Many non-homeomorphic
+manifolds share the same χ, especially in higher dimensions, so χ must not bless
+an arbitrary gluing as toroidal or spherical without the corresponding
+topological construction and local manifold checks.
 
 ### Boundary-only χ (not used by Level 3)
 
@@ -131,7 +172,6 @@ simplicial complex). This is currently not part of Level 3 validation.
 `src/topology/manifold.rs` contains combinatorial validators for manifold and
 PL-manifold invariants (no geometric predicates):
 
-- `validate_facet_degree`
 - `validate_closed_boundary`
 - `validate_ridge_links`
 - `validate_vertex_links`
@@ -186,7 +226,7 @@ construct toroidal triangulations using `DelaunayTriangulationBuilder`:
 ```rust
 use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
 
-// 2D canonicalized toroidal triangulation
+// 2D Euclidean triangulation after wrapping inputs into a toroidal domain
 let vertices = vec![
     vertex![0.1, 0.1]?,
     vertex![0.9, 0.9]?,
@@ -199,9 +239,9 @@ let dt = DelaunayTriangulationBuilder::new(&vertices)
 ```
 
 Canonicalized toroidal construction wraps coordinates into the fundamental
-domain before building the Euclidean triangulation. Topology-aware operations can
-use the toroidal domain for periodic distances, but `.try_canonicalized_toroidal([..])` does not
-rewire opposite boundary facets. For a true periodic quotient, use
+domain before building a Euclidean triangulation of the wrapped point set. It
+does not attach toroidal manifold topology to the output and does not rewire
+opposite boundary facets. For a true periodic quotient, use
 `.try_toroidal([..])`; the validated image-point path currently covers 2D
 and compact 3D fixtures. 4D/5D periodic quotients fail fast pending scalable
 construction work in issue #416.

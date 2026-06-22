@@ -933,7 +933,7 @@ mod tests {
     use crate::core::validation::TopologyGuarantee;
     use crate::core::vertex::Vertex;
     use crate::geometry::kernel::{AdaptiveKernel, RobustKernel};
-    use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
+    use crate::topology::traits::topological_space::GlobalTopology;
     use crate::triangulation::DelaunayTriangulation;
     use std::{num::NonZeroUsize, sync::Once};
 
@@ -1167,9 +1167,7 @@ mod tests {
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
-        let global_topology =
-            GlobalTopology::try_toroidal([1.0, 1.0], ToroidalConstructionMode::PeriodicImagePoint)
-                .unwrap();
+        let global_topology = GlobalTopology::Euclidean;
         dt.set_global_topology(global_topology);
 
         let _guard = ForceHeuristicRebuildGuard::enable();

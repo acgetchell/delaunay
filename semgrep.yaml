@@ -745,42 +745,50 @@ rules:
     languages:
       - generic
     severity: WARNING
-    message: "Use RidgeHandle::try_new for raw omitted indices, or the crate-private validated constructor after bounds are already proven."
+    message: "Use try_from_vertices/try_new for fallible ridge candidates, queries, handles, and views."
     metadata:
       category: correctness
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
       rationale: >-
-        A RidgeHandle must identify a valid codimension-2 face in a live simplex.
-        Public raw index construction must reject duplicate or out-of-range
-        omitted indices instead of storing invalid ridge selectors for later
-        validation.
+        RidgeCandidate parses raw vertex keys into a codimension-2 candidate,
+        RidgeHandle identifies a valid codimension-2 face in a live simplex,
+        and RidgeQuery/RidgeView/RidgeLinkView validate ridge identity against
+        one live TDS before exposing borrowed topology. Constructor names must
+        expose those fallible boundaries.
     paths:
       include:
         - "/src/**/*.rs"
         - "/tests/**/*.rs"
         - "/benches/**/*.rs"
         - "/examples/**/*.rs"
-    pattern-regex: '\bRidgeHandle\s*::\s*new\s*\('
+    pattern-either:
+      - pattern-regex: '\bRidgeCandidate\s*::\s*new\s*\('
+      - pattern-regex: '\bRidgeHandle\s*::\s*new\s*\('
+      - pattern-regex: '\bRidgeQuery\s*::\s*new\s*\('
+      - pattern-regex: '\bRidgeView\s*::\s*new\s*\('
+      - pattern-regex: '\bRidgeLinkView\s*::\s*new\s*\('
 
   - id: delaunay.rust.no-edgekey-new-constructor
     languages:
       - generic
     severity: WARNING
-    message: "Use EdgeKey::try_new with a live TDS for raw endpoints, or the crate-private validated constructor after edge incidence is already proven."
+    message: "Use try_new for fallible edge keys/views, or the crate-private validated constructor after edge incidence is already proven."
     metadata:
       category: correctness
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/454"
       rationale: >-
-        An EdgeKey must identify a real edge in a live TDS, so public raw
-        endpoint construction needs to reject duplicate, missing, or non-incident
-        vertex keys instead of storing an invalid edge selector.
+        EdgeKey must identify a real edge in a live TDS, and EdgeView must
+        validate that detached key against one live TDS before exposing borrowed
+        topology. Constructor names must expose those fallible boundaries.
     paths:
       include:
         - "/src/**/*.rs"
         - "/tests/**/*.rs"
         - "/benches/**/*.rs"
         - "/examples/**/*.rs"
-    pattern-regex: '\bEdgeKey\s*::\s*new\s*\('
+    pattern-either:
+      - pattern-regex: '\bEdgeKey\s*::\s*new\s*\('
+      - pattern-regex: '\bEdgeView\s*::\s*new\s*\('
 
   - id: delaunay.rust.no-edgekey-try-new-without-tds
     languages:
@@ -802,6 +810,51 @@ rules:
         - "/examples/**/*.rs"
     pattern-regex: '\bEdgeKey\s*::\s*try_new\s*\(\s*[^,\n()]+,\s*[^,\n()]+\s*\)'
 
+  - id: delaunay.rust.borrowed-view-types-require-lifetime
+    languages:
+      - generic
+    severity: WARNING
+    message: "Types named *View, and RidgeQuery, must be lifetime-bound borrowed observations of canonical topology."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/461"
+      rationale: >-
+        Names ending in View promise a borrowed observation of canonical
+        storage, not an owned snapshot or detached topology candidate. A view
+        type without a leading lifetime parameter can outlive the storage whose
+        topology it describes; detached values should be named Handle, Key,
+        Candidate, Snapshot, or Report instead. RidgeQuery follows the same
+        borrowed-view contract because it proves a ridge candidate against one
+        live TDS even when the ridge star may be empty.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/examples/**/*.rs"
+    pattern-regex: '(?m)^\s*(?:pub(?:\s*\([^)]*\))?\s+)?struct\s+(?:[A-Za-z0-9_]*View|RidgeQuery)\s*(?:<\s*(?!'')[^>{}]*>|where|\{|;|\()'
+
+  - id: delaunay.rust.no-raw-facet-incidence-boundary-classification
+    languages:
+      - generic
+    severity: WARNING
+    message: "Do not treat raw one-sided facet incidence as manifold boundary; classify it against GlobalTopology."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/461"
+      rationale: >-
+        A facet with one incident simplex is only a TDS incidence fact. Periodic
+        quotient triangulations can encode closed self-identifications with
+        one-sided incidence, while closed topologies must reject open one-sided
+        facets. Boundary semantics must flow through topology::manifold
+        classification helpers such as has_boundary_facets_in_map or
+        boundary_facet_keys_from_index.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/**/*.rs"
+    pattern-regex: '\bfacet_to_simplices\s*\.\s*values\s*\(\s*\)\s*\.\s*any\s*\(\s*\|\s*[A-Za-z_][A-Za-z0-9_]*\s*\|\s*[A-Za-z_][A-Za-z0-9_]*\s*\.\s*len\s*\(\s*\)\s*==\s*1\s*\)' # yamllint disable-line rule:line-length
+
   - id: delaunay.rust.no-runtime-topology-handle-serde
     languages:
       - generic
@@ -811,10 +864,12 @@ rules:
       category: correctness
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/454"
       rationale: >-
-        FacetHandle, FacetView, and EdgeKey contain storage-local slotmap keys or
-        references into one live TDS. They are useful for in-memory traversal and
-        algorithms, but they are not durable interchange identifiers. Persistence
-        must flow through UUID-keyed TDS snapshots instead.
+        FacetHandle, FacetView, EdgeKey, EdgeView, RidgeCandidate, RidgeQuery,
+        RidgeView, RidgeLinkView, LiftedVertexId, and LiftedLinkEdge contain storage-local
+        slotmap keys, periodic runtime identities, or references into one live
+        TDS. They are useful for in-memory traversal and algorithms, but they
+        are not durable interchange identifiers. Persistence must flow through
+        UUID-keyed TDS snapshots instead.
     paths:
       include:
         - "/src/**/*.rs"
@@ -822,10 +877,10 @@ rules:
         - "/benches/**/*.rs"
         - "/examples/**/*.rs"
     pattern-either:
-      - pattern-regex: '(?s)#\s*\[\s*derive\s*\([^)]*\bSerialize\b[^)]*\)\s*\]\s*[^;{]*\bstruct\s+(?:FacetHandle|FacetView|EdgeKey)\b'
-      - pattern-regex: '(?s)#\s*\[\s*derive\s*\([^)]*\bDeserialize\b[^)]*\)\s*\]\s*[^;{]*\bstruct\s+(?:FacetHandle|FacetView|EdgeKey)\b'
-      - pattern-regex: '\bimpl(?:\s*<[^>]*>)?\s+(?:serde\s*::\s*)?Serialize\s+for\s+(?:(?:crate|self|super)\s*::\s*)?(?:(?:tds|core\s*::\s*(?:facet|edge))\s*::\s*)?(?:FacetHandle|FacetView|EdgeKey)\b' # yamllint disable-line rule:line-length
-      - pattern-regex: '\bimpl(?:\s*<[^>]*>)?\s+(?:serde\s*::\s*)?Deserialize(?:\s*<[^>]*>)?\s+for\s+(?:(?:crate|self|super)\s*::\s*)?(?:(?:tds|core\s*::\s*(?:facet|edge))\s*::\s*)?(?:FacetHandle|FacetView|EdgeKey)\b' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?s)#\s*\[\s*derive\s*\([^)]*\bSerialize\b[^)]*\)\s*\]\s*[^;{]*\bstruct\s+(?:FacetHandle|FacetView|EdgeKey|EdgeView|RidgeCandidate|RidgeQuery|RidgeView|RidgeLinkView|LiftedVertexId|LiftedLinkEdge)\b' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?s)#\s*\[\s*derive\s*\([^)]*\bDeserialize\b[^)]*\)\s*\]\s*[^;{]*\bstruct\s+(?:FacetHandle|FacetView|EdgeKey|EdgeView|RidgeCandidate|RidgeQuery|RidgeView|RidgeLinkView|LiftedVertexId|LiftedLinkEdge)\b' # yamllint disable-line rule:line-length
+      - pattern-regex: '\bimpl(?:\s*<[^>]*>)?\s+(?:serde\s*::\s*)?Serialize\s+for\s+(?:(?:crate|self|super)\s*::\s*)?(?:(?:tds|core\s*::\s*(?:facet|edge)|topology\s*::\s*(?:manifold|ridge|spaces\s*::\s*toroidal))\s*::\s*)?(?:FacetHandle|FacetView|EdgeKey|EdgeView|RidgeCandidate|RidgeQuery|RidgeView|RidgeLinkView|LiftedVertexId|LiftedLinkEdge)\b' # yamllint disable-line rule:line-length
+      - pattern-regex: '\bimpl(?:\s*<[^>]*>)?\s+(?:serde\s*::\s*)?Deserialize(?:\s*<[^>]*>)?\s+for\s+(?:(?:crate|self|super)\s*::\s*)?(?:(?:tds|core\s*::\s*(?:facet|edge)|topology\s*::\s*(?:manifold|ridge|spaces\s*::\s*toroidal))\s*::\s*)?(?:FacetHandle|FacetView|EdgeKey|EdgeView|RidgeCandidate|RidgeQuery|RidgeView|RidgeLinkView|LiftedVertexId|LiftedLinkEdge)\b' # yamllint disable-line rule:line-length
 
   - id: delaunay.rust.no-tds-storage-map-serde
     languages:
@@ -858,14 +913,16 @@ rules:
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/454"
       rationale: >-
         Snapshot-shaped records cross persistence and codec boundaries. Storing
-        VertexKey, SimplexKey, FacetHandle, FacetView, or EdgeKey there would
-        smuggle process-local slotmap identity into durable data instead of
-        rebuilding fresh keys from stable UUID relationships.
+        VertexKey, SimplexKey, FacetHandle, FacetView, EdgeKey, EdgeView,
+        RidgeCandidate, RidgeQuery, RidgeView, RidgeLinkView, LiftedVertexId, or
+        LiftedLinkEdge there would smuggle process-local topology identity into
+        durable data instead of rebuilding fresh keys from stable UUID
+        relationships.
     paths:
       include:
         - "/src/**/*.rs"
         - "/tests/semgrep/src/project_rules/**/*.rs"
-    pattern-regex: '(?s)\bstruct\s+(?:Raw)?[A-Za-z0-9_]*(?:Snapshot|Serialized)[A-Za-z0-9_]*\s*(?:<[^>{}]*>)?\s*\{[^{}]*(?:\b(?:VertexKey|SimplexKey|FacetHandle|FacetView|EdgeKey)\b|Vec\s*<\s*(?:Option\s*<\s*)?(?:VertexKey|SimplexKey)\b|NeighborBuffer\s*<\s*(?:Option\s*<\s*)?SimplexKey\b|SmallBuffer\s*<\s*(?:VertexKey|SimplexKey|FacetHandle|EdgeKey)\b)[^{}]*\}' # yamllint disable-line rule:line-length
+    pattern-regex: '(?s)\bstruct\s+(?:Raw)?[A-Za-z0-9_]*(?:Snapshot|Serialized)[A-Za-z0-9_]*\s*(?:<[^>{}]*>)?\s*\{[^{}]*(?:\b(?:VertexKey|SimplexKey|FacetHandle|FacetView|EdgeKey|EdgeView|RidgeCandidate|RidgeQuery|RidgeView|RidgeLinkView|LiftedVertexId|LiftedLinkEdge)\b|Vec\s*<\s*(?:Option\s*<\s*)?(?:VertexKey|SimplexKey)\b|NeighborBuffer\s*<\s*(?:Option\s*<\s*)?SimplexKey\b|SmallBuffer\s*<\s*(?:VertexKey|SimplexKey|FacetHandle|EdgeKey|EdgeView|RidgeCandidate|RidgeQuery|RidgeView|RidgeLinkView|LiftedVertexId|LiftedLinkEdge)\b)[^{}]*\}' # yamllint disable-line rule:line-length
 
   - id: delaunay.rust.raw-tds-snapshot-uuid-maps-require-duplicate-key-deserializers
     languages:

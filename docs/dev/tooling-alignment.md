@@ -171,6 +171,16 @@ The useful updates ported in this pass are:
   are blocked alongside unqualified impls. These rules complement the existing
   constructor and direct-storage serde guards without making the validated
   snapshot representation public API.
+- Repository-owned Semgrep now encodes the #461 borrowed-view naming
+  convention: types named `*View` and `RidgeQuery` must carry a leading
+  lifetime parameter, while detached ridge values use `RidgeCandidate` and
+  fallible `try_from_vertices`/`try_new` constructors. This keeps Views,
+  Handles, Keys, Candidates, Snapshots, and Reports orthogonal in both naming
+  and lifetime semantics. Semgrep also guards the topology-boundary convention:
+  raw one-sided facet incidence from `facet_to_simplices.values()` must not be
+  used as semantic boundary classification; callers should use topology-aware
+  manifold helpers so periodic self-identifications remain closed topology and
+  open one-sided facets in closed spaces stay errors.
 - `.github/workflows/rust-clippy.yml` now matches the hardened SARIF pipeline:
   `set -euo pipefail`, `clippy::cargo`, and guarded upload that skips missing
   SARIF files and forked pull-request uploads.

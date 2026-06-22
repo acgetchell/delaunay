@@ -14,17 +14,20 @@
 //!
 //! For property-based tests with random triangulations, see `proptest_euler_characteristic.rs`.
 
+use std::assert_matches;
+
 use delaunay::builder::DelaunayTriangulationBuilder;
 use delaunay::prelude::construction::{
     DelaunayTriangulation, DelaunayTriangulationConstructionError, ExplicitConstructionError,
     TopologyGuarantee,
 };
 use delaunay::prelude::geometry::AdaptiveKernel;
-use delaunay::prelude::query::BoundaryAnalysis;
+use delaunay::prelude::query::FacetIncidenceAnalysis;
 use delaunay::prelude::tds::Tds;
+use delaunay::prelude::topology::validation::ManifoldError;
 use delaunay::topology::characteristics::{euler, validation};
 use delaunay::topology::traits::topological_space::{
-    GlobalTopology, TopologyKind, ToroidalConstructionMode,
+    GlobalTopology, TopologyError, TopologyKind, ToroidalConstructionMode,
 };
 
 // =============================================================================
@@ -43,7 +46,7 @@ fn test_empty_triangulation_euler() {
     let chi = euler::euler_characteristic(&counts);
     assert_eq!(chi, 0, "Empty triangulation should have χ = 0");
 
-    let classification = euler::classify_triangulation(&tds).unwrap();
+    let classification = euler::classify_triangulation(&tds, GlobalTopology::Euclidean).unwrap();
     assert_eq!(classification, euler::TopologyClassification::Empty);
 
     let expected = euler::expected_chi_for(&classification);
@@ -64,7 +67,7 @@ fn test_2d_single_triangle() {
         TopologyGuarantee::PLManifold,
     )
     .unwrap();
-    let result = validation::validate_triangulation_euler(dt.tds()).unwrap();
+    let result = validation::validate_triangulation_euler(dt.tds(), dt.global_topology()).unwrap();
 
     assert_eq!(result.counts.count(0), 3, "Should have 3 vertices");
     assert_eq!(result.counts.count(1), 3, "Should have 3 edges");
@@ -74,6 +77,49 @@ fn test_2d_single_triangle() {
     assert_eq!(
         result.classification,
         euler::TopologyClassification::SingleSimplex(2)
+    );
+}
+
+#[test]
+fn test_euler_rejects_open_single_simplex_in_closed_topology() {
+    let vertices = vec![
+        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 1.0]).unwrap(),
+    ];
+
+    let dt = DelaunayTriangulation::try_new_with_topology_guarantee(
+        &vertices,
+        TopologyGuarantee::PLManifold,
+    )
+    .unwrap();
+
+    let classify_err =
+        euler::classify_triangulation(dt.tds(), GlobalTopology::Spherical).unwrap_err();
+    assert_matches!(
+        classify_err,
+        TopologyError::BoundaryClassification { source }
+            if matches!(
+                source.as_ref(),
+                ManifoldError::BoundaryFacetInClosedTopology {
+                    topology: TopologyKind::Spherical,
+                    ..
+                }
+            )
+    );
+
+    let validation_err =
+        validation::validate_triangulation_euler(dt.tds(), GlobalTopology::Spherical).unwrap_err();
+    assert_matches!(
+        validation_err,
+        TopologyError::BoundaryClassification { source }
+            if matches!(
+                source.as_ref(),
+                ManifoldError::BoundaryFacetInClosedTopology {
+                    topology: TopologyKind::Spherical,
+                    ..
+                }
+            )
     );
 }
 
@@ -92,7 +138,7 @@ fn test_2d_multiple_triangles() {
         TopologyGuarantee::PLManifold,
     )
     .unwrap();
-    let result = validation::validate_triangulation_euler(dt.tds()).unwrap();
+    let result = validation::validate_triangulation_euler(dt.tds(), dt.global_topology()).unwrap();
 
     assert_eq!(result.counts.count(0), 4, "Should have 4 vertices");
     assert_eq!(
@@ -121,7 +167,7 @@ fn test_3d_single_tetrahedron() {
         TopologyGuarantee::PLManifold,
     )
     .unwrap();
-    let result = validation::validate_triangulation_euler(dt.tds()).unwrap();
+    let result = validation::validate_triangulation_euler(dt.tds(), dt.global_topology()).unwrap();
 
     assert_eq!(result.counts.count(0), 4, "Should have 4 vertices");
     assert_eq!(result.counts.count(1), 6, "Should have 6 edges");
@@ -151,7 +197,7 @@ fn test_3d_with_interior_vertex() {
         TopologyGuarantee::PLManifold,
     )
     .unwrap();
-    let result = validation::validate_triangulation_euler(dt.tds()).unwrap();
+    let result = validation::validate_triangulation_euler(dt.tds(), dt.global_topology()).unwrap();
 
     assert_eq!(result.counts.count(0), 5, "Should have 5 vertices");
     assert_eq!(
@@ -182,7 +228,7 @@ fn test_4d_single_simplex() {
         TopologyGuarantee::PLManifold,
     )
     .unwrap();
-    let result = validation::validate_triangulation_euler(dt.tds()).unwrap();
+    let result = validation::validate_triangulation_euler(dt.tds(), dt.global_topology()).unwrap();
 
     assert_eq!(result.counts.count(0), 5, "Should have 5 vertices");
     assert_eq!(result.counts.count(1), 10, "Should have 10 edges");
@@ -214,7 +260,7 @@ fn test_5d_single_simplex() {
         TopologyGuarantee::PLManifold,
     )
     .unwrap();
-    let result = validation::validate_triangulation_euler(dt.tds()).unwrap();
+    let result = validation::validate_triangulation_euler(dt.tds(), dt.global_topology()).unwrap();
 
     assert_eq!(result.counts.count(0), 6, "Should have 6 vertices");
     assert_eq!(result.chi, 1, "Single 5-simplex should have χ = 1");
@@ -385,7 +431,8 @@ macro_rules! test_complex_with_interior {
                 .unwrap();
 
             // Full complex should have χ = 1 (D-ball)
-            let full_result = validation::validate_triangulation_euler(dt.tds()).unwrap();
+            let full_result =
+                validation::validate_triangulation_euler(dt.tds(), dt.global_topology()).unwrap();
             assert_eq!(
                 full_result.chi, 1,
                 "Full {}-dimensional complex should have χ = 1 (D-ball)",
@@ -398,7 +445,7 @@ macro_rules! test_complex_with_interior {
             );
 
             // Verify we have boundary facets
-            let boundary_facet_count = dt.tds().number_of_boundary_facets().unwrap();
+            let boundary_facet_count = dt.tds().number_of_one_sided_facets().unwrap();
             assert!(
                 boundary_facet_count > 0,
                 "Should have boundary facets in dimension {}",
@@ -420,7 +467,8 @@ macro_rules! test_complex_with_interior {
             // - 4D: boundary is S³ (3-sphere) → χ = 0
             // - 5D: boundary is S⁴ (4-sphere) → χ = 2
             // Generally: χ(S^k) = 1 + (-1)^k
-            let boundary_counts = euler::count_boundary_simplices(dt.tds()).unwrap();
+            let boundary_counts =
+                euler::count_boundary_simplices(dt.tds(), dt.global_topology()).unwrap();
             let boundary_chi = euler::euler_characteristic(&boundary_counts);
 
             let expected_boundary_chi = $expected_boundary_chi;

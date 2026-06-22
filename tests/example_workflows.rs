@@ -29,7 +29,7 @@ fn triangulation_and_hull_workflow_remains_valid() -> Result<(), WorkflowTestErr
         .boundary_facets()?
         .map(|facet| {
             facet.map_err(|source| QueryError::TriangulationCorrupted {
-                source: source.into(),
+                source: Box::new(source.into()),
             })
         })
         .collect::<Result<Vec<_>, _>>()?;

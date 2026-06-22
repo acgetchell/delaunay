@@ -884,13 +884,13 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
         self
     }
 
-    /// Enables canonicalized toroidal topology without periodic quotient rewiring.
+    /// Enables toroidal coordinate canonicalization without periodic quotient rewiring.
     ///
     /// Input vertices are canonicalized into `[0, L_i)` per dimension before the
-    /// triangulation is built. The resulting triangulation is a valid Euclidean
-    /// Delaunay triangulation of the wrapped point set; boundary facets are
+    /// triangulation is built. The resulting triangulation keeps the builder's
+    /// declared global topology, which defaults to Euclidean; boundary facets are
     /// **not** rewired. Use [`.try_toroidal()`](Self::try_toroidal) for the true
-    /// periodic quotient path.
+    /// periodic quotient path with closed toroidal topology.
     ///
     /// # Arguments
     ///
@@ -933,7 +933,7 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
         Ok(self)
     }
 
-    /// Enables canonicalized toroidal topology from an already-validated domain.
+    /// Enables toroidal coordinate canonicalization from an already-validated domain.
     ///
     /// This infallible setter is for callers that already hold a
     /// [`ToroidalDomain`]. Use [`Self::try_canonicalized_toroidal`] at raw
@@ -1380,7 +1380,7 @@ where
                     self.topology_guarantee,
                     self.construction_options,
                 )?;
-                dt.set_global_topology(topology);
+                dt.set_global_topology(self.global_topology);
                 Ok(dt)
             }
             BuilderTopology::PeriodicImagePoint(domain) => {
@@ -2920,13 +2920,7 @@ mod tests {
         assert_eq!(dt.number_of_vertices(), 4);
         assert_eq!(dt.dim(), 2);
         assert!(dt.as_triangulation().validate().is_ok());
-        assert_matches!(
-            dt.global_topology(),
-            GlobalTopology::Toroidal {
-                mode: ToroidalConstructionMode::Canonicalized,
-                ..
-            }
-        );
+        assert_eq!(dt.global_topology(), GlobalTopology::Euclidean);
     }
 
     #[test]
@@ -2945,6 +2939,7 @@ mod tests {
         assert_eq!(dt.number_of_vertices(), 4);
         assert_eq!(dt.dim(), 2);
         assert!(dt.as_triangulation().validate().is_ok());
+        assert_eq!(dt.global_topology(), GlobalTopology::Euclidean);
     }
 
     #[test]

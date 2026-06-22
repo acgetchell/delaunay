@@ -7,6 +7,7 @@
 //! `global_topology_model` adapter layer.
 
 use crate::core::{facet::FacetError, tds::TdsError};
+use crate::topology::manifold::ManifoldError;
 use thiserror::Error;
 
 /// Errors that can occur during topology computation or validation.
@@ -60,6 +61,14 @@ pub enum TopologyError {
         /// Underlying TDS failure.
         #[source]
         source: TdsError,
+    },
+
+    /// Failed to classify boundary facets under the declared global topology.
+    #[error("Failed to classify boundary facets during topology analysis: {source}")]
+    BoundaryClassification {
+        /// Underlying manifold-boundary classification failure.
+        #[source]
+        source: Box<ManifoldError>,
     },
 
     /// Euler characteristic does not match expected value.

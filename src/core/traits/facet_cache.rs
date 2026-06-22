@@ -1,10 +1,9 @@
-//! Facet caching trait for performance optimization
+//! Internal facet-cache support for performance-sensitive algorithms.
 //!
-//! This module provides the `FacetCacheProvider` trait that defines a common
-//! interface for components that need to cache facet-to-simplices mappings for
-//! performance optimization.
+//! Public callers use owner-bound facet indexes. This module stays crate-private
+//! because it stores raw derived maps behind generation checks for algorithms
+//! that repeatedly query facet incidence.
 
-use super::data_type::DataType;
 use crate::core::{
     collections::FacetToSimplicesMap,
     tds::{Tds, TdsError},
@@ -15,7 +14,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-/// Trait for components that provide cached facet-to-simplices mappings.
+/// Trait for components that provide cached internal facet-to-simplices mappings.
 ///
 /// This trait abstracts the common pattern of caching expensive facet-to-simplices
 /// mapping computations with atomic updates and cache invalidation. It's designed
@@ -28,51 +27,7 @@ use std::sync::{
 /// - **Thread-safe**: Atomic cache updates prevent race conditions  
 /// - **Automatic invalidation**: Cache is invalidated when TDS changes
 /// - **Memory efficient**: Single shared instance across algorithm operations
-///
-/// # Examples
-///
-/// ```
-/// use delaunay::prelude::tds::FacetCacheProvider;
-/// use delaunay::prelude::tds::Tds;
-/// use delaunay::prelude::collections::FacetToSimplicesMap;
-/// use delaunay::prelude::DataType;
-/// use std::sync::Arc;
-/// use std::sync::atomic::{AtomicU64, Ordering};
-/// use arc_swap::ArcSwapOption;
-///
-/// struct MyAlgorithm {
-///     facet_to_simplices_cache: ArcSwapOption<FacetToSimplicesMap>,
-///     cached_generation: AtomicU64,
-/// }
-///
-/// impl MyAlgorithm {
-///     fn new() -> Self {
-///         Self {
-///             facet_to_simplices_cache: ArcSwapOption::empty(),
-///             cached_generation: AtomicU64::new(0),
-///         }
-///     }
-/// }
-///
-/// impl<U, V, const D: usize> FacetCacheProvider<U, V, D> for MyAlgorithm
-/// where
-///     U: DataType,
-///     V: DataType,
-/// {
-///     fn facet_cache(&self) -> &ArcSwapOption<FacetToSimplicesMap> {
-///         &self.facet_to_simplices_cache
-///     }
-///     
-///     fn cached_generation(&self) -> &AtomicU64 {
-///         &self.cached_generation
-///     }
-/// }
-/// ```
-pub trait FacetCacheProvider<U, V, const D: usize>
-where
-    U: DataType,
-    V: DataType,
-{
+pub(crate) trait FacetCacheProvider<U, V, const D: usize> {
     /// Returns a reference to the facet cache storage.
     ///
     /// The cache stores precomputed facet-to-simplices mappings to avoid expensive
@@ -176,43 +131,9 @@ where
     /// Returns a `TdsError` if the TDS has corrupted data
     /// (e.g., missing vertex keys) that prevents building a complete facet map.
     ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::*;
-    ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// let vertices = vec![
-    ///     vertex![0.0, 0.0, 0.0]?,
-    ///     vertex![1.0, 0.0, 0.0]?,
-    ///     vertex![0.0, 1.0, 0.0]?,
-    ///     vertex![0.0, 0.0, 1.0]?,
-    /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-    ///
-    /// // Build facet-to-simplices mapping
-    /// let facet_map = dt
-    ///     .tds()
-    ///     .build_facet_to_simplices_map()
-    ///     ?;
-    ///
-    /// // Use the mapping for facet lookups
-    /// for (facet_key, adjacent_simplices) in facet_map.iter() {
-    ///     // Each facet has at most 2 adjacent simplices
-    ///     assert!(adjacent_simplices.len() <= 2);
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// The public equivalent for user code is
+    /// [`Tds::build_facet_to_simplices_index`], which returns an owner-bound
+    /// index instead of exposing this raw cache representation.
     fn try_get_or_build_facet_cache(
         &self,
         tds: &Tds<U, V, D>,
@@ -306,35 +227,9 @@ where
     /// modified and the cache is no longer valid. It's typically called
     /// automatically by algorithms that modify the TDS.
     ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::*;
-    ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// let vertices = vec![
-    ///     vertex![0.0, 0.0, 0.0]?,
-    ///     vertex![1.0, 0.0, 0.0]?,
-    ///     vertex![0.0, 1.0, 0.0]?,
-    ///     vertex![0.0, 0.0, 1.0]?,
-    /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-    ///
-    /// // Build facet-to-simplices mapping
-    /// let facet_map = dt.tds().build_facet_to_simplices_map()?;
-    /// assert!(!facet_map.is_empty(), "Facet map should contain entries");
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// This is only exposed to unit tests; production invalidation is tied to
+    /// algorithm mutation points.
+    #[cfg(test)]
     fn invalidate_facet_cache(&self) {
         // Clear the cache - next access will rebuild
         // ORDERING: The SeqCst store from ArcSwap ensures this None is visible
@@ -385,6 +280,32 @@ mod tests {
         }
     }
 
+    struct NonDataTypePayload;
+
+    struct NonDataTypeCacheProvider {
+        facet_to_simplices_cache: ArcSwapOption<FacetToSimplicesMap>,
+        cached_generation: AtomicU64,
+    }
+
+    impl NonDataTypeCacheProvider {
+        fn new() -> Self {
+            Self {
+                facet_to_simplices_cache: ArcSwapOption::empty(),
+                cached_generation: AtomicU64::new(0),
+            }
+        }
+    }
+
+    impl FacetCacheProvider<NonDataTypePayload, NonDataTypePayload, 3> for NonDataTypeCacheProvider {
+        fn facet_cache(&self) -> &ArcSwapOption<FacetToSimplicesMap> {
+            &self.facet_to_simplices_cache
+        }
+
+        fn cached_generation(&self) -> &AtomicU64 {
+            &self.cached_generation
+        }
+    }
+
     /// Create a simple test triangulation for testing
     fn create_test_triangulation() -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> {
         let vertices = vec![
@@ -394,6 +315,21 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
         ];
         DelaunayTriangulation::try_new(&vertices).expect("Failed to create test triangulation")
+    }
+
+    #[test]
+    fn test_cache_provider_accepts_non_datatype_payloads() {
+        let provider = NonDataTypeCacheProvider::new();
+
+        assert!(
+            provider.facet_cache().load().is_none(),
+            "Cache should be empty initially"
+        );
+        assert_eq!(
+            provider.cached_generation().load(Ordering::Relaxed),
+            0,
+            "Generation should be 0 initially"
+        );
     }
 
     #[test]

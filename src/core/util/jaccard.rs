@@ -4,8 +4,8 @@
 
 use crate::core::facet::FacetError;
 use crate::core::tds::Tds;
-use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
+use crate::core::traits::facet_incidence_analysis::FacetIncidenceAnalysis;
 use crate::core::triangulation::Triangulation;
 use crate::geometry::algorithms::convex_hull::{ConvexHull, ConvexHullConstructionError};
 use crate::geometry::point::Point;
@@ -385,10 +385,10 @@ where
 {
     let mut facet_ids = HashSet::new();
 
-    // boundary_facets() returns Result<impl Iterator, TriangulationValidationError>
+    // one_sided_facets() returns TDS-level incidence candidates.
     // Wrap the underlying error for better diagnostics
     let boundary_facets =
-        tds.boundary_facets()
+        tds.one_sided_facets()
             .map_err(|e| FacetError::BoundaryFacetRetrievalFailed {
                 source: std::sync::Arc::new(e),
             })?;
@@ -396,7 +396,7 @@ where
     for facet_view in boundary_facets {
         let facet_view = facet_view?;
         // Use the existing FacetView::key() method
-        let facet_id = facet_view.key()?;
+        let facet_id = facet_view.key();
         facet_ids.insert(facet_id);
     }
 
@@ -461,11 +461,10 @@ pub fn extract_hull_facet_set<K, U, V, const D: usize>(
 ) -> Result<HashSet<u64>, ConvexHullConstructionError> {
     let mut facet_ids = HashSet::new();
 
-    for facet_view in hull.facets(tri)? {
+    for facet_view in hull.try_facets(tri)? {
         let facet_id = facet_view
             .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })?
-            .key()
-            .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })?;
+            .key();
         facet_ids.insert(facet_id);
     }
 

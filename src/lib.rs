@@ -62,8 +62,8 @@
 //! | Delaunayize workflow (repair + flip) | `use delaunay::prelude::delaunayize::*` |
 //! | Construction telemetry diagnostics | `use delaunay::prelude::diagnostics::*` |
 //! | Construction validation cadence/policy | `use delaunay::prelude::validation::*` |
-//! | Topology validation, Euler characteristic | `use delaunay::prelude::topology::validation::*` |
-//! | Topological spaces and topology traits | `use delaunay::prelude::topology::spaces::*` |
+//! | Topology validation, Euler characteristic, ridge queries | `use delaunay::prelude::topology::validation::*` |
+//! | Topological spaces, topology traits, lifted toroidal IDs | `use delaunay::prelude::topology::spaces::*` |
 //! | Low-level TDS simplices, facets, keys | `use delaunay::prelude::tds::*` |
 //! | Collection types (`FastHashMap`, etc.) | `use delaunay::prelude::collections::*` |
 //! | Broad convenience import for exploratory code | `use delaunay::prelude::*` |
@@ -430,7 +430,7 @@ mod core {
     }
 
     pub mod adjacency;
-    pub mod boundary;
+    pub mod facet_incidence;
     pub mod simplex;
     /// High-performance collection types optimized for computational geometry operations.
     ///
@@ -505,18 +505,18 @@ mod core {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::collections::{FastHashMap, FacetToSimplicesMap, SmallBuffer};
+    /// use delaunay::prelude::collections::{FastHashMap, SmallBuffer};
     ///
     /// // Use optimized HashMap for temporary mappings
     /// let mut temp_map: FastHashMap<u64, usize> = FastHashMap::default();
+    /// temp_map.insert(7, 3);
     ///
     /// // Use stack-allocated buffer for small collections
     /// let mut small_list: SmallBuffer<i32, 8> = SmallBuffer::new();
     /// small_list.push(1);
     /// small_list.push(2);
     ///
-    /// // Use domain-specific optimized collections
-    /// let facet_map: FacetToSimplicesMap = FacetToSimplicesMap::default();
+    /// assert_eq!(temp_map.len(), 1);
     /// ```
     ///
     /// ## Key-based internal operations
@@ -616,10 +616,9 @@ mod core {
 
     /// Traits for Delaunay triangulation data structures.
     pub mod traits {
-        pub mod boundary_analysis;
         pub mod data_type;
         pub mod facet_cache;
-        pub use boundary_analysis::*;
+        pub mod facet_incidence_analysis;
         pub use data_type::*;
     }
 
@@ -874,7 +873,7 @@ pub fn try_vertices_from_points<const D: usize>(
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
-/// let result = validation::validate_triangulation_euler(dt.tds())?;
+/// let result = validation::validate_triangulation_euler(dt.tds(), dt.global_topology())?;
 /// assert_eq!(result.chi, 1);  // Tetrahedron has χ = 1
 /// assert!(result.is_valid());
 /// # Ok(())
@@ -899,6 +898,9 @@ pub mod topology {
     /// Manifold / simplicial-complex validity checks (topology-only).
     pub mod manifold;
 
+    /// Ridge candidates, borrowed ridge queries, and lifted ridge-link views.
+    pub mod ridge;
+
     /// Concrete topological space implementations.
     ///
     /// This module contains the currently exposed Euclidean, spherical, and
@@ -914,16 +916,19 @@ pub mod topology {
 
         pub use euclidean::EuclideanSpace;
         pub use spherical::SphericalSpace;
-        pub use toroidal::ToroidalSpace;
+        pub use toroidal::{LiftedLinkEdge, LiftedVertexId, ToroidalSpace};
     }
 
     // Re-export commonly used types
     pub use crate::TopologyGuarantee;
     pub use characteristics::*;
     pub use manifold::{
-        ManifoldError, RidgeVertices, RidgeVerticesError, ridge_star_simplices,
-        validate_closed_boundary, validate_facet_degree, validate_ridge_links,
-        validate_vertex_links,
+        BoundaryFacetClassification, ManifoldError, classify_boundary_facet,
+        validate_closed_boundary, validate_ridge_links, validate_vertex_links,
+    };
+    pub use ridge::{
+        RidgeCandidate, RidgeCandidateError, RidgeLinkView, RidgeQuery, RidgeView,
+        ridge_star_simplices,
     };
     pub use traits::*;
 }
@@ -950,8 +955,8 @@ pub mod topology {
 /// ```
 pub mod collections {
     pub use crate::core::collections::{
-        Entry, FacetIndex, FacetIssuesMap, FacetSharingSimplicesBuffer, FacetToSimplicesMap,
-        FacetVertexMap, FastBuildHasher, FastHashMap, FastHashSet, FastHasher, KeyBasedSimplexMap,
+        Entry, FacetIndex, FacetIssuesMap, FacetSharingSimplicesBuffer, FacetVertexMap,
+        FastBuildHasher, FastHashMap, FastHashSet, FastHasher, KeyBasedSimplexMap,
         KeyBasedVertexMap, MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, PeriodicOffsetBuffer,
         SecureHashMap, SecureHashSet, SimplexKeyBuffer, SimplexKeySet, SimplexNeighborsMap,
         SimplexSecondaryMap, SimplexToVertexUuidsMap, SimplexVertexBuffer, SimplexVertexKeyBuffer,
@@ -1002,7 +1007,6 @@ pub mod tds {
     pub use crate::core::facet::*;
     pub use crate::core::simplex::*;
     pub use crate::core::tds::*;
-    pub use crate::core::traits::facet_cache::*;
     pub use crate::core::util::{
         UuidValidationError, checked_facet_key_from_vertex_keys, facet_view_to_vertices,
         facet_views_are_adjacent, format_jaccard_report, jaccard_distance, jaccard_index,
@@ -1071,10 +1075,10 @@ pub mod algorithms {
 pub mod query {
     pub use crate::assert_jaccard_gte;
     pub use crate::core::query::QueryError;
-    pub use crate::core::traits::boundary_analysis::BoundaryAnalysis;
     pub use crate::core::traits::data_type::{
         DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType,
     };
+    pub use crate::core::traits::facet_incidence_analysis::FacetIncidenceAnalysis;
     pub use crate::core::util::{
         JaccardComputationError, extract_edge_set, extract_facet_identifier_set,
         extract_hull_facet_set, extract_vertex_coordinate_set, format_jaccard_report,
@@ -1090,8 +1094,9 @@ pub mod query {
     pub use crate::geometry::traits::coordinate::Coordinate;
     pub use crate::geometry::{insphere, insphere_distance, insphere_lifted};
     pub use crate::tds::{
-        AllFacetsIter, BoundaryFacetsIter, EdgeIndex, EdgeKey, EdgeKeyError, FacetView,
-        IncidenceView, Simplex, SimplexKey, SimplexNeighborIndex, TopologyIndexBuildError,
+        AllFacetsIter, BoundaryFacetsIter, EdgeIndex, EdgeKey, EdgeKeyError, EdgeView,
+        FacetIncidenceView, FacetToSimplicesIndex, FacetView, IncidenceView, OneSidedFacetsIter,
+        Simplex, SimplexFacetsIter, SimplexKey, SimplexNeighborIndex, TopologyIndexBuildError,
         TriangulationAdjacency, Vertex, VertexKey,
     };
     pub use crate::{DelaunayTriangulation, Triangulation};
@@ -1102,8 +1107,8 @@ pub mod query {
 pub mod prelude {
     // Re-export the public low-level facades.
     pub use crate::query::{
-        BoundaryAnalysis, DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde,
-        DataSerialize, DataType, QueryError,
+        DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType,
+        FacetIncidenceAnalysis, QueryError,
     };
     pub use crate::tds::*;
     pub use crate::vertex;
@@ -1186,9 +1191,9 @@ pub mod prelude {
     // Re-export commonly used collection types from the public collections facade.
     // These are frequently used in advanced examples and downstream code
     pub use crate::collections::{
-        FacetToSimplicesMap, FastHashMap, FastHashSet, SecureHashMap, SecureHashSet,
-        SimplexNeighborsMap, SimplexSecondaryMap, SmallBuffer, VertexSecondaryMap,
-        VertexToSimplicesMap, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
+        FastHashMap, FastHashSet, SecureHashMap, SecureHashSet, SimplexNeighborsMap,
+        SimplexSecondaryMap, SmallBuffer, VertexSecondaryMap, VertexToSimplicesMap,
+        fast_hash_map_with_capacity, fast_hash_set_with_capacity,
     };
 
     // Re-export from geometry
@@ -1302,9 +1307,10 @@ pub mod prelude {
         };
         pub use crate::geometry::point::Point;
         pub use crate::query::{
-            AllFacetsIter, BoundaryAnalysis, BoundaryFacetsIter, DataCopy, DataDebug,
-            DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType, EdgeIndex, EdgeKey,
-            EdgeKeyError, FacetView, IncidenceView, QueryError, SimplexNeighborIndex,
+            AllFacetsIter, BoundaryFacetsIter, DataCopy, DataDebug, DataDeserialize, DataIdentity,
+            DataSerde, DataSerialize, DataType, EdgeIndex, EdgeKey, EdgeKeyError, EdgeView,
+            FacetIncidenceAnalysis, FacetIncidenceView, FacetToSimplicesIndex, FacetView,
+            IncidenceView, QueryError, SimplexFacetsIter, SimplexNeighborIndex,
             TopologyIndexBuildError, TriangulationAdjacency,
         };
         pub use crate::tds::{
@@ -1457,10 +1463,10 @@ pub mod prelude {
     /// ```
     pub mod collections {
         pub use crate::collections::{
-            Entry, FacetIndex, FacetIssuesMap, FacetSharingSimplicesBuffer, FacetToSimplicesMap,
-            FastBuildHasher, FastHashMap, FastHashSet, FastHasher, KeyBasedSimplexMap,
-            KeyBasedVertexMap, MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, PeriodicOffsetBuffer,
-            SecureHashMap, SecureHashSet, SimplexKeyBuffer, SimplexKeySet, SimplexNeighborsMap,
+            Entry, FacetIndex, FacetIssuesMap, FacetSharingSimplicesBuffer, FastBuildHasher,
+            FastHashMap, FastHashSet, FastHasher, KeyBasedSimplexMap, KeyBasedVertexMap,
+            MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, PeriodicOffsetBuffer, SecureHashMap,
+            SecureHashSet, SimplexKeyBuffer, SimplexKeySet, SimplexNeighborsMap,
             SimplexSecondaryMap, SimplexToVertexUuidsMap, SimplexVertexBuffer,
             SimplexVertexKeyBuffer, SimplexVertexKeysMap, SimplexVertexUuidBuffer,
             SimplexVerticesMap, SmallBuffer, Uuid, UuidToSimplexKeyMap, UuidToVertexKeyMap,
@@ -1637,8 +1643,9 @@ pub mod prelude {
     pub mod query {
         // Core read-only traversal / adjacency
         pub use crate::tds::{
-            EdgeIndex, EdgeKey, EdgeKeyError, IncidenceView, SimplexKey, SimplexNeighborIndex,
-            TopologyIndexBuildError, TriangulationAdjacency, VertexKey,
+            EdgeIndex, EdgeKey, EdgeKeyError, EdgeView, FacetIncidenceView, FacetToSimplicesIndex,
+            IncidenceView, SimplexKey, SimplexNeighborIndex, TopologyIndexBuildError,
+            TriangulationAdjacency, VertexKey,
         };
         pub use crate::{DelaunayTriangulation, Triangulation};
 
@@ -1649,9 +1656,9 @@ pub mod prelude {
         };
         pub use crate::geometry::traits::coordinate::Coordinate;
         pub use crate::query::{
-            AllFacetsIter, BoundaryAnalysis, BoundaryFacetsIter, DataCopy, DataDebug,
-            DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType, FacetView,
-            QueryError, Simplex, Vertex,
+            AllFacetsIter, BoundaryFacetsIter, DataCopy, DataDebug, DataDeserialize, DataIdentity,
+            DataSerde, DataSerialize, DataType, FacetIncidenceAnalysis, FacetView, QueryError,
+            Simplex, SimplexFacetsIter, Vertex,
         };
 
         // Read-only predicates (useful in benchmarks / lightweight geometry checks)
@@ -1753,9 +1760,13 @@ pub mod prelude {
             pub use crate::topology::characteristics::{euler, validation};
             pub use crate::topology::characteristics::{euler::*, validation::*};
             pub use crate::topology::manifold::{
-                ManifoldError, RidgeVertices, RidgeVerticesError, ridge_star_simplices,
-                validate_closed_boundary, validate_facet_degree, validate_ridge_links,
-                validate_ridge_links_for_simplices, validate_vertex_links,
+                BoundaryFacetClassification, ManifoldError, classify_boundary_facet,
+                validate_closed_boundary, validate_ridge_links, validate_ridge_links_for_simplices,
+                validate_vertex_links,
+            };
+            pub use crate::topology::ridge::{
+                RidgeCandidate, RidgeCandidateError, RidgeLinkView, RidgeQuery, RidgeView,
+                ridge_star_simplices,
             };
             pub use crate::topology::traits::{
                 GlobalTopology, GlobalTopologyModelError, TopologicalSpace, TopologyError,
@@ -1911,8 +1922,7 @@ mod tests {
         let set_with_cap = fast_hash_set_with_capacity::<u64>(50);
         assert!(set_with_cap.capacity() >= 50);
 
-        // Test domain-specific types can be instantiated
-        let _facet_map: FacetToSimplicesMap = FacetToSimplicesMap::default();
+        // Test domain-specific public types can be instantiated
         let _neighbors: SimplexNeighborsMap = SimplexNeighborsMap::default();
         let _vertex_simplices: VertexToSimplicesMap = VertexToSimplicesMap::default();
     }

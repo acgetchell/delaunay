@@ -50,8 +50,8 @@ use crate::core::collections::{
     FacetToSimplicesMap, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
 };
 use crate::core::facet::{FacetError, FacetHandle, FacetView};
+use crate::core::query::QueryError;
 use crate::core::tds::TdsError;
-use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
 use crate::core::traits::facet_cache::FacetCacheProvider;
 use crate::core::triangulation::Triangulation;
@@ -177,9 +177,9 @@ pub enum ConvexHullConstructionError {
     /// Failed to extract boundary facets from the triangulation.
     #[error("Failed to extract boundary facets from triangulation: {source}")]
     BoundaryFacetExtractionFailed {
-        /// The underlying triangulation data-structure error.
+        /// The underlying boundary query error.
         #[source]
-        source: TdsError,
+        source: Box<QueryError>,
     },
     /// Failed to check facet visibility from a point.
     #[error("Failed to check facet visibility from point: {source}")]
@@ -273,10 +273,11 @@ pub enum ConvexHullConstructionError {
 
 /// Generic d-dimensional convex hull operations.
 ///
-/// This struct provides convex hull functionality by leveraging the existing
-/// boundary facet analysis from the TDS. Since boundary facets in a Delaunay
-/// triangulation lie on the convex hull, we can use the `BoundaryAnalysis`
-/// trait to get the hull facets directly.
+/// This struct provides convex hull functionality by leveraging topology-aware
+/// boundary facet queries from the triangulation. Since boundary facets in a
+/// Euclidean Delaunay triangulation lie on the convex hull, the high-level
+/// boundary query gives the hull facets directly while still rejecting open
+/// facets in closed global topologies.
 ///
 /// The implementation supports d-dimensional convex hull extraction from
 /// Delaunay triangulations, point-in-hull testing, and facet visibility
@@ -433,7 +434,7 @@ pub struct ConvexHull<U, V, const D: usize> {
     /// Use `is_valid_for_triangulation()` to check validity before use.
     ///
     /// This field is private to prevent external mutation. Use the provided read-only
-    /// accessors (`facets(triangulation)`, `facet_handles()`, `facet()`, `number_of_facets()`)
+    /// accessors (`try_facets(triangulation)`, `facet_handles()`, `facet()`, `number_of_facets()`)
     /// to access hull facets.
     hull_facets: Vec<FacetHandle>,
     /// Cache for the facet-to-simplices mapping to avoid rebuilding it for each facet check
@@ -559,7 +560,7 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     /// Returns an iterator over the hull facet handles.
     ///
     /// These handles are detached, runtime-local references into the TDS state
-    /// captured when the hull was built. Use [`Self::facets`] when callers need
+    /// captured when the hull was built. Use [`Self::try_facets`] when callers need
     /// borrowed [`FacetView`] access with hull freshness checked at the boundary.
     ///
     /// # Examples
@@ -601,8 +602,8 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     /// assert_eq!(facet_count, 4); // Tetrahedron has 4 faces
     ///
     /// // Check that all facets have the expected number of vertices.
-    /// for facet_view in hull.facets(dt.as_triangulation())? {
-    ///     assert_eq!(facet_view?.vertices()?.count(), 3); // 3D facets have 3 vertices
+    /// for facet_view in hull.try_facets(dt.as_triangulation())? {
+    ///     assert_eq!(facet_view?.vertices().count(), 3); // 3D facets have 3 vertices
     /// }
     /// # Ok(())
     /// # }
@@ -656,13 +657,13 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())?;
     ///
-    /// for facet in hull.facets(dt.as_triangulation())? {
-    ///     assert_eq!(facet?.vertices()?.count(), 3);
+    /// for facet in hull.try_facets(dt.as_triangulation())? {
+    ///     assert_eq!(facet?.vertices().count(), 3);
     /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub fn facets<'tds, K>(
+    pub fn try_facets<'tds, K>(
         &'tds self,
         tri: &'tds Triangulation<K, U, V, D>,
     ) -> Result<
@@ -914,7 +915,7 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     /// Builds a construction identity-mismatch error for a hull used with the wrong TDS.
     ///
     /// This is the construction-error counterpart to
-    /// [`Self::identity_mismatch_error`] for APIs such as [`Self::facets`] that
+    /// [`Self::identity_mismatch_error`] for APIs such as [`Self::try_facets`] that
     /// return borrowed views after checking same-owner freshness.
     #[inline]
     fn identity_mismatch_construction_error<K>(
@@ -940,15 +941,15 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
         if self.is_empty() && self.creation_generation.get().is_none() {
             return Ok(());
         }
-        let creation_generation = self.creation_generation.get().copied().unwrap_or(0);
-        if creation_generation != tri.tds.generation() {
-            return Err(self.stale_hull_construction_error(tri));
-        }
         let Some(creation_identity) = self.creation_identity.get() else {
             return Err(self.identity_mismatch_construction_error(tri));
         };
         if !Arc::ptr_eq(creation_identity, tri.tds.identity()) {
             return Err(self.identity_mismatch_construction_error(tri));
+        }
+        let creation_generation = self.creation_generation.get().copied().unwrap_or(0);
+        if creation_generation != tri.tds.generation() {
+            return Err(self.stale_hull_construction_error(tri));
         }
         Ok(())
     }
@@ -965,15 +966,15 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
         if self.is_empty() && self.creation_generation.get().is_none() {
             return Ok(());
         }
-        let creation_generation = self.creation_generation.get().copied().unwrap_or(0);
-        if creation_generation != tri.tds.generation() {
-            return Err(self.stale_hull_error(tri));
-        }
         let Some(creation_identity) = self.creation_identity.get() else {
             return Err(self.identity_mismatch_error(tri));
         };
         if !Arc::ptr_eq(creation_identity, tri.tds.identity()) {
             return Err(self.identity_mismatch_error(tri));
+        }
+        let creation_generation = self.creation_generation.get().copied().unwrap_or(0);
+        if creation_generation != tri.tds.generation() {
+            return Err(self.stale_hull_error(tri));
         }
         Ok(())
     }
@@ -1149,18 +1150,22 @@ where
             });
         }
 
-        // Use the existing boundary analysis to get hull facets
-        let hull_facets_iter = tds.boundary_facets().map_err(|source| {
-            ConvexHullConstructionError::BoundaryFacetExtractionFailed { source }
+        // Use the topology-aware triangulation boundary query to get hull facets.
+        let hull_facets_iter = tri.boundary_facets().map_err(|source| {
+            ConvexHullConstructionError::BoundaryFacetExtractionFailed {
+                source: Box::new(source),
+            }
         })?;
 
         // Collect detached facet handles for storage. Borrowed FacetViews are
-        // reconstructed later through ConvexHull::facets after freshness checks.
+        // reconstructed later through ConvexHull::try_facets after freshness checks.
         let hull_facets: Vec<_> = hull_facets_iter
             .map(|facet_view| {
                 let facet_view = facet_view.map_err(|source| {
                     ConvexHullConstructionError::BoundaryFacetExtractionFailed {
-                        source: source.into(),
+                        source: Box::new(QueryError::TriangulationCorrupted {
+                            source: Box::new(source.into()),
+                        }),
                     }
                 })?;
                 Ok::<_, ConvexHullConstructionError>(FacetHandle::from_validated(
@@ -1806,11 +1811,7 @@ where
                         |source| ConvexHullConstructionError::FacetDataAccessFailed { source },
                     )?;
             // Extract points directly to avoid materializing Vertex copies
-            let facet_points: Vec<Point<D>> = facet_view
-                .vertices()
-                .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })?
-                .map(|v| *v.point())
-                .collect();
+            let facet_points: Vec<Point<D>> = facet_view.vertices().map(|v| *v.point()).collect();
 
             // Calculate distance from point to facet centroid as a simple heuristic
             let mut centroid_coords = [0.0; D];
@@ -2001,14 +2002,7 @@ where
                         source,
                     })?;
 
-            let vertices: Vec<_> = facet_view
-                .vertices()
-                .map_err(|source| ConvexHullValidationError::InvalidFacet {
-                    facet_index: index,
-                    source,
-                })?
-                .copied()
-                .collect();
+            let vertices: Vec<_> = facet_view.vertices().copied().collect();
             if vertices.len() != D {
                 return Err(ConvexHullValidationError::InvalidFacet {
                     facet_index: index,
@@ -2056,14 +2050,9 @@ where
     }
 }
 
-// Implementation of FacetCacheProvider trait for ConvexHull
-// Separate impl block with FacetCacheProvider-specific trait bounds
-// (main impl block has simpler bounds that don't include Sum, DeserializeOwned, etc.)
-impl<U, V, const D: usize> FacetCacheProvider<U, V, D> for ConvexHull<U, V, D>
-where
-    U: DataType,
-    V: DataType,
-{
+// Implementation of crate-private facet-cache plumbing for ConvexHull.
+// Keep this payload-agnostic; cache storage and generation checks do not need `DataType`.
+impl<U, V, const D: usize> FacetCacheProvider<U, V, D> for ConvexHull<U, V, D> {
     fn facet_cache(&self) -> &ArcSwapOption<FacetToSimplicesMap> {
         &self.facet_to_simplices_cache
     }
@@ -2160,9 +2149,7 @@ mod tests {
         let facet_view =
             FacetView::try_new(tds, facet_handle.simplex_key(), facet_handle.facet_index())
                 .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })?;
-        // Use the shared utility for extracting vertices
-        facet_view_to_vertices(&facet_view)
-            .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })
+        Ok(facet_view_to_vertices(&facet_view))
     }
 
     // =============================================================================
@@ -3045,7 +3032,7 @@ mod tests {
                 facet_handle.facet_index(),
             )
             .unwrap();
-            let vertices = facet_view.vertices().unwrap().count();
+            let vertices = facet_view.vertices().count();
             assert_eq!(vertices, 2, "2D facet {i} should have exactly 2 vertices");
         }
         test_debug!(
@@ -3082,7 +3069,7 @@ mod tests {
                 facet_handle.facet_index(),
             )
             .unwrap();
-            let vertices = facet_view.vertices().unwrap().count();
+            let vertices = facet_view.vertices().count();
             assert_eq!(vertices, 3, "3D facet {i} should have exactly 3 vertices");
         }
         test_debug!(
@@ -3120,7 +3107,7 @@ mod tests {
                 facet_handle.facet_index(),
             )
             .unwrap();
-            let vertices = facet_view.vertices().unwrap().count();
+            let vertices = facet_view.vertices().count();
             assert_eq!(vertices, 4, "4D facet {i} should have exactly 4 vertices");
         }
         test_debug!(
@@ -3159,7 +3146,7 @@ mod tests {
                 facet_handle.facet_index(),
             )
             .unwrap();
-            let vertices = facet_view.vertices().unwrap().count();
+            let vertices = facet_view.vertices().count();
             assert_eq!(vertices, 5, "5D facet {i} should have exactly 5 vertices");
         }
         test_debug!(
@@ -3494,9 +3481,9 @@ mod tests {
         );
 
         // Verify all borrowed facet views are valid.
-        for facet_view in hull.facets(dt.as_triangulation()).unwrap() {
+        for facet_view in hull.try_facets(dt.as_triangulation()).unwrap() {
             let facet_view = facet_view.unwrap();
-            let vertex_count = facet_view.vertices().unwrap().count();
+            let vertex_count = facet_view.vertices().count();
             assert!(vertex_count > 0, "Each facet should have vertices");
         }
     }
@@ -3856,7 +3843,7 @@ mod tests {
                 facet_handle.facet_index(),
             )
             .unwrap();
-            let facet_vertices = facet_view_to_vertices(&facet_view).unwrap();
+            let facet_vertices = facet_view_to_vertices(&facet_view);
 
             // Test with a point very close to the facet (should not be visible)
             let close_point = Point::try_new([0.1, 0.1, 0.1]).expect("finite point coordinates");
@@ -4073,7 +4060,6 @@ mod tests {
                 )
                 .unwrap()
                 .vertices()
-                .unwrap()
                 .count()
             })
             .collect();
@@ -4707,7 +4693,7 @@ mod tests {
                 facet_handle.facet_index(),
             )
             .unwrap();
-            let facet_vertices = facet_view_to_vertices(&facet_view).unwrap();
+            let facet_vertices = facet_view_to_vertices(&facet_view);
 
             // Get vertex keys from vertices via TDS
             let facet_vertex_keys: Vec<_> = facet_vertices
@@ -5437,9 +5423,11 @@ mod tests {
         test_debug!("  Testing ConvexHullConstructionError variants...");
 
         let boundary_error = ConvexHullConstructionError::BoundaryFacetExtractionFailed {
-            source: TdsError::InconsistentDataStructure {
-                message: "Test boundary extraction failure".to_string(),
-            },
+            source: Box::new(QueryError::TriangulationCorrupted {
+                source: Box::new(TdsError::InconsistentDataStructure {
+                    message: "Test boundary extraction failure".to_string(),
+                }),
+            }),
         };
         let boundary_msg = format!("{boundary_error}");
         assert!(boundary_msg.contains("Failed to extract boundary facets"));
@@ -5757,7 +5745,7 @@ mod tests {
             facet_handle.facet_index(),
         )
         .unwrap();
-        let test_facet_vertices = facet_view_to_vertices(&facet_view).unwrap();
+        let test_facet_vertices = facet_view_to_vertices(&facet_view);
 
         // Test points at different distance scales
         let test_cases = vec![
@@ -7468,7 +7456,7 @@ mod tests {
         );
 
         test_debug!("  Testing facets...");
-        let facets_result = hull.facets(dt.as_triangulation());
+        let facets_result = hull.try_facets(dt.as_triangulation());
         assert!(
             matches!(
                 facets_result,

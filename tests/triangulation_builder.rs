@@ -18,7 +18,9 @@ use delaunay::prelude::geometry::RobustKernel;
 use delaunay::prelude::insertion::InsertionError;
 use delaunay::prelude::tds::{InvariantError, TdsConstructionError, TdsError, VertexKey};
 use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
-use delaunay::prelude::topology::validation::{count_simplices, euler_characteristic};
+use delaunay::prelude::topology::validation::{
+    TopologyClassification, count_simplices, euler_characteristic, validate_triangulation_euler,
+};
 use delaunay::prelude::validation::{TriangulationValidationError, ValidationPolicy};
 
 // =============================================================================
@@ -199,7 +201,7 @@ fn test_builder_canonicalized_toroidal_canonicalizes_coordinates() {
     );
 }
 
-/// Full Levels 1–3 validation passes on a canonicalized toroidal triangulation.
+/// Full Levels 1-3 validation passes after canonicalizing inputs into a toroidal domain.
 #[test]
 fn test_builder_canonicalized_toroidal_validates_2d() {
     let vertices = vec![
@@ -216,11 +218,11 @@ fn test_builder_canonicalized_toroidal_validates_2d() {
 
     assert!(
         dt.as_triangulation().validate().is_ok(),
-        "Levels 1-3 validation should pass for canonicalized toroidal triangulation"
+        "Levels 1-3 validation should pass after toroidal-domain input canonicalization"
     );
 }
 
-/// Level 4 (Delaunay property) validation passes on a canonicalized toroidal triangulation.
+/// Level 4 (Delaunay property) validation passes after toroidal-domain input canonicalization.
 #[test]
 fn test_builder_canonicalized_toroidal_delaunay_property_valid_2d() {
     let vertices = vec![
@@ -237,7 +239,7 @@ fn test_builder_canonicalized_toroidal_delaunay_property_valid_2d() {
 
     assert!(
         dt.validate().is_ok(),
-        "Full Levels 1-4 validation should pass for canonicalized toroidal triangulation"
+        "Full Levels 1-4 validation should pass after toroidal-domain input canonicalization"
     );
 }
 
@@ -394,6 +396,13 @@ fn build_toroidal_triangulation<const D: usize>()
     dt
 }
 
+fn count_boundary_facets<K, U, V, const D: usize>(dt: &DelaunayTriangulation<K, U, V, D>) -> usize {
+    dt.boundary_facets()
+        .unwrap()
+        .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+        .unwrap()
+}
+
 /// `toroidal` builds a valid 2D periodic triangulation with χ = 0.
 ///
 /// Verifies TDS structural validity and χ = 0 directly.
@@ -412,6 +421,46 @@ fn test_builder_toroidal_chi_zero_2d() {
     assert_eq!(
         chi, 0,
         "Euler characteristic of periodic 2D triangulation must be 0 (torus)"
+    );
+
+    let semantic_result = validate_triangulation_euler(dt.tds(), dt.global_topology()).unwrap();
+    assert_eq!(
+        semantic_result.classification,
+        TopologyClassification::ClosedToroid(2),
+        "topology-aware Euler validation must classify the periodic quotient as closed toroidal",
+    );
+    assert_eq!(semantic_result.chi, 0);
+    assert_eq!(semantic_result.expected, Some(0));
+    assert!(semantic_result.is_valid());
+}
+
+/// The same input points have Euclidean hull boundary, but the periodic quotient is closed.
+#[test]
+fn test_builder_toroidal_boundary_query_is_topology_aware() {
+    let vertices = toroidal_vertices::<2>();
+    let kernel = RobustKernel::new();
+
+    let euclidean = DelaunayTriangulationBuilder::new(&vertices)
+        .build_with_kernel::<_, ()>(&kernel)
+        .expect("Euclidean build should succeed for toroidal fixture points");
+    let toroidal = DelaunayTriangulationBuilder::new(&vertices)
+        .try_toroidal([1.0_f64; 2])
+        .unwrap()
+        .build_with_kernel::<_, ()>(&kernel)
+        .expect("periodic toroidal builder should succeed");
+
+    assert_eq!(
+        euclidean.number_of_vertices(),
+        toroidal.number_of_vertices()
+    );
+    assert!(
+        count_boundary_facets(&euclidean) > 0,
+        "Euclidean triangulation of finite points should expose hull boundary facets",
+    );
+    assert_eq!(
+        count_boundary_facets(&toroidal),
+        0,
+        "periodic toroidal quotient should be closed with no boundary facets",
     );
 }
 

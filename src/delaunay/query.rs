@@ -457,8 +457,9 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
 
     /// Returns an iterator over boundary (hull) facets in the triangulation.
     ///
-    /// Boundary facets are those that belong to exactly one simplex. This method
-    /// computes the facet-to-simplices map internally for convenience.
+    /// Boundary facets are one-sided facets not identified by closed periodic
+    /// topology. This method computes the facet-to-simplices index internally
+    /// for convenience.
     ///
     /// # Returns
     ///
@@ -968,13 +969,14 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// let facet_count = dt
-    ///     .facets()?
+    ///     .facets()
     ///     .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
     /// assert_eq!(facet_count, 4); // Tetrahedron has 4 facets
     /// # Ok(())
     /// # }
     /// ```
-    pub fn facets(&self) -> Result<AllFacetsIter<'_, U, V, D>, QueryError> {
+    #[must_use]
+    pub fn facets(&self) -> AllFacetsIter<'_, U, V, D> {
         self.tri.facets()
     }
 
@@ -1382,9 +1384,8 @@ mod tests {
 
         match dt.boundary_facets() {
             Ok(_) => panic!("corrupted facet map should return a query error"),
-            Err(QueryError::TriangulationCorrupted {
-                source: TdsError::IndexOutOfBounds { .. },
-            }) => {}
+            Err(QueryError::TriangulationCorrupted { source })
+                if matches!(*source, TdsError::IndexOutOfBounds { .. }) => {}
             Err(err) => panic!("expected index-out-of-bounds query error, got {err:?}"),
         }
     }

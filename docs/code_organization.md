@@ -183,8 +183,8 @@ delaunay/
 │   │   │   ├── spatial_hash_grid.rs
 │   │   │   └── triangulation_maps.rs
 │   │   ├── traits/
-│   │   │   ├── boundary_analysis.rs
 │   │   │   ├── data_type.rs
+│   │   │   ├── facet_incidence_analysis.rs
 │   │   │   └── facet_cache.rs
 │   │   ├── util/
 │   │   │   ├── canonical_points.rs
@@ -198,10 +198,10 @@ delaunay/
 │   │   │   ├── measurement.rs
 │   │   │   └── uuid.rs
 │   │   ├── adjacency.rs
-│   │   ├── boundary.rs
 │   │   ├── construction.rs
 │   │   ├── edge.rs
 │   │   ├── facet.rs
+│   │   ├── facet_incidence.rs
 │   │   ├── insertion.rs
 │   │   ├── operations.rs
 │   │   ├── orientation.rs
@@ -478,9 +478,10 @@ paths instead.
   `TriangulationAdjacency` view (opt-in)
 - `collections/` - Optimized collection types and spatial acceleration structures
   - `spatial_hash_grid.rs` - Hash-grid spatial index for duplicate detection and locate-hint selection
-- `boundary.rs` - Boundary detection and analysis
+- `facet_incidence.rs` - TDS-level one-sided/two-sided facet incidence analysis; true boundary
+  classification lives in the topology-aware `Triangulation`/manifold layer
 - `algorithms/` - Core algorithms (incremental insertion, flips, point location, PL-manifold repair)
-- `traits/` - Core trait definitions including FacetCacheProvider for performance optimization
+- `traits/` - Core boundary/data trait definitions plus internal facet-cache plumbing for performance-sensitive algorithms
 - `util/` - General utility functions organized by functionality (replaced single `util.rs` file)
   - `uuid.rs` - UUID generation and validation
   - `hashing.rs` - Stable, deterministic hash primitives
@@ -493,6 +494,18 @@ paths instead.
   - `hilbert.rs` - Hilbert ordering utilities (pure; triangulation-agnostic)
   - `canonical_points.rs` - Canonical vertex-ordering helpers for geometric predicate call sites (SoS consistency)
 - `operations.rs` - Semantic classification and telemetry for topological operations
+
+`edge.rs` and `facet.rs` stay in `src/core/` because they are direct TDS
+traversal primitives: `EdgeKey`/`EdgeView` validate endpoint incidence against
+canonical storage, and `FacetHandle`/`FacetView` describe a codimension-1 face
+of one stored simplex via `simplex_key + facet_index`. They are useful for
+adjacency, boundary, hull, and query operations without invoking Level 3
+manifold reasoning. `src/topology/ridge.rs` is intentionally different: a ridge
+is a codimension-2 topology construct whose concrete shape depends on `D`
+(vertex in 2D, edge in 3D, triangle in 4D, and so on). Its candidate/query/view
+types support ridge stars, lifted toroidal links, and PL-manifold validation, so
+they belong to the topology layer. Dependency direction should remain
+`topology` -> `core`, not the reverse.
 
 Public namespace policy: `crate::core` is the internal implementation namespace
 for the low-level TDS and algorithm layer. The public low-level surface is
@@ -521,8 +534,8 @@ benchmarks, and tests clear about which part of the API they exercise.
 | Points, coordinate ranges, kernels, predicates, and geometric measures | `use delaunay::prelude::geometry::*` |
 | Random points or triangulations for examples, tests, and benchmarks | `use delaunay::prelude::generators::*` |
 | Read-only traversal, adjacency, convex hulls, and comparison helpers | `use delaunay::prelude::query::*` |
-| Topological spaces and topology traits | `use delaunay::prelude::topology::spaces::*` |
-| Topology validation and Euler characteristic helpers | `use delaunay::prelude::topology::validation::*` |
+| Topological spaces, topology traits, and lifted toroidal IDs | `use delaunay::prelude::topology::spaces::*` |
+| Topology validation, Euler characteristic helpers, and ridge queries | `use delaunay::prelude::topology::validation::*` |
 
 `use delaunay::prelude::*` remains available for quick experiments and broad
 interactive use, but repository examples and benchmarks prefer focused preludes.
@@ -582,8 +595,10 @@ than through a `delaunay::delaunay` or `delaunay::triangulation` facade.
 
 - `characteristics/euler.rs` - Euler characteristic computation for full complexes and boundaries
 - `characteristics/validation.rs` - Topological validation functions
-- `manifold.rs` - Topology-only manifold invariants (e.g., closed boundary checks; see
-  [`invariants.md`](invariants.md))
+- `manifold.rs` - Topology-only manifold invariants and boundary classification
+  over declared global topology (e.g., closed boundary checks; see [`invariants.md`](invariants.md))
+- `ridge.rs` - Ridge candidates, borrowed ridge queries/views, lifted ridge-link
+  views, and ridge-star map builders used by topology validation and localized repair
 - `spaces/euclidean.rs` - Euclidean space topology helper implementation (f64-oriented)
 - `spaces/spherical.rs` - Spherical space topology helper implementation (f64-oriented)
 - `spaces/toroidal.rs` - Toroidal space topology helper implementation (f64-oriented)
@@ -601,7 +616,7 @@ than through a `delaunay::delaunay` or `delaunay::triangulation` facade.
 - **`benches/`** - Performance benchmarks with automated baseline management (2D-5D coverage) and memory allocation tracking
   (see: [benches/profiling_suite.rs](../benches/README.md#profiling-suite) and
   [benches/allocation_hot_paths.rs](../benches/README.md))
-- **`tests/`** - Integration tests including basic TDS validation (creation, neighbor assignment, boundary analysis),
+- **`tests/`** - Integration tests including basic TDS validation (creation, neighbor assignment, facet-incidence analysis),
   debugging utilities, regression testing, allocation-measurement smoke coverage
   (see: [tests/allocation_api.rs](../tests/README.md#allocation_apirs)), and robust predicates validation
 - **`docs/`** - User and contributor documentation, including architecture/reference guides,
@@ -785,7 +800,7 @@ This `justfile`-based workflow provides consistent, cross-platform development c
 ## Module Organization Patterns
 
 The canonical organizational patterns found across key modules in the codebase:
-`simplex.rs`, `vertex.rs`, `facet.rs`, `boundary.rs`, and the `util/` submodules
+`simplex.rs`, `vertex.rs`, `facet.rs`, `facet_incidence.rs`, and the `util/` submodules
 under `src/core/util/`.
 
 ### Canonical Section Sequence
@@ -1150,10 +1165,10 @@ mod tests {
 - Adjacency testing
 - Error handling for geometric constraints
 
-#### `boundary.rs` (small module)
+#### `facet_incidence.rs` (small module)
 
 - Trait implementation focused
-- Algorithm-specific testing
+- TDS one-sided/two-sided incidence testing
 - Performance benchmarking
 - Integration with TDS
 

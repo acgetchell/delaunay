@@ -101,7 +101,7 @@ fn run_case<const D: usize>(
         facet
             .map(|_| count + 1)
             .map_err(|source| QueryError::TriangulationCorrupted {
-                source: source.into(),
+                source: Box::new(source.into()),
             })
     })?;
     println!("  boundary facets: {boundary_facet_count}");

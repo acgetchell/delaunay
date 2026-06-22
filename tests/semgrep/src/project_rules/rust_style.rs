@@ -505,9 +505,73 @@ pub struct FacetHandle {
 
 // ruleid: delaunay.rust.no-runtime-topology-handle-serde
 #[derive(Debug, Deserialize)]
+// ruleid: delaunay.rust.borrowed-view-types-require-lifetime
 pub struct FacetView {
     simplex_key: SimplexKey,
     facet_index: u8,
+}
+
+// ruleid: delaunay.rust.no-runtime-topology-handle-serde
+#[derive(Serialize)]
+// ruleid: delaunay.rust.borrowed-view-types-require-lifetime
+pub struct EdgeView {
+    edge: EdgeKey,
+}
+
+// ruleid: delaunay.rust.no-runtime-topology-handle-serde
+#[derive(Deserialize)]
+pub struct RidgeCandidate {
+    vertices: Vec<VertexKey>,
+}
+
+// ruleid: delaunay.rust.no-runtime-topology-handle-serde
+#[derive(Serialize)]
+// ruleid: delaunay.rust.borrowed-view-types-require-lifetime
+pub struct RidgeQuery {
+    ridge: RidgeCandidate,
+}
+
+// ruleid: delaunay.rust.no-runtime-topology-handle-serde
+#[derive(Serialize)]
+// ruleid: delaunay.rust.borrowed-view-types-require-lifetime
+pub struct RidgeView {
+    ridge: RidgeCandidate,
+}
+
+// ruleid: delaunay.rust.no-runtime-topology-handle-serde
+#[derive(Serialize)]
+// ruleid: delaunay.rust.borrowed-view-types-require-lifetime
+pub struct RidgeLinkView {
+    ridge: RidgeCandidate,
+}
+
+// ruleid: delaunay.rust.borrowed-view-types-require-lifetime
+pub struct CachedTopologyView<T> {
+    cache: T,
+}
+
+// ok: delaunay.rust.borrowed-view-types-require-lifetime
+pub struct BorrowedTopologyView<'tds> {
+    tds: &'tds Tds,
+}
+
+pub mod borrowed_query_ok {
+    // ok: delaunay.rust.borrowed-view-types-require-lifetime
+    pub struct RidgeQuery<'tds> {
+        tds: &'tds super::Tds,
+    }
+}
+
+// ruleid: delaunay.rust.no-runtime-topology-handle-serde
+#[derive(Deserialize)]
+pub struct LiftedVertexId {
+    vertex_key: VertexKey,
+}
+
+// ruleid: delaunay.rust.no-runtime-topology-handle-serde
+#[derive(Serialize)]
+pub struct LiftedLinkEdge {
+    endpoint: LiftedVertexId,
 }
 
 // ok: delaunay.rust.no-runtime-topology-handle-serde
@@ -529,10 +593,32 @@ impl Serialize for crate::core::edge::EdgeKey {}
 // ruleid: delaunay.rust.no-runtime-topology-handle-serde
 impl<'de> serde::Deserialize<'de> for crate::tds::FacetView {}
 
+// ruleid: delaunay.rust.no-runtime-topology-handle-serde
+impl Serialize for crate::topology::ridge::RidgeView {}
+
+// ruleid: delaunay.rust.no-runtime-topology-handle-serde
+impl Serialize for crate::topology::ridge::RidgeLinkView {}
+
+// ruleid: delaunay.rust.no-runtime-topology-handle-serde
+impl Serialize for crate::topology::spaces::toroidal::LiftedVertexId {}
+
+// ruleid: delaunay.rust.no-runtime-topology-handle-serde
+impl Serialize for crate::topology::spaces::toroidal::LiftedLinkEdge {}
+
 // ruleid: delaunay.rust.no-runtime-topology-keys-in-snapshot-records
 pub struct RuntimeKeySnapshot {
     vertices: Vec<VertexKey>,
     edge: EdgeKey,
+}
+
+// ruleid: delaunay.rust.no-runtime-topology-keys-in-snapshot-records
+pub struct SerializedRidgeRecord {
+    ridge: RidgeCandidate,
+}
+
+// ruleid: delaunay.rust.no-runtime-topology-keys-in-snapshot-records
+pub struct SerializedLiftedLinkRecord {
+    link: RidgeLinkView,
 }
 
 pub struct UuidRelationshipSnapshot {
@@ -642,27 +728,27 @@ pub fn simplex_try_new_with_data_constructor_ok(vertex_keys: Vec<VertexKey>) {
 pub fn facet_new_constructors_bad<TdsType, SimplexKeyType>(
     tds: &TdsType,
     simplex_key: SimplexKeyType,
-    facet_map: FacetToSimplicesMap,
+    facet_index: FacetToSimplicesIndex<'_, (), (), 3>,
 ) {
     // ruleid: delaunay.rust.no-facet-new-constructors
     let _facet = FacetView::new(tds, simplex_key, 0);
     // ruleid: delaunay.rust.no-facet-new-constructors
     let _all_facets = AllFacetsIter::new(tds);
     // ruleid: delaunay.rust.no-facet-new-constructors
-    let _boundary_facets = BoundaryFacetsIter::new(tds, facet_map);
+    let _boundary_facets = BoundaryFacetsIter::new(facet_index);
 }
 
 pub fn facet_try_new_constructors_ok<TdsType, SimplexKeyType>(
     tds: &TdsType,
     simplex_key: SimplexKeyType,
-    facet_map: FacetToSimplicesMap,
+    facet_index: FacetToSimplicesIndex<'_, (), (), 3>,
 ) {
     // ok: delaunay.rust.no-facet-new-constructors
     let _facet = FacetView::try_new(tds, simplex_key, 0);
     // ok: delaunay.rust.no-facet-new-constructors
     let _all_facets = AllFacetsIter::try_new(tds);
     // ok: delaunay.rust.no-facet-new-constructors
-    let _boundary_facets = BoundaryFacetsIter::try_new(tds, facet_map);
+    let _boundary_facets = BoundaryFacetsIter::try_new(facet_index);
 }
 
 pub fn facet_handle_new_constructor_bad(simplex_key: SimplexKey) {
@@ -680,14 +766,54 @@ pub fn ridge_handle_new_constructor_bad(simplex_key: SimplexKey) {
     let _handle = RidgeHandle::new(simplex_key, 0, 1);
 }
 
+pub fn ridge_candidate_new_constructor_bad(vertices: Vec<VertexKey>) {
+    // ruleid: delaunay.rust.no-ridgehandle-new-constructor
+    let _candidate = RidgeCandidate::new(vertices);
+}
+
+pub fn ridge_query_new_constructor_bad<TdsType>(tds: &TdsType, ridge: RidgeCandidate) {
+    // ruleid: delaunay.rust.no-ridgehandle-new-constructor
+    let _query = RidgeQuery::new(tds, ridge);
+}
+
+pub fn ridge_view_new_constructor_bad<TdsType>(tds: &TdsType, ridge: RidgeCandidate) {
+    // ruleid: delaunay.rust.no-ridgehandle-new-constructor
+    let _view = RidgeView::new(tds, ridge);
+}
+
+pub fn ridge_link_view_new_constructor_bad<TdsType>(tds: &TdsType, ridge: RidgeCandidate) {
+    // ruleid: delaunay.rust.no-ridgehandle-new-constructor
+    let _view = RidgeLinkView::new(tds, ridge);
+}
+
 pub fn ridge_handle_try_new_constructor_ok<TdsType>(tds: &TdsType, simplex_key: SimplexKey) {
     // ok: delaunay.rust.no-ridgehandle-new-constructor
     let _handle = RidgeHandle::try_new(tds, simplex_key, 0, 1);
 }
 
+pub fn ridge_candidate_try_from_vertices_ok(vertices: Vec<VertexKey>) {
+    // ok: delaunay.rust.no-ridgehandle-new-constructor
+    let _candidate = RidgeCandidate::try_from_vertices(vertices);
+}
+
+pub fn ridge_query_try_new_constructor_ok<TdsType>(tds: &TdsType, ridge: RidgeCandidate) {
+    // ok: delaunay.rust.no-ridgehandle-new-constructor
+    let _query = RidgeQuery::try_new(tds, ridge);
+}
+
+pub fn ridge_view_try_new_constructor_ok<TdsType>(tds: &TdsType, ridge: RidgeCandidate) {
+    // ok: delaunay.rust.no-ridgehandle-new-constructor
+    let _view = RidgeView::try_new(tds, ridge);
+}
+
 pub fn edgekey_new_constructor_bad(a: VertexKey, b: VertexKey) {
     // ruleid: delaunay.rust.no-edgekey-new-constructor
     let _edge = EdgeKey::new(a, b);
+}
+
+pub fn edgeview_new_constructor_bad<TdsType>(tds: &TdsType, edge: EdgeKey) {
+    // ruleid: delaunay.rust.no-edgekey-new-constructor
+    let _view = EdgeView::new(tds, edge);
 }
 
 pub fn edgekey_try_new_without_tds_bad(a: VertexKey, b: VertexKey) {
@@ -699,6 +825,31 @@ pub fn edgekey_try_new_constructor_ok<TdsType>(tds: &TdsType, a: VertexKey, b: V
     // ok: delaunay.rust.no-edgekey-new-constructor
     // ok: delaunay.rust.no-edgekey-try-new-without-tds
     let _edge = EdgeKey::try_new(tds, a, b);
+}
+
+pub fn edgeview_try_new_constructor_ok<TdsType>(tds: &TdsType, edge: EdgeKey) {
+    // ok: delaunay.rust.no-edgekey-new-constructor
+    let _view = EdgeView::try_new(tds, edge);
+}
+
+pub fn raw_facet_incidence_boundary_classification_bad(
+    facet_to_simplices: FacetToSimplicesMap,
+    global_topology: GlobalTopology<2>,
+) -> bool {
+    // ruleid: delaunay.rust.no-raw-facet-incidence-boundary-classification
+    let has_raw_one_sided_incidence = facet_to_simplices
+        .values()
+        .any(|simplices| simplices.len() == 1);
+    global_topology.allows_boundary() && has_raw_one_sided_incidence
+}
+
+pub fn topology_boundary_classification_ok(
+    tds: &Tds,
+    facet_to_simplices: FacetToSimplicesMap,
+    global_topology: GlobalTopology<2>,
+) -> bool {
+    // ok: delaunay.rust.no-raw-facet-incidence-boundary-classification
+    has_boundary_facets_in_map(tds, &facet_to_simplices, global_topology).unwrap_or(false)
 }
 
 impl PublicVertexUuidConstructorFixture {

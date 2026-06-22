@@ -51,16 +51,14 @@ macro_rules! test_facet_properties {
                             // Each simplex has D+1 facets (one opposite each vertex)
                             for facet_index in 0..=($dim as u8) {
                                 if let Ok(facet) = FacetView::try_new(&tds, simplex_key, facet_index) {
-                                    if let Ok(facet_vertices) = facet.vertices() {
-                                        let vertex_count = facet_vertices.count();
-                                        prop_assert_eq!(
-                                            vertex_count,
-                                            $expected_facet_vertices,
-                                            "{}D facet should have exactly {} vertices",
-                                            $dim,
-                                            $expected_facet_vertices
-                                        );
-                                    }
+                                    let vertex_count = facet.vertices().count();
+                                    prop_assert_eq!(
+                                        vertex_count,
+                                        $expected_facet_vertices,
+                                        "{}D facet should have exactly {} vertices",
+                                        $dim,
+                                        $expected_facet_vertices
+                                    );
                                 }
                             }
                         }
@@ -91,15 +89,13 @@ macro_rules! test_facet_properties {
 
                             for facet_index in 0..=($dim as u8) {
                                 if let Ok(facet) = FacetView::try_new(&tds, simplex_key, facet_index) {
-                                    if let Ok(facet_vertices) = facet.vertices() {
-                                        let facet_vertex_count = facet_vertices.count();
-                                        prop_assert_eq!(
-                                            facet_vertex_count,
-                                            simplex_vertex_count - 1,
-                                            "{}D facet should have one fewer vertex than simplex",
-                                            $dim
-                                        );
-                                    }
+                                    let facet_vertex_count = facet.vertices().count();
+                                    prop_assert_eq!(
+                                        facet_vertex_count,
+                                        simplex_vertex_count - 1,
+                                        "{}D facet should have one fewer vertex than simplex",
+                                        $dim
+                                    );
                                 }
                             }
                         }

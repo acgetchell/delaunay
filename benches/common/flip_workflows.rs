@@ -19,7 +19,7 @@ use delaunay::prelude::geometry::{CoordinateConversionError, Point, RobustKernel
 use delaunay::prelude::query::{JaccardComputationError, format_jaccard_report};
 use delaunay::prelude::tds::{FacetError, InvariantError, TdsError, VertexKey};
 use delaunay::prelude::topology::validation::{
-    ManifoldError, RidgeVertices, RidgeVerticesError, ridge_star_simplices,
+    ManifoldError, RidgeCandidate, RidgeCandidateError, ridge_star_simplices,
 };
 use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 use thiserror::Error;
@@ -93,14 +93,14 @@ pub enum FlipWorkflowError {
         source: Box<FlipError>,
     },
 
-    /// Ridge vertices could not be parsed into a valid ridge vertex set.
-    #[error("invalid ridge vertices for {ridge:?}: {source}")]
-    InvalidRidgeVertices {
+    /// Ridge vertices could not be parsed into a valid ridge candidate.
+    #[error("invalid ridge candidate for {ridge:?}: {source}")]
+    InvalidRidgeCandidate {
         /// Ridge handle being inspected.
         ridge: RidgeHandle,
-        /// Underlying ridge vertex parsing failure.
+        /// Underlying ridge candidate parsing failure.
         #[source]
-        source: RidgeVerticesError,
+        source: RidgeCandidateError,
     },
 
     /// Ridge-star support collection failed.
@@ -1289,7 +1289,7 @@ fn ridge_support_points<const D: usize>(
         });
     }
 
-    let ridge_vertices = RidgeVertices::<D>::try_from_vertices(
+    let ridge_candidate = RidgeCandidate::<D>::try_from_vertices(
         simplex
             .vertices()
             .iter()
@@ -1297,8 +1297,8 @@ fn ridge_support_points<const D: usize>(
             .filter(|(index, _)| *index != omit_a && *index != omit_b)
             .map(|(_, vertex_key)| *vertex_key),
     )
-    .map_err(|source| FlipWorkflowError::InvalidRidgeVertices { ridge, source })?;
-    let star_simplices = ridge_star_simplices(dt.tds(), &ridge_vertices)
+    .map_err(|source| FlipWorkflowError::InvalidRidgeCandidate { ridge, source })?;
+    let star_simplices = ridge_star_simplices(dt.tds(), &ridge_candidate)
         .map_err(|source| ridge_star_error(ridge, source))?;
 
     let mut keys = Vec::new();

@@ -45,8 +45,8 @@ use crate::core::tds::{
     NeighborValidationError, SimplexKey, Tds, TdsConstructionError, TdsError, TdsErrorKind,
     TriangulationValidationErrorKind, VertexKey,
 };
-use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
+use crate::core::traits::facet_incidence_analysis::FacetIncidenceAnalysis;
 use crate::core::validation::TriangulationValidationError;
 use crate::core::vertex::VertexValidationError;
 use crate::geometry::kernel::Kernel;
@@ -3793,7 +3793,7 @@ where
     #[cfg(debug_assertions)]
     if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
         let total_boundary = tds
-            .boundary_facets()
+            .one_sided_facets()
             .map_err(|e| InsertionError::HullExtension {
                 reason: HullExtensionReason::Tds(e),
             })
@@ -3926,7 +3926,7 @@ where
     let tol = DEFAULT_TOLERANCE_F64;
 
     let boundary_facets = tds
-        .boundary_facets()
+        .one_sided_facets()
         .map_err(|e| InsertionError::HullExtension {
             reason: HullExtensionReason::Tds(e),
         })?;
@@ -4098,7 +4098,7 @@ where
 
     // Get all boundary facets
     let boundary_facets = tds
-        .boundary_facets()
+        .one_sided_facets()
         .map_err(|e| InsertionError::HullExtension {
             reason: HullExtensionReason::Tds(e),
         })?;

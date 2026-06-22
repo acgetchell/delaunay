@@ -77,7 +77,8 @@ macro_rules! test_euler_properties {
                         TopologyGuarantee::PLManifold,
                     ) {
                         // Validate Euler characteristic
-                        let result = validation::validate_triangulation_euler(dt.tds())?;
+                        let result =
+                            validation::validate_triangulation_euler(dt.tds(), dt.global_topology())?;
 
 
                         // Core property: χ must match expected value for the topology
@@ -148,7 +149,8 @@ macro_rules! test_euler_properties {
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
-                        let result = validation::validate_triangulation_euler(dt.tds())?;
+                        let result =
+                            validation::validate_triangulation_euler(dt.tds(), dt.global_topology())?;
 
                         // If we have an expected χ, computed χ must match
                         if let Some(expected_chi) = result.expected {
@@ -179,7 +181,8 @@ fn test_seeded_random_generator_euler_consistent() {
         TopologyGuarantee::PLManifold,
     )
     .unwrap();
-    let result_2d = validation::validate_triangulation_euler(dt_2d.tds()).unwrap();
+    let result_2d =
+        validation::validate_triangulation_euler(dt_2d.tds(), dt_2d.global_topology()).unwrap();
     assert!(
         result_2d.is_valid(),
         "2D seeded random triangulation Euler mismatch: χ={}, expected={:?}, classification={:?}, V={}, simplices={}",
@@ -198,7 +201,8 @@ fn test_seeded_random_generator_euler_consistent() {
         TopologyGuarantee::PLManifold,
     )
     .unwrap();
-    let result_3d = validation::validate_triangulation_euler(dt_3d.tds()).unwrap();
+    let result_3d =
+        validation::validate_triangulation_euler(dt_3d.tds(), dt_3d.global_topology()).unwrap();
     assert!(
         result_3d.is_valid(),
         "3D seeded random triangulation Euler mismatch: χ={}, expected={:?}, classification={:?}, V={}, simplices={}",

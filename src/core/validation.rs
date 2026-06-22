@@ -91,7 +91,8 @@ use crate::core::algorithms::incremental_insertion::{
     InsertionError, InsertionTopologyValidationContext,
 };
 use crate::core::collections::{
-    FacetToSimplicesMap, FastHashSet, SimplexKeyBuffer, SimplexKeySet, fast_hash_set_with_capacity,
+    FacetToSimplicesMap, FastHashSet, SimplexKeyBuffer, SimplexKeySet, VertexKeyBuffer,
+    fast_hash_set_with_capacity,
 };
 use crate::core::operations::{InsertionTelemetry, InsertionTelemetryMode, SuspicionFlags};
 use crate::core::tds::{
@@ -101,14 +102,14 @@ use crate::core::tds::{
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::geometry::kernel::Kernel;
-use crate::topology::characteristics::euler::{TopologyClassification, expected_chi_for};
+use crate::topology::characteristics::euler::TopologyClassification;
 use crate::topology::characteristics::validation::validate_triangulation_euler_with_facet_to_simplices_map;
 use crate::topology::manifold::{
-    ManifoldError, validate_closed_boundary, validate_facet_degree,
+    ManifoldError, validate_closed_boundary_map, validate_facet_degree_map,
     validate_local_pseudomanifold_for_simplices, validate_ridge_links,
-    validate_ridge_links_for_simplices, validate_vertex_links,
+    validate_ridge_links_for_simplices, validate_vertex_links_map,
 };
-use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
+use crate::topology::traits::topological_space::{GlobalTopology, TopologyError, TopologyKind};
 use std::time::Instant;
 use thiserror::Error;
 use uuid::Uuid;
@@ -194,6 +195,47 @@ pub enum TriangulationValidationError {
         ridge_key: u64,
         /// Number of incident boundary facets observed.
         boundary_facet_count: usize,
+    },
+
+    /// A closed global topology contains a raw open one-sided facet.
+    #[error(
+        "Closed {topology:?} topology contains open boundary facet {facet_key:016x} at simplex {simplex_uuid}[{facet_index}]"
+    )]
+    BoundaryFacetInClosedTopology {
+        /// Declared global topology kind.
+        topology: TopologyKind,
+        /// Canonical facet key with open one-sided incidence.
+        facet_key: u64,
+        /// Simplex containing the open facet.
+        simplex_key: SimplexKey,
+        /// UUID of the simplex containing the open facet.
+        simplex_uuid: Uuid,
+        /// Facet index in the simplex.
+        facet_index: usize,
+    },
+
+    /// A non-periodic topology contains a periodic self-identification facet.
+    #[error(
+        "{topology:?} topology contains periodic self-identified facet {facet_key:016x} at simplex {simplex_uuid}[{facet_index}]"
+    )]
+    PeriodicIdentificationInNonPeriodicTopology {
+        /// Declared global topology kind.
+        topology: TopologyKind,
+        /// Canonical facet key with periodic self-identification.
+        facet_key: u64,
+        /// Simplex containing the periodic self-identification.
+        simplex_key: SimplexKey,
+        /// UUID of the simplex containing the periodic self-identification.
+        simplex_uuid: Uuid,
+        /// Facet index in the simplex.
+        facet_index: usize,
+    },
+
+    /// A live ridge candidate did not occur in any D-simplex.
+    #[error("Ridge candidate {ridge_vertices:?} is not present in the triangulation")]
+    RidgeNotFound {
+        /// Canonical quotient-space ridge vertices that had an empty simplex star.
+        ridge_vertices: VertexKeyBuffer,
     },
 
     /// A ridge's link graph is not a 1-manifold (path or cycle).
@@ -314,6 +356,35 @@ impl TryFrom<ManifoldError> for TriangulationValidationError {
                 ridge_key,
                 boundary_facet_count,
             }),
+            ManifoldError::BoundaryFacetInClosedTopology {
+                topology,
+                facet_key,
+                simplex_key,
+                simplex_uuid,
+                facet_index,
+            } => Ok(Self::BoundaryFacetInClosedTopology {
+                topology,
+                facet_key,
+                simplex_key,
+                simplex_uuid,
+                facet_index,
+            }),
+            ManifoldError::PeriodicIdentificationInNonPeriodicTopology {
+                topology,
+                facet_key,
+                simplex_key,
+                simplex_uuid,
+                facet_index,
+            } => Ok(Self::PeriodicIdentificationInNonPeriodicTopology {
+                topology,
+                facet_key,
+                simplex_key,
+                simplex_uuid,
+                facet_index,
+            }),
+            ManifoldError::RidgeNotFound { ridge_vertices } => {
+                Ok(Self::RidgeNotFound { ridge_vertices })
+            }
             ManifoldError::RidgeLinkNotManifold {
                 ridge_key,
                 link_vertex_count,
@@ -356,6 +427,31 @@ impl From<ManifoldError> for InvariantError {
             Ok(source) => Self::Triangulation(source),
             Err(source) => Self::Tds(source),
         }
+    }
+}
+
+/// Preserves validation-layer error provenance from topology helper failures.
+///
+/// [`Triangulation::validate`] exposes Level 1-2 failures as [`InvariantError::Tds`]
+/// and Level 3 failures as [`InvariantError::Triangulation`]. Euler helpers
+/// return [`TopologyError`], so this adapter maps support-data failures back to
+/// TDS errors and semantic boundary failures back through [`ManifoldError`].
+fn invariant_error_from_topology_error(err: TopologyError) -> InvariantError {
+    match err {
+        TopologyError::FacetMapBuild { source }
+        | TopologyError::BoundaryFacetEnumeration { source }
+        | TopologyError::BoundaryFacetCount { source } => InvariantError::Tds(source),
+        TopologyError::BoundaryFacetSimplexAccess { source } => InvariantError::Tds(source.into()),
+        TopologyError::BoundaryClassification { source } => InvariantError::from(*source),
+        TopologyError::EulerMismatch {
+            computed,
+            expected,
+            topology_type,
+        } => InvariantError::Tds(TdsError::InconsistentDataStructure {
+            message: format!(
+                "Euler mismatch in topology helper: computed {computed}, expected {expected} for {topology_type}"
+            ),
+        }),
     }
 }
 
@@ -995,11 +1091,11 @@ where
         &self,
         facet_to_simplices: &FacetToSimplicesMap,
     ) -> Result<(), InvariantError> {
-        validate_facet_degree(facet_to_simplices)?;
+        validate_facet_degree_map(facet_to_simplices)?;
 
         // 2b. Boundary manifoldness in codimension 2: the boundary must be "closed"
         // (i.e., its ridges must have degree 2 within boundary facets).
-        validate_closed_boundary(&self.tds, facet_to_simplices)?;
+        validate_closed_boundary_map(&self.tds, facet_to_simplices, self.global_topology)?;
 
         // 2c. Ridge-link validation for PLManifold/PLManifoldStrict (fast, catches many PL issues).
         if self.topology_guarantee.requires_ridge_links() {
@@ -1010,40 +1106,27 @@ where
             .topology_guarantee
             .requires_vertex_links_during_insertion()
         {
-            validate_vertex_links(&self.tds, facet_to_simplices)?;
+            validate_vertex_links_map(&self.tds, facet_to_simplices, self.global_topology)?;
         }
 
         // 3. Vertex incidence (manifold invariant): every vertex must be incident to at least one simplex.
         self.validate_no_isolated_vertices()?;
 
         // 4. Euler characteristic using the topology module
-        let topology_result =
-            validate_triangulation_euler_with_facet_to_simplices_map(&self.tds, facet_to_simplices);
+        let topology_result = validate_triangulation_euler_with_facet_to_simplices_map(
+            &self.tds,
+            facet_to_simplices,
+            self.global_topology,
+        )
+        .map_err(invariant_error_from_topology_error)?;
 
-        // Override the heuristic classification when the caller has declared a
-        // non-Euclidean global topology. The heuristic classifies any closed
-        // mesh (no boundary facets) as `ClosedSphere(D)`, but a toroidal mesh
-        // also has no boundary — its expected χ is 0, not 1+(-1)^D.
-        let (classification, expected) = match self.global_topology {
-            GlobalTopology::Toroidal { .. }
-                if matches!(
-                    topology_result.classification,
-                    TopologyClassification::ClosedSphere(_)
-                ) =>
-            {
-                let cls = TopologyClassification::ClosedToroid(D);
-                (cls, expected_chi_for(&cls))
-            }
-            _ => (topology_result.classification, topology_result.expected),
-        };
-
-        if let Some(exp) = expected
+        if let Some(exp) = topology_result.expected
             && topology_result.chi != exp
         {
             return Err(TriangulationValidationError::EulerCharacteristicMismatch {
                 computed: topology_result.chi,
                 expected: exp,
-                classification,
+                classification: topology_result.classification,
             }
             .into());
         }
@@ -1118,7 +1201,7 @@ where
             return Ok(());
         }
 
-        validate_vertex_links(&self.tds, facet_to_simplices)?;
+        validate_vertex_links_map(&self.tds, facet_to_simplices, self.global_topology)?;
         Ok(())
     }
 
@@ -1324,8 +1407,8 @@ where
         }
 
         let facet_to_simplices: FacetToSimplicesMap = self.tds.build_facet_to_simplices_map()?;
-        validate_facet_degree(&facet_to_simplices)?;
-        validate_closed_boundary(&self.tds, &facet_to_simplices)?;
+        validate_facet_degree_map(&facet_to_simplices)?;
+        validate_closed_boundary_map(&self.tds, &facet_to_simplices, self.global_topology)?;
 
         if self.topology_guarantee.requires_ridge_links() {
             validate_ridge_links(&self.tds)?;
@@ -1335,7 +1418,7 @@ where
             .topology_guarantee
             .requires_vertex_links_during_insertion()
         {
-            validate_vertex_links(&self.tds, &facet_to_simplices)?;
+            validate_vertex_links_map(&self.tds, &facet_to_simplices, self.global_topology)?;
         }
 
         // Keep geometric orientation non-negotiable during incremental insertion,
@@ -1467,7 +1550,7 @@ where
 
         self.tds
             .validate_coherent_orientation_for_simplices(simplices)?;
-        validate_local_pseudomanifold_for_simplices(&self.tds, simplices)?;
+        validate_local_pseudomanifold_for_simplices(&self.tds, self.global_topology, simplices)?;
 
         if self.topology_guarantee.requires_ridge_links() {
             validate_ridge_links_for_simplices(&self.tds, simplices.iter().copied())?;
@@ -1608,7 +1691,7 @@ mod tests {
     use crate::triangulation::DelaunayTriangulation;
     use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
     use slotmap::KeyData;
-    use std::assert_matches;
+    use std::{assert_matches, iter};
 
     fn synthetic_delaunay_verification_error(
         message: &str,
@@ -1901,6 +1984,16 @@ mod tests {
                 ridge_key: 0x00ab_cdef,
                 boundary_facet_count: 4
             }
+        );
+
+        let ridge_vertex = VertexKey::from(KeyData::from_ffi(7));
+        assert_matches!(
+            TriangulationValidationError::try_from(ManifoldError::RidgeNotFound {
+                ridge_vertices: iter::once(ridge_vertex).collect()
+            })
+            .unwrap(),
+            TriangulationValidationError::RidgeNotFound { ridge_vertices }
+                if ridge_vertices.as_slice() == [ridge_vertex]
         );
 
         assert_matches!(
@@ -2352,6 +2445,17 @@ mod tests {
                 }
             )
         );
+
+        let ridge_vertex = VertexKey::from(KeyData::from_ffi(42));
+        let inv = InvariantError::from(ManifoldError::RidgeNotFound {
+            ridge_vertices: iter::once(ridge_vertex).collect(),
+        });
+        assert_matches!(
+            inv,
+            InvariantError::Triangulation(TriangulationValidationError::RidgeNotFound {
+                ridge_vertices
+            }) if ridge_vertices.as_slice() == [ridge_vertex]
+        );
     }
 
     #[test]
@@ -2708,8 +2812,9 @@ mod tests {
             Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
         tri.validate_global_connectedness().unwrap();
         let facet_to_simplices = tri.tds.build_facet_to_simplices_map().unwrap();
-        validate_facet_degree(&facet_to_simplices).unwrap();
-        validate_closed_boundary(&tri.tds, &facet_to_simplices).unwrap();
+        validate_facet_degree_map(&facet_to_simplices).unwrap();
+        validate_closed_boundary_map(&tri.tds, &facet_to_simplices, GlobalTopology::Euclidean)
+            .unwrap();
 
         tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
 
@@ -2927,10 +3032,14 @@ mod tests {
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 1>::new_with_tds(FastKernel::new(), tds);
         let facet_to_simplices = tri.tds.build_facet_to_simplices_map().unwrap();
-        validate_facet_degree(&facet_to_simplices).unwrap();
+        validate_facet_degree_map(&facet_to_simplices).unwrap();
 
-        let topology =
-            validate_triangulation_euler_with_facet_to_simplices_map(&tri.tds, &facet_to_simplices);
+        let topology = validate_triangulation_euler_with_facet_to_simplices_map(
+            &tri.tds,
+            &facet_to_simplices,
+            GlobalTopology::Euclidean,
+        )
+        .unwrap();
         assert_eq!(topology.classification, TopologyClassification::Ball(1));
         assert_eq!(topology.expected, Some(1));
         assert_eq!(topology.chi, 1);

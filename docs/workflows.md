@@ -266,7 +266,7 @@ use delaunay::prelude::construction::{
 };
 
 fn main() -> DelaunayResult<()> {
-    // 2D canonicalized toroidal triangulation with unit square domain
+    // 2D Euclidean triangulation after wrapping inputs into a unit square domain
     let vertices = vec![
         vertex![0.1, 0.1]?,
         vertex![0.9, 0.9]?,
@@ -275,24 +275,25 @@ fn main() -> DelaunayResult<()> {
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices)
         .try_canonicalized_toroidal([1.0, 1.0])
-        ? // canonicalized toroidal construction
+        ? // input coordinate canonicalization
         .build::<()>()?;
 
-    // Insert more points - they'll be wrapped to [0,1)×[0,1)
-    dt.insert(vertex![1.2, 0.3]?)?; // wraps to [0.2, 0.3]
-    dt.insert(vertex![-0.1, 0.7]?)?; // wraps to [0.9, 0.7]
+    // Subsequent insertions are standard Euclidean insertions; canonicalize
+    // additional points at the call site if they come from the same domain.
+    dt.insert(vertex![0.2, 0.3]?)?;
+    dt.insert(vertex![0.9, 0.7]?)?;
     Ok(())
 }
 ```
 
 **Key points:**
 
-- **Domain wrapping**: Vertex coordinates are automatically canonicalized (wrapped) to the
-  fundamental domain `[0, period)` for each dimension
-- **Distance computation**: Topology-aware operations can use the toroidal metric when the
-  triangulation carries toroidal domain metadata
+- **Domain wrapping**: Initial vertex coordinates are canonicalized (wrapped) to the
+  fundamental domain `[0, period)` for each dimension before Euclidean construction
+- **Manifold topology**: `.try_canonicalized_toroidal([..])` does not assign closed toroidal
+  topology or rewire opposite boundary facets; use `.try_toroidal([..])` for a true quotient
 - **Construction modes**:
-  - `.try_canonicalized_toroidal([..])`: canonicalized construction (wrap into fundamental domain)
+  - `.try_canonicalized_toroidal([..])`: Euclidean construction after wrapping inputs
   - `.try_toroidal([..])`: periodic image-point construction; currently validated as a true
     toroidal quotient in 2D and compact 3D; 4D/5D fail fast pending issue #416
 
@@ -316,7 +317,7 @@ fn main() -> DelaunayResult<()> {
         vertex![1.0, 0.0; data = 20]?,
         vertex![0.0, 1.0; data = 30]?,
     ];
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<i32>()?;
 
     // Read vertex data
     for (_key, vertex) in dt.vertices() {

@@ -6,9 +6,9 @@ use delaunay::DelaunayTriangulation;
 use delaunay::prelude::Triangulation;
 use delaunay::prelude::construction::{GlobalTopology, TopologyGuarantee, TopologyKind};
 use delaunay::prelude::geometry::{Coordinate, CoordinateValidationError, FastKernel, Point};
-use delaunay::prelude::query::BoundaryAnalysis;
+use delaunay::prelude::query::FacetIncidenceAnalysis;
 use delaunay::prelude::tds::{
-    Simplex, SimplexKey, Tds, TdsError, Vertex, VertexKey, verify_facet_index_consistency,
+    SimplexKey, Tds, TdsError, Vertex, VertexKey, verify_facet_index_consistency,
 };
 use delaunay::prelude::topology::validation::validate_triangulation_euler;
 use delaunay::query::{QueryError, TopologyIndexBuildError};
@@ -127,10 +127,10 @@ fn read_only_topology_apis_accept_non_datatype_payloads() {
     );
 
     let tds: Tds<Payload, Payload, 2> = Tds::empty();
-    assert!(tds.build_facet_to_simplices_map().unwrap().is_empty());
-    assert_eq!(tds.number_of_boundary_facets().unwrap(), 0);
+    assert!(tds.build_facet_to_simplices_index().unwrap().is_empty());
+    assert_eq!(tds.number_of_one_sided_facets().unwrap(), 0);
 
-    let topology = validate_triangulation_euler(&tds).unwrap();
+    let topology = validate_triangulation_euler(&tds, GlobalTopology::Euclidean).unwrap();
     assert!(topology.is_valid());
 }
 
@@ -158,7 +158,7 @@ fn delaunay_empty_query_wrappers_accept_non_datatype_payloads()
     dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
 
-    assert!(dt.facets()?.next().is_none());
+    assert!(dt.facets().next().is_none());
     assert_eq!(dt.edges().count(), 0);
     assert_eq!(dt.incident_edges(VertexKey::default()).count(), 0);
     assert_eq!(dt.simplex_neighbors(SimplexKey::default()).count(), 0);
@@ -211,6 +211,5 @@ fn facet_index_consistency_accepts_non_datatype_payloads() {
 fn facet_views_accept_non_datatype_payloads() {
     let tds: Tds<Payload, Payload, 2> = Tds::empty();
 
-    assert!(Simplex::facet_views_from_tds(&tds, SimplexKey::default()).is_err());
-    assert!(Simplex::facet_view_iter(&tds, SimplexKey::default()).is_err());
+    assert!(tds.try_simplex_facets(SimplexKey::default()).is_err());
 }
