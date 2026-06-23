@@ -935,7 +935,7 @@ mod tests {
     use crate::geometry::kernel::{AdaptiveKernel, RobustKernel};
     use crate::topology::traits::topological_space::GlobalTopology;
     use crate::triangulation::DelaunayTriangulation;
-    use std::{num::NonZeroUsize, sync::Once};
+    use std::{assert_matches, num::NonZeroUsize, sync::Once};
 
     fn init_tracing() {
         static INIT: Once = Once::new();
@@ -1181,6 +1181,31 @@ mod tests {
         );
         assert_eq!(dt.global_topology(), global_topology);
         assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
+    }
+
+    #[test]
+    fn test_heuristic_rebuild_threads_non_default_global_topology() {
+        init_tracing();
+        let vertices: Vec<Vertex<(), 2>> = vec![
+            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::try_new(&vertices).unwrap();
+        dt.tri.global_topology = GlobalTopology::Spherical;
+
+        let _guard = ForceHeuristicRebuildGuard::enable();
+        let result =
+            dt.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default());
+
+        assert_matches!(
+            result,
+            Err(DelaunayRepairError::HeuristicRebuildFailed { .. }),
+            "forced rebuild should fail when threaded closed topology rejects Euclidean boundary"
+        );
+        assert_eq!(dt.global_topology(), GlobalTopology::Spherical);
     }
 
     #[test]

@@ -249,6 +249,12 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
         mut coords: [f64; D],
         periodic_offset: Option<[i8; D]>,
     ) -> Result<[f64; D], GlobalTopologyModelError> {
+        for (axis, coord) in coords.iter().copied().enumerate() {
+            if !coord.is_finite() {
+                return Err(GlobalTopologyModelError::NonFiniteCoordinate { axis, value: coord });
+            }
+        }
+
         // Canonicalized toroidal mode intentionally accepts optional periodic offsets but
         // does not apply them. This differs from `EuclideanModel`, which treats any
         // provided periodic offset as unsupported and returns an error.
@@ -259,12 +265,6 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
             return Ok(coords);
         };
 
-        // Validate finiteness before performing arithmetic
-        for (axis, coord) in coords.iter().copied().enumerate() {
-            if !coord.is_finite() {
-                return Err(GlobalTopologyModelError::NonFiniteCoordinate { axis, value: coord });
-            }
-        }
         for axis in 0..D {
             let period = self.domain.periods()[axis];
             let lifted = f64::from(offset[axis]).mul_add(period, coords[axis]);
@@ -599,6 +599,32 @@ mod tests {
     #[test]
     fn toroidal_model_lift_rejects_non_finite_coordinates() {
         let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::PeriodicImagePoint);
+        let err = model
+            .lift_for_orientation([f64::NAN, 0.5_f64], Some([1, 0]))
+            .unwrap_err();
+        assert_matches!(
+            err,
+            GlobalTopologyModelError::NonFiniteCoordinate { axis: 0, value }
+                if value.is_nan()
+        );
+    }
+
+    #[test]
+    fn toroidal_model_lift_rejects_non_finite_coordinates_without_offset() {
+        let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::PeriodicImagePoint);
+        let err = model
+            .lift_for_orientation([0.5_f64, f64::INFINITY], None)
+            .unwrap_err();
+        assert_matches!(
+            err,
+            GlobalTopologyModelError::NonFiniteCoordinate { axis: 1, value }
+                if value.is_infinite() && value.is_sign_positive()
+        );
+    }
+
+    #[test]
+    fn toroidal_model_lift_rejects_non_finite_coordinates_when_offsets_unsupported() {
+        let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let err = model
             .lift_for_orientation([f64::NAN, 0.5_f64], Some([1, 0]))
             .unwrap_err();

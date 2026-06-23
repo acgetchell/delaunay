@@ -3184,6 +3184,26 @@ mod tests {
     }
 
     #[test]
+    fn test_builder_toroidal_rejects_dimension_above_validated_range() {
+        let vertices = vec![Vertex::<(), _>::try_new([0.1_f64, 0.2, 0.3, 0.4]).unwrap()];
+        let result = DelaunayTriangulationBuilder::new(&vertices)
+            .try_toroidal([1.0, 1.0, 1.0, 1.0])
+            .unwrap()
+            .build::<()>();
+
+        assert_matches!(
+            result,
+            Err(DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::UnsupportedPeriodicDimension {
+                    dimension: 4,
+                    max_validated_dimension: 3,
+                    tracking_issue: 416,
+                }
+            ))
+        );
+    }
+
+    #[test]
     fn test_builder_toroidal_rejects_global_topology_before_toroidal_setter() {
         let vertices = periodic_fixture_vertices_2d();
         let result = DelaunayTriangulationBuilder::new(&vertices)
