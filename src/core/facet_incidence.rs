@@ -61,16 +61,16 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     /// # Returns
     ///
     /// A `Result<OneSidedFacetsIter<'_, U, V, D>, TdsError>` containing an
-    /// iterator over one-sided facet incidences. The iterator yields
-    /// `Result<FacetView, FacetError>` items lazily without pre-allocating
-    /// vectors, providing better performance while still surfacing corrupted
+    /// iterator over one-sided facet incidences. The iterator owns a sorted
+    /// handle list derived from the facet-incidence index and yields
+    /// `Result<FacetView, FacetError>` items while still surfacing corrupted
     /// facet views during iteration.
     ///
     /// # Errors
     ///
     /// Returns a [`TdsError`] (typically
     /// [`crate::prelude::tds::FacetError`]) if:
-    /// - The one-sided-facet iterator cannot be constructed
+    /// - The one-sided-facet iterator cannot be constructed.
     /// - A facet index is out of bounds (indicates data corruption)
     /// - A referenced simplex is not found in the triangulation (indicates data corruption)
     ///
@@ -125,7 +125,7 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
         let facet_to_simplices = self.build_facet_to_simplices_index()?;
 
         // Create the one-sided facets iterator.
-        OneSidedFacetsIter::try_new(facet_to_simplices).map_err(TdsError::from)
+        OneSidedFacetsIter::try_new(&facet_to_simplices).map_err(TdsError::from)
     }
 
     /// Checks if a specific facet has one-sided incidence.
@@ -1053,7 +1053,7 @@ mod tests {
                 "Error should contain facet key in hex: {error_string}"
             );
             assert!(
-                error_string.contains("expected 1 (boundary) or 2 (internal)"),
+                error_string.contains("expected 1 (one-sided) or 2 (two-sided)"),
                 "Error should explain valid multiplicities: {error_string}"
             );
 

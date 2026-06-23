@@ -832,7 +832,8 @@ rules:
         - "/tests/**/*.rs"
         - "/benches/**/*.rs"
         - "/examples/**/*.rs"
-    pattern-regex: '(?m)^\s*(?:pub(?:\s*\([^)]*\))?\s+)?struct\s+(?:[A-Za-z0-9_]*View|RidgeQuery)\s*(?:<\s*(?!'')[^>{}]*>|where|\{|;|\()'
+    pattern-regex: >-
+      (?m)^\s*(?:pub(?:\s*\([^)]*\))?\s+)?struct\s+(?:[A-Za-z0-9_]*View|RidgeQuery)\s*(?:<\s*(?!')[^>{}]*>|where|\{|;|\()
 
   - id: delaunay.rust.no-raw-facet-incidence-boundary-classification
     languages:

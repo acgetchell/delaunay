@@ -1140,6 +1140,7 @@ mod tests {
     use crate::core::vertex::VertexValidationError;
     use crate::repair::DelaunayRepairOperation;
     use crate::topology::characteristics::euler::TopologyClassification;
+    use crate::topology::traits::topological_space::TopologyKind;
     use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
     use slotmap::KeyData;
     use std::{assert_matches, iter};
@@ -1345,6 +1346,26 @@ mod tests {
                     boundary_facet_count: 3,
                 },
                 TriangulationValidationErrorKind::BoundaryRidgeMultiplicity,
+            ),
+            (
+                TriangulationValidationError::BoundaryFacetInClosedTopology {
+                    topology: TopologyKind::Spherical,
+                    facet_key: 0x111,
+                    simplex_key: SimplexKey::from(KeyData::from_ffi(5)),
+                    simplex_uuid: Uuid::new_v4(),
+                    facet_index: 1,
+                },
+                TriangulationValidationErrorKind::BoundaryFacetInClosedTopology,
+            ),
+            (
+                TriangulationValidationError::PeriodicIdentificationInNonPeriodicTopology {
+                    topology: TopologyKind::Euclidean,
+                    facet_key: 0x222,
+                    simplex_key: SimplexKey::from(KeyData::from_ffi(6)),
+                    simplex_uuid: Uuid::new_v4(),
+                    facet_index: 2,
+                },
+                TriangulationValidationErrorKind::PeriodicIdentificationInNonPeriodicTopology,
             ),
             (
                 TriangulationValidationError::RidgeNotFound {

@@ -115,7 +115,7 @@ pub type FacetInfoBuffer = SmallBuffer<FacetHandle, MAX_PRACTICAL_DIMENSION_SIZE
 pub type CavityBoundaryBuffer = SmallBuffer<FacetHandle, 64>;
 
 /// Buffer for storing simplices that share a facet.
-/// Facets are shared by at most 2 simplices (boundary=1, interior=2).
+/// Facets are incident to at most 2 simplices (one-sided=1, two-sided=2).
 ///
 /// # Optimization Rationale
 ///

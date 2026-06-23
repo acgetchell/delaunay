@@ -617,9 +617,9 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     /// This is the borrowed-view counterpart to [`Self::facet_handles`]. It first
     /// verifies that the hull still belongs to `tri` and that the triangulation
     /// generation matches the hull's creation generation, then yields
-    /// [`FacetView`] values lifetime-bound to the supplied triangulation. Holding
-    /// any returned view therefore keeps the source triangulation immutably
-    /// borrowed.
+    /// [`FacetView`] values lifetime-bound to the supplied triangulation. The
+    /// iterator borrows the hull while it is consumed, but collected facet views
+    /// borrow only `tri`.
     ///
     /// # Errors
     ///
@@ -663,13 +663,16 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn try_facets<'tds, K>(
-        &'tds self,
-        tri: &'tds Triangulation<K, U, V, D>,
+    pub fn try_facets<'hull, 'tri, K>(
+        &'hull self,
+        tri: &'tri Triangulation<K, U, V, D>,
     ) -> Result<
-        impl Iterator<Item = Result<FacetView<'tds, U, V, D>, FacetError>> + 'tds,
+        impl Iterator<Item = Result<FacetView<'tri, U, V, D>, FacetError>> + 'hull,
         ConvexHullConstructionError,
-    > {
+    >
+    where
+        'tri: 'hull,
+    {
         self.ensure_current_for_construction(tri)?;
         let tds = &tri.tds;
         Ok(self
@@ -2260,6 +2263,27 @@ mod tests {
                         assert!(
                             hull.facet($expected_facets).is_none(),
                             "{}D hull out of range facet index should return None",
+                            $dim
+                        );
+                    }
+
+                    #[test]
+                    fn [<$test_name _facet_views_outlive_hull_borrow>]() {
+                        let vertices = $vertices;
+                        let dt = create_triangulation(&vertices);
+                        let facet_views: Vec<_> = {
+                            let hull: ConvexHull<(), (), $dim> =
+                                ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
+                            hull.try_facets(dt.as_triangulation())
+                                .unwrap()
+                                .collect::<Result<Vec<_>, _>>()
+                                .unwrap()
+                        };
+
+                        assert_eq!(
+                            facet_views.len(),
+                            $expected_facets,
+                            "{}D facet views should borrow only the triangulation",
                             $dim
                         );
                     }

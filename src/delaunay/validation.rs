@@ -45,11 +45,16 @@ pub(crate) struct DelaunayTriangulationCandidate<K, U, V, const D: usize> {
 }
 
 impl<K, U, V, const D: usize> DelaunayTriangulationCandidate<K, U, V, D> {
-    /// Assembles a validation candidate from a TDS and topology guarantee.
+    /// Assembles a validation candidate with the topology context used for proof checks.
+    ///
+    /// The global topology is installed before any validation proof is minted so
+    /// boundary classification and Euler checks use the construction path's
+    /// intended topology rather than the Euclidean default.
     pub(crate) const fn assemble(
         tds: Tds<U, V, D>,
         kernel: K,
         topology_guarantee: TopologyGuarantee,
+        global_topology: GlobalTopology<D>,
     ) -> Self {
         let validation_policy = topology_guarantee.default_validation_policy();
         Self {
@@ -57,7 +62,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulationCandidate<K, U, V, D> {
                 tri: Triangulation {
                     kernel,
                     tds,
-                    global_topology: GlobalTopology::DEFAULT,
+                    global_topology,
                     validation_policy,
                     topology_guarantee,
                 },
@@ -65,11 +70,6 @@ impl<K, U, V, const D: usize> DelaunayTriangulationCandidate<K, U, V, D> {
                 spatial_index: None,
             },
         }
-    }
-
-    /// Sets runtime global-topology metadata before validation.
-    pub(crate) const fn set_global_topology(&mut self, global_topology: GlobalTopology<D>) {
-        self.candidate.tri.set_global_topology(global_topology);
     }
 
     /// Validates Level 1–2 TDS structure and returns proof for structural-only assembly paths.
@@ -863,9 +863,12 @@ where
         topology_guarantee: TopologyGuarantee,
         global_topology: GlobalTopology<D>,
     ) -> Result<Self, DelaunayTriangulationValidationError> {
-        let mut candidate =
-            DelaunayTriangulationCandidate::assemble(tds, kernel, topology_guarantee);
-        candidate.set_global_topology(global_topology);
+        let candidate = DelaunayTriangulationCandidate::assemble(
+            tds,
+            kernel,
+            topology_guarantee,
+            global_topology,
+        );
         let proof = candidate.validate_delaunay_property()?;
         Ok(candidate.into_validated_delaunay(proof))
     }

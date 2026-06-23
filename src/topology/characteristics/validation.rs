@@ -11,7 +11,7 @@ use crate::topology::{
         FVector, TopologyClassification, count_simplices_with_facet_to_simplices_map,
         euler_characteristic, expected_chi_for,
     },
-    manifold::has_boundary_facets_in_map,
+    manifold::{ValidatedFacetDegreeMap, has_boundary_facets_in_validated_facet_map},
     traits::topological_space::{GlobalTopology, TopologyError},
 };
 
@@ -170,40 +170,38 @@ pub fn validate_triangulation_euler<U, V, const D: usize>(
             .map_err(|source| TopologyError::FacetMapBuild { source })?
     };
 
-    validate_triangulation_euler_with_facet_to_simplices_map(
-        tds,
-        &facet_to_simplices,
-        global_topology,
-    )
+    let facet_to_simplices = ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices)
+        .map_err(|source| TopologyError::BoundaryClassification {
+            source: Box::new(source),
+        })?;
+    validate_triangulation_euler_from_validated_facet_map(tds, facet_to_simplices, global_topology)
 }
 
-/// Computes the Euler check while reusing an already-built raw facet map.
+/// Computes the Euler check while reusing an already-validated facet-degree map.
 ///
 /// This keeps [`Triangulation`](crate::prelude::triangulation::Triangulation)
 /// Level-3 validation from rebuilding the same incidence map while preserving
-/// the public boundary contract: raw one-sided incidence is classified against
+/// the public boundary contract: one-sided incidence is classified against
 /// [`GlobalTopology`] before it affects the expected χ.
 ///
 /// # Errors
 ///
-/// Returns [`TopologyError::BoundaryClassification`] if the raw facet map
-/// contains non-manifold facet multiplicity or one-sided incidence that is
+/// Returns [`TopologyError::BoundaryClassification`] if one-sided incidence is
 /// incompatible with `global_topology`.
-pub(crate) fn validate_triangulation_euler_with_facet_to_simplices_map<U, V, const D: usize>(
+pub(crate) fn validate_triangulation_euler_from_validated_facet_map<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
-    facet_to_simplices: &FacetToSimplicesMap,
+    facet_to_simplices: ValidatedFacetDegreeMap<'_>,
     global_topology: GlobalTopology<D>,
 ) -> Result<TopologyCheckResult, TopologyError> {
-    let counts = count_simplices_with_facet_to_simplices_map(tds, facet_to_simplices);
+    let counts = count_simplices_with_facet_to_simplices_map(tds, facet_to_simplices.as_map());
     let chi = euler_characteristic(&counts);
 
     let num_simplices = tds.number_of_simplices();
     let has_boundary = num_simplices != 0
-        && has_boundary_facets_in_map(tds, facet_to_simplices, global_topology).map_err(
-            |source| TopologyError::BoundaryClassification {
+        && has_boundary_facets_in_validated_facet_map(tds, facet_to_simplices, global_topology)
+            .map_err(|source| TopologyError::BoundaryClassification {
                 source: Box::new(source),
-            },
-        )?;
+            })?;
 
     let classification = if num_simplices == 0 {
         TopologyClassification::Empty

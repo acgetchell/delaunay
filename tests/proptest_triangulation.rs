@@ -674,7 +674,7 @@ test_quality_properties!(5, 7, 16, #[cfg(feature = "slow-tests")]);
 /// Macro to generate facet topology invariant property tests for a given dimension.
 ///
 /// These tests verify the **critical manifold topology invariant**: each facet
-/// must be shared by at most 2 simplices (1 for boundary, 2 for interior). This
+/// must be incident to at most 2 simplices (one-sided or two-sided). This
 /// invariant is essential for facet walking used in point location.
 ///
 /// The localized validation functions (`detect_local_facet_issues`,

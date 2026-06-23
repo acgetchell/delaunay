@@ -80,7 +80,7 @@
 #![forbid(unsafe_code)]
 
 use super::collections::{
-    FacetToSimplicesMap, FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
+    FacetToSimplicesMap, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
     fast_hash_map_with_capacity,
 };
 use super::util::{stable_hash_u64_slice, usize_to_u8};
@@ -91,8 +91,12 @@ use super::{
 };
 use crate::geometry::traits::coordinate::CoordinateConversionError;
 use slotmap::Key;
-use std::fmt::{self, Debug};
-use std::sync::Arc;
+use std::{
+    fmt::{self, Debug},
+    iter::FusedIterator,
+    sync::Arc,
+    vec::IntoIter,
+};
 use thiserror::Error;
 
 // =============================================================================
@@ -217,9 +221,9 @@ pub enum FacetError {
     /// A facet-to-simplices index was used with a different TDS than the one that produced it.
     #[error("Facet-to-simplices index belongs to a different TDS")]
     FacetIndexOwnerMismatch,
-    /// Facet has invalid multiplicity (should be 1 for boundary or 2 for internal).
+    /// Facet has invalid multiplicity (should be one-sided or two-sided).
     #[error(
-        "Facet with key {facet_key:016x} has invalid multiplicity {found}, expected 1 (boundary) or 2 (internal)"
+        "Facet with key {facet_key:016x} has invalid multiplicity {found}, expected 1 (one-sided) or 2 (two-sided)"
     )]
     InvalidFacetMultiplicity {
         /// The facet key with invalid multiplicity.
@@ -236,6 +240,30 @@ pub enum FacetError {
         facet_key: u64,
         /// The repeated simplex facet handle.
         handle: FacetHandle,
+    },
+    /// An incident facet handle derives a different canonical facet key than its index entry.
+    #[error(
+        "Facet handle {handle:?} derives key {actual_facet_key:016x}, but index entry expected {expected_facet_key:016x}"
+    )]
+    FacetHandleKeyMismatch {
+        /// The facet key under which the handle was stored.
+        expected_facet_key: u64,
+        /// The canonical facet key derived from the handle's live facet view.
+        actual_facet_key: u64,
+        /// The mismatched incident simplex facet handle.
+        handle: FacetHandle,
+    },
+    /// A supplied boundary facet handle is not the parsed one-sided handle for its facet key.
+    #[error(
+        "Boundary facet handle {supplied_handle:?} is not the indexed one-sided handle {indexed_handle:?} for facet key {facet_key:016x}"
+    )]
+    BoundaryFacetHandleNotIndexed {
+        /// The canonical facet key derived from the supplied handle.
+        facet_key: u64,
+        /// The handle supplied to the boundary-facet iterator.
+        supplied_handle: FacetHandle,
+        /// The one-sided handle stored in the parsed facet index.
+        indexed_handle: FacetHandle,
     },
     /// Failed to retrieve boundary facets from triangulation.
     #[error("Failed to retrieve boundary facets: {source}")]
@@ -1033,7 +1061,50 @@ enum FacetIncidenceKind {
 }
 
 impl FacetIncidence {
+    /// Parses a raw facet-index entry into validated incidence for one canonical facet key.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FacetError::InvalidFacetMultiplicity`] or
+    /// [`FacetError::DuplicateFacetIncidentHandle`] when the raw entry does not
+    /// contain one handle or two distinct handles. Returns
+    /// [`FacetError::FacetHandleKeyMismatch`] or a lower-level handle/view error
+    /// when an incident handle does not resolve to the facet key under the TDS
+    /// that produced the index.
+    fn try_from_index_entry<U, V, const D: usize>(
+        tds: &Tds<U, V, D>,
+        facet_key: u64,
+        handles: &SmallBuffer<FacetHandle, 2>,
+    ) -> Result<Self, FacetError> {
+        let incidence = Self::try_from_handles(facet_key, handles)?;
+        match incidence.kind {
+            FacetIncidenceKind::OneSided(handle) => {
+                let handle = try_incident_facet_view_for_facet_key(tds, facet_key, handle)
+                    .map(|_| handle)?;
+                Ok(Self {
+                    kind: FacetIncidenceKind::OneSided(handle),
+                })
+            }
+            FacetIncidenceKind::TwoSided([first, second]) => {
+                let first =
+                    try_incident_facet_view_for_facet_key(tds, facet_key, first).map(|_| first)?;
+                let second = try_incident_facet_view_for_facet_key(tds, facet_key, second)
+                    .map(|_| second)?;
+                Ok(Self {
+                    kind: FacetIncidenceKind::TwoSided([first, second]),
+                })
+            }
+        }
+    }
+
     /// Parses raw incident handles into a multiplicity-proof facet incidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FacetError::InvalidFacetMultiplicity`] unless the entry has one
+    /// handle or two handles, and returns
+    /// [`FacetError::DuplicateFacetIncidentHandle`] when a two-sided entry
+    /// repeats the same handle.
     fn try_from_handles(
         facet_key: u64,
         handles: &SmallBuffer<FacetHandle, 2>,
@@ -1097,6 +1168,31 @@ impl FacetIncidence {
             FacetIncidenceKind::TwoSided(handles) => Some(handles),
         }
     }
+}
+
+/// Parses a raw incident handle as belonging to one canonical facet-key entry.
+///
+/// # Errors
+///
+/// Returns the same errors as [`FacetHandle::view`] when the handle cannot be
+/// reborrowed from `tds`, or [`FacetError::FacetHandleKeyMismatch`] when the
+/// live facet view derives a different canonical key than the index entry.
+pub(crate) fn try_incident_facet_view_for_facet_key<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    expected_facet_key: u64,
+    handle: FacetHandle,
+) -> Result<FacetView<'_, U, V, D>, FacetError> {
+    let facet = handle.view(tds)?;
+    let actual_facet_key = facet.key();
+    if actual_facet_key == expected_facet_key {
+        return Ok(facet);
+    }
+
+    Err(FacetError::FacetHandleKeyMismatch {
+        expected_facet_key,
+        actual_facet_key,
+        handle,
+    })
 }
 
 /// Borrowed view over one parsed facet-incidence entry.
@@ -1180,6 +1276,12 @@ pub struct FacetToSimplicesIndex<'tds, U, V, const D: usize> {
 
 impl<'tds, U, V, const D: usize> FacetToSimplicesIndex<'tds, U, V, D> {
     /// Parses a freshly built raw facet map and binds it to the TDS that produced it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FacetError`] when any raw incidence entry has invalid
+    /// multiplicity, duplicate handles, stale handles, or handles whose live
+    /// facet key does not match the map entry.
     #[inline]
     pub(crate) fn try_from_map(
         tds: &'tds Tds<U, V, D>,
@@ -1187,10 +1289,8 @@ impl<'tds, U, V, const D: usize> FacetToSimplicesIndex<'tds, U, V, D> {
     ) -> Result<Self, FacetError> {
         let mut parsed = fast_hash_map_with_capacity(map.len());
         for (facet_key, handles) in map {
-            parsed.insert(
-                *facet_key,
-                FacetIncidence::try_from_handles(*facet_key, handles)?,
-            );
+            let incidence = FacetIncidence::try_from_index_entry(tds, *facet_key, handles)?;
+            parsed.insert(*facet_key, incidence);
         }
         Ok(Self { tds, map: parsed })
     }
@@ -1220,8 +1320,9 @@ impl<'tds, U, V, const D: usize> FacetToSimplicesIndex<'tds, U, V, D> {
     #[inline]
     #[must_use]
     pub fn is_one_sided_facet_key(&self, facet_key: &u64) -> bool {
-        self.get(facet_key)
-            .is_some_and(FacetIncidenceView::is_one_sided)
+        self.map
+            .get(facet_key)
+            .is_some_and(|incidence| incidence.is_one_sided())
     }
 
     /// Returns the number of indexed facet keys.
@@ -1252,6 +1353,14 @@ impl<'tds, U, V, const D: usize> FacetToSimplicesIndex<'tds, U, V, D> {
                 incidence,
             })
     }
+
+    /// Iterates over handles for parsed one-sided facet incidences.
+    #[inline]
+    pub(crate) fn one_sided_handles(&self) -> impl Iterator<Item = FacetHandle> + '_ {
+        self.map
+            .values()
+            .filter_map(|incidence| incidence.one_sided_handle())
+    }
 }
 
 /// Local neighbor metadata for a one-sided facet occurrence.
@@ -1266,18 +1375,12 @@ pub(crate) enum OneSidedFacetAdjacency {
 
 /// Classifies the local neighbor metadata for a parsed one-sided facet.
 pub(crate) fn classify_one_sided_facet_adjacency<U, V, const D: usize>(
-    tds: &Tds<U, V, D>,
-    facet_key: u64,
-    handle: FacetHandle,
+    facet: &FacetView<'_, U, V, D>,
 ) -> Result<OneSidedFacetAdjacency, TdsError> {
-    let simplex_key = handle.simplex_key();
-    let facet_index = usize::from(handle.facet_index());
-    let simplex = tds
-        .simplex(simplex_key)
-        .ok_or_else(|| TdsError::SimplexNotFound {
-            simplex_key,
-            context: "one-sided facet adjacency classification".to_string(),
-        })?;
+    let facet_key = facet.key();
+    let simplex_key = facet.simplex_key();
+    let facet_index = usize::from(facet.facet_index());
+    let simplex = facet.simplex();
 
     if facet_index >= simplex.number_of_vertices() {
         return Err(TdsError::IndexOutOfBounds {
@@ -1416,6 +1519,7 @@ impl<U, V, const D: usize> Eq for FacetView<'_, U, V, D> {}
 /// # Ok(())
 /// # }
 /// ```
+#[must_use]
 #[derive(Clone)]
 pub struct SimplexFacetsIter<'tds, U, V, const D: usize> {
     tds: &'tds Tds<U, V, D>,
@@ -1492,7 +1596,7 @@ impl<U, V, const D: usize> ExactSizeIterator for SimplexFacetsIter<'_, U, V, D> 
     }
 }
 
-impl<U, V, const D: usize> std::iter::FusedIterator for SimplexFacetsIter<'_, U, V, D> {}
+impl<U, V, const D: usize> FusedIterator for SimplexFacetsIter<'_, U, V, D> {}
 
 /// Iterator over all facets in a triangulation data structure.
 ///
@@ -1786,8 +1890,9 @@ impl<'tds, U, V, const D: usize> Iterator for AllFacetsIter<'tds, U, V, D> {
 ///
 /// This iterator yields facets whose keys were preclassified as true manifold
 /// boundary by the topology layer.
-/// Each item is a `Result` so facet-view construction or key-derivation
-/// failures propagate to the caller during iteration.
+/// It owns the topology-approved handles in deterministic storage order while
+/// borrowing the TDS that produced them. Each item is a `Result` so facet-view
+/// construction failures propagate to the caller during iteration.
 ///
 /// # Examples
 ///
@@ -1821,11 +1926,11 @@ impl<'tds, U, V, const D: usize> Iterator for AllFacetsIter<'tds, U, V, D> {
 /// # Ok(())
 /// # }
 /// ```
+#[must_use]
 #[derive(Clone)]
 pub struct BoundaryFacetsIter<'tds, U, V, const D: usize> {
-    all_facets: AllFacetsIter<'tds, U, V, D>,
-    facet_to_simplices_index: FacetToSimplicesIndex<'tds, U, V, D>,
-    boundary_facet_keys: FastHashSet<u64>,
+    tds: &'tds Tds<U, V, D>,
+    boundary_facet_handles: IntoIter<FacetHandle>,
 }
 
 impl<'tds, U, V, const D: usize> BoundaryFacetsIter<'tds, U, V, D> {
@@ -1834,7 +1939,10 @@ impl<'tds, U, V, const D: usize> BoundaryFacetsIter<'tds, U, V, D> {
     /// # Errors
     ///
     /// Returns [`FacetError::FacetIndexCapacityExceeded`] if this dimension
-    /// cannot be represented by the current `u8` facet-index storage.
+    /// cannot be represented by the current `u8` facet-index storage. Also
+    /// returns [`FacetError`] if any supplied handle is stale, missing from the
+    /// parsed index, not the indexed one-sided handle for its facet key, or no
+    /// longer reborrows as a live [`FacetView`].
     ///
     /// # Examples
     ///
@@ -1868,13 +1976,18 @@ impl<'tds, U, V, const D: usize> BoundaryFacetsIter<'tds, U, V, D> {
     /// # }
     /// ```
     pub(crate) fn try_new(
-        facet_to_simplices_index: FacetToSimplicesIndex<'tds, U, V, D>,
-        boundary_facet_keys: FastHashSet<u64>,
+        facet_to_simplices_index: &FacetToSimplicesIndex<'tds, U, V, D>,
+        mut boundary_facet_handles: Vec<FacetHandle>,
     ) -> Result<Self, FacetError> {
+        let tds = facet_to_simplices_index.tds();
+        AllFacetsIter::try_new(tds)?;
+        for handle in &mut boundary_facet_handles {
+            *handle = try_one_sided_handle_from_index(facet_to_simplices_index, *handle)?;
+        }
+        sort_handles_by_storage_order(&mut boundary_facet_handles);
         Ok(Self {
-            all_facets: AllFacetsIter::try_new(facet_to_simplices_index.tds())?,
-            facet_to_simplices_index,
-            boundary_facet_keys,
+            tds,
+            boundary_facet_handles: boundary_facet_handles.into_iter(),
         })
     }
 }
@@ -1883,49 +1996,87 @@ impl<'tds, U, V, const D: usize> Iterator for BoundaryFacetsIter<'tds, U, V, D> 
     type Item = Result<FacetView<'tds, U, V, D>, FacetError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        for facet_result in self.all_facets.by_ref() {
-            let facet_view = match facet_result {
-                Ok(facet_view) => facet_view,
-                Err(err) => return Some(Err(err)),
-            };
-            let facet_key = facet_view.key();
-            if !self.boundary_facet_keys.contains(&facet_key) {
-                continue;
-            }
+        self.boundary_facet_handles
+            .next()
+            .map(|handle| handle.view(self.tds))
+    }
 
-            if self.facet_to_simplices_index.get(&facet_key).is_none() {
-                let vertex_uuids = facet_view.vertices().map(Vertex::uuid).collect();
-                return Some(Err(FacetError::FacetKeyNotFoundInCache {
-                    facet_key,
-                    cache_size: self.facet_to_simplices_index.len(),
-                    vertex_uuids,
-                }));
-            }
-            return Some(Ok(facet_view));
-        }
-        None
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.boundary_facet_handles.size_hint()
     }
 }
+
+impl<U, V, const D: usize> ExactSizeIterator for BoundaryFacetsIter<'_, U, V, D> {}
+
+impl<U, V, const D: usize> FusedIterator for BoundaryFacetsIter<'_, U, V, D> {}
 
 /// Iterator over one-sided facet incidences in a TDS.
 ///
 /// This is a TDS-level incidence traversal, not a topology-aware boundary
 /// query. Closed periodic self-identifications can be one-sided in the quotient
-/// incidence index without being manifold boundary.
+/// incidence index without being manifold boundary. The iterator owns a sorted
+/// handle list derived from the parsed incidence index while borrowing the TDS
+/// that produced it.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::*;
+///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+/// #     #[error(transparent)]
+/// #     Tds(#[from] delaunay::prelude::tds::TdsError),
+/// #     #[error(transparent)]
+/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
+/// let vertices = vec![
+///     delaunay::vertex![0.0, 0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0, 0.0]?,
+///     delaunay::vertex![0.0, 0.0, 1.0]?,
+/// ];
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+///
+/// let one_sided_count = dt
+///     .tds()
+///     .one_sided_facets()?
+///     .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
+/// assert_eq!(one_sided_count, 4);
+/// # Ok(())
+/// # }
+/// ```
+#[must_use]
 #[derive(Clone)]
 pub struct OneSidedFacetsIter<'tds, U, V, const D: usize> {
-    all_facets: AllFacetsIter<'tds, U, V, D>,
-    facet_to_simplices_index: FacetToSimplicesIndex<'tds, U, V, D>,
+    tds: &'tds Tds<U, V, D>,
+    one_sided_facet_handles: IntoIter<FacetHandle>,
 }
 
 impl<'tds, U, V, const D: usize> OneSidedFacetsIter<'tds, U, V, D> {
     /// Creates a new iterator over one-sided facet incidences.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FacetError::FacetIndexCapacityExceeded`] if this dimension
+    /// cannot be represented by the current `u8` facet-index storage.
     pub(crate) fn try_new(
-        facet_to_simplices_index: FacetToSimplicesIndex<'tds, U, V, D>,
+        facet_to_simplices_index: &FacetToSimplicesIndex<'tds, U, V, D>,
     ) -> Result<Self, FacetError> {
+        let tds = facet_to_simplices_index.tds();
+        AllFacetsIter::try_new(tds)?;
+        let mut one_sided_facet_handles = facet_to_simplices_index
+            .one_sided_handles()
+            .collect::<Vec<_>>();
+        sort_handles_by_storage_order(&mut one_sided_facet_handles);
         Ok(Self {
-            all_facets: AllFacetsIter::try_new(facet_to_simplices_index.tds())?,
-            facet_to_simplices_index,
+            tds,
+            one_sided_facet_handles: one_sided_facet_handles.into_iter(),
         })
     }
 }
@@ -1934,26 +2085,62 @@ impl<'tds, U, V, const D: usize> Iterator for OneSidedFacetsIter<'tds, U, V, D> 
     type Item = Result<FacetView<'tds, U, V, D>, FacetError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        for facet_result in self.all_facets.by_ref() {
-            let facet_view = match facet_result {
-                Ok(facet_view) => facet_view,
-                Err(err) => return Some(Err(err)),
-            };
-            let facet_key = facet_view.key();
-            let Some(incidence) = self.facet_to_simplices_index.get(&facet_key) else {
-                let vertex_uuids = facet_view.vertices().map(Vertex::uuid).collect();
-                return Some(Err(FacetError::FacetKeyNotFoundInCache {
-                    facet_key,
-                    cache_size: self.facet_to_simplices_index.len(),
-                    vertex_uuids,
-                }));
-            };
-            if incidence.is_one_sided() {
-                return Some(Ok(facet_view));
-            }
-        }
-        None
+        self.one_sided_facet_handles
+            .next()
+            .map(|handle| handle.view(self.tds))
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.one_sided_facet_handles.size_hint()
+    }
+}
+
+impl<U, V, const D: usize> ExactSizeIterator for OneSidedFacetsIter<'_, U, V, D> {}
+
+impl<U, V, const D: usize> FusedIterator for OneSidedFacetsIter<'_, U, V, D> {}
+
+/// Parses a supplied handle as the indexed one-sided handle for its facet key.
+///
+/// # Errors
+///
+/// Returns the same errors as [`FacetHandle::view`] when `handle` cannot be
+/// reborrowed from the index's TDS. Returns
+/// [`FacetError::FacetKeyNotFoundInCache`] when the handle's facet key is absent
+/// from the parsed index, [`FacetError::BoundaryFacetHandleNotIndexed`] when a
+/// different one-sided handle is indexed for that key, or
+/// [`FacetError::InvalidAdjacentSimplexCount`] when the key is not one-sided.
+fn try_one_sided_handle_from_index<U, V, const D: usize>(
+    facet_to_simplices_index: &FacetToSimplicesIndex<'_, U, V, D>,
+    handle: FacetHandle,
+) -> Result<FacetHandle, FacetError> {
+    let facet = handle.view(facet_to_simplices_index.tds())?;
+    let facet_key = facet.key();
+    let Some(incidence) = facet_to_simplices_index.get(&facet_key) else {
+        let vertex_uuids = facet.vertices().map(Vertex::uuid).collect();
+        return Err(FacetError::FacetKeyNotFoundInCache {
+            facet_key,
+            cache_size: facet_to_simplices_index.len(),
+            vertex_uuids,
+        });
+    };
+    match incidence.one_sided_handle() {
+        Some(indexed_handle) if indexed_handle == handle => Ok(handle),
+        Some(indexed_handle) => Err(FacetError::BoundaryFacetHandleNotIndexed {
+            facet_key,
+            supplied_handle: handle,
+            indexed_handle,
+        }),
+        None => Err(FacetError::InvalidAdjacentSimplexCount {
+            found: incidence.incident_simplex_count(),
+        }),
+    }
+}
+
+/// Sorts handles by storage key and local facet index for deterministic iteration.
+fn sort_handles_by_storage_order(handles: &mut [FacetHandle]) {
+    handles.sort_unstable_by_key(|handle| {
+        (handle.simplex_key().data().as_ffi(), handle.facet_index())
+    });
 }
 
 // =============================================================================
@@ -2053,7 +2240,7 @@ mod tests {
     use crate::core::vertex::Vertex;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::triangulation::DelaunayTriangulation;
-    use slotmap::SlotMap;
+    use slotmap::{KeyData, SlotMap};
     use std::assert_matches;
     use std::{collections::HashSet, mem};
 
@@ -2624,10 +2811,10 @@ mod tests {
     }
 
     #[test]
-    fn boundary_facets_iter_propagates_inner_errors() {
-        let tds = overwide_simplex_tds();
+    fn boundary_facets_iter_yields_supplied_handles_in_storage_order() {
+        let tds = tetrahedron_tds();
         let mut facet_to_simplices = FacetToSimplicesMap::default();
-        for facet in tds.facets().take(usize::from(u8::MAX) + 1) {
+        for facet in tds.facets() {
             let facet = facet.unwrap();
             let mut incidents = SmallBuffer::new();
             let handle = FacetHandle::from_validated(facet.simplex_key(), facet.facet_index());
@@ -2636,40 +2823,117 @@ mod tests {
         }
         let facet_to_simplices_index =
             FacetToSimplicesIndex::try_from_map(&tds, &facet_to_simplices).unwrap();
-        let boundary_facet_keys = facet_to_simplices.keys().copied().collect();
+        let mut boundary_facet_handles = facet_to_simplices_index
+            .one_sided_handles()
+            .collect::<Vec<_>>();
+        boundary_facet_handles.reverse();
         let mut iter =
-            BoundaryFacetsIter::try_new(facet_to_simplices_index, boundary_facet_keys).unwrap();
+            BoundaryFacetsIter::try_new(&facet_to_simplices_index, boundary_facet_handles).unwrap();
 
-        for facet in iter.by_ref().take(usize::from(u8::MAX) + 1) {
-            assert!(facet.is_ok(), "labeled facets before overflow should yield");
+        assert_eq!(iter.len(), 4);
+        for expected_index in 0..4 {
+            let facet = iter.next().transpose().unwrap().unwrap();
+            assert_eq!(usize::from(facet.facet_index()), expected_index);
         }
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn one_sided_facets_iter_reports_len_and_storage_order() {
+        let tds = tetrahedron_tds();
+        let mut facet_to_simplices = FacetToSimplicesMap::default();
+        for facet in tds.facets() {
+            let facet = facet.unwrap();
+            let mut incidents = SmallBuffer::new();
+            let handle = FacetHandle::from_validated(facet.simplex_key(), facet.facet_index());
+            incidents.push(handle);
+            facet_to_simplices.insert(facet.key(), incidents);
+        }
+        let facet_to_simplices_index =
+            FacetToSimplicesIndex::try_from_map(&tds, &facet_to_simplices).unwrap();
+        let mut iter = OneSidedFacetsIter::try_new(&facet_to_simplices_index).unwrap();
+
+        assert_eq!(iter.len(), 4);
+        for expected_index in 0..4 {
+            let facet = iter.next().transpose().unwrap().unwrap();
+            assert_eq!(usize::from(facet.facet_index()), expected_index);
+        }
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn boundary_facets_iter_revalidates_supplied_handles() {
+        let tds = tetrahedron_tds();
+        let facet_to_simplices_index =
+            FacetToSimplicesIndex::try_from_map(&tds, &FacetToSimplicesMap::default()).unwrap();
+        let stale_handle =
+            FacetHandle::from_validated(SimplexKey::from(KeyData::from_ffi(0xDEAD)), 0);
+        let Err(error) = BoundaryFacetsIter::try_new(&facet_to_simplices_index, vec![stale_handle])
+        else {
+            panic!("expected stale boundary handle to be rejected");
+        };
+
+        assert_matches!(error, FacetError::SimplexNotFoundInTriangulation);
+    }
+
+    #[test]
+    fn boundary_facets_iter_rejects_handle_missing_from_index() {
+        let tds = tetrahedron_tds();
+        let first_facet = first_facet_view(&tds);
+        let handle = first_facet.handle();
+        let facet_to_simplices_index =
+            FacetToSimplicesIndex::try_from_map(&tds, &FacetToSimplicesMap::default()).unwrap();
+        let Err(error) = BoundaryFacetsIter::try_new(&facet_to_simplices_index, vec![handle])
+        else {
+            panic!("expected missing boundary handle to be rejected");
+        };
 
         assert_matches!(
-            iter.next(),
-            Some(Err(FacetError::InvalidFacetIndexOverflow {
-                original_index: 256,
-                facet_count: 257,
-            }))
+            error,
+            FacetError::FacetKeyNotFoundInCache {
+                cache_size: 0,
+                vertex_uuids,
+                ..
+            } if vertex_uuids.len() == 3
         );
     }
 
     #[test]
-    fn boundary_facets_iter_errors_when_facet_map_is_missing_key() {
-        let tds = tetrahedron_tds();
+    fn boundary_facets_iter_rejects_same_key_handle_not_indexed() {
+        let mut tds = tetrahedron_tds();
+        let simplex_key = tds.simplex_keys().next().unwrap();
+        let duplicated_vertex = tds.simplex(simplex_key).unwrap().vertices()[0];
+        {
+            let simplex = tds.simplex_mut(simplex_key).unwrap();
+            simplex.push_vertex_key(duplicated_vertex);
+        }
+
+        let indexed_handle = FacetHandle::from_validated(simplex_key, 0);
+        let supplied_handle = FacetHandle::from_validated(simplex_key, 4);
+        let facet_key = indexed_handle.view(&tds).unwrap().key();
+        assert_eq!(supplied_handle.view(&tds).unwrap().key(), facet_key);
+
+        let mut incidents = SmallBuffer::new();
+        incidents.push(indexed_handle);
+        let mut facet_to_simplices = FacetToSimplicesMap::default();
+        facet_to_simplices.insert(facet_key, incidents);
         let facet_to_simplices_index =
-            FacetToSimplicesIndex::try_from_map(&tds, &FacetToSimplicesMap::default()).unwrap();
-        let mut boundary_facet_keys = FastHashSet::default();
-        boundary_facet_keys.insert(first_facet_view(&tds).key());
-        let mut iter =
-            BoundaryFacetsIter::try_new(facet_to_simplices_index, boundary_facet_keys).unwrap();
+            FacetToSimplicesIndex::try_from_map(&tds, &facet_to_simplices).unwrap();
+        let Err(error) =
+            BoundaryFacetsIter::try_new(&facet_to_simplices_index, vec![supplied_handle])
+        else {
+            panic!("expected non-indexed boundary handle to be rejected");
+        };
 
         assert_matches!(
-            iter.next(),
-            Some(Err(FacetError::FacetKeyNotFoundInCache {
-                cache_size: 0,
-                vertex_uuids,
-                ..
-            })) if vertex_uuids.len() == 3
+            error,
+            FacetError::BoundaryFacetHandleNotIndexed {
+                facet_key: observed_facet_key,
+                supplied_handle: observed_supplied_handle,
+                indexed_handle: observed_indexed_handle,
+            } if observed_facet_key == facet_key
+                && observed_supplied_handle == supplied_handle
+                && observed_indexed_handle == indexed_handle
         );
     }
 
@@ -2721,6 +2985,30 @@ mod tests {
                 facet_key,
                 handle: repeated
             }) if facet_key == first_facet.key() && repeated == handle
+        );
+    }
+
+    #[test]
+    fn facet_index_rejects_handle_with_mismatched_facet_key() {
+        let tds = tetrahedron_tds();
+        let mut facets = tds.facets();
+        let first = facets.next().unwrap().unwrap();
+        let second = facets.next().unwrap().unwrap();
+        let wrong_handle = second.handle();
+        let mut incidents = SmallBuffer::new();
+        incidents.push(wrong_handle);
+        let mut facet_to_simplices = FacetToSimplicesMap::default();
+        facet_to_simplices.insert(first.key(), incidents);
+
+        assert_matches!(
+            FacetToSimplicesIndex::try_from_map(&tds, &facet_to_simplices),
+            Err(FacetError::FacetHandleKeyMismatch {
+                expected_facet_key,
+                actual_facet_key,
+                handle,
+            }) if expected_facet_key == first.key()
+                && actual_facet_key == second.key()
+                && handle == wrong_handle
         );
     }
 

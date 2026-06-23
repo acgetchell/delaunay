@@ -113,7 +113,7 @@ macro_rules! test_convex_hull_properties {
 
                     // Filter: Skip degenerate configurations (no boundary facets)
                     // These are tested separately in dedicated degenerate case tests
-                    let boundary_count = dt.tds().number_of_one_sided_facets().unwrap_or(0);
+                    let boundary_count = dt.tds().number_of_one_sided_facets().unwrap();
                     prop_assume!(boundary_count > 0);
 
                     // Should be able to construct hull from valid triangulation
@@ -213,7 +213,7 @@ macro_rules! test_convex_hull_properties {
 
                     // Filter: Skip degenerate initial configurations
                     let initial_boundary_count =
-                        dt.tds().number_of_one_sided_facets().unwrap_or(0);
+                        dt.tds().number_of_one_sided_facets().unwrap();
                     prop_assume!(initial_boundary_count > 0);
 
                     let hull_result = ConvexHull::try_from_triangulation(dt.as_triangulation());
@@ -234,7 +234,7 @@ macro_rules! test_convex_hull_properties {
 
                     // Filter: Skip if modification resulted in degenerate configuration
                     let modified_boundary_count =
-                        dt.tds().number_of_one_sided_facets().unwrap_or(0);
+                        dt.tds().number_of_one_sided_facets().unwrap();
                     prop_assume!(modified_boundary_count > 0);
 
                     // Hull should now be invalid (stale)

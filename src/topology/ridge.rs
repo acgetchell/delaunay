@@ -7,6 +7,11 @@
 //! covering-space identity with
 //! [`LiftedVertexId`](crate::topology::spaces::toroidal::LiftedVertexId) and
 //! [`LiftedLinkEdge`](crate::topology::spaces::toroidal::LiftedLinkEdge).
+//!
+//! Ridge-star and ridge-link validation is combinatorial PL topology: it
+//! follows standard links-of-simplices criteria for PL manifolds (see
+//! `REFERENCES.md`, "Topological Manifolds and PL Topology") and does not add
+//! any new `f64` floating-point conditioning behavior.
 
 #![forbid(unsafe_code)]
 
@@ -812,7 +817,6 @@ impl<'tds, U, V, const D: usize> RidgeLinkView<'tds, U, V, D> {
 
     /// Returns the lifted ridge vertices for this particular link image.
     #[inline]
-    #[must_use]
     pub fn lifted_ridge_vertices(&self) -> &[LiftedVertexId] {
         &self.lifted_ridge_vertices
     }
@@ -1220,7 +1224,7 @@ pub(crate) fn build_ridge_star_map<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
 ) -> Result<FastHashMap<u64, RidgeStar>, ManifoldError> {
     let simplex_count = tds.number_of_simplices();
-    if simplex_count == 0 {
+    if D < 2 || simplex_count == 0 {
         return Ok(FastHashMap::default());
     }
 
@@ -2013,6 +2017,18 @@ mod tests {
     }
 
     #[test]
+    fn test_build_ridge_star_map_noop_for_d_lt_2() {
+        let mut tds: Tds<(), (), 1> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(test_vertex([0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(test_vertex([1.0])).unwrap();
+        tds.insert_simplex_with_mapping(Simplex::try_new_with_data(vec![v0, v1], None).unwrap())
+            .unwrap();
+
+        let map = build_ridge_star_map(&tds).unwrap();
+        assert!(map.is_empty());
+    }
+
+    #[test]
     fn test_build_ridge_star_map_errors_on_corrupted_simplex_vertex_count() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
@@ -2318,6 +2334,34 @@ mod tests {
 
         assert_eq!(forward, reversed);
         assert_eq!(reversed.as_slice(), &[v0, v1]);
+    }
+
+    #[test]
+    fn test_ridge_query_view_and_link_trait_behavior() {
+        let (tds, [v0, v1, _v2, _v3, _v4], _) = build_two_tetrahedra_sharing_facet_tds_3d();
+
+        let ridge_candidate = RidgeCandidate::<3>::try_from_vertices([v1, v0]).unwrap();
+        assert_eq!(ridge_candidate.as_slice(), &[v0, v1]);
+
+        let query = ridge_candidate.query(&tds).unwrap();
+        let query_clone = query.clone();
+        assert_eq!(query, query_clone);
+        assert!(format!("{query:?}").contains("RidgeQuery"));
+
+        let view = ridge_candidate.view(&tds).unwrap();
+        let view_clone = view.clone();
+        assert_eq!(view, view_clone);
+        assert!(format!("{view:?}").contains("RidgeView"));
+
+        let links = view.links().unwrap();
+        assert!(!links.is_empty());
+
+        let link = links[0].clone();
+        assert_eq!(link, link.clone());
+        assert_eq!(link.quotient_ridge_candidate(), view.ridge_candidate());
+        assert!(!link.incident_simplices().is_empty());
+        assert!(!link.edges().is_empty());
+        assert!(format!("{link:?}").contains("RidgeLinkView"));
     }
 
     #[test]

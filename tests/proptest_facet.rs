@@ -4,7 +4,7 @@
 //! operations in d-dimensional triangulations, including:
 //! - Facet vertex count correctness (D vertices for D-dimensional simplex)
 //! - Facet-simplex relationship validity
-//! - Facet boundary multiplicity (1 for boundary, 2 for interior)
+//! - Facet incidence multiplicity (one-sided or two-sided)
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 

@@ -65,16 +65,20 @@ For cumulative validation, use `Triangulation::validate()` (Levels 1–3) or
 Level 3 always checks:
 
 - **Codimension-1 facet degree** (pseudomanifold / manifold-with-boundary):
-  every (D−1)-facet is incident to exactly 1 or 2 D-simplices. This is parsed
-  into `FacetToSimplicesIndex` by `Tds::build_facet_to_simplices_index`.
-  Boundary classification additionally excludes admissible periodic
-  self-identifications, which are closed quotient topology rather than boundary.
+  every (D−1)-facet is incident to exactly 1 or 2 D-simplices. Public facet
+  incidence APIs parse this into the owner-bound `FacetToSimplicesIndex` via
+  `Tds::build_facet_to_simplices_index`; Level 3 validation builds one raw
+  `FacetToSimplicesMap`, parses it into `ValidatedFacetDegreeMap`, and reuses
+  that proof-bearing map so boundary, vertex-link, and Euler checks do not
+  rebuild or revalidate the same facet-degree evidence. Boundary classification
+  additionally excludes admissible periodic self-identifications, which are
+  closed quotient topology rather than boundary.
 - **Codimension-2 boundary manifoldness**: if a boundary exists, it is closed
   ("no boundary of boundary"). (`topology::manifold::validate_closed_boundary`)
 - **Connectedness**: a single connected component in the simplex neighbor graph.
 - **No isolated vertices**: every vertex is incident to at least one simplex.
 - **Euler characteristic** for the full D-dimensional simplicial complex.
-  (`topology::characteristics::validation::validate_triangulation_euler_with_facet_to_simplices_map`)
+  (`topology::characteristics::validation::validate_triangulation_euler_from_validated_facet_map`)
 
 ### `TopologyGuarantee`-dependent checks
 
@@ -90,7 +94,12 @@ Implementation pointers:
 
 - Level 3 entry points and validation vocabulary: `src/core/validation.rs`
   (`Triangulation::is_valid`, `Triangulation::validate`)
-- Manifold validators: `src/topology/manifold.rs`
+- Public manifold validators: `src/topology/manifold.rs`
+  (`validate_closed_boundary`, `validate_vertex_links`, `validate_ridge_links`)
+- Internal raw-map reuse helpers: `src/topology/manifold.rs`
+  (`ValidatedFacetDegreeMap::try_from_facet_map`,
+  `validate_closed_boundary_from_validated_facet_map`,
+  `validate_vertex_links_from_validated_facet_map`)
 - Euler characteristic helpers: `src/topology/characteristics/{euler.rs,validation.rs}`
 
 ## Boundary semantics

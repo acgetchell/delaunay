@@ -19,7 +19,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// Builds an owner-bound facet-to-simplices index with strict error handling.
     ///
     /// This method returns an error if any simplex has missing vertex keys or if
-    /// any facet has multiplicity other than 1 (boundary) or 2 (interior),
+    /// any facet has multiplicity other than 1 (one-sided) or 2 (two-sided),
     /// ensuring complete and validated facet topology information. This is the
     /// public method for repeated facet-incidence and boundary queries.
     ///

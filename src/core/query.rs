@@ -17,7 +17,7 @@ use crate::core::simplex::Simplex;
 use crate::core::tds::{SimplexKey, TdsError, VertexKey};
 use crate::core::triangulation::Triangulation;
 use crate::core::vertex::Vertex;
-use crate::topology::manifold::{ManifoldError, boundary_facet_keys_from_index};
+use crate::topology::manifold::{ManifoldError, boundary_facet_handles_from_index};
 use std::marker::PhantomData;
 
 /// Errors returned by read-only triangulation queries.
@@ -89,8 +89,11 @@ impl From<TdsError> for QueryError {
 
 impl From<ManifoldError> for QueryError {
     fn from(source: ManifoldError) -> Self {
-        Self::TopologyInvalid {
-            source: Box::new(source),
+        match source {
+            ManifoldError::Tds(source) => Self::from(source),
+            source => Self::TopologyInvalid {
+                source: Box::new(source),
+            },
         }
     }
 }
@@ -378,20 +381,24 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::TriangulationCorrupted`] if facet-map construction
-    /// detects invalid simplex or facet bookkeeping. The variant preserves the
-    /// underlying [`TdsError`] so callers can inspect the structural failure.
+    /// Returns [`QueryError::TriangulationCorrupted`] if facet-incidence index
+    /// construction detects invalid simplex or facet bookkeeping. The variant
+    /// preserves the underlying [`TdsError`] so callers can inspect the
+    /// structural failure. Returns [`QueryError::TopologyInvalid`] if
+    /// topology-aware boundary classification detects a closed topology that
+    /// cannot contain open boundary facets, or another manifold-boundary
+    /// inconsistency.
     /// Individual iterator items return [`FacetError`](crate::prelude::tds::FacetError)
-    /// if a boundary facet cannot be created or keyed from the simplices.
+    /// if a boundary facet handle cannot be reborrowed as a view.
     pub fn boundary_facets(&self) -> Result<BoundaryFacetsIter<'_, U, V, D>, QueryError> {
         let facet_index = self
             .tds
             .build_facet_to_simplices_index()
             .map_err(QueryError::from)?;
-        let boundary_facet_keys =
-            boundary_facet_keys_from_index(&facet_index, self.global_topology)
+        let boundary_facet_handles =
+            boundary_facet_handles_from_index(&facet_index, self.global_topology)
                 .map_err(QueryError::from)?;
-        BoundaryFacetsIter::try_new(facet_index, boundary_facet_keys)
+        BoundaryFacetsIter::try_new(&facet_index, boundary_facet_handles)
             .map_err(TdsError::from)
             .map_err(QueryError::from)
     }
@@ -965,6 +972,23 @@ mod tests {
                 if matches!(*source, TdsError::IndexOutOfBounds { .. }) => {}
             Err(err) => panic!("expected index-out-of-bounds query error, got {err:?}"),
         }
+    }
+
+    #[test]
+    fn query_error_preserves_tds_provenance_from_manifold_error() {
+        let source = TdsError::InconsistentDataStructure {
+            message: "facet incidence".to_string(),
+        };
+
+        assert_matches!(
+            QueryError::from(ManifoldError::Tds(source)),
+            QueryError::TriangulationCorrupted { source }
+                if matches!(
+                    source.as_ref(),
+                    TdsError::InconsistentDataStructure { message }
+                        if message == "facet incidence"
+                )
+        );
     }
 
     #[test]

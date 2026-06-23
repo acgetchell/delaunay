@@ -69,22 +69,37 @@ where
     /// ```
     #[must_use]
     pub fn new_empty(kernel: K) -> Self {
+        Self::new_empty_with_topology_context(
+            kernel,
+            TopologyGuarantee::DEFAULT,
+            GlobalTopology::DEFAULT,
+        )
+    }
+
+    /// Creates empty storage with explicit validation and global-topology context.
+    ///
+    /// Construction paths use this helper when topology metadata must be present
+    /// before later validation, boundary classification, or Euler checks run.
+    #[inline]
+    pub(crate) fn new_empty_with_topology_context(
+        kernel: K,
+        topology_guarantee: TopologyGuarantee,
+        global_topology: GlobalTopology<D>,
+    ) -> Self {
         Self {
             kernel,
             tds: Tds::empty(),
-            global_topology: GlobalTopology::DEFAULT,
-            validation_policy: TopologyGuarantee::DEFAULT.default_validation_policy(),
-            topology_guarantee: TopologyGuarantee::DEFAULT,
+            global_topology,
+            validation_policy: topology_guarantee.default_validation_policy(),
+            topology_guarantee,
         }
     }
 
+    /// Test-only constructor for fixtures that need a prepared TDS without
+    /// crossing a public validation boundary.
     #[cfg(test)]
     #[inline]
-    #[expect(
-        clippy::missing_const_for_fn,
-        reason = "test-only constructor is not a pure math helper"
-    )]
-    pub(crate) fn new_with_tds(kernel: K, tds: Tds<U, V, D>) -> Self {
+    pub(crate) const fn new_with_tds(kernel: K, tds: Tds<U, V, D>) -> Self {
         Self {
             kernel,
             tds,

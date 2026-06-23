@@ -748,7 +748,7 @@ pub fn facet_try_new_constructors_ok<TdsType, SimplexKeyType>(
     // ok: delaunay.rust.no-facet-new-constructors
     let _all_facets = AllFacetsIter::try_new(tds);
     // ok: delaunay.rust.no-facet-new-constructors
-    let _boundary_facets = BoundaryFacetsIter::try_new(facet_index);
+    let _boundary_facets = BoundaryFacetsIter::try_new(&facet_index, Vec::new());
 }
 
 pub fn facet_handle_new_constructor_bad(simplex_key: SimplexKey) {
@@ -849,7 +849,11 @@ pub fn topology_boundary_classification_ok(
     global_topology: GlobalTopology<2>,
 ) -> bool {
     // ok: delaunay.rust.no-raw-facet-incidence-boundary-classification
-    has_boundary_facets_in_map(tds, &facet_to_simplices, global_topology).unwrap_or(false)
+    ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices)
+        .and_then(|validated| {
+            has_boundary_facets_in_validated_facet_map(tds, validated, global_topology)
+        })
+        .unwrap_or(false)
 }
 
 impl PublicVertexUuidConstructorFixture {

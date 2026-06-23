@@ -33,7 +33,7 @@ use crate::core::tds::{SimplexKey, Tds, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::geometry::util::norms::hypot;
-use crate::topology::manifold::validate_facet_degree_map;
+use crate::topology::manifold::ValidatedFacetDegreeMap;
 use num_traits::NumCast;
 use slotmap::Key;
 use thiserror::Error;
@@ -220,7 +220,7 @@ where
 
     // Fast path: if the facet-degree invariant already holds, nothing to do.
     let facet_map = tds.build_facet_to_simplices_map()?;
-    if validate_facet_degree_map(&facet_map).is_ok() {
+    if ValidatedFacetDegreeMap::try_from_facet_map(&facet_map).is_ok() {
         stats.succeeded = true;
         return Ok(stats);
     }
@@ -302,7 +302,7 @@ where
 
         // Check if the invariant now holds.
         let facet_map = tds.build_facet_to_simplices_map()?;
-        if validate_facet_degree_map(&facet_map).is_ok() {
+        if ValidatedFacetDegreeMap::try_from_facet_map(&facet_map).is_ok() {
             stats.succeeded = true;
             // Rebuild full neighbor/incidence pointers before returning.
             rebuild_success_topology(tds)?;
@@ -684,7 +684,7 @@ mod tests {
         // Sanity: at least one facet should now be over-shared.
         let facet_map = tds.build_facet_to_simplices_map().unwrap();
         assert!(
-            validate_facet_degree_map(&facet_map).is_err(),
+            ValidatedFacetDegreeMap::try_from_facet_map(&facet_map).is_err(),
             "Expected over-shared facets after duplicating a simplex"
         );
 
@@ -752,7 +752,7 @@ mod tests {
         assert_eq!(stats.removed_simplices.len(), stats.simplices_removed);
 
         let facet_map = tds.build_facet_to_simplices_map().unwrap();
-        assert!(validate_facet_degree_map(&facet_map).is_ok());
+        assert!(ValidatedFacetDegreeMap::try_from_facet_map(&facet_map).is_ok());
     }
 
     /// Verify that a tight simplex-removal budget triggers `BudgetExhausted`.

@@ -15909,82 +15909,91 @@ mod tests {
         );
     }
 
-    #[test]
-    fn build_k2_inverse_context_rejects_missing_endpoint_incidence_as_adjacency() {
-        let mut tds: Tds<(), (), 3> = Tds::empty();
-        let vertices = insert_standard_simplex_vertices(&mut tds);
-        let simplex_key = insert_plain_simplex(&mut tds, vertices.clone());
-        tds.clear_vertex_incidence_for_test(vertices[1]);
+    macro_rules! gen_k2_edge_adjacency_validation_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<build_k2_inverse_context_rejects_missing_endpoint_incidence_as_adjacency_ $dim d>]() {
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
+                    let vertices = insert_standard_simplex_vertices(&mut tds);
+                    let simplex_key = insert_plain_simplex(&mut tds, vertices.clone());
+                    tds.clear_vertex_incidence_for_test(vertices[1]);
 
-        let edge = EdgeKey::from_validated_endpoints(vertices[0], vertices[1]);
-        let err = build_k2_flip_context_from_edge(&tds, edge).unwrap_err();
+                    let edge = EdgeKey::from_validated_endpoints(vertices[0], vertices[1]);
+                    let err = build_k2_flip_context_from_edge(&tds, edge).unwrap_err();
 
-        assert_matches!(
-            err,
-            FlipError::InvalidEdgeAdjacency { reason }
-                if matches!(
-                    reason.as_ref(),
-                    FlipEdgeAdjacencyError::MissingVertexIncidence {
-                        vertex_key,
-                        simplex_key: reported_simplex,
-                    } if *vertex_key == vertices[1] && *reported_simplex == simplex_key
-                )
-        );
+                    assert_matches!(
+                        err,
+                        FlipError::InvalidEdgeAdjacency { reason }
+                            if matches!(
+                                reason.as_ref(),
+                                FlipEdgeAdjacencyError::MissingVertexIncidence {
+                                    vertex_key,
+                                    simplex_key: reported_simplex,
+                                } if *vertex_key == vertices[1] && *reported_simplex == simplex_key
+                            )
+                    );
+                }
+
+                #[test]
+                fn [<build_k2_inverse_context_rejects_missing_edge_incidence_as_adjacency_ $dim d>]() {
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
+                    let vertices = insert_standard_simplex_vertices(&mut tds);
+                    insert_plain_simplex(&mut tds, vertices.clone());
+                    tds.clear_vertex_incidence_for_test(vertices[0]);
+                    tds.clear_vertex_incidence_for_test(vertices[1]);
+
+                    let edge = EdgeKey::from_validated_endpoints(vertices[0], vertices[1]);
+                    let err = build_k2_flip_context_from_edge(&tds, edge).unwrap_err();
+
+                    assert_matches!(
+                        err,
+                        FlipError::InvalidEdgeAdjacency { reason }
+                            if matches!(
+                                reason.as_ref(),
+                                FlipEdgeAdjacencyError::MissingEdgeIncidence { v0, v1 }
+                                    if (*v0, *v1) == edge.endpoints()
+                            )
+                    );
+                }
+
+                #[test]
+                fn [<build_k2_inverse_context_rejects_vertex_incidence_mismatch_as_adjacency_ $dim d>]() {
+                    let mut tds: Tds<(), (), $dim> = Tds::empty();
+                    let vertices = insert_standard_simplex_vertices(&mut tds);
+                    insert_plain_simplex(&mut tds, vertices.clone());
+                    let mut extra_coords = [0.0_f64; $dim];
+                    extra_coords[0] = 2.0;
+                    let extra_vertex = tds
+                        .insert_vertex_with_mapping(Vertex::<(), _>::try_new(extra_coords).unwrap())
+                        .unwrap();
+                    let mut mismatched_vertices = vertices[1..].to_vec();
+                    mismatched_vertices.push(extra_vertex);
+                    let mismatched_simplex = insert_plain_simplex(&mut tds, mismatched_vertices);
+                    tds.add_simplex_to_vertex_incidence_for_test(vertices[0], mismatched_simplex);
+
+                    let edge = EdgeKey::from_validated_endpoints(vertices[0], vertices[1]);
+                    let err = build_k2_flip_context_from_edge(&tds, edge).unwrap_err();
+
+                    assert_matches!(
+                        err,
+                        FlipError::InvalidEdgeAdjacency { reason }
+                            if matches!(
+                                reason.as_ref(),
+                                FlipEdgeAdjacencyError::VertexIncidenceMismatch {
+                                    vertex_key,
+                                    simplex_key,
+                                } if *vertex_key == vertices[0] && *simplex_key == mismatched_simplex
+                            )
+                    );
+                }
+            }
+        };
     }
 
-    #[test]
-    fn build_k2_inverse_context_rejects_missing_edge_incidence_as_adjacency() {
-        let mut tds: Tds<(), (), 3> = Tds::empty();
-        let vertices = insert_standard_simplex_vertices(&mut tds);
-        insert_plain_simplex(&mut tds, vertices.clone());
-        tds.clear_vertex_incidence_for_test(vertices[0]);
-        tds.clear_vertex_incidence_for_test(vertices[1]);
-
-        let edge = EdgeKey::from_validated_endpoints(vertices[0], vertices[1]);
-        let err = build_k2_flip_context_from_edge(&tds, edge).unwrap_err();
-
-        assert_matches!(
-            err,
-            FlipError::InvalidEdgeAdjacency { reason }
-                if matches!(
-                    reason.as_ref(),
-                    FlipEdgeAdjacencyError::MissingEdgeIncidence { v0, v1 }
-                        if (*v0, *v1) == edge.endpoints()
-                )
-        );
-    }
-
-    #[test]
-    fn build_k2_inverse_context_rejects_vertex_incidence_mismatch_as_adjacency() {
-        let mut tds: Tds<(), (), 3> = Tds::empty();
-        let vertices = insert_standard_simplex_vertices(&mut tds);
-        insert_plain_simplex(&mut tds, vertices.clone());
-        let extra_vertex = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).unwrap(),
-            )
-            .unwrap();
-        let mismatched_simplex = insert_plain_simplex(
-            &mut tds,
-            vec![vertices[1], vertices[2], vertices[3], extra_vertex],
-        );
-        tds.add_simplex_to_vertex_incidence_for_test(vertices[0], mismatched_simplex);
-
-        let edge = EdgeKey::from_validated_endpoints(vertices[0], vertices[1]);
-        let err = build_k2_flip_context_from_edge(&tds, edge).unwrap_err();
-
-        assert_matches!(
-            err,
-            FlipError::InvalidEdgeAdjacency { reason }
-                if matches!(
-                    reason.as_ref(),
-                    FlipEdgeAdjacencyError::VertexIncidenceMismatch {
-                        vertex_key,
-                        simplex_key,
-                    } if *vertex_key == vertices[0] && *simplex_key == mismatched_simplex
-                )
-        );
-    }
+    gen_k2_edge_adjacency_validation_tests!(3);
+    gen_k2_edge_adjacency_validation_tests!(4);
+    gen_k2_edge_adjacency_validation_tests!(5);
 
     macro_rules! gen_stale_incidence_context_tests {
         ($dim:literal) => {

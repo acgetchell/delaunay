@@ -553,6 +553,27 @@ impl<'tds, U, V, const D: usize> EdgeView<'tds, U, V, D> {
             incident_simplices.push(simplex_key);
         }
 
+        for simplex_key in v1_star {
+            let simplex =
+                tds.simplex(simplex_key)
+                    .ok_or(EdgeKeyError::DanglingVertexIncidence {
+                        vertex_key: v1,
+                        simplex_key,
+                    })?;
+            if !simplex.contains_vertex(v1) {
+                return Err(EdgeKeyError::VertexIncidenceMismatch {
+                    vertex_key: v1,
+                    simplex_key,
+                });
+            }
+            if simplex.contains_vertex(v0) && !incident_simplices.contains(&simplex_key) {
+                return Err(EdgeKeyError::MissingVertexIncidence {
+                    vertex_key: v0,
+                    simplex_key,
+                });
+            }
+        }
+
         if incident_simplices.is_empty() {
             if Self::endpoints_share_stored_simplex(tds, v0, v1) {
                 return Err(EdgeKeyError::MissingEdgeIncidence { v0, v1 });
@@ -637,7 +658,10 @@ mod tests {
     use super::*;
     use crate::core::simplex::Simplex;
     use crate::prelude::{DelaunayTriangulationBuilder, Vertex};
-    use std::collections::{BTreeSet, HashSet};
+    use std::{
+        collections::{BTreeSet, HashSet},
+        ptr,
+    };
 
     fn with_triangle_tds(test: impl FnOnce(&Tds<(), (), 2>, [VertexKey; 3])) {
         let vertices = [
@@ -702,6 +726,17 @@ mod tests {
     }
 
     #[test]
+    fn edge_key_rejects_missing_first_endpoint() {
+        with_triangle_tds(|tds, [_a, b, _c]| {
+            let missing = VertexKey::default();
+            assert_eq!(
+                EdgeKey::try_new(tds, missing, b),
+                Err(EdgeKeyError::MissingEndpoint { endpoint: missing })
+            );
+        });
+    }
+
+    #[test]
     fn edge_key_rejects_live_vertices_without_edge() {
         let vertices = [
             Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
@@ -754,9 +789,26 @@ mod tests {
             let (first, second) = view.vertices();
 
             assert_eq!(view.key(), key);
+            assert!(ptr::eq(view.tds(), tds));
             assert_eq!(view.endpoint_keys(), key.endpoints());
             assert_eq!(first.uuid(), tds.vertex(view.key().v0()).unwrap().uuid());
             assert_eq!(second.uuid(), tds.vertex(view.key().v1()).unwrap().uuid());
+        });
+    }
+
+    #[test]
+    fn edge_view_clone_debug_and_equality_use_owner_and_key() {
+        with_triangle_tds(|tds, [a, b, c]| {
+            let first = EdgeKey::try_new(tds, a, b).unwrap().view(tds).unwrap();
+            let first_clone = first.clone();
+            let second = EdgeKey::try_new(tds, a, c).unwrap().view(tds).unwrap();
+
+            assert_eq!(first, first_clone);
+            assert_ne!(first, second);
+
+            let debug = format!("{first:?}");
+            assert!(debug.contains("EdgeView"));
+            assert!(debug.contains("incident_simplices"));
         });
     }
 
@@ -852,6 +904,35 @@ mod tests {
             edge.view(&tds),
             Err(EdgeKeyError::MissingVertexIncidence {
                 vertex_key: second,
+                simplex_key
+            })
+        );
+    }
+
+    #[test]
+    fn edge_view_rejects_missing_forward_vertex_incidence() {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let v0 = tds
+            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0]).unwrap())
+            .unwrap();
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::try_new(vec![v0, v1, v2]).unwrap())
+            .unwrap();
+        let edge = EdgeKey::from_validated_endpoints(v0, v1);
+        let (first, _second) = edge.endpoints();
+
+        tds.clear_vertex_incidence_for_test(first);
+
+        assert_eq!(
+            edge.view(&tds),
+            Err(EdgeKeyError::MissingVertexIncidence {
+                vertex_key: first,
                 simplex_key
             })
         );

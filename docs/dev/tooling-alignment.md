@@ -181,6 +181,12 @@ The useful updates ported in this pass are:
   used as semantic boundary classification; callers should use topology-aware
   manifold helpers so periodic self-identifications remain closed topology and
   open one-sided facets in closed spaces stay errors.
+- The borrowed-view rule's generic-parameter detector is now written as a YAML
+  block scalar with a literal Rust lifetime lookahead (`(?!')`) instead of the
+  ambiguous single-quoted YAML spelling (`(?!'')`). This makes the configured
+  regex visibly reject lifetime-bound views such as `struct FooView<'tds>` and
+  match only non-lifetime generic parameters, preserving the intended #461
+  View/Handle/Candidate convention.
 - `.github/workflows/rust-clippy.yml` now matches the hardened SARIF pipeline:
   `set -euo pipefail`, `clippy::cargo`, and guarded upload that skips missing
   SARIF files and forked pull-request uploads.

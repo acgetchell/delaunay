@@ -79,6 +79,7 @@ use std::{
 /// # Ok(())
 /// # }
 /// ```
+#[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LiftedVertexId {
     pub(crate) vertex_key: VertexKey,
@@ -186,7 +187,6 @@ impl LiftedLinkEdge {
 
     /// Returns the lifted endpoints in canonical order.
     #[inline]
-    #[must_use]
     pub const fn endpoints(&self) -> (&LiftedVertexId, &LiftedVertexId) {
         (&self.endpoints.0, &self.endpoints.1)
     }

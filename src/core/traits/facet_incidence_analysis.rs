@@ -20,6 +20,10 @@ use crate::core::{
 pub trait FacetIncidenceAnalysis<U, V, const D: usize> {
     /// Identifies all one-sided facet incidences in the TDS.
     ///
+    /// Implementations may build and sort a derived handle list so iteration is
+    /// deterministic. This remains incidence analysis only; callers that need
+    /// semantic boundary facets should use the topology-aware boundary APIs.
+    ///
     /// # Errors
     ///
     /// Returns a [`TdsError`] if the facet-incidence index cannot be built.

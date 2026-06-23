@@ -8,14 +8,28 @@ use delaunay::prelude::construction::{GlobalTopology, TopologyGuarantee, Topolog
 use delaunay::prelude::geometry::{Coordinate, CoordinateValidationError, FastKernel, Point};
 use delaunay::prelude::query::FacetIncidenceAnalysis;
 use delaunay::prelude::tds::{
-    SimplexKey, Tds, TdsError, Vertex, VertexKey, verify_facet_index_consistency,
+    InvariantError, SimplexKey, Tds, TdsError, Vertex, VertexKey, verify_facet_index_consistency,
 };
 use delaunay::prelude::topology::validation::validate_triangulation_euler;
+use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 use delaunay::query::{QueryError, TopologyIndexBuildError};
 use uuid::Uuid;
 
 struct Payload;
 struct NotAKernel;
+
+type NotAKernelTriangulation = Triangulation<NotAKernel, Payload, Payload, 2>;
+type NotAKernelDelaunay = DelaunayTriangulation<NotAKernel, Payload, Payload, 2>;
+type GenericTrySetTopologyFn =
+    fn(&mut NotAKernelTriangulation, GlobalTopology<2>) -> Result<(), InvariantError>;
+type DelaunayTrySetTopologyFn = fn(
+    &mut NotAKernelDelaunay,
+    GlobalTopology<2>,
+) -> Result<(), DelaunayTriangulationValidationError>;
+
+fn accepts_generic_try_set(_: GenericTrySetTopologyFn) {}
+
+fn accepts_delaunay_try_set(_: DelaunayTrySetTopologyFn) {}
 
 #[derive(Debug, thiserror::Error)]
 enum TraitBoundErgonomicsError {
@@ -28,6 +42,11 @@ enum TraitBoundErgonomicsError {
     Query {
         #[from]
         source: QueryError,
+    },
+    #[error(transparent)]
+    Validation {
+        #[from]
+        source: DelaunayTriangulationValidationError,
     },
 }
 
@@ -90,11 +109,21 @@ fn vertex_uuid_constructor_accepts_non_datatype_payloads() {
 
 #[test]
 fn triangulation_types_do_not_require_kernel_bounds() {
-    let generic: Option<Triangulation<NotAKernel, Payload, Payload, 2>> = None;
-    let delaunay: Option<DelaunayTriangulation<NotAKernel, Payload, Payload, 2>> = None;
+    let generic: Option<NotAKernelTriangulation> = None;
+    let delaunay: Option<NotAKernelDelaunay> = None;
 
     assert!(generic.is_none());
     assert!(delaunay.is_none());
+}
+
+#[test]
+fn topology_metadata_setters_do_not_require_kernel_bounds() {
+    accepts_generic_try_set(
+        Triangulation::<NotAKernel, Payload, Payload, 2>::try_set_global_topology,
+    );
+    accepts_delaunay_try_set(
+        DelaunayTriangulation::<NotAKernel, Payload, Payload, 2>::try_set_global_topology,
+    );
 }
 
 #[test]
@@ -154,7 +183,7 @@ fn delaunay_empty_query_wrappers_accept_non_datatype_payloads()
     assert_eq!(dt.global_topology(), GlobalTopology::Euclidean);
     assert_eq!(dt.topology_kind(), TopologyKind::Euclidean);
 
-    dt.set_global_topology(GlobalTopology::Euclidean);
+    dt.try_set_global_topology(GlobalTopology::Euclidean)?;
     dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
 

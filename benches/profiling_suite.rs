@@ -1146,7 +1146,7 @@ fn bench_bottlenecks(c: &mut Criterion) {
                                     ));
                                 }
                             };
-                            black_box(boundary_facets);
+                            black_box(boundary_facets.len());
                         }
                     },
                     BatchSize::LargeInput,

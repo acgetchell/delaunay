@@ -588,6 +588,32 @@ macro_rules! gen_toroidal_high_dim_guardrail_test {
 gen_toroidal_high_dim_guardrail_test!(4);
 gen_toroidal_high_dim_guardrail_test!(5);
 
+#[test]
+fn test_builder_toroidal_large_dimension_fails_before_expansion_math() {
+    let vertices: Vec<Vertex<(), 64>> = Vec::new();
+    let kernel = RobustKernel::new();
+    let err = DelaunayTriangulationBuilder::new(&vertices)
+        .try_toroidal([1.0_f64; 64])
+        .unwrap()
+        .build_with_kernel::<_, ()>(&kernel)
+        .expect_err("64D periodic quotient should fail before computing 3^D image count");
+
+    match err {
+        DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::UnsupportedPeriodicDimension {
+                dimension,
+                max_validated_dimension,
+                tracking_issue,
+            },
+        ) => {
+            assert_eq!(dimension, 64);
+            assert_eq!(max_validated_dimension, 3);
+            assert_eq!(tracking_issue, 416);
+        }
+        other => panic!("expected high-dimensional periodic guardrail, got {other:?}"),
+    }
+}
+
 /// Explicit 7-vertex torus (Heawood triangulation) with `GlobalTopology::Toroidal`
 /// is rejected until explicit non-Euclidean construction has Level 4 validation.
 ///

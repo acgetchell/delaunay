@@ -208,7 +208,8 @@
 //!   - **Vertex mappings** – every vertex UUID has a corresponding key and vice versa.
 //!   - **Simplex mappings** – every simplex UUID has a corresponding key and vice versa.
 //!   - **No duplicate simplices** – no two maximal simplices share the same vertex set.
-//!   - **Facet sharing** – each facet is shared by at most 2 simplices (1 on the boundary, 2 in the interior).
+//!   - **Facet incidence** – each facet is one-sided or two-sided; topology
+//!     metadata decides whether a one-sided facet is semantic boundary.
 //!   - **Neighbor consistency** – neighbor relationships are mutual and reference a shared facet.
 //!
 //!   These checks are surfaced via [`Tds::is_valid`](crate::tds::Tds::is_valid)
@@ -221,8 +222,9 @@
 //!   Level 3 (topology) validation is performed by
 //!   [`Triangulation::is_valid`](crate::Triangulation::is_valid) (Level 3 only) and
 //!   [`Triangulation::validate`](crate::Triangulation::validate) (Levels 1–3), which:
-//!   - Strengthens facet sharing to the **manifold facet property**: each facet belongs to
-//!     exactly 1 simplex (boundary) or exactly 2 simplices (interior).
+//!   - Strengthens facet incidence to the **manifold facet property**:
+//!     one-sided facets are valid only when the declared topology admits
+//!     boundary; two-sided facets are interior.
 //!   - Checks the **Euler characteristic** of the triangulation (using the topology module).
 //!
 //! - [`DelaunayTriangulation`] builds on
@@ -488,7 +490,7 @@ mod core {
     /// The size parameters for `SmallVec` are chosen based on empirical analysis of
     /// typical triangulation patterns:
     ///
-    /// - **2 elements**: Facet sharing (boundary facets = 1 simplex, interior facets = 2 simplices)
+    /// - **2 elements**: Facet incidence (one-sided = 1 simplex, two-sided = 2 simplices)
     /// - **4 elements**: Small temporary collections during geometric operations
     /// - **8 elements**: Vertex degrees and simplex neighbor counts in typical triangulations
     /// - **16 elements**: Larger temporary buffers for batch operations
@@ -1155,6 +1157,10 @@ pub mod prelude {
         facet_views_are_adjacent, make_uuid, stable_hash_u64_slice, usize_to_u8, validate_uuid,
         verify_facet_index_consistency,
     };
+    pub use crate::topology::{
+        GlobalTopology, GlobalTopologyModelError, TopologyError, TopologyKind,
+        ToroidalConstructionMode, ToroidalDomain, ToroidalDomainError,
+    };
 
     // Re-export point location algorithms from the public algorithms facade.
     pub use crate::algorithms::{
@@ -1310,7 +1316,7 @@ pub mod prelude {
             AllFacetsIter, BoundaryFacetsIter, DataCopy, DataDebug, DataDeserialize, DataIdentity,
             DataSerde, DataSerialize, DataType, EdgeIndex, EdgeKey, EdgeKeyError, EdgeView,
             FacetIncidenceAnalysis, FacetIncidenceView, FacetToSimplicesIndex, FacetView,
-            IncidenceView, QueryError, SimplexFacetsIter, SimplexNeighborIndex,
+            IncidenceView, OneSidedFacetsIter, QueryError, SimplexFacetsIter, SimplexNeighborIndex,
             TopologyIndexBuildError, TriangulationAdjacency,
         };
         pub use crate::tds::{
@@ -1657,8 +1663,8 @@ pub mod prelude {
         pub use crate::geometry::traits::coordinate::Coordinate;
         pub use crate::query::{
             AllFacetsIter, BoundaryFacetsIter, DataCopy, DataDebug, DataDeserialize, DataIdentity,
-            DataSerde, DataSerialize, DataType, FacetIncidenceAnalysis, FacetView, QueryError,
-            Simplex, SimplexFacetsIter, Vertex,
+            DataSerde, DataSerialize, DataType, FacetIncidenceAnalysis, FacetView,
+            OneSidedFacetsIter, QueryError, Simplex, SimplexFacetsIter, Vertex,
         };
 
         // Read-only predicates (useful in benchmarks / lightweight geometry checks)

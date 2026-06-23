@@ -92,6 +92,7 @@ use crate::core::{
     facet::{
         FacetHandle, FacetIncidenceView, FacetToSimplicesIndex, OneSidedFacetAdjacency,
         classify_one_sided_facet_adjacency, facet_key_from_vertices,
+        try_incident_facet_view_for_facet_key,
     },
     tds::{SimplexKey, Tds, TdsError, VertexKey},
 };
@@ -245,23 +246,46 @@ pub enum ManifoldError {
     },
 }
 
-/// Validates raw facet multiplicities for crate-internal validation caches.
-pub(crate) fn validate_facet_degree_map(
-    facet_to_simplices: &FacetToSimplicesMap,
-) -> Result<(), ManifoldError> {
-    for (facet_key, simplex_facet_pairs) in facet_to_simplices {
-        match simplex_facet_pairs.as_slice() {
-            [_] | [_, _] => {}
-            _ => {
-                return Err(ManifoldError::ManifoldFacetMultiplicity {
-                    facet_key: *facet_key,
-                    simplex_count: simplex_facet_pairs.len(),
-                });
+/// Borrowed proof that a raw facet map has one- or two-sided incidence only.
+///
+/// Level-3 validation builds one [`FacetToSimplicesMap`] and reuses it across
+/// topology checks. This wrapper carries the facet-degree proof so downstream
+/// helpers cannot accidentally consume an unparsed raw map.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ValidatedFacetDegreeMap<'map> {
+    facet_to_simplices: &'map FacetToSimplicesMap,
+}
+
+impl<'map> ValidatedFacetDegreeMap<'map> {
+    /// Parses a raw facet map into a facet-degree proof.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ManifoldError::ManifoldFacetMultiplicity`] if any facet key is
+    /// incident to zero, three, or more simplex facets.
+    pub(crate) fn try_from_facet_map(
+        facet_to_simplices: &'map FacetToSimplicesMap,
+    ) -> Result<Self, ManifoldError> {
+        for (facet_key, simplex_facet_pairs) in facet_to_simplices {
+            match simplex_facet_pairs.as_slice() {
+                [_] | [_, _] => {}
+                _ => {
+                    return Err(ManifoldError::ManifoldFacetMultiplicity {
+                        facet_key: *facet_key,
+                        simplex_count: simplex_facet_pairs.len(),
+                    });
+                }
             }
         }
+
+        Ok(Self { facet_to_simplices })
     }
 
-    Ok(())
+    /// Returns the raw facet map whose degree invariant this value proves.
+    #[inline]
+    pub(crate) const fn as_map(self) -> &'map FacetToSimplicesMap {
+        self.facet_to_simplices
+    }
 }
 
 /// Topology-aware boundary classification for one canonical facet key.
@@ -358,17 +382,14 @@ fn classify_boundary_facet_handle<U, V, const D: usize>(
     facet_key: u64,
     handle: FacetHandle,
 ) -> Result<BoundaryFacetClassification, ManifoldError> {
-    let simplex_key = handle.simplex_key();
-    let facet_index = usize::from(handle.facet_index());
-    let simplex = tds
-        .simplex(simplex_key)
-        .ok_or_else(|| TdsError::SimplexNotFound {
-            simplex_key,
-            context: "topology-aware boundary classification".to_string(),
-        })?;
+    let facet =
+        try_incident_facet_view_for_facet_key(tds, facet_key, handle).map_err(TdsError::from)?;
+    let simplex_key = facet.simplex_key();
+    let facet_index = usize::from(facet.facet_index());
+    let simplex = facet.simplex();
     let simplex_uuid = simplex.uuid();
 
-    match classify_one_sided_facet_adjacency(tds, facet_key, handle)? {
+    match classify_one_sided_facet_adjacency(&facet)? {
         OneSidedFacetAdjacency::Open if global_topology.allows_boundary() => {
             Ok(BoundaryFacetClassification::Boundary(handle))
         }
@@ -407,7 +428,8 @@ pub(crate) fn boundary_facet_keys_from_index<U, V, const D: usize>(
     facet_to_simplices: &FacetToSimplicesIndex<'_, U, V, D>,
     global_topology: GlobalTopology<D>,
 ) -> Result<FastHashSet<u64>, ManifoldError> {
-    let mut boundary_facet_keys: FastHashSet<u64> = FastHashSet::default();
+    let mut boundary_facet_keys: FastHashSet<u64> =
+        fast_hash_set_with_capacity(facet_to_simplices.len().min(64));
     for incidence in facet_to_simplices.iter() {
         let facet_key = incidence.facet_key();
         if matches!(
@@ -420,26 +442,48 @@ pub(crate) fn boundary_facet_keys_from_index<U, V, const D: usize>(
     Ok(boundary_facet_keys)
 }
 
-/// Returns whether a raw facet map contains any true boundary facet.
+/// Builds the topology-approved boundary facet handles for a triangulation.
+///
+/// This is the view-iteration counterpart to [`boundary_facet_keys_from_index`].
+/// Returning handles lets boundary iterators construct exactly the facets
+/// classified as true boundary, without rescanning every simplex facet.
+///
+/// # Errors
+///
+/// Returns the same topology-classification errors as
+/// [`boundary_facet_keys_from_index`].
+pub(crate) fn boundary_facet_handles_from_index<U, V, const D: usize>(
+    facet_to_simplices: &FacetToSimplicesIndex<'_, U, V, D>,
+    global_topology: GlobalTopology<D>,
+) -> Result<Vec<FacetHandle>, ManifoldError> {
+    let mut boundary_facet_handles = Vec::with_capacity(facet_to_simplices.len().min(64));
+    for incidence in facet_to_simplices.iter() {
+        if let BoundaryFacetClassification::Boundary(handle) =
+            classify_boundary_facet(incidence, global_topology)?
+        {
+            boundary_facet_handles.push(handle);
+        }
+    }
+    Ok(boundary_facet_handles)
+}
+
+/// Returns whether a validated facet-degree map contains any true boundary facet.
 ///
 /// This is the map-reuse counterpart to [`boundary_facet_keys_from_index`].
-/// Euler validation uses it so a raw one-sided facet is never mistaken for a
+/// Euler validation uses it so one-sided incidence is never mistaken for a
 /// semantic boundary without first checking [`GlobalTopology`].
 ///
 /// # Errors
 ///
-/// Returns [`ManifoldError::ManifoldFacetMultiplicity`] if the raw map contains
-/// a facet with a non-manifold incident-simplex count. It also returns the same
-/// topology-classification errors as [`boundary_facet_keys_from_index`] when a
-/// one-sided facet is incompatible with the declared topology.
-pub(crate) fn has_boundary_facets_in_map<U, V, const D: usize>(
+/// Returns the same topology-classification errors as
+/// [`boundary_facet_keys_from_index`] when a one-sided facet is incompatible
+/// with the declared topology.
+pub(crate) fn has_boundary_facets_in_validated_facet_map<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
-    facet_to_simplices: &FacetToSimplicesMap,
+    facet_to_simplices: ValidatedFacetDegreeMap<'_>,
     global_topology: GlobalTopology<D>,
 ) -> Result<bool, ManifoldError> {
-    validate_facet_degree_map(facet_to_simplices)?;
-
-    for (facet_key, simplex_facet_pairs) in facet_to_simplices {
+    for (facet_key, simplex_facet_pairs) in facet_to_simplices.as_map() {
         let [handle] = simplex_facet_pairs.as_slice() else {
             continue;
         };
@@ -568,12 +612,13 @@ fn validate_closed_boundary_index<U, V, const D: usize>(
     validate_boundary_ridge_counts(ridge_to_boundary_facet_count)
 }
 
-/// Validates closed-boundary invariants from a raw facet map shared by validation internals.
-pub(crate) fn validate_closed_boundary_map<U, V, const D: usize>(
+/// Validates closed-boundary invariants from a validated facet-degree map.
+pub(crate) fn validate_closed_boundary_from_validated_facet_map<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
-    facet_to_simplices: &FacetToSimplicesMap,
+    facet_to_simplices: ValidatedFacetDegreeMap<'_>,
     global_topology: GlobalTopology<D>,
 ) -> Result<(), ManifoldError> {
+    let facet_to_simplices = facet_to_simplices.as_map();
     // The boundary is a (D-1)-complex. Codimension-2 manifoldness is only meaningful for D>=2.
     if D < 2 {
         return Ok(());
@@ -725,8 +770,8 @@ pub(crate) fn validate_local_pseudomanifold_for_simplices<U, V, const D: usize>(
     }
 
     let facet_to_simplices = build_local_facet_star_map(tds, simplices)?;
-    validate_facet_degree_map(&facet_to_simplices)?;
-    validate_closed_boundary_for_local_facets(tds, global_topology, &facet_to_simplices)
+    let facet_to_simplices = ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices)?;
+    validate_closed_boundary_for_validated_local_facets(tds, global_topology, facet_to_simplices)
 }
 
 /// Builds full facet-incidence entries for facets owned by the supplied simplices.
@@ -847,17 +892,17 @@ fn facet_incident_handles<U, V, const D: usize>(
 }
 
 /// Validates boundary closure for boundary facets present in a local facet map.
-fn validate_closed_boundary_for_local_facets<U, V, const D: usize>(
+fn validate_closed_boundary_for_validated_local_facets<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     global_topology: GlobalTopology<D>,
-    facet_to_simplices: &FacetToSimplicesMap,
+    facet_to_simplices: ValidatedFacetDegreeMap<'_>,
 ) -> Result<(), ManifoldError> {
     if D < 2 {
         return Ok(());
     }
 
     let mut checked_ridges: FastHashSet<u64> = FastHashSet::default();
-    for (facet_key, simplex_facet_pairs) in facet_to_simplices {
+    for (facet_key, simplex_facet_pairs) in facet_to_simplices.as_map() {
         let [handle] = simplex_facet_pairs.as_slice() else {
             continue;
         };
@@ -1367,10 +1412,10 @@ fn validate_vertex_links_index<U, V, const D: usize>(
     Ok(())
 }
 
-/// Validates vertex links from a raw facet map shared by validation internals.
-pub(crate) fn validate_vertex_links_map<U, V, const D: usize>(
+/// Validates vertex links from a validated facet-degree map.
+pub(crate) fn validate_vertex_links_from_validated_facet_map<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
-    facet_to_simplices: &FacetToSimplicesMap,
+    facet_to_simplices: ValidatedFacetDegreeMap<'_>,
     global_topology: GlobalTopology<D>,
 ) -> Result<(), ManifoldError> {
     // Vertex links are only meaningful for D>=1.
@@ -1382,8 +1427,11 @@ pub(crate) fn validate_vertex_links_map<U, V, const D: usize>(
         return Ok(());
     }
 
-    let boundary_vertices =
-        build_boundary_vertex_labels_from_map(tds, facet_to_simplices, global_topology)?;
+    let boundary_vertices = build_boundary_vertex_labels_from_validated_facet_map(
+        tds,
+        facet_to_simplices,
+        global_topology,
+    )?;
 
     for (vertex_key, _vertex) in tds.vertices() {
         let interior_vertex = !boundary_vertices.contains_key(vertex_key);
@@ -1393,9 +1441,9 @@ pub(crate) fn validate_vertex_links_map<U, V, const D: usize>(
     Ok(())
 }
 
-fn build_boundary_vertex_labels_from_map<U, V, const D: usize>(
+fn build_boundary_vertex_labels_from_validated_facet_map<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
-    facet_to_simplices: &FacetToSimplicesMap,
+    facet_to_simplices: ValidatedFacetDegreeMap<'_>,
     global_topology: GlobalTopology<D>,
 ) -> Result<VertexSecondaryMap<()>, ManifoldError> {
     // Single pass: collect all vertices that appear on a boundary facet (a facet incident to exactly 1 D-simplex).
@@ -1404,7 +1452,7 @@ fn build_boundary_vertex_labels_from_map<U, V, const D: usize>(
     // expensive and we only need a coarse set (it can grow dynamically).
     let mut boundary_vertices: VertexSecondaryMap<()> = VertexSecondaryMap::new();
 
-    for (facet_key, simplex_facet_pairs) in facet_to_simplices {
+    for (facet_key, simplex_facet_pairs) in facet_to_simplices.as_map() {
         let [handle] = simplex_facet_pairs.as_slice() else {
             continue;
         };
@@ -2098,7 +2146,7 @@ mod tests {
     use super::*;
     use std::{assert_matches, iter};
 
-    use crate::core::facet::{FacetHandle, FacetView};
+    use crate::core::facet::{FacetError, FacetHandle, FacetView};
     use crate::core::simplex::Simplex;
     use crate::core::triangulation::Triangulation;
     use crate::core::vertex::Vertex;
@@ -2115,6 +2163,12 @@ mod tests {
         let mut s: LiftedVertexBuffer = LiftedVertexBuffer::with_capacity(vertices.len());
         s.extend(vertices.iter().copied().map(LiftedVertexId::base));
         s
+    }
+
+    fn validated_facet_map(
+        facet_to_simplices: &FacetToSimplicesMap,
+    ) -> ValidatedFacetDegreeMap<'_> {
+        ValidatedFacetDegreeMap::try_from_facet_map(facet_to_simplices).unwrap()
     }
 
     fn build_single_triangle_tds(periodic_self_neighbor: bool) -> (Tds<(), (), 2>, SimplexKey) {
@@ -2243,7 +2297,7 @@ mod tests {
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
         let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
 
-        assert!(validate_facet_degree_map(&facet_to_simplices).is_ok());
+        assert!(ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices).is_ok());
     }
 
     #[test]
@@ -2282,7 +2336,7 @@ mod tests {
             .unwrap();
 
         let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
-        assert!(validate_facet_degree_map(&facet_to_simplices).is_ok());
+        assert!(ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices).is_ok());
     }
 
     #[test]
@@ -2329,7 +2383,7 @@ mod tests {
         let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
 
         let expected_facet_key = facet_key_from_vertices(&[v0, v1, v2]);
-        match validate_facet_degree_map(&facet_to_simplices) {
+        match ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices) {
             Err(ManifoldError::ManifoldFacetMultiplicity {
                 facet_key,
                 simplex_count,
@@ -2353,10 +2407,15 @@ mod tests {
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
         let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
+        let facet_to_simplices = validated_facet_map(&facet_to_simplices);
 
         assert!(
-            validate_closed_boundary_map(&tds, &facet_to_simplices, GlobalTopology::Euclidean)
-                .is_ok()
+            validate_closed_boundary_from_validated_facet_map(
+                &tds,
+                facet_to_simplices,
+                GlobalTopology::Euclidean
+            )
+            .is_ok()
         );
     }
 
@@ -2378,15 +2437,21 @@ mod tests {
         let mut handles: SmallBuffer<FacetHandle, 2> = SmallBuffer::new();
         handles.push(FacetHandle::from_validated(simplex_key, u8::MAX));
         facet_to_simplices.insert(0_u64, handles);
+        let facet_to_simplices = validated_facet_map(&facet_to_simplices);
 
-        match validate_closed_boundary_map(&tds, &facet_to_simplices, GlobalTopology::Euclidean) {
-            Err(ManifoldError::Tds(TdsError::IndexOutOfBounds { index, bound, .. })) => {
-                assert!(
-                    index >= bound,
-                    "Expected index ({index}) >= bound ({bound})"
-                );
+        match validate_closed_boundary_from_validated_facet_map(
+            &tds,
+            facet_to_simplices,
+            GlobalTopology::Euclidean,
+        ) {
+            Err(ManifoldError::Tds(TdsError::FacetError(FacetError::InvalidFacetIndex {
+                index,
+                facet_count,
+            }))) => {
+                assert_eq!(index, u8::MAX);
+                assert_eq!(facet_count, 4);
             }
-            other => panic!("Expected IndexOutOfBounds error, got {other:?}"),
+            other => panic!("Expected InvalidFacetIndex error, got {other:?}"),
         }
     }
 
@@ -2676,14 +2741,19 @@ mod tests {
         }
 
         let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
+        let facet_to_simplices = validated_facet_map(&facet_to_simplices);
 
         // Sanity: pseudomanifold-with-boundary checks pass.
-        validate_facet_degree_map(&facet_to_simplices).unwrap();
-        validate_closed_boundary_map(&tds, &facet_to_simplices, GlobalTopology::Euclidean).unwrap();
-
-        let boundary_vertices = build_boundary_vertex_labels_from_map(
+        validate_closed_boundary_from_validated_facet_map(
             &tds,
-            &facet_to_simplices,
+            facet_to_simplices,
+            GlobalTopology::Euclidean,
+        )
+        .unwrap();
+
+        let boundary_vertices = build_boundary_vertex_labels_from_validated_facet_map(
+            &tds,
+            facet_to_simplices,
             GlobalTopology::Euclidean,
         )
         .unwrap();
@@ -2719,7 +2789,12 @@ mod tests {
         assert_eq!(vertex_count, 4);
 
         // Full vertex-link validation should succeed.
-        validate_vertex_links_map(&tds, &facet_to_simplices, GlobalTopology::Euclidean).unwrap();
+        validate_vertex_links_from_validated_facet_map(
+            &tds,
+            facet_to_simplices,
+            GlobalTopology::Euclidean,
+        )
+        .unwrap();
 
         // And misclassifications should be rejected (guards the interior/boundary distinction).
         assert_matches!(
@@ -2742,11 +2817,16 @@ mod tests {
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 1>::build_initial_simplex(&vertices).unwrap();
         let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
+        let facet_to_simplices = validated_facet_map(&facet_to_simplices);
 
         // Codimension-2 boundary manifoldness is only meaningful for D>=2.
         assert!(
-            validate_closed_boundary_map(&tds, &facet_to_simplices, GlobalTopology::Euclidean)
-                .is_ok()
+            validate_closed_boundary_from_validated_facet_map(
+                &tds,
+                facet_to_simplices,
+                GlobalTopology::Euclidean
+            )
+            .is_ok()
         );
     }
 
@@ -2763,8 +2843,12 @@ mod tests {
         );
 
         assert!(
-            validate_closed_boundary_map(&tds, &facet_to_simplices, GlobalTopology::Euclidean)
-                .is_ok()
+            validate_closed_boundary_from_validated_facet_map(
+                &tds,
+                validated_facet_map(&facet_to_simplices),
+                GlobalTopology::Euclidean
+            )
+            .is_ok()
         );
     }
 
@@ -2774,8 +2858,13 @@ mod tests {
 
         // Sanity: pseudomanifold checks pass.
         let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
-        validate_facet_degree_map(&facet_to_simplices).unwrap();
-        validate_closed_boundary_map(&tds, &facet_to_simplices, GlobalTopology::Euclidean).unwrap();
+        let facet_to_simplices = validated_facet_map(&facet_to_simplices);
+        validate_closed_boundary_from_validated_facet_map(
+            &tds,
+            facet_to_simplices,
+            GlobalTopology::Euclidean,
+        )
+        .unwrap();
 
         assert!(validate_ridge_links(&tds).is_ok());
     }
@@ -2900,8 +2989,13 @@ mod tests {
         let (tds, _touched_simplex, expected_ridge_key) =
             build_non_manifold_boundary_ridge_tds_3d();
         let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
+        let facet_to_simplices = validated_facet_map(&facet_to_simplices);
 
-        match validate_closed_boundary_map(&tds, &facet_to_simplices, GlobalTopology::Euclidean) {
+        match validate_closed_boundary_from_validated_facet_map(
+            &tds,
+            facet_to_simplices,
+            GlobalTopology::Euclidean,
+        ) {
             Err(ManifoldError::BoundaryRidgeMultiplicity {
                 ridge_key,
                 boundary_facet_count,
@@ -2986,8 +3080,13 @@ mod tests {
 
         // Sanity: pseudomanifold-with-boundary checks pass (in fact, this complex is closed).
         let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
-        validate_facet_degree_map(&facet_to_simplices).unwrap();
-        validate_closed_boundary_map(&tds, &facet_to_simplices, GlobalTopology::Euclidean).unwrap();
+        let facet_to_simplices = validated_facet_map(&facet_to_simplices);
+        validate_closed_boundary_from_validated_facet_map(
+            &tds,
+            facet_to_simplices,
+            GlobalTopology::Euclidean,
+        )
+        .unwrap();
 
         let expected_ridge_key = facet_key_from_vertices(&[v0]);
 
@@ -3231,14 +3330,23 @@ mod tests {
         let (tds, apex) = build_cone_on_torus_tds();
 
         let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
-        validate_facet_degree_map(&facet_to_simplices).unwrap();
-        validate_closed_boundary_map(&tds, &facet_to_simplices, GlobalTopology::Euclidean).unwrap();
+        let facet_to_simplices = validated_facet_map(&facet_to_simplices);
+        validate_closed_boundary_from_validated_facet_map(
+            &tds,
+            facet_to_simplices,
+            GlobalTopology::Euclidean,
+        )
+        .unwrap();
 
         // Ridge-link validation should *not* detect this singularity.
         assert!(validate_ridge_links(&tds).is_ok());
 
         // Vertex-link validation MUST reject it: apex link is T^2, not S^2.
-        match validate_vertex_links_map(&tds, &facet_to_simplices, GlobalTopology::Euclidean) {
+        match validate_vertex_links_from_validated_facet_map(
+            &tds,
+            facet_to_simplices,
+            GlobalTopology::Euclidean,
+        ) {
             Err(ManifoldError::VertexLinkNotManifold {
                 vertex_key,
                 interior_vertex,
@@ -3291,18 +3399,22 @@ mod tests {
         let mut handles: SmallBuffer<FacetHandle, 2> = SmallBuffer::new();
         handles.push(FacetHandle::from_validated(simplex_key, 0));
         facet_to_simplices.insert(0_u64, handles);
+        let facet_to_simplices = validated_facet_map(&facet_to_simplices);
 
-        match validate_closed_boundary_map(&tds, &facet_to_simplices, GlobalTopology::Euclidean) {
-            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
-                expected, actual, ..
-            })) => {
-                assert_eq!(expected, 3, "D=3: boundary facet should have 3 vertices");
-                assert!(
-                    actual != 3,
-                    "Corrupted simplex should produce wrong vertex count"
-                );
+        match validate_closed_boundary_from_validated_facet_map(
+            &tds,
+            facet_to_simplices,
+            GlobalTopology::Euclidean,
+        ) {
+            Err(ManifoldError::Tds(TdsError::FacetError(FacetError::FacetHandleKeyMismatch {
+                expected_facet_key,
+                actual_facet_key,
+                ..
+            }))) => {
+                assert_eq!(expected_facet_key, 0);
+                assert_ne!(actual_facet_key, expected_facet_key);
             }
-            other => panic!("Expected DimensionMismatch, got {other:?}"),
+            other => panic!("Expected FacetHandleKeyMismatch, got {other:?}"),
         }
     }
 
@@ -3340,6 +3452,38 @@ mod tests {
             classification,
             BoundaryFacetClassification::Boundary(handle)
                 if handle.simplex_key() == simplex_key && handle.facet_index() == 0
+        );
+    }
+
+    #[test]
+    fn validated_facet_map_rejects_boundary_handle_under_wrong_facet_key() {
+        let (tds, simplex_key) = build_single_triangle_tds(false);
+        let actual_facet_key = facet_key_for_simplex_facet(&tds, simplex_key, 0);
+        let mismatched_facet_key = actual_facet_key.wrapping_add(1);
+        let handle = FacetHandle::from_validated(simplex_key, 0);
+
+        let mut handles = SmallBuffer::new();
+        handles.push(handle);
+        let mut facet_to_simplices = FacetToSimplicesMap::default();
+        facet_to_simplices.insert(mismatched_facet_key, handles);
+        let facet_to_simplices = validated_facet_map(&facet_to_simplices);
+
+        let err = has_boundary_facets_in_validated_facet_map(
+            &tds,
+            facet_to_simplices,
+            GlobalTopology::Euclidean,
+        )
+        .unwrap_err();
+
+        assert_matches!(
+            err,
+            ManifoldError::Tds(TdsError::FacetError(FacetError::FacetHandleKeyMismatch {
+                expected_facet_key,
+                actual_facet_key: found_actual_facet_key,
+                handle: found_handle,
+            })) if expected_facet_key == mismatched_facet_key
+                && found_actual_facet_key == actual_facet_key
+                && found_handle == handle
         );
     }
 
@@ -3435,14 +3579,24 @@ mod tests {
         }
 
         let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
+        let facet_to_simplices = validated_facet_map(&facet_to_simplices);
 
         // Sanity: pseudomanifold + ridge links pass
-        validate_facet_degree_map(&facet_to_simplices).unwrap();
-        validate_closed_boundary_map(&tds, &facet_to_simplices, GlobalTopology::Euclidean).unwrap();
+        validate_closed_boundary_from_validated_facet_map(
+            &tds,
+            facet_to_simplices,
+            GlobalTopology::Euclidean,
+        )
+        .unwrap();
         validate_ridge_links(&tds).unwrap();
 
         // Vertex-link validation should ACCEPT this complex
-        validate_vertex_links_map(&tds, &facet_to_simplices, GlobalTopology::Euclidean).unwrap();
+        validate_vertex_links_from_validated_facet_map(
+            &tds,
+            facet_to_simplices,
+            GlobalTopology::Euclidean,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -3494,12 +3648,22 @@ mod tests {
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
         let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
+        let facet_to_simplices = validated_facet_map(&facet_to_simplices);
 
         // All vertices are boundary vertices in a single tetrahedron
-        validate_facet_degree_map(&facet_to_simplices).unwrap();
-        validate_closed_boundary_map(&tds, &facet_to_simplices, GlobalTopology::Euclidean).unwrap();
+        validate_closed_boundary_from_validated_facet_map(
+            &tds,
+            facet_to_simplices,
+            GlobalTopology::Euclidean,
+        )
+        .unwrap();
 
         // Vertex-link validation must succeed (links are 2-balls)
-        validate_vertex_links_map(&tds, &facet_to_simplices, GlobalTopology::Euclidean).unwrap();
+        validate_vertex_links_from_validated_facet_map(
+            &tds,
+            facet_to_simplices,
+            GlobalTopology::Euclidean,
+        )
+        .unwrap();
     }
 }

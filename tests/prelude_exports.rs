@@ -87,10 +87,11 @@ use delaunay::prelude::ordering::{
 use delaunay::prelude::query::{
     AllFacetsIter as QueryAllFacetsIter, BoundaryFacetsIter as QueryBoundaryFacetsIter, ConvexHull,
     ConvexHullConstructionError, EdgeIndex as QueryEdgeIndex, EdgeKey as QueryEdgeKey,
-    EdgeView as QueryEdgeView, FacetIncidenceView as QueryFacetIncidenceView,
-    IncidenceView as QueryIncidenceView, QueryError, SimplexFacetsIter as QuerySimplexFacetsIter,
-    SimplexNeighborIndex as QuerySimplexNeighborIndex, TopologyIndexBuildError,
-    TriangulationAdjacency as QueryTriangulationAdjacency,
+    EdgeView as QueryEdgeView, FacetIncidenceAnalysis as QueryFacetIncidenceAnalysis,
+    FacetIncidenceView as QueryFacetIncidenceView, IncidenceView as QueryIncidenceView,
+    OneSidedFacetsIter as QueryOneSidedFacetsIter, QueryError,
+    SimplexFacetsIter as QuerySimplexFacetsIter, SimplexNeighborIndex as QuerySimplexNeighborIndex,
+    TopologyIndexBuildError, TriangulationAdjacency as QueryTriangulationAdjacency,
 };
 use delaunay::prelude::repair::{
     DelaunayCheckPolicy, DelaunayRepairDiagnostics, DelaunayRepairError,
@@ -106,8 +107,9 @@ use delaunay::prelude::repair::{
 use delaunay::prelude::tds::{
     AllFacetsIter as TdsAllFacetsIter, BoundaryFacetsIter as TdsBoundaryFacetsIter, EdgeKey,
     EdgeKeyError, EdgeView, FacetError, FacetHandle, FacetIncidenceView as TdsFacetIncidenceView,
-    FacetView, InvariantError, NeighborSlot, SimplexFacetsIter as TdsSimplexFacetsIter, SimplexKey,
-    Tds, TdsConstructionError, TdsError, VertexKey,
+    FacetView, InvariantError, NeighborSlot, OneSidedFacetsIter as TdsOneSidedFacetsIter,
+    SimplexFacetsIter as TdsSimplexFacetsIter, SimplexKey, Tds, TdsConstructionError, TdsError,
+    VertexKey,
 };
 use delaunay::prelude::topology::spaces::{
     GlobalTopology, GlobalTopologyModelError, LiftedLinkEdge, LiftedVertexId, TopologyKind,
@@ -122,7 +124,8 @@ use delaunay::prelude::triangulation::{
     BoundaryFacetsIter as TriangulationBoundaryFacetsIter, EdgeIndex as GenericEdgeIndex,
     FacetIssuesMap as TriangulationFacetIssuesMap, FastKernel as TriangulationFastKernel,
     IncidenceView as GenericIncidenceView, InsertionError as TriangulationInsertionError,
-    QueryError as TriangulationQueryError, SimplexFacetsIter as GenericSimplexFacetsIter,
+    OneSidedFacetsIter as TriangulationOneSidedFacetsIter, QueryError as TriangulationQueryError,
+    SimplexFacetsIter as GenericSimplexFacetsIter,
     SimplexNeighborIndex as GenericSimplexNeighborIndex,
     SpatialIndexConstructionFailure as GenericSpatialIndexConstructionFailure,
     TdsError as TriangulationTdsError, TopologyGuarantee as TriangulationTopologyGuarantee,
@@ -141,14 +144,19 @@ use delaunay::prelude::{
     CoordinateRange as RootCoordinateRange, DelaunayError as RootDelaunayError,
     DelaunayResult as RootDelaunayResult, EdgeIndex as RootEdgeIndex,
     FlipFailureKind as RootFlipFailureKind,
-    FlipOrientationCheckStage as RootFlipOrientationCheckStage, IncidenceView as RootIncidenceView,
-    SecureHashMap, SecureHashSet, SimplexNeighborIndex as RootSimplexNeighborIndex,
+    FlipOrientationCheckStage as RootFlipOrientationCheckStage,
+    GlobalTopology as RootGlobalTopology, GlobalTopologyModelError as RootGlobalTopologyModelError,
+    IncidenceView as RootIncidenceView, SecureHashMap, SecureHashSet,
+    SimplexNeighborIndex as RootSimplexNeighborIndex, TopologyError as RootTopologyError,
+    TopologyKind as RootTopologyKind, ToroidalConstructionMode as RootToroidalConstructionMode,
+    ToroidalDomain as RootToroidalDomain, ToroidalDomainError as RootToroidalDomainError,
     TriangulationAdjacency as RootTriangulationAdjacency,
     ValidationConfigurationError as RootValidationConfigurationError, vertex as root_vertex,
 };
 use delaunay::query::{
     AllFacetsIter as QueryFacadeAllFacetsIter, BoundaryFacetsIter as QueryFacadeBoundaryFacetsIter,
     EdgeIndex as QueryFacadeEdgeIndex, IncidenceView as QueryFacadeIncidenceView,
+    OneSidedFacetsIter as QueryFacadeOneSidedFacetsIter,
     SimplexFacetsIter as QueryFacadeSimplexFacetsIter,
     SimplexNeighborIndex as QueryFacadeSimplexNeighborIndex,
     TriangulationAdjacency as QueryFacadeTriangulationAdjacency,
@@ -223,6 +231,54 @@ const fn assert_root_bistellar_flips(_: &impl delaunay::flips::BistellarFlips<3,
 }
 
 const fn assert_send_sync_unpin<T: Send + Sync + Unpin>() {}
+
+const fn assert_query_facet_incidence_trait_export<T>(_: &T)
+where
+    T: QueryFacetIncidenceAnalysis<(), (), 3> + ?Sized,
+{
+}
+
+fn assert_construction_prelude_unsupported_topology_variants() {
+    let unsupported_euclidean_topology =
+        DelaunayConstructionFailure::EuclideanUnsupportedGlobalTopology {
+            topology: TopologyKind::Spherical,
+        };
+    assert_matches!(
+        unsupported_euclidean_topology,
+        DelaunayConstructionFailure::EuclideanUnsupportedGlobalTopology {
+            topology: TopologyKind::Spherical,
+        }
+    );
+    let unsupported_canonicalized_topology =
+        DelaunayConstructionFailure::CanonicalizedUnsupportedGlobalTopology {
+            topology: TopologyKind::Toroidal,
+        };
+    assert_matches!(
+        unsupported_canonicalized_topology,
+        DelaunayConstructionFailure::CanonicalizedUnsupportedGlobalTopology {
+            topology: TopologyKind::Toroidal,
+        }
+    );
+    let conflicting_periodic_topology =
+        DelaunayConstructionFailure::PeriodicImageConflictingGlobalTopology {
+            requested_topology: TopologyKind::Euclidean,
+            requested_mode: None,
+            requested_periods: None,
+            expected_mode: ToroidalConstructionMode::PeriodicImagePoint,
+            expected_periods: vec![1.0, 1.0],
+        };
+    assert_matches!(
+        conflicting_periodic_topology,
+        DelaunayConstructionFailure::PeriodicImageConflictingGlobalTopology {
+            requested_topology: TopologyKind::Euclidean,
+            requested_mode: None,
+            requested_periods: None,
+            expected_mode: ToroidalConstructionMode::PeriodicImagePoint,
+            expected_periods,
+        }
+        if expected_periods.as_slice() == [1.0, 1.0]
+    );
+}
 
 #[test]
 fn construction_prelude_exports_common_delaunay_error_aliases() {
@@ -384,6 +440,7 @@ fn construction_prelude_covers_typed_construction_failure_variants() {
             tracking_issue: 416,
         }
     );
+    assert_construction_prelude_unsupported_topology_variants();
     let topology_model_failure = DelaunayConstructionFailure::TopologyModelConfiguration {
         source: ConstructionGlobalTopologyModelError::PeriodicOffsetsUnsupported {
             kind: TopologyKind::Euclidean,
@@ -630,6 +687,21 @@ fn assert_facet_incidence_exports(
     assert_eq!(root_incidence.facet_key(), query_incidence.facet_key());
     assert_eq!(query_incidence.facet_key(), tds_incidence.facet_key());
     assert!(tds_incidence.is_one_sided());
+    assert_query_facet_incidence_trait_export(tds);
+
+    let query_facade_one_sided_facets: Option<QueryFacadeOneSidedFacetsIter<'_, (), (), 3>> = None;
+    let query_one_sided_facets: Option<QueryOneSidedFacetsIter<'_, (), (), 3>> = None;
+    let tds_one_sided_facets: Option<TdsOneSidedFacetsIter<'_, (), (), 3>> = None;
+    let triangulation_one_sided_facets: Option<TriangulationOneSidedFacetsIter<'_, (), (), 3>> =
+        None;
+    assert!(query_facade_one_sided_facets.is_none());
+    assert!(query_one_sided_facets.is_none());
+    assert!(tds_one_sided_facets.is_none());
+    assert!(triangulation_one_sided_facets.is_none());
+    let one_sided_count = tds
+        .one_sided_facets()?
+        .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
+    assert!(one_sided_count > 0);
 
     let topology_classification =
         topology_classify_boundary_facet(incidence, GlobalTopology::Euclidean)?;
@@ -691,7 +763,8 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
 
     let mut empty_tds: InsertionTds<(), (), 2> = InsertionTds::empty();
     let _tds_all_facets: TdsAllFacetsIter<'_, (), (), 2> = empty_tds.facets();
-    let _tds_boundary_facets: Option<TdsBoundaryFacetsIter<'static, (), (), 2>> = None;
+    let tds_boundary_facets: Option<TdsBoundaryFacetsIter<'static, (), (), 2>> = None;
+    assert!(tds_boundary_facets.is_none());
     assert_eq!(
         repair_neighbor_pointers_local(&mut empty_tds, &[], None)?,
         0
@@ -1247,7 +1320,23 @@ fn topology_spaces_prelude_covers_toroidal_domain_api() -> Result<(), PreludeExp
         ToroidalConstructionMode::PeriodicImagePoint,
     )?;
     assert!(topology.is_toroidal());
+
+    let root_domain = RootToroidalDomain::<3>::try_new([1.0, 2.0, 3.0])?;
+    assert_relative_eq!(
+        root_domain.periods().as_slice(),
+        domain.periods().as_slice()
+    );
+    let root_topology = RootGlobalTopology::try_toroidal(
+        [1.0, 2.0, 3.0],
+        RootToroidalConstructionMode::PeriodicImagePoint,
+    )?;
+    assert_eq!(root_topology.kind(), RootTopologyKind::Toroidal);
+    let root_topology_error: Option<RootTopologyError> = None;
+    let root_topology_model_error: Option<RootGlobalTopologyModelError> = None;
+    assert!(root_topology_error.is_none());
+    assert!(root_topology_model_error.is_none());
     assert_send_sync_unpin::<ToroidalDomainError>();
+    assert_send_sync_unpin::<RootToroidalDomainError>();
     Ok(())
 }
 
