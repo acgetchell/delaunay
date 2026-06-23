@@ -30,7 +30,7 @@
 //! vertices into the fundamental domain `[0, L_i)` before passing them to the standard
 //! Euclidean constructor. The resulting triangulation is a valid Euclidean Delaunay
 //! triangulation of the canonicalized point set; it does **not** identify opposite
-//! boundary facets.
+//! boundary facets and cannot be combined with non-Euclidean global topology metadata.
 //!
 //! # Examples
 //!
@@ -606,13 +606,12 @@ pub struct DelaunayTriangulationBuilder<'v, U, const D: usize> {
     /// When set, the builder constructs a triangulation from the given vertices and
     /// simplices directly, bypassing point-insertion-based Delaunay construction.
     explicit_simplices: Option<ValidatedExplicitSimplices<'v>>,
-    /// Runtime global topology metadata.
+    /// Explicit runtime global topology metadata requested by the caller.
     ///
-    /// When set to a non-Euclidean topology (e.g. `Toroidal`), Euler characteristic
-    /// validation uses the appropriate expectation (e.g. χ = 0 for a torus).
-    /// This is **metadata only** and does not trigger any construction-time
-    /// coordinate transformation.
-    global_topology: GlobalTopology<D>,
+    /// `None` means the construction path supplies its own default metadata:
+    /// Euclidean paths default to [`GlobalTopology::Euclidean`], while periodic
+    /// image-point construction derives closed toroidal metadata from its domain.
+    requested_global_topology: Option<GlobalTopology<D>>,
 }
 
 enum BuilderTopology<const D: usize> {
@@ -670,7 +669,7 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
             topology_guarantee: TopologyGuarantee::DEFAULT,
             construction_options: ConstructionOptions::default(),
             explicit_simplices: None,
-            global_topology: GlobalTopology::DEFAULT,
+            requested_global_topology: None,
         }
     }
 
@@ -884,13 +883,13 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
         self
     }
 
-    /// Enables canonicalized toroidal topology without periodic quotient rewiring.
+    /// Enables toroidal coordinate canonicalization without periodic quotient rewiring.
     ///
     /// Input vertices are canonicalized into `[0, L_i)` per dimension before the
-    /// triangulation is built. The resulting triangulation is a valid Euclidean
-    /// Delaunay triangulation of the wrapped point set; boundary facets are
-    /// **not** rewired. Use [`.try_toroidal()`](Self::try_toroidal) for the true
-    /// periodic quotient path.
+    /// triangulation is built. The resulting triangulation remains Euclidean:
+    /// boundary facets are **not** rewired, and non-Euclidean global topology
+    /// metadata is rejected at build time. Use [`.try_toroidal()`](Self::try_toroidal)
+    /// for the true periodic quotient path with closed toroidal topology.
     ///
     /// # Arguments
     ///
@@ -933,7 +932,7 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
         Ok(self)
     }
 
-    /// Enables canonicalized toroidal topology from an already-validated domain.
+    /// Enables toroidal coordinate canonicalization from an already-validated domain.
     ///
     /// This infallible setter is for callers that already hold a
     /// [`ToroidalDomain`]. Use [`Self::try_canonicalized_toroidal`] at raw
@@ -1011,13 +1010,20 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// mesh instead of χ = 2 (the sphere default).
     ///
     /// This is **metadata only** and does not trigger any coordinate
-    /// canonicalization or image-point construction. Explicit non-Euclidean
-    /// connectivity is rejected until Level 4 validation supports quotient
-    /// topology. For construction-time toroidal processing, use
-    /// [`.try_toroidal()`](Self::try_toroidal) or
-    /// [`.try_canonicalized_toroidal()`](Self::try_canonicalized_toroidal) instead.
+    /// canonicalization or image-point construction. Plain Euclidean,
+    /// canonicalized toroidal, and explicit-simplex construction reject
+    /// non-Euclidean metadata because those paths do not build closed quotient
+    /// connectivity. For construction-time toroidal processing, use
+    /// [`.try_toroidal()`](Self::try_toroidal) for true toroidal topology, or
+    /// [`.try_canonicalized_toroidal()`](Self::try_canonicalized_toroidal) for
+    /// wrapping-only Euclidean construction. If explicit metadata is supplied on
+    /// the periodic image-point path, it must exactly match the toroidal topology
+    /// derived from [`.try_toroidal()`](Self::try_toroidal).
     ///
-    /// Defaults to [`GlobalTopology::Euclidean`].
+    /// When this setter is not called, Euclidean, canonicalized, and explicit
+    /// construction paths use [`GlobalTopology::Euclidean`]. The periodic
+    /// image-point path derives [`GlobalTopology::Toroidal`] metadata from
+    /// [`.try_toroidal()`](Self::try_toroidal) instead.
     ///
     /// # Examples
     ///
@@ -1051,7 +1057,7 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// ```
     #[must_use]
     pub const fn global_topology(mut self, global_topology: GlobalTopology<D>) -> Self {
-        self.global_topology = global_topology;
+        self.requested_global_topology = Some(global_topology);
         self
     }
 
@@ -1349,23 +1355,26 @@ where
                 self.vertices,
                 simplices.as_slice(),
                 self.topology_guarantee,
-                self.global_topology,
+                self.global_topology_or_default(),
             );
         }
 
         match self.topology {
             BuilderTopology::Euclidean => {
+                Self::reject_euclidean_non_euclidean_topology(self.global_topology_or_default())?;
                 // Euclidean path: delegate directly.
-                let mut dt = DelaunayTriangulation::try_with_topology_guarantee_and_options(
+                let dt = DelaunayTriangulation::try_with_topology_guarantee_and_options(
                     kernel,
                     self.vertices,
                     self.topology_guarantee,
                     self.construction_options,
                 )?;
-                dt.set_global_topology(self.global_topology);
                 Ok(dt)
             }
             BuilderTopology::Canonicalized(domain) => {
+                Self::reject_canonicalized_non_euclidean_topology(
+                    self.global_topology_or_default(),
+                )?;
                 let topology = GlobalTopology::Toroidal {
                     domain,
                     mode: ToroidalConstructionMode::Canonicalized,
@@ -1374,20 +1383,20 @@ where
                 Self::validate_topology_model(&topology_model)?;
                 // Canonicalized toroidal construction: canonicalize then delegate.
                 let canonical = Self::canonicalize_vertices(self.vertices, &topology_model)?;
-                let mut dt = DelaunayTriangulation::try_with_topology_guarantee_and_options(
+                let dt = DelaunayTriangulation::try_with_topology_guarantee_and_options(
                     kernel,
                     &canonical,
                     self.topology_guarantee,
                     self.construction_options,
                 )?;
-                dt.set_global_topology(topology);
                 Ok(dt)
             }
             BuilderTopology::PeriodicImagePoint(domain) => {
-                let topology = GlobalTopology::Toroidal {
-                    domain,
-                    mode: ToroidalConstructionMode::PeriodicImagePoint,
-                };
+                let topology = Self::periodic_image_global_topology(domain);
+                Self::reject_periodic_conflicting_global_topology(
+                    self.requested_global_topology,
+                    topology,
+                )?;
                 let topology_model = topology.model();
                 Self::validate_topology_model(&topology_model)?;
                 if !topology_model.supports_periodic_facet_signatures() {
@@ -1407,7 +1416,6 @@ where
                     self.topology_guarantee,
                     self.construction_options,
                 )?;
-                dt.set_global_topology(topology);
                 dt.tri
                     .normalize_and_promote_positive_orientation()
                     .map_err(|source| {
@@ -1532,13 +1540,15 @@ where
         // Construct the DT first so the Triangulation-layer helpers
         // (orientation promotion, topology checks) operate on the assembled
         // complex.
-        let mut candidate =
-            DelaunayTriangulationCandidate::assemble(tds, kernel.clone(), topology_guarantee);
-
-        // Set global topology metadata before validation so that
+        // Include global topology metadata before validation so that
         // validate_topology_core() uses the correct Euler characteristic
         // expectation (e.g. χ = 0 for toroidal instead of χ = 2 for sphere).
-        candidate.set_global_topology(global_topology);
+        let mut candidate = DelaunayTriangulationCandidate::assemble(
+            tds,
+            kernel.clone(),
+            topology_guarantee,
+            global_topology,
+        );
 
         // --- Normalize orientation and promote to positive ---
         //
@@ -1640,6 +1650,110 @@ where
         .into())
     }
 
+    /// Returns the requested topology metadata or the Euclidean builder default.
+    const fn global_topology_or_default(&self) -> GlobalTopology<D> {
+        match self.requested_global_topology {
+            Some(global_topology) => global_topology,
+            None => GlobalTopology::DEFAULT,
+        }
+    }
+
+    /// Builds the global topology metadata derived by periodic image-point construction.
+    const fn periodic_image_global_topology(domain: ToroidalDomain<D>) -> GlobalTopology<D> {
+        GlobalTopology::Toroidal {
+            domain,
+            mode: ToroidalConstructionMode::PeriodicImagePoint,
+        }
+    }
+
+    /// Rejects topology metadata that would misclassify Euclidean construction boundaries.
+    ///
+    /// The plain Euclidean builder path does not create quotient-space neighbor
+    /// links, so accepting closed metadata here would make boundary queries and
+    /// Euler validation describe topology that was never assembled.
+    const fn reject_euclidean_non_euclidean_topology(
+        global_topology: GlobalTopology<D>,
+    ) -> Result<(), DelaunayTriangulationConstructionError> {
+        if global_topology.is_euclidean() {
+            return Ok(());
+        }
+
+        Err(DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::EuclideanUnsupportedGlobalTopology {
+                topology: global_topology.kind(),
+            },
+        ))
+    }
+
+    /// Rejects topology metadata that would misclassify canonicalized Euclidean boundaries.
+    ///
+    /// Canonicalization wraps coordinates into a toroidal domain but intentionally
+    /// leaves connectivity Euclidean. True closed toroidal topology must use the
+    /// periodic image-point builder path.
+    const fn reject_canonicalized_non_euclidean_topology(
+        global_topology: GlobalTopology<D>,
+    ) -> Result<(), DelaunayTriangulationConstructionError> {
+        if global_topology.is_euclidean() {
+            return Ok(());
+        }
+
+        Err(DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::CanonicalizedUnsupportedGlobalTopology {
+                topology: global_topology.kind(),
+            },
+        ))
+    }
+
+    /// Rejects explicit metadata that conflicts with derived periodic topology.
+    ///
+    /// Periodic image-point construction derives the only valid closed toroidal
+    /// metadata from its validated domain. An explicitly supplied matching value
+    /// is harmless, but a different value would make the builder silently discard
+    /// caller intent.
+    fn reject_periodic_conflicting_global_topology(
+        requested_global_topology: Option<GlobalTopology<D>>,
+        derived_global_topology: GlobalTopology<D>,
+    ) -> Result<(), DelaunayTriangulationConstructionError> {
+        let Some(requested_global_topology) = requested_global_topology else {
+            return Ok(());
+        };
+
+        if requested_global_topology == derived_global_topology {
+            return Ok(());
+        }
+
+        Err(DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::PeriodicImageConflictingGlobalTopology {
+                requested_topology: requested_global_topology.kind(),
+                requested_mode: Self::toroidal_mode(requested_global_topology),
+                requested_periods: Self::toroidal_periods(requested_global_topology),
+                expected_mode: ToroidalConstructionMode::PeriodicImagePoint,
+                expected_periods: Self::toroidal_periods(derived_global_topology)
+                    .unwrap_or_default(),
+            },
+        ))
+    }
+
+    /// Extracts toroidal construction mode from topology metadata for diagnostics.
+    const fn toroidal_mode(global_topology: GlobalTopology<D>) -> Option<ToroidalConstructionMode> {
+        match global_topology {
+            GlobalTopology::Toroidal { mode, .. } => Some(mode),
+            GlobalTopology::Euclidean | GlobalTopology::Spherical | GlobalTopology::Hyperbolic => {
+                None
+            }
+        }
+    }
+
+    /// Extracts toroidal periods from topology metadata for diagnostics.
+    fn toroidal_periods(global_topology: GlobalTopology<D>) -> Option<Vec<f64>> {
+        match global_topology {
+            GlobalTopology::Toroidal { domain, .. } => Some(domain.periods().to_vec()),
+            GlobalTopology::Euclidean | GlobalTopology::Spherical | GlobalTopology::Hyperbolic => {
+                None
+            }
+        }
+    }
+
     /// Builds a true periodic (toroidal) Delaunay triangulation using the 3^D image-point method.
     ///
     /// **Algorithm** (see module-level doc for periodic image-point details):
@@ -1681,6 +1795,16 @@ where
     {
         // Keep `build_periodic` self-protecting even if future call paths bypass outer validation.
         Self::validate_topology_model(topology_model)?;
+        if D > 3 {
+            return Err(
+                TriangulationConstructionError::UnsupportedPeriodicDimension {
+                    dimension: D,
+                    max_validated_dimension: 3,
+                    tracking_issue: 416,
+                }
+                .into(),
+            );
+        }
         if !topology_model.supports_periodic_facet_signatures() {
             return Err(
                 TriangulationConstructionError::PeriodicImageUnsupportedTopology {
@@ -1695,16 +1819,11 @@ where
                 topology: topology_model.kind(),
             }
         })?;
-        if D > 3 {
-            return Err(
-                TriangulationConstructionError::UnsupportedPeriodicDimension {
-                    dimension: D,
-                    max_validated_dimension: 3,
-                    tracking_issue: 416,
-                }
-                .into(),
-            );
-        }
+        let domain_periods = domain.into_periods();
+        let global_topology = GlobalTopology::Toroidal {
+            domain,
+            mode: ToroidalConstructionMode::PeriodicImagePoint,
+        };
         let n = canonical_vertices.len();
         let min_points = 2 * D + 1;
         if n < min_points {
@@ -1751,7 +1870,7 @@ where
                 let orig_coords = v.point().coords();
                 let mut coords = [0_f64; D];
                 for i in 0..D {
-                    let domain_i = domain[i];
+                    let domain_i = domain_periods[i];
                     let orig = orig_coords[i]
                         .to_f64()
                         .expect("canonical coordinate is finite and convertible");
@@ -1788,7 +1907,7 @@ where
             for (canon_idx, v) in canonical_vertices.iter().enumerate() {
                 let mut new_coords = [0.0; D];
                 for i in 0..D {
-                    let shift_f64 = <f64 as From<i8>>::from(offset[i]) * domain[i];
+                    let shift_f64 = <f64 as From<i8>>::from(offset[i]) * domain_periods[i];
                     let jitter_f64 = if is_canonical {
                         0.0
                     } else {
@@ -1796,7 +1915,7 @@ where
                         (<f64 as num_traits::NumCast>::from(jitter_units)
                             .expect("jitter fits in f64")
                             / TWO_POW_52_F64)
-                            * domain[i]
+                            * domain_periods[i]
                     };
                     new_coords[i] = canonical_f64[canon_idx][i] + shift_f64 + jitter_f64;
                 }
@@ -2020,7 +2139,7 @@ where
             let center = circumcenter(&points).ok()?;
             for (axis, coord) in center.coords().iter().enumerate() {
                 let center_coord = coord.to_f64()?;
-                let period = domain[axis];
+                let period = domain_periods[axis];
                 if !(center_coord >= 0.0 && center_coord < period) {
                     return Some(false);
                 }
@@ -2592,8 +2711,12 @@ where
             .into());
         }
 
-        let candidate =
-            DelaunayTriangulationCandidate::assemble(tds_mut, kernel.clone(), topology_guarantee);
+        let candidate = DelaunayTriangulationCandidate::assemble(
+            tds_mut,
+            kernel.clone(),
+            topology_guarantee,
+            global_topology,
+        );
         let proof = candidate.validate_tds_structure().map_err(|e| {
             TriangulationConstructionError::FinalTopologyValidation {
                 context: FinalTopologyValidationContext::PeriodicQuotientTopology,
@@ -2647,6 +2770,18 @@ mod tests {
             ToroidalDomainError::InvalidPeriod { axis, period }
                 if axis == expected_axis && period.to_bits() == expected_period.to_bits()
         );
+    }
+
+    fn periodic_fixture_vertices_2d() -> Vec<Vertex<(), 2>> {
+        vec![
+            Vertex::<(), _>::try_new([0.1_f64, 0.2]).unwrap(),
+            Vertex::<(), _>::try_new([0.4, 0.7]).unwrap(),
+            Vertex::<(), _>::try_new([0.7, 0.3]).unwrap(),
+            Vertex::<(), _>::try_new([0.2, 0.9]).unwrap(),
+            Vertex::<(), _>::try_new([0.8, 0.6]).unwrap(),
+            Vertex::<(), _>::try_new([0.5, 0.1]).unwrap(),
+            Vertex::<(), _>::try_new([0.3, 0.5]).unwrap(),
+        ]
     }
 
     #[derive(Clone, Copy, Debug)]
@@ -2785,7 +2920,7 @@ mod tests {
             true
         }
 
-        fn periodic_domain(&self) -> Option<&[f64; 2]> {
+        fn periodic_domain(&self) -> Option<ToroidalDomain<2>> {
             None
         }
     }
@@ -2822,6 +2957,27 @@ mod tests {
             .unwrap();
         assert_eq!(dt.number_of_vertices(), 4);
         assert!(dt.validate().is_ok());
+    }
+
+    #[test]
+    fn test_builder_euclidean_rejects_non_euclidean_global_topology() {
+        let vertices = vec![
+            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        ];
+        let result = DelaunayTriangulationBuilder::new(&vertices)
+            .global_topology(GlobalTopology::Spherical)
+            .build::<()>();
+
+        assert_matches!(
+            result,
+            Err(DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::EuclideanUnsupportedGlobalTopology {
+                    topology: TopologyKind::Spherical,
+                }
+            ))
+        );
     }
 
     #[test]
@@ -2920,13 +3076,7 @@ mod tests {
         assert_eq!(dt.number_of_vertices(), 4);
         assert_eq!(dt.dim(), 2);
         assert!(dt.as_triangulation().validate().is_ok());
-        assert_matches!(
-            dt.global_topology(),
-            GlobalTopology::Toroidal {
-                mode: ToroidalConstructionMode::Canonicalized,
-                ..
-            }
-        );
+        assert_eq!(dt.global_topology(), GlobalTopology::Euclidean);
     }
 
     #[test]
@@ -2945,6 +3095,34 @@ mod tests {
         assert_eq!(dt.number_of_vertices(), 4);
         assert_eq!(dt.dim(), 2);
         assert!(dt.as_triangulation().validate().is_ok());
+        assert_eq!(dt.global_topology(), GlobalTopology::Euclidean);
+    }
+
+    #[test]
+    fn test_builder_canonicalized_toroidal_rejects_non_euclidean_global_topology() {
+        let vertices = vec![
+            Vertex::<(), _>::try_new([0.2, 0.3]).unwrap(),
+            Vertex::<(), _>::try_new([0.8, 0.1]).unwrap(),
+            Vertex::<(), _>::try_new([0.5, 0.7]).unwrap(),
+            Vertex::<(), _>::try_new([0.1, 0.9]).unwrap(),
+        ];
+        let topology =
+            GlobalTopology::try_toroidal([1.0, 1.0], ToroidalConstructionMode::Canonicalized)
+                .unwrap();
+        let result = DelaunayTriangulationBuilder::new(&vertices)
+            .try_canonicalized_toroidal([1.0, 1.0])
+            .unwrap()
+            .global_topology(topology)
+            .build::<()>();
+
+        assert_matches!(
+            result,
+            Err(DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::CanonicalizedUnsupportedGlobalTopology {
+                    topology: TopologyKind::Toroidal,
+                }
+            ))
+        );
     }
 
     #[test]
@@ -2986,15 +3164,7 @@ mod tests {
 
     #[test]
     fn test_builder_toroidal_2d_smoke() {
-        let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.1_f64, 0.2]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.4, 0.7]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.7, 0.3]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.9]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.8, 0.6]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.1]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.5]).unwrap(),
-        ];
+        let vertices = periodic_fixture_vertices_2d();
         let n = vertices.len();
         let kernel = RobustKernel::new();
         let dt = DelaunayTriangulationBuilder::new(&vertices)
@@ -3011,6 +3181,143 @@ mod tests {
                 ..
             }
         );
+    }
+
+    #[test]
+    fn test_builder_toroidal_rejects_dimension_above_validated_range() {
+        let vertices = vec![Vertex::<(), _>::try_new([0.1_f64, 0.2, 0.3, 0.4]).unwrap()];
+        let result = DelaunayTriangulationBuilder::new(&vertices)
+            .try_toroidal([1.0, 1.0, 1.0, 1.0])
+            .unwrap()
+            .build::<()>();
+
+        assert_matches!(
+            result,
+            Err(DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::UnsupportedPeriodicDimension {
+                    dimension: 4,
+                    max_validated_dimension: 3,
+                    tracking_issue: 416,
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn test_builder_toroidal_rejects_global_topology_before_toroidal_setter() {
+        let vertices = periodic_fixture_vertices_2d();
+        let result = DelaunayTriangulationBuilder::new(&vertices)
+            .global_topology(GlobalTopology::Spherical)
+            .try_toroidal([1.0, 1.0])
+            .unwrap()
+            .build::<()>();
+
+        assert_matches!(
+            result,
+            Err(DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::PeriodicImageConflictingGlobalTopology {
+                    requested_topology: TopologyKind::Spherical,
+                    requested_mode: None,
+                    requested_periods: None,
+                    expected_mode: ToroidalConstructionMode::PeriodicImagePoint,
+                    expected_periods,
+                }
+            )) if expected_periods.as_slice() == [1.0, 1.0]
+        );
+    }
+
+    #[test]
+    fn test_builder_toroidal_rejects_global_topology_after_toroidal_setter() {
+        let vertices = periodic_fixture_vertices_2d();
+        let result = DelaunayTriangulationBuilder::new(&vertices)
+            .try_toroidal([1.0, 1.0])
+            .unwrap()
+            .global_topology(GlobalTopology::Euclidean)
+            .build::<()>();
+
+        assert_matches!(
+            result,
+            Err(DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::PeriodicImageConflictingGlobalTopology {
+                    requested_topology: TopologyKind::Euclidean,
+                    requested_mode: None,
+                    requested_periods: None,
+                    expected_mode: ToroidalConstructionMode::PeriodicImagePoint,
+                    expected_periods,
+                }
+            )) if expected_periods.as_slice() == [1.0, 1.0]
+        );
+    }
+
+    #[test]
+    fn test_builder_toroidal_rejects_conflicting_explicit_toroidal_mode() {
+        let vertices = periodic_fixture_vertices_2d();
+        let requested_topology =
+            GlobalTopology::try_toroidal([1.0, 1.0], ToroidalConstructionMode::Canonicalized)
+                .unwrap();
+        let result = DelaunayTriangulationBuilder::new(&vertices)
+            .try_toroidal([1.0, 1.0])
+            .unwrap()
+            .global_topology(requested_topology)
+            .build::<()>();
+
+        assert_matches!(
+            result,
+            Err(DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::PeriodicImageConflictingGlobalTopology {
+                    requested_topology: TopologyKind::Toroidal,
+                    requested_mode: Some(ToroidalConstructionMode::Canonicalized),
+                    requested_periods: Some(requested_periods),
+                    expected_mode: ToroidalConstructionMode::PeriodicImagePoint,
+                    expected_periods,
+                }
+            )) if requested_periods.as_slice() == [1.0, 1.0]
+                && expected_periods.as_slice() == [1.0, 1.0]
+        );
+    }
+
+    #[test]
+    fn test_builder_toroidal_rejects_conflicting_explicit_toroidal_domain() {
+        let vertices = periodic_fixture_vertices_2d();
+        let requested_topology =
+            GlobalTopology::try_toroidal([2.0, 1.0], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap();
+        let result = DelaunayTriangulationBuilder::new(&vertices)
+            .try_toroidal([1.0, 1.0])
+            .unwrap()
+            .global_topology(requested_topology)
+            .build::<()>();
+
+        assert_matches!(
+            result,
+            Err(DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::PeriodicImageConflictingGlobalTopology {
+                    requested_topology: TopologyKind::Toroidal,
+                    requested_mode: Some(ToroidalConstructionMode::PeriodicImagePoint),
+                    requested_periods: Some(requested_periods),
+                    expected_mode: ToroidalConstructionMode::PeriodicImagePoint,
+                    expected_periods,
+                }
+            )) if requested_periods.as_slice() == [2.0, 1.0]
+                && expected_periods.as_slice() == [1.0, 1.0]
+        );
+    }
+
+    #[test]
+    fn test_builder_toroidal_accepts_matching_explicit_global_topology() {
+        let vertices = periodic_fixture_vertices_2d();
+        let topology =
+            GlobalTopology::try_toroidal([1.0, 1.0], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap();
+        let dt = DelaunayTriangulationBuilder::new(&vertices)
+            .try_toroidal([1.0, 1.0])
+            .unwrap()
+            .global_topology(topology)
+            .build::<()>()
+            .unwrap();
+
+        assert_eq!(dt.global_topology(), topology);
+        assert!(dt.validate().is_ok());
     }
 
     #[test]

@@ -65,10 +65,9 @@
 
 use super::vertex::{Vertex, VertexValidationError};
 use super::{
-    facet::{FacetError, FacetView},
     tds::{EntityKind, SimplexKey, Tds, TdsConstructionError, VertexKey},
     traits::{DataDeserialize, DataSerialize},
-    util::{UuidValidationError, make_uuid, usize_to_u8, validate_uuid},
+    util::{UuidValidationError, make_uuid, validate_uuid},
 };
 use crate::core::collections::{
     FastHashMap, NeighborBuffer, PeriodicOffsetBuffer, SimplexVertexKeyBuffer,
@@ -1722,144 +1721,6 @@ impl<V, const D: usize> Simplex<V, D> {
 
 // Advanced implementation block for Simplex methods
 impl<V, const D: usize> Simplex<V, D> {
-    /// Returns all facets (faces) of the simplex.
-    ///
-    /// A facet is a (D-1)-dimensional face of a D-dimensional simplex, obtained by removing
-    /// exactly one vertex from the original simplex. This operation creates all possible
-    /// (D-1)-dimensional boundary faces of the D-dimensional simplex.
-    ///
-    /// ## Mathematical Background
-    ///
-    /// For a D-dimensional simplex (D-simplex) with D+1 vertices:
-    /// - Each facet is a (D-1)-dimensional simplex with D vertices
-    /// - The total number of facets equals the number of vertices (D+1)
-    /// - Each vertex defines exactly one facet by its exclusion from the simplex
-    ///
-    /// ## Dimensional Examples
-    ///
-    /// - **1D simplex (line segment)**: 2 facets, each being a 0D point (vertex)
-    /// - **2D simplex (triangle)**: 3 facets, each being a 1D line segment (edge)
-    /// - **3D simplex (tetrahedron)**: 4 facets, each being a 2D triangle (face)
-    /// - **4D simplex (4-simplex)**: 5 facets, each being a 3D tetrahedron
-    ///
-    /// ## Facet Construction
-    ///
-    /// Each facet is constructed by:
-    /// 1. Taking all vertices from the original simplex
-    /// 2. Removing exactly one vertex (the "opposite" vertex)
-    /// 3. Creating a new (D-1)-dimensional simplex from the remaining D vertices
-    ///
-    /// The facet "opposite" to vertex `v` contains all vertices of the simplex except `v`.
-    ///
-    /// # Returns
-    ///
-    /// A `Result<Vec<FacetView<U, V, D>>, FacetError>` containing all facets of the simplex.
-    /// The returned vector has exactly D+1 facets, where each facet contains D vertices
-    /// (one fewer than the original simplex's D+1 vertices).
-    ///
-    /// The facets are returned in the same order as the vertices in the original simplex,
-    /// where `facets[i]` is the facet opposite to `vertices[i]`.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`FacetError`] if facet creation fails:
-    /// - [`FacetError::SimplexDoesNotContainVertex`]: Internal consistency error where
-    ///   a vertex appears to be missing from the simplex during facet construction.
-    ///   This should not occur under normal circumstances for properly constructed simplices.
-    ///
-    /// Note: For properly constructed simplices with D+1 distinct vertices, this method
-    /// should not fail under normal circumstances.
-    /// Returns all facets of a simplex as lightweight `FacetView` objects using only TDS and simplex key.
-    ///
-    /// This is a static method that provides a more robust alternative to `facet_views()` by avoiding
-    /// potential mismatches between `self` and the simplex retrieved by `simplex_key`. It accesses the simplex
-    /// data directly from the TDS using the provided key.
-    ///
-    /// # Arguments
-    ///
-    /// * `tds` - Reference to the triangulation data structure
-    /// * `simplex_key` - The key of the simplex in the TDS
-    ///
-    /// # Returns
-    ///
-    /// A `Result<Vec<FacetView>, FacetError>` containing all facets of the simplex.
-    /// Each facet is represented as a `FacetView` which provides efficient access
-    /// to facet properties without cloning simplex data.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`FacetError`] if:
-    /// - The simplex key is not found in the TDS
-    /// - Facet creation fails during the construction of `FacetView` objects
-    /// - The facet index cannot be represented as `u8` (very rare, only for extremely high dimensions)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use delaunay::prelude::*;
-    /// use delaunay::prelude::tds::Simplex;
-    ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
-    /// #     #[error(transparent)]
-    /// #     Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
-    /// #     #[error(transparent)]
-    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// let vertices = vec![
-    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
-    /// ];
-    /// let dt: DelaunayTriangulation<_, _, _, 3> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-    /// let tds = dt.tds();
-    ///
-    /// let Some(simplex_key) = tds.simplex_keys().next() else {
-    ///     return Ok(());
-    /// };
-    /// let facet_views = Simplex::facet_views_from_tds(tds, simplex_key)?;
-    ///
-    /// // Each facet should have 3 vertices (triangular faces of tetrahedron)
-    /// for facet_view in &facet_views {
-    ///     assert_eq!(facet_view.vertices()?.count(), 3);
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn facet_views_from_tds<U>(
-        tds: &Tds<U, V, D>,
-        simplex_key: SimplexKey,
-    ) -> Result<Vec<FacetView<'_, U, V, D>>, FacetError> {
-        // Get the simplex from the TDS using the key
-        let simplex = tds
-            .simplex(simplex_key)
-            .ok_or(FacetError::SimplexNotFoundInTriangulation)?;
-
-        let vertex_count = simplex.number_of_vertices();
-        if vertex_count > u8::MAX as usize {
-            return Err(FacetError::InvalidFacetIndex {
-                index: u8::MAX,
-                facet_count: vertex_count,
-            });
-        }
-
-        let mut facet_views = Vec::with_capacity(vertex_count);
-        for idx in 0..vertex_count {
-            let facet_index = usize_to_u8(idx, vertex_count)?;
-            facet_views.push(FacetView::try_new(tds, simplex_key, facet_index)?);
-        }
-        Ok(facet_views)
-    }
-
     /// Compare two simplices by their vertex sets (using `Vertex::PartialEq`) for cross-TDS equality checking.
     ///
     /// This method enables semantic comparison of simplices from different TDS instances by comparing
@@ -2002,143 +1863,6 @@ impl<V, const D: usize> Simplex<V, D> {
 
         // Compare using Vertex::PartialEq (coordinate-based)
         self_vertices == other_vertices
-    }
-
-    /// Returns an iterator over all facets of a simplex as lightweight `FacetView` objects.
-    ///
-    /// This is a zero-allocation alternative to `facet_views_from_tds()` that returns an iterator
-    /// instead of collecting results into a `Vec`. This is more memory-efficient for large simplices
-    /// or when you don't need to store all facet views at once.
-    ///
-    /// # Arguments
-    ///
-    /// * `tds` - Reference to the triangulation data structure
-    /// * `simplex_key` - The key of the simplex in the TDS
-    ///
-    /// # Returns
-    ///
-    /// A `Result<impl ExactSizeIterator<Item = Result<FacetView, FacetError>>, FacetError>` that yields all facets of the simplex.
-    /// The iterator implements `ExactSizeIterator`, so you can call `.len()` to get the number of facets
-    /// without consuming the iterator.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`FacetError`] if:
-    /// - The simplex key is not found in the TDS
-    /// - The facet count cannot be represented as `u8` (very rare, only for extremely high dimensions)
-    ///
-    /// Individual facet creation errors are yielded by the iterator as `Result<FacetView, FacetError>`
-    /// items, not returned immediately from this method.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use delaunay::prelude::*;
-    /// use delaunay::prelude::tds::Simplex;
-    ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
-    /// #     #[error(transparent)]
-    /// #     Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
-    /// #     #[error(transparent)]
-    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// let vertices = vec![
-    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
-    /// ];
-    /// let dt: DelaunayTriangulation<_, _, _, 3> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-    /// let tds = dt.tds();
-    ///
-    /// let Some(simplex_key) = tds.simplex_keys().next() else {
-    ///     return Ok(());
-    /// };
-    /// let facet_iter = Simplex::facet_view_iter(tds, simplex_key)?;
-    ///
-    /// // Iterator knows the exact count
-    /// assert_eq!(facet_iter.len(), 4); // 4 facets for a tetrahedron
-    ///
-    /// // Process facets one at a time (zero allocation)
-    /// for facet_result in facet_iter {
-    ///     let facet_view = facet_result?;
-    ///     assert_eq!(facet_view.vertices()?.count(), 3); // Each facet has 3 vertices
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// ```
-    /// use delaunay::prelude::*;
-    /// use delaunay::prelude::tds::Simplex;
-    ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
-    /// #     #[error(transparent)]
-    /// #     Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
-    /// #     #[error(transparent)]
-    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// let vertices = vec![
-    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
-    /// ];
-    /// let dt: DelaunayTriangulation<_, _, _, 3> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-    /// let tds = dt.tds();
-    ///
-    /// let Some(simplex_key) = tds.simplex_keys().next() else {
-    ///     return Ok(());
-    /// };
-    /// let facet_iter = Simplex::facet_view_iter(tds, simplex_key)?;
-    ///
-    /// // Collect all facets and surface any construction error
-    /// let successful_facets: Vec<_> = facet_iter.collect::<Result<Vec<_>, _>>()?;
-    /// assert_eq!(successful_facets.len(), 4);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn facet_view_iter<U>(
-        tds: &Tds<U, V, D>,
-        simplex_key: SimplexKey,
-    ) -> Result<impl ExactSizeIterator<Item = Result<FacetView<'_, U, V, D>, FacetError>>, FacetError>
-    {
-        // Get the simplex from the TDS using the key
-        let simplex = tds
-            .simplex(simplex_key)
-            .ok_or(FacetError::SimplexNotFoundInTriangulation)?;
-
-        let vertex_count = simplex.number_of_vertices();
-        if vertex_count > u8::MAX as usize {
-            return Err(FacetError::InvalidFacetIndex {
-                index: u8::MAX,
-                facet_count: vertex_count,
-            });
-        }
-
-        // Return a simple range-based iterator that maps indices to FacetView creation
-        Ok((0..vertex_count).map(move |idx| {
-            let facet_index = usize_to_u8(idx, vertex_count)?;
-            FacetView::try_new(tds, simplex_key, facet_index)
-        }))
     }
 }
 
@@ -3673,13 +3397,17 @@ mod tests {
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Test that we can get facet views for all facets
-        let facet_views = Simplex::facet_views_from_tds(dt.tds(), simplex_key)
+        let facet_views = dt
+            .tds()
+            .try_simplex_facets(simplex_key)
+            .expect("Failed to get facet iterator")
+            .collect::<Result<Vec<_>, _>>()
             .expect("Failed to get facet views");
         assert_eq!(facet_views.len(), 4, "3D simplex should have 4 facets");
 
         // Each facet should have 3 vertices (for 3D)
         for (i, facet_view) in facet_views.iter().enumerate() {
-            let facet_vertices = facet_view.vertices().expect("Failed to get facet vertices");
+            let facet_vertices = facet_view.vertices();
             assert_eq!(
                 facet_vertices.count(),
                 3,
@@ -3690,9 +3418,7 @@ mod tests {
         // Verify opposite vertices are correct
         let simplex = dt.tds().simplex(simplex_key).unwrap();
         for (i, facet_view) in facet_views.iter().enumerate() {
-            let opposite_vertex = facet_view
-                .opposite_vertex()
-                .expect("Failed to get opposite vertex");
+            let opposite_vertex = facet_view.opposite_vertex();
             // The opposite vertex should be one of the simplex's vertices (by VertexKey)
             let opposite_key = dt
                 .tds()
@@ -3720,18 +3446,20 @@ mod tests {
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Get all facet views
-        let facet_views = Simplex::facet_views_from_tds(dt.tds(), simplex_key)
+        let facet_views = dt
+            .tds()
+            .try_simplex_facets(simplex_key)
+            .expect("Failed to get facet iterator")
+            .collect::<Result<Vec<_>, _>>()
             .expect("Failed to get facet views");
 
         for facet_view in &facet_views {
-            let opposite_vertex = facet_view
-                .opposite_vertex()
-                .expect("Failed to get opposite vertex");
+            let opposite_vertex = facet_view.opposite_vertex();
             let opposite_vertex_key = dt
                 .tds()
                 .vertex_key_from_uuid(&opposite_vertex.uuid())
                 .unwrap();
-            let facet_vertices = facet_view.vertices().expect("Failed to get facet vertices");
+            let facet_vertices = facet_view.vertices();
 
             // Collect facet vertex keys
             let facet_vertex_keys: Vec<_> = facet_vertices
@@ -3778,7 +3506,8 @@ mod tests {
         assert_eq!(simplex.number_of_vertices(), 6);
         assert_eq!(simplex.dim(), 5);
         assert_eq!(
-            Simplex::facet_views_from_tds(dt.tds(), simplex_key)
+            dt.tds()
+                .try_simplex_facets(simplex_key)
                 .expect("Failed to get facets")
                 .len(),
             6
@@ -3824,12 +3553,15 @@ mod tests {
         }
         assert_eq!(simplex.data.unwrap(), 42u32);
 
-        // Also verify we can access vertex data through facet_views
-        let facet_views = Simplex::facet_views_from_tds(dt.tds(), simplex_key)
-            .expect("Failed to get facet views");
-        for facet_view in &facet_views {
+        // Also verify we can access vertex data through facet views
+        let facet_views = dt
+            .tds()
+            .try_simplex_facets(simplex_key)
+            .expect("Failed to get facet iterator");
+        for facet_view in facet_views {
+            let facet_view = facet_view.expect("Failed to get facet view");
             // Get vertices from the facet view
-            let vertices = facet_view.vertices().expect("Failed to get facet vertices");
+            let vertices = facet_view.vertices();
 
             // Verify all vertices have valid data
             for vertex in vertices {
@@ -4208,31 +3940,25 @@ mod tests {
                 .tds
                 .simplex_mut(simplex_key)
                 .expect("simplex key should be valid in test");
-            while u8::try_from(simplex.number_of_vertices()).is_ok() {
+            while simplex.number_of_vertices() <= usize::from(u8::MAX) + 1 {
                 simplex.push_vertex_key(vkey0);
             }
-            assert!(u8::try_from(simplex.number_of_vertices()).is_err());
+            assert!(simplex.number_of_vertices() > usize::from(u8::MAX) + 1);
         }
 
-        // Both helpers should fail early (before attempting to build individual FacetViews).
-        let err = Simplex::facet_views_from_tds(dt.tds(), simplex_key).unwrap_err();
-        assert_matches!(
-            err,
-            FacetError::InvalidFacetIndex {
-                index: u8::MAX,
-                facet_count,
-            } if u8::try_from(facet_count).is_err()
-        );
-
-        let err = Simplex::facet_view_iter(dt.tds(), simplex_key)
+        // The owner-bound iterator should fail early before building individual FacetViews.
+        let err = dt
+            .tds()
+            .try_simplex_facets(simplex_key)
             .err()
-            .expect("Expected facet_view_iter to fail on vertex_count overflow");
+            .expect("Expected try_simplex_facets to fail on vertex_count overflow");
         assert_matches!(
             err,
-            FacetError::InvalidFacetIndex {
-                index: u8::MAX,
+            FacetError::InvalidFacetIndexOverflow {
+                original_index,
                 facet_count,
-            } if u8::try_from(facet_count).is_err()
+            } if original_index == usize::from(u8::MAX) + 1
+                && facet_count > usize::from(u8::MAX) + 1
         );
     }
 
@@ -4312,8 +4038,8 @@ mod tests {
     }
 
     #[test]
-    fn test_facet_view_iter() {
-        // Test the iterator-based facet_view_iter method
+    fn test_try_simplex_facets() {
+        // Test the owner-bound simplex facet iterator.
         let vertices = vec![
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
@@ -4325,8 +4051,10 @@ mod tests {
         let simplex_key = dt.tds().simplex_keys().next().unwrap();
 
         // Test the iterator method
-        let facet_iter =
-            Simplex::facet_view_iter(dt.tds(), simplex_key).expect("Failed to get facet iterator");
+        let facet_iter = dt
+            .tds()
+            .try_simplex_facets(simplex_key)
+            .expect("Failed to get facet iterator");
 
         // Should know the exact count upfront (implements ExactSizeIterator)
         assert_eq!(
@@ -4344,12 +4072,14 @@ mod tests {
             let facet_view = facet_result
                 .as_ref()
                 .unwrap_or_else(|_| panic!("Facet {i} creation should succeed"));
-            let vertex_count = facet_view.vertices().unwrap().count();
+            let vertex_count = facet_view.vertices().count();
             assert_eq!(vertex_count, 3, "Facet {i} should have 3 vertices");
         }
 
         // Test iterator is zero-allocation by using it without collect
-        let facet_iter2 = Simplex::facet_view_iter(dt.tds(), simplex_key)
+        let facet_iter2 = dt
+            .tds()
+            .try_simplex_facets(simplex_key)
             .expect("Failed to get second facet iterator");
 
         let mut count = 0;
@@ -4360,7 +4090,9 @@ mod tests {
         assert_eq!(count, 4, "Iterator should yield 4 facets");
 
         // Test iterator combinators work correctly
-        let facet_iter3 = Simplex::facet_view_iter(dt.tds(), simplex_key)
+        let facet_iter3 = dt
+            .tds()
+            .try_simplex_facets(simplex_key)
             .expect("Failed to get third facet iterator");
 
         let successful_facets: Vec<_> = facet_iter3
@@ -4370,15 +4102,6 @@ mod tests {
             successful_facets.len(),
             4,
             "All facets should be created successfully"
-        );
-
-        // Compare with Vec-based method to ensure same results
-        let vec_facets = Simplex::facet_views_from_tds(dt.tds(), simplex_key)
-            .expect("Vec-based method should work");
-        assert_eq!(
-            successful_facets.len(),
-            vec_facets.len(),
-            "Iterator and Vec methods should return same count"
         );
     }
 

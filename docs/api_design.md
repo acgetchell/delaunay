@@ -93,7 +93,7 @@ fn main() -> DelaunayResult<()> {
 
 ### Advanced Construction: `DelaunayTriangulationBuilder`
 
-For advanced configuration (toroidal topology, custom validation policies, etc.),
+For advanced configuration (domain wrapping, toroidal topology, custom validation policies, etc.),
 use `DelaunayTriangulationBuilder`:
 
 ```rust
@@ -103,7 +103,7 @@ use delaunay::prelude::construction::{
 use delaunay::prelude::validation::ValidationPolicy;
 
 fn main() -> DelaunayResult<()> {
-    // Canonicalized toroidal triangulation in 2D
+    // Euclidean triangulation of points canonicalized into a toroidal domain.
     let vertices = vec![
         vertex![0.1, 0.1]?,
         vertex![0.9, 0.9]?,
@@ -112,7 +112,7 @@ fn main() -> DelaunayResult<()> {
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices)
         .try_canonicalized_toroidal([1.0, 1.0])
-        ? // Canonicalized toroidal construction
+        ? // Wrap input coordinates before Euclidean construction.
         .topology_guarantee(TopologyGuarantee::PLManifoldStrict)
         .build::<()>()?;
 
@@ -127,7 +127,8 @@ fn main() -> DelaunayResult<()> {
 **When to use the Builder:**
 
 - **Toroidal construction**: Use `.try_toroidal()` for periodic image-point construction or
-  `.try_canonicalized_toroidal()` for canonicalized construction with explicit domain periods.
+  `.try_canonicalized_toroidal()` for Euclidean construction after wrapping input coordinates
+  into explicit domain periods.
   The periodic image-point path is release-validated in 2D and compact 3D; 4D/5D
   fail fast pending scalable quotient construction in issue #416.
 - **Custom topology guarantees**: Set stricter or more relaxed manifold checks
@@ -390,8 +391,9 @@ Topology APIs use names to make ownership visible:
 
 - `*View` values borrow the canonical owner or are lifetime-bound to it, so they
   cannot outlive the storage they observe. Examples include `FacetView<'tds>`,
-  `IncidenceView<'tds>`, `EdgeIndex<'tds>`, `SimplexNeighborIndex<'tds>`, and
-  `TriangulationAdjacency<'tds>`.
+  `EdgeView<'tds>`, `RidgeView<'tds>`, `RidgeLinkView<'tds>`,
+  `IncidenceView<'tds>`, `EdgeIndex<'tds>`, `SimplexNeighborIndex<'tds>`,
+  and `TriangulationAdjacency<'tds>`.
 - Borrowed slices over canonical storage follow the same rule. For example,
   `Tds::simplex_vertices(simplex_key)` validates the key relation, then returns
   the simplex's stored `&[VertexKey]` instead of copying detached keys into a
@@ -401,10 +403,22 @@ Topology APIs use names to make ownership visible:
   them against a live owner before reading through them. Examples include
   `VertexKey`, `SimplexKey`, `FacetHandle`, `RidgeHandle`, `EdgeKey`, and
   `TriangleHandle`.
+- Proof-bearing runtime candidates such as `RidgeCandidate<D>` may validate
+  local arity, uniqueness, and canonical ordering without borrowing an owner,
+  but they are still detached storage-local values. Convert them to
+  `RidgeQuery<'tds>` before asking live-TDS questions that may have an empty
+  answer, or to `RidgeView<'tds>` when the API requires an existing ridge.
+  `RidgeView` construction proves the candidate vertices are live and have a
+  non-empty incident simplex star.
+- Toroidal covering-space identities such as `LiftedVertexId` and
+  `LiftedLinkEdge` live under `topology::spaces::toroidal`. They are runtime
+  graph identities, not TDS storage entries or durable IDs. They preserve
+  periodic image identity for link traversal and validation; collapsing them to
+  bare `VertexKey`s is an explicit quotient-space operation.
 - Owned snapshots are allowed only when the data must cross a persistence,
   detached-analysis, or cache boundary. `TdsSnapshot`/`RawTdsSnapshot` are the
   durable UUID persistence boundary. `ConvexHull` is a logically immutable hull
-  snapshot that stores `FacetHandle`s, while `ConvexHull::facets(triangulation)`
+  snapshot that stores `FacetHandle`s, while `ConvexHull::try_facets(triangulation)`
   returns borrowed `FacetView` values and `ConvexHull::facet_handles()` exposes
   the detached handles explicitly.
 - Transactional rollback state may own cloned topology or exact mutation

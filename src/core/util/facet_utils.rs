@@ -3,7 +3,7 @@
 #![forbid(unsafe_code)]
 
 use crate::core::collections::VertexUuidBuffer;
-use crate::core::facet::{FacetError, FacetView};
+use crate::core::facet::FacetView;
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 
@@ -18,14 +18,8 @@ use crate::core::vertex::Vertex;
 ///
 /// # Returns
 ///
-/// `Ok(true)` if the facets share the same vertices, `Ok(false)` if they have
-/// different vertices, or `Err(FacetError)` if there was an error accessing
-/// the facet data.
-///
-/// # Errors
-///
-/// Returns `FacetError` if either facet's vertices cannot be accessed, typically
-/// due to missing simplices in the triangulation data structure.
+/// `true` if the facets share the same vertices, or `false` if they have
+/// different vertices.
 ///
 /// # Examples
 ///
@@ -41,7 +35,7 @@ use crate::core::vertex::Vertex;
 ///         let facet1 = FacetView::try_new(tds, simplex_keys[0], 0)?;
 ///         let facet2 = FacetView::try_new(tds, simplex_keys[1], 0)?;
 ///
-///         let adjacent = facet_views_are_adjacent(&facet1, &facet2)?;
+///         let adjacent = facet_views_are_adjacent(&facet1, &facet2);
 ///         match adjacent {
 ///             true => println!("Facets are adjacent"),
 ///             false => println!("Facets are not adjacent"),
@@ -52,32 +46,33 @@ use crate::core::vertex::Vertex;
 ///     }
 /// }
 /// ```
+#[must_use]
 pub fn facet_views_are_adjacent<U, V, const D: usize>(
     facet1: &FacetView<'_, U, V, D>,
     facet2: &FacetView<'_, U, V, D>,
-) -> Result<bool, FacetError>
+) -> bool
 where
     U: DataType,
     V: DataType,
 {
-    let vertices1 = sorted_facet_vertex_uuids(facet1)?;
-    let vertices2 = sorted_facet_vertex_uuids(facet2)?;
+    let vertices1 = sorted_facet_vertex_uuids(facet1);
+    let vertices2 = sorted_facet_vertex_uuids(facet2);
 
-    Ok(vertices1 == vertices2)
+    vertices1 == vertices2
 }
 
 /// Canonicalizes facet vertex UUIDs so facet comparison stays allocation-light
 /// while remaining independent of local vertex order.
 fn sorted_facet_vertex_uuids<U, V, const D: usize>(
     facet: &FacetView<'_, U, V, D>,
-) -> Result<VertexUuidBuffer, FacetError>
+) -> VertexUuidBuffer
 where
     U: DataType,
     V: DataType,
 {
-    let mut vertices: VertexUuidBuffer = facet.vertices()?.map(Vertex::uuid).collect();
+    let mut vertices: VertexUuidBuffer = facet.vertices().map(Vertex::uuid).collect();
     vertices.sort_unstable();
-    Ok(vertices)
+    vertices
 }
 
 /// Extracts owned vertices from a `FacetView` as a `Vec<Vertex>`.
@@ -92,13 +87,7 @@ where
 ///
 /// # Returns
 ///
-/// A `Result` containing a `Vec` of owned `Vertex` objects, or a `FacetError` if
-/// the vertices cannot be accessed.
-///
-/// # Errors
-///
-/// Returns `FacetError` if the facet's vertices cannot be accessed, typically
-/// due to missing simplices in the triangulation data structure.
+/// A `Vec` of owned `Vertex` objects.
 ///
 /// # Examples
 ///
@@ -122,7 +111,7 @@ where
 ///     let facet_view = FacetView::try_new(tds, simplex_key, 0)?;
 ///     
 ///     // Extract owned vertices
-///     let vertices = facet_view_to_vertices(&facet_view)?;
+///     let vertices = facet_view_to_vertices(&facet_view);
 ///     println!("Facet has {} vertices", vertices.len());
 ///     Ok(())
 /// }
@@ -133,14 +122,15 @@ where
 /// - Time Complexity: O(D) where D is the dimension (number of vertices in facet)
 /// - Space Complexity: O(D) for the returned vector
 /// - Uses `Copy` semantics so this is as efficient as possible for owned vertices
+#[must_use]
 pub fn facet_view_to_vertices<U, V, const D: usize>(
     facet_view: &FacetView<'_, U, V, D>,
-) -> Result<Vec<Vertex<U, D>>, FacetError>
+) -> Vec<Vertex<U, D>>
 where
     U: DataType,
     V: DataType,
 {
-    Ok(facet_view.vertices()?.copied().collect())
+    facet_view.vertices().copied().collect()
 }
 
 /// Generates all unique combinations of `k` vertices for local regression tests.
@@ -376,7 +366,7 @@ mod tests {
             for facet_idx2 in 0..4 {
                 let fv1 = FacetView::try_new(tds1, simplex1_key, facet_idx1).unwrap();
                 let fv2 = FacetView::try_new(tds2, simplex2_key, facet_idx2).unwrap();
-                if facet_views_are_adjacent(&fv1, &fv2).unwrap() {
+                if facet_views_are_adjacent(&fv1, &fv2) {
                     found_adjacent = true;
                     facet_view1_adj = Some(fv1);
                     break;
@@ -402,7 +392,7 @@ mod tests {
             for facet_idx2 in 0..4 {
                 let fv1 = FacetView::try_new(tds1, simplex1_key, facet_idx1).unwrap();
                 let fv2 = FacetView::try_new(tds2, simplex2_key, facet_idx2).unwrap();
-                if !facet_views_are_adjacent(&fv1, &fv2).unwrap() {
+                if !facet_views_are_adjacent(&fv1, &fv2) {
                     found_non_adjacent = true;
                     break;
                 }
@@ -423,7 +413,7 @@ mod tests {
 
         let facet_view1 = facet_view1_adj.unwrap();
         assert!(
-            facet_views_are_adjacent(&facet_view1, &facet_view1).unwrap(),
+            facet_views_are_adjacent(&facet_view1, &facet_view1),
             "A facet should be adjacent to itself"
         );
         println!("  ✓ Self-adjacency works correctly");
@@ -465,7 +455,7 @@ mod tests {
             for facet_idx2 in 0..3 {
                 let facet_view1 = FacetView::try_new(tds1, simplex1_key, facet_idx1).unwrap();
                 let facet_view2 = FacetView::try_new(tds2, simplex2_key, facet_idx2).unwrap();
-                if facet_views_are_adjacent(&facet_view1, &facet_view2).unwrap() {
+                if facet_views_are_adjacent(&facet_view1, &facet_view2) {
                     found_adjacent = true;
                     break;
                 }
@@ -516,7 +506,7 @@ mod tests {
             for facet_idx2 in 0..2 {
                 let fv1 = FacetView::try_new(tds1, simplex1_key, facet_idx1).unwrap();
                 let fv2 = FacetView::try_new(tds2, simplex2_key, facet_idx2).unwrap();
-                if facet_views_are_adjacent(&fv1, &fv2).unwrap() {
+                if facet_views_are_adjacent(&fv1, &fv2) {
                     found_adjacent = true;
                 } else {
                     found_non_adjacent = true;
@@ -562,19 +552,19 @@ mod tests {
         let facet3 = FacetView::try_new(tds, simplex_key, 3).unwrap();
 
         // Each facet should be adjacent to itself
-        assert!(facet_views_are_adjacent(&facet0, &facet0).unwrap());
-        assert!(facet_views_are_adjacent(&facet1, &facet1).unwrap());
-        assert!(facet_views_are_adjacent(&facet2, &facet2).unwrap());
-        assert!(facet_views_are_adjacent(&facet3, &facet3).unwrap());
+        assert!(facet_views_are_adjacent(&facet0, &facet0));
+        assert!(facet_views_are_adjacent(&facet1, &facet1));
+        assert!(facet_views_are_adjacent(&facet2, &facet2));
+        assert!(facet_views_are_adjacent(&facet3, &facet3));
 
         // Different facets of the same tetrahedron should not be adjacent
         // (they have different sets of vertices)
-        assert!(!facet_views_are_adjacent(&facet0, &facet1).unwrap());
-        assert!(!facet_views_are_adjacent(&facet0, &facet2).unwrap());
-        assert!(!facet_views_are_adjacent(&facet0, &facet3).unwrap());
-        assert!(!facet_views_are_adjacent(&facet1, &facet2).unwrap());
-        assert!(!facet_views_are_adjacent(&facet1, &facet3).unwrap());
-        assert!(!facet_views_are_adjacent(&facet2, &facet3).unwrap());
+        assert!(!facet_views_are_adjacent(&facet0, &facet1));
+        assert!(!facet_views_are_adjacent(&facet0, &facet2));
+        assert!(!facet_views_are_adjacent(&facet0, &facet3));
+        assert!(!facet_views_are_adjacent(&facet1, &facet2));
+        assert!(!facet_views_are_adjacent(&facet1, &facet3));
+        assert!(!facet_views_are_adjacent(&facet2, &facet3));
 
         println!("  ✓ Single tetrahedron facet relationships correct");
     }
@@ -604,7 +594,7 @@ mod tests {
 
         for _ in 0..iterations {
             // This should be very fast since it just compares UUID sets
-            let _result = facet_views_are_adjacent(&facet1, &facet2).unwrap();
+            let _result = facet_views_are_adjacent(&facet1, &facet2);
         }
 
         let duration = start.elapsed();
@@ -650,7 +640,7 @@ mod tests {
 
         // Facets from completely different geometries should not be adjacent
         assert!(
-            !facet_views_are_adjacent(&facet1, &facet2).unwrap(),
+            !facet_views_are_adjacent(&facet1, &facet2),
             "Facets from different geometries should not be adjacent"
         );
 
@@ -681,19 +671,11 @@ mod tests {
         let facet2 = FacetView::try_new(tds2, simplex2_key, 0).unwrap();
 
         // Check if the UUID generation is deterministic based on coordinates
-        let facet1_vertex_uuids: FastHashSet<_> = facet1
-            .vertices()
-            .expect("facet1 should have valid vertices")
-            .map(Vertex::uuid)
-            .collect();
-        let facet2_vertex_uuids: FastHashSet<_> = facet2
-            .vertices()
-            .expect("facet2 should have valid vertices")
-            .map(Vertex::uuid)
-            .collect();
+        let facet1_vertex_uuids: FastHashSet<_> = facet1.vertices().map(Vertex::uuid).collect();
+        let facet2_vertex_uuids: FastHashSet<_> = facet2.vertices().map(Vertex::uuid).collect();
 
         let uuids_are_same = facet1_vertex_uuids == facet2_vertex_uuids;
-        let facets_are_adjacent = facet_views_are_adjacent(&facet1, &facet2).unwrap();
+        let facets_are_adjacent = facet_views_are_adjacent(&facet1, &facet2);
 
         if uuids_are_same != facets_are_adjacent {
             let mut facet1_uuid_list: Vec<_> = facet1_vertex_uuids.iter().copied().collect();
@@ -759,7 +741,7 @@ mod tests {
             for facet_idx2 in 0..5 {
                 let fv1 = FacetView::try_new(tds1, simplex1_key, facet_idx1).unwrap();
                 let fv2 = FacetView::try_new(tds2, simplex2_key, facet_idx2).unwrap();
-                if facet_views_are_adjacent(&fv1, &fv2).unwrap() {
+                if facet_views_are_adjacent(&fv1, &fv2) {
                     found_adjacent = true;
                 } else {
                     found_non_adjacent = true;
@@ -822,7 +804,7 @@ mod tests {
             for facet_idx2 in 0..6 {
                 let fv1 = FacetView::try_new(tds1, simplex1_key, facet_idx1).unwrap();
                 let fv2 = FacetView::try_new(tds2, simplex2_key, facet_idx2).unwrap();
-                if facet_views_are_adjacent(&fv1, &fv2).unwrap() {
+                if facet_views_are_adjacent(&fv1, &fv2) {
                     found_adjacent = true;
                 } else {
                     found_non_adjacent = true;

@@ -19,7 +19,7 @@ pub mod pl_manifold {
     use crate::core::vertex::Vertex;
     use crate::geometry::traits::coordinate::CoordinateConversionError;
     use crate::geometry::util::safe_usize_to_scalar;
-    use crate::topology::manifold::validate_facet_degree;
+    use crate::topology::manifold::ValidatedFacetDegreeMap;
     use thiserror::Error;
 
     /// Fixture for benchmarking facet over-sharing repair plus orphan cleanup in 3D.
@@ -153,7 +153,7 @@ pub mod pl_manifold {
         let facet_map = tds
             .build_facet_to_simplices_map()
             .map_err(|source| PlManifoldRepairFixtureError::StructuralValidation { source })?;
-        if validate_facet_degree(&facet_map).is_ok() {
+        if ValidatedFacetDegreeMap::try_from_facet_map(&facet_map).is_ok() {
             return Err(PlManifoldRepairFixtureError::MissingOversharedFacet { cluster_count });
         }
 

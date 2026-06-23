@@ -53,9 +53,10 @@
 //!
 //! Valid Delaunay triangulations maintain several critical topological invariants:
 //!
-//! - **Facet Sharing Invariant**: Every facet (D-1 dimensional face) is shared by exactly
-//!   two simplices, except for boundary facets which belong to exactly one simplex. This ensures
-//!   the triangulation forms a valid simplicial complex.
+//! - **Facet Sharing Invariant**: Every facet (D-1 dimensional face) is one-sided or
+//!   two-sided. One-sided facets are boundary facets unless closed periodic topology
+//!   identifies them with their opposite side. This ensures the triangulation forms a
+//!   valid simplicial complex in its ambient topological space.
 //! - **Neighbor Consistency**: Adjacent simplices properly reference each other through their
 //!   shared facets, maintaining bidirectional neighbor relationships.
 //! - **Vertex Incidence**: Each vertex is incident to a well-defined set of simplices that
@@ -572,7 +573,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         };
         !offsets.is_empty() && offsets.len() == simplex.number_of_vertices()
     }
-    pub(in crate::core::tds) fn periodic_facet_key_from_simplex_vertices(
+    pub(crate) fn periodic_facet_key_from_simplex_vertices(
         simplex: &Simplex<V, D>,
         vertices: &[VertexKey],
         facet_index: usize,
@@ -2311,6 +2312,17 @@ mod test_support {
         /// Clears one vertex incidence buffer for tests that need corrupted storage.
         pub(in crate::core) fn clear_vertex_incidence_for_test(&mut self, vertex_key: VertexKey) {
             self.vertex_to_simplices.clear_vertex_for_test(vertex_key);
+        }
+
+        /// Adds a simplex to one vertex incidence buffer without changing simplex storage.
+        pub(in crate::core) fn add_simplex_to_vertex_incidence_for_test(
+            &mut self,
+            vertex_key: VertexKey,
+            simplex_key: SimplexKey,
+        ) {
+            self.vertex_to_simplices
+                .insert_simplex(simplex_key, &[vertex_key])
+                .expect("test helper should receive an existing vertex incidence entry");
         }
 
         /// Removes a simplex from storage while deliberately preserving incidence.

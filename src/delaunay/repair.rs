@@ -746,11 +746,11 @@ where
                 // repair cannot escape.
                 let topology_guarantee = self.tri.topology_guarantee();
                 let global_topology = self.tri.global_topology();
-                let mut candidate = Self::with_empty_kernel_and_topology_guarantee(
+                let mut candidate = Self::with_empty_kernel_and_topology_context(
                     self.tri.kernel.clone(),
                     topology_guarantee,
+                    global_topology,
                 );
-                candidate.set_global_topology(global_topology);
 
                 // During rebuild, force local repair after every insertion. The caller's
                 // policies are copied onto the finished candidate below.
@@ -933,9 +933,9 @@ mod tests {
     use crate::core::validation::TopologyGuarantee;
     use crate::core::vertex::Vertex;
     use crate::geometry::kernel::{AdaptiveKernel, RobustKernel};
-    use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
+    use crate::topology::traits::topological_space::GlobalTopology;
     use crate::triangulation::DelaunayTriangulation;
-    use std::{num::NonZeroUsize, sync::Once};
+    use std::{assert_matches, num::NonZeroUsize, sync::Once};
 
     fn init_tracing() {
         static INIT: Once = Once::new();
@@ -1157,20 +1157,18 @@ mod tests {
     }
 
     #[test]
-    fn test_heuristic_rebuild_preserves_global_topology() {
+    fn test_heuristic_rebuild_preserves_default_global_topology() {
         init_tracing();
         let vertices: Vec<Vertex<(), 2>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
-        let global_topology =
-            GlobalTopology::try_toroidal([1.0, 1.0], ToroidalConstructionMode::PeriodicImagePoint)
-                .unwrap();
-        dt.set_global_topology(global_topology);
+        let global_topology = GlobalTopology::Euclidean;
+        dt.try_set_global_topology(global_topology).unwrap();
 
         let _guard = ForceHeuristicRebuildGuard::enable();
         let outcome = dt
@@ -1183,6 +1181,31 @@ mod tests {
         );
         assert_eq!(dt.global_topology(), global_topology);
         assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
+    }
+
+    #[test]
+    fn test_heuristic_rebuild_threads_non_default_global_topology() {
+        init_tracing();
+        let vertices: Vec<Vertex<(), 2>> = vec![
+            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::try_new(&vertices).unwrap();
+        dt.tri.global_topology = GlobalTopology::Spherical;
+
+        let _guard = ForceHeuristicRebuildGuard::enable();
+        let result =
+            dt.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default());
+
+        assert_matches!(
+            result,
+            Err(DelaunayRepairError::HeuristicRebuildFailed { .. }),
+            "forced rebuild should fail when threaded closed topology rejects Euclidean boundary"
+        );
+        assert_eq!(dt.global_topology(), GlobalTopology::Spherical);
     }
 
     #[test]
@@ -1314,8 +1337,13 @@ mod tests {
         assert!(verify_delaunay_via_flip_predicates(&tds, &kernel).is_err());
         assert!(verify_delaunay_via_flip_predicates(&tds, &robust_kernel).is_err());
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
-            DelaunayTriangulationCandidate::assemble(tds, kernel, TopologyGuarantee::PLManifold)
-                .into_repairable_delaunay_for_test();
+            DelaunayTriangulationCandidate::assemble(
+                tds,
+                kernel,
+                TopologyGuarantee::PLManifold,
+                GlobalTopology::DEFAULT,
+            )
+            .into_repairable_delaunay_for_test();
         dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
         // max_flips=0 should fail (flips are needed but budget is zero).
@@ -1349,6 +1377,7 @@ mod tests {
                 tds2,
                 AdaptiveKernel::new(),
                 TopologyGuarantee::PLManifold,
+                GlobalTopology::DEFAULT,
             )
             .into_repairable_delaunay_for_test();
         dt2.set_topology_guarantee(TopologyGuarantee::PLManifold);

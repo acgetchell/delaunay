@@ -14,26 +14,20 @@ use crate::core::tds::{SimplexKey, VertexKey};
 // TRIANGULATION-SPECIFIC OPTIMIZED TYPES
 // =============================================================================
 
-/// Facet-to-simplices mapping optimized for typical triangulation patterns.
-/// Most facets are shared by at most 2 simplices (boundary facets = 1, interior facets = 2).
+/// Internal facet-to-simplices mapping optimized for typical triangulation patterns.
+///
+/// Public APIs expose [`FacetToSimplicesIndex`](crate::prelude::tds::FacetToSimplicesIndex)
+/// instead, tying this derived map to the [`Tds`](crate::prelude::tds::Tds) that produced it.
+/// Most facets are incident to 1 or 2 simplices (one-sided or two-sided incidence).
 ///
 /// # Optimization Rationale
 ///
 /// - **Key**: `u64` facet hash (from vertex combination)
 /// - **Value**: `SmallBuffer<FacetHandle, 2>` - stack allocated for typical case
-/// - **Typical Pattern**: 1 simplex (boundary) or 2 simplices (interior facet)
+/// - **Typical Pattern**: 1 simplex (one-sided) or 2 simplices (two-sided)
 /// - **Performance**: Avoids heap allocation for >95% of facets
 /// - **Memory Efficiency**: `FacetHandle` uses u8 for facet index, same size as raw tuple
-///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::collections::FacetToSimplicesMap;
-///
-/// let facet_map: FacetToSimplicesMap = FacetToSimplicesMap::default();
-/// assert!(facet_map.is_empty());
-/// ```
-pub type FacetToSimplicesMap = FastHashMap<u64, SmallBuffer<FacetHandle, 2>>;
+pub(crate) type FacetToSimplicesMap = FastHashMap<u64, SmallBuffer<FacetHandle, 2>>;
 
 /// Map of over-shared facets detected during localized validation.
 ///

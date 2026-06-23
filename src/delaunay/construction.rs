@@ -94,7 +94,8 @@ use crate::locality::{
 };
 use crate::repair::DelaunayRepairPolicy;
 use crate::topology::traits::{
-    GlobalTopology, GlobalTopologyModelError, TopologyKind, ToroidalDomainError,
+    GlobalTopology, GlobalTopologyModelError, TopologyKind, ToroidalConstructionMode,
+    ToroidalDomainError,
 };
 use crate::triangulation::DelaunayTriangulation;
 use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
@@ -512,6 +513,41 @@ pub enum DelaunayConstructionFailure {
         /// Underlying topology model configuration error.
         #[source]
         source: GlobalTopologyModelError,
+    },
+
+    /// Euclidean construction was combined with non-Euclidean topology metadata.
+    #[error(
+        "Euclidean construction produces a triangulation with boundary; requested {topology:?} topology metadata is unsupported"
+    )]
+    EuclideanUnsupportedGlobalTopology {
+        /// Requested topology kind that would misclassify Euclidean boundary facets.
+        topology: TopologyKind,
+    },
+
+    /// Canonicalized toroidal construction was combined with non-Euclidean topology metadata.
+    #[error(
+        "canonicalized toroidal construction produces a Euclidean triangulation; requested {topology:?} topology metadata is unsupported"
+    )]
+    CanonicalizedUnsupportedGlobalTopology {
+        /// Requested topology kind that would misclassify Euclidean boundary facets.
+        topology: TopologyKind,
+    },
+
+    /// Periodic image-point construction was combined with conflicting explicit topology metadata.
+    #[error(
+        "periodic image-point construction derives {expected_mode:?} toroidal topology with domain {expected_periods:?}; requested {requested_topology:?} metadata conflicts (mode={requested_mode:?}, domain={requested_periods:?})"
+    )]
+    PeriodicImageConflictingGlobalTopology {
+        /// Explicit topology kind requested through the builder metadata setter.
+        requested_topology: TopologyKind,
+        /// Explicit toroidal construction mode, when the requested metadata was toroidal.
+        requested_mode: Option<ToroidalConstructionMode>,
+        /// Explicit toroidal periods, when the requested metadata was toroidal.
+        requested_periods: Option<Vec<f64>>,
+        /// Periodic image-point mode required by this construction path.
+        expected_mode: ToroidalConstructionMode,
+        /// Periodic image-point periods derived from the construction path.
+        expected_periods: Vec<f64>,
     },
 
     /// A topology model failed while canonicalizing an input vertex.
@@ -4637,13 +4673,11 @@ where
     /// ```
     #[must_use]
     pub fn with_empty_kernel(kernel: K) -> Self {
-        let duplicate_tolerance = default_duplicate_tolerance();
-
-        Self {
-            tri: Triangulation::new_empty(kernel),
-            insertion_state: DelaunayInsertionState::new(),
-            spatial_index: HashGridIndex::try_new(duplicate_tolerance).ok(),
-        }
+        Self::with_empty_kernel_and_topology_context(
+            kernel,
+            TopologyGuarantee::DEFAULT,
+            GlobalTopology::DEFAULT,
+        )
     }
 
     /// Creates an empty Delaunay triangulation with a topology guarantee.
@@ -4666,13 +4700,31 @@ where
         kernel: K,
         topology_guarantee: TopologyGuarantee,
     ) -> Self {
+        Self::with_empty_kernel_and_topology_context(
+            kernel,
+            topology_guarantee,
+            GlobalTopology::DEFAULT,
+        )
+    }
+
+    /// Creates an empty Delaunay wrapper with explicit validation and topology context.
+    ///
+    /// Repair and builder paths use this before inserting vertices so subsequent
+    /// topology validation observes the same global topology as the source
+    /// triangulation or construction mode.
+    pub(crate) fn with_empty_kernel_and_topology_context(
+        kernel: K,
+        topology_guarantee: TopologyGuarantee,
+        global_topology: GlobalTopology<D>,
+    ) -> Self {
         let duplicate_tolerance = default_duplicate_tolerance();
 
-        let mut tri = Triangulation::new_empty(kernel);
-        tri.topology_guarantee = topology_guarantee;
-        tri.validation_policy = topology_guarantee.default_validation_policy();
         Self {
-            tri,
+            tri: Triangulation::new_empty_with_topology_context(
+                kernel,
+                topology_guarantee,
+                global_topology,
+            ),
             insertion_state: DelaunayInsertionState::new(),
             spatial_index: HashGridIndex::try_new(duplicate_tolerance).ok(),
         }
@@ -5205,6 +5257,9 @@ where
                     | DelaunayConstructionFailure::OrientationCanonicalizationInternal { .. }
                     | DelaunayConstructionFailure::InsertionNeighborWiring { .. }
                     | DelaunayConstructionFailure::UnsupportedPeriodicDimension { .. }
+                    | DelaunayConstructionFailure::EuclideanUnsupportedGlobalTopology { .. }
+                    | DelaunayConstructionFailure::CanonicalizedUnsupportedGlobalTopology { .. }
+                    | DelaunayConstructionFailure::PeriodicImageConflictingGlobalTopology { .. }
                     | DelaunayConstructionFailure::SpatialIndexConstruction { .. }
                     | DelaunayConstructionFailure::InsertionTopologyValidation { .. }
                     | DelaunayConstructionFailure::LocalRepairBudgetExceeded { .. }

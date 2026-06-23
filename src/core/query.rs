@@ -17,6 +17,7 @@ use crate::core::simplex::Simplex;
 use crate::core::tds::{SimplexKey, TdsError, VertexKey};
 use crate::core::triangulation::Triangulation;
 use crate::core::vertex::Vertex;
+use crate::topology::manifold::{ManifoldError, boundary_facet_handles_from_index};
 use std::marker::PhantomData;
 
 /// Errors returned by read-only triangulation queries.
@@ -61,13 +62,40 @@ use std::marker::PhantomData;
 #[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[non_exhaustive]
 pub enum QueryError {
-    /// The triangulation could not build a facet map for a read-only query.
+    /// The triangulation could not build a facet index for a read-only query.
     #[error("Triangulation data structure is corrupted: {source}")]
     TriangulationCorrupted {
         /// Typed TDS validation or bookkeeping error that prevented the query.
-        #[from]
-        source: TdsError,
+        #[source]
+        source: Box<TdsError>,
     },
+
+    /// The triangulation's topology metadata rejects the requested boundary query.
+    #[error("Triangulation topology is invalid for this query: {source}")]
+    TopologyInvalid {
+        /// Typed topology validation error that prevented the query.
+        #[source]
+        source: Box<ManifoldError>,
+    },
+}
+
+impl From<TdsError> for QueryError {
+    fn from(source: TdsError) -> Self {
+        Self::TriangulationCorrupted {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<ManifoldError> for QueryError {
+    fn from(source: ManifoldError) -> Self {
+        match source {
+            ManifoldError::Tds(source) => Self::from(source),
+            source => Self::TopologyInvalid {
+                source: Box::new(source),
+            },
+        }
+    }
 }
 
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
@@ -264,12 +292,8 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// An iterator yielding `Result<FacetView, FacetError>` items for all facets
     /// in the triangulation.
     ///
-    /// # Errors
-    ///
-    /// Returns [`QueryError::TriangulationCorrupted`] if the facet iterator cannot
-    /// represent facet indices for this dimension. Individual iterator items
-    /// return [`FacetError`](crate::prelude::tds::FacetError) if a facet view
-    /// cannot be constructed from the current TDS state.
+    /// Individual iterator items return [`FacetError`](crate::prelude::tds::FacetError)
+    /// if a facet view cannot be constructed from the current TDS state.
     ///
     /// # Examples
     ///
@@ -299,22 +323,22 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// // Iterate over all facets
     /// let facet_count = dt
     ///     .as_triangulation()
-    ///     .facets()?
+    ///     .facets()
     ///     .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
     /// assert_eq!(facet_count, 4); // Tetrahedron has 4 facets
     /// # Ok(())
     /// # }
     /// ```
-    pub fn facets(&self) -> Result<AllFacetsIter<'_, U, V, D>, QueryError> {
-        self.tds
-            .facets()
-            .map_err(|source| QueryError::TriangulationCorrupted { source })
+    #[must_use]
+    pub fn facets(&self) -> AllFacetsIter<'_, U, V, D> {
+        self.tds.facets()
     }
 
     /// Returns an iterator over boundary (hull) facets in the triangulation.
     ///
-    /// Boundary facets are those that belong to exactly one simplex. This method
-    /// computes the facet-to-simplices map internally for convenience.
+    /// Boundary facets are one-sided facets not identified by closed periodic
+    /// topology. This method computes the facet-to-simplices index internally
+    /// for convenience.
     ///
     /// # Returns
     ///
@@ -357,19 +381,26 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::TriangulationCorrupted`] if facet-map construction
-    /// detects invalid simplex or facet bookkeeping. The variant preserves the
-    /// underlying [`TdsError`] so callers can inspect the structural failure.
+    /// Returns [`QueryError::TriangulationCorrupted`] if facet-incidence index
+    /// construction detects invalid simplex or facet bookkeeping. The variant
+    /// preserves the underlying [`TdsError`] so callers can inspect the
+    /// structural failure. Returns [`QueryError::TopologyInvalid`] if
+    /// topology-aware boundary classification detects a closed topology that
+    /// cannot contain open boundary facets, or another manifold-boundary
+    /// inconsistency.
     /// Individual iterator items return [`FacetError`](crate::prelude::tds::FacetError)
-    /// if a boundary facet cannot be created or keyed from the simplices.
+    /// if a boundary facet handle cannot be reborrowed as a view.
     pub fn boundary_facets(&self) -> Result<BoundaryFacetsIter<'_, U, V, D>, QueryError> {
-        let facet_map = self
+        let facet_index = self
             .tds
-            .build_facet_to_simplices_map()
-            .map_err(|source| QueryError::TriangulationCorrupted { source })?;
-        BoundaryFacetsIter::try_new(&self.tds, facet_map)
+            .build_facet_to_simplices_index()
+            .map_err(QueryError::from)?;
+        let boundary_facet_handles =
+            boundary_facet_handles_from_index(&facet_index, self.global_topology)
+                .map_err(QueryError::from)?;
+        BoundaryFacetsIter::try_new(&facet_index, boundary_facet_handles)
             .map_err(TdsError::from)
-            .map_err(|source| QueryError::TriangulationCorrupted { source })
+            .map_err(QueryError::from)
     }
 
     /// Returns an iterator over all unique edges in the triangulation.
@@ -833,7 +864,6 @@ mod tests {
                     assert_eq!(
                         empty
                             .facets()
-                            .unwrap()
                             .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
                             .unwrap(),
                         0
@@ -867,7 +897,6 @@ mod tests {
                     assert_eq!(tri.vertices().count(), expected_vertex_count);
                     assert_eq!(
                         tri.facets()
-                            .unwrap()
                             .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
                             .unwrap(),
                         expected_vertex_count
@@ -939,11 +968,27 @@ mod tests {
 
         match tri.boundary_facets() {
             Ok(_) => panic!("corrupted facet map should return a query error"),
-            Err(QueryError::TriangulationCorrupted {
-                source: TdsError::IndexOutOfBounds { .. },
-            }) => {}
+            Err(QueryError::TriangulationCorrupted { source })
+                if matches!(*source, TdsError::IndexOutOfBounds { .. }) => {}
             Err(err) => panic!("expected index-out-of-bounds query error, got {err:?}"),
         }
+    }
+
+    #[test]
+    fn query_error_preserves_tds_provenance_from_manifold_error() {
+        let source = TdsError::InconsistentDataStructure {
+            message: "facet incidence".to_string(),
+        };
+
+        assert_matches!(
+            QueryError::from(ManifoldError::Tds(source)),
+            QueryError::TriangulationCorrupted { source }
+                if matches!(
+                    source.as_ref(),
+                    TdsError::InconsistentDataStructure { message }
+                        if message == "facet incidence"
+                )
+        );
     }
 
     #[test]
@@ -1454,7 +1499,7 @@ mod tests {
         assert_eq!(edges_collected.len(), edge_count);
         assert!(edge_count >= 6);
 
-        assert!(tri.facets().unwrap().next().transpose().unwrap().is_some());
+        assert!(tri.facets().next().transpose().unwrap().is_some());
         assert!(
             tri.boundary_facets()
                 .unwrap()

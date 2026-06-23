@@ -1138,7 +1138,7 @@ fn bench_bottlenecks(c: &mut Criterion) {
                     },
                     |dt| {
                         if let Some(dt) = dt {
-                            let boundary_facets = match dt.tds().boundary_facets() {
+                            let boundary_facets = match dt.tds().one_sided_facets() {
                                 Ok(value) => value,
                                 Err(error) => {
                                     abort_benchmark(format_args!(
@@ -1146,7 +1146,7 @@ fn bench_bottlenecks(c: &mut Criterion) {
                                     ));
                                 }
                             };
-                            black_box(boundary_facets);
+                            black_box(boundary_facets.len());
                         }
                     },
                     BatchSize::LargeInput,

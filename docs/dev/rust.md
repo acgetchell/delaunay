@@ -217,7 +217,7 @@ views must borrow the canonical owner, or return values lifetime-bound to that
 owner, so the view cannot outlive the data it observes. Detached, copyable
 runtime references should be named `*Handle` or `*Key` instead, and APIs that
 turn handles back into views must revalidate the handle against a live owner at
-the conversion boundary. For example, `ConvexHull::facets(triangulation)`
+the conversion boundary. For example, `ConvexHull::try_facets(triangulation)`
 returns borrowed `FacetView<'_>` values, while `ConvexHull::facet_handles()`
 exposes the stored `FacetHandle`s explicitly.
 

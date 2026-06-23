@@ -6,16 +6,30 @@ use delaunay::DelaunayTriangulation;
 use delaunay::prelude::Triangulation;
 use delaunay::prelude::construction::{GlobalTopology, TopologyGuarantee, TopologyKind};
 use delaunay::prelude::geometry::{Coordinate, CoordinateValidationError, FastKernel, Point};
-use delaunay::prelude::query::BoundaryAnalysis;
+use delaunay::prelude::query::FacetIncidenceAnalysis;
 use delaunay::prelude::tds::{
-    Simplex, SimplexKey, Tds, TdsError, Vertex, VertexKey, verify_facet_index_consistency,
+    InvariantError, SimplexKey, Tds, TdsError, Vertex, VertexKey, verify_facet_index_consistency,
 };
 use delaunay::prelude::topology::validation::validate_triangulation_euler;
+use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 use delaunay::query::{QueryError, TopologyIndexBuildError};
 use uuid::Uuid;
 
 struct Payload;
 struct NotAKernel;
+
+type NotAKernelTriangulation = Triangulation<NotAKernel, Payload, Payload, 2>;
+type NotAKernelDelaunay = DelaunayTriangulation<NotAKernel, Payload, Payload, 2>;
+type GenericTrySetTopologyFn =
+    fn(&mut NotAKernelTriangulation, GlobalTopology<2>) -> Result<(), InvariantError>;
+type DelaunayTrySetTopologyFn = fn(
+    &mut NotAKernelDelaunay,
+    GlobalTopology<2>,
+) -> Result<(), DelaunayTriangulationValidationError>;
+
+fn accepts_generic_try_set(_: GenericTrySetTopologyFn) {}
+
+fn accepts_delaunay_try_set(_: DelaunayTrySetTopologyFn) {}
 
 #[derive(Debug, thiserror::Error)]
 enum TraitBoundErgonomicsError {
@@ -28,6 +42,11 @@ enum TraitBoundErgonomicsError {
     Query {
         #[from]
         source: QueryError,
+    },
+    #[error(transparent)]
+    Validation {
+        #[from]
+        source: DelaunayTriangulationValidationError,
     },
 }
 
@@ -90,11 +109,21 @@ fn vertex_uuid_constructor_accepts_non_datatype_payloads() {
 
 #[test]
 fn triangulation_types_do_not_require_kernel_bounds() {
-    let generic: Option<Triangulation<NotAKernel, Payload, Payload, 2>> = None;
-    let delaunay: Option<DelaunayTriangulation<NotAKernel, Payload, Payload, 2>> = None;
+    let generic: Option<NotAKernelTriangulation> = None;
+    let delaunay: Option<NotAKernelDelaunay> = None;
 
     assert!(generic.is_none());
     assert!(delaunay.is_none());
+}
+
+#[test]
+fn topology_metadata_setters_do_not_require_kernel_bounds() {
+    accepts_generic_try_set(
+        Triangulation::<NotAKernel, Payload, Payload, 2>::try_set_global_topology,
+    );
+    accepts_delaunay_try_set(
+        DelaunayTriangulation::<NotAKernel, Payload, Payload, 2>::try_set_global_topology,
+    );
 }
 
 #[test]
@@ -127,10 +156,10 @@ fn read_only_topology_apis_accept_non_datatype_payloads() {
     );
 
     let tds: Tds<Payload, Payload, 2> = Tds::empty();
-    assert!(tds.build_facet_to_simplices_map().unwrap().is_empty());
-    assert_eq!(tds.number_of_boundary_facets().unwrap(), 0);
+    assert!(tds.build_facet_to_simplices_index().unwrap().is_empty());
+    assert_eq!(tds.number_of_one_sided_facets().unwrap(), 0);
 
-    let topology = validate_triangulation_euler(&tds).unwrap();
+    let topology = validate_triangulation_euler(&tds, GlobalTopology::Euclidean).unwrap();
     assert!(topology.is_valid());
 }
 
@@ -154,11 +183,11 @@ fn delaunay_empty_query_wrappers_accept_non_datatype_payloads()
     assert_eq!(dt.global_topology(), GlobalTopology::Euclidean);
     assert_eq!(dt.topology_kind(), TopologyKind::Euclidean);
 
-    dt.set_global_topology(GlobalTopology::Euclidean);
+    dt.try_set_global_topology(GlobalTopology::Euclidean)?;
     dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
 
-    assert!(dt.facets()?.next().is_none());
+    assert!(dt.facets().next().is_none());
     assert_eq!(dt.edges().count(), 0);
     assert_eq!(dt.incident_edges(VertexKey::default()).count(), 0);
     assert_eq!(dt.simplex_neighbors(SimplexKey::default()).count(), 0);
@@ -211,6 +240,5 @@ fn facet_index_consistency_accepts_non_datatype_payloads() {
 fn facet_views_accept_non_datatype_payloads() {
     let tds: Tds<Payload, Payload, 2> = Tds::empty();
 
-    assert!(Simplex::facet_views_from_tds(&tds, SimplexKey::default()).is_err());
-    assert!(Simplex::facet_view_iter(&tds, SimplexKey::default()).is_err());
+    assert!(tds.try_simplex_facets(SimplexKey::default()).is_err());
 }

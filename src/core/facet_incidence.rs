@@ -1,24 +1,27 @@
-//! Boundary and convex hull analysis functions
+//! TDS-level facet-incidence analysis functions.
 //!
-//! This module implements the `BoundaryAnalysis` trait for triangulation data structures,
-//! providing methods to identify and analyze boundary facets in d-dimensional triangulations.
+//! This module implements the `FacetIncidenceAnalysis` trait for triangulation
+//! data structures, providing methods to identify and analyze one-sided facet
+//! incidence in d-dimensional triangulations.
 
 #![forbid(unsafe_code)]
 
 use super::{
-    collections::FacetToSimplicesMap,
-    facet::{BoundaryFacetsIter, FacetError, FacetView},
+    facet::{FacetError, FacetToSimplicesIndex, FacetView, OneSidedFacetsIter},
     tds::{Tds, TdsError},
-    traits::boundary_analysis::BoundaryAnalysis,
+    traits::facet_incidence_analysis::FacetIncidenceAnalysis,
 };
+use std::ptr;
 
-/// Counts facets with multiplicity one and rejects non-manifold multiplicities.
+/// Counts one-sided raw facet incidences and rejects non-manifold multiplicities.
 ///
-/// Boundary analysis treats multiplicity one as boundary and multiplicity two as
-/// interior. Any other multiplicity is a topology error that callers need to see
-/// rather than an interior facet to ignore.
-fn number_of_boundary_facets_in_map(
-    facet_to_simplices: &FacetToSimplicesMap,
+/// This test helper exercises raw multiplicity parsing only. Production
+/// topology-aware boundary classification uses [`FacetToSimplicesIndex`] so
+/// admissible periodic self-identifications remain closed topology instead of
+/// being counted as boundary.
+#[cfg(test)]
+fn number_of_one_sided_facets_in_map(
+    facet_to_simplices: &super::collections::FacetToSimplicesMap,
 ) -> Result<usize, TdsError> {
     let mut count = 0usize;
     for (&facet_key, simplices) in facet_to_simplices {
@@ -33,22 +36,23 @@ fn number_of_boundary_facets_in_map(
     Ok(count)
 }
 
-/// Implementation of `BoundaryAnalysis` trait for `Tds`.
+/// Implementation of `FacetIncidenceAnalysis` trait for `Tds`.
 ///
-/// This implementation provides efficient boundary facet identification and analysis
+/// This implementation provides efficient one-sided facet incidence analysis
 /// for d-dimensional triangulations using the triangulation data structure.
-impl<U, V, const D: usize> BoundaryAnalysis<U, V, D> for Tds<U, V, D> {
-    /// Identifies all boundary facets in the triangulation.
+impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
+    /// Identifies all one-sided facet incidences in the TDS.
     ///
-    /// A boundary facet is a facet that belongs to only one simplex, meaning it lies on the
-    /// boundary of the triangulation (convex hull). These facets are important for
-    /// convex hull computation and boundary analysis.
+    /// This is incidence analysis only: a one-sided facet can be a Euclidean
+    /// boundary facet, but topology-aware callers must still decide whether it
+    /// is true boundary or a closed periodic self-identification.
     ///
     /// # Triangulation Invariant
     ///
     /// This method relies on the fundamental invariant of Delaunay triangulations:
-    /// **every facet is shared by exactly two simplices, except boundary facets which belong to exactly one simplex.**
-    /// Any facet shared by 0, 3, or more simplices indicates a topological error in the triangulation.
+    /// **every facet is one-sided or two-sided.** Any facet shared by 0, 3, or
+    /// more simplices indicates a structural/topological error in the
+    /// triangulation.
     ///
     /// For a comprehensive discussion of all topological invariants in Delaunay triangulations,
     /// see the [Topological Invariants](crate::tds::Tds#topological-invariants)
@@ -56,19 +60,21 @@ impl<U, V, const D: usize> BoundaryAnalysis<U, V, D> for Tds<U, V, D> {
     ///
     /// # Returns
     ///
-    /// A `Result<BoundaryFacetsIter<'_, U, V, D>, TdsError>` containing an iterator over boundary facets.
-    /// The iterator yields `Result<FacetView, FacetError>` items lazily without pre-allocating vectors,
-    /// providing better performance while still surfacing corrupted facet views during iteration.
+    /// A `Result<OneSidedFacetsIter<'_, U, V, D>, TdsError>` containing an
+    /// iterator over one-sided facet incidences. The iterator owns a sorted
+    /// handle list derived from the facet-incidence index and yields
+    /// `Result<FacetView, FacetError>` items while still surfacing corrupted
+    /// facet views during iteration.
     ///
     /// # Errors
     ///
     /// Returns a [`TdsError`] (typically
     /// [`crate::prelude::tds::FacetError`]) if:
-    /// - The boundary-facet iterator cannot be constructed
+    /// - The one-sided-facet iterator cannot be constructed.
     /// - A facet index is out of bounds (indicates data corruption)
     /// - A referenced simplex is not found in the triangulation (indicates data corruption)
     ///
-    /// Individual iterator items return [`FacetError`] if a boundary facet cannot
+    /// Individual iterator items return [`FacetError`] if a facet view cannot
     /// be created or keyed from the simplices.
     ///
     /// # Examples
@@ -105,33 +111,37 @@ impl<U, V, const D: usize> BoundaryAnalysis<U, V, D> for Tds<U, V, D> {
     ///     .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
     /// assert_eq!(high_level_count, 4);
     ///
-    /// // TDS-level API (fallible): returns `TdsError` on corruption.
+    /// // TDS-level API reports raw one-sided incidence.
     /// let count = dt
     ///     .tds()
-    ///     .boundary_facets()?
+    ///     .one_sided_facets()?
     ///     .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
     /// assert_eq!(count, 4);
     /// # Ok(())
     /// # }
     /// ```
-    fn boundary_facets(&self) -> Result<BoundaryFacetsIter<'_, U, V, D>, TdsError> {
-        // Build a map from facet keys to the simplices that contain them
-        let facet_to_simplices = self.build_facet_to_simplices_map()?;
+    fn one_sided_facets(&self) -> Result<OneSidedFacetsIter<'_, U, V, D>, TdsError> {
+        // Build an owner-bound index from facet keys to the simplices that contain them.
+        let facet_to_simplices = self.build_facet_to_simplices_index()?;
 
-        // Create the boundary facets iterator
-        BoundaryFacetsIter::try_new(self, facet_to_simplices).map_err(TdsError::from)
+        // Create the one-sided facets iterator.
+        OneSidedFacetsIter::try_new(&facet_to_simplices).map_err(TdsError::from)
     }
 
-    /// Checks if a specific facet is a boundary facet.
+    /// Checks if a specific facet has one-sided incidence.
     ///
-    /// A boundary facet is a facet that belongs to only one simplex in the triangulation.
+    /// This does not classify manifold boundary. Use
+    /// [`Triangulation::boundary_facets`](crate::Triangulation::boundary_facets)
+    /// or
+    /// [`DelaunayTriangulation::boundary_facets`](crate::DelaunayTriangulation::boundary_facets)
+    /// when the declared global topology matters.
     ///
     /// # Performance Note
     ///
-    /// This method rebuilds the facet-to-simplices map on every call, which has O(N·F) complexity.
+    /// This method rebuilds the facet-to-simplices index on every call, which has O(N·F) complexity.
     /// For checking multiple facets in hot paths, prefer using
-    /// [`BoundaryAnalysis::is_boundary_facet_with_map`] with a precomputed map to avoid
-    /// recomputation.
+    /// [`FacetIncidenceAnalysis::is_one_sided_facet_with_index`] with a
+    /// precomputed index to avoid recomputation.
     ///
     /// # Arguments
     ///
@@ -139,13 +149,13 @@ impl<U, V, const D: usize> BoundaryAnalysis<U, V, D> for Tds<U, V, D> {
     ///
     /// # Returns
     ///
-    /// `Ok(true)` if the facet is on the boundary (belongs to only one simplex),
-    /// `Ok(false)` if it is interior or absent from the facet map.
+    /// `Ok(true)` if the facet has one-sided incidence, `Ok(false)` if it is
+    /// two-sided or absent from the facet index.
     ///
     /// # Errors
     ///
-    /// Returns a [`TdsError`] if the facet map cannot be built, the facet cannot
-    /// be keyed, or the map contains an invalid multiplicity other than 1 or 2.
+    /// Returns a [`TdsError`] if the facet index cannot be built or the facet
+    /// view belongs to a different TDS.
     ///
     /// # Examples
     ///
@@ -174,40 +184,43 @@ impl<U, V, const D: usize> BoundaryAnalysis<U, V, D> for Tds<U, V, D> {
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
-    /// // Get boundary facets using the new iterator API
-    /// let Some(first_facet) = dt.boundary_facets()?.next().transpose()? else {
+    /// // Get one-sided facets using the TDS incidence API.
+    /// let Some(first_facet) = dt.tds().one_sided_facets()?.next().transpose()? else {
     ///     return Ok(());
     /// };
-    /// // In a single tetrahedron, all facets are boundary facets
-    /// assert!(dt.tds().is_boundary_facet(&first_facet)?);
+    /// assert!(dt.tds().is_one_sided_facet(&first_facet)?);
     /// # Ok(())
     /// # }
     /// ```
     #[inline]
-    fn is_boundary_facet(&self, facet: &FacetView<'_, U, V, D>) -> Result<bool, TdsError> {
-        let facet_to_simplices = self.build_facet_to_simplices_map()?;
-        self.is_boundary_facet_with_map(facet, &facet_to_simplices)
+    fn is_one_sided_facet(&self, facet: &FacetView<'_, U, V, D>) -> Result<bool, TdsError> {
+        ensure_facet_view_owner(self, facet)?;
+        let facet_to_simplices = self.build_facet_to_simplices_index()?;
+        self.is_one_sided_facet_with_index(facet, &facet_to_simplices)
     }
 
-    /// Checks if a specific facet is a boundary facet using a precomputed facet map.
+    /// Checks if a specific facet has one-sided incidence using a precomputed facet index.
     ///
-    /// This is an optimized version of [`BoundaryAnalysis::is_boundary_facet`] that
-    /// accepts a prebuilt facet-to-simplices map to avoid recomputation in tight loops.
+    /// This is an optimized version of
+    /// [`FacetIncidenceAnalysis::is_one_sided_facet`] that accepts a prebuilt
+    /// owner-bound facet-to-simplices index to avoid recomputation in tight
+    /// loops.
     ///
     /// # Arguments
     ///
     /// * `facet` - The facet to check.
-    /// * `facet_to_simplices` - Precomputed map from facet keys to simplices containing them.
+    /// * `facet_to_simplices` - Precomputed index from facet keys to simplices containing them.
     ///
     /// # Returns
     ///
-    /// `Ok(true)` if the facet is on the boundary (belongs to only one simplex),
-    /// `Ok(false)` if it is interior or absent from the facet map.
+    /// `Ok(true)` if the facet has one-sided incidence, `Ok(false)` if it is
+    /// two-sided or absent from the facet index.
     ///
     /// # Errors
     ///
-    /// Returns a [`TdsError`] if the facet cannot be keyed or the supplied map
-    /// contains an invalid multiplicity other than 1 or 2 for the facet.
+    /// Returns a [`TdsError`] if the supplied index or facet view belongs to a
+    /// different TDS. A facet view borrowed from a different TDS is rejected
+    /// before its key is compared with the supplied index.
     ///
     /// # Examples
     ///
@@ -236,54 +249,44 @@ impl<U, V, const D: usize> BoundaryAnalysis<U, V, D> for Tds<U, V, D> {
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
-    /// // Build the facet map once for multiple queries
-    /// let facet_to_simplices = dt.tds().build_facet_to_simplices_map()?;
+    /// // Build the facet index once for multiple queries
+    /// let facet_to_simplices = dt.tds().build_facet_to_simplices_index()?;
     ///
-    /// // Check boundary facets efficiently using the iterator API
-    /// for facet in dt.boundary_facets()? {
+    /// // Check one-sided incidence efficiently using the iterator API.
+    /// for facet in dt.tds().one_sided_facets()? {
     ///     let facet = facet?;
-    ///     let is_boundary = dt.tds().is_boundary_facet_with_map(&facet, &facet_to_simplices)?;
-    ///     println!("Facet is boundary: {is_boundary}");
+    ///     let is_one_sided = dt.tds().is_one_sided_facet_with_index(&facet, &facet_to_simplices)?;
+    ///     println!("Facet is one-sided: {is_one_sided}");
     /// }
     /// # Ok(())
     /// # }
     /// ```
     #[inline]
-    fn is_boundary_facet_with_map(
+    fn is_one_sided_facet_with_index(
         &self,
         facet: &FacetView<'_, U, V, D>,
-        facet_to_simplices: &FacetToSimplicesMap,
+        facet_to_simplices: &FacetToSimplicesIndex<'_, U, V, D>,
     ) -> Result<bool, TdsError> {
-        // Use FacetView's key() method which is more efficient
-        let facet_key = facet.key().map_err(TdsError::FacetError)?;
-
-        match facet_to_simplices.get(&facet_key) {
-            Some(simplices) if simplices.len() == 1 => Ok(true),
-            Some(simplices) if simplices.len() == 2 => Ok(false),
-            Some(simplices) => Err(FacetError::InvalidFacetMultiplicity {
-                facet_key,
-                found: simplices.len(),
-            }
-            .into()),
-            None => Ok(false),
-        }
+        ensure_facet_view_owner(self, facet)?;
+        ensure_facet_index_owner(self, facet_to_simplices)?;
+        // Use FacetView's cached key path.
+        Ok(facet_to_simplices.is_one_sided_facet_key(&facet.key()))
     }
 
-    /// Returns the number of boundary facets in the triangulation.
+    /// Returns the number of one-sided facet incidences in the TDS.
     ///
-    /// This method efficiently counts boundary facets directly from the facet map
+    /// This method efficiently counts one-sided facets from the derived facet-incidence map
     /// without allocating or cloning `Facet` objects, making it O(|facets|) with
     /// no per-simplex `facets()` calls.
     ///
     /// # Returns
     ///
-    /// A `Result` containing the number of boundary facets in the triangulation,
-    /// or a [`TdsError`] if the facet map cannot be built or contains invalid topology.
+    /// A `Result` containing the number of one-sided facet incidences,
+    /// or a [`TdsError`] if the facet index cannot be built.
     ///
     /// # Errors
     ///
-    /// Returns a [`TdsError`] if the facet-to-simplices map cannot be built or
-    /// any facet has an invalid multiplicity other than 1 or 2.
+    /// Returns a [`TdsError`] if the facet-to-simplices index cannot be built.
     ///
     /// # Examples
     ///
@@ -310,28 +313,74 @@ impl<U, V, const D: usize> BoundaryAnalysis<U, V, D> for Tds<U, V, D> {
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
-    /// // A single tetrahedron has 4 boundary facets
-    /// assert_eq!(dt.tds().number_of_boundary_facets()?, 4);
+    /// // A single Euclidean tetrahedron has 4 one-sided facets.
+    /// assert_eq!(dt.tds().number_of_one_sided_facets()?, 4);
     /// # Ok(())
     /// # }
     /// ```
-    fn number_of_boundary_facets(&self) -> Result<usize, TdsError> {
-        let facet_to_simplices = self.build_facet_to_simplices_map()?;
-        number_of_boundary_facets_in_map(&facet_to_simplices)
+    fn number_of_one_sided_facets(&self) -> Result<usize, TdsError> {
+        let facet_to_simplices = self.build_facet_to_simplices_index()?;
+        Ok(facet_to_simplices
+            .iter()
+            .filter(|incidence| incidence.is_one_sided())
+            .count())
+    }
+}
+
+fn ensure_facet_view_owner<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    facet: &FacetView<'_, U, V, D>,
+) -> Result<(), TdsError> {
+    if ptr::eq(facet.tds(), tds) {
+        Ok(())
+    } else {
+        Err(FacetError::FacetOwnerMismatch {
+            simplex_key: facet.simplex_key(),
+            facet_index: facet.facet_index(),
+        }
+        .into())
+    }
+}
+
+/// Rejects owner-bound facet indexes from another TDS before their keys are queried.
+fn ensure_facet_index_owner<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    facet_to_simplices: &FacetToSimplicesIndex<'_, U, V, D>,
+) -> Result<(), TdsError> {
+    if ptr::eq(facet_to_simplices.tds(), tds) {
+        Ok(())
+    } else {
+        Err(FacetError::FacetIndexOwnerMismatch.into())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BoundaryAnalysis, number_of_boundary_facets_in_map};
-    use crate::core::collections::FacetToSimplicesMap;
-    use crate::core::facet::{FacetError, FacetHandle};
+    use super::{FacetIncidenceAnalysis, number_of_one_sided_facets_in_map};
+    use crate::core::collections::{FacetToSimplicesMap, SmallBuffer};
+    use crate::core::facet::{FacetError, FacetHandle, FacetToSimplicesIndex, FacetView};
     use crate::core::query::QueryError;
-    use crate::core::tds::{SimplexKey, TdsError};
+    use crate::core::simplex::Simplex;
+    use crate::core::tds::{SimplexKey, Tds, TdsError};
+    use crate::core::vertex::Vertex;
     use crate::geometry::point::Point;
     use crate::triangulation::DelaunayTriangulation;
     use crate::try_vertices_from_points;
     use std::assert_matches;
+
+    #[cfg(feature = "diagnostics")]
+    macro_rules! test_debug {
+        ($($arg:tt)*) => {{
+            tracing::debug!($($arg)*);
+        }};
+    }
+
+    #[cfg(not(feature = "diagnostics"))]
+    macro_rules! test_debug {
+        ($($arg:tt)*) => {{
+            let _ = core::format_args!($($arg)*);
+        }};
+    }
 
     // =============================================================================
     // SINGLE SIMPLEX TESTS
@@ -339,13 +388,13 @@ mod tests {
 
     #[expect(
         clippy::too_many_lines,
-        reason = "boundary regression test keeps topology setup and assertions together"
+        reason = "one-sided incidence regression test keeps setup and assertions together"
     )]
     #[test]
-    fn test_boundary_facets_single_simplices() {
-        // Test boundary analysis for single simplices in different dimensions
+    fn test_one_sided_facets_single_simplices() {
+        // Test one-sided incidence analysis for single simplices in different dimensions.
 
-        // Test Case 1: 2D triangle - all 3 edges should be boundary facets
+        // Test Case 1: 2D triangle - all 3 edges should be one-sided facets.
         {
             let points = vec![
                 Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
@@ -362,30 +411,31 @@ mod tests {
             );
             assert_eq!(dt.dim(), 2, "Should be 2-dimensional");
 
-            let boundary_count = dt
-                .boundary_facets()
+            let one_sided_count = dt
+                .tds()
+                .one_sided_facets()
                 .unwrap()
                 .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
                 .unwrap();
             assert_eq!(
-                boundary_count, 3,
-                "2D triangle should have 3 boundary facets"
+                one_sided_count, 3,
+                "2D triangle should have 3 one-sided facets"
             );
 
-            // Verify all facets are boundary facets using cached map
+            // Verify all facets are one-sided using cached index.
             let facet_to_simplices = dt
                 .tds()
-                .build_facet_to_simplices_map()
-                .expect("Should build facet map");
-            assert!(dt.boundary_facets().unwrap().all(|f| {
-                let f = f.expect("valid boundary facet");
+                .build_facet_to_simplices_index()
+                .expect("Should build facet index");
+            assert!(dt.tds().one_sided_facets().unwrap().all(|f| {
+                let f = f.expect("valid one-sided facet");
                 dt.tds()
-                    .is_boundary_facet_with_map(&f, &facet_to_simplices)
+                    .is_one_sided_facet_with_index(&f, &facet_to_simplices)
                     .expect("Should not fail for valid facets")
             }));
         }
 
-        // Test Case 2: 3D tetrahedron - all 4 faces should be boundary facets
+        // Test Case 2: 3D tetrahedron - all 4 faces should be one-sided facets.
         {
             let points = vec![
                 Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
@@ -403,30 +453,31 @@ mod tests {
             );
             assert_eq!(dt.dim(), 3, "Should be 3-dimensional");
 
-            let boundary_count = dt
-                .boundary_facets()
+            let one_sided_count = dt
+                .tds()
+                .one_sided_facets()
                 .unwrap()
                 .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
                 .unwrap();
             assert_eq!(
-                boundary_count, 4,
-                "3D tetrahedron should have 4 boundary facets"
+                one_sided_count, 4,
+                "3D tetrahedron should have 4 one-sided facets"
             );
 
-            // Verify all facets are boundary facets
+            // Verify all facets are one-sided.
             let facet_to_simplices = dt
                 .tds()
-                .build_facet_to_simplices_map()
-                .expect("Should build facet map");
-            assert!(dt.boundary_facets().unwrap().all(|f| {
-                let f = f.expect("valid boundary facet");
+                .build_facet_to_simplices_index()
+                .expect("Should build facet index");
+            assert!(dt.tds().one_sided_facets().unwrap().all(|f| {
+                let f = f.expect("valid one-sided facet");
                 dt.tds()
-                    .is_boundary_facet_with_map(&f, &facet_to_simplices)
+                    .is_one_sided_facet_with_index(&f, &facet_to_simplices)
                     .expect("Should not fail for valid facets")
             }));
         }
 
-        // Test Case 3: 4D simplex - all 5 tetrahedra should be boundary facets
+        // Test Case 3: 4D simplex - all 5 tetrahedra should be one-sided facets.
         {
             let points = vec![
                 Point::try_new([0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
@@ -445,35 +496,34 @@ mod tests {
             );
             assert_eq!(dt.dim(), 4, "Should be 4-dimensional");
 
-            let boundary_count = dt
-                .boundary_facets()
+            let one_sided_count = dt
+                .tds()
+                .one_sided_facets()
                 .unwrap()
                 .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
                 .unwrap();
             assert_eq!(
-                boundary_count, 5,
-                "4D simplex should have 5 boundary facets"
+                one_sided_count, 5,
+                "4D simplex should have 5 one-sided facets"
             );
 
-            // Verify all facets are boundary facets
+            // Verify all facets are one-sided.
             let facet_to_simplices = dt
                 .tds()
-                .build_facet_to_simplices_map()
-                .expect("Should build facet map");
-            let confirmed_boundary = dt
-                .boundary_facets()
+                .build_facet_to_simplices_index()
+                .expect("Should build facet index");
+            let confirmed_one_sided = dt
+                .tds()
+                .one_sided_facets()
                 .unwrap()
                 .filter(|f| {
-                    let f = f.as_ref().expect("valid boundary facet");
+                    let f = f.as_ref().expect("valid one-sided facet");
                     dt.tds()
-                        .is_boundary_facet_with_map(f, &facet_to_simplices)
+                        .is_one_sided_facet_with_index(f, &facet_to_simplices)
                         .expect("Should not fail for valid facets")
                 })
                 .count();
-            assert_eq!(
-                confirmed_boundary, 5,
-                "All facets should be boundary facets"
-            );
+            assert_eq!(confirmed_one_sided, 5, "All facets should be one-sided");
         }
 
         // Test Case 4: Empty triangulation
@@ -485,18 +535,19 @@ mod tests {
                 "Empty triangulation should have no simplices"
             );
 
-            let boundary_count = dt
-                .boundary_facets()
+            let one_sided_count = dt
+                .tds()
+                .one_sided_facets()
                 .unwrap()
                 .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
                 .unwrap();
             assert_eq!(
-                boundary_count, 0,
-                "Empty triangulation should have no boundary facets"
+                one_sided_count, 0,
+                "Empty triangulation should have no one-sided facets"
             );
         }
 
-        // Test Case 5: 5D simplex - all 6 facets should be boundary facets
+        // Test Case 5: 5D simplex - all 6 facets should be one-sided facets.
         {
             let points = vec![
                 Point::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point coordinates"),
@@ -516,43 +567,45 @@ mod tests {
             );
             assert_eq!(dt.dim(), 5, "Should be 5-dimensional");
 
-            let boundary_count = dt
-                .boundary_facets()
+            let one_sided_count = dt
+                .tds()
+                .one_sided_facets()
                 .unwrap()
                 .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
                 .unwrap();
             assert_eq!(
-                boundary_count, 6,
-                "5D simplex should have 6 boundary facets"
+                one_sided_count, 6,
+                "5D simplex should have 6 one-sided facets"
             );
 
             let facet_to_simplices = dt
                 .tds()
-                .build_facet_to_simplices_map()
-                .expect("Should build facet map");
-            let confirmed_boundary = dt
-                .boundary_facets()
+                .build_facet_to_simplices_index()
+                .expect("Should build facet index");
+            let confirmed_one_sided = dt
+                .tds()
+                .one_sided_facets()
                 .unwrap()
                 .filter(|f| {
-                    let f = f.as_ref().expect("valid boundary facet");
+                    let f = f.as_ref().expect("valid one-sided facet");
                     dt.tds()
-                        .is_boundary_facet_with_map(f, &facet_to_simplices)
+                        .is_one_sided_facet_with_index(f, &facet_to_simplices)
                         .expect("Should not fail for valid facets")
                 })
                 .count();
             assert_eq!(
-                confirmed_boundary, 6,
-                "All 5D simplex facets should be boundary facets"
+                confirmed_one_sided, 6,
+                "All 5D simplex facets should be one-sided"
             );
         }
 
-        println!(
-            "✓ Single simplex boundary analysis works correctly in 2D, 3D, 4D, 5D, and empty cases"
+        test_debug!(
+            "✓ Single simplex one-sided incidence analysis works correctly in 2D, 3D, 4D, 5D, and empty cases"
         );
     }
 
     #[test]
-    fn test_boundary_facets_method_coverage() {
+    fn test_one_sided_facets_method_coverage() {
         // Test method delegation and implementation path coverage
 
         // Test case 1: Basic method delegation and error propagation
@@ -566,26 +619,24 @@ mod tests {
             let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
             let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
-            // Test boundary_facets() normal path
-            let boundary_count = dt
-                .boundary_facets()
+            // Test one_sided_facets() normal path.
+            let one_sided_count = dt
+                .tds()
+                .one_sided_facets()
                 .unwrap()
                 .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
                 .unwrap();
             assert_eq!(
-                boundary_count, 4,
-                "Single tetrahedron has 4 boundary facets"
+                one_sided_count, 4,
+                "Single tetrahedron has 4 one-sided facets"
             );
 
-            // Test is_boundary_facet() delegation (builds facet map internally)
-            if let Some(facet) = dt.boundary_facets().unwrap().next() {
+            // Test is_one_sided_facet() delegation (builds facet index internally).
+            if let Some(facet) = dt.tds().one_sided_facets().unwrap().next() {
                 let facet = facet.unwrap();
-                let result = dt.tds().is_boundary_facet(&facet);
+                let result = dt.tds().is_one_sided_facet(&facet);
                 assert!(result.is_ok(), "Should not error on valid facet");
-                assert!(
-                    result.unwrap(),
-                    "Facet should be boundary in single tetrahedron"
-                );
+                assert!(result.unwrap(), "Facet should be one-sided");
             }
         }
 
@@ -608,19 +659,20 @@ mod tests {
             );
 
             // Exercise capacity allocation, cache initialization, and vector push operations
-            let boundary_count = dt
-                .boundary_facets()
+            let one_sided_count = dt
+                .tds()
+                .one_sided_facets()
                 .unwrap()
                 .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
                 .unwrap();
-            assert!(boundary_count > 0, "Should have boundary facets");
+            assert!(one_sided_count > 0, "Should have one-sided facets");
             assert!(
-                boundary_count >= 4,
-                "Should have at least 4 boundary facets"
+                one_sided_count >= 4,
+                "Should have at least 4 one-sided facets"
             );
         }
 
-        println!("✓ Boundary facets method coverage and delegation work correctly");
+        test_debug!("✓ One-sided facets method coverage and delegation work correctly");
     }
 
     // =============================================================================
@@ -629,7 +681,7 @@ mod tests {
 
     #[test]
     fn test_boundary_facets_invalid_facet_index_error() {
-        println!("Testing boundary_facets with invalid facet index error path");
+        test_debug!("Testing boundary_facets with invalid facet index error path");
 
         // Note: This error path (InvalidFacetIndex) is difficult to trigger in practice
         // because the facet-to-simplices mapping is built from valid facets.
@@ -652,13 +704,13 @@ mod tests {
             "Error should contain the facet count"
         );
 
-        println!("  Error structure: {error}");
-        println!("  ✓ InvalidFacetIndex error path structure verified");
+        test_debug!("  Error structure: {error}");
+        test_debug!("  ✓ InvalidFacetIndex error path structure verified");
     }
 
     #[test]
     fn test_boundary_facets_simplex_not_found_error() {
-        println!("Testing boundary_facets with simplex not found error path");
+        test_debug!("Testing boundary_facets with simplex not found error path");
 
         // Note: This error path (SimplexNotFoundInTriangulation) is also difficult to trigger
         // in practice because the mapping is built from existing simplices.
@@ -674,13 +726,13 @@ mod tests {
             "Error should mention simplex: {error_string}"
         );
 
-        println!("  Error structure: {error}");
-        println!("  ✓ SimplexNotFoundInTriangulation error path structure verified");
+        test_debug!("  Error structure: {error}");
+        test_debug!("  ✓ SimplexNotFoundInTriangulation error path structure verified");
     }
 
     #[test]
-    fn test_is_boundary_facet_with_map_consistency() {
-        println!("Testing is_boundary_facet_with_map consistency with boundary_facets");
+    fn test_is_one_sided_facet_with_index_consistency() {
+        test_debug!("Testing is_one_sided_facet_with_index consistency with one_sided_facets");
 
         // Create a valid triangulation
         let points = vec![
@@ -692,52 +744,51 @@ mod tests {
         let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
-        // Build facet map
+        // Build facet index
         let facet_to_simplices = dt
             .tds()
-            .build_facet_to_simplices_map()
-            .expect("Should build map");
+            .build_facet_to_simplices_index()
+            .expect("Should build index");
 
-        // Get all boundary facets and verify they are correctly identified
-        let mut boundary_count = 0;
+        // Get all one-sided facets and verify they are correctly identified.
+        let mut one_sided_count = 0;
 
-        for boundary_facet in dt.boundary_facets().unwrap() {
-            let boundary_facet = boundary_facet.unwrap();
-            let is_boundary = dt
+        for facet in dt.tds().one_sided_facets().unwrap() {
+            let facet = facet.unwrap();
+            let is_one_sided = dt
                 .tds()
-                .is_boundary_facet_with_map(&boundary_facet, &facet_to_simplices)
-                .expect("Should successfully check boundary status");
+                .is_one_sided_facet_with_index(&facet, &facet_to_simplices)
+                .expect("Should successfully check one-sided status");
 
             assert!(
-                is_boundary,
-                "All facets returned by boundary_facets() should be boundary facets"
+                is_one_sided,
+                "All facets returned by one_sided_facets() should be one-sided"
             );
-            boundary_count += 1;
+            one_sided_count += 1;
         }
 
-        // Single tetrahedron should have 4 boundary facets
         assert_eq!(
-            boundary_count, 4,
-            "Single tetrahedron should have 4 boundary facets"
+            one_sided_count, 4,
+            "Single tetrahedron should have 4 one-sided facets"
         );
 
-        // Verify consistency
         let reported_count = dt
-            .boundary_facets()
+            .tds()
+            .one_sided_facets()
             .unwrap()
             .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
             .unwrap();
         assert_eq!(
-            boundary_count, reported_count,
-            "Boundary facet count should be consistent"
+            one_sided_count, reported_count,
+            "One-sided facet count should be consistent"
         );
 
-        println!("  ✓ All {boundary_count} boundary facets correctly identified");
-        println!("  ✓ is_boundary_facet_with_map consistency verified");
+        test_debug!("  ✓ All {one_sided_count} one-sided facets correctly identified");
+        test_debug!("  ✓ is_one_sided_facet_with_index consistency verified");
     }
 
     #[test]
-    fn test_boundary_facet_with_map_rejects_invalid_multiplicity() {
+    fn facet_index_rejects_invalid_multiplicity() {
         let points = vec![
             Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
             Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
@@ -747,15 +798,21 @@ mod tests {
         let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let facet = dt.boundary_facets().unwrap().next().unwrap().unwrap();
-        let facet_key = facet.key().unwrap();
+        let facet_key = facet.key();
 
         let mut facet_to_simplices = dt.tds().build_facet_to_simplices_map().unwrap();
         facet_to_simplices.remove(&facet_key);
+        let facet_index =
+            FacetToSimplicesIndex::try_from_map(dt.tds(), &facet_to_simplices).unwrap();
         assert!(
             !dt.tds()
-                .is_boundary_facet_with_map(&facet, &facet_to_simplices)
+                .is_one_sided_facet_with_index(&facet, &facet_index)
                 .unwrap()
         );
+
+        facet_to_simplices.insert(facet_key, SmallBuffer::new());
+        let err = FacetToSimplicesIndex::try_from_map(dt.tds(), &facet_to_simplices).unwrap_err();
+        assert_matches!(err, FacetError::InvalidFacetMultiplicity { found: 0, .. });
 
         facet_to_simplices.insert(
             facet_key,
@@ -768,19 +825,68 @@ mod tests {
             .collect(),
         );
 
-        let err = dt
-            .tds()
-            .is_boundary_facet_with_map(&facet, &facet_to_simplices)
-            .unwrap_err();
+        let err = FacetToSimplicesIndex::try_from_map(dt.tds(), &facet_to_simplices).unwrap_err();
+
+        assert_matches!(err, FacetError::InvalidFacetMultiplicity { found: 3, .. });
+    }
+
+    #[test]
+    fn one_sided_facet_query_rejects_foreign_facet_view() {
+        let points = vec![
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
+        ];
+        let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::try_new(&vertices).unwrap();
+        let foreign_dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::try_new(&vertices).unwrap();
+        let foreign_facet = foreign_dt
+            .boundary_facets()
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap();
+
+        let err = dt.tds().is_one_sided_facet(&foreign_facet).unwrap_err();
 
         assert_matches!(
             err,
-            TdsError::FacetError(FacetError::InvalidFacetMultiplicity { found: 3, .. })
+            TdsError::FacetError(FacetError::FacetOwnerMismatch { .. })
         );
     }
 
     #[test]
-    fn test_boundary_facet_count_rejects_invalid_multiplicity() {
+    fn one_sided_facet_query_rejects_foreign_facet_index() {
+        let points = vec![
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
+        ];
+        let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::try_new(&vertices).unwrap();
+        let foreign_dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::try_new(&vertices).unwrap();
+        let facet = dt.boundary_facets().unwrap().next().unwrap().unwrap();
+        let foreign_index = foreign_dt.tds().build_facet_to_simplices_index().unwrap();
+
+        let err = dt
+            .tds()
+            .is_one_sided_facet_with_index(&facet, &foreign_index)
+            .unwrap_err();
+
+        assert_matches!(
+            err,
+            TdsError::FacetError(FacetError::FacetIndexOwnerMismatch)
+        );
+    }
+
+    #[test]
+    fn test_one_sided_facet_count_rejects_invalid_multiplicity() {
         let mut facet_to_simplices = FacetToSimplicesMap::default();
         facet_to_simplices.insert(
             0xCAFE,
@@ -793,7 +899,7 @@ mod tests {
             .collect(),
         );
 
-        let err = number_of_boundary_facets_in_map(&facet_to_simplices).unwrap_err();
+        let err = number_of_one_sided_facets_in_map(&facet_to_simplices).unwrap_err();
 
         assert_matches!(
             err,
@@ -827,19 +933,19 @@ mod tests {
 
         match dt.boundary_facets() {
             Ok(_) => panic!("corrupted facet map should return a query error"),
-            Err(QueryError::TriangulationCorrupted {
-                source: TdsError::IndexOutOfBounds { .. },
-            }) => {}
+            Err(QueryError::TriangulationCorrupted { source })
+                if matches!(*source, TdsError::IndexOutOfBounds { .. }) => {}
             Err(err) => panic!("expected index-out-of-bounds query error, got {err:?}"),
         }
     }
 
     #[test]
-    fn test_number_of_boundary_facets_delegation() {
-        println!("Testing number_of_boundary_facets delegation to boundary_facets");
+    fn test_number_of_one_sided_facets_delegation() {
+        test_debug!("Testing number_of_one_sided_facets delegation to one_sided_facets");
 
-        // This test exercises the delegation to boundary_facets() and result transformation
-        // ensuring the method properly delegates and transforms the result
+        // This test exercises the delegation to one_sided_facets() and result
+        // transformation, ensuring the method properly delegates and transforms
+        // the result.
 
         let points = vec![
             Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
@@ -851,34 +957,76 @@ mod tests {
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
         // Test both methods return consistent results
-        let boundary_facets_count = dt
-            .boundary_facets()
+        let one_sided_facets_count = dt
+            .tds()
+            .one_sided_facets()
             .unwrap()
             .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
             .unwrap();
-        let boundary_count = dt
+        let one_sided_count = dt
             .tds()
-            .number_of_boundary_facets()
-            .expect("Should get boundary count");
+            .number_of_one_sided_facets()
+            .expect("Should get one-sided count");
 
         assert_eq!(
-            boundary_facets_count, boundary_count,
-            "number_of_boundary_facets should equal boundary_facets().count()"
+            one_sided_facets_count, one_sided_count,
+            "number_of_one_sided_facets should equal one_sided_facets().count()"
         );
 
         assert_eq!(
-            boundary_count, 4,
-            "Single tetrahedron should have 4 boundary facets"
+            one_sided_count, 4,
+            "Single tetrahedron should have 4 one-sided facets"
         );
 
-        println!("  ✓ number_of_boundary_facets delegation working correctly");
-        println!("    - boundary_facets().count(): {boundary_facets_count}");
-        println!("    - number_of_boundary_facets(): {boundary_count}");
+        test_debug!("  ✓ number_of_one_sided_facets delegation working correctly");
+        test_debug!("    - one_sided_facets().count(): {one_sided_facets_count}");
+        test_debug!("    - number_of_one_sided_facets(): {one_sided_count}");
+    }
+
+    #[test]
+    fn periodic_self_identified_one_sided_facet_is_not_boundary() {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let v0 = tds
+            .insert_vertex_with_mapping(Vertex::try_new([0.0, 0.0]).unwrap())
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(Vertex::try_new([1.0, 0.0]).unwrap())
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(Vertex::try_new([0.0, 1.0]).unwrap())
+            .unwrap();
+
+        let mut simplex = Simplex::try_new(vec![v0, v1, v2]).unwrap();
+        simplex
+            .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [1, 0]])
+            .unwrap();
+        let simplex_key = tds.insert_simplex_with_mapping(simplex).unwrap();
+        tds.simplex_mut(simplex_key)
+            .unwrap()
+            .set_neighbors_from_keys([Some(simplex_key), None, None])
+            .unwrap();
+
+        let facet_index = tds.build_facet_to_simplices_index().unwrap();
+        let self_identified_facet = FacetView::try_new(&tds, simplex_key, 0).unwrap();
+        let self_identified_key = self_identified_facet.key();
+        let boundary_keys: Vec<_> = tds
+            .one_sided_facets()
+            .unwrap()
+            .map(|facet| facet.unwrap().key())
+            .collect();
+
+        assert!(
+            tds.is_one_sided_facet_with_index(&self_identified_facet, &facet_index)
+                .unwrap()
+        );
+        assert!(boundary_keys.contains(&self_identified_key));
+        assert_eq!(boundary_keys.len(), 3);
+        assert_eq!(tds.number_of_one_sided_facets().unwrap(), 3);
     }
 
     #[test]
     fn test_invalid_facet_multiplicity_error_creation() {
-        println!("Testing InvalidFacetMultiplicity error creation and formatting");
+        test_debug!("Testing InvalidFacetMultiplicity error creation and formatting");
 
         // Test that the error can be created with various multiplicity values
         let test_cases = [
@@ -887,17 +1035,17 @@ mod tests {
             (5, "excessive multiplicity"),
         ];
 
-        for (multiplicity, description) in &test_cases {
+        for &(multiplicity, description) in &test_cases {
             let facet_key = 0x1234_5678_9ABC_DEF0_u64; // Example facet key
             let error = TdsError::FacetError(FacetError::InvalidFacetMultiplicity {
                 facet_key,
-                found: *multiplicity,
+                found: multiplicity,
             });
 
             // Verify error display includes all necessary information
             let error_string = format!("{error}");
             assert!(
-                error_string.contains(&format!("{multiplicity:}").to_string()),
+                error_string.contains(&multiplicity.to_string()),
                 "Error should contain multiplicity {multiplicity}: {error_string}"
             );
             assert!(
@@ -905,13 +1053,13 @@ mod tests {
                 "Error should contain facet key in hex: {error_string}"
             );
             assert!(
-                error_string.contains("expected 1 (boundary) or 2 (internal)"),
+                error_string.contains("expected 1 (one-sided) or 2 (two-sided)"),
                 "Error should explain valid multiplicities: {error_string}"
             );
 
-            println!("  ✓ {description}: {error}");
+            test_debug!("  ✓ {description}: {error}");
         }
 
-        println!("  ✓ InvalidFacetMultiplicity error creation and formatting verified");
+        test_debug!("  ✓ InvalidFacetMultiplicity error creation and formatting verified");
     }
 }

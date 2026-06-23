@@ -10,31 +10,35 @@ use crate::core::collections::{
     FacetToSimplicesMap, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer,
     SimplexVerticesMap, SmallBuffer, VertexKeySet, fast_hash_map_with_capacity,
 };
-use crate::core::facet::FacetHandle;
+use crate::core::facet::{FacetHandle, FacetToSimplicesIndex};
 use crate::core::simplex::{NeighborSlot, Simplex};
 use crate::core::util::{deduplication::coords_equal_exact, usize_to_u8};
 use slotmap::Key;
 
 impl<U, V, const D: usize> Tds<U, V, D> {
-    /// Builds a `FacetToSimplicesMap` with strict error handling.
+    /// Builds an owner-bound facet-to-simplices index with strict error handling.
     ///
-    /// This method returns an error if any simplex has missing vertex keys, ensuring
-    /// complete and accurate facet topology information. This is the preferred method
-    /// for building facet-to-simplices mappings.
+    /// This method returns an error if any simplex has missing vertex keys or if
+    /// any facet has multiplicity other than 1 (one-sided) or 2 (two-sided),
+    /// ensuring complete and validated facet topology information. This is the
+    /// public method for repeated facet-incidence and boundary queries.
     ///
     /// # Returns
     ///
     /// A `Result` containing:
-    /// - `Ok(FacetToSimplicesMap)`: A complete mapping of facet keys to simplices
-    /// - `Err(TdsError)`: If any simplex has missing vertex keys
+    /// - `Ok(FacetToSimplicesIndex)`: A complete index of facet keys to simplices,
+    ///   lifetime-bound to this TDS
+    /// - `Err(TdsError)`: If simplex vertices cannot be resolved or a facet has
+    ///   invalid multiplicity
     ///
     /// # Errors
     ///
-    /// Returns [`TdsError`] if the map cannot be built:
+    /// Returns [`TdsError`] if the index cannot be built:
     /// - [`VertexNotFound`](TdsError::VertexNotFound) / [`SimplexNotFound`](TdsError::SimplexNotFound) — a simplex cannot resolve its vertex keys.
     /// - [`IndexOutOfBounds`](TdsError::IndexOutOfBounds) — a facet index exceeds the `u8` range.
     /// - [`DimensionMismatch`](TdsError::DimensionMismatch) — periodic offset count does not match vertex count.
     /// - [`InconsistentDataStructure`](TdsError::InconsistentDataStructure) — periodic facet key derivation fails.
+    /// - [`FacetError`](TdsError::FacetError) — a facet is incident to a number of simplices other than 1 or 2.
     ///
     /// # Performance
     ///
@@ -66,12 +70,20 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tds = dt.tds();
-    /// let facet_map = tds.build_facet_to_simplices_map()?;
-    /// assert!(!facet_map.is_empty());
+    /// let facet_index = tds.build_facet_to_simplices_index()?;
+    /// assert!(!facet_index.is_empty());
     /// # Ok(())
     /// # }
     /// ```
-    pub fn build_facet_to_simplices_map(&self) -> Result<FacetToSimplicesMap, TdsError> {
+    pub fn build_facet_to_simplices_index(
+        &self,
+    ) -> Result<FacetToSimplicesIndex<'_, U, V, D>, TdsError> {
+        self.build_facet_to_simplices_map()
+            .and_then(|map| FacetToSimplicesIndex::try_from_map(self, &map).map_err(TdsError::from))
+    }
+
+    /// Builds the raw facet-to-simplices map used by validation and cache internals.
+    pub(crate) fn build_facet_to_simplices_map(&self) -> Result<FacetToSimplicesMap, TdsError> {
         if D > usize::from(u8::MAX) {
             return Err(TdsError::DimensionMismatch {
                 expected: usize::from(u8::MAX),

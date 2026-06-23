@@ -7,6 +7,7 @@
 //! `global_topology_model` adapter layer.
 
 use crate::core::{facet::FacetError, tds::TdsError};
+use crate::topology::manifold::ManifoldError;
 use thiserror::Error;
 
 /// Errors that can occur during topology computation or validation.
@@ -62,21 +63,12 @@ pub enum TopologyError {
         source: TdsError,
     },
 
-    /// Euler characteristic does not match expected value.
-    ///
-    /// NOTE: Currently unused - validation returns `TopologyCheckResult` with
-    /// structured diagnostics instead. This variant is reserved for future use
-    /// when more structured error reporting is needed at the error boundary.
-    #[error(
-        "Euler characteristic mismatch: computed χ={computed}, expected χ={expected} for {topology_type}"
-    )]
-    EulerMismatch {
-        /// The computed Euler characteristic.
-        computed: isize,
-        /// The expected Euler characteristic.
-        expected: isize,
-        /// Human-readable topology type description.
-        topology_type: String,
+    /// Failed to classify boundary facets under the declared global topology.
+    #[error("Failed to classify boundary facets during topology analysis: {source}")]
+    BoundaryClassification {
+        /// Underlying manifold-boundary classification failure.
+        #[source]
+        source: Box<ManifoldError>,
     },
 }
 
@@ -139,10 +131,12 @@ pub enum ToroidalConstructionMode {
     /// Periodic toroidal mode: 3^D image-point construction with periodic quotient
     /// neighbor rewiring.
     PeriodicImagePoint,
-    /// Explicit simplex construction: the caller provided combinatorial connectivity
-    /// directly and declared toroidal topology metadata for validation purposes.
+    /// Explicit quotient connectivity supplied directly by the caller.
     ///
-    /// No coordinate canonicalization or image-point expansion is performed.
+    /// No coordinate canonicalization or image-point expansion is performed. The
+    /// current Delaunay builder rejects non-Euclidean explicit connectivity
+    /// because Level 4 quotient Delaunay validation is not implemented for that
+    /// construction path.
     Explicit,
 }
 
@@ -310,8 +304,11 @@ impl<const D: usize> TryFrom<[f64; D]> for ToroidalDomain<D> {
 
 /// Runtime metadata describing the global topological space associated with a triangulation.
 ///
-/// This enum is stored on triangulations so callers can query whether a result was
-/// constructed in Euclidean or toroidal mode after construction.
+/// This enum is stored on triangulations so boundary queries, Euler checks, and
+/// topology validation interpret facet incidence under the construction path's
+/// intended space. The metadata does not itself canonicalize coordinates or
+/// rewire adjacency; construction APIs decide whether quotient connectivity
+/// exists.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum GlobalTopology<const D: usize> {
     /// Euclidean (flat) space.
@@ -396,6 +393,29 @@ impl<const D: usize> GlobalTopology<D> {
     }
 
     /// Returns whether boundary facets are allowed for this global topology.
+    ///
+    /// Euclidean triangulations may have convex-hull boundary facets. Closed
+    /// global topologies such as toroidal, spherical, and hyperbolic metadata do
+    /// not admit open boundary facets.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::topology::spaces::{
+    ///     GlobalTopology, ToroidalConstructionMode, ToroidalDomainError,
+    /// };
+    ///
+    /// # fn main() -> Result<(), ToroidalDomainError> {
+    /// let toroidal = GlobalTopology::<2>::try_toroidal(
+    ///     [1.0, 1.0],
+    ///     ToroidalConstructionMode::PeriodicImagePoint,
+    /// )?;
+    ///
+    /// assert!(GlobalTopology::<2>::Euclidean.allows_boundary());
+    /// assert!(!toroidal.allows_boundary());
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
     pub const fn allows_boundary(self) -> bool {
         match self {
@@ -421,12 +441,56 @@ impl<const D: usize> GlobalTopology<D> {
     }
 
     /// Returns `true` for toroidal global topology metadata.
+    ///
+    /// This includes both canonicalized metadata and true periodic image-point
+    /// metadata; use [`Self::is_periodic`] when the distinction matters.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::topology::spaces::{
+    ///     GlobalTopology, ToroidalConstructionMode, ToroidalDomainError,
+    /// };
+    ///
+    /// # fn main() -> Result<(), ToroidalDomainError> {
+    /// let canonicalized = GlobalTopology::<2>::try_toroidal(
+    ///     [1.0, 1.0],
+    ///     ToroidalConstructionMode::Canonicalized,
+    /// )?;
+    ///
+    /// assert!(canonicalized.is_toroidal());
+    /// assert!(!canonicalized.is_periodic());
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
     pub const fn is_toroidal(self) -> bool {
         matches!(self, Self::Toroidal { .. })
     }
 
     /// Returns `true` when this represents a true periodic image-point toroidal build.
+    ///
+    /// Canonicalized toroidal metadata wraps coordinates into a domain but leaves
+    /// connectivity Euclidean, so it is toroidal but not periodic in this sense.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::topology::spaces::{
+    ///     GlobalTopology, ToroidalConstructionMode, ToroidalDomainError,
+    /// };
+    ///
+    /// # fn main() -> Result<(), ToroidalDomainError> {
+    /// let periodic = GlobalTopology::<2>::try_toroidal(
+    ///     [1.0, 1.0],
+    ///     ToroidalConstructionMode::PeriodicImagePoint,
+    /// )?;
+    ///
+    /// assert!(periodic.is_periodic());
+    /// assert!(!GlobalTopology::<2>::Euclidean.is_periodic());
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
     pub const fn is_periodic(self) -> bool {
         matches!(
@@ -689,16 +753,6 @@ mod tests {
         assert_eq!(
             classification.to_string(),
             "Failed to count boundary facets during topology classification: Internal data structure inconsistency: another test"
-        );
-
-        let euler = TopologyError::EulerMismatch {
-            computed: 2,
-            expected: 1,
-            topology_type: "sphere".to_string(),
-        };
-        assert_eq!(
-            euler.to_string(),
-            "Euler characteristic mismatch: computed χ=2, expected χ=1 for sphere"
         );
     }
 

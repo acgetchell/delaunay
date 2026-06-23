@@ -687,10 +687,12 @@ mod tests {
 
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        tri.set_global_topology(
+        // This fixture is intentionally orientation-focused: the single simplex
+        // has Euclidean boundary facets, so the validated topology setter would
+        // reject closed toroidal metadata before lifted-coordinate handling runs.
+        tri.global_topology =
             GlobalTopology::try_toroidal([1.0, 1.0], ToroidalConstructionMode::PeriodicImagePoint)
-                .unwrap(),
-        );
+                .unwrap();
 
         assert!(tri.validate_geometric_simplex_orientation().is_ok());
 

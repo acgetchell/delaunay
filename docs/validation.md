@@ -274,7 +274,9 @@ Validates the combinatorial structure of the Triangulation Data Structure.
 1. **UUID ↔ Key Mappings**: Bidirectional consistency for vertices and simplices
 2. **No Duplicate Simplices**: No simplices with identical vertex sets
 3. **Facet Sharing Invariant**: Each facet shared by at most 2 simplices
-4. **Neighbor Consistency**: Mutual neighbor relationships are correct (boundary facets have no neighbor; interior facets have reciprocal neighbors)
+4. **Neighbor Consistency**: Mutual neighbor relationships are correct:
+   manifold boundary facets are open, interior facets have reciprocal
+   neighbors, and admissible periodic self-neighbors are closed topology.
 
 `Tds::validate()` (Levels 1–2) additionally checks:
 

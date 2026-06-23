@@ -85,7 +85,10 @@ Key combinatorial objects:
   [TDS_3](https://doc.cgal.org/latest/TDS_3/index.html)).[^cgal-tds3][^impl-tds]
 - **Boundary vs interior facets**:
   - An **interior facet** is incident to exactly two simplices.
-  - A **boundary facet** is incident to exactly one simplex.
+  - A **boundary facet** is one-sided and not an admissible periodic
+    self-identification.
+  - A periodic quotient facet may be incident to one stored simplex while a
+    self-neighbor pointer identifies it as closed topology rather than boundary.
 
 These are **combinatorial** notions: they depend only on incidence and adjacency relationships.
 Geometric predicates (orientation / in-sphere tests) are used to construct and validate the
@@ -210,8 +213,9 @@ simplicial complexes for geometry:
 
 - **Pseudomanifold / manifold-with-boundary (codimension-1)**: enforce that each facet has the
   expected incidence count:
-  - boundary facets are incident to exactly 1 simplex
-  - interior facets are incident to exactly 2 simplices
+  - one-sided facets are incident to exactly 1 simplex
+  - two-sided facets are incident to exactly 2 simplices
+  Boundary classification then excludes admissible periodic self-identifications.
   This rules out the most obvious non-manifold failures (branching facets).
 
 - **Closed boundary condition (codimension-2 on the boundary)**: enforce “no boundary of boundary”
@@ -303,8 +307,9 @@ facets are expected unless the simplex complex represents a closed manifold by c
 
 Toroidal workflows are integrated as first-class topology options:
 
-- `.try_canonicalized_toroidal()` canonicalizes coordinates into the fundamental domain and uses
-  toroidal topology metadata for validation.
+- `.try_canonicalized_toroidal()` canonicalizes coordinates into the fundamental domain, then
+  builds a Euclidean triangulation of the wrapped point set. It does not assign closed
+  toroidal manifold topology or identify opposite boundary facets.
 - `.try_toroidal(...)` constructs a periodic image-point triangulation over neighboring
   fundamental domains. The 2D and compact 3D paths are validated periodic quotients; 4D/5D
   periodic construction fails fast until quotient selection scales to routine release validation

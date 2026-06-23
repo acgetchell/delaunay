@@ -14,13 +14,14 @@ use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::query::QueryError;
 use crate::core::simplex::Simplex;
-use crate::core::tds::{SimplexKey, Tds, TdsError, TdsMutationError, VertexKey};
+use crate::core::tds::{InvariantError, SimplexKey, Tds, TdsError, TdsMutationError, VertexKey};
 use crate::core::triangulation::Triangulation;
 use crate::core::validation::{TopologyGuarantee, ValidationConfigurationError, ValidationPolicy};
 use crate::core::vertex::Vertex;
 use crate::repair::{DelaunayCheckPolicy, DelaunayRepairPolicy};
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
 use crate::triangulation::DelaunayTriangulation;
+use crate::validation::DelaunayTriangulationValidationError;
 
 // =============================================================================
 // QUERY, ACCESSORS, AND CONFIGURATION (Minimal Bounds)
@@ -457,8 +458,9 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
 
     /// Returns an iterator over boundary (hull) facets in the triangulation.
     ///
-    /// Boundary facets are those that belong to exactly one simplex. This method
-    /// computes the facet-to-simplices map internally for convenience.
+    /// Boundary facets are one-sided facets not identified by closed periodic
+    /// topology. This method computes the facet-to-simplices index internally
+    /// for convenience.
     ///
     /// # Returns
     ///
@@ -500,11 +502,14 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::TriangulationCorrupted`] if facet-map construction
-    /// detects invalid simplex or facet bookkeeping. The variant preserves the
-    /// lower-level [`TdsError`] for diagnostics.
+    /// Returns [`QueryError::TriangulationCorrupted`] if facet-incidence index
+    /// construction detects invalid simplex or facet bookkeeping. The variant
+    /// preserves the lower-level [`TdsError`] for diagnostics. Returns
+    /// [`QueryError::TopologyInvalid`] when topology-aware boundary
+    /// classification rejects the declared global topology or detects another
+    /// manifold-boundary inconsistency.
     /// Individual iterator items return [`FacetError`](crate::prelude::tds::FacetError)
-    /// if a boundary facet cannot be created or keyed from the simplices.
+    /// if a boundary facet handle cannot be reborrowed as a view.
     pub fn boundary_facets(&self) -> Result<BoundaryFacetsIter<'_, U, V, D>, QueryError> {
         self.tri.boundary_facets()
     }
@@ -872,33 +877,51 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
         self.tri.topology_kind()
     }
 
-    /// Sets runtime global topology metadata on this triangulation.
+    /// Sets runtime global topology metadata after validating it against current topology.
+    ///
+    /// The update is atomic: if the current triangulation does not satisfy the
+    /// requested global topology, the previous metadata is restored before the
+    /// error is returned.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DelaunayTriangulationValidationError::Tds`] if lower-level
+    /// structure is invalid while checking topology, or
+    /// [`DelaunayTriangulationValidationError::Triangulation`] when Level 3
+    /// topology violates the requested metadata, for example when Euclidean
+    /// boundary facets are relabeled as closed spherical or toroidal topology.
+    /// The previous topology metadata is restored before the error is returned.
     ///
     /// # Examples
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, GlobalTopology,
+    ///     DelaunayResult, DelaunayTriangulationBuilder, GlobalTopology,
     /// };
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// let vertices = vec![delaunay::vertex![0.0, 0.0]?, delaunay::vertex![1.0, 0.0]?, delaunay::vertex![0.0, 1.0]?];
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = vec![
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-    /// dt.set_global_topology(GlobalTopology::Euclidean);
+    /// dt.try_set_global_topology(GlobalTopology::Euclidean)?;
     /// assert!(dt.global_topology().is_euclidean());
     /// # Ok(())
     /// # }
     /// ```
     #[inline]
-    pub const fn set_global_topology(&mut self, global_topology: GlobalTopology<D>) {
-        self.tri.set_global_topology(global_topology);
+    pub fn try_set_global_topology(
+        &mut self,
+        global_topology: GlobalTopology<D>,
+    ) -> Result<(), DelaunayTriangulationValidationError> {
+        match self.tri.try_set_global_topology(global_topology) {
+            Ok(()) => Ok(()),
+            Err(InvariantError::Tds(err)) => Err(err.into()),
+            Err(InvariantError::Triangulation(err)) => Err(err.into()),
+            Err(InvariantError::Delaunay(err)) => Err(err),
+        }
     }
 
     /// Sets the topology guarantee used for Level 3 topology validation.
@@ -933,12 +956,9 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///
     /// An iterator yielding `Result<FacetView, FacetError>` items for all facets.
     ///
-    /// # Errors
-    ///
-    /// Returns [`QueryError::TriangulationCorrupted`] if the facet iterator cannot
-    /// represent facet indices for this dimension. Individual iterator items
-    /// return [`FacetError`](crate::prelude::tds::FacetError) if a facet view
-    /// cannot be constructed from the current TDS state.
+    /// Individual iterator items return
+    /// [`FacetError`](crate::prelude::tds::FacetError) if a facet view cannot be
+    /// constructed from the current TDS state.
     ///
     /// # Examples
     ///
@@ -968,13 +988,14 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// let facet_count = dt
-    ///     .facets()?
+    ///     .facets()
     ///     .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
     /// assert_eq!(facet_count, 4); // Tetrahedron has 4 facets
     /// # Ok(())
     /// # }
     /// ```
-    pub fn facets(&self) -> Result<AllFacetsIter<'_, U, V, D>, QueryError> {
+    #[must_use]
+    pub fn facets(&self) -> AllFacetsIter<'_, U, V, D> {
         self.tri.facets()
     }
 
@@ -1287,6 +1308,7 @@ mod tests {
     use super::*;
     use crate::core::operations::DelaunayInsertionState;
     use crate::core::tds::TdsError;
+    use crate::core::validation::TriangulationValidationError;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use std::{assert_matches, collections::HashSet, num::NonZeroUsize, sync::Once};
 
@@ -1308,9 +1330,9 @@ mod tests {
     fn test_delaunay_constructors_default_to_pl_manifold_mode() {
         init_tracing();
         let vertices: Vec<Vertex<(), 2>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
         ];
 
         let dt_new: DelaunayTriangulation<_, (), (), 2> =
@@ -1350,6 +1372,36 @@ mod tests {
     }
 
     #[test]
+    fn test_try_global_topology_setter_rejects_closed_metadata_for_euclidean_boundary() {
+        init_tracing();
+        let vertices: Vec<Vertex<(), 2>> = vec![
+            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::try_new(&vertices).unwrap();
+
+        let err = dt
+            .try_set_global_topology(GlobalTopology::Spherical)
+            .unwrap_err();
+
+        assert_matches!(
+            err,
+            DelaunayTriangulationValidationError::Triangulation(source)
+                if matches!(
+                    &*source,
+                    TriangulationValidationError::BoundaryFacetInClosedTopology {
+                        topology: TopologyKind::Spherical,
+                        ..
+                    }
+                )
+        );
+        assert_eq!(dt.global_topology(), GlobalTopology::Euclidean);
+        assert!(dt.validate().is_ok());
+    }
+
+    #[test]
     fn test_set_delaunay_check_policy_updates_state() {
         init_tracing();
         let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
@@ -1382,9 +1434,8 @@ mod tests {
 
         match dt.boundary_facets() {
             Ok(_) => panic!("corrupted facet map should return a query error"),
-            Err(QueryError::TriangulationCorrupted {
-                source: TdsError::IndexOutOfBounds { .. },
-            }) => {}
+            Err(QueryError::TriangulationCorrupted { source })
+                if matches!(*source, TdsError::IndexOutOfBounds { .. }) => {}
             Err(err) => panic!("expected index-out-of-bounds query error, got {err:?}"),
         }
     }

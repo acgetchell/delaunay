@@ -845,6 +845,7 @@ mod tests {
     use crate::flips::BistellarFlips;
     use crate::geometry::kernel::{AdaptiveKernel, RobustKernel};
     use crate::geometry::util::safe_usize_to_scalar;
+    use crate::topology::traits::topological_space::GlobalTopology;
     use slotmap::KeyData;
     use std::assert_matches;
     use std::sync::Once;
@@ -1480,6 +1481,7 @@ mod tests {
             tds,
             AdaptiveKernel::new(),
             TopologyGuarantee::PLManifold,
+            GlobalTopology::DEFAULT,
         )
         .into_repairable_delaunay_for_test();
         let stats = DelaunayRepairStats {

@@ -43,9 +43,9 @@ use crate::core::{
     },
     edge::EdgeKey,
     tds::{Tds, VertexKey},
-    traits::BoundaryAnalysis,
 };
-use crate::topology::traits::topological_space::TopologyError;
+use crate::topology::manifold::boundary_facet_keys_from_index;
+use crate::topology::traits::topological_space::{GlobalTopology, TopologyError};
 
 type LiftedCellVertex = (VertexKey, SmallBuffer<i16, MAX_PRACTICAL_DIMENSION_SIZE>);
 type LiftedCellKey = SmallBuffer<LiftedCellVertex, MAX_PRACTICAL_DIMENSION_SIZE>;
@@ -132,10 +132,12 @@ impl FVector {
     }
 }
 
-/// Topological classification of a triangulation.
+/// Euler-check classification of a triangulation.
 ///
-/// Classifies the global topological structure to determine
-/// the expected Euler characteristic.
+/// This is a coarse classification used to choose an expected Euler
+/// characteristic after boundary facets have been interpreted under the
+/// declared global topology. It is not a complete topological invariant:
+/// different manifolds can share the same Euler characteristic.
 ///
 /// # Variants
 ///
@@ -196,7 +198,7 @@ pub enum TopologyClassification {
 ///
 /// - `f₀` (vertices): Direct count from Tds - O(1)
 /// - `f_D` (simplices): Direct count from Tds - O(1)
-/// - `f_{D-1}` (facets): Use `build_facet_to_simplices_map()` - O(N·D²)
+/// - `f_{D-1}` (facets): Use the internal facet-incidence map - O(N·D²)
 /// - Intermediate `k`: Enumerate combinations from simplices - O(N · C(D+1, k+1))
 ///
 /// For practical dimensions (D ≤ 5), this is efficient.
@@ -477,7 +479,7 @@ fn insert_simplices_of_size(
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
-/// let boundary_counts = euler::count_boundary_simplices(dt.tds())?;
+/// let boundary_counts = euler::count_boundary_simplices(dt.tds(), dt.global_topology())?;
 /// let boundary_chi = euler::euler_characteristic(&boundary_counts);
 /// assert_eq!(boundary_chi, 2);  // S² has χ = 2
 /// # Ok(())
@@ -486,41 +488,71 @@ fn insert_simplices_of_size(
 ///
 /// # Errors
 ///
-/// Returns [`TopologyError::BoundaryFacetEnumeration`] or
-/// [`TopologyError::BoundaryFacetSimplexAccess`] if boundary enumeration fails.
+/// Returns [`TopologyError::BoundaryFacetEnumeration`] if the facet index cannot
+/// be built, [`TopologyError::BoundaryClassification`] if the declared global
+/// topology is incompatible with the observed facet incidences, or
+/// [`TopologyError::BoundaryFacetSimplexAccess`] if a matching facet view cannot
+/// be reconstructed from the TDS.
 pub fn count_boundary_simplices<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
+    global_topology: GlobalTopology<D>,
 ) -> Result<FVector, TopologyError> {
-    // Get boundary facets
-    let boundary_facets: Vec<_> = tds
-        .boundary_facets()
-        .map_err(|source| TopologyError::BoundaryFacetEnumeration { source })?
-        .map(|facet| facet.map_err(|source| TopologyError::BoundaryFacetSimplexAccess { source }))
-        .collect::<Result<Vec<_>, _>>()?;
+    // Get topology-approved boundary facets.
+    let facet_index = tds
+        .build_facet_to_simplices_index()
+        .map_err(|source| TopologyError::BoundaryFacetEnumeration { source })?;
+    let boundary_facet_keys = boundary_facet_keys_from_index(&facet_index, global_topology)
+        .map_err(|source| TopologyError::BoundaryClassification {
+            source: Box::new(source),
+        })?;
+    // Count boundary facets and unique boundary vertices in one pass. Keep the
+    // facet-view construction in the pass so corrupt facet reconstruction still
+    // surfaces as BoundaryFacetSimplexAccess.
+    let mut num_boundary_facets = 0_usize;
+    let mut boundary_vertices = FastHashSet::default();
+    let mut intermediate_simplex_sets: Option<
+        Vec<FastHashSet<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>>,
+    > = (D > 2).then(|| (0..(D - 2)).map(|_| FastHashSet::default()).collect());
 
-    if boundary_facets.is_empty() {
+    for facet in tds.facets() {
+        let facet = facet.map_err(|source| TopologyError::BoundaryFacetSimplexAccess { source })?;
+        if !boundary_facet_keys.contains(&facet.key()) {
+            continue;
+        }
+
+        num_boundary_facets += 1;
+        let simplex = facet.simplex();
+        let facet_index = usize::from(facet.facet_index());
+        let mut facet_vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::new();
+
+        for (vertex_position, &vertex_key) in simplex.vertices().iter().enumerate() {
+            if vertex_position != facet_index {
+                boundary_vertices.insert(vertex_key);
+                facet_vertex_keys.push(vertex_key);
+            }
+        }
+
+        let Some(intermediate_simplex_sets) = intermediate_simplex_sets.as_mut() else {
+            continue;
+        };
+
+        // Sort once so every generated combination is already canonical,
+        // avoiding per-combination sorting.
+        facet_vertex_keys.sort();
+        for simplex_dimension in 1..=D - 2 {
+            let simplex_set = &mut intermediate_simplex_sets[simplex_dimension.saturating_sub(1)];
+            let simplex_size = simplex_dimension + 1; // k-simplex has k+1 vertices
+            insert_simplices_of_size(&facet_vertex_keys, simplex_size, simplex_set);
+        }
+    }
+
+    if num_boundary_facets == 0 {
         // No boundary - return zero counts for (D-1)-dimensional complex
         return Ok(FVector { by_dim: vec![0; D] });
     }
 
-    // Collect unique vertices on the boundary
-    let mut boundary_vertices = FastHashSet::default();
-    for facet in &boundary_facets {
-        let simplex = facet
-            .simplex()
-            .map_err(|source| TopologyError::BoundaryFacetSimplexAccess { source })?;
-        let facet_index = usize::from(facet.facet_index());
-
-        // Add all vertex keys except the opposite vertex
-        for (i, &v_key) in simplex.vertices().iter().enumerate() {
-            if i != facet_index {
-                boundary_vertices.insert(v_key);
-            }
-        }
-    }
-
     let num_boundary_vertices = boundary_vertices.len();
-    let num_boundary_facets = boundary_facets.len(); // These are (D-1)-simplices
 
     // Initialize counts for (D-1)-dimensional complex
     // by_dim[0] = vertices, by_dim[1] = edges, ..., by_dim[D-1] = (D-1)-simplices
@@ -530,42 +562,7 @@ pub fn count_boundary_simplices<U, V, const D: usize>(
 
     // Count intermediate k-simplices (1 ≤ k < D-1) by enumerating combinations
     // from boundary facets.
-    //
-    // We keep a set per k and fill them in a single pass over boundary facets, which is faster than
-    // re-iterating all facets once per k.
-    // Skip if D <= 2 (no intermediate dimensions in boundary)
-    if D > 2 {
-        let mut intermediate_simplex_sets: Vec<
-            FastHashSet<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
-        > = (0..(D - 2)).map(|_| FastHashSet::default()).collect();
-
-        for facet in &boundary_facets {
-            let simplex = facet
-                .simplex()
-                .map_err(|source| TopologyError::BoundaryFacetSimplexAccess { source })?;
-            let facet_index = usize::from(facet.facet_index());
-
-            // Collect vertex keys for this facet (excluding opposite vertex).
-            //
-            // We sort once so every generated combination is already in canonical order, avoiding
-            // per-combination sorting.
-            let mut facet_vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-                SmallBuffer::new();
-            for (vertex_position, &v_key) in simplex.vertices().iter().enumerate() {
-                if vertex_position != facet_index {
-                    facet_vertex_keys.push(v_key);
-                }
-            }
-            facet_vertex_keys.sort();
-
-            for simplex_dimension in 1..=D - 2 {
-                let simplex_set =
-                    &mut intermediate_simplex_sets[simplex_dimension.saturating_sub(1)];
-                let simplex_size = simplex_dimension + 1; // k-simplex has k+1 vertices
-                insert_simplices_of_size(&facet_vertex_keys, simplex_size, simplex_set);
-            }
-        }
-
+    if let Some(intermediate_simplex_sets) = intermediate_simplex_sets {
         for simplex_dimension in 1..=D - 2 {
             by_dim[simplex_dimension] =
                 intermediate_simplex_sets[simplex_dimension.saturating_sub(1)].len();
@@ -735,17 +732,19 @@ pub(crate) fn triangulated_surface_boundary_component_count(
     components
 }
 
-/// Classify the triangulation topologically.
+/// Classifies a triangulation for Euler-characteristic compatibility checks.
 ///
-/// Determines the topological type based on the number of simplices
-/// and boundary structure.
+/// This is a coarse classification, not a complete topology detector. Boundary
+/// structure is interpreted through the supplied [`GlobalTopology`] so raw
+/// one-sided incidence in a periodic quotient is not mistaken for boundary.
 ///
 /// # Classification Logic
 ///
 /// - No simplices → `Empty`
-/// - One simplex → `SingleSimplex(D)`
-/// - Has boundary → `Ball(D)`
-/// - No boundary → `ClosedSphere(D)` (rare)
+/// - One simplex with true boundary → `SingleSimplex(D)`
+/// - True boundary → `Ball(D)`
+/// - No boundary with toroidal metadata → `ClosedToroid(D)`
+/// - No boundary otherwise → `ClosedSphere(D)` (rare)
 ///
 /// # Examples
 ///
@@ -771,7 +770,7 @@ pub(crate) fn triangulated_surface_boundary_component_count(
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
-/// let classification = classify_triangulation(dt.tds())?;
+/// let classification = classify_triangulation(dt.tds(), dt.global_topology())?;
 /// assert_eq!(classification, TopologyClassification::SingleSimplex(3));
 /// # Ok(())
 /// # }
@@ -779,9 +778,14 @@ pub(crate) fn triangulated_surface_boundary_component_count(
 ///
 /// # Errors
 ///
-/// Returns [`TopologyError::BoundaryFacetCount`] if boundary detection fails.
+/// Returns [`TopologyError::BoundaryFacetCount`] if the facet index cannot be
+/// built, or [`TopologyError::BoundaryClassification`] if the declared global
+/// topology is incompatible with the observed facet incidences. The latter
+/// includes open one-sided facets in closed topology and periodic
+/// self-identifications in non-periodic topology metadata.
 pub fn classify_triangulation<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
+    global_topology: GlobalTopology<D>,
 ) -> Result<TopologyClassification, TopologyError> {
     let num_simplices = tds.number_of_simplices();
 
@@ -790,20 +794,21 @@ pub fn classify_triangulation<U, V, const D: usize>(
         return Ok(TopologyClassification::Empty);
     }
 
-    // Single simplex
-    if num_simplices == 1 {
-        return Ok(TopologyClassification::SingleSimplex(D));
-    }
+    let facet_index = tds
+        .build_facet_to_simplices_index()
+        .map_err(|source| TopologyError::BoundaryFacetCount { source })?;
+    let has_boundary = !boundary_facet_keys_from_index(&facet_index, global_topology)
+        .map_err(|source| TopologyError::BoundaryClassification {
+            source: Box::new(source),
+        })?
+        .is_empty();
 
-    // Check boundary
-    let has_boundary = tds
-        .number_of_boundary_facets()
-        .map_err(|source| TopologyError::BoundaryFacetCount { source })?
-        > 0;
-
-    if has_boundary {
-        // Has boundary → topological ball
+    if num_simplices == 1 && has_boundary {
+        Ok(TopologyClassification::SingleSimplex(D))
+    } else if has_boundary {
         Ok(TopologyClassification::Ball(D))
+    } else if global_topology.is_toroidal() {
+        Ok(TopologyClassification::ClosedToroid(D))
     } else {
         // No boundary → closed manifold (assume sphere for now)
         Ok(TopologyClassification::ClosedSphere(D))
@@ -1144,9 +1149,7 @@ mod tests {
     fn test_classify_triangulation_closed_sphere_2d_surface() {
         let tds = build_closed_2d_surface_tds();
 
-        assert_eq!(tds.number_of_boundary_facets().unwrap(), 0);
-
-        let classification = classify_triangulation(&tds).unwrap();
+        let classification = classify_triangulation(&tds, GlobalTopology::Euclidean).unwrap();
         assert_eq!(classification, TopologyClassification::ClosedSphere(2));
 
         let counts = count_simplices(&tds).unwrap();
@@ -1158,7 +1161,7 @@ mod tests {
     fn test_count_boundary_simplices_no_boundary_is_zero() {
         let tds = build_closed_2d_surface_tds();
 
-        let boundary_counts = count_boundary_simplices(&tds).unwrap();
+        let boundary_counts = count_boundary_simplices(&tds, GlobalTopology::Euclidean).unwrap();
         assert_eq!(boundary_counts.by_dim, vec![0, 0]);
         assert_eq!(euler_characteristic(&boundary_counts), 0);
     }

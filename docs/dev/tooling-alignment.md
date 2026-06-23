@@ -171,6 +171,22 @@ The useful updates ported in this pass are:
   are blocked alongside unqualified impls. These rules complement the existing
   constructor and direct-storage serde guards without making the validated
   snapshot representation public API.
+- Repository-owned Semgrep now encodes the #461 borrowed-view naming
+  convention: types named `*View` and `RidgeQuery` must carry a leading
+  lifetime parameter, while detached ridge values use `RidgeCandidate` and
+  fallible `try_from_vertices`/`try_new` constructors. This keeps Views,
+  Handles, Keys, Candidates, Snapshots, and Reports orthogonal in both naming
+  and lifetime semantics. Semgrep also guards the topology-boundary convention:
+  raw one-sided facet incidence from `facet_to_simplices.values()` must not be
+  used as semantic boundary classification; callers should use topology-aware
+  manifold helpers so periodic self-identifications remain closed topology and
+  open one-sided facets in closed spaces stay errors.
+- The borrowed-view rule's generic-parameter detector is now written as a YAML
+  block scalar with a literal Rust lifetime lookahead (`(?!')`) instead of the
+  ambiguous single-quoted YAML spelling (`(?!'')`). This makes the configured
+  regex visibly reject lifetime-bound views such as `struct FooView<'tds>` and
+  match only non-lifetime generic parameters, preserving the intended #461
+  View/Handle/Candidate convention.
 - `.github/workflows/rust-clippy.yml` now matches the hardened SARIF pipeline:
   `set -euo pipefail`, `clippy::cargo`, and guarded upload that skips missing
   SARIF files and forked pull-request uploads.
@@ -297,6 +313,28 @@ Some causal-triangulations tooling remains project-specific and was not ported:
   was folded into that harness so `.github/workflows/profiling-benchmarks.yml`
   and `just profile-dev` exercise the same real construction, memory,
   validation, and traversal workloads.
+
+### Large-Scale Smoke Parameters
+
+`just perf-large-scale-smoke` is a Delaunay-specific local guard over the
+release-mode `debug_large_scale_{2,3,4,5}d` tests, not a sibling-repository
+tooling convention. It exists to catch obvious construction, repair, and
+validation slowdowns before a PR leaves a developer machine, while keeping
+benchmark-quality regression detection in `just perf-no-regressions` and the
+Criterion harnesses.
+
+The current smoke sizes are calibrated per dimension: 32,000 vertices in 2D,
+9,000 in 3D, 1,000 in 4D, and 160 in 5D. Lower dimensions use larger point
+clouds because they need more vertices to expose traversal and repair costs;
+higher dimensions scale down aggressively because simplex counts, exact
+predicate work, and topology checks grow much faster. The progress chunks
+of 2,000, 500, 100, and 20 vertices keep timeout/progress reporting visible
+without turning logging and validation cadence into the measured workload.
+These values are intentionally coarse canaries designed to finish in roughly
+50 seconds per dimension, leaving headroom under the default 60-second cap.
+They should be recalibrated only from same-machine local runs when the
+construction envelope changes.
+
 - CDT's concise `docs/dev/commands.md` structure; Delaunay keeps its more
   detailed benchmark-profile guidance because it documents the `perf` profile,
   local performance-regression guard, calibrated benchmark canaries, and release

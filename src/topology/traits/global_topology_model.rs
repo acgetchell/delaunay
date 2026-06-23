@@ -117,11 +117,11 @@ pub trait GlobalTopologyModel<const D: usize> {
         periodic_offset: Option<[i8; D]>,
     ) -> Result<[f64; D], GlobalTopologyModelError>;
 
-    /// Returns the periodic domain when relevant.
+    /// Returns the validated periodic [`ToroidalDomain`] when relevant.
     ///
-    /// For periodic topologies (e.g., toroidal), this returns the fundamental domain periods.
-    /// For non-periodic topologies, returns `None`.
-    fn periodic_domain(&self) -> Option<&[f64; D]> {
+    /// For periodic topologies (e.g., toroidal), this returns the fundamental
+    /// domain by value. For non-periodic topologies, returns `None`.
+    fn periodic_domain(&self) -> Option<ToroidalDomain<D>> {
         None
     }
 
@@ -180,19 +180,27 @@ impl<const D: usize> GlobalTopologyModel<D> for EuclideanModel {
     }
 }
 
-/// Toroidal behavior model (domain wrapping + lattice-offset lifting).
+/// Toroidal behavior model for domain wrapping and lattice-offset lifting.
+///
+/// This crate-internal model is the behavior side of
+/// [`GlobalTopology::Toroidal`]:
+/// public metadata stores a validated domain and construction mode, while this
+/// type applies those invariants to coordinate canonicalization and periodic
+/// orientation lifting.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ToroidalModel<const D: usize> {
-    /// Fundamental-domain periods.
+    /// Validated fundamental-domain periods.
     pub domain: ToroidalDomain<D>,
-    /// Construction mode (canonicalized vs periodic image-point).
+    /// Construction mode controlling whether periodic offsets are meaningful.
     pub mode: ToroidalConstructionMode,
 }
 
 impl<const D: usize> ToroidalModel<D> {
-    /// Creates a toroidal model for the provided validated domain and construction mode.
+    /// Creates a toroidal model from an already-validated domain.
     ///
-    /// Note: `ToroidalModel` is internal; users should access via [`GlobalTopology::model()`].
+    /// Use [`Self::try_new`] at raw numeric boundaries. This constructor is
+    /// infallible because [`ToroidalDomain`] already proves every period is
+    /// finite and strictly positive.
     #[must_use]
     pub const fn new(domain: ToroidalDomain<D>, mode: ToroidalConstructionMode) -> Self {
         Self { domain, mode }
@@ -241,6 +249,12 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
         mut coords: [f64; D],
         periodic_offset: Option<[i8; D]>,
     ) -> Result<[f64; D], GlobalTopologyModelError> {
+        for (axis, coord) in coords.iter().copied().enumerate() {
+            if !coord.is_finite() {
+                return Err(GlobalTopologyModelError::NonFiniteCoordinate { axis, value: coord });
+            }
+        }
+
         // Canonicalized toroidal mode intentionally accepts optional periodic offsets but
         // does not apply them. This differs from `EuclideanModel`, which treats any
         // provided periodic offset as unsupported and returns an error.
@@ -251,12 +265,6 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
             return Ok(coords);
         };
 
-        // Validate finiteness before performing arithmetic
-        for (axis, coord) in coords.iter().copied().enumerate() {
-            if !coord.is_finite() {
-                return Err(GlobalTopologyModelError::NonFiniteCoordinate { axis, value: coord });
-            }
-        }
         for axis in 0..D {
             let period = self.domain.periods()[axis];
             let lifted = f64::from(offset[axis]).mul_add(period, coords[axis]);
@@ -271,8 +279,8 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
         Ok(coords)
     }
 
-    fn periodic_domain(&self) -> Option<&[f64; D]> {
-        Some(self.domain.periods())
+    fn periodic_domain(&self) -> Option<ToroidalDomain<D>> {
+        Some(self.domain)
     }
 
     fn supports_periodic_facet_signatures(&self) -> bool {
@@ -472,7 +480,7 @@ impl<const D: usize> GlobalTopologyModel<D> for GlobalTopologyModelAdapter<D> {
         }
     }
 
-    fn periodic_domain(&self) -> Option<&[f64; D]> {
+    fn periodic_domain(&self) -> Option<ToroidalDomain<D>> {
         match self {
             Self::Euclidean(model) => GlobalTopologyModel::<D>::periodic_domain(model),
             Self::Toroidal(model) => GlobalTopologyModel::<D>::periodic_domain(model),
@@ -591,6 +599,32 @@ mod tests {
     #[test]
     fn toroidal_model_lift_rejects_non_finite_coordinates() {
         let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::PeriodicImagePoint);
+        let err = model
+            .lift_for_orientation([f64::NAN, 0.5_f64], Some([1, 0]))
+            .unwrap_err();
+        assert_matches!(
+            err,
+            GlobalTopologyModelError::NonFiniteCoordinate { axis: 0, value }
+                if value.is_nan()
+        );
+    }
+
+    #[test]
+    fn toroidal_model_lift_rejects_non_finite_coordinates_without_offset() {
+        let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::PeriodicImagePoint);
+        let err = model
+            .lift_for_orientation([0.5_f64, f64::INFINITY], None)
+            .unwrap_err();
+        assert_matches!(
+            err,
+            GlobalTopologyModelError::NonFiniteCoordinate { axis: 1, value }
+                if value.is_infinite() && value.is_sign_positive()
+        );
+    }
+
+    #[test]
+    fn toroidal_model_lift_rejects_non_finite_coordinates_when_offsets_unsupported() {
+        let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let err = model
             .lift_for_orientation([f64::NAN, 0.5_f64], Some([1, 0]))
             .unwrap_err();
@@ -865,7 +899,10 @@ mod tests {
             [2.0, 3.0],
             ToroidalConstructionMode::Canonicalized,
         ));
-        assert_eq!(toroidal.periodic_domain(), Some(&[2.0, 3.0]));
+        assert_eq!(
+            toroidal.periodic_domain(),
+            Some(ToroidalDomain::try_new([2.0, 3.0]).unwrap())
+        );
     }
 
     #[test]

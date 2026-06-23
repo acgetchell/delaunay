@@ -10,7 +10,7 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::CoordinateRange;
-use delaunay::prelude::query::BoundaryAnalysis;
+use delaunay::prelude::query::FacetIncidenceAnalysis;
 use delaunay::try_vertices_from_points;
 use uuid::Uuid;
 
@@ -76,13 +76,13 @@ fn bench_boundary_facets_micro(c: &mut Criterion) {
             .collect::<Result<Vec<_>, _>>()
             .or_abort();
         group.bench_with_input(
-            BenchmarkId::new("is_boundary_facet_3d", requested_vertices),
+            BenchmarkId::new("is_one_sided_facet_3d", requested_vertices),
             &(&dt, boundary_facets),
             |b, (dt, facets)| {
                 b.iter(|| {
                     let confirmed = facets
                         .iter()
-                        .filter(|facet| dt.tds().is_boundary_facet(facet).or_abort())
+                        .filter(|facet| dt.tds().is_one_sided_facet(facet).or_abort())
                         .count();
                     black_box(confirmed);
                 });

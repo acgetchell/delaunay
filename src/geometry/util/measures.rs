@@ -807,7 +807,7 @@ fn facet_measure_gram_matrix<const D: usize>(
 /// let tds = dt.tds();
 ///
 /// // Get boundary facets as FacetViews
-/// let boundary_facets = tds.boundary_facets()?.collect::<Result<Vec<_>, _>>()?;
+/// let boundary_facets = tds.one_sided_facets()?.collect::<Result<Vec<_>, _>>()?;
 ///
 /// // Calculate surface area
 /// let surface_area = surface_measure(&boundary_facets)?;
@@ -825,13 +825,8 @@ where
     let mut total_measure = 0.0;
 
     for facet in facets {
-        let facet_vertices = facet.vertices();
-
         // Convert vertices to Points for measure calculation
-        let points: Vec<Point<D>> = facet_vertices
-            .map_err(SurfaceMeasureError::from)?
-            .map(|v| *v.point())
-            .collect();
+        let points: Vec<Point<D>> = facet.vertices().map(|v| *v.point()).collect();
 
         let measure = facet_measure(&points).map_err(SurfaceMeasureError::from)?;
         total_measure += measure;
@@ -845,7 +840,7 @@ mod tests {
     use super::*;
     use std::assert_matches;
 
-    use crate::core::traits::boundary_analysis::BoundaryAnalysis;
+    use crate::core::traits::facet_incidence_analysis::FacetIncidenceAnalysis;
     use crate::core::vertex::Vertex;
     use crate::geometry::matrix::LaError;
     use crate::geometry::point::Point;
@@ -1614,7 +1609,7 @@ mod tests {
             DelaunayTriangulation::try_new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt
             .tds()
-            .boundary_facets()
+            .one_sided_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -1623,7 +1618,7 @@ mod tests {
         let tarfacet = boundary_facets
             .iter()
             .find(|facet| {
-                let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
+                let facet_vertices: Vec<_> = facet.vertices().collect();
                 facet_vertices.len() == 3
                     && facet_vertices.iter().any(|v| {
                         let coords = *v.point().coords();
@@ -1640,7 +1635,7 @@ mod tests {
             })
             .expect("Should find the target facet");
 
-        let surface_area = surface_measure(&[*tarfacet]).unwrap();
+        let surface_area = surface_measure(std::slice::from_ref(tarfacet)).unwrap();
 
         // Should be area of right triangle: 3 * 4 / 2 = 6.0
         assert_relative_eq!(surface_area, 6.0, epsilon = 1e-10);
@@ -1663,22 +1658,21 @@ mod tests {
             DelaunayTriangulation::try_new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt
             .tds()
-            .boundary_facets()
+            .one_sided_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
         // Take first two boundary facets for testing
-        let facet1 = boundary_facets[0];
-        let facet2 = boundary_facets[1];
+        let facet1 = boundary_facets[0].clone();
+        let facet2 = boundary_facets[1].clone();
 
         // Calculate surface measure
-        let total_surface = surface_measure(&[facet1, facet2]).unwrap();
+        let total_surface = surface_measure(&[facet1.clone(), facet2.clone()]).unwrap();
 
         // Calculate individual facet measures and sum them
         let points1: Vec<Point<3>> = facet1
             .vertices()
-            .unwrap()
             .map(|v| {
                 let coords = *v.point().coords();
                 Point::try_new(coords).expect("finite point coordinates")
@@ -1686,7 +1680,6 @@ mod tests {
             .collect();
         let points2: Vec<Point<3>> = facet2
             .vertices()
-            .unwrap()
             .map(|v| {
                 let coords = *v.point().coords();
                 Point::try_new(coords).expect("finite point coordinates")
@@ -1984,20 +1977,29 @@ mod tests {
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(), // v3
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(), // v4
         ];
+
+        // Create second triangulation with large right triangle (area = 24.0)
+        let vertices2: Vec<Vertex<(), 3>> = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(), // v5
+            crate::core::vertex::Vertex::<(), _>::try_new([6.0, 0.0, 0.0]).unwrap(), // v6
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 8.0, 0.0]).unwrap(), // v7
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(), // v8
+        ];
         let dt1: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices1).unwrap();
+        let dt2: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::try_new(&vertices2).unwrap();
+
         let boundary_facets1: Vec<_> = dt1
             .tds()
-            .boundary_facets()
+            .one_sided_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-
-        // Find the facet opposite to v4 (triangle with v1, v2, v3) - area = 0.5
         let small_facet = boundary_facets1
             .iter()
             .find(|facet| {
-                let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
+                let facet_vertices: Vec<_> = facet.vertices().collect();
                 facet_vertices.len() == 3
                     && facet_vertices.iter().any(|v| {
                         let coords = *v.point().coords();
@@ -2012,20 +2014,12 @@ mod tests {
                         coords == [0.0, 1.0, 0.0]
                     })
             })
-            .expect("Should find small triangle facet");
+            .expect("Should find small triangle facet")
+            .clone();
 
-        // Create second triangulation with large right triangle (area = 24.0)
-        let vertices2: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(), // v5
-            crate::core::vertex::Vertex::<(), _>::try_new([6.0, 0.0, 0.0]).unwrap(), // v6
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 8.0, 0.0]).unwrap(), // v7
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(), // v8
-        ];
-        let dt2: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices2).unwrap();
         let boundary_facets2: Vec<_> = dt2
             .tds()
-            .boundary_facets()
+            .one_sided_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -2034,7 +2028,7 @@ mod tests {
         let large_facet = boundary_facets2
             .iter()
             .find(|facet| {
-                let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
+                let facet_vertices: Vec<_> = facet.vertices().collect();
                 facet_vertices.len() == 3
                     && facet_vertices.iter().any(|v| {
                         let coords = *v.point().coords();
@@ -2049,9 +2043,10 @@ mod tests {
                         coords == [0.0, 8.0, 0.0]
                     })
             })
-            .expect("Should find large triangle facet");
+            .expect("Should find large triangle facet")
+            .clone();
 
-        let total_surface = surface_measure(&[*small_facet, *large_facet]).unwrap();
+        let total_surface = surface_measure(&[small_facet, large_facet]).unwrap();
         let expected_total = 0.5 + 24.0;
 
         assert_relative_eq!(total_surface, expected_total, epsilon = 1e-10);
@@ -2076,7 +2071,7 @@ mod tests {
             DelaunayTriangulation::try_new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt
             .tds()
-            .boundary_facets()
+            .one_sided_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -2105,7 +2100,7 @@ mod tests {
             DelaunayTriangulation::try_new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt
             .tds()
-            .boundary_facets()
+            .one_sided_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -2141,7 +2136,7 @@ mod tests {
             DelaunayTriangulation::try_new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt
             .tds()
-            .boundary_facets()
+            .one_sided_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -2215,7 +2210,7 @@ mod tests {
             DelaunayTriangulation::try_new(&vertices).unwrap();
         let boundary_facets: Vec<_> = dt
             .tds()
-            .boundary_facets()
+            .one_sided_facets()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();

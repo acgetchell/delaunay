@@ -993,6 +993,12 @@ pub enum TriangulationValidationErrorKind {
     ManifoldFacetMultiplicity,
     /// A boundary ridge had invalid boundary-facet multiplicity.
     BoundaryRidgeMultiplicity,
+    /// A closed topology contained an open boundary facet.
+    BoundaryFacetInClosedTopology,
+    /// A non-periodic topology contained periodic self-identification metadata.
+    PeriodicIdentificationInNonPeriodicTopology,
+    /// A requested ridge candidate was not present in any simplex.
+    RidgeNotFound,
     /// A ridge link failed PL-manifold validation.
     RidgeLinkNotManifold,
     /// A vertex link failed PL-manifold validation.
@@ -1016,6 +1022,13 @@ impl From<&TriangulationValidationError> for TriangulationValidationErrorKind {
             TriangulationValidationError::BoundaryRidgeMultiplicity { .. } => {
                 Self::BoundaryRidgeMultiplicity
             }
+            TriangulationValidationError::BoundaryFacetInClosedTopology { .. } => {
+                Self::BoundaryFacetInClosedTopology
+            }
+            TriangulationValidationError::PeriodicIdentificationInNonPeriodicTopology {
+                ..
+            } => Self::PeriodicIdentificationInNonPeriodicTopology,
+            TriangulationValidationError::RidgeNotFound { .. } => Self::RidgeNotFound,
             TriangulationValidationError::RidgeLinkNotManifold { .. } => Self::RidgeLinkNotManifold,
             TriangulationValidationError::VertexLinkNotManifold { .. } => {
                 Self::VertexLinkNotManifold
@@ -1127,9 +1140,10 @@ mod tests {
     use crate::core::vertex::VertexValidationError;
     use crate::repair::DelaunayRepairOperation;
     use crate::topology::characteristics::euler::TopologyClassification;
+    use crate::topology::traits::topological_space::TopologyKind;
     use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
     use slotmap::KeyData;
-    use std::assert_matches;
+    use std::{assert_matches, iter};
 
     fn synthetic_delaunay_verification_error(
         message: &str,
@@ -1332,6 +1346,32 @@ mod tests {
                     boundary_facet_count: 3,
                 },
                 TriangulationValidationErrorKind::BoundaryRidgeMultiplicity,
+            ),
+            (
+                TriangulationValidationError::BoundaryFacetInClosedTopology {
+                    topology: TopologyKind::Spherical,
+                    facet_key: 0x111,
+                    simplex_key: SimplexKey::from(KeyData::from_ffi(5)),
+                    simplex_uuid: Uuid::new_v4(),
+                    facet_index: 1,
+                },
+                TriangulationValidationErrorKind::BoundaryFacetInClosedTopology,
+            ),
+            (
+                TriangulationValidationError::PeriodicIdentificationInNonPeriodicTopology {
+                    topology: TopologyKind::Euclidean,
+                    facet_key: 0x222,
+                    simplex_key: SimplexKey::from(KeyData::from_ffi(6)),
+                    simplex_uuid: Uuid::new_v4(),
+                    facet_index: 2,
+                },
+                TriangulationValidationErrorKind::PeriodicIdentificationInNonPeriodicTopology,
+            ),
+            (
+                TriangulationValidationError::RidgeNotFound {
+                    ridge_vertices: iter::once(vertex_key).collect(),
+                },
+                TriangulationValidationErrorKind::RidgeNotFound,
             ),
             (
                 TriangulationValidationError::RidgeLinkNotManifold {
