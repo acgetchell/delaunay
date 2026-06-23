@@ -313,6 +313,28 @@ Some causal-triangulations tooling remains project-specific and was not ported:
   was folded into that harness so `.github/workflows/profiling-benchmarks.yml`
   and `just profile-dev` exercise the same real construction, memory,
   validation, and traversal workloads.
+
+### Large-Scale Smoke Parameters
+
+`just perf-large-scale-smoke` is a Delaunay-specific local guard over the
+release-mode `debug_large_scale_{2,3,4,5}d` tests, not a sibling-repository
+tooling convention. It exists to catch obvious construction, repair, and
+validation slowdowns before a PR leaves a developer machine, while keeping
+benchmark-quality regression detection in `just perf-no-regressions` and the
+Criterion harnesses.
+
+The current smoke sizes are calibrated per dimension: 32,000 vertices in 2D,
+9,000 in 3D, 1,000 in 4D, and 160 in 5D. Lower dimensions use larger point
+clouds because they need more vertices to expose traversal and repair costs;
+higher dimensions scale down aggressively because simplex counts, exact
+predicate work, and topology checks grow much faster. The progress chunks
+of 2,000, 500, 100, and 20 vertices keep timeout/progress reporting visible
+without turning logging and validation cadence into the measured workload.
+These values are intentionally coarse canaries designed to finish in roughly
+50 seconds per dimension, leaving headroom under the default 60-second cap.
+They should be recalibrated only from same-machine local runs when the
+construction envelope changes.
+
 - CDT's concise `docs/dev/commands.md` structure; Delaunay keeps its more
   detailed benchmark-profile guidance because it documents the `perf` profile,
   local performance-regression guard, calibrated benchmark canaries, and release
