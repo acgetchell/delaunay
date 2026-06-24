@@ -299,3 +299,49 @@ where
         Ok(info.into())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use slotmap::KeyData;
+
+    #[test]
+    fn pachner_move_result_roundtrips_through_flip_info() {
+        let mut removed_simplices = SimplexKeyBuffer::new();
+        removed_simplices.push(SimplexKey::from(KeyData::from_ffi(11)));
+        removed_simplices.push(SimplexKey::from(KeyData::from_ffi(12)));
+
+        let mut new_simplices = SimplexKeyBuffer::new();
+        new_simplices.push(SimplexKey::from(KeyData::from_ffi(21)));
+        new_simplices.push(SimplexKey::from(KeyData::from_ffi(22)));
+        new_simplices.push(SimplexKey::from(KeyData::from_ffi(23)));
+
+        let mut removed_face_vertices = SmallBuffer::new();
+        removed_face_vertices.push(VertexKey::from(KeyData::from_ffi(31)));
+        removed_face_vertices.push(VertexKey::from(KeyData::from_ffi(32)));
+        removed_face_vertices.push(VertexKey::from(KeyData::from_ffi(33)));
+
+        let mut inserted_face_vertices = SmallBuffer::new();
+        inserted_face_vertices.push(VertexKey::from(KeyData::from_ffi(41)));
+        inserted_face_vertices.push(VertexKey::from(KeyData::from_ffi(42)));
+
+        let result = PachnerMoveResult::<3> {
+            kind: BistellarFlipKind::k2(3),
+            direction: FlipDirection::Forward,
+            removed_simplices,
+            new_simplices,
+            removed_face_vertices,
+            inserted_face_vertices,
+        };
+
+        let info: FlipInfo<3> = result.clone().into();
+
+        assert_eq!(info.kind, result.kind);
+        assert_eq!(info.direction, result.direction);
+        assert_eq!(info.removed_simplices, result.removed_simplices);
+        assert_eq!(info.new_simplices, result.new_simplices);
+        assert_eq!(info.removed_face_vertices, result.removed_face_vertices);
+        assert_eq!(info.inserted_face_vertices, result.inserted_face_vertices);
+        assert_eq!(PachnerMoveResult::from(info), result);
+    }
+}

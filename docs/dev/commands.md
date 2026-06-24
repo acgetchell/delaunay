@@ -53,18 +53,34 @@ These commands ensure:
 ## Validation Command Selection
 
 Use the smallest non-mutating validator that covers the files you changed while
-iterating. For final handoff validation, Rust changes use `just ci`; docs,
-configuration, and Python-only changes stay on the narrower validators below.
+iterating. For final handoff validation, match the command to the changed Rust
+surface instead of defaulting all Rust edits to full CI. Non-test Rust code
+still requires `just ci`; Rust test-only and benchmark-only changes use the
+focused validators below.
 
 | Touched surface | Iteration validation | Final validation |
 |-----|-----|-----|
 | Documentation or configuration only | `just check` | `just check` |
 | Python-only changes under `scripts/` | `just python-check` | `just python-check` |
-| Rust/Cargo/examples/benches/tests | Focused checks, `just check`, or targeted tests | `just ci` |
+| Rust unit tests only (`#[cfg(test)]` in `src/**`) | Targeted `cargo test --lib <filter>` or `just test-unit` | `just test-unit` |
+| Rust integration tests only (`tests/**`) | Targeted `cargo nextest run --test <name>` or `just test-integration-fast` | `just test-integration` |
+| Rust benchmark files only (`benches/**`) | Targeted benchmark command or `just bench-smoke` | Matching benchmark validator |
+| Rust examples only (`examples/**`) | Targeted `cargo run --example <name>` or `just examples` | `just examples` |
+| Cargo manifest, features, public API, or non-test Rust code | Focused checks, `just check`, or targeted tests | `just ci` |
+| Mixed Rust test categories | Run each matching focused validator | Run each matching focused validator |
+| Mixed non-test Rust plus tests/benches/examples | Focused checks while iterating | `just ci` |
 
 Do not run `just ci` merely because documentation, configuration, or Python
-files changed. Run `just ci` before final handoff when Rust code changed or
-when the maintainer explicitly asks for full CI.
+files changed. Do not run `just ci` merely because a Rust file changed if the
+diff only touches unit tests, integration tests, examples, or benchmarks and
+the focused validator covers the changed surface. Run `just ci` before final
+handoff when non-test Rust code changed or when the maintainer explicitly asks
+for full CI.
+
+For benchmark-only changes, run the changed benchmark with
+`cargo bench --profile perf --bench <name>` when the change affects measured
+behavior. Use `just bench-smoke` for harness-only edits, and `just bench` for
+broad benchmark-suite changes.
 
 ## Justfile Usage
 

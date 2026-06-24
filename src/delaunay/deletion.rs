@@ -7,6 +7,7 @@
 
 #![forbid(unsafe_code)]
 
+use crate::construction::local_repair_flip_budget;
 #[cfg(test)]
 use crate::construction::test_hooks;
 use crate::core::algorithms::flips::{
@@ -72,7 +73,8 @@ where
     /// [`InvariantError::Triangulation`], and the pre-deletion state is restored. Both the inverse
     /// k=1 fast-path and fan triangulation may temporarily violate the Delaunay property in some
     /// cases. If the [`DelaunayRepairPolicy`](crate::DelaunayRepairPolicy) allows it, a flip-based
-    /// repair pass is run automatically after deletion.
+    /// repair pass is run automatically after deletion. Otherwise, Level 4 validation is run without
+    /// mutating repair, and Delaunay violations roll back as invariant failures.
     ///
     /// The post-deletion repair and orientation canonicalization steps are
     /// transactional: if either step fails, this method restores the triangulation
@@ -83,9 +85,9 @@ where
     /// is pruned from the spatial index.
     ///
     /// **Future Enhancement**: Delaunay-aware cavity retriangulation will be added for
-    /// deletions. For now, occasional Delaunay violations after deletion are expected and
-    /// can be addressed by running flip-based repair (e.g., [`repair_delaunay_with_flips`](Self::repair_delaunay_with_flips))
-    /// or by leaving automatic repair enabled via [`DelaunayRepairPolicy`](crate::DelaunayRepairPolicy).
+    /// deletions. For now, local retriangulation can still require post-deletion flip repair; if
+    /// automatic repair is disabled and Level 4 validation detects a violation, deletion fails and
+    /// rolls back.
     ///
     /// # Arguments
     ///
@@ -110,6 +112,9 @@ where
     /// - Delaunay flip-based repair fails after deletion
     ///   ([`DeleteVertexError::InvariantViolation`] wrapping [`InvariantError::Delaunay`] wrapping
     ///   [`DelaunayTriangulationValidationError::RepairOperationFailed`]).
+    /// - Level 4 Delaunay validation fails after deletion when automatic repair is disabled
+    ///   ([`DeleteVertexError::InvariantViolation`] wrapping [`InvariantError::Delaunay`] wrapping
+    ///   [`DelaunayTriangulationValidationError::VerificationFailed`]).
     /// - Orientation canonicalization fails after repair
     ///   ([`DeleteVertexError::InvariantViolation`] wrapping [`InvariantError::Tds`]).
     ///
@@ -229,10 +234,19 @@ where
             let topology = self.tri.topology_guarantee();
             if self.should_run_delaunay_repair_after_mutation(topology) {
                 let seed_ref = seed_simplices.as_deref();
+                let repair_seed_count =
+                    seed_ref.map_or_else(|| self.tri.tds.number_of_simplices(), <[_]>::len);
+                let max_flips = local_repair_flip_budget::<D>(repair_seed_count);
                 let repair_result = {
                     self.invalidate_locate_hint_cache();
                     let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-                    repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology, None)
+                    repair_delaunay_with_flips_k2_k3(
+                        tds,
+                        kernel,
+                        seed_ref,
+                        topology,
+                        Some(max_flips),
+                    )
                 };
 
                 #[cfg(test)]
@@ -261,6 +275,8 @@ where
                             "Orientation canonicalization failed after vertex deletion",
                         )
                     })?;
+            } else {
+                self.is_valid().map_err(InvariantError::Delaunay)?;
             }
 
             Ok(simplices_removed)
@@ -624,5 +640,70 @@ mod tests {
         assert_eq!(dt.number_of_vertices(), vertex_count_before_stale_attempt);
         assert_eq!(dt.number_of_simplices(), simplex_count_before_stale_attempt);
         assert!(dt.as_triangulation().validate().is_ok());
+    }
+
+    #[test]
+    fn delete_vertex_without_repair_rolls_back_on_delaunay_violation() {
+        init_tracing();
+        let vertices = [
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
+            vertex![1.0, 1.0].unwrap(),
+            vertex![0.18, 0.42].unwrap(),
+            vertex![0.52, 0.18].unwrap(),
+            vertex![0.64, 0.72].unwrap(),
+        ];
+        let deleted_uuid = vertices[4].uuid();
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::try_new(&vertices).unwrap();
+        dt.is_valid().unwrap();
+        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
+
+        let vertex_key = dt
+            .vertices()
+            .find_map(|(key, vertex)| (vertex.uuid() == deleted_uuid).then_some(key))
+            .expect("fixture vertex should be present");
+        let vertex_count_before = dt.number_of_vertices();
+        let simplex_count_before = dt.number_of_simplices();
+        let hint_simplex_before = dt.simplices().next().map(|(key, _)| key);
+        dt.insertion_state.last_inserted_simplex = hint_simplex_before;
+        let mut spatial_index = HashGridIndex::<2>::try_new(1.0).unwrap();
+        for (vertex_key, vertex) in dt.vertices() {
+            spatial_index.insert_vertex(vertex_key, vertex.point().coords());
+        }
+        dt.spatial_index = Some(spatial_index);
+        let spatial_index_before = dt
+            .spatial_index
+            .as_ref()
+            .map(HashGridIndex::<2>::debug_snapshot);
+
+        let err = dt
+            .delete_vertex(vertex_key)
+            .expect_err("disabled repair should roll back a Level 4 violation");
+
+        assert_matches!(
+            err,
+            DeleteVertexError::InvariantViolation {
+                source: InvariantError::Delaunay(
+                    DelaunayTriangulationValidationError::VerificationFailed { .. },
+                ),
+            }
+        );
+        assert_eq!(dt.number_of_vertices(), vertex_count_before);
+        assert_eq!(dt.number_of_simplices(), simplex_count_before);
+        assert_eq!(
+            dt.insertion_state.last_inserted_simplex,
+            hint_simplex_before
+        );
+        assert_eq!(
+            dt.spatial_index
+                .as_ref()
+                .map(HashGridIndex::<2>::debug_snapshot),
+            spatial_index_before
+        );
+        assert!(dt.vertices().any(|(_, v)| v.uuid() == deleted_uuid));
+        dt.is_valid().unwrap();
     }
 }

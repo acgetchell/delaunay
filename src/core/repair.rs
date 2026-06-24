@@ -1979,6 +1979,60 @@ mod tests {
     }
 
     #[test]
+    fn test_vertex_removal_outcome_noops_for_missing_vertex_key() {
+        let vertices = [
+            vertex![0.0, 0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0, 0.0].unwrap(),
+            vertex![0.0, 1.0, 0.0].unwrap(),
+            vertex![0.0, 0.0, 1.0].unwrap(),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::try_new(&vertices).unwrap();
+        let mut tri = dt.as_triangulation().clone();
+        let missing_vertex = VertexKey::from(KeyData::from_ffi(0xBAD));
+        let vertex_count = tri.tds.number_of_vertices();
+        let simplex_count = tri.tds.number_of_simplices();
+
+        let outcome = tri
+            .remove_vertex_with_repair_seeds(missing_vertex)
+            .expect("missing vertex removal should be a no-op at the core repair layer");
+
+        assert_eq!(outcome.simplices_removed, 0);
+        assert!(outcome.repair_seed_simplices.is_empty());
+        assert_eq!(tri.tds.number_of_vertices(), vertex_count);
+        assert_eq!(tri.tds.number_of_simplices(), simplex_count);
+        tri.validate().unwrap();
+    }
+
+    #[test]
+    fn test_vertex_removal_outcome_removes_isolated_vertex_without_repair_seeds() {
+        let vertices = [
+            vertex![0.0, 0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0, 0.0].unwrap(),
+            vertex![0.0, 1.0, 0.0].unwrap(),
+            vertex![0.0, 0.0, 1.0].unwrap(),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::try_new(&vertices).unwrap();
+        let mut tri = dt.as_triangulation().clone();
+        let isolated_vertex = tri
+            .tds
+            .insert_vertex_with_mapping(vertex![0.5, 0.5, 0.5].unwrap())
+            .unwrap();
+        let simplex_count = tri.tds.number_of_simplices();
+
+        let outcome = tri
+            .remove_vertex_with_repair_seeds(isolated_vertex)
+            .expect("isolated vertex removal should restore the prior valid triangulation");
+
+        assert_eq!(outcome.simplices_removed, 0);
+        assert!(outcome.repair_seed_simplices.is_empty());
+        assert!(!tri.tds.contains_vertex_key(isolated_vertex));
+        assert_eq!(tri.tds.number_of_simplices(), simplex_count);
+        tri.validate().unwrap();
+    }
+
+    #[test]
     fn test_repair_vertex_removal_facet_issues_noops_without_local_issues() {
         let (mut tri, _, simplex_key) = build_single_tet();
         let mut new_simplices = SimplexKeyBuffer::new();

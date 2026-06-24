@@ -1387,7 +1387,7 @@ pub mod prelude {
     /// The focused prelude intentionally excludes the lower-level flip trait:
     ///
     /// ```compile_fail
-    /// use delaunay::prelude::flips::BistellarFlips;
+    /// use delaunay::prelude::pachner::BistellarFlips;
     /// ```
     ///
     /// Unified Pachner imports do not expose the primitive flip methods:

@@ -52,9 +52,9 @@ fn ridge_link_repair_validation_error(err: ManifoldError) -> InsertionError {
 // MUTATION (Requires Numeric Scalar Bounds)
 // =============================================================================
 //
-// Incremental insertion, deletion, and post-insertion repair/check helpers.
+// Incremental insertion and post-insertion repair/check helpers.
 // These require an f64-backed kernel for spatial-index construction,
-// Triangulation-layer insertion, and Triangulation-layer deletion.
+// Triangulation-layer insertion, and Delaunay repair predicates.
 
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
 where
@@ -181,7 +181,7 @@ where
         // DelaunayTriangulation adds:
         // - Kernel (provides in-sphere predicate for Delaunay property)
         // - Hint caching for performance
-        // - Future: Delaunay property restoration after deletion
+        // - Post-insertion Delaunay repair and/or validation
         //
         // Transactional guard: post-steps (flip repair and/or global Delaunay checks) can fail.
         // If they do, rollback to leave the triangulation unchanged.

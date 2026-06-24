@@ -402,8 +402,9 @@ For guidance on retry/skip behavior and choosing `RobustKernel`, see
 
 Vertex deletion is supported and preserves Levels 1–3. It uses an inverse k=1 fast path when
 possible and fan retriangulation otherwise, then runs flip-based Delaunay repair when the active
-`DelaunayRepairPolicy` allows it. If post-deletion repair or orientation canonicalization fails,
-the operation rolls back to the pre-deletion triangulation.
+`DelaunayRepairPolicy` allows it. If automatic repair is disabled, deletion still runs Level 4
+validation and rolls back on any Delaunay violation. If post-deletion repair, validation, or
+orientation canonicalization fails, the operation rolls back to the pre-deletion triangulation.
 
 ```rust
 use delaunay::prelude::construction::{
@@ -453,8 +454,10 @@ When automatic repair fails after the mutation, `delete_vertex` reports
 InvariantError::Delaunay(DelaunayTriangulationValidationError::RepairOperationFailed { operation:
 DelaunayRepairOperation::VertexRemoval, source }) }`, preserving the underlying
 `DelaunayRepairError` for callers that need to inspect the exact repair failure.
-Successful deletions invalidate internal locate hints and the spatial index so subsequent queries do
-not observe stale topology-dependent cache entries.
+Successful deletions invalidate internal locate hints so stale simplex handles
+are not reused. The spatial index is retained, but the deleted vertex entry is
+removed; later spatial lookups still validate candidate keys against the live
+TDS before using them.
 
 ## Pachner Move API: minimal local move example
 

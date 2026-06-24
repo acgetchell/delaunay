@@ -1727,10 +1727,12 @@ const LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_LT_4: usize = 16;
 const LOCAL_REPAIR_SEED_BACKLOG_FACTOR_D_GE_4: usize = 24;
 const LOCAL_REPAIR_SEED_BACKLOG_FACTOR_D_LT_4: usize = 16;
 
-/// Per-insertion local Delaunay repair flip budget.
+/// Local Delaunay repair flip budget for mutation-scoped seed frontiers.
 ///
 /// Computes `seeds * (D + 1) * FACTOR` with a minimum of `FLOOR`, using the
-/// dimension-aware constants above.
+/// dimension-aware constants above. Insertion and deletion use this budget to
+/// keep local post-mutation flip repair bounded while preserving typed
+/// non-convergence errors.
 pub(crate) const fn local_repair_flip_budget<const D: usize>(seed_simplices_len: usize) -> usize {
     let (factor, floor) = if D >= 4 {
         (

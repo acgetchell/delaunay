@@ -51,9 +51,11 @@ workflow. Agents must load every file in `docs/dev/` before making changes.
 - **Do not revert user changes.** The worktree may be dirty; preserve unrelated
   changes and work with any overlapping edits.
 - **Unsafe Rust is forbidden.** The crate enforces `#![forbid(unsafe_code)]`.
-- **Validate with the right command.** Rust changes require final `just ci`.
+- **Validate with the right command.** Non-test Rust changes require final
+  `just ci`. Rust unit-test-only, integration-test-only, and benchmark-only
+  changes use the matching focused validators from `docs/dev/commands.md`.
   Docs/config changes use `just check`; Python-only changes use
-  `just python-check`. Full details live in `docs/dev/commands.md`.
+  `just python-check`.
 - **Do not edit generated changelogs manually.** Changelog and documentation
   maintenance rules live in `docs/dev/docs.md`.
 
