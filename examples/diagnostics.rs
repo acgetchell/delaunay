@@ -19,11 +19,9 @@ use delaunay::prelude::diagnostics::{
     debug_print_first_delaunay_violation, delaunay_violation_report,
 };
 #[cfg(feature = "diagnostics")]
-use delaunay::prelude::flips::*;
-#[cfg(feature = "diagnostics")]
 use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateConversionError};
 #[cfg(feature = "diagnostics")]
-use delaunay::prelude::tds::FacetError;
+use delaunay::prelude::pachner::{FacetError, FacetHandle, PachnerMove, PachnerMoves};
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 #[cfg(feature = "diagnostics")]
@@ -144,7 +142,7 @@ fn build_non_delaunay_triangulation_2d()
                 };
                 let facet = FacetHandle::try_new(dt.tds(), simplex_key, facet_index)?;
                 let mut trial = dt.clone();
-                if trial.flip_k2(facet).is_ok()
+                if trial.attempt_pachner(PachnerMove::K2 { facet }).is_ok()
                     && trial.as_triangulation().validate().is_ok()
                     && matches!(
                         trial.is_valid(),

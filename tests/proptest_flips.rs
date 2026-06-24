@@ -9,10 +9,10 @@
 //! dimensions 2D-5D.
 
 use ::uuid::Uuid;
+use delaunay::flips::BistellarFlips;
 use delaunay::prelude::construction::{
     DelaunayTriangulation, TopologyGuarantee, Triangulation, Vertex,
 };
-use delaunay::prelude::flips::BistellarFlips;
 use delaunay::prelude::geometry::{AdaptiveKernel, FastKernel, Kernel, Point, RobustKernel};
 use delaunay::try_vertices_from_points;
 use proptest::prelude::*;

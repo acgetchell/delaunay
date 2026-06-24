@@ -389,9 +389,11 @@ The following previously deferred checks are now repository-owned Semgrep rules:
 - `delaunay.rust.prefer-prelude-imports-in-examples-benches` and
   `delaunay.rust.prefer-prelude-imports-in-delaunay-doctests` track the
   flattened Delaunay API surface: the removed `delaunay::delaunay::*` facade is
-  no longer matched, while focused root modules such as `delaunay::flips::*`
-  still trigger guidance toward the orthogonal prelude modules in public
-  samples.
+  no longer matched, while focused root modules still trigger guidance toward
+  the orthogonal prelude modules in public samples. The primitive flip module
+  docs and benchmark fixture helpers are excluded because `prelude::flips` is
+  intentionally absent; user-facing local moves go through
+  `delaunay::prelude::pachner`.
 - `delaunay.rust.prefer-simplex-key-buffer-for-local-frontiers` keeps local
   repair/topology simplex-key frontiers on `SimplexKeyBuffer` instead of raw
   `Vec<SimplexKey>`. The rule is intentionally name-based and heuristic:
@@ -404,6 +406,13 @@ The following previously deferred checks are now repository-owned Semgrep rules:
   `src/bench_fixtures.rs`, while public fixture-returning helpers must use the
   `validated_` prefix so Criterion harnesses receive fixtures whose repair
   contract has already been checked.
+- `delaunay.rust.no-ignored-fallible-results` keeps tests, examples, and
+  benchmarks from discarding result-like values with `let _ = ...`. Accepted
+  operations should bind and inspect returned metadata, especially APIs such as
+  Pachner moves where success returns topological evidence.
+- `delaunay.rust.prefer-vertex-macro-for-workflow-fixtures` keeps incidental
+  vertex setup in workflow tests, examples, and benchmarks on `vertex!`, while
+  leaving constructor-focused tests free to exercise `Vertex::try_new` directly.
 
 ## Retired Repository Rules
 

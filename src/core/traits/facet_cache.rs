@@ -249,6 +249,7 @@ mod tests {
     use crate::core::tds::Tds;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::triangulation::DelaunayTriangulation;
+    use crate::vertex;
     use std::sync::Arc;
     use std::sync::Barrier;
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -410,8 +411,8 @@ mod tests {
 
         // Modify triangulation by adding a new vertex - this will bump the generation
         // Use an interior vertex away from the circumcenter to avoid degenerate insertion cases
-        let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2]).unwrap();
-        dt.insert(new_vertex).expect("Failed to add vertex");
+        let new_vertex = vertex![0.2, 0.2, 0.2].unwrap();
+        dt.insert_vertex(new_vertex).expect("Failed to add vertex");
 
         // Verify generation was incremented
         let new_generation = dt.tds().generation();
@@ -717,18 +718,18 @@ mod tests {
         // Perform multiple operations to increment generation
         // Each operation should bump the generation counter
         let operations = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.3, 0.3]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.4, 0.4, 0.4]).unwrap(),
+            vertex![0.2, 0.2, 0.2].unwrap(),
+            vertex![0.3, 0.3, 0.3].unwrap(),
+            vertex![0.4, 0.4, 0.4].unwrap(),
         ];
 
         for vertex in operations {
             let prev_gen = dt.tds().generation();
-            let _ = dt.insert(vertex);
+            dt.insert_vertex(vertex).expect("Failed to add vertex");
             let new_gen = dt.tds().generation();
             assert!(
-                new_gen >= prev_gen,
-                "Generation should not go backwards after operation"
+                new_gen > prev_gen,
+                "Generation should increase after insertion"
             );
         }
 
@@ -954,8 +955,8 @@ mod tests {
 
         // Modify triangulation by adding a new vertex - this will bump the generation
         // Use an interior vertex away from the circumcenter to avoid degenerate insertion cases
-        let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2]).unwrap();
-        dt.insert(new_vertex).expect("Failed to add vertex");
+        let new_vertex = vertex![0.2, 0.2, 0.2].unwrap();
+        dt.insert_vertex(new_vertex).expect("Failed to add vertex");
 
         // Verify generation was incremented
         let new_generation = dt.tds().generation();
@@ -1090,12 +1091,12 @@ mod tests {
         // Modify triangulation multiple times rapidly with unique coordinates
         let test_vertices = [
             // Interior point away from circumcenter to reduce degeneracy
-            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.3, 0.1]).unwrap(), // Another interior point
-            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.1, 0.3]).unwrap(), // Third interior point
+            vertex![0.2, 0.2, 0.2].unwrap(),
+            vertex![0.3, 0.3, 0.1].unwrap(), // Another interior point
+            vertex![0.2, 0.1, 0.3].unwrap(), // Third interior point
         ];
         for vertex in test_vertices {
-            dt.insert(vertex).expect("Failed to add vertex");
+            dt.insert_vertex(vertex).expect("Failed to add vertex");
         }
 
         let final_gen = dt.tds().generation();
@@ -1160,7 +1161,7 @@ mod tests {
 
         // Add vertex - size should change
         // Use an interior vertex away from circumcenter to avoid degenerate insertion cases
-        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2]).unwrap())
+        dt.insert_vertex(vertex![0.2, 0.2, 0.2].unwrap())
             .expect("Failed to add vertex");
         let cache3 = provider.try_get_or_build_facet_cache(dt.tds()).unwrap();
         // Size might be different after adding a vertex (more simplices = more facets)

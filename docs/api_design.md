@@ -1,24 +1,26 @@
-# API Design: Two-Track Approach
+# API Design: Construction and Local Move Editing
 
-This document explains the dual API design for working with Delaunay triangulations:
-the **Builder API** for constructing and maintaining Delaunay triangulations, and
-the **Edit API** for explicit topology editing via bistellar flips.
+This document explains the public API design for working with Delaunay
+triangulations: construction and vertex lifecycle APIs for maintaining Delaunay
+triangulations, and the Pachner move API for explicit local topology edits.
 
 ## Overview
 
 The library provides two distinct APIs for different use cases:
 
-1. **Builder API** (`DelaunayTriangulation::insert` / `::remove_vertex`)
+1. **Builder API** (`DelaunayTriangulation::insert_vertex` / `::delete_vertex`)
    - High-level construction and maintenance of Delaunay triangulations
    - Automatically maintains the Delaunay property (empty circumsphere)
    - Designed for building triangulations from point sets
    - Uses cavity-based insertion and fan retriangulation
 
-2. **Edit API** (`prelude::flips::BistellarFlips` trait)
-   - Low-level topology editing via bistellar (Pachner) flips
+2. **Pachner Move API** (`prelude::pachner::PachnerMoves` trait)
+   - Explicit local topology editing via Pachner move requests
    - Explicit control over individual topology operations
    - Does **not** automatically restore the Delaunay property
    - Designed for topology manipulation, research, and custom algorithms
+   - Keeps raw flip primitives out of preludes; import `delaunay::flips`
+     directly only when testing or documenting the primitive layer itself
 
 Examples that derive `thiserror::Error` assume the example crate includes
 `thiserror`; run `cargo add thiserror` alongside `delaunay` when copying those
@@ -29,7 +31,7 @@ snippets into an application.
 ### Use the Builder API when
 
 - Building a Delaunay triangulation from a set of points
-- Adding/removing vertices while maintaining the Delaunay property
+- Adding/deleting vertices while maintaining the Delaunay property
 - You need automatic geometric property preservation
 - Working with standard computational geometry workflows
 
@@ -42,7 +44,7 @@ snippets into an application.
 - Mesh generation
 - Scientific simulations requiring Delaunay meshes
 
-### Use the Edit API when
+### Use the Pachner Move API when
 
 - Implementing custom topological algorithms
 - Researching bistellar flip sequences
@@ -81,11 +83,11 @@ fn main() -> DelaunayResult<()> {
 
     // Incremental insertion (maintains Delaunay property)
     let new_vertex = vertex![0.5, 0.5, 0.5]?;
-    dt.insert(new_vertex)?;
+    dt.insert_vertex(new_vertex)?;
 
-    // Vertex removal (topology-preserving, with automatic repair when enabled)
+    // Vertex deletion (topology-preserving, with automatic repair when enabled)
     if let Some((vertex_key, _)) = dt.vertices().next() {
-        dt.remove_vertex(vertex_key)?;
+        dt.delete_vertex(vertex_key)?;
     }
     Ok(())
 }
@@ -119,7 +121,7 @@ fn main() -> DelaunayResult<()> {
     dt.set_validation_policy(ValidationPolicy::Always);
 
     // Works like any other DelaunayTriangulation
-    dt.insert(vertex![0.25, 0.75]?)?;
+    dt.insert_vertex(vertex![0.25, 0.75]?)?;
     Ok(())
 }
 ```
@@ -145,13 +147,13 @@ for topology guarantee and validation policy details.
 ### Key Characteristics
 
 - **Automatic property preservation**: Insertion maintains the Delaunay
-  empty-circumsphere property; removal runs flip-based repair when the active
+  empty-circumsphere property; deletion runs flip-based repair when the active
   `DelaunayRepairPolicy` permits it
 - **Cavity-based insertion**: New vertices are inserted by identifying conflicting simplices, removing them, and filling the cavity
-- **Transactional vertex removal**: Vertex removal uses an inverse k=1 fast path
-  when possible and fan-based retriangulation otherwise. If post-removal
+- **Transactional vertex deletion**: Vertex deletion uses an inverse k=1 fast path
+  when possible and fan-based retriangulation otherwise. If post-deletion
   Delaunay repair or orientation canonicalization fails, the triangulation and
-  internal caches are restored to their pre-removal state.
+  internal caches are restored to their pre-deletion state.
 - **Auxiliary data**: Vertices and simplices carry optional user data (`U` / `V`). Read via `vertex.data()` /
   `simplex.data()`, write via checked `dt.set_vertex_data(key, data)?` /
   `dt.set_simplex_data(key, data)?` calls (O(1), invariant-preserving, typed failure for stale keys).
@@ -164,16 +166,19 @@ for topology guarantee and validation policy details.
   `dt.try_set_validation_policy(...)` or `dt.set_validation_policy(...)`) governs automatic topology validation for
   subsequent construction/modification operations
 
-## Edit API Reference
+## Pachner Move API Reference
 
-The Edit API is exposed through the `BistellarFlips` trait in `prelude::flips`:
+The local edit API is exposed through the `PachnerMoves` trait in
+`prelude::pachner`:
 
 ```rust
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
-use delaunay::prelude::flips::*;
 use delaunay::prelude::geometry::CoordinateConversionError;
+use delaunay::prelude::pachner::{
+    EdgeKey, FacetHandle, FlipError, PachnerMove, PachnerMoves, TriangleHandle,
+};
 
 #[derive(Debug, thiserror::Error)]
 enum ExampleError {
@@ -199,23 +204,26 @@ fn main() -> Result<(), ExampleError> {
     let Some((simplex_key, _)) = dt.simplices().next() else {
         return Ok(());
     };
-    let info = dt.flip_k1_insert(simplex_key, vertex![0.25, 0.25, 0.25]?)?;
+    let info = dt.attempt_pachner(PachnerMove::K1Insert {
+        simplex_key,
+        vertex: vertex![0.25, 0.25, 0.25]?,
+    })?;
 
     // k=1 inverse: Remove a vertex (collapses its star)
     let vertex_key = info.inserted_face_vertices[0];
-    dt.flip_k1_remove(vertex_key)?;
+    dt.attempt_pachner(PachnerMove::K1Remove { vertex_key })?;
 
     // k=2 move: Flip a facet (2 simplices ↔ D simplices)
     let facet = /* FacetHandle */;
-    let info = dt.flip_k2(facet)?;
+    let info = dt.attempt_pachner(PachnerMove::K2 { facet })?;
 
     // k=2 inverse: Flip from an edge star (D simplices ↔ 2 simplices)
     let edge = EdgeKey::try_new(info.inserted_face_vertices[0], info.inserted_face_vertices[1])?;
-    dt.flip_k2_inverse_from_edge(edge)?;
+    dt.attempt_pachner(PachnerMove::K2Inverse { edge })?;
 
     // k=3 move: Flip a ridge (3 simplices ↔ D-1 simplices, requires D ≥ 3)
     let ridge = /* RidgeHandle */;
-    let info = dt.flip_k3(ridge)?;
+    let info = dt.attempt_pachner(PachnerMove::K3 { ridge })?;
 
     // k=3 inverse: Flip from a triangle star (D-1 simplices ↔ 3 simplices)
     let triangle = TriangleHandle::try_new(
@@ -223,7 +231,7 @@ fn main() -> Result<(), ExampleError> {
         info.inserted_face_vertices[1],
         info.inserted_face_vertices[2],
     )?;
-    dt.flip_k3_inverse_from_triangle(triangle)?;
+    dt.attempt_pachner(PachnerMove::K3Inverse { triangle })?;
     Ok(())
 }
 ```
@@ -232,37 +240,37 @@ fn main() -> Result<(), ExampleError> {
 
 #### k=1 Moves (Simplex Split/Merge)
 
-- **Forward (`flip_k1_insert`)**: Insert a vertex into a simplex, splitting it into D+1 simplices
+- **Forward (`PachnerMove::K1Insert`)**: Insert a vertex into a simplex, splitting it into D+1 simplices
   - Valid for D ≥ 1
   - Replaces 1 simplex with D+1 simplices
   - Removed face: the entire simplex (D-simplex)
   - Inserted face: the new vertex (0-simplex)
 
-- **Inverse (`flip_k1_remove`)**: Remove a vertex, collapsing its star
+- **Inverse (`PachnerMove::K1Remove`)**: Remove a vertex, collapsing its star
   - Requires the vertex star to be collapsible (star of D+1 simplices forming a ball)
   - Replaces D+1 simplices with 1 simplex
 
 #### k=2 Moves (Facet Flip)
 
-- **Forward (`flip_k2`)**: Flip a facet shared by 2 simplices
+- **Forward (`PachnerMove::K2`)**: Flip a facet shared by 2 simplices
   - Valid for D ≥ 2
   - Replaces 2 simplices with D simplices
   - Removed face: the shared facet ((D-1)-simplex)
   - Inserted face: an edge (1-simplex)
 
-- **Inverse (`flip_k2_inverse_from_edge`)**: Flip from an edge star
+- **Inverse (`PachnerMove::K2Inverse`)**: Flip from an edge star
   - Requires an edge with star of D simplices
   - Replaces D simplices with 2 simplices
 
 #### k=3 Moves (Ridge Flip)
 
-- **Forward (`flip_k3`)**: Flip a ridge
+- **Forward (`PachnerMove::K3`)**: Flip a ridge
   - Valid for D ≥ 3
   - Replaces 3 simplices with D-1 simplices
   - Removed face: a ridge ((D-2)-simplex)
   - Inserted face: a triangle (2-simplex)
 
-- **Inverse (`flip_k3_inverse_from_triangle`)**: Flip from a triangle star
+- **Inverse (`PachnerMove::K3Inverse`)**: Flip from a triangle star
   - Requires a triangle with star of D-1 simplices
   - Replaces D-1 simplices with 3 simplices
 
@@ -276,7 +284,7 @@ fn main() -> Result<(), ExampleError> {
 
 ### Important Caveats
 
-⚠️ **The Edit API does not preserve the Delaunay property automatically.**
+⚠️ **The Pachner Move API does not preserve the Delaunay property automatically.**
 
 After applying flips, you should:
 
@@ -298,9 +306,9 @@ You can mix both APIs in the same workflow:
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
-use delaunay::prelude::flips::*;
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::insertion::InsertionError;
+use delaunay::prelude::pachner::{FacetHandle, FlipError, PachnerMove, PachnerMoves};
 
 #[derive(Debug, thiserror::Error)]
 enum ExampleError {
@@ -325,11 +333,11 @@ fn main() -> Result<(), ExampleError> {
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
     // 2. Add vertices using Builder API (maintains Delaunay)
-    dt.insert(vertex![0.5, 0.5, 0.5]?)?;
+    dt.insert_vertex(vertex![0.5, 0.5, 0.5]?)?;
 
-    // 3. Make custom topology edits (Edit API)
+    // 3. Make custom topology edits (Pachner Move API)
     let facet = /* ... */;
-    dt.flip_k2(facet)?;
+    dt.attempt_pachner(PachnerMove::K2 { facet })?;
 
     // 4. Verify Delaunay property if needed
     if let Err(e) = dt.is_valid() {
@@ -351,7 +359,7 @@ Both APIs work with the same validation framework but have different guarantees:
 - ✅ Designed to maintain **Delaunay property** (Level 4)
 - ✅ Fails gracefully if invariants cannot be maintained
 
-### Edit API Guarantees
+### Pachner Move API Guarantees
 
 - ✅ Maintains **structural invariants** (Level 1-2)
 - ✅ Checks **geometric degeneracy** (prevents degenerate flips)
@@ -382,7 +390,8 @@ let report = dt.validation_report();
 
 - **Builder API**: Implemented in `delaunay::construction`, `delaunay::builder`,
   and `core::algorithms::incremental_insertion`
-- **Edit API**: Implemented in `delaunay::flips` (public trait) and `core::algorithms::flips` (internal implementation)
+- **Pachner Move API**: Implemented in `delaunay::pachner` over the primitive
+  `delaunay::flips` trait and `core::algorithms::flips` internals
 - **Low-level primitives**: Context builders and flip application functions are `pub(crate)` in `core::algorithms::flips`
 
 ### Borrowed Views, Handles, Snapshots, And Rollback State
@@ -448,9 +457,9 @@ immutable access.
 
 The separation serves several purposes:
 
-1. **Clear contracts**: Builder API guarantees Delaunay property; Edit API does not
+1. **Clear contracts**: Builder API guarantees Delaunay property; Pachner Move API does not
 2. **Safety**: Low-level flip primitives are not exposed to prevent accidental misuse
-3. **Flexibility**: Edit API enables research and custom algorithms without restricting the design
+3. **Flexibility**: Pachner Move API enables research and custom algorithms without restricting the design
 4. **Documentation**: Clear distinction between "construction" and "manipulation" workflows
 
 ## Examples
@@ -543,4 +552,4 @@ changed or ambiguous simplices receive no payload.
 - **Validation framework**: See `docs/validation.md` for detailed validation guide
 - **Invariant rationale**: See [`invariants.md`](invariants.md) for theory and implementation pointers
 - **Topology analysis**: See `docs/topology.md` for topological concepts
-- **API implementation**: See `delaunay::flips` module documentation
+- **API implementation**: See `delaunay::pachner` and `delaunay::flips` module documentation

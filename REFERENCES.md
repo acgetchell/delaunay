@@ -22,7 +22,7 @@ processed by GitHub and other platforms.
 **Quick citation:**
 
 ```text
-Adam Getchell. 2025. delaunay: A d-dimensional Delaunay triangulation library.
+Adam Getchell. 2026. delaunay: A d-dimensional Delaunay triangulation library.
 Zenodo. DOI: https://doi.org/10.5281/zenodo.16931097
 ```
 
@@ -136,7 +136,7 @@ This section contains the foundational algorithms and data structures that form 
 
 - Blandford, D.K., Blelloch, G.E., and Kadow, C. "Engineering a Compact Parallel Delaunay Algorithm in 3D."
   *Proceedings of the Twenty-Second Annual Symposium on Computational Geometry* (2006): 292-300.
-  DOI: [10.1145/1137856.1137895](https://doi.org/10.1145/1137856.1137895)
+  DOI: [10.1145/1137856.1137900](https://doi.org/10.1145/1137856.1137900)
 - de Berg, M., et al. "Computational Geometry: Algorithms and Applications." 3rd ed. Berlin: Springer-Verlag, 2008.
   DOI: [10.1007/978-3-540-77974-2](https://doi.org/10.1007/978-3-540-77974-2)
 - Devillers, O. "The Delaunay Hierarchy." *International Journal of Foundations of Computer Science* 13,
@@ -185,7 +185,7 @@ This section contains the foundational algorithms and data structures that form 
   DOI: [10.1142/S0129054102001047](https://doi.org/10.1142/S0129054102001047)
 - Mücke, E.P., Saias, I., and Zhu, B. "Fast Randomized Point Location Without Preprocessing in Two- and Three-Dimensional Delaunay Triangulations."
   *Proceedings of the Twelfth Annual Symposium on Computational Geometry* (1996): 274-283.
-  DOI: [10.1145/237218.237393](https://doi.org/10.1145/237218.237393)
+  DOI: [10.1145/237218.237396](https://doi.org/10.1145/237218.237396)
 
 ### Scoped Local Validation and Flips
 
@@ -251,11 +251,11 @@ These references ensure the library's geometric computations are mathematically 
 
 - Fortune, S., and Van Wyk, C.J. "Efficient Exact Arithmetic for Computational Geometry."
   *Proceedings of the Ninth Annual Symposium on Computational Geometry* (1993): 163-172.
-  DOI: [10.1145/160985.161140](https://doi.org/10.1145/160985.161140)
+  DOI: [10.1145/160985.161015](https://doi.org/10.1145/160985.161015)
 - Fortune, S., and Van Wyk, C. J. "Static Analysis Yields Efficient Exact Integer Arithmetic for Computational Geometry."
-  *ACM Transactions on Graphics* 15, no. 3 (1996): 223-248. DOI: [10.1145/234535.234691](https://doi.org/10.1145/234535.234691)
+  *ACM Transactions on Graphics* 15, no. 3 (1996): 223-248. DOI: [10.1145/231731.231735](https://doi.org/10.1145/231731.231735)
 - Karasick, M., Lieber, D., and Nackman, L. R. "Efficient Delaunay Triangulation Using Rational Arithmetic."
-  *ACM Transactions on Graphics* 10, no. 1 (1991): 71-91. DOI: [10.1145/99902.99917](https://doi.org/10.1145/99902.99917)
+  *ACM Transactions on Graphics* 10, no. 1 (1991): 71-91. DOI: [10.1145/99902.99905](https://doi.org/10.1145/99902.99905)
 - Shewchuk, J. R. "Adaptive Precision Floating-Point Arithmetic and Fast Robust Geometric Predicates."
   *Discrete & Computational Geometry* 18, no. 3 (1997): 305-363. DOI: [10.1007/PL00009321](https://doi.org/10.1007/PL00009321)
 - Shewchuk, J. R. "Robust Adaptive Floating-Point Geometric Predicates."
@@ -267,7 +267,7 @@ These references ensure the library's geometric computations are mathematically 
 - Edelsbrunner, H., and Mücke, E. P. "Simulation of Simplicity: A Technique to Cope with Degenerate Cases in Geometric Algorithms."
   *ACM Transactions on Graphics* 9, no. 1 (1990): 66-104. DOI: [10.1145/77635.77639](https://doi.org/10.1145/77635.77639)
 - Seidel, R. "The Nature and Meaning of Perturbations in Geometric Computing."
-  *Discrete & Computational Geometry* 19, no. 1 (1998): 1-17. DOI: [10.1007/PL00009336](https://doi.org/10.1007/PL00009336)
+  *Discrete & Computational Geometry* 19, no. 1 (1998): 1-17. DOI: [10.1007/PL00009330](https://doi.org/10.1007/PL00009330)
 
 ## Mesh Quality Metrics
 

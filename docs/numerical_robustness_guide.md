@@ -312,7 +312,7 @@ If a duplicate is detected, strict APIs return
 telemetry.
 
 This layer catches duplicates that survive Hilbert dedup (e.g. when using
-`InsertionOrderStrategy::Input`) and also protects single-vertex `insert()` calls.
+`InsertionOrderStrategy::Input`) and also protects single-vertex `insert_vertex()` calls.
 
 See `duplicate_coordinates_error` in
 [`src/core/triangulation.rs`](../src/core/triangulation.rs).

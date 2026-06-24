@@ -158,7 +158,7 @@ Property-based tests for `DelaunayTriangulation` invariants (all Delaunay-specif
 **Implementation:** Bistellar flips (k=2 facets, k=3 ridges) with automatic Delaunay repair:
 
 - Fast O(N) flip-based validation provides 40-100x speedup over brute-force
-- Automatic repair runs after insertion/removal via `DelaunayRepairPolicy`
+- Automatic repair runs after insertion/deletion via `DelaunayRepairPolicy`
 - Inverse edge/triangle queues for 4D/5D repair
 - See `src/core/algorithms/flips.rs` for implementation
 

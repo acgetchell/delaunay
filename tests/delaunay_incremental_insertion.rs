@@ -14,7 +14,7 @@ use delaunay::geometry::kernel::RobustKernel;
 use delaunay::prelude::algorithms::{LocateResult, find_conflict_region, locate};
 use delaunay::prelude::collections::MAX_PRACTICAL_DIMENSION_SIZE;
 use delaunay::prelude::construction::{
-    ConstructionOptions, DedupPolicy, DelaunayTriangulation, TopologyGuarantee, Vertex,
+    ConstructionOptions, DedupPolicy, DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
 };
 use delaunay::prelude::geometry::{AdaptiveKernel, Point};
 use delaunay::prelude::tds::{
@@ -137,7 +137,7 @@ macro_rules! test_insert_single_point {
             #[test]
             fn [<test_insert_single_point_ $dim d>]() {
                 let vertices = vec![
-                    $(delaunay::prelude::Vertex::<(), _>::try_new($simplex).unwrap()),+
+                    $(vertex!($simplex).unwrap()),+
                 ];
 
                 let mut dt: DelaunayTriangulation<_, (), (), $dim> =
@@ -150,7 +150,7 @@ macro_rules! test_insert_single_point {
                 let initial_vertices = vertices.len();
                 assert_eq!(dt.number_of_simplices(), 1);
 
-                dt.insert(delaunay::prelude::Vertex::<(), _>::try_new($point).unwrap()).unwrap();
+                dt.insert_vertex(vertex!($point).unwrap()).unwrap();
 
                 assert_eq!(dt.number_of_vertices(), initial_vertices + 1);
                 assert_eq!(dt.number_of_simplices(), $expected_simplices);
@@ -205,7 +205,7 @@ macro_rules! test_insert_5_points {
             #[test]
             fn [<test_insert_5_points_ $dim d>]() {
                 let vertices = vec![
-                    $(delaunay::prelude::Vertex::<(), _>::try_new($simplex).unwrap()),+
+                    $(vertex!($simplex).unwrap()),+
                 ];
 
                 let mut dt: DelaunayTriangulation<_, (), (), $dim> =
@@ -219,9 +219,9 @@ macro_rules! test_insert_5_points {
                 assert_eq!(dt.number_of_simplices(), 1);
 
                 // Insert 5 well-spaced interior points
-                let points = vec![$(delaunay::prelude::Vertex::<(), _>::try_new($point).unwrap()),+];
+                let points = vec![$(vertex!($point).unwrap()),+];
                 for (i, point) in points.iter().enumerate() {
-                    dt.insert(*point).unwrap();
+                    dt.insert_vertex(*point).unwrap();
                     assert_eq!(dt.number_of_vertices(), initial_vertices + i + 1);
                 }
 
@@ -299,7 +299,7 @@ macro_rules! test_local_neighbor_repair_guardrails {
             #[test]
             fn [<test_local_neighbor_repair_guardrails_ $dim d>]() {
                 let vertices = vec![
-                    $(delaunay::prelude::Vertex::<(), _>::try_new($simplex).unwrap()),+
+                    $(vertex!($simplex).unwrap()),+
                 ];
                 let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), $dim> =
                     DelaunayTriangulation::try_with_topology_guarantee(
@@ -309,8 +309,8 @@ macro_rules! test_local_neighbor_repair_guardrails {
                     )
                     .unwrap();
 
-                for point in [$(delaunay::prelude::Vertex::<(), _>::try_new($point).unwrap()),+] {
-                    dt.insert(point).unwrap();
+                for point in [$(vertex!($point).unwrap()),+] {
+                    dt.insert_vertex(point).unwrap();
                     assert_neighbors_valid_and_symmetric(&dt);
                     assert_locate_and_conflict_traversal(&dt);
                 }
@@ -392,10 +392,10 @@ test_local_neighbor_repair_guardrails!(
 #[test]
 fn test_adaptive_kernel_vs_robust_kernel_2d() {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
+        vertex![0.0, 0.0].unwrap(),
+        vertex![1.0, 0.0].unwrap(),
+        vertex![0.0, 1.0].unwrap(),
+        vertex![0.5, 0.5].unwrap(),
     ];
 
     let dt_adaptive: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
@@ -429,9 +429,9 @@ fn test_adaptive_kernel_vs_robust_kernel_2d() {
 #[test]
 fn test_robust_kernel_incremental_insertion() {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        vertex![0.0, 0.0].unwrap(),
+        vertex![1.0, 0.0].unwrap(),
+        vertex![0.0, 1.0].unwrap(),
     ];
 
     let mut dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 2> =
@@ -443,12 +443,9 @@ fn test_robust_kernel_incremental_insertion() {
         .unwrap();
 
     // Insert points with robust kernel
-    dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([0.3, 0.3]).unwrap())
-        .unwrap();
-    dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.3]).unwrap())
-        .unwrap();
-    dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([0.4, 0.5]).unwrap())
-        .unwrap();
+    dt.insert_vertex(vertex![0.3, 0.3].unwrap()).unwrap();
+    dt.insert_vertex(vertex![0.5, 0.3].unwrap()).unwrap();
+    dt.insert_vertex(vertex![0.4, 0.5].unwrap()).unwrap();
 
     assert_eq!(dt.number_of_vertices(), 6);
     assert!(dt.number_of_simplices() > 1);
@@ -461,9 +458,9 @@ fn test_robust_kernel_incremental_insertion() {
 #[test]
 fn test_clustered_points_2d() {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([10.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([5.0, 10.0]).unwrap(),
+        vertex![0.0, 0.0].unwrap(),
+        vertex![10.0, 0.0].unwrap(),
+        vertex![5.0, 10.0].unwrap(),
     ];
 
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
@@ -474,16 +471,11 @@ fn test_clustered_points_2d() {
         .unwrap();
 
     // Insert 5 points clustered around (3.0, 3.0)
-    dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([3.0, 3.0]).unwrap())
-        .unwrap();
-    dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([3.1, 3.0]).unwrap())
-        .unwrap();
-    dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([3.0, 3.1]).unwrap())
-        .unwrap();
-    dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([3.1, 3.1]).unwrap())
-        .unwrap();
-    dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([3.05, 3.05]).unwrap())
-        .unwrap();
+    dt.insert_vertex(vertex![3.0, 3.0].unwrap()).unwrap();
+    dt.insert_vertex(vertex![3.1, 3.0].unwrap()).unwrap();
+    dt.insert_vertex(vertex![3.0, 3.1].unwrap()).unwrap();
+    dt.insert_vertex(vertex![3.1, 3.1].unwrap()).unwrap();
+    dt.insert_vertex(vertex![3.05, 3.05].unwrap()).unwrap();
 
     assert_eq!(dt.number_of_vertices(), 8);
     assert!(dt.number_of_simplices() > 3);
@@ -492,9 +484,9 @@ fn test_clustered_points_2d() {
 #[test]
 fn test_grid_pattern_2d() {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([3.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.5, 3.0]).unwrap(),
+        vertex![0.0, 0.0].unwrap(),
+        vertex![3.0, 0.0].unwrap(),
+        vertex![1.5, 3.0].unwrap(),
     ];
 
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
@@ -505,14 +497,10 @@ fn test_grid_pattern_2d() {
         .unwrap();
 
     // Insert 4 points in a grid
-    dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap())
-        .unwrap();
-    dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([2.0, 1.0]).unwrap())
-        .unwrap();
-    dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.5]).unwrap())
-        .unwrap();
-    dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([2.0, 1.5]).unwrap())
-        .unwrap();
+    dt.insert_vertex(vertex![1.0, 1.0].unwrap()).unwrap();
+    dt.insert_vertex(vertex![2.0, 1.0].unwrap()).unwrap();
+    dt.insert_vertex(vertex![1.0, 1.5].unwrap()).unwrap();
+    dt.insert_vertex(vertex![2.0, 1.5].unwrap()).unwrap();
 
     assert_eq!(dt.number_of_vertices(), 7);
     assert!(dt.number_of_simplices() > 4);
@@ -525,12 +513,12 @@ fn test_grid_pattern_2d() {
 #[test]
 fn test_batch_vs_incremental_same_vertex_count() {
     let all_vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([4.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 4.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([3.0, 1.0]).unwrap(),
+        vertex![0.0, 0.0].unwrap(),
+        vertex![4.0, 0.0].unwrap(),
+        vertex![2.0, 4.0].unwrap(),
+        vertex![1.0, 1.0].unwrap(),
+        vertex![2.0, 1.0].unwrap(),
+        vertex![3.0, 1.0].unwrap(),
     ];
 
     // Batch construction
@@ -543,9 +531,9 @@ fn test_batch_vs_incremental_same_vertex_count() {
 
     // Incremental construction
     let initial = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([4.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 4.0]).unwrap(),
+        vertex![0.0, 0.0].unwrap(),
+        vertex![4.0, 0.0].unwrap(),
+        vertex![2.0, 4.0].unwrap(),
     ];
     let mut dt_incremental: DelaunayTriangulation<_, (), (), 2> =
         DelaunayTriangulation::try_new_with_topology_guarantee(
@@ -555,13 +543,13 @@ fn test_batch_vs_incremental_same_vertex_count() {
         .unwrap();
 
     dt_incremental
-        .insert(delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap())
+        .insert_vertex(vertex![1.0, 1.0].unwrap())
         .unwrap();
     dt_incremental
-        .insert(delaunay::prelude::Vertex::<(), _>::try_new([2.0, 1.0]).unwrap())
+        .insert_vertex(vertex![2.0, 1.0].unwrap())
         .unwrap();
     dt_incremental
-        .insert(delaunay::prelude::Vertex::<(), _>::try_new([3.0, 1.0]).unwrap())
+        .insert_vertex(vertex![3.0, 1.0].unwrap())
         .unwrap();
 
     // Both should have same vertex count
@@ -580,12 +568,12 @@ fn test_batch_vs_incremental_same_vertex_count() {
 fn test_bulk_construction_skips_near_duplicate_3d() {
     // Use bulk construction with a near-duplicate inside the tolerance (1e-10).
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.2, 0.2]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.2 + 1e-11, 0.2, 0.2]).unwrap(),
+        vertex![0.0, 0.0, 0.0].unwrap(),
+        vertex![1.0, 0.0, 0.0].unwrap(),
+        vertex![0.0, 1.0, 0.0].unwrap(),
+        vertex![0.0, 0.0, 1.0].unwrap(),
+        vertex![0.2, 0.2, 0.2].unwrap(),
+        vertex![0.2 + 1e-11, 0.2, 0.2].unwrap(),
     ];
 
     let opts =
@@ -604,9 +592,9 @@ fn test_bulk_construction_skips_near_duplicate_3d() {
 #[test]
 fn test_insert_at_centroid() {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([3.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.5, 3.0]).unwrap(),
+        vertex![0.0, 0.0].unwrap(),
+        vertex![3.0, 0.0].unwrap(),
+        vertex![1.5, 3.0].unwrap(),
     ];
 
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
@@ -617,8 +605,7 @@ fn test_insert_at_centroid() {
         .unwrap();
 
     // Insert point at approximate centroid
-    dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([1.5, 1.0]).unwrap())
-        .unwrap();
+    dt.insert_vertex(vertex![1.5, 1.0].unwrap()).unwrap();
 
     assert_eq!(dt.number_of_vertices(), 4);
     assert_eq!(dt.number_of_simplices(), 3);
@@ -628,10 +615,10 @@ fn test_insert_at_centroid() {
 fn test_minimal_simplex_then_insert() {
     // Test with exactly D+1 vertices initially
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+        vertex![0.0, 0.0, 0.0].unwrap(),
+        vertex![1.0, 0.0, 0.0].unwrap(),
+        vertex![0.0, 1.0, 0.0].unwrap(),
+        vertex![0.0, 0.0, 1.0].unwrap(),
     ];
 
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
@@ -645,7 +632,7 @@ fn test_minimal_simplex_then_insert() {
     assert_eq!(dt.number_of_simplices(), 1);
 
     // Insert one point
-    dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([0.25, 0.25, 0.25]).unwrap())
+    dt.insert_vertex(vertex![0.25, 0.25, 0.25].unwrap())
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 5);
@@ -659,9 +646,9 @@ fn test_minimal_simplex_then_insert() {
 #[test]
 fn test_f64_coordinates() {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        vertex![0.0, 0.0].unwrap(),
+        vertex![1.0, 0.0].unwrap(),
+        vertex![0.0, 1.0].unwrap(),
     ];
 
     let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
@@ -672,8 +659,7 @@ fn test_f64_coordinates() {
         )
         .unwrap();
 
-    dt.insert(delaunay::prelude::Vertex::<(), _>::try_new([0.3, 0.3]).unwrap())
-        .unwrap();
+    dt.insert_vertex(vertex![0.3, 0.3].unwrap()).unwrap();
 
     assert_eq!(dt.number_of_vertices(), 4);
     assert_eq!(dt.number_of_simplices(), 3);
@@ -699,13 +685,13 @@ macro_rules! test_bootstrap_key_stability {
                     );
 
                 // Collect the test points
-                let points = vec![$(delaunay::prelude::Vertex::<(), _>::try_new($point).unwrap()),+];
+                let points = vec![$(vertex!($point).unwrap()),+];
                 assert_eq!(points.len(), $dim + 1, "Must provide exactly D+1 points");
 
                 // Insert vertices incrementally and collect keys
                 let mut keys = Vec::new();
                 for (i, point) in points.iter().enumerate() {
-                    let key = dt.insert(*point).unwrap();
+                    let key = dt.insert_vertex(*point).unwrap();
                     keys.push(key);
                     assert_eq!(dt.number_of_vertices(), i + 1);
 
@@ -802,16 +788,16 @@ fn test_bootstrap_returns_valid_key_after_tds_rebuild() {
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
         DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
-    let key1 = dt.insert(v1).unwrap();
+    let key1 = dt.insert_vertex(v1).unwrap();
     assert_eq!(dt.number_of_vertices(), 1);
     assert_eq!(dt.number_of_simplices(), 0);
 
-    let key2 = dt.insert(v2).unwrap();
+    let key2 = dt.insert_vertex(v2).unwrap();
     assert_eq!(dt.number_of_vertices(), 2);
     assert_eq!(dt.number_of_simplices(), 0);
 
     // D+1 vertex triggers TDS rebuild - this is where the bug occurred
-    let key3 = dt.insert(v3).unwrap();
+    let key3 = dt.insert_vertex(v3).unwrap();
     assert_eq!(dt.number_of_vertices(), 3);
     assert_eq!(dt.number_of_simplices(), 1);
 

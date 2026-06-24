@@ -409,7 +409,10 @@ for total conversions, passive report/view extraction, or proof-bearing input.
 Prefer `vertex!` for user-facing vertex construction examples. This includes
 `README.md`, active workflow/design docs, crate-level examples, doctests,
 integration-style examples under `examples/`, and benchmarks where vertex
-construction is incidental setup.
+construction is incidental setup. Integration tests should follow the same
+default when they exercise a higher-level workflow such as Pachner moves,
+flips, insertion, repair, or triangulation construction rather than vertex
+construction itself.
 
 Use the direct constructors only when they are the subject of the example:
 
@@ -757,8 +760,9 @@ Examples:
 delaunay::prelude
 delaunay::prelude::triangulation
 delaunay::prelude::construction
-delaunay::prelude::flips
+delaunay::prelude::pachner
 delaunay::prelude::insertion
+delaunay::prelude::deletion
 delaunay::prelude::repair
 delaunay::prelude::delaunayize
 delaunay::prelude::validation
@@ -773,6 +777,13 @@ delaunay::prelude::tds
 delaunay::prelude::topology::validation
 delaunay::prelude::topology::spaces
 ```
+
+Keep raw bistellar flip primitives out of preludes. Downstream examples should
+use `delaunay::prelude::pachner` for local move workflows, the construction
+prelude for `DelaunayTriangulation::insert_vertex`, and
+`delaunay::prelude::deletion` when matching typed `delete_vertex` failures.
+Import `delaunay::flips` directly only when testing, benchmarking, or
+documenting the primitive flip layer itself.
 
 The root `delaunay::prelude::*` is intentionally available as the
 kitchen-sink prelude for new users, quick experiments, and exploratory tests.
@@ -874,12 +885,15 @@ isolation.
 
 ## Testing Expectations
 
-Rust changes should be validated with:
+Use focused tests while iterating on Rust changes, for example:
 
 ```bash
 just test
 just test-integration
 ```
+
+For final handoff validation after Rust/Cargo/example/benchmark/test changes,
+run `just ci`; see [`commands.md`](commands.md) for the full command matrix.
 
 Property tests are preferred for geometric invariants such as:
 
@@ -890,6 +904,11 @@ Property tests are preferred for geometric invariants such as:
 ---
 
 ## Performance
+
+For performance-sensitive Rust changes, follow the benchmark-before-and-after
+workflow in [`perf-tuning.md`](perf-tuning.md). Add a representative benchmark
+when none exists, and cover 2D through 5D for dimension-generic hot paths
+whenever feasible.
 
 Avoid unnecessary allocations.
 

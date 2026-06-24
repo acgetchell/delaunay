@@ -7,17 +7,17 @@
 
 use std::{collections::HashSet, fmt, num::TryFromIntError};
 
+use delaunay::flips::{
+    BistellarFlips, EdgeKey, FacetHandle, FlipError, RidgeHandle, SimplexKey, TriangleHandle,
+    TriangleHandleError,
+};
 use delaunay::prelude::construction::{
     ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError,
     InsertionOrderStrategy, TopologyGuarantee, Vertex, vertex,
 };
-use delaunay::prelude::flips::{
-    BistellarFlips, EdgeKey, EdgeKeyError, FacetHandle, FlipError, RidgeHandle, SimplexKey,
-    TriangleHandle, TriangleHandleError,
-};
 use delaunay::prelude::geometry::{CoordinateConversionError, Point, RobustKernel, simplex_volume};
 use delaunay::prelude::query::{JaccardComputationError, format_jaccard_report};
-use delaunay::prelude::tds::{FacetError, InvariantError, TdsError, VertexKey};
+use delaunay::prelude::tds::{EdgeKeyError, FacetError, InvariantError, TdsError, VertexKey};
 use delaunay::prelude::topology::validation::{
     ManifoldError, RidgeCandidate, RidgeCandidateError, ridge_star_simplices,
 };

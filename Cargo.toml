@@ -21,6 +21,7 @@ include = [
     "/benches/**/*.rs",
     "/benches/README.md",
     "/docs/*.md",
+    "/docs/architecture/*.md",
     "/examples/**/*.rs",
     "/examples/README.md",
     "/src/**/*.rs",
@@ -114,14 +115,19 @@ path = "benches/profiling_suite.rs"
 harness = false
 
 [[bench]]
+name = "pachner_stress"
+path = "benches/pachner_stress.rs"
+harness = false
+
+[[bench]]
 name = "pl_manifold_repair"
 path = "benches/pl_manifold_repair.rs"
 harness = false
 required-features = [ "bench" ]
 
 [[bench]]
-name = "remove_vertex"
-path = "benches/remove_vertex.rs"
+name = "delete_vertex"
+path = "benches/delete_vertex.rs"
 harness = false
 
 [[bench]]

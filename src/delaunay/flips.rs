@@ -2,9 +2,9 @@
 //!
 //! This module exposes **high-level** flip methods for explicit triangulation editing.
 //! These operations do **not** automatically restore the Delaunay property.
-//! For Delaunay construction/removal, use
-//! [`crate::DelaunayTriangulation::insert`] and
-//! [`crate::DelaunayTriangulation::remove_vertex`].
+//! For Delaunay construction/deletion, use
+//! [`crate::DelaunayTriangulation::insert_vertex`] and
+//! [`crate::DelaunayTriangulation::delete_vertex`].
 
 #![forbid(unsafe_code)]
 
@@ -32,7 +32,6 @@ use crate::core::algorithms::flips::{
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::vertex::Vertex;
-use crate::geometry::kernel::Kernel;
 use crate::triangulation::DelaunayTriangulation;
 /// High-level triangulation editing operations via bistellar flips.
 ///
@@ -40,7 +39,7 @@ use crate::triangulation::DelaunayTriangulation;
 ///
 /// ```rust
 /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, TopologyGuarantee};
-/// use delaunay::prelude::flips::*;
+/// use delaunay::flips::BistellarFlips;
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -85,7 +84,7 @@ pub trait BistellarFlips<const D: usize> {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, TopologyGuarantee};
-    /// use delaunay::prelude::flips::*;
+    /// use delaunay::flips::BistellarFlips;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -133,7 +132,7 @@ pub trait BistellarFlips<const D: usize> {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, TopologyGuarantee};
-    /// use delaunay::prelude::flips::*;
+    /// use delaunay::flips::BistellarFlips;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -179,7 +178,7 @@ pub trait BistellarFlips<const D: usize> {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
-    /// use delaunay::prelude::flips::*;
+    /// use delaunay::flips::{BistellarFlips, FacetHandle};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -228,7 +227,7 @@ pub trait BistellarFlips<const D: usize> {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
-    /// use delaunay::prelude::flips::*;
+    /// use delaunay::flips::{BistellarFlips, RidgeHandle};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -279,7 +278,6 @@ pub trait BistellarFlips<const D: usize> {
 
 impl<K, U, V, const D: usize> BistellarFlips<D> for Triangulation<K, U, V, D>
 where
-    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -334,7 +332,6 @@ where
 
 impl<K, U, V, const D: usize> BistellarFlips<D> for DelaunayTriangulation<K, U, V, D>
 where
-    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {

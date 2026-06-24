@@ -22,9 +22,8 @@
 
 use delaunay::prelude::construction::{DelaunayTriangulationConstructionError, vertex};
 use delaunay::prelude::delaunayize::*;
-use delaunay::prelude::flips::*;
 use delaunay::prelude::geometry::CoordinateConversionError;
-use delaunay::prelude::tds::FacetError;
+use delaunay::prelude::pachner::{FacetError, FacetHandle, FlipError, PachnerMove, PachnerMoves};
 use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 
 // For the generic print_outcome helper.
@@ -179,7 +178,7 @@ fn flip_then_repair_2d() -> Result<(), DelaunayizeRepairExampleError> {
     let mut violating_facet = None;
     for facet in facets {
         let mut trial = dt.clone();
-        if trial.flip_k2(facet).is_ok() && trial.is_valid().is_err() {
+        if trial.attempt_pachner(PachnerMove::K2 { facet }).is_ok() && trial.is_valid().is_err() {
             violating_facet = Some(facet);
             break;
         }
@@ -190,7 +189,8 @@ fn flip_then_repair_2d() -> Result<(), DelaunayizeRepairExampleError> {
         return Ok(());
     };
 
-    dt.flip_k2(facet)?;
+    let selected_flip = dt.attempt_pachner(PachnerMove::K2 { facet })?;
+    assert!(!selected_flip.new_simplices.is_empty());
     match dt.is_valid() {
         Ok(()) => {
             println!(

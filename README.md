@@ -78,7 +78,7 @@ meshing, or production-scale dynamic remeshing.
   workflows.
 - [x] Geometry measures and simplex quality metrics such as simplex volume, inradius, radius ratio, and
   normalized volume, plus Jaccard set-similarity diagnostics.
-- [x] Incremental insertion, insertion statistics, and transactional `remove_vertex` rollback on failed
+- [x] Incremental insertion, insertion statistics, and transactional `delete_vertex` rollback on failed
   repair/canonicalization.
 - [x] Optional Cargo feature gates for allocation counting, diagnostics, benchmark logging, and slow
   correctness tests.
@@ -123,7 +123,7 @@ fn main() -> DelaunayResult<()> {
 }
 ```
 
-For toroidal domains, auxiliary vertex/simplex data, insertion statistics, vertex removal, and
+For toroidal domains, auxiliary vertex/simplex data, insertion statistics, vertex deletion, and
 explicit flips, see [`docs/workflows.md`](docs/workflows.md).
 
 ## 🧪 Scientific Basis
@@ -156,9 +156,9 @@ explicit full-validation checkpoints.
 
 ## 🗺️ Documentation Map
 
-- [API Design](docs/api_design.md) - Builder vs Edit APIs and explicit bistellar flips.
+- [API Design](docs/api_design.md) - construction, vertex lifecycle, and explicit Pachner moves.
 - [Benchmarks](benches/README.md) - Criterion suites, perf-profile workflow, release summaries, and canary sizes.
-- [Code Organization](docs/code_organization.md) - Module layout, focused preludes, and contributor orientation.
+- [Code Organization](docs/code_organization.md) - Architecture hub with links to module maps, focused preludes, and file layout.
 - [Diagnostics](docs/diagnostics.md) - Structured reports, telemetry, and debug switches.
 - [Examples](examples/README.md) - Runnable examples for construction, hulls, topology editing, diagnostics, and repair.
 - [Invariants](docs/invariants.md) - Topological and geometric invariants enforced by the crate.

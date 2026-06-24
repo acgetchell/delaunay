@@ -2222,10 +2222,10 @@ mod tests {
 
         let vertex = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
         let duplicate = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
-        dt.insert(vertex).unwrap();
+        dt.insert_vertex(vertex).unwrap();
 
         // Same coordinates again (distinct UUID, constructed via Vertex smart constructors)
-        let result = dt.insert(duplicate);
+        let result = dt.insert_vertex(duplicate);
         assert_matches!(
             &result,
             Err(InsertionError::DuplicateCoordinates { .. }),
@@ -2240,14 +2240,14 @@ mod tests {
 
         let vertex1 = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
         let uuid1 = vertex1.uuid();
-        dt.insert(vertex1).unwrap();
+        dt.insert_vertex(vertex1).unwrap();
 
         let vertex2 = vertex_with_uuid(
             Point::try_new([4.0, 5.0, 6.0]).expect("finite point coordinates"),
             uuid1,
             None,
         );
-        let result = dt.insert(vertex2);
+        let result = dt.insert_vertex(vertex2);
         assert_matches!(
             &result,
             Err(InsertionError::DuplicateUuid {
@@ -2265,7 +2265,7 @@ mod tests {
         let initial_simplex_count = dt.number_of_simplices();
 
         let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap();
-        dt.insert(new_vertex).unwrap();
+        dt.insert_vertex(new_vertex).unwrap();
 
         assert_eq!(dt.number_of_vertices(), 5);
         assert!(
@@ -2285,7 +2285,7 @@ mod tests {
 
         let vertex = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
         let uuid = vertex.uuid();
-        dt.insert(vertex).unwrap();
+        dt.insert_vertex(vertex).unwrap();
         assert_eq!(dt.number_of_vertices(), 5);
 
         // Vertex should be findable by UUID.
@@ -2339,7 +2339,7 @@ mod tests {
         let vertex_uuid = vertex_ref.uuid();
 
         // Remove the vertex and all simplices containing it
-        let simplices_removed = dt.remove_vertex(vertex_key).unwrap();
+        let simplices_removed = dt.delete_vertex(vertex_key).unwrap();
 
         // Verify the vertex was removed
         assert!(
@@ -2389,8 +2389,7 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_vertex_nonexistent() {
-        // Test removing a vertex that doesn't exist
+    fn test_delete_vertex_rejects_nonexistent_vertex_key() {
         let vertices = [
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
@@ -2404,10 +2403,13 @@ mod tests {
         let initial_vertices = dt.number_of_vertices();
         let initial_simplices = dt.number_of_simplices();
 
-        // Remove should return 0 (no simplices removed)
-        let simplices_removed = dt.remove_vertex(nonexistent_key).unwrap();
+        let err = dt.delete_vertex(nonexistent_key).unwrap_err();
 
-        assert_eq!(simplices_removed, 0, "No simplices should be removed");
+        assert_matches!(
+            err,
+            crate::DeleteVertexError::VertexNotFound { vertex_key }
+                if vertex_key == nonexistent_key
+        );
         assert_eq!(
             dt.number_of_vertices(),
             initial_vertices,
@@ -2421,9 +2423,7 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_vertex_stale_key_is_idempotent() {
-        // With the VertexKey API, callers can hold a key after removal and reuse it.
-        // Double-remove must be a no-op returning Ok(0).
+    fn test_delete_vertex_rejects_stale_vertex_key() {
         let vertices = [
             crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
             crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
@@ -2436,16 +2436,16 @@ mod tests {
         let vertex_key = dt.vertices().next().unwrap().0;
 
         // First removal succeeds.
-        let simplices_removed = dt.remove_vertex(vertex_key).unwrap();
+        let simplices_removed = dt.delete_vertex(vertex_key).unwrap();
         assert!(simplices_removed > 0);
         let vertices_after = dt.number_of_vertices();
         let simplices_after = dt.number_of_simplices();
 
-        // Second removal with the same (now stale) key is a no-op.
-        let simplices_removed_again = dt.remove_vertex(vertex_key).unwrap();
-        assert_eq!(
-            simplices_removed_again, 0,
-            "Stale key should remove nothing"
+        let err = dt.delete_vertex(vertex_key).unwrap_err();
+        assert_matches!(
+            err,
+            crate::DeleteVertexError::VertexNotFound { vertex_key: stale_key }
+                if stale_key == vertex_key
         );
         assert_eq!(dt.number_of_vertices(), vertices_after);
         assert_eq!(dt.number_of_simplices(), simplices_after);
@@ -2466,7 +2466,7 @@ mod tests {
             let mut dt_2d: DelaunayTriangulation<_, (), (), 2> =
                 DelaunayTriangulation::try_new(&vertices_2d).unwrap();
             let vertex_key = dt_2d.vertices().next().unwrap().0;
-            let simplices_removed = dt_2d.remove_vertex(vertex_key).unwrap();
+            let simplices_removed = dt_2d.delete_vertex(vertex_key).unwrap();
             assert!(simplices_removed > 0);
             assert!(dt_2d.as_triangulation().tds.is_valid().is_ok());
         }
@@ -2493,7 +2493,7 @@ mod tests {
                 })
                 .unwrap()
                 .0;
-            let simplices_removed = dt_3d.remove_vertex(vertex_key).unwrap();
+            let simplices_removed = dt_3d.delete_vertex(vertex_key).unwrap();
             assert!(simplices_removed > 0);
             assert!(dt_3d.as_triangulation().tds.is_valid().is_ok());
         }
@@ -2521,7 +2521,7 @@ mod tests {
                 })
                 .unwrap()
                 .0;
-            let simplices_removed = dt_4d.remove_vertex(vertex_key).unwrap();
+            let simplices_removed = dt_4d.delete_vertex(vertex_key).unwrap();
             assert!(simplices_removed > 0);
             assert!(dt_4d.as_triangulation().tds.is_valid().is_ok());
         }
@@ -2561,7 +2561,7 @@ mod tests {
             .expect("Interior vertex should exist");
 
         // Remove the vertex
-        let simplices_removed = dt.remove_vertex(removed_vertex_key).unwrap();
+        let simplices_removed = dt.delete_vertex(removed_vertex_key).unwrap();
         assert!(
             simplices_removed > 0,
             "Should have removed at least one simplex"
@@ -4436,7 +4436,7 @@ mod tests {
 
         // Insert a new vertex so the locate hint is populated.
         let extra = Vertex::<_, _>::try_new_with_data([0.25, 0.25], 0i32).unwrap();
-        dt.insert(extra).unwrap();
+        dt.insert_vertex(extra).unwrap();
 
         // Data mutation should NOT clear the insertion hint.
         let key = dt.vertices().next().unwrap().0;
@@ -4450,7 +4450,7 @@ mod tests {
 
         // A subsequent insert should still succeed (hint not invalidated).
         let another = Vertex::<_, _>::try_new_with_data([0.75, 0.1], 0i32).unwrap();
-        assert!(dt.insert(another).is_ok());
+        assert!(dt.insert_vertex(another).is_ok());
         assert!(dt.validate().is_ok());
     }
 }

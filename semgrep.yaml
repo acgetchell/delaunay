@@ -1366,6 +1366,50 @@ rules:
       - pattern: $VALUE.unwrap()
       - pattern: $VALUE.expect(...)
 
+  - id: delaunay.rust.no-ignored-fallible-results
+    languages:
+      - generic
+    severity: WARNING
+    message: >-
+      Do not discard fallible or result-like values with let _ =; bind and
+      assert/inspect the returned value, or use explicit drop(...) when only
+      side effects matter.
+    metadata:
+      category: correctness
+      rationale: >-
+        Tests, examples, and benchmarks should prove what a fallible call
+        returned instead of merely proving that it did not error. Ignored
+        Pachner results can mask missing assertions on accepted move metadata.
+    paths:
+      include:
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/examples/**/*.rs"
+    pattern-either:
+      - pattern-regex: >-
+          (?ms)^\s*let\s+_\s*=\s*(?:(?!;).)*?(?:\?\s*;|\.(?:unwrap|expect|or_abort)\s*\()
+      - pattern-regex: '(?ms)^\s*let\s+_\s*=\s*(?:(?!;).)*?\.attempt_pachner\s*\('
+
+  - id: delaunay.rust.prefer-vertex-macro-for-workflow-fixtures
+    languages:
+      - generic
+    severity: WARNING
+    message: "Use vertex! for incidental vertex setup in workflow tests, examples, and benchmarks."
+    metadata:
+      category: maintainability
+      rationale: >-
+        Higher-level workflow samples should keep attention on the API under
+        test. Reserve Vertex::try_new and Vertex::try_new_with_data for
+        constructor-focused tests and docs.
+    paths:
+      include:
+        - "/tests/pachner_roundtrip.rs"
+        - "/benches/pachner_stress.rs"
+        - "/examples/**/*.rs"
+        - "/tests/semgrep/src/project_rules/workflow_vertex_macro.rs"
+    pattern-regex: >-
+      ^\s*(?!//|///|\*)[^\n]*\b(?:delaunay::prelude::)?Vertex\s*(?:::<[^;\n]+>)?\s*::\s*try_new(?:_with_data)?\s*\(
+
   - id: delaunay.rust.no-public-raw-bench-fixture-builders
     languages:
       - generic
@@ -1485,6 +1529,9 @@ rules:
         - "/examples/**/*.rs"
         - "/benches/**/*.rs"
         - "/src/project_rules/**/*.rs"
+      exclude:
+        - "/benches/ci_performance_suite.rs"
+        - "/benches/common/flip_workflows.rs"
     patterns:
       - pattern-either:
           - pattern-regex: '^\s*use\s+delaunay::(builder|construction|core|delaunayize|diagnostics|flips)::'
@@ -1508,6 +1555,9 @@ rules:
       include:
         - "/src/**/*.rs"
         - "/tests/semgrep/src/project_rules/**/*.rs"
+      exclude:
+        - "/src/core/algorithms/flips.rs"
+        - "/src/delaunay/flips.rs"
     patterns:
       - pattern-either:
           - pattern-regex: '^\s*//[/!]\s*(?:#\s*)?use\s+delaunay::(builder|construction|core|delaunayize|diagnostics|flips)::'

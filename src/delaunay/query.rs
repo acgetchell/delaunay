@@ -1310,6 +1310,7 @@ mod tests {
     use crate::core::tds::TdsError;
     use crate::core::validation::TriangulationValidationError;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
+    use crate::vertex;
     use std::{assert_matches, collections::HashSet, num::NonZeroUsize, sync::Once};
 
     struct Payload;
@@ -1595,8 +1596,7 @@ mod tests {
         assert_eq!(dt.number_of_simplices(), 1);
 
         // Insert interior point - should create 3 triangles
-        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.3]).unwrap())
-            .unwrap();
+        dt.insert_vertex(vertex![0.3, 0.3].unwrap()).unwrap();
         assert_eq!(dt.number_of_simplices(), 3);
     }
 
@@ -1721,8 +1721,7 @@ mod tests {
         assert_eq!(dt.tds().number_of_vertices(), 3);
 
         // Insert a new vertex
-        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.3]).unwrap())
-            .unwrap();
+        dt.insert_vertex(vertex![0.3, 0.3].unwrap()).unwrap();
 
         // After insertion, TDS accessor reflects the change
         assert_eq!(dt.tds().number_of_vertices(), 4);
@@ -1746,7 +1745,7 @@ mod tests {
         assert!(dt.tds().is_valid().is_ok());
 
         // Insert additional vertex
-        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2]).unwrap())
+        dt.insert_vertex(vertex![0.2, 0.2, 0.2, 0.2].unwrap())
             .unwrap();
 
         // TDS should still be valid after mutation

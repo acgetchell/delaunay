@@ -9,6 +9,7 @@ Agents must run appropriate checks after modifying code.
 ## Contents
 
 - [Core Workflow](#core-workflow)
+- [Validation Command Selection](#validation-command-selection)
 - [Justfile Usage](#justfile-usage)
 - [Formatting](#formatting)
 - [Linting](#linting)
@@ -49,6 +50,22 @@ These commands ensure:
 - static analysis
 - tests
 
+## Validation Command Selection
+
+Use the smallest non-mutating validator that covers the files you changed while
+iterating. For final handoff validation, Rust changes use `just ci`; docs,
+configuration, and Python-only changes stay on the narrower validators below.
+
+| Touched surface | Iteration validation | Final validation |
+|-----|-----|-----|
+| Documentation or configuration only | `just check` | `just check` |
+| Python-only changes under `scripts/` | `just python-check` | `just python-check` |
+| Rust/Cargo/examples/benches/tests | Focused checks, `just check`, or targeted tests | `just ci` |
+
+Do not run `just ci` merely because documentation, configuration, or Python
+files changed. Run `just ci` before final handoff when Rust code changed or
+when the maintainer explicitly asks for full CI.
+
 ## Justfile Usage
 
 This repository standardizes development tasks through the `justfile`.
@@ -61,7 +78,8 @@ Examples:
 
 - prefer `just check` instead of running `cargo clippy` directly
 - prefer `just fix` instead of running `cargo fmt` directly
-- prefer `just ci` instead of manually running multiple validation steps
+- prefer `just ci` instead of manually running multiple validation steps when
+  full CI is the right validation level
 
 Direct tool invocation should only be used when a corresponding `just`
 command does not exist.
@@ -139,7 +157,8 @@ cargo doc
 
 ## Full CI Validation
 
-Before large changes, run the full CI command:
+Before large Rust changes, broad API/test/benchmark changes, release-style
+validation, or explicit maintainer requests, run the full CI command:
 
 ```bash
 just ci
@@ -158,6 +177,11 @@ This runs:
 ---
 
 ## Benchmark Profiles
+
+For performance-sensitive code changes, follow
+[`perf-tuning.md`](perf-tuning.md): benchmark before editing, add a benchmark
+when none covers the hot path, benchmark after editing, and preserve
+correctness invariants throughout.
 
 `just ci` is the comprehensive error-catching validation path. It runs the
 `check`, `test`, and `examples` recipes. The `test` recipe already depends on
@@ -467,6 +491,8 @@ just action-lint
 | Fast compile check | `just check-fast` |
 | Check formatting | `just fmt-check` |
 | Apply formatters/auto-fixes | `just fix` |
+| Validate documentation/config-only changes | `just check` |
+| Validate Python-only changes | `just python-check` |
 | Run tests + compile smoke | `just test` |
 | Run unit/doc tests only | `just test-unit` |
 | Run integration tests | `just test-integration` |
@@ -490,7 +516,11 @@ Rust warnings are denied by the manifest lint policy and Clippy warnings are
 denied by the `just clippy` invocations. Keep any intentional warning-level
 exceptions explicit in `Cargo.toml`.
 
-Agents must ensure changes pass CI locally before proposing patches.
+Agents must ensure changes pass the appropriate local validator before
+proposing patches. Rust/Cargo/example/benchmark/test changes should pass
+`just ci` for final handoff validation; documentation/config-only changes
+should normally pass `just check`, and Python-only changes should normally pass
+`just python-check`.
 
 ---
 

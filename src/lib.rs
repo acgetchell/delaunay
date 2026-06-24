@@ -52,12 +52,13 @@
 //! | Construct/configure a Delaunay triangulation | `use delaunay::prelude::construction::*` |
 //! | Build/validate/repair generic triangulations | `use delaunay::prelude::triangulation::*` |
 //! | Low-level incremental insertion building blocks | `use delaunay::prelude::insertion::*` |
+//! | Post-construction vertex deletion errors and keys | `use delaunay::prelude::deletion::*` |
 //! | Read-only queries, traversal, convex hull | `use delaunay::prelude::query::*` |
 //! | Point location and conflict-region algorithms | `use delaunay::prelude::algorithms::*` |
 //! | Geometry helpers, coordinate ranges, predicates, points | `use delaunay::prelude::geometry::*` |
 //! | Random points / triangulations for examples and tests | `use delaunay::prelude::generators::*` |
 //! | Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
-//! | Bistellar flips (Pachner moves) | `use delaunay::prelude::flips::*` |
+//! | Unified Pachner move workflow | `use delaunay::prelude::pachner::*` |
 //! | Delaunay repair and flip-based Level 4 validation | `use delaunay::prelude::repair::*` |
 //! | Delaunayize workflow (repair + flip) | `use delaunay::prelude::delaunayize::*` |
 //! | Construction telemetry diagnostics | `use delaunay::prelude::diagnostics::*` |
@@ -176,7 +177,7 @@
 //! let before_simplices = dt.number_of_simplices();
 //!
 //! // Duplicate coordinates are rejected.
-//! let result = dt.insert(vertex![0.0, 0.0]?);
+//! let result = dt.insert_vertex(vertex![0.0, 0.0]?);
 //! std::assert_matches!(result, Err(InsertionError::DuplicateCoordinates { .. }));
 //!
 //! // On error, the triangulation is unchanged.
@@ -290,7 +291,7 @@
 //! dt.try_set_validation_policy(ValidationPolicy::ExplicitOnly)?;
 //!
 //! // Do incremental work...
-//! dt.insert(vertex![0.2, 0.2, 0.2]?)?;
+//! dt.insert_vertex(vertex![0.2, 0.2, 0.2]?)?;
 //!
 //! // ...then explicitly validate the topology layer when you need a certificate.
 //! assert!(dt.as_triangulation().validate().is_ok());
@@ -713,17 +714,23 @@ pub(crate) mod delaunay_query;
 /// End-to-end "repair then delaunayize" workflow.
 #[path = "delaunay/delaunayize.rs"]
 pub mod delaunayize;
+/// Post-construction vertex deletion operations.
+#[path = "delaunay/deletion.rs"]
+pub(crate) mod deletion;
 /// Construction and performance diagnostics.
 #[path = "delaunay/diagnostics.rs"]
 pub mod diagnostics;
 /// Triangulation editing operations (bistellar flips).
 #[path = "delaunay/flips.rs"]
 pub mod flips;
-/// Post-construction vertex insertion and removal operations.
+/// Post-construction vertex insertion operations.
 #[path = "delaunay/insertion.rs"]
 pub(crate) mod insertion;
 #[path = "delaunay/locality.rs"]
 pub(crate) mod locality;
+/// Unified Pachner move workflow API for Monte-Carlo-style editing.
+#[path = "delaunay/pachner.rs"]
+pub mod pachner;
 /// Repair policies and outcomes for Delaunay triangulations.
 #[path = "delaunay/repair.rs"]
 pub mod repair;
@@ -777,6 +784,7 @@ pub use crate::core::util::{
 pub use crate::core::validation::{
     TopologyGuarantee, TriangulationValidationError, ValidationConfigurationError, ValidationPolicy,
 };
+pub use crate::deletion::DeleteVertexError;
 pub use crate::repair::{
     DelaunayCheckPolicy, DelaunayRepairHeuristicConfig, DelaunayRepairHeuristicSeeds,
     DelaunayRepairOperation, DelaunayRepairOutcome, DelaunayRepairPolicy,
@@ -1263,7 +1271,7 @@ pub mod prelude {
         };
         pub use crate::vertex;
         pub use crate::{
-            CavityFillingError, CavityRepairStage, DelaunayTriangulation,
+            CavityFillingError, CavityRepairStage, DelaunayTriangulation, DeleteVertexError,
             FinalDelaunayValidationContext, FinalTopologyValidationContext,
             SpatialIndexConstructionFailure, TopologyGuarantee, Triangulation,
             TriangulationConstructionError, try_vertices_from_points,
@@ -1332,27 +1340,92 @@ pub mod prelude {
         };
     }
 
-    /// Bistellar (Pachner) flips for explicit triangulation editing.
+    /// Unified Pachner move workflow for Monte-Carlo-style local edits.
     ///
-    /// Repair-only diagnostics and validation helpers are intentionally
-    /// excluded; use [`crate::prelude::repair`] for those.
+    /// This focused prelude exports the unified request/result/dispatch API,
+    /// the handles and handle-construction errors needed to construct moves,
+    /// result metadata needed to inspect moves, and [`vertex!`](crate::vertex)
+    /// for k=1 insertion vertices. Low-level flip primitives stay under
+    /// [`crate::flips`] for expert/debug workflows.
     ///
-    /// ```compile_fail
-    /// use delaunay::prelude::flips::DelaunayRepairError;
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee,
+    /// };
+    /// use delaunay::prelude::pachner::{
+    ///     BistellarFlipKind, FlipDirection, PachnerMove, PachnerMoves, vertex,
+    /// };
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = vec![
+    ///     vertex![0.0, 0.0, 0.0]?,
+    ///     vertex![1.0, 0.0, 0.0]?,
+    ///     vertex![0.0, 1.0, 0.0]?,
+    ///     vertex![0.0, 0.0, 1.0]?,
+    /// ];
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .topology_guarantee(TopologyGuarantee::PLManifold)
+    ///     .build::<()>()?;
+    /// let Some((simplex_key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// let result = dt.attempt_pachner(PachnerMove::K1Insert {
+    ///     simplex_key,
+    ///     vertex: vertex![0.2, 0.2, 0.2]?,
+    /// })?;
+    /// assert_eq!(result.kind, BistellarFlipKind::k1(3));
+    /// assert_eq!(result.direction, FlipDirection::Forward);
+    /// assert_eq!(result.inserted_face_vertices.len(), 1);
+    /// assert_eq!(result.new_simplices.len(), 4);
+    /// # Ok(())
+    /// # }
     /// ```
     ///
-    pub mod flips {
-        pub use crate::DelaunayTriangulation;
-        pub use crate::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer, SmallBuffer};
+    /// The focused prelude intentionally excludes the lower-level flip trait:
+    ///
+    /// ```compile_fail
+    /// use delaunay::prelude::flips::BistellarFlips;
+    /// ```
+    ///
+    /// Unified Pachner imports do not expose the primitive flip methods:
+    ///
+    /// ```compile_fail
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
+    /// use delaunay::prelude::pachner::*;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = vec![
+    ///     vertex![0.0, 0.0, 0.0]?,
+    ///     vertex![1.0, 0.0, 0.0]?,
+    ///     vertex![0.0, 1.0, 0.0]?,
+    ///     vertex![0.0, 0.0, 1.0]?,
+    /// ];
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let Some((simplex_key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    /// let Ok(facet) = FacetHandle::try_new(dt.tds(), simplex_key, 0) else {
+    ///     return Ok(());
+    /// };
+    /// if dt.flip_k2(facet).is_err() {
+    ///     return Ok(());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub mod pachner {
         pub use crate::flips::{
-            BistellarFlipKind, BistellarFlips, FlipContextError, FlipDirection,
-            FlipEdgeAdjacencyError, FlipError, FlipInfo, FlipMutationError,
-            FlipNeighborWiringError, FlipOrientationCheckStage, FlipPredicateError,
-            FlipPredicateOperation, FlipTriangleAdjacencyError, FlipVertexAdjacencyError,
-            RidgeHandle, TriangleHandle, TriangleHandleError,
+            BistellarFlipKind, FlipDirection, FlipError, RidgeHandle, TriangleHandle,
+            TriangleHandleError,
         };
-        pub use crate::flips::{BistellarMove, ConstK};
-        pub use crate::tds::{EdgeKey, EdgeKeyError, FacetHandle, SimplexKey, VertexKey};
+        pub use crate::pachner::{PachnerMove, PachnerMoveResult, PachnerMoves};
+        pub use crate::tds::{
+            EdgeKey, EdgeKeyError, FacetError, FacetHandle, SimplexKey, Vertex, VertexKey,
+        };
+        pub use crate::vertex;
     }
 
     /// Incremental insertion building blocks and diagnostics.
@@ -1370,6 +1443,30 @@ pub mod prelude {
             repair_neighbor_pointers_local, wire_cavity_neighbors,
         };
         pub use crate::{InsertionOutcome, InsertionResult, InsertionStatistics};
+    }
+
+    /// Vertex deletion errors and key types.
+    ///
+    /// Deletion itself is an inherent method on
+    /// [`DelaunayTriangulation`], so callers
+    /// usually import the triangulation type from
+    /// [`prelude::construction`](crate::prelude::construction) and import this
+    /// focused prelude only when they need to match deletion-specific failures.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::deletion::{DeleteVertexError, VertexKey};
+    /// use slotmap::KeyData;
+    ///
+    /// let err = DeleteVertexError::VertexNotFound {
+    ///     vertex_key: VertexKey::from(KeyData::from_ffi(42)),
+    /// };
+    /// std::assert_matches!(err, DeleteVertexError::VertexNotFound { .. });
+    /// ```
+    pub mod deletion {
+        pub use crate::DeleteVertexError;
+        pub use crate::tds::VertexKey;
     }
 
     /// Topological operation telemetry and repair decisions.
@@ -1936,9 +2033,9 @@ mod tests {
     #[test]
     fn prelude_repair_exports() {
         let vertices = vec![
-            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            crate::vertex![0.0, 0.0].unwrap(),
+            crate::vertex![1.0, 0.0].unwrap(),
+            crate::vertex![0.0, 1.0].unwrap(),
         ];
         let dt: RepairDelaunayTriangulation<_, (), (), 2> =
             RepairDelaunayTriangulation::try_new(&vertices).unwrap();
@@ -1979,9 +2076,9 @@ mod tests {
     fn prelude_quality_exports() {
         // Test that quality functions are accessible from prelude
         let vertices = vec![
-            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            crate::vertex![0.0, 0.0].unwrap(),
+            crate::vertex![1.0, 0.0].unwrap(),
+            crate::vertex![0.0, 1.0].unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -2056,10 +2153,10 @@ mod tests {
 
         // DelaunayTriangulation construction
         let vertices = vec![
-            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::vertex![0.0, 0.0, 0.0].unwrap(),
+            crate::vertex![1.0, 0.0, 0.0].unwrap(),
+            crate::vertex![0.0, 1.0, 0.0].unwrap(),
+            crate::vertex![0.0, 0.0, 1.0].unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -2083,9 +2180,9 @@ mod tests {
     fn test_prelude_point_location() {
         // Test that point location algorithms are accessible
         let vertices = vec![
-            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            crate::vertex![0.0, 0.0].unwrap(),
+            crate::vertex![1.0, 0.0].unwrap(),
+            crate::vertex![0.0, 1.0].unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -2140,10 +2237,10 @@ mod tests {
     fn test_prelude_convex_hull() {
         // Test that convex hull operations are accessible
         let vertices = vec![
-            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            crate::vertex![0.0, 0.0, 0.0].unwrap(),
+            crate::vertex![1.0, 0.0, 0.0].unwrap(),
+            crate::vertex![0.0, 1.0, 0.0].unwrap(),
+            crate::vertex![0.0, 0.0, 1.0].unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();

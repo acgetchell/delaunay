@@ -81,6 +81,7 @@ use crate::core::validation::{
     TopologyGuarantee, TriangulationValidationError, ValidationConfigurationError, ValidationPolicy,
 };
 use crate::core::vertex::Vertex;
+use crate::deletion::DeleteVertexError;
 use crate::diagnostics::{BatchLocalRepairTrigger, ConstructionTelemetry, LocalRepairSample};
 use crate::geometry::coordinate_range::CoordinateRange;
 use crate::geometry::kernel::{AdaptiveKernel, Kernel};
@@ -206,18 +207,18 @@ pub(crate) mod test_hooks {
 ///
 /// This convenience error covers the fallible path most examples use:
 /// converting caller coordinates into vertices, constructing a
-/// [`DelaunayTriangulation`], editing it through
-/// the Delaunay insertion API, updating auxiliary vertex/simplex data through
-/// checked keys, and validating its Delaunay invariants. More specialized
-/// workflows such as convex hull extraction, bistellar flips,
-/// repair, and delaunayize continue to expose their narrower error types
-/// directly.
+/// [`DelaunayTriangulation`], editing it through the Delaunay insertion/deletion
+/// API or explicit flip/Pachner APIs, updating auxiliary vertex/simplex data
+/// through checked keys, and validating its Delaunay invariants. More specialized
+/// workflows such as convex hull extraction, repair, and delaunayize continue
+/// to expose their narrower error types directly.
 ///
 /// # Examples
 ///
 /// Use [`DelaunayResult`] for examples, binaries, and quick workflows whose
 /// fallible operations stay inside coordinate conversion, construction,
-/// checked auxiliary-data mutation, insertion, and validation:
+/// checked auxiliary-data mutation, insertion/deletion, explicit flip editing,
+/// and validation:
 ///
 /// ```rust
 /// use delaunay::prelude::construction::{
@@ -232,7 +233,7 @@ pub(crate) mod test_hooks {
 ///     ];
 ///
 ///     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-///     dt.insert(vertex![0.25, 0.25]?)?;
+///     dt.insert_vertex(vertex![0.25, 0.25]?)?;
 ///     dt.validate()?;
 ///
 ///     Ok(())
@@ -263,6 +264,22 @@ pub enum DelaunayError {
         /// Underlying insertion failure.
         #[from]
         source: InsertionError,
+    },
+
+    /// Delaunay vertex deletion failed.
+    #[error(transparent)]
+    DeleteVertex {
+        /// Underlying vertex-deletion failure.
+        #[from]
+        source: DeleteVertexError,
+    },
+
+    /// Explicit bistellar flip or Pachner move dispatch failed.
+    #[error(transparent)]
+    Flip {
+        /// Underlying flip failure.
+        #[from]
+        source: FlipError,
     },
 
     /// User-data mutation through a checked TDS key failed.
@@ -303,7 +320,7 @@ pub enum DelaunayError {
 /// This is equivalent to `Result<T, DelaunayError>` with [`DelaunayError`] as
 /// the error type, and is intended for caller-facing examples and applications
 /// that use the standard construction, checked auxiliary-data mutation,
-/// insertion, and validation APIs.
+/// insertion/deletion, explicit flip editing, and validation APIs.
 pub type DelaunayResult<T> = Result<T, DelaunayError>;
 
 /// Errors that can occur during Delaunay triangulation construction.
@@ -5693,6 +5710,7 @@ mod tests {
     use crate::topology::characteristics::euler::TopologyClassification;
     use crate::topology::traits::topological_space::TopologyKind;
     use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
+    use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
     use std::num::NonZeroUsize;
@@ -5826,9 +5844,9 @@ mod tests {
                 fn [<test_incremental_insertion_ $dim d>]() {
                     init_tracing();
                     let mut vertices: Vec<Vertex<(), $dim>> = vec![
-                        $(crate::core::vertex::Vertex::<(), _>::try_new($simplex_coords).unwrap()),+
+                        $(vertex!($simplex_coords).unwrap()),+
                     ];
-                    vertices.push(crate::core::vertex::Vertex::<(), _>::try_new($interior_point).unwrap());
+                    vertices.push(vertex!($interior_point).unwrap());
 
                     let expected_vertices = vertices.len();
                     let dt: DelaunayTriangulation<_, (), (), $dim> =
@@ -5846,16 +5864,16 @@ mod tests {
                     assert_eq!(dt.number_of_vertices(), 0);
                     assert_eq!(dt.number_of_simplices(), 0);
 
-                    let vertices = vec![$(crate::core::vertex::Vertex::<(), _>::try_new($simplex_coords).unwrap()),+];
+                    let vertices = vec![$(vertex!($simplex_coords).unwrap()),+];
                     assert_eq!(vertices.len(), $dim + 1);
 
                     for (i, vertex) in vertices.iter().take($dim).enumerate() {
-                        dt.insert(*vertex).unwrap();
+                        dt.insert_vertex(*vertex).unwrap();
                         assert_eq!(dt.number_of_vertices(), i + 1);
                         assert_eq!(dt.number_of_simplices(), 0);
                     }
 
-                    dt.insert(*vertices.last().unwrap()).unwrap();
+                    dt.insert_vertex(*vertices.last().unwrap()).unwrap();
                     assert_eq!(dt.number_of_vertices(), $dim + 1);
                     assert_eq!(dt.number_of_simplices(), 1);
                     assert!(dt.is_valid().is_ok());
@@ -5866,14 +5884,14 @@ mod tests {
                     init_tracing();
                     let mut dt: DelaunayTriangulation<_, (), (), $dim> =
                         DelaunayTriangulation::empty();
-                    let initial_vertices = vec![$(crate::core::vertex::Vertex::<(), _>::try_new($simplex_coords).unwrap()),+];
+                    let initial_vertices = vec![$(vertex!($simplex_coords).unwrap()),+];
 
                     for vertex in &initial_vertices {
-                        dt.insert(*vertex).unwrap();
+                        dt.insert_vertex(*vertex).unwrap();
                     }
                     assert_eq!(dt.number_of_simplices(), 1);
 
-                    dt.insert(crate::core::vertex::Vertex::<(), _>::try_new($interior_point).unwrap()).unwrap();
+                    dt.insert_vertex(vertex!($interior_point).unwrap()).unwrap();
                     assert_eq!(dt.number_of_vertices(), $dim + 2);
                     assert!(dt.number_of_simplices() > 1);
                     assert!(dt.is_valid().is_ok());
@@ -5882,12 +5900,12 @@ mod tests {
                 #[test]
                 fn [<test_bootstrap_equivalent_to_batch_ $dim d>]() {
                     init_tracing();
-                    let vertices = vec![$(crate::core::vertex::Vertex::<(), _>::try_new($simplex_coords).unwrap()),+];
+                    let vertices = vec![$(vertex!($simplex_coords).unwrap()),+];
 
                     let mut dt_bootstrap: DelaunayTriangulation<_, (), (), $dim> =
                         DelaunayTriangulation::empty();
                     for vertex in &vertices {
-                        dt_bootstrap.insert(*vertex).unwrap();
+                        dt_bootstrap.insert_vertex(*vertex).unwrap();
                     }
 
                     let dt_batch: DelaunayTriangulation<_, (), (), $dim> =
@@ -7424,14 +7442,11 @@ mod tests {
         let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
         assert_eq!(dt.number_of_vertices(), 0);
 
-        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
-            .unwrap();
-        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
-            .unwrap();
+        dt.insert_vertex(vertex![0.0, 0.0].unwrap()).unwrap();
+        dt.insert_vertex(vertex![1.0, 0.0].unwrap()).unwrap();
         assert_eq!(dt.number_of_simplices(), 0);
 
-        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap())
-            .unwrap();
+        dt.insert_vertex(vertex![0.0, 1.0].unwrap()).unwrap();
         assert_eq!(dt.number_of_simplices(), 1);
     }
 

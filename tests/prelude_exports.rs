@@ -10,11 +10,14 @@
     reason = "tests preserve typed construction, repair, and delaunayize errors"
 )]
 
-use std::{assert_matches, num::NonZeroUsize};
+use std::{assert_matches, mem::size_of, num::NonZeroUsize};
 
 use approx::assert_relative_eq;
 use slotmap::KeyData;
 
+use delaunay::flips::{
+    BistellarFlips, FlipOrientationCheckStage as DirectFlipOrientationCheckStage,
+};
 use delaunay::geometry::CoordinateRange as GeometryCoordinateRange;
 use delaunay::prelude::DelaunayValidationError;
 use delaunay::prelude::algorithms::LocateResult;
@@ -32,8 +35,8 @@ use delaunay::prelude::construction::{
     DelaunayConstructionRetryFailure, DelaunayError, DelaunayRepairPolicy, DelaunayResult,
     DelaunayTriangulation, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
     DelaunayTriangulationValidationError as ConstructionDelaunayTriangulationValidationError,
-    DelaunayVerificationError as ConstructionDelaunayVerificationError, ExplicitConstructionError,
-    FinalDelaunayValidationContext, FinalTopologyValidationContext,
+    DelaunayVerificationError as ConstructionDelaunayVerificationError, DeleteVertexError,
+    ExplicitConstructionError, FinalDelaunayValidationContext, FinalTopologyValidationContext,
     GlobalTopologyModelError as ConstructionGlobalTopologyModelError, InsertionOrderStrategy,
     InvalidCoordinateValue as ConstructionInvalidCoordinateValue,
     InvalidPositiveScalar as ConstructionInvalidPositiveScalar, RandomPointGenerationError,
@@ -46,15 +49,15 @@ use delaunay::prelude::delaunayize::{
     DelaunayTriangulationBuilder as DelaunayizeDelaunayTriangulationBuilder, DelaunayizeConfig,
     DelaunayizeError, DelaunayizeOutcome, SimplexDataRestoreError, delaunayize_by_flips,
 };
+use delaunay::prelude::deletion::{
+    DeleteVertexError as FocusedDeleteVertexError, VertexKey as DeletionVertexKey,
+};
 use delaunay::prelude::diagnostics::ConstructionTelemetry;
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::diagnostics::{
     DelaunayViolationDetail, DelaunayViolationReport, NeighborSlot as DiagnosticNeighborSlot,
     debug_print_first_delaunay_violation, delaunay_violation_report,
     verify_conflict_region_completeness,
-};
-use delaunay::prelude::flips::{
-    BistellarFlips, FlipOrientationCheckStage as FocusedFlipOrientationCheckStage,
 };
 use delaunay::prelude::generators::{
     CoordinateRange, CoordinateRangeError, InvalidPositiveScalar,
@@ -83,6 +86,15 @@ use delaunay::prelude::ordering::{
     hilbert_sort_by_stable_in_range, hilbert_sort_by_unstable_in_range,
     hilbert_sorted_indices_in_range, try_hilbert_index, try_hilbert_quantize,
     try_hilbert_sort_by_stable, try_hilbert_sort_by_unstable, try_hilbert_sorted_indices,
+};
+use delaunay::prelude::pachner::{
+    BistellarFlipKind as PachnerBistellarFlipKind, EdgeKey as PachnerEdgeKey,
+    EdgeKeyError as PachnerEdgeKeyError, FacetError as PachnerFacetError,
+    FacetHandle as PachnerFacetHandle, FlipDirection as PachnerFlipDirection,
+    FlipError as PachnerFlipError, PachnerMove, PachnerMoveResult, PachnerMoves,
+    RidgeHandle as PachnerRidgeHandle, SimplexKey as PachnerSimplexKey,
+    TriangleHandle as PachnerTriangleHandle, TriangleHandleError as PachnerTriangleHandleError,
+    Vertex as PachnerVertex, VertexKey as PachnerVertexKey, vertex as pachner_vertex,
 };
 use delaunay::prelude::query::{
     AllFacetsIter as QueryAllFacetsIter, BoundaryFacetsIter as QueryBoundaryFacetsIter, ConvexHull,
@@ -223,11 +235,68 @@ enum PreludeExportTestError {
     GenericTriangulationConstruction(#[from] GenericTriangulationConstructionError),
 }
 
-/// Proves the focused flips prelude exports the trait bound expected by benchmarks.
+/// Proves the direct flips module keeps the expert trait bound available.
 const fn assert_bistellar_flips(_: &impl BistellarFlips<3, VertexData = ()>) {}
 
 /// Proves the root flips module exports the same public trait bound.
 const fn assert_root_bistellar_flips(_: &impl delaunay::flips::BistellarFlips<3, VertexData = ()>) {
+}
+
+struct NonKernelMarker;
+
+/// Proves explicit topology edits do not require kernel-backed predicates.
+const fn assert_bistellar_flips_without_kernel<T: BistellarFlips<2, VertexData = ()>>() {}
+
+/// Proves the focused Pachner prelude exports the unified workflow trait.
+const fn assert_pachner_moves(_: &impl PachnerMoves<3, VertexData = ()>) {}
+
+/// Proves the root Pachner module exports the same unified workflow trait.
+const fn assert_root_pachner_moves(_: &impl delaunay::pachner::PachnerMoves<3, VertexData = ()>) {}
+
+/// Proves unified Pachner dispatch inherits the kernel-free explicit flip contract.
+const fn assert_pachner_moves_without_kernel<T: PachnerMoves<2, VertexData = ()>>() {}
+
+/// Proves unified Pachner dispatch is available through unsized flip trait objects.
+const fn assert_pachner_moves_for_unsized_flip_trait_objects<
+    T: PachnerMoves<2, VertexData = ()> + ?Sized,
+>() {
+}
+
+const fn assert_pachner_prelude_type_exports(dt: &impl PachnerMoves<3, VertexData = ()>) {
+    assert_pachner_moves(dt);
+    assert_root_pachner_moves(dt);
+    let _pachner_kind_size = size_of::<PachnerBistellarFlipKind>();
+    let _pachner_direction_size = size_of::<PachnerFlipDirection>();
+    let _pachner_error_size = size_of::<PachnerFlipError>();
+    let _pachner_move_size = size_of::<PachnerMove<(), 3>>();
+    let _pachner_result_size = size_of::<PachnerMoveResult<3>>();
+    let _pachner_edge_size = size_of::<PachnerEdgeKey>();
+    let _pachner_edge_error_size = size_of::<PachnerEdgeKeyError>();
+    let _pachner_facet_error_size = size_of::<PachnerFacetError>();
+    let _pachner_facet_size = size_of::<PachnerFacetHandle>();
+    let _pachner_ridge_size = size_of::<PachnerRidgeHandle>();
+    let _pachner_simplex_size = size_of::<PachnerSimplexKey>();
+    let _pachner_triangle_size = size_of::<PachnerTriangleHandle>();
+    let _pachner_triangle_error_size = size_of::<PachnerTriangleHandleError>();
+    let _pachner_vertex_size = size_of::<PachnerVertex<(), 3>>();
+    let _pachner_vertex_key_size = size_of::<PachnerVertexKey>();
+}
+
+fn assert_pachner_prelude_exports(
+    dt: &impl PachnerMoves<3, VertexData = ()>,
+    simplex_key: PachnerSimplexKey,
+) -> Result<(), PreludeExportTestError> {
+    assert_pachner_prelude_type_exports(dt);
+    let pachner_vertex: PachnerVertex<(), 3> = pachner_vertex![0.25, 0.25, 0.25]?;
+    let pachner_move = PachnerMove::K1Insert {
+        simplex_key,
+        vertex: pachner_vertex,
+    };
+    assert_matches!(
+        pachner_move,
+        PachnerMove::K1Insert { simplex_key: key, .. } if key == simplex_key
+    );
+    Ok(())
 }
 
 const fn assert_send_sync_unpin<T: Send + Sync + Unpin>() {}
@@ -321,6 +390,20 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
         DelaunayError::Insertion { source: err } if err == insertion
     );
 
+    let delete_vertex = DeleteVertexError::VertexNotFound {
+        vertex_key: VertexKey::from(KeyData::from_ffi(2)),
+    };
+    assert_matches!(
+        DelaunayError::from(delete_vertex.clone()),
+        DelaunayError::DeleteVertex { source: err } if err == delete_vertex
+    );
+
+    let flip = FlipError::DegenerateSimplex;
+    assert_matches!(
+        DelaunayError::from(flip.clone()),
+        DelaunayError::Flip { source: err } if err == flip
+    );
+
     let configuration =
         FocusedValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
             topology_guarantee: TopologyGuarantee::PLManifold,
@@ -362,6 +445,15 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
     let focused_result: DelaunayResult<()> = Ok(());
     let root_result: RootDelaunayResult<()> = focused_result;
     assert!(root_result.is_ok());
+}
+
+#[test]
+fn deletion_prelude_exports_delete_vertex_error_and_key() {
+    let err = FocusedDeleteVertexError::VertexNotFound {
+        vertex_key: DeletionVertexKey::from(KeyData::from_ffi(9)),
+    };
+
+    assert_matches!(err, FocusedDeleteVertexError::VertexNotFound { .. });
 }
 
 #[test]
@@ -561,10 +653,10 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
     };
 
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
     ];
 
     let options: ConstructionOptions =
@@ -617,10 +709,13 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
 }
 
 #[test]
-fn flip_preludes_cover_orientation_check_stage() {
+fn flip_exports_cover_orientation_check_stage() {
+    assert_bistellar_flips_without_kernel::<GenericTriangulation<NonKernelMarker, (), (), 2>>();
+    assert_pachner_moves_without_kernel::<GenericTriangulation<NonKernelMarker, (), (), 2>>();
+    assert_pachner_moves_for_unsized_flip_trait_objects::<dyn BistellarFlips<2, VertexData = ()>>();
     assert_matches!(
-        FocusedFlipOrientationCheckStage::BeforeMutation,
-        FocusedFlipOrientationCheckStage::BeforeMutation
+        DirectFlipOrientationCheckStage::BeforeMutation,
+        DirectFlipOrientationCheckStage::BeforeMutation
     );
     assert_matches!(
         RepairFlipOrientationCheckStage::AfterTrialMutation,
@@ -717,10 +812,10 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     let _generated_points: Vec<Point<2>> = try_generate_random_points_seeded(3, (0.0, 1.0), 42)?;
 
     let vertices: Vec<Vertex<(), 3>> = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
     ];
     let options =
         ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
@@ -760,6 +855,7 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     assert_eq!(hull_facet_view_count, boundary_facet_count);
     dt.validate().unwrap();
     assert_bistellar_flips(&dt);
+    assert_pachner_prelude_exports(&dt, simplex_key)?;
 
     let mut empty_tds: InsertionTds<(), (), 2> = InsertionTds::empty();
     let _tds_all_facets: TdsAllFacetsIter<'_, (), (), 2> = empty_tds.facets();
@@ -825,10 +921,10 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
 #[test]
 fn query_preludes_cover_borrowed_adjacency_view() -> Result<(), PreludeExportTestError> {
     let vertices: Vec<Vertex<(), 3>> = vec![
-        Vertex::try_new([0.0, 0.0, 0.0])?,
-        Vertex::try_new([1.0, 0.0, 0.0])?,
-        Vertex::try_new([0.0, 1.0, 0.0])?,
-        Vertex::try_new([0.0, 0.0, 1.0])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
     ];
     let dt = DelaunayTriangulation::try_new(&vertices)?;
 
@@ -1161,12 +1257,12 @@ fn simplex_prelude_vertices<const D: usize>(
     scale: f64,
 ) -> Result<Vec<Vertex<(), D>>, PreludeExportTestError> {
     let mut vertices = Vec::with_capacity(D + 1);
-    vertices.push(delaunay::prelude::Vertex::<(), _>::try_new([origin; D])?);
+    vertices.push(vertex!([origin; D])?);
 
     for axis in 0..D {
         let mut coords = [origin; D];
         coords[axis] = origin + scale;
-        vertices.push(delaunay::prelude::Vertex::<(), _>::try_new(coords)?);
+        vertices.push(vertex!(coords)?);
     }
 
     Ok(vertices)
@@ -1179,20 +1275,16 @@ fn cospherical_prelude_vertices<const D: usize>()
     for axis in 0..D {
         let mut coords = [0.0; D];
         coords[axis] = 1.0;
-        vertices.push(delaunay::prelude::Vertex::<(), _>::try_new(coords)?);
+        vertices.push(vertex!(coords)?);
     }
 
     let mut negative_first_axis = [0.0; D];
     negative_first_axis[0] = -1.0;
-    vertices.push(delaunay::prelude::Vertex::<(), _>::try_new(
-        negative_first_axis,
-    )?);
+    vertices.push(vertex!(negative_first_axis)?);
 
     let mut negative_second_axis = [0.0; D];
     negative_second_axis[1] = -1.0;
-    vertices.push(delaunay::prelude::Vertex::<(), _>::try_new(
-        negative_second_axis,
-    )?);
+    vertices.push(vertex!(negative_second_axis)?);
 
     Ok(vertices)
 }
@@ -1204,7 +1296,7 @@ fn degenerate_prelude_vertices<const D: usize>()
     for _ in 0..=D {
         let mut coords = [0.0; D];
         coords[0] = coordinate;
-        vertices.push(delaunay::prelude::Vertex::<(), _>::try_new(coords)?);
+        vertices.push(vertex!(coords)?);
         coordinate += 1.0;
     }
     Ok(vertices)
@@ -1494,10 +1586,10 @@ fn construction_prelude_covers_random_point_generation_failure_variant()
 #[test]
 fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError> {
     let vertices: Vec<Vertex<(), 3>> = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
     ];
     let mut dt = DelaunayizeDelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
