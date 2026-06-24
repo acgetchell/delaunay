@@ -1,6 +1,6 @@
 //! Compile coverage for read-only APIs with non-`DataType` payloads.
 
-use std::hash::Hasher;
+use std::{assert_matches, hash::Hasher};
 
 use delaunay::DelaunayTriangulation;
 use delaunay::prelude::Triangulation;
@@ -191,10 +191,10 @@ fn delaunay_empty_query_wrappers_accept_non_datatype_payloads()
     assert_eq!(dt.edges().count(), 0);
     assert_eq!(dt.incident_edges(VertexKey::default()).count(), 0);
     assert_eq!(dt.simplex_neighbors(SimplexKey::default()).count(), 0);
-    assert!(matches!(
+    assert_matches!(
         dt.simplex_vertices(SimplexKey::default()),
         Err(TdsError::SimplexNotFound { .. })
-    ));
+    );
     assert_eq!(dt.vertex_coords(VertexKey::default()), None);
 
     let incidence = dt.incidence()?;

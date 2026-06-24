@@ -337,6 +337,8 @@ impl VertexIncidenceIndex {
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use super::*;
     use slotmap::KeyData;
 
@@ -356,7 +358,7 @@ mod tests {
 
         let err = index.insert_vertex(vertex).unwrap_err();
 
-        assert!(matches!(err, TdsError::InconsistentDataStructure { .. }));
+        assert_matches!(err, TdsError::InconsistentDataStructure { .. });
         assert!(index.contains_vertex(vertex));
         assert_eq!(index.number_of_simplices(vertex), 0);
     }
@@ -367,7 +369,7 @@ mod tests {
         let err = index
             .insert_simplex(simplex_key(1), &[vertex_key(1)])
             .unwrap_err();
-        assert!(matches!(err, TdsError::VertexNotFound { .. }));
+        assert_matches!(err, TdsError::VertexNotFound { .. });
     }
 
     #[test]
@@ -382,7 +384,7 @@ mod tests {
             .insert_simplex(simplex, &[existing, missing])
             .unwrap_err();
 
-        assert!(matches!(err, TdsError::VertexNotFound { .. }));
+        assert_matches!(err, TdsError::VertexNotFound { .. });
         assert_eq!(index.number_of_simplices(existing), 0);
     }
 
@@ -397,7 +399,7 @@ mod tests {
             .insert_simplex(simplex, &[vertex, vertex])
             .unwrap_err();
 
-        assert!(matches!(err, TdsError::InconsistentDataStructure { .. }));
+        assert_matches!(err, TdsError::InconsistentDataStructure { .. });
         assert_eq!(index.number_of_simplices(vertex), 0);
     }
 
@@ -428,7 +430,7 @@ mod tests {
         index.insert_simplex(simplex, &[vertex]).unwrap();
 
         let err = index.remove_isolated_vertex(vertex).unwrap_err();
-        assert!(matches!(err, TdsError::InconsistentDataStructure { .. }));
+        assert_matches!(err, TdsError::InconsistentDataStructure { .. });
     }
 
     #[test]
@@ -437,7 +439,7 @@ mod tests {
 
         let err = index.remove_isolated_vertex(vertex_key(1)).unwrap_err();
 
-        assert!(matches!(err, TdsError::VertexNotFound { .. }));
+        assert_matches!(err, TdsError::VertexNotFound { .. });
         assert!(index.is_empty());
     }
 
@@ -453,7 +455,7 @@ mod tests {
             .remove_simplex(simplex, &[vertex, vertex])
             .unwrap_err();
 
-        assert!(matches!(err, TdsError::InconsistentDataStructure { .. }));
+        assert_matches!(err, TdsError::InconsistentDataStructure { .. });
         assert_eq!(
             index.simplex_keys(vertex).collect::<Vec<_>>(),
             vec![simplex]
@@ -475,7 +477,7 @@ mod tests {
             .remove_simplex(before[1], &[vertex, missing])
             .unwrap_err();
 
-        assert!(matches!(err, TdsError::VertexNotFound { .. }));
+        assert_matches!(err, TdsError::VertexNotFound { .. });
         assert_eq!(
             index.simplex_keys(vertex).collect::<Vec<_>>(),
             before.to_vec()

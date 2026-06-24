@@ -140,8 +140,9 @@ impl EdgeKey {
     ///
     /// Returns [`EdgeKeyError::DuplicateEndpoint`] if both endpoints are the
     /// same vertex, [`EdgeKeyError::MissingEndpoint`] if either endpoint is not
-    /// live in `tds`, or [`EdgeKeyError::EdgeNotFound`] if no simplex contains
-    /// both endpoints.
+    /// live in `tds`, [`EdgeKeyError::EdgeNotFound`] if no simplex contains both
+    /// endpoints, or another [`EdgeKeyError`] if the maintained vertex-incidence
+    /// metadata needed to prove the edge is inconsistent with simplex storage.
     ///
     /// # Examples
     ///
@@ -192,14 +193,104 @@ impl EdgeKey {
         if tds.vertex(b).is_none() {
             return Err(EdgeKeyError::MissingEndpoint { endpoint: b });
         }
-        if !tds
-            .simplices()
-            .any(|(_simplex_key, simplex)| simplex.contains_vertex(a) && simplex.contains_vertex(b))
-        {
-            return Err(EdgeKeyError::EdgeNotFound { v0: a, v1: b });
+        let key = Self::from_validated_endpoints(a, b);
+        Self::validate_incidence(tds, key)?;
+
+        Ok(key)
+    }
+
+    /// Proves that a canonical endpoint pair forms a live edge using maintained incidence.
+    ///
+    /// The success path inspects endpoint stars instead of scanning every simplex.
+    /// A full simplex-storage scan is reserved for the cold path where neither
+    /// endpoint star reports the edge, so callers still get a precise
+    /// `MissingEdgeIncidence` diagnostic when storage and incidence diverge.
+    fn validate_incidence<U, V, const D: usize>(
+        tds: &Tds<U, V, D>,
+        key: Self,
+    ) -> Result<(), EdgeKeyError> {
+        let (v0, v1) = key.endpoints();
+        let v0_degree = tds.vertex_to_simplices_index().number_of_simplices(v0);
+        let v1_degree = tds.vertex_to_simplices_index().number_of_simplices(v1);
+        let (primary, secondary) = if v0_degree <= v1_degree {
+            (v0, v1)
+        } else {
+            (v1, v0)
+        };
+
+        if let Some(simplex_key) = Self::first_edge_simplex_in_star(tds, primary, secondary)? {
+            if Self::endpoint_star_contains_simplex(tds, secondary, simplex_key)? {
+                return Ok(());
+            }
+            return Err(EdgeKeyError::MissingVertexIncidence {
+                vertex_key: secondary,
+                simplex_key,
+            });
         }
 
-        Ok(Self::from_validated_endpoints(a, b))
+        if let Some(simplex_key) = Self::first_edge_simplex_in_star(tds, secondary, primary)? {
+            return Err(EdgeKeyError::MissingVertexIncidence {
+                vertex_key: primary,
+                simplex_key,
+            });
+        }
+
+        if EdgeView::endpoints_share_stored_simplex(tds, v0, v1) {
+            return Err(EdgeKeyError::MissingEdgeIncidence { v0, v1 });
+        }
+        Err(EdgeKeyError::EdgeNotFound { v0, v1 })
+    }
+
+    /// Finds one simplex in `source`'s validated star that also contains `target`.
+    fn first_edge_simplex_in_star<U, V, const D: usize>(
+        tds: &Tds<U, V, D>,
+        source: VertexKey,
+        target: VertexKey,
+    ) -> Result<Option<SimplexKey>, EdgeKeyError> {
+        for simplex_key in tds.simplex_keys_containing_vertex(source) {
+            let simplex =
+                tds.simplex(simplex_key)
+                    .ok_or(EdgeKeyError::DanglingVertexIncidence {
+                        vertex_key: source,
+                        simplex_key,
+                    })?;
+            if !simplex.contains_vertex(source) {
+                return Err(EdgeKeyError::VertexIncidenceMismatch {
+                    vertex_key: source,
+                    simplex_key,
+                });
+            }
+            if simplex.contains_vertex(target) {
+                return Ok(Some(simplex_key));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Checks that an endpoint star contains a specific simplex while validating touched entries.
+    fn endpoint_star_contains_simplex<U, V, const D: usize>(
+        tds: &Tds<U, V, D>,
+        vertex_key: VertexKey,
+        needle: SimplexKey,
+    ) -> Result<bool, EdgeKeyError> {
+        for simplex_key in tds.simplex_keys_containing_vertex(vertex_key) {
+            let simplex =
+                tds.simplex(simplex_key)
+                    .ok_or(EdgeKeyError::DanglingVertexIncidence {
+                        vertex_key,
+                        simplex_key,
+                    })?;
+            if !simplex.contains_vertex(vertex_key) {
+                return Err(EdgeKeyError::VertexIncidenceMismatch {
+                    vertex_key,
+                    simplex_key,
+                });
+            }
+            if simplex_key == needle {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Creates a canonical edge key from endpoints already known to be distinct.
@@ -872,6 +963,13 @@ mod tests {
 
         let edge = EdgeKey::from_validated_endpoints(v0, v1);
         assert_eq!(
+            EdgeKey::try_new(&tds, v0, v1),
+            Err(EdgeKeyError::DanglingVertexIncidence {
+                vertex_key: edge.v0(),
+                simplex_key: stale_simplex
+            })
+        );
+        assert_eq!(
             edge.view(&tds),
             Err(EdgeKeyError::DanglingVertexIncidence {
                 vertex_key: edge.v0(),
@@ -901,6 +999,13 @@ mod tests {
         tds.clear_vertex_incidence_for_test(second);
 
         assert_eq!(
+            EdgeKey::try_new(&tds, v0, v1),
+            Err(EdgeKeyError::MissingVertexIncidence {
+                vertex_key: second,
+                simplex_key
+            })
+        );
+        assert_eq!(
             edge.view(&tds),
             Err(EdgeKeyError::MissingVertexIncidence {
                 vertex_key: second,
@@ -929,6 +1034,13 @@ mod tests {
 
         tds.clear_vertex_incidence_for_test(first);
 
+        assert_eq!(
+            EdgeKey::try_new(&tds, v0, v1),
+            Err(EdgeKeyError::MissingVertexIncidence {
+                vertex_key: first,
+                simplex_key
+            })
+        );
         assert_eq!(
             edge.view(&tds),
             Err(EdgeKeyError::MissingVertexIncidence {

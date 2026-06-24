@@ -437,6 +437,47 @@ Topology APIs use names to make ownership visible:
   full-TDS clone rollback with a journaled or localized design remains tracked
   by #364.
 
+### Simplex-Local Incidence Query Vocabulary
+
+The public incidence-query surface names topology by simplex dimension, not by
+one downstream move type:
+
+| Concept | Simplex dimension | Current public shape |
+|---|---:|---|
+| Vertex | 0 | `VertexKey`, `adjacent_simplices(vertex)` |
+| Edge | 1 | `EdgeKey`, `EdgeView`, `incident_edges(vertex)` |
+| Ridge | `D - 2` | `RidgeCandidate<D>`, `RidgeQuery<'tds>`, `RidgeView<'tds>` |
+| Facet | `D - 1` | `FacetHandle`, `FacetView<'tds>`, `FacetToSimplicesIndex<'tds, ...>` |
+| Cell | `D` | `SimplexKey`, `Simplex<V, D>` |
+
+In 2D, an edge is also a cell facet. The first public edge-to-facet bridge is
+therefore 2D-specific:
+
+```rust
+dt.try_incident_facets_to_edge_2d(edge)
+dt.try_interior_facet_for_edge_2d(edge)
+```
+
+`try_incident_facets_to_edge_2d` parses the detached edge key against the
+current TDS and returns the current simplex-local facet handles for that edge:
+one handle for a boundary edge and two for an interior edge in a valid 2D PL
+manifold. `try_interior_facet_for_edge_2d` returns one of those handles only
+when the edge has exactly two incident 2D facets, making it suitable for
+consumer code that needs a `FacetHandle` for a 2D k=2 local move. On
+deliberately invalid low-level topology, non-manifold edge multiplicity is
+visible through `try_incident_facets_to_edge_2d`; the narrower
+`try_interior_facet_for_edge_2d` still returns `Ok(None)` because the edge is not
+a two-sided 2D move support.
+
+These queries are read-only and do not expose a mutable cache. Implementations
+may use neighbor walks, maintained TDS incidence, or lifetime-bound derived
+indexes internally, but the public contract is stable: detached `*Key` and
+`*Handle` inputs are revalidated against the current live owner. Stale keys and
+corrupted incidence metadata return typed parse errors rather than being
+silently conflated with empty topology. Higher-dimensional incidence should
+generalize through simplex-key and ridge/facet/cell vocabulary instead of
+treating edge-to-facet as universal.
+
 Runtime generation or identity checks remain appropriate for detached handles,
 owned snapshots, serialization boundaries, persistent performance caches, and
 tests that intentionally construct inconsistent topology. They should not be

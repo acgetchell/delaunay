@@ -1104,7 +1104,7 @@ pub mod query {
     pub use crate::geometry::traits::coordinate::Coordinate;
     pub use crate::geometry::{insphere, insphere_distance, insphere_lifted};
     pub use crate::tds::{
-        AllFacetsIter, BoundaryFacetsIter, EdgeIndex, EdgeKey, EdgeKeyError, EdgeView,
+        AllFacetsIter, BoundaryFacetsIter, EdgeIndex, EdgeKey, EdgeKeyError, EdgeView, FacetHandle,
         FacetIncidenceView, FacetToSimplicesIndex, FacetView, IncidenceView, OneSidedFacetsIter,
         Simplex, SimplexFacetsIter, SimplexKey, SimplexNeighborIndex, TopologyIndexBuildError,
         TriangulationAdjacency, Vertex, VertexKey,
@@ -1746,9 +1746,9 @@ pub mod prelude {
     pub mod query {
         // Core read-only traversal / adjacency
         pub use crate::tds::{
-            EdgeIndex, EdgeKey, EdgeKeyError, EdgeView, FacetIncidenceView, FacetToSimplicesIndex,
-            IncidenceView, SimplexKey, SimplexNeighborIndex, TopologyIndexBuildError,
-            TriangulationAdjacency, VertexKey,
+            EdgeIndex, EdgeKey, EdgeKeyError, EdgeView, FacetHandle, FacetIncidenceView,
+            FacetToSimplicesIndex, IncidenceView, SimplexKey, SimplexNeighborIndex,
+            TopologyIndexBuildError, TriangulationAdjacency, VertexKey,
         };
         pub use crate::{DelaunayTriangulation, Triangulation};
 
