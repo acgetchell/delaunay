@@ -159,7 +159,7 @@ Treat partial items as still open until their acceptance notes are satisfied.
 - [x] **E. Verify `core/util/uuid.rs` panic helpers are test-only.**
   The remaining UUID validation panic paths are confined to the `#[cfg(test)]`
   module; production UUID validation returns typed `UuidValidationError` values.
-- [x] **F. Remove scale-unit tolerance from the `remove_vertex` doctest.**
+- [x] **F. Remove scale-unit tolerance from the `delete_vertex` doctest.**
   The doctest now finds the vertex by UUID instead of coordinate epsilon.
 
 ## Tooling Follow-Up From This Patch

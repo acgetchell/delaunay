@@ -442,11 +442,15 @@ Large-scale performance validation belongs in **benchmarks**, not tests.
 
 All tests must pass under CI.
 
-Before proposing patches agents should run:
+For final handoff validation after Rust test changes, run:
 
 ```bash
 just ci
 ```
+
+For documentation-only, configuration-only, or Python-only edits, follow the
+validation command selection matrix in [`commands.md`](commands.md) instead of
+defaulting to full CI.
 
 CI enforces:
 

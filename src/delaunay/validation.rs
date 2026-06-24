@@ -287,7 +287,7 @@ impl From<&DelaunayVerificationError> for DelaunayVerificationErrorKind {
 ///
 /// The repair-failure variants are **not** returned by `validate()` or
 /// `is_valid()`. They are produced by mutating operations that invoke
-/// flip-based repair internally (e.g. [`DelaunayTriangulation::remove_vertex`](crate::DelaunayTriangulation::remove_vertex)).
+/// flip-based repair internally (e.g. [`DelaunayTriangulation::delete_vertex`](crate::DelaunayTriangulation::delete_vertex)).
 ///
 /// When manually forwarding lower-layer validation errors, prefer
 /// `DelaunayTriangulationValidationError::from(tds_error)` or `.into()` for
@@ -346,8 +346,8 @@ pub enum DelaunayTriangulationValidationError {
     /// inspect budget exhaustion, topology errors, predicate failures, and other
     /// repair causes without parsing display text. Operations that report this
     /// variant are responsible for documenting whether failure is transactional;
-    /// [`remove_vertex`](crate::DelaunayTriangulation::remove_vertex)
-    /// restores the pre-removal triangulation when post-removal repair fails.
+    /// [`delete_vertex`](crate::DelaunayTriangulation::delete_vertex)
+    /// restores the pre-deletion triangulation when post-deletion repair fails.
     ///
     /// **Not** returned by `validate()` or `is_valid()` — those use
     /// [`VerificationFailed`](Self::VerificationFailed) for passive checks.

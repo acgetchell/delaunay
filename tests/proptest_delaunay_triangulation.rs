@@ -727,7 +727,7 @@ macro_rules! gen_incremental_insertion_validity {
                     let mut dt = dt.prop_assume_ok()?;
                     prop_assert_levels_1_to_3_valid!($dim, &dt, "initial triangulation");
 
-                    let insert_result = dt.insert(additional_vertex);
+                    let insert_result = dt.insert_vertex(additional_vertex);
                     if let Err(e) = &insert_result {
                         if std::env::var_os("DELAUNAY_PROPTEST_INSERT_ERRORS").is_some() {
                             tracing::warn!(
@@ -918,7 +918,7 @@ macro_rules! gen_duplicate_coords_test {
                         .expect("DelaunayTriangulation::try_new_with_options returned Ok but has no vertices");
                     let p = *existing_vertex.point();
                     let dup = try_vertices_from_points(&[p]).expect("finite point coordinates")[0];
-                    let result = dt.insert(dup);
+                    let result = dt.insert_vertex(dup);
                     prop_assert!(
                         result.is_err(),
                         "expected insertion error for duplicate coordinates, got {result:?}"
@@ -1126,7 +1126,7 @@ macro_rules! gen_high_dim_delaunay_smoke {
                         .expect("successfully constructed triangulation should contain vertices");
                     let duplicate = try_vertices_from_points(&[*existing_vertex.point()])
                         .expect("finite point coordinates")[0];
-                    let duplicate_result = dt.insert(duplicate);
+                    let duplicate_result = dt.insert_vertex(duplicate);
                     prop_assert!(
                         duplicate_result.is_err(),
                         "{}D active smoke should reject duplicate coordinate insertion",

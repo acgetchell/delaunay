@@ -115,7 +115,7 @@ Public API: `DelaunayTriangulation::validate`
 
 #### Incremental insert
 
-Public API: `DelaunayTriangulation::insert`
+Public API: `DelaunayTriangulation::insert_vertex`
 
 | Benchmark ID | Dimension | Input | Variant | Mean | 95% CI |
 |--------------|-----------|-------|---------|------|--------|

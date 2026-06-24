@@ -83,7 +83,7 @@ type ReplacementPeriodicOffsets<const D: usize> =
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::flips::BistellarFlipKind;
+/// use delaunay::flips::BistellarFlipKind;
 ///
 /// let kind = BistellarFlipKind::k2(3);
 /// let inverse = kind.inverse();
@@ -2431,7 +2431,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::flips::FlipDirection;
+/// use delaunay::flips::FlipDirection;
 ///
 /// assert_eq!(FlipDirection::Forward.inverse(), FlipDirection::Inverse);
 /// ```
@@ -2671,7 +2671,7 @@ impl BistellarFlipKind {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::flips::{BistellarMove, ConstK};
+/// use delaunay::flips::{BistellarMove, ConstK};
 ///
 /// fn move_k<const D: usize, M: BistellarMove<D>>() -> usize {
 ///     M::K
@@ -2687,7 +2687,7 @@ pub struct ConstK<const K: usize>;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::flips::{BistellarMove, ConstK};
+/// use delaunay::flips::{BistellarMove, ConstK};
 ///
 /// fn move_k<const D: usize, M: BistellarMove<D>>() -> usize {
 ///     M::K
@@ -2770,7 +2770,7 @@ impl FlipPredicateError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::flips::{FlipContextError, FlipError};
+/// use delaunay::flips::{FlipContextError, FlipError};
 ///
 /// let reason = FlipContextError::ReplacementPeriodicOffsetCountMismatch {
 ///     simplex_count: 2,
@@ -3755,7 +3755,7 @@ pub enum FlipVertexAdjacencyError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::flips::{FlipContextError, FlipError};
+/// use delaunay::flips::{FlipContextError, FlipError};
 ///
 /// let err = FlipError::UnsupportedDimension { dimension: 1 };
 /// std::assert_matches!(err, FlipError::UnsupportedDimension { .. });
@@ -4121,7 +4121,7 @@ impl From<FlipError> for FlipFailureKind {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::flips::{BistellarFlipKind, FlipDirection, FlipInfo};
+/// use delaunay::flips::{BistellarFlipKind, FlipDirection, FlipInfo};
 /// use delaunay::prelude::collections::{SimplexKeyBuffer, SmallBuffer, MAX_PRACTICAL_DIMENSION_SIZE};
 /// use delaunay::prelude::tds::{SimplexKey, VertexKey};
 /// use slotmap::KeyData;
@@ -4201,7 +4201,7 @@ pub(crate) struct FlipContextDyn<const D: usize> {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::flips::TriangleHandle;
+/// use delaunay::flips::TriangleHandle;
 /// use delaunay::prelude::tds::VertexKey;
 /// use slotmap::KeyData;
 ///
@@ -4211,7 +4211,7 @@ pub(crate) struct FlipContextDyn<const D: usize> {
 ///
 /// let handle = TriangleHandle::try_new(b, a, c)?;
 /// assert_eq!(handle.vertices().len(), 3);
-/// # Ok::<(), delaunay::prelude::flips::TriangleHandleError>(())
+/// # Ok::<(), delaunay::flips::TriangleHandleError>(())
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TriangleHandle {
@@ -4226,7 +4226,7 @@ impl TriangleHandle {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::flips::TriangleHandle;
+    /// use delaunay::flips::TriangleHandle;
     /// use delaunay::prelude::tds::VertexKey;
     /// use slotmap::KeyData;
     ///
@@ -4236,7 +4236,7 @@ impl TriangleHandle {
     ///
     /// let handle = TriangleHandle::try_new(a, b, c)?;
     /// assert_eq!(handle.vertices(), [a, b, c]);
-    /// # Ok::<(), delaunay::prelude::flips::TriangleHandleError>(())
+    /// # Ok::<(), delaunay::flips::TriangleHandleError>(())
     /// ```
     ///
     /// # Errors
@@ -4286,14 +4286,14 @@ impl TryFrom<[VertexKey; 3]> for TriangleHandle {
 ///
 /// ```rust
 /// use delaunay::prelude::*;
-/// use delaunay::prelude::flips::RidgeHandle;
+/// use delaunay::flips::RidgeHandle;
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
 /// #     #[error(transparent)]
 /// #     Construction(#[from] DelaunayTriangulationConstructionError),
 /// #     #[error(transparent)]
-/// #     Flip(#[from] delaunay::prelude::flips::FlipError),
+/// #     Flip(#[from] delaunay::flips::FlipError),
 /// #     #[error(transparent)]
 /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }

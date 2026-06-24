@@ -65,6 +65,13 @@ cargo set-version "$VERSION"
 Alternative: edit `Cargo.toml` manually and update `version = "..."` under
 `[package]`.
 
+Update `CITATION.cff` for the release. Confirm:
+
+- `version` matches `$VERSION`.
+- `date-released` is the planned release date.
+- `doi` is the current Zenodo DOI for this release, if already known.
+- author, ORCID, repository, and license metadata still match the package.
+
 Review version references in documentation:
 
 ```bash

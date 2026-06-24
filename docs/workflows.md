@@ -1,9 +1,9 @@
-# Workflows: Builder API and Edit API
+# Workflows: Construction API and Pachner Moves
 
 This document provides small, practical recipes for working with triangulations.
 
 - **Builder API**: construct and maintain Delaunay triangulations via `DelaunayTriangulation`.
-- **Edit API**: explicitly edit triangulation topology via bistellar flips.
+- **Pachner Move API**: explicitly edit triangulation topology via local Pachner moves.
 
 For the full design discussion (and more extensive examples), see [`api_design.md`](api_design.md).
 For validation semantics and configuration details, see [`validation.md`](validation.md).
@@ -280,8 +280,8 @@ fn main() -> DelaunayResult<()> {
 
     // Subsequent insertions are standard Euclidean insertions; canonicalize
     // additional points at the call site if they come from the same domain.
-    dt.insert(vertex![0.2, 0.3]?)?;
-    dt.insert(vertex![0.9, 0.7]?)?;
+    dt.insert_vertex(vertex![0.2, 0.3]?)?;
+    dt.insert_vertex(vertex![0.9, 0.7]?)?;
     Ok(())
 }
 ```
@@ -398,31 +398,32 @@ fn main() -> DelaunayResult<()> {
 For guidance on retry/skip behavior and choosing `RobustKernel`, see
 [`numerical_robustness_guide.md`](numerical_robustness_guide.md).
 
-## Builder API: removing a vertex
+## Builder API: deleting a vertex
 
-Vertex removal is supported and preserves Levels 1–3. It uses an inverse k=1 fast path when
+Vertex deletion is supported and preserves Levels 1–3. It uses an inverse k=1 fast path when
 possible and fan retriangulation otherwise, then runs flip-based Delaunay repair when the active
-`DelaunayRepairPolicy` allows it. If post-removal repair or orientation canonicalization fails,
-the operation rolls back to the pre-removal triangulation.
+`DelaunayRepairPolicy` allows it. If automatic repair is disabled, deletion still runs Level 4
+validation and rolls back on any Delaunay violation. If post-deletion repair, validation, or
+orientation canonicalization fails, the operation rolls back to the pre-deletion triangulation.
 
 ```rust
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
+use delaunay::prelude::deletion::DeleteVertexError;
 use delaunay::prelude::geometry::CoordinateConversionError;
-use delaunay::prelude::tds::InvariantError;
 
 #[derive(Debug, thiserror::Error)]
-enum RemovalExampleError {
+enum DeletionExampleError {
     #[error(transparent)]
     Construction(#[from] DelaunayTriangulationConstructionError),
     #[error(transparent)]
-    Invariant(#[from] InvariantError),
+    DeleteVertex(#[from] DeleteVertexError),
     #[error(transparent)]
     Coordinate(#[from] CoordinateConversionError),
 }
 
-fn main() -> Result<(), RemovalExampleError> {
+fn main() -> Result<(), DeletionExampleError> {
     let vertices = vec![
         vertex![0.0, 0.0, 0.0]?,
         vertex![1.0, 0.0, 0.0]?,
@@ -436,28 +437,31 @@ fn main() -> Result<(), RemovalExampleError> {
         return Ok(());
     };
 
-    let _simplices_removed = dt.remove_vertex(vertex_key)?;
+    let _simplices_removed = dt.delete_vertex(vertex_key)?;
 
     // Topology should still be valid:
     assert!(dt.as_triangulation().validate().is_ok());
 
-    // If automatic repair is enabled, successful removal has already attempted to
+    // If automatic repair is enabled, successful deletion has already attempted to
     // restore the Delaunay property.
     assert!(dt.is_valid().is_ok());
     Ok(())
 }
 ```
 
-When automatic repair fails after the mutation, `remove_vertex` reports
-`InvariantError::Delaunay(DelaunayTriangulationValidationError::RepairOperationFailed { operation:
-DelaunayRepairOperation::VertexRemoval, source })`, preserving the underlying
+When automatic repair fails after the mutation, `delete_vertex` reports
+`DeleteVertexError::InvariantViolation { source:
+InvariantError::Delaunay(DelaunayTriangulationValidationError::RepairOperationFailed { operation:
+DelaunayRepairOperation::VertexRemoval, source }) }`, preserving the underlying
 `DelaunayRepairError` for callers that need to inspect the exact repair failure.
-Successful removals invalidate internal locate hints and the spatial index so subsequent queries do
-not observe stale topology-dependent cache entries.
+Successful deletions invalidate internal locate hints so stale simplex handles
+are not reused. The spatial index is retained, but the deleted vertex entry is
+removed; later spatial lookups still validate candidate keys against the live
+TDS before using them.
 
-## Edit API: minimal flip example
+## Pachner Move API: minimal local move example
 
-The Edit API exposes explicit bistellar flips. These operations do **not** automatically restore
+The Pachner Move API exposes explicit local bistellar moves. These operations do **not** automatically restore
 (or preserve) the Delaunay property.
 
 After using flips, you typically:
@@ -465,14 +469,14 @@ After using flips, you typically:
 1. validate topology (Level 3), and
 2. optionally repair / verify the Delaunay property.
 
-See [`api_design.md`](api_design.md) for the full Builder vs Edit API design.
+See [`api_design.md`](api_design.md) for the full construction vs local move API design.
 
 ```rust
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
-use delaunay::prelude::flips::*;
 use delaunay::prelude::geometry::CoordinateConversionError;
+use delaunay::prelude::pachner::{FlipError, PachnerMove, PachnerMoves};
 
 #[derive(Debug, thiserror::Error)]
 enum FlipExampleError {
@@ -497,11 +501,17 @@ fn main() -> Result<(), FlipExampleError> {
     let Some((simplex_key, _)) = dt.simplices().next() else {
         return Ok(());
     };
-    let info = dt.flip_k1_insert(simplex_key, vertex![0.1, 0.1, 0.1]?)?;
+    let info = dt.attempt_pachner(PachnerMove::K1Insert {
+        simplex_key,
+        vertex: vertex![0.1, 0.1, 0.1]?,
+    })?;
     let inserted_vertex = info.inserted_face_vertices[0];
 
     // k=1 inverse: remove the inserted vertex (collapse its star).
-    let _ = dt.flip_k1_remove(inserted_vertex)?;
+    let removed = dt.attempt_pachner(PachnerMove::K1Remove {
+        vertex_key: inserted_vertex,
+    })?;
+    assert!(!removed.removed_simplices.is_empty());
 
     // Validate the stack (Levels 1–3) after topological edits.
     assert!(dt.as_triangulation().validate().is_ok());

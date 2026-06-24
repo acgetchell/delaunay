@@ -43,10 +43,10 @@ use criterion::measurement::WallTime;
 use criterion::{
     BatchSize, BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
+use delaunay::flips::{FacetHandle, RidgeHandle, SimplexKey};
 use delaunay::prelude::construction::{
     ConstructionOptions, DelaunayTriangulation, RetryPolicy, Vertex,
 };
-use delaunay::prelude::flips::{FacetHandle, RidgeHandle, SimplexKey};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, Point};
 use delaunay::prelude::query::ConvexHull;
@@ -225,7 +225,7 @@ fn api_benchmark_entries() -> Vec<ApiBenchmarkEntry> {
         },
         ApiBenchmarkEntry {
             group: "incremental_insert",
-            public_api: "DelaunayTriangulation::insert",
+            public_api: "DelaunayTriangulation::insert_vertex",
             dimensions: "2,3,4,5",
             benchmark_ids: insert_benchmark_ids(),
             note: "insert_batches_into_calibrated_well_conditioned_and_adversarial_triangulations",
@@ -1228,7 +1228,7 @@ fn bench_insert_case<const D: usize>(
                 || (base_dt.clone(), insert_vertices.to_vec()),
                 |(mut dt, vertices)| {
                     for vertex in vertices {
-                        match black_box(dt.insert(vertex)) {
+                        match black_box(dt.insert_vertex(vertex)) {
                             Ok(_) => {}
                             Err(error) => {
                                 abort_benchmark(format_args!(

@@ -305,7 +305,7 @@ pub enum ConvexHullConstructionError {
 /// Use `is_valid_for_triangulation()` to check if a hull is still valid for a given TDS:
 ///
 /// ```rust
-/// # use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
+/// # use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder, vertex};
 /// # use delaunay::prelude::query::ConvexHull;
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -322,16 +322,16 @@ pub enum ConvexHullConstructionError {
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// # let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulationBuilder::new(&vec![
-/// #     delaunay::vertex![0.0, 0.0, 0.0]?,
-/// #     delaunay::vertex![1.0, 0.0, 0.0]?,
-/// #     delaunay::vertex![0.0, 1.0, 0.0]?,
-/// #     delaunay::vertex![0.0, 0.0, 1.0]?,
+/// #     vertex![0.0, 0.0, 0.0]?,
+/// #     vertex![1.0, 0.0, 0.0]?,
+/// #     vertex![0.0, 1.0, 0.0]?,
+/// #     vertex![0.0, 0.0, 1.0]?,
 /// # ]).build::<()>()?;
 /// let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())?;
 /// assert!(hull.is_valid_for_triangulation(dt.as_triangulation())); // Valid initially
 ///
 /// // Hull extension is now implemented - inserting outside points works!
-/// dt.insert(delaunay::vertex![2.0, 2.0, 2.0]?)?;
+/// dt.insert_vertex(vertex![2.0, 2.0, 2.0]?)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -348,7 +348,7 @@ pub enum ConvexHullConstructionError {
 /// ## Example: Correct Usage Pattern
 ///
 /// ```rust
-/// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
+/// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder, vertex};
 /// use delaunay::prelude::query::ConvexHull;
 ///
 /// # #[derive(Debug, thiserror::Error)]
@@ -366,10 +366,10 @@ pub enum ConvexHullConstructionError {
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
 /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulationBuilder::new(&vec![
-///     delaunay::vertex![0.0, 0.0, 0.0]?,
-///     delaunay::vertex![1.0, 0.0, 0.0]?,
-///     delaunay::vertex![0.0, 1.0, 0.0]?,
-///     delaunay::vertex![0.0, 0.0, 1.0]?,
+///     vertex![0.0, 0.0, 0.0]?,
+///     vertex![1.0, 0.0, 0.0]?,
+///     vertex![0.0, 1.0, 0.0]?,
+///     vertex![0.0, 0.0, 1.0]?,
 /// ]).build::<()>()?;
 ///
 /// // Create initial hull (note: immutable binding)
@@ -379,8 +379,8 @@ pub enum ConvexHullConstructionError {
 ///
 /// // Hull extension is now implemented - inserting outside points works!
 /// // Note: The hull becomes invalid after modification and needs to be recreated
-/// let new_vertex = delaunay::vertex![2.0, 2.0, 2.0]?;
-/// dt.insert(new_vertex)?; // Now works with hull extension!
+/// let new_vertex = vertex![2.0, 2.0, 2.0]?;
+/// dt.insert_vertex(new_vertex)?; // Now works with hull extension!
 /// assert!(!hull.is_valid_for_triangulation(dt.as_triangulation())); // Hull is stale
 /// # Ok(())
 /// # }
@@ -2101,6 +2101,7 @@ mod tests {
         CoordinateConversionError, CoordinateConversionValue, InvalidCoordinateValue,
     };
     use crate::triangulation::DelaunayTriangulation;
+    use crate::vertex;
     use std::assert_matches;
     use std::error::Error;
     use std::sync::atomic::Ordering;
@@ -4420,7 +4421,7 @@ mod tests {
 
         // Add a new vertex - this will bump the generation
         let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(); // Interior point
-        dt.insert(new_vertex)
+        dt.insert_vertex(new_vertex)
             .expect("Failed to insert vertex into DelaunayTriangulation");
 
         let modified_tds_gen = dt.as_triangulation().tds.generation();
@@ -4652,7 +4653,8 @@ mod tests {
 
         // Add a new vertex to trigger generation bump
         let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(); // Interior point
-        dt.insert(new_vertex).expect("Failed to insert vertex");
+        dt.insert_vertex(new_vertex)
+            .expect("Failed to insert vertex");
 
         let new_generation = dt.as_triangulation().tds.generation();
         assert!(
@@ -6847,7 +6849,7 @@ mod tests {
                 0.1,
             ])
             .unwrap();
-            if dt.insert(new_vertex).is_ok() {
+            if dt.insert_vertex(new_vertex).is_ok() {
                 let current_gen = dt.as_triangulation().tds.generation();
                 test_debug!("    After modification {i}: TDS generation = {current_gen}");
 
@@ -7182,8 +7184,7 @@ mod tests {
         test_debug!("  ✓ Hull created with generation {initial_gen}");
 
         // Step 2: Mutate triangulation (increases generation)
-        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap())
-            .unwrap();
+        dt.insert_vertex(vertex![0.5, 0.5, 0.5].unwrap()).unwrap();
         let new_gen = dt.as_triangulation().tds.generation();
         assert_ne!(
             initial_gen, new_gen,
@@ -7388,7 +7389,7 @@ mod tests {
             None,
         );
 
-        let result = dt.insert(duplicate_uuid_vertex);
+        let result = dt.insert_vertex(duplicate_uuid_vertex);
         assert_matches!(
             result,
             Err(InsertionError::DuplicateUuid { uuid, .. }) if uuid == duplicate_uuid
@@ -7443,8 +7444,7 @@ mod tests {
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
 
         // Modify triangulation to make hull stale
-        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap())
-            .unwrap();
+        dt.insert_vertex(vertex![0.5, 0.5, 0.5].unwrap()).unwrap();
 
         let test_point = Point::try_new([2.0, 2.0, 2.0]).expect("finite point coordinates");
 

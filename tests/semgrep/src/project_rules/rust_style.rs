@@ -890,6 +890,42 @@ fn private_documented_invariant(value: Option<u8>) -> u8 {
     value.expect("private helper documents an internal invariant")
 }
 
+trait FixtureAbort<T> {
+    fn or_abort(self) -> T;
+}
+
+trait FixturePachnerMoves {
+    fn attempt_pachner(&mut self) -> Result<u8, ()>;
+}
+
+pub fn ignored_question_mark_result_bad(value: Result<u8, ()>) -> Result<(), ()> {
+    // ruleid: delaunay.rust.no-ignored-fallible-results
+    let _ = value?;
+    Ok(())
+}
+
+pub fn ignored_or_abort_result_bad(value: impl FixtureAbort<u8>) {
+    // ruleid: delaunay.rust.no-ignored-fallible-results
+    let _ = value.or_abort();
+}
+
+pub fn ignored_attempt_pachner_result_bad(mut moves: impl FixturePachnerMoves) {
+    // ruleid: delaunay.rust.no-ignored-fallible-results
+    let _ = moves.attempt_pachner();
+}
+
+pub fn consumed_fallible_result_ok(value: Result<u8, ()>) -> Result<(), ()> {
+    // ok: delaunay.rust.no-ignored-fallible-results
+    let consumed = value?;
+    assert_eq!(consumed, 1);
+    Ok(())
+}
+
+pub fn explicit_drop_result_ok(value: impl FixtureAbort<u8>) {
+    // ok: delaunay.rust.no-ignored-fallible-results
+    drop(value.or_abort());
+}
+
 pub fn env_gated_stdio() {
     // ruleid: delaunay.rust.no-env-gated-stdio-diagnostics
     if std::env::var_os("DELAUNAY_DEBUG").is_some() {

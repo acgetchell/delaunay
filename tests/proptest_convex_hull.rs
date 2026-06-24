@@ -230,7 +230,7 @@ macro_rules! test_convex_hull_properties {
                     // Modify the triangulation by inserting a new vertex
                     let new_vertex =
                         try_vertices_from_points(&[new_point]).expect("finite point coordinates");
-                    prop_assume!(dt.insert(new_vertex[0]).is_ok());
+                    prop_assume!(dt.insert_vertex(new_vertex[0]).is_ok());
 
                     // Filter: Skip if modification resulted in degenerate configuration
                     let modified_boundary_count =

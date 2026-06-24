@@ -123,12 +123,36 @@ pub(crate) struct LocalFacetRepairOutcome {
     pub(crate) affected_vertices: IncidentRepairVertexBuffer,
 }
 
-impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
-where
-    K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
-{
+/// Internal result from vertex deletion, including local simplices that should
+/// seed downstream Delaunay repair.
+#[derive(Debug)]
+pub(crate) struct VertexRemovalOutcome {
+    /// Number of simplices actually removed from the TDS.
+    pub(crate) simplices_removed: usize,
+    /// Live local simplices whose facets, ridges, or neighbors changed.
+    pub(crate) repair_seed_simplices: SimplexKeyBuffer,
+}
+
+impl VertexRemovalOutcome {
+    fn without_repair_seeds(simplices_removed: usize) -> Self {
+        Self {
+            simplices_removed,
+            repair_seed_simplices: SimplexKeyBuffer::new(),
+        }
+    }
+
+    const fn with_repair_seed_simplices(
+        simplices_removed: usize,
+        repair_seed_simplices: SimplexKeyBuffer,
+    ) -> Self {
+        Self {
+            simplices_removed,
+            repair_seed_simplices,
+        }
+    }
+}
+
+impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// Adds one vertex key to an incident repair scope.
     pub(crate) fn push_incident_repair_vertex(
         affected_vertices: &mut IncidentRepairVertexBuffer,
@@ -264,7 +288,13 @@ where
 
         Ok(Some(simplex_key))
     }
+}
 
+impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
+where
+    U: DataType,
+    V: DataType,
+{
     /// Repair neighbor pointers after local simplex removal without scanning the full TDS.
     pub(crate) fn repair_neighbors_after_local_simplex_removal(
         &mut self,
@@ -353,10 +383,12 @@ where
     /// **Fan Triangulation**: The cavity is filled by picking one boundary vertex as an apex
     /// and connecting it to all boundary facets. This follows the local cavity-retriangulation
     /// lineage used by Bowyer-Watson insertion and the computational-geometry treatment in
-    /// Edelsbrunner and Preparata-Shamos; see `REFERENCES.md` entries \[1\]-\[5\] for
-    /// `remove_vertex` source context and the robust predicate background from Shewchuk.
+    /// Edelsbrunner and Preparata-Shamos. See `REFERENCES.md` sections "Triangulation
+    /// Construction Algorithms", "Lifted Paraboloid Method", and "Robust Geometric
+    /// Predicates" for vertex-deletion source context and Shewchuk's robust-predicate
+    /// background.
     ///
-    /// The `remove_vertex` fan step is numerically and topologically fragile when the cavity is
+    /// The vertex-deletion fan step is numerically and topologically fragile when the cavity is
     /// degenerate or nearly coplanar, when epsilon thresholds are too small for the active scalar
     /// range, or when candidate simplices are inverted. Mitigate those cases with robust
     /// predicates, explicit epsilon thresholds, bounded repair budgets, and transactional
@@ -368,16 +400,21 @@ where
     ///
     /// # Returns
     ///
-    /// The number of simplices that were removed along with the vertex.
+    /// The number of simplices removed along with live local simplices that
+    /// should seed downstream Delaunay repair.
     ///
     /// # Errors
     ///
     /// Returns [`InvariantError`] if the removal cannot be completed while maintaining
     /// triangulation invariants. The error preserves structured information from whichever
     /// layer (TDS or Topology) detected the failure.
-    pub(crate) fn remove_vertex(&mut self, vertex_key: VertexKey) -> Result<usize, InvariantError> {
+    pub(crate) fn remove_vertex_with_repair_seeds(
+        &mut self,
+        vertex_key: VertexKey,
+    ) -> Result<VertexRemovalOutcome, InvariantError> {
         if self.tds.vertex(vertex_key).is_none() {
-            return Ok(0); // Vertex not found, nothing to remove
+            // Vertex not found, nothing to remove.
+            return Ok(VertexRemovalOutcome::without_repair_seeds(0));
         }
 
         let simplices_to_remove: SimplexKeyBuffer = self
@@ -388,7 +425,9 @@ where
         if simplices_to_remove.is_empty() {
             // Vertex exists but has no incident simplices; remove it only if the
             // resulting triangulation satisfies the same invariant checks.
-            return self.remove_vertex_with_invariant_checks(vertex_key);
+            return self
+                .remove_vertex_with_invariant_checks(vertex_key)
+                .map(VertexRemovalOutcome::without_repair_seeds);
         }
 
         let boundary_facets =
@@ -401,7 +440,9 @@ where
         if boundary_facets.is_empty() {
             // Use TDS removal for the empty-boundary case, then validate so
             // lower-dimensional remnants are rejected and rolled back.
-            return self.remove_vertex_with_invariant_checks(vertex_key);
+            return self
+                .remove_vertex_with_invariant_checks(vertex_key)
+                .map(VertexRemovalOutcome::without_repair_seeds);
         }
 
         let affected_vertices =
@@ -426,11 +467,11 @@ where
         boundary_facets: &[FacetHandle],
         affected_vertices: &VertexKeySet,
         apex_vertex_key: VertexKey,
-    ) -> Result<usize, InvariantError> {
+    ) -> Result<VertexRemovalOutcome, InvariantError> {
         // Snapshot before destructive retriangulation edits so we can roll back if any
         // subsequent orientation/finalization step fails.
         let tds_snapshot = self.tds.clone_for_rollback();
-        let retriangulation_result = (|| -> Result<usize, InvariantError> {
+        let retriangulation_result = (|| -> Result<VertexRemovalOutcome, InvariantError> {
             // Fill cavity with fan triangulation BEFORE removing old simplices
             // Use fan triangulation that skips boundary facets which already include the apex
             let new_simplices = self
@@ -494,11 +535,14 @@ where
                 &validation_scope,
             )?;
 
-            Ok(simplices_removed)
+            Ok(VertexRemovalOutcome::with_repair_seed_simplices(
+                simplices_removed,
+                validation_scope,
+            ))
         })();
 
         match retriangulation_result {
-            Ok(simplices_removed) => Ok(simplices_removed),
+            Ok(outcome) => Ok(outcome),
             Err(error) => {
                 self.tds = tds_snapshot;
                 Err(error)
@@ -1228,7 +1272,7 @@ where
     ///
     /// `repair_local_facet_issues` uses a localized radius-ratio heuristic to choose
     /// problematic simplices for removal and repair. The heuristic is inspired by the same
-    /// local cavity and simplex-quality ideas cited for `remove_vertex`; see `REFERENCES.md`
+    /// local cavity and simplex-quality ideas cited for vertex deletion; see `REFERENCES.md`
     /// entries \[1\]-\[5\]. It may fail or choose an overly aggressive repair near degenerate or
     /// nearly-coplanar cavities, inverted simplices, or scalar ranges where small numeric epsilons
     /// hide facet distinctions. Use robust predicates, explicit epsilon thresholds, bounded
@@ -1317,6 +1361,7 @@ mod tests {
     use crate::core::tds::Tds;
     use crate::core::vertex::Vertex;
     use crate::geometry::kernel::FastKernel;
+    use crate::vertex;
     use std::assert_matches;
 
     use slotmap::KeyData;
@@ -1333,27 +1378,19 @@ mod tests {
 
         let v0 = tri
             .tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex![0.0, 0.0, 0.0].unwrap())
             .unwrap();
         let v1 = tri
             .tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex![1.0, 0.0, 0.0].unwrap())
             .unwrap();
         let v2 = tri
             .tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex![0.0, 1.0, 0.0].unwrap())
             .unwrap();
         let v3 = tri
             .tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex![0.0, 0.0, 1.0].unwrap())
             .unwrap();
 
         let ck = tri
@@ -1397,29 +1434,19 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v_a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex![0.0, 0.0].unwrap())
             .unwrap();
         let v_b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex![1.0, 0.0].unwrap())
             .unwrap();
         let v_c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex![0.0, 1.0].unwrap())
             .unwrap();
         let v_d = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, -1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex![0.0, -1.0].unwrap())
             .unwrap();
         let v_e = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex![1.0, 1.0].unwrap())
             .unwrap();
 
         let c1 = tds
@@ -1465,7 +1492,7 @@ mod tests {
                 #[test]
                 fn [<test_detect_local_facet_issues_ $dim d>]() {
                     let vertices: Vec<Vertex<(), $dim>> = vec![
-                        $(crate::core::vertex::Vertex::<(), _>::try_new($simplex_coords).unwrap()),+
+                        $(vertex!($simplex_coords).unwrap()),+
                     ];
 
                     let tds = Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices)
@@ -1502,7 +1529,7 @@ mod tests {
                 #[test]
                 fn [<test_repair_local_facet_issues_ $dim d>]() {
                     let vertices: Vec<Vertex<(), $dim>> = vec![
-                        $(crate::core::vertex::Vertex::<(), _>::try_new($simplex_coords).unwrap()),+
+                        $(vertex!($simplex_coords).unwrap()),+
                     ];
 
                     let tds = Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices)
@@ -1519,19 +1546,19 @@ mod tests {
         };
     }
 
-    /// Dimension-parametric `remove_vertex` tests.
+    /// Dimension-parametric `delete_vertex` tests.
     ///
-    /// Verifies that vertex removal maintains neighbor pointer integrity and
+    /// Verifies that vertex deletion maintains neighbor pointer integrity and
     /// triangulation validity across dimensions.
-    macro_rules! test_remove_vertex {
+    macro_rules! test_delete_vertex {
         ($dim:expr, [$($simplex_coords:expr),+ $(,)?], $interior_point:expr) => {
             pastey::paste! {
                 #[test]
-                fn [<test_remove_vertex_neighbor_pointers_ $dim d>]() {
+                fn [<test_delete_vertex_neighbor_pointers_ $dim d>]() {
                     // Build triangulation with D+1 simplex vertices + 1 interior point
                     let vertices: Vec<Vertex<(), $dim>> = {
-                        let mut v = vec![$(crate::core::vertex::Vertex::<(), _>::try_new($simplex_coords).unwrap()),+];
-                        v.push(crate::core::vertex::Vertex::<(), _>::try_new($interior_point).unwrap());
+                        let mut v = vec![$(vertex!($simplex_coords).unwrap()),+];
+                        v.push(vertex!($interior_point).unwrap());
                         v
                     };
 
@@ -1551,7 +1578,7 @@ mod tests {
                         .expect("Interior vertex not found");
 
                     let initial_simplex_count = dt.tds().number_of_simplices();
-                    dt.remove_vertex(interior_vertex_key)
+                    dt.delete_vertex(interior_vertex_key)
                         .expect("Failed to remove vertex");
 
                     // After removal, should have fewer simplices (or same if just 1 simplex left)
@@ -1637,9 +1664,9 @@ mod tests {
         ]
     );
 
-    // Remove vertex tests (2D - 5D)
-    test_remove_vertex!(2, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]], [0.3, 0.3]);
-    test_remove_vertex!(
+    // Delete vertex tests (2D - 5D)
+    test_delete_vertex!(2, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]], [0.3, 0.3]);
+    test_delete_vertex!(
         3,
         [
             [0.0, 0.0, 0.0],
@@ -1649,7 +1676,7 @@ mod tests {
         ],
         [0.25, 0.25, 0.25]
     );
-    test_remove_vertex!(
+    test_delete_vertex!(
         4,
         [
             [0.0, 0.0, 0.0, 0.0],
@@ -1660,7 +1687,7 @@ mod tests {
         ],
         [0.2, 0.2, 0.2, 0.2]
     );
-    test_remove_vertex!(
+    test_delete_vertex!(
         5,
         [
             [0.0, 0.0, 0.0, 0.0, 0.0],
@@ -1778,9 +1805,7 @@ mod tests {
         // Insert a vertex that is NOT referenced by any simplex.
         let iso = tri
             .tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex![0.5, 0.5, 0.5].unwrap())
             .unwrap();
 
         let scope = incident_repair_scope([iso]);
@@ -1825,10 +1850,10 @@ mod tests {
     #[test]
     fn test_detect_local_facet_issues_none_for_valid_triangulation() {
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
+            vertex![1.0, 1.0].unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -1917,6 +1942,94 @@ mod tests {
 
         assert_eq!(live_simplices.as_slice(), &[simplex_key]);
         assert_eq!(validation_scope.as_slice(), &[simplex_key]);
+    }
+
+    #[test]
+    fn test_vertex_removal_outcome_returns_local_repair_seeds_for_fan_path() {
+        let vertices = [
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
+            vertex![0.5, 0.5].unwrap(),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::try_new(&vertices).unwrap();
+        let vertex_key = dt
+            .vertices()
+            .find(|(_, vertex)| {
+                let coords = vertex.point().coords();
+                (coords[0] - 0.5).abs() < 1e-10 && (coords[1] - 0.5).abs() < 1e-10
+            })
+            .map(|(key, _)| key)
+            .unwrap();
+        let mut tri = dt.as_triangulation().clone();
+
+        let outcome = tri.remove_vertex_with_repair_seeds(vertex_key).unwrap();
+
+        assert!(outcome.simplices_removed > 0);
+        assert!(!outcome.repair_seed_simplices.is_empty());
+        assert!(tri.tds.vertex(vertex_key).is_none());
+        assert!(
+            outcome
+                .repair_seed_simplices
+                .iter()
+                .all(|&simplex_key| tri.tds.simplex(simplex_key).is_some())
+        );
+        tri.validate().unwrap();
+    }
+
+    #[test]
+    fn test_vertex_removal_outcome_noops_for_missing_vertex_key() {
+        let vertices = [
+            vertex![0.0, 0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0, 0.0].unwrap(),
+            vertex![0.0, 1.0, 0.0].unwrap(),
+            vertex![0.0, 0.0, 1.0].unwrap(),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::try_new(&vertices).unwrap();
+        let mut tri = dt.as_triangulation().clone();
+        let missing_vertex = VertexKey::from(KeyData::from_ffi(0xBAD));
+        let vertex_count = tri.tds.number_of_vertices();
+        let simplex_count = tri.tds.number_of_simplices();
+
+        let outcome = tri
+            .remove_vertex_with_repair_seeds(missing_vertex)
+            .expect("missing vertex removal should be a no-op at the core repair layer");
+
+        assert_eq!(outcome.simplices_removed, 0);
+        assert!(outcome.repair_seed_simplices.is_empty());
+        assert_eq!(tri.tds.number_of_vertices(), vertex_count);
+        assert_eq!(tri.tds.number_of_simplices(), simplex_count);
+        tri.validate().unwrap();
+    }
+
+    #[test]
+    fn test_vertex_removal_outcome_removes_isolated_vertex_without_repair_seeds() {
+        let vertices = [
+            vertex![0.0, 0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0, 0.0].unwrap(),
+            vertex![0.0, 1.0, 0.0].unwrap(),
+            vertex![0.0, 0.0, 1.0].unwrap(),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::try_new(&vertices).unwrap();
+        let mut tri = dt.as_triangulation().clone();
+        let isolated_vertex = tri
+            .tds
+            .insert_vertex_with_mapping(vertex![0.5, 0.5, 0.5].unwrap())
+            .unwrap();
+        let simplex_count = tri.tds.number_of_simplices();
+
+        let outcome = tri
+            .remove_vertex_with_repair_seeds(isolated_vertex)
+            .expect("isolated vertex removal should restore the prior valid triangulation");
+
+        assert_eq!(outcome.simplices_removed, 0);
+        assert!(outcome.repair_seed_simplices.is_empty());
+        assert!(!tri.tds.contains_vertex_key(isolated_vertex));
+        assert_eq!(tri.tds.number_of_simplices(), simplex_count);
+        tri.validate().unwrap();
     }
 
     #[test]
@@ -2061,17 +2174,17 @@ mod tests {
     }
 
     // =========================================================================
-    // REMOVE VERTEX: RETRIANGULATION AND TOPOLOGY
+    // DELETE VERTEX: RETRIANGULATION AND TOPOLOGY
     // =========================================================================
 
     #[test]
-    fn test_remove_vertex_retriangulates_cavity_2d() {
-        // Build 2D triangulation with 4 vertices, remove one, verify valid.
+    fn test_delete_vertex_retriangulates_cavity_2d() {
+        // Build 2D triangulation with 4 vertices, delete one, verify valid.
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
+            vertex![0.5, 0.5].unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -2086,20 +2199,20 @@ mod tests {
             .map(|(k, _)| k)
             .unwrap();
 
-        let removed = dt.remove_vertex(vertex_key).unwrap();
+        let removed = dt.delete_vertex(vertex_key).unwrap();
         assert!(removed > 0, "Should have removed at least 1 simplex");
         assert!(dt.number_of_simplices() <= initial_simplices);
         assert_eq!(dt.number_of_vertices(), 3);
     }
 
     #[test]
-    fn test_remove_vertex_entire_triangulation_2d() {
-        // When we remove a vertex from a single-simplex triangulation,
+    fn test_delete_vertex_entire_triangulation_2d() {
+        // When we delete a vertex from a single-simplex triangulation,
         // the empty boundary case triggers Tds::remove_vertex fallback.
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -2108,12 +2221,16 @@ mod tests {
         let initial_simplices = dt.number_of_simplices();
         let vertex_key = dt.vertices().next().unwrap().0;
 
-        let error = dt.remove_vertex(vertex_key).unwrap_err();
+        let error = dt.delete_vertex(vertex_key).unwrap_err();
 
         assert!(
             matches!(
                 error,
-                InvariantError::Triangulation(TriangulationValidationError::IsolatedVertex { .. })
+                crate::DeleteVertexError::InvariantViolation {
+                    source: InvariantError::Triangulation(
+                        TriangulationValidationError::IsolatedVertex { .. }
+                    )
+                }
             ),
             "expected isolated-vertex invariant failure, got {error:?}"
         );
@@ -2152,10 +2269,10 @@ mod tests {
         // Build 2D triangulation with enough simplices to have interior facets,
         // then artificially create an over-shared facet by duplicating a simplex.
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
+            vertex![1.0, 1.0].unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();

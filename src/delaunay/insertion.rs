@@ -1,8 +1,7 @@
-//! Incremental insertion and vertex-removal operations for Delaunay triangulations.
+//! Incremental insertion operations for Delaunay triangulations.
 //!
-//! This module owns post-construction mutation APIs: inserting vertices, removing
-//! vertices, maintaining insertion caches, and running policy-controlled local
-//! Delaunay repair after those mutations.
+//! This module owns post-construction vertex insertion, insertion-cache
+//! maintenance, and policy-controlled local Delaunay repair after insertion.
 //!
 //! The insertion workflow follows the Bowyer-Watson cavity model \[2]\[3]:
 //! point location and cavity identification depend on exact orientation and
@@ -19,8 +18,7 @@
 #[cfg(test)]
 use crate::construction::test_hooks;
 use crate::core::algorithms::flips::{
-    DelaunayRepairError, DelaunayRepairRun, FlipError, apply_bistellar_flip_k1_inverse,
-    repair_delaunay_with_flips_k2_k3, repair_delaunay_with_flips_k2_k3_run,
+    DelaunayRepairError, DelaunayRepairRun, repair_delaunay_with_flips_k2_k3_run,
 };
 use crate::core::algorithms::incremental_insertion::{
     DelaunayRepairFailureContext, InsertionError, InsertionTopologyValidationContext,
@@ -28,19 +26,16 @@ use crate::core::algorithms::incremental_insertion::{
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::collections::{FastHashSet, SimplexKeyBuffer};
 use crate::core::operations::{InsertionOutcome, InsertionStatistics};
-use crate::core::tds::{InvariantError, NeighborValidationError, SimplexKey, TdsError, VertexKey};
+use crate::core::tds::{SimplexKey, VertexKey};
 use crate::core::traits::data_type::DataType;
-use crate::core::validation::{
-    TopologyGuarantee, TriangulationValidationError, insertion_error_to_invariant_error,
-};
+use crate::core::validation::{TopologyGuarantee, TriangulationValidationError};
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
-use crate::repair::{DelaunayRepairOperation, DelaunayRepairPolicy};
+use crate::repair::DelaunayRepairPolicy;
 use crate::topology::manifold::{ManifoldError, validate_ridge_links_for_simplices};
 use crate::triangulation::DelaunayTriangulation;
 #[cfg(test)]
 use crate::validation::DelaunayTriangulationCandidate;
-use crate::validation::DelaunayTriangulationValidationError;
 use std::env;
 
 fn ridge_link_repair_validation_error(err: ManifoldError) -> InsertionError {
@@ -57,9 +52,9 @@ fn ridge_link_repair_validation_error(err: ManifoldError) -> InsertionError {
 // MUTATION (Requires Numeric Scalar Bounds)
 // =============================================================================
 //
-// Incremental insertion, removal, and post-insertion repair/check helpers.
+// Incremental insertion and post-insertion repair/check helpers.
 // These require an f64-backed kernel for spatial-index construction,
-// Triangulation-layer insertion, and Triangulation-layer removal.
+// Triangulation-layer insertion, and Delaunay repair predicates.
 
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
 where
@@ -122,7 +117,7 @@ where
     /// Incremental insertion from empty triangulation:
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulation};
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulation, vertex};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// // Start with empty triangulation
@@ -131,19 +126,19 @@ where
     /// assert_eq!(dt.number_of_simplices(), 0);
     ///
     /// // Insert vertices one by one - bootstrap phase (no simplices yet)
-    /// dt.insert(delaunay::vertex![0.0, 0.0, 0.0]?)?;
-    /// dt.insert(delaunay::vertex![1.0, 0.0, 0.0]?)?;
-    /// dt.insert(delaunay::vertex![0.0, 1.0, 0.0]?)?;
+    /// dt.insert_vertex(vertex![0.0, 0.0, 0.0]?)?;
+    /// dt.insert_vertex(vertex![1.0, 0.0, 0.0]?)?;
+    /// dt.insert_vertex(vertex![0.0, 1.0, 0.0]?)?;
     /// assert_eq!(dt.number_of_vertices(), 3);
     /// assert_eq!(dt.number_of_simplices(), 0); // Still no simplices
     ///
     /// // 4th vertex triggers initial simplex creation
-    /// dt.insert(delaunay::vertex![0.0, 0.0, 1.0]?)?;
+    /// dt.insert_vertex(vertex![0.0, 0.0, 1.0]?)?;
     /// assert_eq!(dt.number_of_vertices(), 4);
     /// assert_eq!(dt.number_of_simplices(), 1); // First simplex created!
     ///
     /// // Further insertions use cavity-based algorithm
-    /// dt.insert(delaunay::vertex![0.2, 0.2, 0.2]?)?;
+    /// dt.insert_vertex(vertex![0.2, 0.2, 0.2]?)?;
     /// assert_eq!(dt.number_of_vertices(), 5);
     /// assert!(dt.number_of_simplices() > 1);
     /// # Ok(())
@@ -153,28 +148,28 @@ where
     /// Using batch construction (traditional approach):
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder, vertex};
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// // Create initial triangulation with 5 vertices (4-simplex)
     /// let vertices = vec![
-    ///     delaunay::vertex![0.0, 0.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![1.0, 0.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 1.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 0.0, 1.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
+    ///     vertex![0.0, 0.0, 0.0, 0.0]?,
+    ///     vertex![1.0, 0.0, 0.0, 0.0]?,
+    ///     vertex![0.0, 1.0, 0.0, 0.0]?,
+    ///     vertex![0.0, 0.0, 1.0, 0.0]?,
+    ///     vertex![0.0, 0.0, 0.0, 1.0]?,
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.number_of_vertices(), 5);
     ///
     /// // Insert additional interior vertex
-    /// dt.insert(delaunay::vertex![0.2, 0.2, 0.2, 0.2]?)?;
+    /// dt.insert_vertex(vertex![0.2, 0.2, 0.2, 0.2]?)?;
     /// assert_eq!(dt.number_of_vertices(), 6);
     /// assert!(dt.number_of_simplices() > 1);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn insert(&mut self, vertex: Vertex<U, D>) -> Result<VertexKey, InsertionError> {
+    pub fn insert_vertex(&mut self, vertex: Vertex<U, D>) -> Result<VertexKey, InsertionError> {
         self.ensure_spatial_index_seeded()?;
 
         // Fully delegate to Triangulation layer
@@ -186,7 +181,7 @@ where
         // DelaunayTriangulation adds:
         // - Kernel (provides in-sphere predicate for Delaunay property)
         // - Hint caching for performance
-        // - Future: Delaunay property restoration after removal
+        // - Post-insertion Delaunay repair and/or validation
         //
         // Transactional guard: post-steps (flip repair and/or global Delaunay checks) can fail.
         // If they do, rollback to leave the triangulation unchanged.
@@ -617,223 +612,6 @@ where
         self.is_valid()
             .map_err(|e| InsertionError::DelaunayValidationFailed { source: e })
     }
-
-    /// Removes a vertex and retriangulates the resulting cavity using fan triangulation.
-    ///
-    /// This operation delegates to the core triangulation layer, which:
-    /// 1. Finds all simplices containing the vertex
-    /// 2. Removes those simplices (creating a cavity)
-    /// 3. Fills the cavity with fan triangulation
-    /// 4. Wires neighbors and rebuilds vertex-simplex incidence
-    /// 5. Removes the vertex
-    ///
-    /// Fast-path: if the vertex star is a simplex (exactly D+1 incident simplices with
-    /// consistent adjacency), this method collapses it via the **inverse k=1** bistellar
-    /// flip. Otherwise it falls back to fan triangulation.
-    ///
-    /// This operation is topology-preserving on success: it returns `Ok` only after the
-    /// post-removal triangulation satisfies the required manifold and topology invariants. A
-    /// candidate removal that would collapse the mesh to a lower-dimensional remnant or isolate
-    /// remaining vertices is rejected as an [`InvariantError::Triangulation`] failure, and the
-    /// pre-removal state is restored. Both the inverse k=1 fast-path and fan triangulation may
-    /// temporarily violate the Delaunay property in some cases. If the [`DelaunayRepairPolicy`]
-    /// allows it, a flip-based repair pass is run automatically after removal.
-    ///
-    /// The post-removal repair and orientation canonicalization steps are
-    /// transactional: if either step fails, this method restores the triangulation
-    /// and insertion state to their pre-removal state before returning the error.
-    /// The spatial index is retained across rollback because its keys are
-    /// validated against the live TDS before use. On successful removal,
-    /// topology-dependent locate hints are invalidated and the removed vertex key
-    /// is pruned from the spatial index.
-    ///
-    /// **Future Enhancement**: Delaunay-aware cavity retriangulation will be added for
-    /// removals. For now, occasional Delaunay violations after removal are expected and
-    /// can be addressed by running flip-based repair (e.g., [`repair_delaunay_with_flips`](Self::repair_delaunay_with_flips))
-    /// or by leaving automatic repair enabled via [`DelaunayRepairPolicy`].
-    ///
-    /// # Arguments
-    ///
-    /// * `vertex_key` - Key of the vertex to remove
-    ///
-    /// # Returns
-    ///
-    /// The number of simplices that were removed along with the vertex. Returns `Ok(0)` if
-    /// `vertex_key` does not refer to a vertex in the triangulation (e.g. a stale key from
-    /// a previously removed vertex or a key that was never inserted). This is a successful
-    /// no-op, not an error.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`InvariantError`] if:
-    /// - The inverse k=1 flip encounters a neighbor-wiring failure ([`InvariantError::Tds`]).
-    /// - Fan retriangulation fails ([`InvariantError::Tds`]).
-    /// - Post-removal topology validation fails, for example because removal would leave
-    ///   isolated vertices or a lower-dimensional remnant
-    ///   ([`InvariantError::Triangulation`]).
-    /// - Delaunay flip-based repair fails after removal
-    ///   ([`InvariantError::Delaunay`] wrapping
-    ///   [`DelaunayTriangulationValidationError::RepairOperationFailed`]).
-    /// - Orientation canonicalization fails after repair ([`InvariantError::Tds`]).
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
-    ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Invariant(#[from] delaunay::tds::InvariantError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// let interior = delaunay::vertex![0.3, 0.3]?;
-    /// let interior_uuid = interior.uuid();
-    /// let vertices = [
-    ///     delaunay::vertex![0.0, 0.0]?,
-    ///     delaunay::vertex![1.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 1.0]?,
-    ///     interior,
-    /// ];
-    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-    ///
-    /// // Find the key of a known interior vertex.
-    /// let Some((vertex_key, _)) = dt.vertices().find(|(_, v)| v.uuid() == interior_uuid) else {
-    ///     return Ok(());
-    /// };
-    ///
-    /// // Remove the vertex and all simplices containing it
-    /// let simplices_removed = dt.remove_vertex(vertex_key)?;
-    /// println!("Removed {} simplices along with the vertex", simplices_removed);
-    ///
-    /// // Vertex removal preserves topology; automatic repair is attempted when enabled.
-    /// assert!(dt.as_triangulation().validate().is_ok());
-    /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// Removals that would leave a non-manifold remnant fail and roll back:
-    ///
-    /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
-    /// use delaunay::prelude::tds::InvariantError;
-    /// use delaunay::prelude::triangulation::TriangulationValidationError;
-    ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// let vertices = [
-    ///     delaunay::vertex![0.0, 0.0]?,
-    ///     delaunay::vertex![1.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 1.0]?,
-    /// ];
-    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
-    /// let Some((vertex_key, _)) = dt.vertices().next() else {
-    ///     return Ok(());
-    /// };
-    ///
-    /// let err = dt
-    ///     .remove_vertex(vertex_key)
-    ///     .expect_err("removal should leave an isolated vertex");
-    /// std::assert_matches!(
-    ///     err,
-    ///     InvariantError::Triangulation(TriangulationValidationError::IsolatedVertex { .. })
-    /// );
-    /// assert_eq!(dt.number_of_vertices(), 3);
-    /// assert_eq!(dt.number_of_simplices(), 1);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn remove_vertex(&mut self, vertex_key: VertexKey) -> Result<usize, InvariantError> {
-        let Some(removed_vertex) = self.tri.tds.vertex(vertex_key) else {
-            return Ok(0);
-        };
-        let removed_vertex_coords = *removed_vertex.point().coords();
-        let snapshot = (self.tri.tds.clone_for_rollback(), self.insertion_state);
-
-        let result = (|| {
-            // Fast path: inverse k=1 flip when the vertex star is a simplex.
-            let mut seed_simplices: Option<SimplexKeyBuffer> = None;
-            let simplices_removed =
-                match apply_bistellar_flip_k1_inverse(&mut self.tri.tds, vertex_key) {
-                    Ok(info) => {
-                        seed_simplices = Some(info.new_simplices);
-                        info.removed_simplices.len()
-                    }
-                    Err(FlipError::NeighborWiring { reason }) => {
-                        return Err(TdsError::InvalidNeighbors {
-                            reason: NeighborValidationError::FlipNeighborWiring { reason },
-                        }
-                        .into());
-                    }
-                    Err(_) => self.tri.remove_vertex(vertex_key)?,
-                };
-
-            let topology = self.tri.topology_guarantee();
-            if self.should_run_delaunay_repair_after_mutation(topology) {
-                let seed_ref = seed_simplices.as_deref();
-                let repair_result = {
-                    self.invalidate_locate_hint_cache();
-                    let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-                    repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology, None)
-                };
-
-                #[cfg(test)]
-                let repair_result = if test_hooks::force_repair_nonconvergent_enabled() {
-                    Err(test_hooks::synthetic_nonconvergent_error())
-                } else {
-                    repair_result
-                };
-
-                repair_result.map_err(|source| {
-                    InvariantError::Delaunay(
-                        DelaunayTriangulationValidationError::RepairOperationFailed {
-                            operation: DelaunayRepairOperation::VertexRemoval,
-                            source: Box::new(source),
-                        },
-                    )
-                })?;
-
-                // Re-canonicalize geometric orientation (#258): flip repair may leave
-                // the global sign negative.
-                self.tri
-                    .normalize_and_promote_positive_orientation()
-                    .map_err(|e| {
-                        insertion_error_to_invariant_error(
-                            e,
-                            "Orientation canonicalization failed after vertex removal",
-                        )
-                    })?;
-            }
-
-            Ok(simplices_removed)
-        })();
-
-        match result {
-            Ok(simplices_removed) => {
-                self.insertion_state.last_inserted_simplex = None;
-                if let Some(index) = self.spatial_index.as_mut() {
-                    index.remove_vertex(&vertex_key, &removed_vertex_coords);
-                }
-                Ok(simplices_removed)
-            }
-            Err(err) => {
-                let (tds, insertion_state) = snapshot;
-                self.tri.tds = tds;
-                self.insertion_state = insertion_state;
-                Err(err)
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -841,15 +619,13 @@ mod tests {
     use super::*;
     use crate::core::algorithms::flips::DelaunayRepairStats;
     use crate::core::simplex::Simplex;
-    use crate::core::tds::Tds;
-    use crate::flips::BistellarFlips;
+    use crate::core::tds::{Tds, TdsError};
     use crate::geometry::kernel::{AdaptiveKernel, RobustKernel};
-    use crate::geometry::util::safe_usize_to_scalar;
     use crate::topology::traits::topological_space::GlobalTopology;
+    use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
     use std::sync::Once;
-    use uuid::Uuid;
 
     fn init_tracing() {
         static INIT: Once = Once::new();
@@ -880,183 +656,6 @@ mod tests {
             let _ = test_hooks::set_force_repair_nonconvergent(self.previous);
         }
     }
-
-    fn simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
-        let mut vertices = Vec::with_capacity(D + 1);
-        vertices.push(crate::core::vertex::Vertex::<(), _>::try_new([0.0; D]).unwrap());
-        for axis in 0..D {
-            let mut coords = [0.0; D];
-            coords[axis] = 1.0;
-            vertices.push(crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap());
-        }
-        vertices
-    }
-
-    fn interior_vertex_for_k1_insert<const D: usize>() -> Vertex<(), D> {
-        let denominator = safe_usize_to_scalar(D + 2)
-            .expect("D + 2 should convert exactly for rollback test dimensions");
-        let coord = 1.0 / denominator;
-        crate::core::vertex::Vertex::<(), _>::try_new([coord; D]).unwrap()
-    }
-
-    fn rollback_probe_vertex<const D: usize>(point_index: usize) -> Vertex<(), D> {
-        let dimension = safe_usize_to_scalar(D).expect("test dimensions should convert exactly");
-        let point_index_scalar =
-            safe_usize_to_scalar(point_index).expect("point index should convert exactly");
-        let mut coords = [0.2 / dimension; D];
-        let axis = point_index % D;
-        coords[axis] += point_index_scalar.mul_add(0.005, 0.02);
-        crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap()
-    }
-
-    fn incident_simplex_count<const D: usize>(
-        dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
-        vertex_key: VertexKey,
-    ) -> usize {
-        dt.simplices()
-            .filter(|(_, simplex)| simplex.vertices().contains(&vertex_key))
-            .count()
-    }
-
-    fn assert_forced_remove_vertex_rolls_back<const D: usize>(
-        dt: &mut DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
-        vertex_key: VertexKey,
-        inserted_uuid: Uuid,
-    ) {
-        let vertex_count_before = dt.number_of_vertices();
-        let simplex_count_before = dt.number_of_simplices();
-        let hint_simplex_before = dt.simplices().next().map(|(key, _)| key);
-        dt.insertion_state.last_inserted_simplex = hint_simplex_before;
-        let mut spatial_index = HashGridIndex::<D>::try_new(1.0).unwrap();
-        for (vertex_key, vertex) in dt.vertices() {
-            spatial_index.insert_vertex(vertex_key, vertex.point().coords());
-        }
-        dt.spatial_index = Some(spatial_index);
-        let last_inserted_simplex_before = dt.insertion_state.last_inserted_simplex;
-        let spatial_index_before = dt
-            .spatial_index
-            .as_ref()
-            .map(HashGridIndex::<D>::debug_snapshot);
-
-        let _guard = ForceRepairNonconvergentGuard::enable();
-        let result = dt.remove_vertex(vertex_key);
-        let err = result.expect_err("forced repair failure should make removal fail");
-        match err {
-            InvariantError::Delaunay(
-                DelaunayTriangulationValidationError::RepairOperationFailed {
-                    operation: DelaunayRepairOperation::VertexRemoval,
-                    source,
-                },
-            ) if matches!(
-                source.as_ref(),
-                DelaunayRepairError::NonConvergent { max_flips: 0, .. }
-            ) => {}
-            InvariantError::Triangulation(
-                TriangulationValidationError::OrientationPromotionNonConvergence { .. },
-            )
-            | InvariantError::Tds(TdsError::FacetSharingViolation { .. }) => {}
-            other => panic!(
-                "expected vertex-removal rollback error from forced repair path, got {other:?}"
-            ),
-        }
-
-        assert_eq!(dt.number_of_vertices(), vertex_count_before);
-        assert_eq!(dt.number_of_simplices(), simplex_count_before);
-        assert_eq!(
-            dt.insertion_state.last_inserted_simplex, last_inserted_simplex_before,
-            "remove_vertex rollback should restore last_inserted_simplex"
-        );
-        assert_eq!(
-            dt.spatial_index
-                .as_ref()
-                .map(HashGridIndex::<D>::debug_snapshot),
-            spatial_index_before,
-            "remove_vertex rollback should restore spatial_index"
-        );
-        assert!(dt.vertices().any(|(_, v)| v.uuid() == inserted_uuid));
-        assert!(dt.as_triangulation().validate().is_ok());
-    }
-
-    fn assert_remove_vertex_rollback<const D: usize>() {
-        init_tracing();
-        let vertices = simplex_vertices::<D>();
-
-        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
-        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
-
-        let simplex_key = dt.simplices().next().unwrap().0;
-        let inserted_vertex = interior_vertex_for_k1_insert::<D>();
-        let inserted_uuid = inserted_vertex.uuid();
-        dt.flip_k1_insert(simplex_key, inserted_vertex).unwrap();
-
-        let vertex_key = dt
-            .vertices()
-            .find(|(_, v)| v.uuid() == inserted_uuid)
-            .map(|(k, _)| k)
-            .expect("Inserted vertex not found");
-
-        assert_forced_remove_vertex_rolls_back(&mut dt, vertex_key, inserted_uuid);
-    }
-
-    fn assert_remove_vertex_fallback_rollback<const D: usize>() {
-        init_tracing();
-        let vertices = simplex_vertices::<D>();
-
-        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
-        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
-
-        let mut inserted_vertices = Vec::new();
-        for point_index in 0..(D + 3) {
-            let inserted_vertex = rollback_probe_vertex::<D>(point_index);
-            let inserted_uuid = inserted_vertex.uuid();
-            let vertex_key = dt
-                .insert(inserted_vertex)
-                .expect("rollback fallback fixture insertion should succeed");
-            inserted_vertices.push((vertex_key, inserted_uuid));
-        }
-
-        let (vertex_key, inserted_uuid, incident_simplices) = inserted_vertices
-            .iter()
-            .find_map(|&(vertex_key, inserted_uuid)| {
-                let incident_simplices = incident_simplex_count(&dt, vertex_key);
-                (incident_simplices != D + 1).then_some((
-                    vertex_key,
-                    inserted_uuid,
-                    incident_simplices,
-                ))
-            })
-            .expect("expected at least one inserted vertex with a non-simplex star");
-        assert_ne!(
-            incident_simplices,
-            D + 1,
-            "fallback rollback fixture must avoid the inverse-k=1 simplex-star path"
-        );
-
-        assert_forced_remove_vertex_rolls_back(&mut dt, vertex_key, inserted_uuid);
-    }
-
-    macro_rules! gen_remove_vertex_rollback_tests {
-        ($dim:literal) => {
-            pastey::paste! {
-                #[test]
-                fn [<remove_vertex_rollback_ $dim d>]() {
-                    assert_remove_vertex_rollback::<$dim>();
-                }
-
-                #[test]
-                fn [<remove_vertex_fallback_rollback_ $dim d>]() {
-                    assert_remove_vertex_fallback_rollback::<$dim>();
-                }
-            }
-        };
-    }
-
-    gen_remove_vertex_rollback_tests!(2);
-    gen_remove_vertex_rollback_tests!(3);
-    gen_remove_vertex_rollback_tests!(4);
-    gen_remove_vertex_rollback_tests!(5);
 
     #[test]
     fn test_ridge_link_repair_validation_error_routes_tds_errors_to_tds_layer() {
@@ -1094,97 +693,12 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_vertex_fast_path_inverse_k1() {
-        init_tracing();
-        let vertices: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-        ];
-
-        let mut dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
-        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
-        let original_vertex_count = dt.number_of_vertices();
-        let original_simplex_count = dt.number_of_simplices();
-
-        let simplex_key = dt.simplices().next().unwrap().0;
-        let inserted_vertex =
-            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2]).unwrap();
-        let inserted_uuid = inserted_vertex.uuid();
-        dt.flip_k1_insert(simplex_key, inserted_vertex).unwrap();
-
-        assert_eq!(dt.number_of_vertices(), original_vertex_count + 1);
-        assert_eq!(dt.number_of_simplices(), original_simplex_count + 3);
-
-        let vertex_key = dt
-            .vertices()
-            .find(|(_, v)| v.uuid() == inserted_uuid)
-            .map(|(k, _)| k)
-            .expect("Inserted vertex not found");
-
-        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
-        let removed_simplices = dt.remove_vertex(vertex_key).unwrap();
-
-        assert_eq!(removed_simplices, 4);
-        assert_eq!(dt.number_of_vertices(), original_vertex_count);
-        assert_eq!(dt.number_of_simplices(), original_simplex_count);
-        assert!(dt.as_triangulation().validate().is_ok());
-        assert!(dt.vertices().all(|(_, v)| v.uuid() != inserted_uuid));
-    }
-
-    #[test]
-    fn remove_vertex_invalidates_locate_hint_and_prunes_spatial_index() {
-        init_tracing();
-        let vertices: Vec<Vertex<(), 2>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-        ];
-        let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
-
-        let vertex_key = dt
-            .insert(crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.25]).unwrap())
-            .unwrap();
-        let hint_simplex = dt.simplices().next().map(|(key, _)| key);
-        dt.insertion_state.last_inserted_simplex = hint_simplex;
-        let mut spatial_index = HashGridIndex::<2>::try_new(1.0).unwrap();
-        for (vertex_key, vertex) in dt.vertices() {
-            spatial_index.insert_vertex(vertex_key, vertex.point().coords());
-        }
-        dt.spatial_index = Some(spatial_index);
-        assert!(dt.insertion_state.last_inserted_simplex.is_some());
-        assert!(dt.spatial_index.is_some());
-
-        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
-        let removed_simplices = dt.remove_vertex(vertex_key).unwrap();
-
-        assert!(removed_simplices > 0);
-        assert!(dt.insertion_state.last_inserted_simplex.is_none());
-        let spatial_index = dt
-            .spatial_index
-            .as_ref()
-            .expect("successful vertex removal should retain the spatial index");
-        let mut found_removed_key = false;
-        assert!(
-            spatial_index.for_each_candidate_vertex_key(&[0.25, 0.25], |candidate| {
-                found_removed_key |= candidate == vertex_key;
-                true
-            })
-        );
-        assert!(!found_removed_key);
-        assert!(dt.as_triangulation().validate().is_ok());
-    }
-
-    #[test]
     fn test_insert_single_interior_point_2d() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
@@ -1193,9 +707,7 @@ mod tests {
         assert_eq!(dt.number_of_vertices(), 3);
         assert_eq!(dt.number_of_simplices(), 1);
 
-        let v_key = dt
-            .insert(crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.3]).unwrap())
-            .unwrap();
+        let v_key = dt.insert_vertex(vertex![0.3, 0.3].unwrap()).unwrap();
 
         // Verify insertion succeeded
         assert_eq!(dt.number_of_vertices(), 4);
@@ -1209,25 +721,22 @@ mod tests {
     fn test_insert_multiple_sequential_points_2d() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
 
         // Insert 3 interior points sequentially
-        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.3]).unwrap())
-            .unwrap();
+        dt.insert_vertex(vertex![0.3, 0.3].unwrap()).unwrap();
         assert_eq!(dt.number_of_vertices(), 4);
 
-        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.2]).unwrap())
-            .unwrap();
+        dt.insert_vertex(vertex![0.5, 0.2].unwrap()).unwrap();
         assert_eq!(dt.number_of_vertices(), 5);
 
-        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.5]).unwrap())
-            .unwrap();
+        dt.insert_vertex(vertex![0.2, 0.5].unwrap()).unwrap();
         assert_eq!(dt.number_of_vertices(), 6);
 
         // All vertices should be present
@@ -1238,26 +747,23 @@ mod tests {
     fn test_insert_multiple_sequential_points_3d() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex![0.0, 0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0, 0.0].unwrap(),
+            vertex![0.0, 1.0, 0.0].unwrap(),
+            vertex![0.0, 0.0, 1.0].unwrap(),
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
 
         // Insert 3 interior points sequentially (well inside the tetrahedron)
-        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.1, 0.1, 0.1]).unwrap())
-            .unwrap();
+        dt.insert_vertex(vertex![0.1, 0.1, 0.1].unwrap()).unwrap();
         assert_eq!(dt.number_of_vertices(), 5);
 
-        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.15, 0.15, 0.1]).unwrap())
-            .unwrap();
+        dt.insert_vertex(vertex![0.15, 0.15, 0.1].unwrap()).unwrap();
         assert_eq!(dt.number_of_vertices(), 6);
 
-        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.1, 0.15, 0.15]).unwrap())
-            .unwrap();
+        dt.insert_vertex(vertex![0.1, 0.15, 0.15].unwrap()).unwrap();
         assert_eq!(dt.number_of_vertices(), 7);
 
         assert!(dt.number_of_simplices() > 1);
@@ -1267,9 +773,9 @@ mod tests {
     fn test_insert_updates_last_inserted_simplex() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
@@ -1280,8 +786,7 @@ mod tests {
         assert!(dt.insertion_state.last_inserted_simplex.is_none());
 
         // After insertion, should have a cached simplex
-        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.3]).unwrap())
-            .unwrap();
+        dt.insert_vertex(vertex![0.3, 0.3].unwrap()).unwrap();
         assert!(dt.insertion_state.last_inserted_simplex.is_some());
     }
 
@@ -1295,16 +800,12 @@ mod tests {
         assert_eq!(dt.number_of_vertices(), 0);
 
         // Bootstrap with robust predicates
-        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap())
-            .unwrap();
-        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap())
-            .unwrap();
-        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap())
-            .unwrap();
+        dt.insert_vertex(vertex![0.0, 0.0, 0.0].unwrap()).unwrap();
+        dt.insert_vertex(vertex![1.0, 0.0, 0.0].unwrap()).unwrap();
+        dt.insert_vertex(vertex![0.0, 1.0, 0.0].unwrap()).unwrap();
         assert_eq!(dt.number_of_simplices(), 0); // Still bootstrapping
 
-        dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap())
-            .unwrap();
+        dt.insert_vertex(vertex![0.0, 0.0, 1.0].unwrap()).unwrap();
         assert_eq!(dt.number_of_simplices(), 1); // Initial simplex created
 
         assert!(dt.is_valid().is_ok());
@@ -1316,15 +817,15 @@ mod tests {
     fn test_maybe_repair_after_insertion_robust_fallback_on_forced_nonconvergent() {
         init_tracing();
         let vertices: Vec<Vertex<(), 2>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
         ];
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
 
         let _guard = ForceRepairNonconvergentGuard::enable();
-        let result = dt.insert(crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap());
+        let result = dt.insert_vertex(vertex![0.5, 0.5].unwrap());
         let inserted_key = result
             .as_ref()
             .copied()
@@ -1354,24 +855,16 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex![0.0, 0.0].unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex![1.0, 0.0].unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex![0.0, 1.0].unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex![1.0, 1.0].unwrap())
             .unwrap();
 
         let incident = tds
@@ -1396,19 +889,13 @@ mod tests {
             .unwrap();
 
         let v4 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([10.0, 10.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex![10.0, 10.0].unwrap())
             .unwrap();
         let v5 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([11.0, 10.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex![11.0, 10.0].unwrap())
             .unwrap();
         let v6 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([10.0, 11.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex![10.0, 11.0].unwrap())
             .unwrap();
 
         let _ = tds
@@ -1438,11 +925,11 @@ mod tests {
     #[test]
     fn test_collect_local_repair_seed_simplices_merges_adjacent_extra_and_ignores_stale() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
+            vertex![1.0, 1.0].unwrap(),
+            vertex![0.5, 0.5].unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();

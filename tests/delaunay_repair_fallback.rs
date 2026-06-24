@@ -4,11 +4,11 @@
 //! Delaunay violations, the deterministic rebuild heuristic is triggered and
 //! successfully produces a valid Delaunay triangulation.
 
+use delaunay::flips::BistellarFlips;
 use delaunay::flips::FacetHandle;
 use delaunay::prelude::construction::{
     DelaunayRepairPolicy, DelaunayTriangulation, TopologyGuarantee,
 };
-use delaunay::prelude::flips::BistellarFlips;
 use delaunay::prelude::repair::DelaunayRepairHeuristicConfig;
 
 #[cfg(feature = "diagnostics")]
@@ -127,7 +127,7 @@ fn incremental_insertion_with_repair_fallback() {
     ];
 
     for (i, vertex) in test_vertices.into_iter().enumerate() {
-        let result = dt.insert(vertex);
+        let result = dt.insert_vertex(vertex);
 
         match result {
             Ok(_) => {
@@ -244,7 +244,7 @@ fn repair_policy_configuration_with_fallback() {
         dt.set_delaunay_repair_policy(policy);
 
         for vertex in &vertices {
-            dt.insert(*vertex)
+            dt.insert_vertex(*vertex)
                 .expect("Insertion should succeed with any repair policy");
         }
 

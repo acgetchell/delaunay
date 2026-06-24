@@ -19,10 +19,10 @@ mod flip_workflows;
 
 use std::assert_matches;
 
+use delaunay::flips::{FacetHandle, FlipError, RidgeHandle};
 use delaunay::prelude::construction::{
     DelaunayConstructionFailure, DelaunayTriangulationConstructionError,
 };
-use delaunay::prelude::flips::{FacetHandle, FlipError, RidgeHandle};
 use delaunay::prelude::tds::{FacetError, SimplexKey};
 use slotmap::KeyData;
 

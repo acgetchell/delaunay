@@ -4,11 +4,11 @@
 //! Delaunay triangulations in both 2D and 3D:
 //!
 //! 1. **Builder API** - High-level construction and maintenance
-//! 2. **Edit API** - Low-level topology editing via bistellar flips
+//! 2. **Pachner Move API** - Local topology editing via Pachner moves
 //!
 //! The example shows:
 //! - Building triangulations with the Builder API
-//! - Manual topology editing with the Edit API (k=1, k=2, k=3 flips)
+//! - Manual topology editing with the Pachner Move API (k=1, k=2, k=3 moves)
 //! - The difference in Delaunay property preservation between the two APIs
 //! - Dimension-specific flip operations (k=3 is only available in 3D+)
 //!
@@ -27,13 +27,16 @@ use delaunay::prelude::construction::{
     DelaunayTriangulation, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
     vertex,
 };
-use delaunay::prelude::flips::*;
 use delaunay::prelude::geometry::{
-    CircumcenterError, Coordinate, CoordinateConversionError, Kernel, Point, circumcenter, hypot,
+    CircumcenterError, Coordinate, CoordinateConversionError, Point, circumcenter, hypot,
 };
 use delaunay::prelude::insertion::InsertionError;
+use delaunay::prelude::pachner::{
+    EdgeKey, EdgeKeyError, FacetError, FacetHandle, FlipError, PachnerMove, PachnerMoves,
+    RidgeHandle, VertexKey,
+};
+use delaunay::prelude::tds::TdsError;
 use delaunay::prelude::validation::DelaunayTriangulationValidationError;
-use delaunay::prelude::{EdgeKeyError, FacetError, TdsError, VertexKey};
 
 type ExampleResult<T = ()> = Result<T, TopologyEditingExampleError>;
 
@@ -72,7 +75,7 @@ enum TopologyEditingExampleError {
 
 fn main() -> ExampleResult {
     println!("============================================================");
-    println!("Topology Editing: Builder API vs Edit API (2D and 3D)");
+    println!("Topology Editing: Builder API vs Pachner Move API (2D and 3D)");
     println!("============================================================\n");
 
     // Part 1: 2D examples (k=1 and k=2 flips)
@@ -99,9 +102,9 @@ fn demo_2d() -> ExampleResult {
 
     builder_api_2d()?;
     println!("\n------------------------------------------------------------\n");
-    edit_api_2d_k1()?;
+    pachner_2d_k1()?;
     println!("\n------------------------------------------------------------\n");
-    edit_api_2d_k2()?;
+    pachner_2d_k2()?;
     Ok(())
 }
 
@@ -125,7 +128,7 @@ fn builder_api_2d() -> ExampleResult {
     let new_vertices = vec![vertex![2.0, 1.0]?, vertex![1.0, 1.5]?, vertex![3.0, 1.5]?];
 
     for (i, v) in new_vertices.into_iter().enumerate() {
-        dt.insert(v)?;
+        dt.insert_vertex(v)?;
         println!(
             "  After insert {}: {} vertices, {} simplices",
             i + 1,
@@ -141,8 +144,8 @@ fn builder_api_2d() -> ExampleResult {
 }
 
 /// Demonstrates k=1 flips (simplex split/merge) in 2D.
-fn edit_api_2d_k1() -> ExampleResult {
-    println!("2D Edit API: k=1 Flips (Simplex Split/Merge)");
+fn pachner_2d_k1() -> ExampleResult {
+    println!("2D Pachner Move API: k=1 Moves (Simplex Split/Merge)");
     println!("------------------------------------------\n");
 
     let vertices = vec![vertex![0.0, 0.0]?, vertex![3.0, 0.0]?, vertex![1.5, 2.5]?];
@@ -198,7 +201,10 @@ fn edit_api_2d_k1() -> ExampleResult {
         circumcenter_coords[0], circumcenter_coords[1]
     );
 
-    let flip_info = dt.flip_k1_insert(simplex_key, vertex!(circumcenter_coords)?)?;
+    let flip_info = dt.attempt_pachner(PachnerMove::K1Insert {
+        simplex_key,
+        vertex: vertex!(circumcenter_coords)?,
+    })?;
 
     println!("After k=1 forward:");
     print_stats_2d(&dt);
@@ -213,20 +219,23 @@ fn edit_api_2d_k1() -> ExampleResult {
     // Apply inverse k=1 flip (remove vertex)
     println!("\nApplying k=1 inverse (remove vertex):");
     let vertex_to_remove = flip_info.inserted_face_vertices[0];
-    dt.flip_k1_remove(vertex_to_remove)?;
+    let inverse_info = dt.attempt_pachner(PachnerMove::K1Remove {
+        vertex_key: vertex_to_remove,
+    })?;
+    assert!(!inverse_info.removed_simplices.is_empty());
 
     println!("After k=1 inverse:");
     print_stats_2d(&dt);
 
     // Verify we're back to original state
     dt.validate()?;
-    println!("\n✓ k=1 flip roundtrip successful (Edit API)");
+    println!("\n✓ k=1 move roundtrip successful (Pachner Move API)");
     Ok(())
 }
 
 /// Demonstrates k=2 flips (edge flip) in 2D.
-fn edit_api_2d_k2() -> ExampleResult {
-    println!("2D Edit API: k=2 Flips (Edge Flip)");
+fn pachner_2d_k2() -> ExampleResult {
+    println!("2D Pachner Move API: k=2 Moves (Edge Flip)");
     println!("-----------------------------------\n");
 
     // Create a square with diagonal (2 triangles)
@@ -249,13 +258,12 @@ fn edit_api_2d_k2() -> ExampleResult {
     );
 
     // Find an interior edge to flip
-    let facet =
-        find_interior_facet_2d(&dt)?.ok_or(TopologyEditingExampleError::NoInteriorFacet {
-            demo: "2D k=2 demo",
-        })?;
+    let facet = find_interior_facet(&dt)?.ok_or(TopologyEditingExampleError::NoInteriorFacet {
+        demo: "2D k=2 demo",
+    })?;
 
     println!("\nApplying k=2 flip (flipping diagonal edge):");
-    let flip_info = dt.flip_k2(facet)?;
+    let flip_info = dt.attempt_pachner(PachnerMove::K2 { facet })?;
 
     println!("After k=2 forward:");
     print_stats_2d(&dt);
@@ -270,14 +278,14 @@ fn edit_api_2d_k2() -> ExampleResult {
     );
 
     if initial_valid != after_valid {
-        println!("  Note: Delaunay property changed (expected with Edit API)");
+        println!("  Note: Delaunay property changed (expected with Pachner Move API)");
     }
 
     // Note: k=2 inverse is only available in 3D+
     println!("\nNote: k=2 inverse flip (from edge star) is only available in 3D+");
     println!("      In 2D, k=2 flips are always reversible by another k=2 flip");
 
-    println!("\n✓ k=2 flip successful (Edit API)");
+    println!("\n✓ k=2 move successful (Pachner Move API)");
     Ok(())
 }
 
@@ -291,11 +299,11 @@ fn demo_3d() -> ExampleResult {
 
     builder_api_3d()?;
     println!("\n------------------------------------------------------------\n");
-    edit_api_3d_k1()?;
+    pachner_3d_k1()?;
     println!("\n------------------------------------------------------------\n");
-    edit_api_3d_k2()?;
+    pachner_3d_k2()?;
     println!("\n------------------------------------------------------------\n");
-    edit_api_3d_k3()?;
+    pachner_3d_k3()?;
     Ok(())
 }
 
@@ -323,7 +331,7 @@ fn builder_api_3d() -> ExampleResult {
     let new_vertices = vec![vertex![1.0, 0.5, 0.5]?, vertex![0.8, 0.8, 0.8]?];
 
     for (i, v) in new_vertices.into_iter().enumerate() {
-        dt.insert(v)?;
+        dt.insert_vertex(v)?;
         println!(
             "  After insert {}: {} vertices, {} simplices",
             i + 1,
@@ -338,8 +346,8 @@ fn builder_api_3d() -> ExampleResult {
 }
 
 /// Demonstrates k=1 flips in 3D.
-fn edit_api_3d_k1() -> ExampleResult {
-    println!("3D Edit API: k=1 Flips (Simplex Split/Merge)");
+fn pachner_3d_k1() -> ExampleResult {
+    println!("3D Pachner Move API: k=1 Moves (Simplex Split/Merge)");
     println!("------------------------------------------\n");
 
     let vertices = vec![
@@ -400,7 +408,10 @@ fn edit_api_3d_k1() -> ExampleResult {
         "\nApplying k=1 flip (split tetrahedron at circumcenter [{:.2}, {:.2}, {:.2}]):",
         circumcenter_coords[0], circumcenter_coords[1], circumcenter_coords[2]
     );
-    let flip_info = dt.flip_k1_insert(simplex_key, vertex!(circumcenter_coords)?)?;
+    let flip_info = dt.attempt_pachner(PachnerMove::K1Insert {
+        simplex_key,
+        vertex: vertex!(circumcenter_coords)?,
+    })?;
 
     println!("After k=1 forward:");
     print_stats_3d(&dt);
@@ -412,7 +423,10 @@ fn edit_api_3d_k1() -> ExampleResult {
     // Apply inverse
     println!("\nApplying k=1 inverse:");
     let vertex_to_remove = flip_info.inserted_face_vertices[0];
-    dt.flip_k1_remove(vertex_to_remove)?;
+    let inverse_info = dt.attempt_pachner(PachnerMove::K1Remove {
+        vertex_key: vertex_to_remove,
+    })?;
+    assert!(!inverse_info.removed_simplices.is_empty());
 
     println!("After k=1 inverse:");
     print_stats_3d(&dt);
@@ -422,8 +436,8 @@ fn edit_api_3d_k1() -> ExampleResult {
 }
 
 /// Demonstrates k=2 flips (facet flip) in 3D.
-fn edit_api_3d_k2() -> ExampleResult {
-    println!("3D Edit API: k=2 Flips (Facet Flip: 2↔3)");
+fn pachner_3d_k2() -> ExampleResult {
+    println!("3D Pachner Move API: k=2 Moves (Facet Flip: 2↔3)");
     println!("-----------------------------------------\n");
 
     println!("Note: k=2 flips in 3D replace 2 tetrahedra with 3 (and vice versa)");
@@ -444,8 +458,8 @@ fn edit_api_3d_k2() -> ExampleResult {
     print_stats_3d(&dt);
 
     // Find an interior facet to flip
-    if let Some(facet) = find_interior_facet_3d(&dt)? {
-        match dt.flip_k2(facet) {
+    if let Some(facet) = find_interior_facet(&dt)? {
+        match dt.attempt_pachner(PachnerMove::K2 { facet }) {
             Ok(flip_info) => {
                 println!("\nApplied k=2 flip:");
                 print_stats_3d(&dt);
@@ -460,7 +474,7 @@ fn edit_api_3d_k2() -> ExampleResult {
                     flip_info.inserted_face_vertices[1],
                 )?;
 
-                match dt.flip_k2_inverse_from_edge(edge) {
+                match dt.attempt_pachner(PachnerMove::K2Inverse { edge }) {
                     Ok(_) => {
                         println!("After k=2 inverse:");
                         print_stats_3d(&dt);
@@ -487,8 +501,8 @@ fn edit_api_3d_k2() -> ExampleResult {
 }
 
 /// Demonstrates k=3 flips (ridge flip) in 3D.
-fn edit_api_3d_k3() -> ExampleResult {
-    println!("3D Edit API: k=3 Flips (Ridge Flip: 3↔2)");
+fn pachner_3d_k3() -> ExampleResult {
+    println!("3D Pachner Move API: k=3 Moves (Ridge Flip: 3↔2)");
     println!("-----------------------------------------\n");
     println!("Note: k=3 flips are only available in 3D and higher dimensions\n");
 
@@ -517,7 +531,7 @@ fn edit_api_3d_k3() -> ExampleResult {
 
     // Try to find and flip a ridge
     if let Some(ridge) = find_flippable_ridge_3d(&dt)? {
-        match dt.flip_k3(ridge) {
+        match dt.attempt_pachner(PachnerMove::K3 { ridge }) {
             Ok(flip_info) => {
                 println!("\n✓ k=3 flip succeeded:");
                 print_stats_3d(&dt);
@@ -533,7 +547,7 @@ fn edit_api_3d_k3() -> ExampleResult {
         println!("\n⚠️  No ridges found in this simple triangulation");
     }
 
-    println!("\n✓ k=3 flip API demonstrated (Edit API - 3D+ only)");
+    println!("\n✓ k=3 move API demonstrated (Pachner Move API - 3D+ only)");
     Ok(())
 }
 
@@ -541,7 +555,7 @@ fn edit_api_3d_k3() -> ExampleResult {
 // UTILITY FUNCTIONS
 // ============================================================================
 
-fn print_stats_2d<K: Kernel<2, Scalar = f64>>(dt: &DelaunayTriangulation<K, (), (), 2>) {
+fn print_stats_2d<K>(dt: &DelaunayTriangulation<K, (), (), 2>) {
     println!(
         "  Vertices: {}, Triangles: {}",
         dt.number_of_vertices(),
@@ -549,7 +563,7 @@ fn print_stats_2d<K: Kernel<2, Scalar = f64>>(dt: &DelaunayTriangulation<K, (), 
     );
 }
 
-fn print_stats_3d<K: Kernel<3, Scalar = f64>>(dt: &DelaunayTriangulation<K, (), (), 3>) {
+fn print_stats_3d<K>(dt: &DelaunayTriangulation<K, (), (), 3>) {
     println!(
         "  Vertices: {}, Tetrahedra: {}",
         dt.number_of_vertices(),
@@ -557,61 +571,37 @@ fn print_stats_3d<K: Kernel<3, Scalar = f64>>(dt: &DelaunayTriangulation<K, (), 
     );
 }
 
-fn find_interior_facet_2d<K: Kernel<2, Scalar = f64>>(
-    dt: &DelaunayTriangulation<K, (), (), 2>,
+fn find_interior_facet<K, const D: usize>(
+    dt: &DelaunayTriangulation<K, (), (), D>,
 ) -> ExampleResult<Option<FacetHandle>> {
     for (simplex_key, simplex) in dt.simplices() {
-        if let Some(neighbors) = simplex.neighbors() {
-            for (facet_idx, neighbor) in neighbors.enumerate() {
-                if neighbor.is_some() {
-                    let Ok(facet_idx) = u8::try_from(facet_idx) else {
-                        continue;
-                    };
-                    return Ok(Some(FacetHandle::try_new(
-                        dt.tds(),
-                        simplex_key,
-                        facet_idx,
-                    )?));
-                }
+        let Some(neighbors) = simplex.neighbors() else {
+            continue;
+        };
+        for (facet_idx, neighbor) in neighbors.enumerate() {
+            if neighbor.is_some() {
+                let Ok(facet_idx) = u8::try_from(facet_idx) else {
+                    continue;
+                };
+                return Ok(Some(FacetHandle::try_new(
+                    dt.tds(),
+                    simplex_key,
+                    facet_idx,
+                )?));
             }
         }
     }
     Ok(None)
 }
 
-fn find_interior_facet_3d<K: Kernel<3, Scalar = f64>>(
-    dt: &DelaunayTriangulation<K, (), (), 3>,
-) -> ExampleResult<Option<FacetHandle>> {
-    for (simplex_key, simplex) in dt.simplices() {
-        if let Some(neighbors) = simplex.neighbors() {
-            for (facet_idx, neighbor) in neighbors.enumerate() {
-                if neighbor.is_some() {
-                    let Ok(facet_idx) = u8::try_from(facet_idx) else {
-                        continue;
-                    };
-                    return Ok(Some(FacetHandle::try_new(
-                        dt.tds(),
-                        simplex_key,
-                        facet_idx,
-                    )?));
-                }
-            }
-        }
-    }
-    Ok(None)
-}
-
-fn find_flippable_ridge_3d<K: Kernel<3, Scalar = f64>>(
+fn find_flippable_ridge_3d<K>(
     dt: &DelaunayTriangulation<K, (), (), 3>,
 ) -> ExampleResult<Option<RidgeHandle>> {
     // Try to find any ridge (edge in 3D shared by multiple tetrahedra)
     for (simplex_key, simplex) in dt.simplices() {
         let vertex_count = simplex.number_of_vertices();
         // Try each pair of vertices (each defines a ridge)
-        for i in 0..vertex_count {
-            if i + 1 >= vertex_count {
-                continue;
-            }
+        for i in 0..vertex_count.saturating_sub(1) {
             let Ok(omit_a) = u8::try_from(i) else {
                 continue;
             };

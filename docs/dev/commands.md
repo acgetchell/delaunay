@@ -9,6 +9,7 @@ Agents must run appropriate checks after modifying code.
 ## Contents
 
 - [Core Workflow](#core-workflow)
+- [Validation Command Selection](#validation-command-selection)
 - [Justfile Usage](#justfile-usage)
 - [Formatting](#formatting)
 - [Linting](#linting)
@@ -49,6 +50,38 @@ These commands ensure:
 - static analysis
 - tests
 
+## Validation Command Selection
+
+Use the smallest non-mutating validator that covers the files you changed while
+iterating. For final handoff validation, match the command to the changed Rust
+surface instead of defaulting all Rust edits to full CI. Non-test Rust code
+still requires `just ci`; Rust test-only and benchmark-only changes use the
+focused validators below.
+
+| Touched surface | Iteration validation | Final validation |
+|-----|-----|-----|
+| Documentation or configuration only | `just check` | `just check` |
+| Python-only changes under `scripts/` | `just python-check` | `just python-check` |
+| Rust unit tests only (`#[cfg(test)]` in `src/**`) | Targeted `cargo test --lib <filter>` or `just test-unit` | `just test-unit` |
+| Rust integration tests only (`tests/**`) | Targeted `cargo nextest run --test <name>` or `just test-integration-fast` | `just test-integration` |
+| Rust benchmark files only (`benches/**`) | Targeted benchmark command or `just bench-smoke` | Matching benchmark validator |
+| Rust examples only (`examples/**`) | Targeted `cargo run --example <name>` or `just examples` | `just examples` |
+| Cargo manifest, features, public API, or non-test Rust code | Focused checks, `just check`, or targeted tests | `just ci` |
+| Mixed Rust test categories | Run each matching focused validator | Run each matching focused validator |
+| Mixed non-test Rust plus tests/benches/examples | Focused checks while iterating | `just ci` |
+
+Do not run `just ci` merely because documentation, configuration, or Python
+files changed. Do not run `just ci` merely because a Rust file changed if the
+diff only touches unit tests, integration tests, examples, or benchmarks and
+the focused validator covers the changed surface. Run `just ci` before final
+handoff when non-test Rust code changed or when the maintainer explicitly asks
+for full CI.
+
+For benchmark-only changes, run the changed benchmark with
+`cargo bench --profile perf --bench <name>` when the change affects measured
+behavior. Use `just bench-smoke` for harness-only edits, and `just bench` for
+broad benchmark-suite changes.
+
 ## Justfile Usage
 
 This repository standardizes development tasks through the `justfile`.
@@ -61,7 +94,8 @@ Examples:
 
 - prefer `just check` instead of running `cargo clippy` directly
 - prefer `just fix` instead of running `cargo fmt` directly
-- prefer `just ci` instead of manually running multiple validation steps
+- prefer `just ci` instead of manually running multiple validation steps when
+  full CI is the right validation level
 
 Direct tool invocation should only be used when a corresponding `just`
 command does not exist.
@@ -139,7 +173,8 @@ cargo doc
 
 ## Full CI Validation
 
-Before large changes, run the full CI command:
+Before large Rust changes, broad API/test/benchmark changes, release-style
+validation, or explicit maintainer requests, run the full CI command:
 
 ```bash
 just ci
@@ -158,6 +193,11 @@ This runs:
 ---
 
 ## Benchmark Profiles
+
+For performance-sensitive code changes, follow
+[`perf-tuning.md`](perf-tuning.md): benchmark before editing, add a benchmark
+when none covers the hot path, benchmark after editing, and preserve
+correctness invariants throughout.
 
 `just ci` is the comprehensive error-catching validation path. It runs the
 `check`, `test`, and `examples` recipes. The `test` recipe already depends on
@@ -467,6 +507,8 @@ just action-lint
 | Fast compile check | `just check-fast` |
 | Check formatting | `just fmt-check` |
 | Apply formatters/auto-fixes | `just fix` |
+| Validate documentation/config-only changes | `just check` |
+| Validate Python-only changes | `just python-check` |
 | Run tests + compile smoke | `just test` |
 | Run unit/doc tests only | `just test-unit` |
 | Run integration tests | `just test-integration` |
@@ -490,7 +532,11 @@ Rust warnings are denied by the manifest lint policy and Clippy warnings are
 denied by the `just clippy` invocations. Keep any intentional warning-level
 exceptions explicit in `Cargo.toml`.
 
-Agents must ensure changes pass CI locally before proposing patches.
+Agents must ensure changes pass the appropriate local validator before
+proposing patches. Rust/Cargo/example/benchmark/test changes should pass
+`just ci` for final handoff validation; documentation/config-only changes
+should normally pass `just check`, and Python-only changes should normally pass
+`just python-check`.
 
 ---
 

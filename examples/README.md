@@ -87,9 +87,9 @@ including NaN/infinity handling suitable for `HashMap`/`HashSet`.
 
 ### `topology_editing`
 
-Contrasts the Builder API and Edit API in 2D and 3D, including bistellar flips
-(k=1, k=2, and k=3 where applicable) and how Delaunay preservation differs
-between the two tracks.
+Contrasts Delaunay vertex lifecycle APIs and the Pachner Move API in 2D and
+3D, including k=1, k=2, and k=3 moves and how Delaunay preservation differs
+between the workflows.
 
 - Run: `cargo run --release --example topology_editing`
 - Source: [`topology_editing.rs`](./topology_editing.rs)

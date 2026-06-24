@@ -141,10 +141,10 @@
 //! # }
 //! # fn main() -> Result<(), ExampleError> {
 //! let vertices = [
-//!     delaunay::vertex![0.0, 0.0, 0.0]?,
-//!     delaunay::vertex![1.0, 0.0, 0.0]?,
-//!     delaunay::vertex![0.0, 1.0, 0.0]?,
-//!     delaunay::vertex![0.0, 0.0, 1.0]?,
+//!     vertex![0.0, 0.0, 0.0]?,
+//!     vertex![1.0, 0.0, 0.0]?,
+//!     vertex![0.0, 1.0, 0.0]?,
+//!     vertex![0.0, 0.0, 1.0]?,
 //! ];
 //! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
@@ -263,8 +263,8 @@
 //! let mut dt = DelaunayTriangulationBuilder::new(&initial_vertices).build::<()>()?;
 //!
 //! // Add a new vertex
-//! let new_vertex = delaunay::vertex![0.2, 0.2, 0.2]?;
-//! dt.insert(new_vertex)?;
+//! let new_vertex = vertex![0.2, 0.2, 0.2]?;
+//! dt.insert_vertex(new_vertex)?;
 //!
 //! assert_eq!(dt.number_of_vertices(), 5);
 //! assert!(dt.validate().is_ok());
@@ -1146,13 +1146,13 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
-    /// let vertex1: Vertex<(), 3> = delaunay::vertex![1.0, 2.0, 3.0]?;
-    /// let vertex2: Vertex<(), 3> = delaunay::vertex![4.0, 5.0, 6.0]?;
+    /// let vertex1: Vertex<(), 3> = vertex![1.0, 2.0, 3.0]?;
+    /// let vertex2: Vertex<(), 3> = vertex![4.0, 5.0, 6.0]?;
     ///
-    /// dt.insert(vertex1)?;
+    /// dt.insert_vertex(vertex1)?;
     /// assert_eq!(dt.number_of_vertices(), 1);
     ///
-    /// dt.insert(vertex2)?;
+    /// dt.insert_vertex(vertex2)?;
     /// assert_eq!(dt.number_of_vertices(), 2);
     /// # Ok(())
     /// # }
@@ -1236,20 +1236,20 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// assert_eq!(dt.dim(), -1);
     ///
     /// // Add vertices incrementally
-    /// let vertex1: Vertex<(), 3> = delaunay::vertex![0.0, 0.0, 0.0]?;
-    /// dt.insert(vertex1)?;
+    /// let vertex1: Vertex<(), 3> = vertex![0.0, 0.0, 0.0]?;
+    /// dt.insert_vertex(vertex1)?;
     /// assert_eq!(dt.dim(), 0);
     ///
-    /// let vertex2: Vertex<(), 3> = delaunay::vertex![1.0, 0.0, 0.0]?;
-    /// dt.insert(vertex2)?;
+    /// let vertex2: Vertex<(), 3> = vertex![1.0, 0.0, 0.0]?;
+    /// dt.insert_vertex(vertex2)?;
     /// assert_eq!(dt.dim(), 1);
     ///
-    /// let vertex3: Vertex<(), 3> = delaunay::vertex![0.0, 1.0, 0.0]?;
-    /// dt.insert(vertex3)?;
+    /// let vertex3: Vertex<(), 3> = vertex![0.0, 1.0, 0.0]?;
+    /// dt.insert_vertex(vertex3)?;
     /// assert_eq!(dt.dim(), 2);
     ///
-    /// let vertex4: Vertex<(), 3> = delaunay::vertex![0.0, 0.0, 1.0]?;
-    /// dt.insert(vertex4)?;
+    /// let vertex4: Vertex<(), 3> = vertex![0.0, 0.0, 1.0]?;
+    /// dt.insert_vertex(vertex4)?;
     /// assert_eq!(dt.number_of_vertices(), 4);
     /// assert_eq!(dt.dim(), 3);
     /// # Ok(())

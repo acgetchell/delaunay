@@ -1,10 +1,10 @@
 #![forbid(unsafe_code)]
 
-//! Benchmark: `DelaunayTriangulation::remove_vertex` mutation and rollback cost.
+//! Benchmark: `DelaunayTriangulation::delete_vertex` mutation and rollback cost.
 //!
-//! This benchmark separates vertex-removal cost from construction cost by building
+//! This benchmark separates vertex-deletion cost from construction cost by building
 //! deterministic source triangulations once, then cloning them in Criterion setup
-//! before timing the removal call itself. The timed path still includes the
+//! before timing the deletion call itself. The timed path still includes the
 //! operation's own transactional snapshot and invariant validation, which is the
 //! behavior this benchmark is meant to track.
 //!
@@ -12,7 +12,7 @@
 //!
 //! Run with:
 //! ```bash
-//! cargo bench --profile perf --bench remove_vertex
+//! cargo bench --profile perf --bench delete_vertex
 //! ```
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
@@ -53,7 +53,7 @@ const MEASUREMENT_TIME: Duration = Duration::from_secs(2);
 
 type BenchTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
 
-struct RemovalSource<const D: usize> {
+struct DeletionSource<const D: usize> {
     vertex_count: usize,
     simplex_count: usize,
     fixture_kind: FixtureKind,
@@ -307,13 +307,13 @@ fn centered_unit_direction<const D: usize>(point: &Point<D>) -> [f64; D] {
     direction
 }
 
-/// Find a vertex whose removal succeeds for the prepared triangulation.
-fn successful_removal_vertex<const D: usize>(
+/// Find a vertex whose deletion succeeds for the prepared triangulation.
+fn successful_deletion_vertex<const D: usize>(
     triangulation: &BenchTriangulation<D>,
 ) -> Option<VertexKey> {
     for (vertex_key, _) in triangulation.vertices() {
         let mut candidate = triangulation.clone();
-        if candidate.remove_vertex(vertex_key).is_ok() {
+        if candidate.delete_vertex(vertex_key).is_ok() {
             return Some(vertex_key);
         }
     }
@@ -321,12 +321,12 @@ fn successful_removal_vertex<const D: usize>(
     None
 }
 
-/// Build the source triangulation for successful interior-removal measurements.
+/// Build the source triangulation for successful interior-deletion measurements.
 fn build_success_source<const D: usize>(
     requested_vertices: usize,
     seed_base: u64,
     preferred_kind: FixtureKind,
-) -> RemovalSource<D> {
+) -> DeletionSource<D> {
     for attempt in 0..SEED_SEARCH_ATTEMPTS {
         let attempt_seed = u64::try_from(attempt).or_abort();
         let seed = seed_for_case::<D>(requested_vertices, seed_base)
@@ -336,11 +336,11 @@ fn build_success_source<const D: usize>(
         let Ok(triangulation) = DelaunayTriangulation::try_new(&vertices) else {
             continue;
         };
-        let Some(vertex_key) = successful_removal_vertex(&triangulation) else {
+        let Some(vertex_key) = successful_deletion_vertex(&triangulation) else {
             continue;
         };
 
-        return RemovalSource {
+        return DeletionSource {
             vertex_count: triangulation.number_of_vertices(),
             simplex_count: triangulation.number_of_simplices(),
             fixture_kind,
@@ -350,13 +350,13 @@ fn build_success_source<const D: usize>(
     }
 
     abort_benchmark(format!(
-        "no successful {D}D remove_vertex fixture found for {requested_vertices} vertices \
+        "no successful {D}D delete_vertex fixture found for {requested_vertices} vertices \
              after {SEED_SEARCH_ATTEMPTS} seeds across all fixture kinds"
     ))
 }
 
-/// Build the source triangulation for invalid-removal rollback measurements.
-fn build_rollback_source<const D: usize>() -> RemovalSource<D> {
+/// Build the source triangulation for invalid-deletion rollback measurements.
+fn build_rollback_source<const D: usize>() -> DeletionSource<D> {
     let vertices = simplex_vertices::<D>();
     let triangulation: BenchTriangulation<D> = DelaunayTriangulation::try_new(&vertices).or_abort();
     let vertex_key = triangulation
@@ -365,7 +365,7 @@ fn build_rollback_source<const D: usize>() -> RemovalSource<D> {
         .map(|(key, _)| key)
         .or_abort(format!("rollback benchmark simplex has no {D}D vertices"));
 
-    RemovalSource {
+    DeletionSource {
         vertex_count: triangulation.number_of_vertices(),
         simplex_count: triangulation.number_of_simplices(),
         fixture_kind: FixtureKind::Interior,
@@ -375,19 +375,19 @@ fn build_rollback_source<const D: usize>() -> RemovalSource<D> {
 }
 
 /// Report benchmark throughput in total stored vertices plus simplices.
-fn triangulation_element_count<const D: usize>(source: &RemovalSource<D>) -> u64 {
+fn triangulation_element_count<const D: usize>(source: &DeletionSource<D>) -> u64 {
     let total_elements = source.vertex_count + source.simplex_count;
     u64::try_from(total_elements).or_abort()
 }
 
-/// Register the successful-removal cases for one dimension and input-size schedule.
+/// Register the successful-deletion cases for one dimension and input-size schedule.
 fn bench_success_dimension<const D: usize>(
     c: &mut Criterion,
     dim_label: &str,
     counts: &[usize],
     seed_base: u64,
 ) {
-    let mut group = c.benchmark_group(format!("remove_vertex/success/{dim_label}"));
+    let mut group = c.benchmark_group(format!("delete_vertex/success/{dim_label}"));
     group.sample_size(SAMPLE_SIZE);
     group.warm_up_time(WARM_UP_TIME);
     group.measurement_time(MEASUREMENT_TIME);
@@ -402,7 +402,7 @@ fn bench_success_dimension<const D: usize>(
 
         group.bench_with_input(
             BenchmarkId::new(
-                "remove_vertex",
+                "delete_vertex",
                 format!(
                     "{}_vertices_{}_simplices_{}",
                     source.fixture_kind.label(),
@@ -415,7 +415,7 @@ fn bench_success_dimension<const D: usize>(
                 b.iter_batched(
                     || source.triangulation.clone(),
                     |mut triangulation| {
-                        black_box(triangulation.remove_vertex(source.vertex_key).or_abort());
+                        black_box(triangulation.delete_vertex(source.vertex_key).or_abort());
                     },
                     BatchSize::SmallInput,
                 );
@@ -429,7 +429,7 @@ fn bench_success_dimension<const D: usize>(
 /// Register the minimal-simplex rollback case for one dimension.
 fn bench_rollback_dimension<const D: usize>(c: &mut Criterion, dim_label: &str) {
     let source = build_rollback_source::<D>();
-    let mut group = c.benchmark_group(format!("remove_vertex/rollback/{dim_label}"));
+    let mut group = c.benchmark_group(format!("delete_vertex/rollback/{dim_label}"));
     group.sample_size(SAMPLE_SIZE);
     group.warm_up_time(WARM_UP_TIME);
     group.measurement_time(MEASUREMENT_TIME);
@@ -437,7 +437,7 @@ fn bench_rollback_dimension<const D: usize>(c: &mut Criterion, dim_label: &str) 
 
     group.bench_with_input(
         BenchmarkId::new(
-            "remove_vertex_invalid_remnant",
+            "delete_vertex_invalid_remnant",
             format!(
                 "vertices_{}_simplices_{}",
                 source.vertex_count, source.simplex_count
@@ -448,7 +448,7 @@ fn bench_rollback_dimension<const D: usize>(c: &mut Criterion, dim_label: &str) 
             b.iter_batched(
                 || source.triangulation.clone(),
                 |mut triangulation| {
-                    black_box(triangulation.remove_vertex(source.vertex_key).unwrap_err());
+                    black_box(triangulation.delete_vertex(source.vertex_key).unwrap_err());
                 },
                 BatchSize::SmallInput,
             );
@@ -458,28 +458,28 @@ fn bench_rollback_dimension<const D: usize>(c: &mut Criterion, dim_label: &str) 
     group.finish();
 }
 
-/// Benchmark successful 2D vertex removal.
-fn bench_remove_vertex_success_2d(c: &mut Criterion) {
+/// Benchmark successful 2D vertex deletion.
+fn bench_delete_vertex_success_2d(c: &mut Criterion) {
     bench_success_dimension::<2>(c, "2d", &[100, 500, 2_000], 0xD2AA_0000_0000_0001);
 }
 
-/// Benchmark successful 3D vertex removal.
-fn bench_remove_vertex_success_3d(c: &mut Criterion) {
+/// Benchmark successful 3D vertex deletion.
+fn bench_delete_vertex_success_3d(c: &mut Criterion) {
     bench_success_dimension::<3>(c, "3d", &[50, 150, 500], 0xD3AA_0000_0000_0002);
 }
 
-/// Benchmark successful 4D vertex removal.
-fn bench_remove_vertex_success_4d(c: &mut Criterion) {
+/// Benchmark successful 4D vertex deletion.
+fn bench_delete_vertex_success_4d(c: &mut Criterion) {
     bench_success_dimension::<4>(c, "4d", &[20, 50, 100], 0xD4AA_0000_0000_0003);
 }
 
-/// Benchmark successful 5D vertex removal.
-fn bench_remove_vertex_success_5d(c: &mut Criterion) {
+/// Benchmark successful 5D vertex deletion.
+fn bench_delete_vertex_success_5d(c: &mut Criterion) {
     bench_success_dimension::<5>(c, "5d", &[12, 25, 40], 0xD5AA_0000_0000_0004);
 }
 
 /// Benchmark rollback for invalid lower-dimensional remnants.
-fn bench_remove_vertex_rollback(c: &mut Criterion) {
+fn bench_delete_vertex_rollback(c: &mut Criterion) {
     bench_rollback_dimension::<2>(c, "2d");
     bench_rollback_dimension::<3>(c, "3d");
     bench_rollback_dimension::<4>(c, "4d");
@@ -488,10 +488,10 @@ fn bench_remove_vertex_rollback(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    bench_remove_vertex_success_2d,
-    bench_remove_vertex_success_3d,
-    bench_remove_vertex_success_4d,
-    bench_remove_vertex_success_5d,
-    bench_remove_vertex_rollback
+    bench_delete_vertex_success_2d,
+    bench_delete_vertex_success_3d,
+    bench_delete_vertex_success_4d,
+    bench_delete_vertex_success_5d,
+    bench_delete_vertex_rollback
 );
 criterion_main!(benches);
