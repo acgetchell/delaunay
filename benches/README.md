@@ -17,6 +17,7 @@ predicates fast across 2D-5D.
 | `pl_manifold_repair.rs` | Over-shared facet repair plus orphan cleanup | 3D synthetic repair fixtures | <1 min | PL-manifold repair tuning |
 | `profiling_suite.rs` | Large-scale construction, memory, query, validation profiling | 2D/3D 10k, 4D 3k, 5D 1k | ~2-3 hr | Manual/monthly |
 | `delete_vertex.rs` | Vertex deletion and rollback cost | 2D-5D fixed cases | ~1-5 min | Vertex deletion |
+| `edge_key_queries.rs` | Public `EdgeKey` construction microbenchmarks | 2D-5D fixed live-edge cases | <1 min | Query API tuning |
 | `tds_clone.rs` | `Tds::clone()` snapshot cost | Deterministic 2D-5D triangulations | ~1-3 min | Rollback design baselines |
 | `topology_guarantee_construction.rs` | Cost of topology guarantee modes | 2D-5D construction cases | ~5-15 min | Manual topology policy work |
 
@@ -45,6 +46,7 @@ predicates fast across 2D-5D.
 | PL-manifold repair path | `cargo bench --profile perf --features bench --bench pl_manifold_repair -- --noplot` |
 | Large-scale scaling suite | `cargo bench --profile perf --bench profiling_suite -- --noplot` |
 | Vertex deletion mutation baseline | `cargo bench --profile perf --bench delete_vertex -- --noplot` |
+| Edge-key query construction | `cargo bench --profile perf --bench edge_key_queries -- --noplot` |
 | One-dimension acceptance/profiling run | `just debug-large-scale-{2,3,4,5}d [n] [repair_every]` |
 | Deep profiling | `cargo bench --profile perf --bench profiling_suite --features count-allocations` |
 

@@ -131,6 +131,11 @@ path = "benches/delete_vertex.rs"
 harness = false
 
 [[bench]]
+name = "edge_key_queries"
+path = "benches/edge_key_queries.rs"
+harness = false
+
+[[bench]]
 name = "tds_clone"
 path = "benches/tds_clone.rs"
 harness = false

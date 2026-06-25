@@ -10,8 +10,8 @@
 use crate::core::adjacency::{
     EdgeIndex, IncidenceView, SimplexNeighborIndex, TopologyIndexBuildError, TriangulationAdjacency,
 };
-use crate::core::edge::EdgeKey;
-use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
+use crate::core::edge::{EdgeKey, EdgeKeyError};
+use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter, FacetHandle};
 use crate::core::query::QueryError;
 use crate::core::simplex::Simplex;
 use crate::core::tds::{InvariantError, SimplexKey, Tds, TdsError, TdsMutationError, VertexKey};
@@ -1301,6 +1301,129 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     #[must_use]
     pub fn vertex_coords(&self, v: VertexKey) -> Option<&[f64]> {
         self.as_triangulation().vertex_coords(v)
+    }
+}
+
+// =============================================================================
+// 2D SIMPLEX-LOCAL INCIDENCE QUERIES
+// =============================================================================
+
+impl<K, U, V> DelaunayTriangulation<K, U, V, 2> {
+    /// Returns one simplex-local facet handle for an interior 2D edge.
+    ///
+    /// In 2D, a cell is a triangle and each cell facet is an edge. This query
+    /// maps a live interior [`EdgeKey`] to one of the two incident
+    /// [`FacetHandle`] values that can be passed to local-edit APIs such as
+    /// Pachner k=2 flips.
+    ///
+    /// Edges that do not have exactly two incident 2D facets return `Ok(None)`.
+    /// In a valid 2D PL-manifold this means a boundary edge, but callers working
+    /// with deliberately invalid low-level topology can inspect the exact
+    /// multiplicity with [`Self::try_incident_facets_to_edge_2d`]. Stale edge
+    /// keys and keys that no longer identify a live edge return the
+    /// [`EdgeKeyError`] produced while parsing the edge. Use
+    /// [`Self::try_incident_facets_to_edge_2d`] when callers need to distinguish
+    /// boundary edges from interior edges by multiplicity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EdgeKeyError`] if `edge` is stale, no longer identifies a live
+    /// edge, or exposes inconsistent maintained incidence metadata in this
+    /// triangulation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
+    /// use delaunay::prelude::tds::EdgeKey;
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Edge(#[from] delaunay::prelude::tds::EdgeKeyError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let Some((_simplex_key, simplex)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// let boundary_edge = EdgeKey::try_new(dt.tds(), simplex.vertices()[0], simplex.vertices()[1])?;
+    /// assert!(dt.try_interior_facet_for_edge_2d(boundary_edge)?.is_none());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub fn try_interior_facet_for_edge_2d(
+        &self,
+        edge: EdgeKey,
+    ) -> Result<Option<FacetHandle>, EdgeKeyError> {
+        self.as_triangulation().try_interior_facet_for_edge_2d(edge)
+    }
+
+    /// Returns the simplex-local facet handles incident to a 2D edge.
+    ///
+    /// In a valid 2D triangulation, this yields one handle for a boundary edge
+    /// and two handles for an interior edge. Stale edge keys and keys that no
+    /// longer identify a live edge return the [`EdgeKeyError`] produced while
+    /// parsing the edge.
+    ///
+    /// The query is computed from the current TDS vertex→simplices incidence
+    /// relation, so it reflects local topology mutations without requiring a
+    /// public mutable cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EdgeKeyError`] if `edge` is stale, no longer identifies a live
+    /// edge, or exposes inconsistent maintained incidence metadata in this
+    /// triangulation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
+    /// use delaunay::prelude::tds::EdgeKey;
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Edge(#[from] delaunay::prelude::tds::EdgeKeyError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let Some((_simplex_key, simplex)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// let boundary_edge = EdgeKey::try_new(dt.tds(), simplex.vertices()[0], simplex.vertices()[1])?;
+    /// assert_eq!(dt.try_incident_facets_to_edge_2d(boundary_edge)?.count(), 1);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub fn try_incident_facets_to_edge_2d(
+        &self,
+        edge: EdgeKey,
+    ) -> Result<impl Iterator<Item = FacetHandle>, EdgeKeyError> {
+        self.as_triangulation().try_incident_facets_to_edge_2d(edge)
     }
 }
 #[cfg(test)]

@@ -2,18 +2,23 @@
 
 //! Public API roundtrip tests for Pachner/bistellar flips.
 
+use std::assert_matches;
+
 use delaunay::prelude::construction::{
     ConstructionOptions, DelaunayError, DelaunayResult, DelaunayTriangulation,
-    InsertionOrderStrategy, TopologyGuarantee, Vertex, vertex,
+    DelaunayTriangulationBuilder, InsertionOrderStrategy, TopologyGuarantee, Vertex, vertex,
 };
 use delaunay::prelude::geometry::RobustKernel;
 use delaunay::prelude::pachner::{
-    BistellarFlipKind, EdgeKey, FacetHandle, FlipDirection, FlipError, PachnerMove,
+    BistellarFlipKind, EdgeKey, EdgeKeyError, FacetHandle, FlipDirection, FlipError, PachnerMove,
     PachnerMoveResult, PachnerMoves, RidgeHandle, SimplexKey, TriangleHandle, VertexKey,
 };
 use uuid::Uuid;
 
 type Dt4 = DelaunayTriangulation<RobustKernel<f64>, (), (), 4>;
+type Dt2 = DelaunayTriangulation<RobustKernel<f64>, (), (), 2>;
+
+const FLIPPABLE_POINTS_2D: &[[f64; 2]] = &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
 
 const STABLE_POINTS_4D: &[[f64; 4]] = &[
     [0.0, 0.0, 0.0, 0.0],
@@ -95,19 +100,75 @@ fn stale_pachner_error_propagates_through_delaunay_result() {
 
     let err = try_stale_k1_insert(&mut dt, stale_simplex, vertex_coords)
         .expect_err("stale Pachner failure should propagate through DelaunayResult");
-    assert!(
-        matches!(
-            &err,
-            DelaunayError::Flip {
-                source: FlipError::MissingSimplex { simplex_key },
-            } if *simplex_key == stale_simplex
-        ),
+    assert_matches!(
+        &err,
+        DelaunayError::Flip {
+            source: FlipError::MissingSimplex { simplex_key },
+        } if *simplex_key == stale_simplex,
         "unexpected DelaunayResult error for stale Pachner move: {err:?}"
     );
     dt.tds()
         .is_valid()
         .expect("failed Pachner attempt should preserve TDS validity");
     assert_eq!(snapshot_topology(&dt), before_failed_attempt);
+}
+
+#[test]
+fn edge_to_facet_query_tracks_2d_k2_mutation_freshness() {
+    let mut dt = build_flippable_dt_2d();
+    let facet = flippable_k2_facet_2d(&dt);
+    let old_edge = edge_for_facet_2d(&dt, facet);
+
+    let old_incident_facets: Vec<_> = dt
+        .try_incident_facets_to_edge_2d(old_edge)
+        .unwrap()
+        .collect();
+    assert_eq!(old_incident_facets.len(), 2);
+    assert!(old_incident_facets.contains(&facet));
+    assert!(
+        old_incident_facets
+            .iter()
+            .all(|&incident_facet| edge_for_facet_2d(&dt, incident_facet) == old_edge)
+    );
+    assert!(
+        dt.try_interior_facet_for_edge_2d(old_edge)
+            .unwrap()
+            .is_some()
+    );
+
+    let info = dt
+        .attempt_pachner(PachnerMove::K2 { facet })
+        .expect("2D k=2 flip should succeed on selected fixture facet");
+    assert_eq!(info.inserted_face_vertices.len(), 2);
+
+    match dt.try_incident_facets_to_edge_2d(old_edge) {
+        Err(EdgeKeyError::EdgeNotFound { .. }) => {}
+        Err(err) => panic!("expected old edge to be absent after k=2 flip, got {err:?}"),
+        Ok(_) => panic!("expected old edge to be absent after k=2 flip, got facets"),
+    }
+    assert_matches!(
+        dt.try_interior_facet_for_edge_2d(old_edge),
+        Err(EdgeKeyError::EdgeNotFound { .. })
+    );
+
+    let new_edge = inserted_edge_2d(&dt, &info.inserted_face_vertices);
+    let new_incident_facets: Vec<_> = dt
+        .try_incident_facets_to_edge_2d(new_edge)
+        .unwrap()
+        .collect();
+    assert_eq!(new_incident_facets.len(), 2);
+    assert!(
+        new_incident_facets
+            .iter()
+            .all(|&incident_facet| edge_for_facet_2d(&dt, incident_facet) == new_edge)
+    );
+    assert!(
+        dt.try_interior_facet_for_edge_2d(new_edge)
+            .unwrap()
+            .is_some()
+    );
+    dt.validate()
+        .expect("2D k=2 mutation-freshness fixture should remain valid");
 }
 
 /// Attempts a stale k=1 insert through the public `DelaunayResult` alias.
@@ -150,6 +211,80 @@ fn build_stable_dt_4d() -> Dt4 {
         options,
     )
     .expect("stable 4D fixture should build")
+}
+
+/// Builds a deterministic 2D fixture with at least one public k=2 move.
+fn build_flippable_dt_2d() -> Dt2 {
+    let vertices = FLIPPABLE_POINTS_2D
+        .iter()
+        .map(|coords| Vertex::<(), 2>::try_new(*coords).expect("stable 2D fixture coordinates"))
+        .collect::<Vec<_>>();
+    let simplices = vec![vec![0, 1, 2], vec![0, 2, 3]];
+
+    let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+        .expect("explicit 2D fixture connectivity should parse")
+        .build_with_kernel::<_, ()>(&RobustKernel::new())
+        .expect("stable 2D fixture should build");
+    dt.validate()
+        .expect("stable 2D fixture should validate before local edits");
+    dt
+}
+
+/// Searches the 2D fixture for an edge facet whose public k=2 move succeeds.
+fn flippable_k2_facet_2d(dt: &Dt2) -> FacetHandle {
+    for (simplex_key, simplex) in dt.simplices() {
+        let Some(neighbors) = simplex.neighbors() else {
+            continue;
+        };
+        for (facet_index, neighbor) in neighbors.enumerate() {
+            if neighbor.is_none() {
+                continue;
+            }
+            let facet = FacetHandle::try_new(
+                dt.tds(),
+                simplex_key,
+                u8::try_from(facet_index).expect("2D facet index should fit in u8"),
+            )
+            .expect("interior 2D facet index should be valid");
+            let mut trial = dt.clone();
+            if trial.attempt_pachner(PachnerMove::K2 { facet }).is_ok() && trial.validate().is_ok()
+            {
+                return facet;
+            }
+        }
+    }
+    panic!("stable 2D fixture should contain a public k=2 candidate");
+}
+
+/// Converts a 2D facet handle into the edge key represented by that facet.
+fn edge_for_facet_2d(dt: &Dt2, facet: FacetHandle) -> EdgeKey {
+    let view = facet
+        .view(dt.tds())
+        .expect("facet handle should still be live");
+    let endpoints = view
+        .simplex()
+        .vertices()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &vertex_key)| {
+            (index != usize::from(view.facet_index())).then_some(vertex_key)
+        })
+        .collect::<Vec<_>>();
+    let [a, b] = endpoints.as_slice() else {
+        panic!("2D facet should contain exactly two edge endpoints");
+    };
+    EdgeKey::try_new(dt.tds(), *a, *b).expect("facet endpoints should form a live edge")
+}
+
+/// Parses the inserted edge reported by a 2D k=2 move.
+fn inserted_edge_2d(dt: &Dt2, vertices: &[VertexKey]) -> EdgeKey {
+    let [a, b] = vertices else {
+        panic!(
+            "2D k=2 move should report exactly two inserted edge vertices, got {}",
+            vertices.len()
+        );
+    };
+    EdgeKey::try_new(dt.tds(), *a, *b).expect("reported inserted vertices should form a live edge")
 }
 
 /// Checks that a rejected detached move leaves the live topology byte-for-byte equivalent.
@@ -215,11 +350,9 @@ fn assert_stale_k1_insert_preserves_topology(mut dt: Dt4) {
             vertex: stale_attempt_vertex,
         },
         |err| {
-            assert!(
-                matches!(
-                    err,
-                    FlipError::MissingSimplex { simplex_key } if *simplex_key == stale_simplex
-                ),
+            assert_matches!(
+                err,
+                FlipError::MissingSimplex { simplex_key } if *simplex_key == stale_simplex,
                 "unexpected stale k=1 insert error: {err:?}"
             );
         },
@@ -251,11 +384,9 @@ fn assert_stale_k1_remove_preserves_topology(mut dt: Dt4) {
         &mut dt,
         PachnerMove::K1Remove { vertex_key },
         |err| {
-            assert!(
-                matches!(
-                    err,
-                    FlipError::MissingVertex { vertex_key: missing } if *missing == vertex_key
-                ),
+            assert_matches!(
+                err,
+                FlipError::MissingVertex { vertex_key: missing } if *missing == vertex_key,
                 "unexpected stale k=1 remove error: {err:?}"
             );
         },
@@ -273,11 +404,9 @@ fn assert_stale_k2_preserves_topology(mut dt: Dt4) {
     let stale_simplex = facet.simplex_key();
 
     assert_failed_attempt_preserves_topology(&mut dt, PachnerMove::K2 { facet }, |err| {
-        assert!(
-            matches!(
-                err,
-                FlipError::MissingSimplex { simplex_key } if *simplex_key == stale_simplex
-            ),
+        assert_matches!(
+            err,
+            FlipError::MissingSimplex { simplex_key } if *simplex_key == stale_simplex,
             "unexpected stale k=2 error: {err:?}"
         );
     });
@@ -296,14 +425,12 @@ fn assert_stale_k2_inverse_preserves_topology(mut dt: Dt4) {
     assert!(!inverse.removed_simplices.is_empty());
 
     assert_failed_attempt_preserves_topology(&mut dt, PachnerMove::K2Inverse { edge }, |err| {
-        assert!(
-            matches!(
-                err,
-                FlipError::InvalidEdgeMultiplicity {
-                    found: 0,
-                    expected: 4
-                }
-            ),
+        assert_matches!(
+            err,
+            FlipError::InvalidEdgeMultiplicity {
+                found: 0,
+                expected: 4
+            },
             "unexpected stale inverse k=2 error: {err:?}"
         );
     });
@@ -320,11 +447,9 @@ fn assert_stale_k3_preserves_topology(mut dt: Dt4) {
     let stale_simplex = ridge.simplex_key();
 
     assert_failed_attempt_preserves_topology(&mut dt, PachnerMove::K3 { ridge }, |err| {
-        assert!(
-            matches!(
-                err,
-                FlipError::MissingSimplex { simplex_key } if *simplex_key == stale_simplex
-            ),
+        assert_matches!(
+            err,
+            FlipError::MissingSimplex { simplex_key } if *simplex_key == stale_simplex,
             "unexpected stale k=3 error: {err:?}"
         );
     });
@@ -343,14 +468,12 @@ fn assert_stale_k3_inverse_preserves_topology(mut dt: Dt4) {
     assert!(!inverse.removed_simplices.is_empty());
 
     assert_failed_attempt_preserves_topology(&mut dt, PachnerMove::K3Inverse { triangle }, |err| {
-        assert!(
-            matches!(
-                err,
-                FlipError::InvalidTriangleMultiplicity {
-                    found: 0,
-                    expected: 3
-                }
-            ),
+        assert_matches!(
+            err,
+            FlipError::InvalidTriangleMultiplicity {
+                found: 0,
+                expected: 3
+            },
             "unexpected stale inverse k=3 error: {err:?}"
         );
     });

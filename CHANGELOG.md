@@ -20,11 +20,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Return fallible facet iterators [#458](https://github.com/acgetchell/delaunay/pull/458)
 - Hydrate TDS through validated UUID snapshots [#454](https://github.com/acgetchell/delaunay/pull/454) [#460](https://github.com/acgetchell/delaunay/pull/460)
 - Normalize fallible constructors [#459](https://github.com/acgetchell/delaunay/pull/459) [#464](https://github.com/acgetchell/delaunay/pull/464)
+- Borrow topology views from canonical storage [#472](https://github.com/acgetchell/delaunay/pull/472) [#474](https://github.com/acgetchell/delaunay/pull/474)
+- Make topology views and boundaries owner-aware [#476](https://github.com/acgetchell/delaunay/pull/476)
+- Split Pachner moves from vertex lifecycle edits [#477](https://github.com/acgetchell/delaunay/pull/477)
 - Reject stale adjacency indexes [#451](https://github.com/acgetchell/delaunay/pull/451) [#463](https://github.com/acgetchell/delaunay/pull/463)
 - Update tooling to Rust 1.96.0 [#430](https://github.com/acgetchell/delaunay/pull/430) [#431](https://github.com/acgetchell/delaunay/pull/431)
 
 ### Merged Pull Requests
 
+- Split Pachner moves from vertex lifecycle edits [#477](https://github.com/acgetchell/delaunay/pull/477)
+- Make topology views and boundaries owner-aware [#476](https://github.com/acgetchell/delaunay/pull/476)
+- Borrow topology views from canonical storage [#472](https://github.com/acgetchell/delaunay/pull/472) [#474](https://github.com/acgetchell/delaunay/pull/474)
+- Refactor!(tds): canonicalize incidence storage [#473](https://github.com/acgetchell/delaunay/pull/473)
+- Streamline iterator helpers for diagnostics work [#471](https://github.com/acgetchell/delaunay/pull/471)
+- Add common Delaunay result alias [#470](https://github.com/acgetchell/delaunay/pull/470)
 - Add vertex construction macro [#469](https://github.com/acgetchell/delaunay/pull/469)
 - Preserve setup failure messages [#468](https://github.com/acgetchell/delaunay/pull/468)
 - Refactor/443 329 typed validation errors [#465](https://github.com/acgetchell/delaunay/pull/465)
@@ -62,7 +71,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   - Align shared development tooling pins with causal-triangulations and harden
     benchmark baseline metadata parsing.
-
 - [**breaking**] Add vertex construction macro [#469](https://github.com/acgetchell/delaunay/pull/469)
   [`63228a0`](https://github.com/acgetchell/delaunay/commit/63228a06ffca2ee8d68806823995d92ebfa84525)
 
@@ -70,6 +78,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Export the macro through the root, construction, and triangulation preludes.
   - Migrate public docs, examples, and benchmark setup to prefer `vertex!` for incidental vertex construction.
   - Retire the Semgrep rule that banned `vertex!` and document the new Rust style guidance.
+- Add common Delaunay result alias [#470](https://github.com/acgetchell/delaunay/pull/470)
+  [`db46fa2`](https://github.com/acgetchell/delaunay/commit/db46fa2dd1518c1a47defda676453df8829665a6)
+
+  - Add DelaunayError and DelaunayResult for common construction, insertion, validation, coordinate conversion, and toroidal-domain setup workflows.
+  - Re-export the aliases from the crate root and construction preludes for downstream examples and applications.
+  - Update public docs and examples to use DelaunayResult when workflow-specific errors are not required.
 
 ### Changed
 
@@ -165,10 +179,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Report generated simplex counts in the large-scale smoke benchmark output.
 - Refactor/443 329 typed validation errors [#465](https://github.com/acgetchell/delaunay/pull/465)
   [`f6a85e8`](https://github.com/acgetchell/delaunay/commit/f6a85e84d43a81f1d5fdd8ec4c20e65e303dfe40)
+- Streamline iterator helpers for diagnostics work [#471](https://github.com/acgetchell/delaunay/pull/471)
+  [`1985e6f`](https://github.com/acgetchell/delaunay/commit/1985e6ff95d0a452a09034d27d1bc9b21414befa)
+
+  - Preserve point-generator preallocation while using fallible iterator control flow.
+  - Extract Poisson spacing checks and stream geometry test distance calculations.
+  - Gate benchmark setup tracing behind bench-logging and update diagnostics examples to use DelaunayResult.
+- Refactor!(tds): canonicalize incidence storage [#473](https://github.com/acgetchell/delaunay/pull/473)
+  [`9a973df`](https://github.com/acgetchell/delaunay/commit/9a973dfa598692261d9ea475f179862e3e92de4d)
+- [**breaking**] Borrow topology views from canonical storage [#472](https://github.com/acgetchell/delaunay/pull/472)
+  [#474](https://github.com/acgetchell/delaunay/pull/474) [`3b6d2d4`](https://github.com/acgetchell/delaunay/commit/3b6d2d4a71e0f40a2e8b1be3871696e9b8f13866)
+
+  - Return validated borrowed simplex vertex slices instead of owned or optional detached snapshots.
+  - Split convex hull facet access into detached `facet_handles()` and borrowed `facets(triangulation)` views with freshness checks.
+  - Make vertex and simplex payload setters checked mutations that report typed stale-key errors.
+  - Preserve fallback rebuild payload restoration through typed simplex-data restore errors.
+- [**breaking**] Make topology views and boundaries owner-aware [#476](https://github.com/acgetchell/delaunay/pull/476)
+  [`db3fcb3`](https://github.com/acgetchell/delaunay/commit/db3fcb3a899db625f3e969c8d2fa098520826479)
+
+  - Replace raw TDS boundary queries with one-sided facet-incidence APIs and keep true boundary classification topology-aware.
+  - Add borrowed EdgeView, RidgeQuery, RidgeView, and RidgeLinkView surfaces around detached EdgeKey and RidgeCandidate values.
+  - Interpret boundary facets through GlobalTopology so periodic quotient self-identifications remain closed topology.
+  - Align Euler validation, focused preludes, docs, examples, benchmarks, and Semgrep rules with the new view/candidate/incidence model.
+- [**breaking**] Split Pachner moves from vertex lifecycle edits [#477](https://github.com/acgetchell/delaunay/pull/477)
+  [`f6efe10`](https://github.com/acgetchell/delaunay/commit/f6efe10c776e08a52efe1d2a4b4e65cf56271cf2)
+
+  - Add a unified PachnerMove request/result API with attempt_pachner dispatch and a focused prelude::pachner import surface.
+  - Move vertex deletion into its own Delaunay module with typed DeleteVertexError and keep insertion/deletion terminology explicit through public docs and
+    examples.
+
+  - Keep primitive bistellar flip APIs available from delaunay::flips while hiding them from focused preludes intended for workflow users.
+  - Add Pachner stress coverage, delete_vertex benchmarks, and Semgrep rules that require fallible results to be consumed and workflow fixtures to use vertex!.
+  - Split long agent/development guidance into focused dev and architecture docs, including release citation and performance-tuning checklists.
 
 ### Dependencies
 
 - Bump support tooling and smallvec [`1799d3c`](https://github.com/acgetchell/delaunay/commit/1799d3cbd4a5c01a10c490fffe15cc28b1f3784d)
+
+### Documentation
+
+- Refresh README and changelog [`b80d25a`](https://github.com/acgetchell/delaunay/commit/b80d25a40df9a06de8554a9900598bdf2a584dbf)
+
+  - Reorganize the README around a concise quickstart, documentation map,
+    ecosystem notes, benchmarking guidance, and current limitations.
+
+  - Preserve the citation abstract and detailed feature checklist while updating
+    quickstart guidance for the current published crate version.
+
+  - Regenerate the active and archived changelog files with current release-note
+    formatting.
 
 ### Fixed
 

@@ -11,11 +11,12 @@ use crate::core::collections::{
     FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
     fast_hash_map_with_capacity, fast_hash_set_with_capacity,
 };
-use crate::core::edge::EdgeKey;
-use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
+use crate::core::edge::{EdgeKey, EdgeKeyError, EdgeView};
+use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter, FacetHandle};
 use crate::core::simplex::Simplex;
 use crate::core::tds::{SimplexKey, TdsError, VertexKey};
 use crate::core::triangulation::Triangulation;
+use crate::core::util::usize_to_u8;
 use crate::core::vertex::Vertex;
 use crate::topology::manifold::{ManifoldError, boundary_facet_handles_from_index};
 use std::marker::PhantomData;
@@ -771,6 +772,164 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     }
 }
 
+impl<K, U, V> Triangulation<K, U, V, 2> {
+    /// Returns one simplex-local facet handle for an interior 2D edge.
+    ///
+    /// In 2D, a cell is a triangle and each cell facet is an edge. This query
+    /// maps a live interior [`EdgeKey`] to one of the two incident
+    /// [`FacetHandle`] values that can be passed to 2D local-edit APIs such as
+    /// Pachner k=2 flips.
+    ///
+    /// Edges that do not have exactly two incident 2D facets return `Ok(None)`.
+    /// In a valid 2D PL-manifold this means a boundary edge, but callers working
+    /// with deliberately invalid low-level topology can inspect the exact
+    /// multiplicity with [`Self::try_incident_facets_to_edge_2d`]. Stale edge
+    /// keys and keys that no longer identify a live edge return the
+    /// [`EdgeKeyError`] produced while parsing the edge. Use
+    /// [`Self::try_incident_facets_to_edge_2d`] when callers need to distinguish
+    /// boundary edges from interior edges by multiplicity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EdgeKeyError`] if `edge` is stale, no longer identifies a live
+    /// edge, or exposes inconsistent maintained incidence metadata in this
+    /// triangulation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::tds::EdgeKey;
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Edge(#[from] delaunay::prelude::tds::EdgeKeyError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let tri = dt.as_triangulation();
+    /// let Some((_simplex_key, simplex)) = tri.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// let boundary_edge = EdgeKey::try_new(dt.tds(), simplex.vertices()[0], simplex.vertices()[1])?;
+    /// assert!(tri.try_interior_facet_for_edge_2d(boundary_edge)?.is_none());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn try_interior_facet_for_edge_2d(
+        &self,
+        edge: EdgeKey,
+    ) -> Result<Option<FacetHandle>, EdgeKeyError> {
+        let edge_view = edge.view(&self.tds)?;
+        let facets = Self::collect_incident_facets_to_edge_2d(&edge_view);
+        Ok((facets.len() == 2).then(|| facets[0]))
+    }
+
+    /// Returns the simplex-local facet handles incident to a 2D edge.
+    ///
+    /// In a valid 2D triangulation, this yields one handle for a boundary edge
+    /// and two handles for an interior edge. Stale edge keys and keys that no
+    /// longer identify a live edge return the [`EdgeKeyError`] produced while
+    /// parsing the edge.
+    ///
+    /// The query is computed from the current TDS vertex→simplices incidence
+    /// relation, so it reflects local topology mutations without requiring a
+    /// public mutable cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EdgeKeyError`] if `edge` is stale, no longer identifies a live
+    /// edge, or exposes inconsistent maintained incidence metadata in this
+    /// triangulation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::tds::EdgeKey;
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Edge(#[from] delaunay::prelude::tds::EdgeKeyError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let tri = dt.as_triangulation();
+    /// let Some((_simplex_key, simplex)) = tri.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// let boundary_edge = EdgeKey::try_new(dt.tds(), simplex.vertices()[0], simplex.vertices()[1])?;
+    /// assert_eq!(tri.try_incident_facets_to_edge_2d(boundary_edge)?.count(), 1);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn try_incident_facets_to_edge_2d(
+        &self,
+        edge: EdgeKey,
+    ) -> Result<impl Iterator<Item = FacetHandle>, EdgeKeyError> {
+        let edge_view = edge.view(&self.tds)?;
+        Ok(Self::collect_incident_facets_to_edge_2d(&edge_view).into_iter())
+    }
+
+    /// Builds the edge-to-facet answer from a parsed live edge star without storing a cache.
+    ///
+    /// Public callers reach this helper only after [`EdgeKey::view`] has proven
+    /// that the detached key is a live edge in this TDS, so the collector stays
+    /// infallible and preserves parse failures at the public query boundary.
+    fn collect_incident_facets_to_edge_2d(
+        edge_view: &EdgeView<'_, U, V, 2>,
+    ) -> SmallBuffer<FacetHandle, 2> {
+        let (v0, v1) = edge_view.endpoint_keys();
+        let mut facets = SmallBuffer::new();
+
+        for &simplex_key in edge_view.incident_simplices() {
+            let simplex = edge_view
+                .tds()
+                .simplex(simplex_key)
+                .expect("validated EdgeView contains only live incident simplices");
+            let facet_index = Self::facet_index_for_edge_2d(simplex, v0, v1);
+            facets.push(FacetHandle::from_validated(simplex_key, facet_index));
+        }
+
+        facets
+    }
+
+    /// Converts a validated triangle edge into the facet slot opposite the third vertex.
+    ///
+    /// Callers only pass simplices from a parsed [`EdgeView`], so each simplex
+    /// is already proven to contain both edge endpoints.
+    fn facet_index_for_edge_2d(simplex: &Simplex<V, 2>, v0: VertexKey, v1: VertexKey) -> u8 {
+        let vertices = simplex.vertices();
+        let facet_index = vertices
+            .iter()
+            .position(|&vertex_key| vertex_key != v0 && vertex_key != v1)
+            .expect("validated 2D EdgeView incident simplex contains both edge endpoints");
+        usize_to_u8(facet_index, vertices.len()).expect("2D simplex facet index fits in u8")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -834,6 +993,43 @@ mod tests {
         Triangulation::new_with_tds(FastKernel::new(), tds)
     }
 
+    /// Builds an invalid 2D complex with three triangles sharing the same edge.
+    fn overshared_edge_fixture_2d() -> (
+        Triangulation<FastKernel<f64>, (), (), 2>,
+        VertexKey,
+        VertexKey,
+    ) {
+        let mut tds = Tds::empty();
+        let left_endpoint = tds
+            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .unwrap();
+        let right_endpoint = tds
+            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+            .unwrap();
+        let upper_apex = tds
+            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0]).unwrap())
+            .unwrap();
+        let lower_apex = tds
+            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, -1.0]).unwrap())
+            .unwrap();
+        let extra_apex = tds
+            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.5, 0.5]).unwrap())
+            .unwrap();
+
+        for apex in [upper_apex, lower_apex, extra_apex] {
+            tds.insert_simplex_with_mapping_prechecked_topology(
+                Simplex::try_new(vec![left_endpoint, right_endpoint, apex]).unwrap(),
+            )
+            .unwrap();
+        }
+
+        (
+            Triangulation::new_with_tds(FastKernel::new(), tds),
+            left_endpoint,
+            right_endpoint,
+        )
+    }
+
     /// Returns the edge count for two D-simplices sharing one facet.
     const fn expected_split_topology_fixture_edges<const D: usize>() -> usize {
         D * (D + 3) / 2
@@ -843,9 +1039,49 @@ mod tests {
     fn shared_fixture_vertex<const D: usize>(
         tri: &Triangulation<FastKernel<f64>, (), (), D>,
     ) -> VertexKey {
+        fixture_vertex_by_coords(tri, [0.0; D])
+    }
+
+    /// Finds one fixture vertex by exact coordinates chosen by the deterministic helper.
+    fn fixture_vertex_by_coords<const D: usize>(
+        tri: &Triangulation<FastKernel<f64>, (), (), D>,
+        coords: [f64; D],
+    ) -> VertexKey {
         tri.vertices()
-            .find_map(|(vk, _)| (tri.vertex_coords(vk)? == [0.0; D]).then_some(vk))
+            .find_map(|(vk, _)| (tri.vertex_coords(vk)? == coords).then_some(vk))
             .unwrap()
+    }
+
+    /// Checks that each returned 2D facet handle resolves to the queried edge.
+    fn assert_facet_handles_match_edge_2d(
+        tri: &Triangulation<FastKernel<f64>, (), (), 2>,
+        edge: EdgeKey,
+        facets: impl IntoIterator<Item = FacetHandle>,
+    ) {
+        let (v0, v1) = edge.endpoints();
+
+        for facet in facets {
+            let view = facet
+                .view(&tri.tds)
+                .expect("edge-to-facet query should return live facet handles");
+            let facet_index = usize::from(facet.facet_index());
+            let mut facet_vertices = view
+                .simplex()
+                .vertices()
+                .iter()
+                .enumerate()
+                .filter_map(|(index, &vertex_key)| (index != facet_index).then_some(vertex_key));
+
+            assert_matches!(
+                (
+                    facet_vertices.next(),
+                    facet_vertices.next(),
+                    facet_vertices.next()
+                ),
+                (Some(a), Some(b), None) if (a == v0 && b == v1) || (a == v1 && b == v0),
+                "facet {facet:?} should describe queried edge {edge:?}"
+            );
+        }
     }
 
     /// Basic accessor tests across dimensions.
@@ -1019,6 +1255,84 @@ mod tests {
             let (a, b) = edge.endpoints();
             a != b && tri.vertex_coords(a).is_some() && tri.vertex_coords(b).is_some()
         }));
+    }
+
+    #[test]
+    fn edge_to_facet_queries_classify_2d_boundary_and_interior_edges() {
+        let tri = split_topology_fixture::<2>();
+        let shared_left = fixture_vertex_by_coords(&tri, [0.0, 0.0]);
+        let shared_right = fixture_vertex_by_coords(&tri, [1.0, 0.0]);
+        let positive_apex = fixture_vertex_by_coords(&tri, [0.2, 1.0]);
+
+        let interior_edge = EdgeKey::try_new(&tri.tds, shared_left, shared_right).unwrap();
+        let incident_facets: HashSet<_> = tri
+            .try_incident_facets_to_edge_2d(interior_edge)
+            .unwrap()
+            .collect();
+        let interior_facet = tri
+            .try_interior_facet_for_edge_2d(interior_edge)
+            .unwrap()
+            .expect("shared edge should be interior");
+
+        assert_eq!(incident_facets.len(), 2);
+        assert!(incident_facets.contains(&interior_facet));
+        assert_facet_handles_match_edge_2d(&tri, interior_edge, incident_facets.iter().copied());
+        assert_facet_handles_match_edge_2d(&tri, interior_edge, [interior_facet]);
+
+        let boundary_edge = EdgeKey::try_new(&tri.tds, shared_left, positive_apex).unwrap();
+        let boundary_facets: Vec<_> = tri
+            .try_incident_facets_to_edge_2d(boundary_edge)
+            .unwrap()
+            .collect();
+        assert_eq!(boundary_facets.len(), 1);
+        assert_facet_handles_match_edge_2d(&tri, boundary_edge, boundary_facets);
+        assert!(
+            tri.try_interior_facet_for_edge_2d(boundary_edge)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn edge_to_facet_queries_expose_non_manifold_2d_multiplicity() {
+        let (tri, a, b) = overshared_edge_fixture_2d();
+        let overshared_edge = EdgeKey::try_new(&tri.tds, a, b).unwrap();
+
+        let incident_facets: Vec<_> = tri
+            .try_incident_facets_to_edge_2d(overshared_edge)
+            .unwrap()
+            .collect();
+
+        assert_eq!(incident_facets.len(), 3);
+        assert_facet_handles_match_edge_2d(&tri, overshared_edge, incident_facets);
+        assert!(
+            tri.try_interior_facet_for_edge_2d(overshared_edge)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn edge_to_facet_query_preserves_incidence_parse_errors() {
+        let mut tri = split_topology_fixture::<2>();
+        let shared_left = fixture_vertex_by_coords(&tri, [0.0, 0.0]);
+        let shared_right = fixture_vertex_by_coords(&tri, [1.0, 0.0]);
+        let edge = EdgeKey::try_new(&tri.tds, shared_left, shared_right).unwrap();
+        let (first, _) = edge.endpoints();
+
+        tri.tds.clear_vertex_incidence_for_test(first);
+
+        match tri.try_incident_facets_to_edge_2d(edge) {
+            Err(EdgeKeyError::MissingVertexIncidence { vertex_key, .. }) if vertex_key == first => {
+            }
+            Err(err) => panic!("expected missing vertex incidence for {first:?}, got {err:?}"),
+            Ok(_) => panic!("expected missing vertex incidence for {first:?}, got facets"),
+        }
+        assert_matches!(
+            tri.try_interior_facet_for_edge_2d(edge),
+            Err(EdgeKeyError::MissingVertexIncidence { vertex_key, .. })
+                if vertex_key == first
+        );
     }
 
     #[test]

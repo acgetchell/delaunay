@@ -99,7 +99,8 @@ use delaunay::prelude::pachner::{
 use delaunay::prelude::query::{
     AllFacetsIter as QueryAllFacetsIter, BoundaryFacetsIter as QueryBoundaryFacetsIter, ConvexHull,
     ConvexHullConstructionError, EdgeIndex as QueryEdgeIndex, EdgeKey as QueryEdgeKey,
-    EdgeView as QueryEdgeView, FacetIncidenceAnalysis as QueryFacetIncidenceAnalysis,
+    EdgeView as QueryEdgeView, FacetHandle as QueryFacetHandle,
+    FacetIncidenceAnalysis as QueryFacetIncidenceAnalysis,
     FacetIncidenceView as QueryFacetIncidenceView, IncidenceView as QueryIncidenceView,
     OneSidedFacetsIter as QueryOneSidedFacetsIter, QueryError,
     SimplexFacetsIter as QuerySimplexFacetsIter, SimplexNeighborIndex as QuerySimplexNeighborIndex,
@@ -167,8 +168,8 @@ use delaunay::prelude::{
 };
 use delaunay::query::{
     AllFacetsIter as QueryFacadeAllFacetsIter, BoundaryFacetsIter as QueryFacadeBoundaryFacetsIter,
-    EdgeIndex as QueryFacadeEdgeIndex, IncidenceView as QueryFacadeIncidenceView,
-    OneSidedFacetsIter as QueryFacadeOneSidedFacetsIter,
+    EdgeIndex as QueryFacadeEdgeIndex, FacetHandle as QueryFacadeFacetHandle,
+    IncidenceView as QueryFacadeIncidenceView, OneSidedFacetsIter as QueryFacadeOneSidedFacetsIter,
     SimplexFacetsIter as QueryFacadeSimplexFacetsIter,
     SimplexNeighborIndex as QueryFacadeSimplexNeighborIndex,
     TriangulationAdjacency as QueryFacadeTriangulationAdjacency,
@@ -768,8 +769,12 @@ fn assert_facet_incidence_exports(
     simplex_key: SimplexKey,
 ) -> Result<(), PreludeExportTestError> {
     let facet_handle = FacetHandle::try_new(tds, simplex_key, 0)?;
+    let query_facet_handle: QueryFacetHandle = facet_handle;
+    let query_facade_facet_handle: QueryFacadeFacetHandle = facet_handle;
     let facet_view: FacetView<'_, (), (), 3> = facet_handle.view(tds)?;
     assert_eq!(facet_view.handle(), facet_handle);
+    assert_eq!(query_facet_handle, facet_handle);
+    assert_eq!(query_facade_facet_handle, facet_handle);
 
     let facet_index = tds.build_facet_to_simplices_index()?;
     let incidence = facet_index
@@ -1647,10 +1652,10 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
     let orientation_kind = DelaunayRepairOrientationCanonicalizationFailureKind::AfterFlipRepair {
         source_kind: delaunay::prelude::insertion::InsertionErrorKind::DuplicateCoordinates,
     };
-    assert!(matches!(
+    assert_matches!(
         orientation_kind,
         DelaunayRepairOrientationCanonicalizationFailureKind::AfterFlipRepair { .. }
-    ));
+    );
     let heuristic_vertex: Option<DelaunayRepairHeuristicVertexContext> = None;
     assert!(heuristic_vertex.is_none());
     let heuristic_reason =
