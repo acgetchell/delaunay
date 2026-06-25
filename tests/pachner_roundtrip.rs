@@ -102,9 +102,11 @@ fn stale_pachner_error_propagates_through_delaunay_result() {
         .expect_err("stale Pachner failure should propagate through DelaunayResult");
     assert_matches!(
         &err,
-        DelaunayError::Flip {
-            source: FlipError::MissingSimplex { simplex_key },
-        } if *simplex_key == stale_simplex,
+        DelaunayError::Flip { source }
+            if matches!(
+                source.as_ref(),
+                FlipError::MissingSimplex { simplex_key } if *simplex_key == stale_simplex
+            ),
         "unexpected DelaunayResult error for stale Pachner move: {err:?}"
     );
     dt.tds()
@@ -172,10 +174,6 @@ fn edge_to_facet_query_tracks_2d_k2_mutation_freshness() {
 }
 
 /// Attempts a stale k=1 insert through the public `DelaunayResult` alias.
-#[expect(
-    clippy::result_large_err,
-    reason = "test intentionally exercises DelaunayResult error propagation"
-)]
 fn try_stale_k1_insert(
     dt: &mut Dt4,
     stale_simplex: SimplexKey,

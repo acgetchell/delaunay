@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Merged Pull Requests
 
+- Add 2D edge-to-facet incidence queries [#478](https://github.com/acgetchell/delaunay/pull/478)
 - Split Pachner moves from vertex lifecycle edits [#477](https://github.com/acgetchell/delaunay/pull/477)
 - Make topology views and boundaries owner-aware [#476](https://github.com/acgetchell/delaunay/pull/476)
 - Borrow topology views from canonical storage [#472](https://github.com/acgetchell/delaunay/pull/472) [#474](https://github.com/acgetchell/delaunay/pull/474)
@@ -84,6 +85,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Add DelaunayError and DelaunayResult for common construction, insertion, validation, coordinate conversion, and toroidal-domain setup workflows.
   - Re-export the aliases from the crate root and construction preludes for downstream examples and applications.
   - Update public docs and examples to use DelaunayResult when workflow-specific errors are not required.
+- Add 2D edge-to-facet incidence queries [#478](https://github.com/acgetchell/delaunay/pull/478)
+  [`af2620b`](https://github.com/acgetchell/delaunay/commit/af2620b51a29c2fed7d33eabb5cfc0e867f0a419)
+
+  - Add 2D `try_incident_facets_to_edge_2d` and
+    `try_interior_facet_for_edge_2d` APIs on triangulation query surfaces.
+
+  - Re-export `FacetHandle` from query-focused surfaces for callers that consume
+    simplex-local facet handles outside Pachner-only imports.
+
+  - Optimize `EdgeKey::try_new` to prove live edges from endpoint incidence while
+    preserving typed incidence metadata errors.
+
+  - Add edge-key construction benchmarks and document the simplex-local incidence
+    query vocabulary.
 
 ### Changed
 

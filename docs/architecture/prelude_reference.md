@@ -10,6 +10,7 @@ they exercise.
 | Collection aliases and small buffers | `use delaunay::prelude::collections::*` |
 | Construct/configure a Delaunay triangulation | `use delaunay::prelude::construction::*` |
 | Construction telemetry diagnostics | `use delaunay::prelude::diagnostics::*` |
+| Export stable simplicial-complex primitives | `use delaunay::prelude::export::*` |
 | Construction validation cadence/policy | `use delaunay::prelude::validation::*` |
 | Delaunay repair diagnostics and policies | `use delaunay::prelude::repair::*` |
 | Delaunayize workflow | `use delaunay::prelude::delaunayize::*` |

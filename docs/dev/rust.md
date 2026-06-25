@@ -888,12 +888,15 @@ isolation.
 Use focused tests while iterating on Rust changes, for example:
 
 ```bash
-just test
+just test-unit
+just test-doc
 just test-integration
 ```
 
-For final handoff validation after Rust/Cargo/example/benchmark/test changes,
-run `just ci`; see [`commands.md`](commands.md) for the full command matrix.
+For final handoff validation, core Rust/Cargo changes require `just ci`.
+Doctest-only, unit-test-only, integration-test-only, benchmark-only, and
+example-only changes use the focused validators in
+[`commands.md`](commands.md).
 
 Property tests are preferred for geometric invariants such as:
 
@@ -949,7 +952,7 @@ Before adding a dependency, consider:
 Code must pass non-mutating checks:
 
 ```bash
-just check
+just rust-core-check
 ```
 
 Apply formatters and auto-fixes after reviewing check output:

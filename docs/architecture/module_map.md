@@ -118,6 +118,18 @@ crate-level documentation map. Delaunay-facing modules are exposed directly as
 `delaunay::repair`, `delaunay::validation`, and focused preludes rather than
 through a nested `delaunay::delaunay` facade.
 
+## I/O And Export Layer
+
+`src/io/` owns public downstream-facing export data models:
+
+- `visualization.rs` - generic simplicial-complex primitives for notebooks,
+  visualization tools, analysis pipelines, and downstream crates.
+
+This layer is distinct from the TDS snapshot/hydration boundary. TDS serde
+remains the canonical validated persistence path; `io::visualization` exposes
+stable UUID-based records for consumers that should not depend on runtime
+slotmap handles.
+
 ## Topology Layer
 
 `src/topology/` owns topology analysis and validation:

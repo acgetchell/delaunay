@@ -90,6 +90,7 @@ use crate::geometry::traits::coordinate::{
     CoordinateConversionError, CoordinateValidationError, CoordinateValues,
 };
 use crate::geometry::util::{RandomPointGenerationError, safe_usize_to_scalar, simplex_volume};
+use crate::io::visualization::{VisualizationDataValidationError, VisualizationExportError};
 use crate::locality::{
     accumulate_live_simplex_seeds, clear_simplex_seed_set, retain_live_simplex_seeds,
 };
@@ -209,16 +210,19 @@ pub(crate) mod test_hooks {
 /// converting caller coordinates into vertices, constructing a
 /// [`DelaunayTriangulation`], editing it through the Delaunay insertion/deletion
 /// API or explicit flip/Pachner APIs, updating auxiliary vertex/simplex data
-/// through checked keys, and validating its Delaunay invariants. More specialized
-/// workflows such as convex hull extraction, repair, and delaunayize continue
-/// to expose their narrower error types directly.
+/// through checked keys, validating its Delaunay invariants, exporting mesh
+/// data, and validating the export schema. More specialized workflows such as
+/// convex hull extraction, repair, and delaunayize continue to expose their
+/// narrower error types directly.
+/// Each variant keeps the concrete typed source error behind a box so the
+/// umbrella result stays small without erasing matchable failure details.
 ///
 /// # Examples
 ///
 /// Use [`DelaunayResult`] for examples, binaries, and quick workflows whose
 /// fallible operations stay inside coordinate conversion, construction,
 /// checked auxiliary-data mutation, insertion/deletion, explicit flip editing,
-/// and validation:
+/// validation, mesh export, and export-schema validation:
 ///
 /// ```rust
 /// use delaunay::prelude::construction::{
@@ -243,76 +247,180 @@ pub(crate) mod test_hooks {
 #[non_exhaustive]
 pub enum DelaunayError {
     /// Delaunay triangulation construction failed.
-    #[error(transparent)]
+    #[error("{source}")]
     Construction {
         /// Underlying construction failure.
-        #[from]
-        source: DelaunayTriangulationConstructionError,
+        #[source]
+        source: Box<DelaunayTriangulationConstructionError>,
     },
 
     /// Coordinate conversion or validation failed before construction.
-    #[error(transparent)]
+    #[error("{source}")]
     CoordinateConversion {
         /// Underlying coordinate conversion failure.
-        #[from]
-        source: CoordinateConversionError,
+        #[source]
+        source: Box<CoordinateConversionError>,
     },
 
     /// Incremental Delaunay insertion failed.
-    #[error(transparent)]
+    #[error("{source}")]
     Insertion {
         /// Underlying insertion failure.
-        #[from]
-        source: InsertionError,
+        #[source]
+        source: Box<InsertionError>,
     },
 
     /// Delaunay vertex deletion failed.
-    #[error(transparent)]
+    #[error("{source}")]
     DeleteVertex {
         /// Underlying vertex-deletion failure.
-        #[from]
-        source: DeleteVertexError,
+        #[source]
+        source: Box<DeleteVertexError>,
     },
 
     /// Explicit bistellar flip or Pachner move dispatch failed.
-    #[error(transparent)]
+    #[error("{source}")]
     Flip {
         /// Underlying flip failure.
-        #[from]
-        source: FlipError,
+        #[source]
+        source: Box<FlipError>,
     },
 
     /// User-data mutation through a checked TDS key failed.
-    #[error(transparent)]
+    #[error("{source}")]
     TdsMutation {
         /// Underlying TDS mutation failure.
-        #[from]
-        source: TdsMutationError,
+        #[source]
+        source: Box<TdsMutationError>,
     },
 
     /// Validation policy configuration failed.
-    #[error(transparent)]
+    #[error("{source}")]
     ValidationConfiguration {
         /// Underlying validation configuration failure.
-        #[from]
-        source: ValidationConfigurationError,
+        #[source]
+        source: Box<ValidationConfigurationError>,
     },
 
     /// Delaunay triangulation validation failed.
-    #[error(transparent)]
+    #[error("{source}")]
     Validation {
         /// Underlying validation failure.
-        #[from]
-        source: DelaunayTriangulationValidationError,
+        #[source]
+        source: Box<DelaunayTriangulationValidationError>,
+    },
+
+    /// Visualization or mesh export failed.
+    #[error("{source}")]
+    VisualizationExport {
+        /// Underlying visualization export failure.
+        #[source]
+        source: Box<VisualizationExportError>,
+    },
+
+    /// Visualization or mesh export schema validation failed.
+    #[error("{source}")]
+    VisualizationDataValidation {
+        /// Underlying visualization data validation failure.
+        #[source]
+        source: Box<VisualizationDataValidationError>,
     },
 
     /// Toroidal-domain setup failed.
-    #[error(transparent)]
+    #[error("{source}")]
     ToroidalDomain {
         /// Underlying toroidal-domain validation failure.
-        #[from]
-        source: ToroidalDomainError,
+        #[source]
+        source: Box<ToroidalDomainError>,
     },
+}
+
+impl From<DelaunayTriangulationConstructionError> for DelaunayError {
+    fn from(source: DelaunayTriangulationConstructionError) -> Self {
+        Self::Construction {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<CoordinateConversionError> for DelaunayError {
+    fn from(source: CoordinateConversionError) -> Self {
+        Self::CoordinateConversion {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<InsertionError> for DelaunayError {
+    fn from(source: InsertionError) -> Self {
+        Self::Insertion {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<DeleteVertexError> for DelaunayError {
+    fn from(source: DeleteVertexError) -> Self {
+        Self::DeleteVertex {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<FlipError> for DelaunayError {
+    fn from(source: FlipError) -> Self {
+        Self::Flip {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<TdsMutationError> for DelaunayError {
+    fn from(source: TdsMutationError) -> Self {
+        Self::TdsMutation {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<ValidationConfigurationError> for DelaunayError {
+    fn from(source: ValidationConfigurationError) -> Self {
+        Self::ValidationConfiguration {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<DelaunayTriangulationValidationError> for DelaunayError {
+    fn from(source: DelaunayTriangulationValidationError) -> Self {
+        Self::Validation {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<VisualizationExportError> for DelaunayError {
+    fn from(source: VisualizationExportError) -> Self {
+        Self::VisualizationExport {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<VisualizationDataValidationError> for DelaunayError {
+    fn from(source: VisualizationDataValidationError) -> Self {
+        Self::VisualizationDataValidation {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<ToroidalDomainError> for DelaunayError {
+    fn from(source: ToroidalDomainError) -> Self {
+        Self::ToroidalDomain {
+            source: Box::new(source),
+        }
+    }
 }
 
 /// Result alias for common user-facing Delaunay triangulation workflows.
@@ -320,7 +428,8 @@ pub enum DelaunayError {
 /// This is equivalent to `Result<T, DelaunayError>` with [`DelaunayError`] as
 /// the error type, and is intended for caller-facing examples and applications
 /// that use the standard construction, checked auxiliary-data mutation,
-/// insertion/deletion, explicit flip editing, and validation APIs.
+/// insertion/deletion, explicit flip editing, validation, mesh export, and
+/// export-schema validation APIs.
 pub type DelaunayResult<T> = Result<T, DelaunayError>;
 
 /// Errors that can occur during Delaunay triangulation construction.

@@ -59,6 +59,17 @@ use delaunay::prelude::diagnostics::{
     debug_print_first_delaunay_violation, delaunay_violation_report,
     verify_conflict_region_completeness,
 };
+use delaunay::prelude::export::{
+    InvalidCoordinateValue as ExportPreludeInvalidCoordinateValue,
+    MESH_EXPORT_SCHEMA as ExportPreludeMeshExportSchema, MeshExport as ExportPreludeMeshExport,
+    MeshExportError as ExportPreludeMeshExportError,
+    MeshExportValidationError as ExportPreludeMeshExportValidationError,
+    ValidatedMeshExport as ExportPreludeValidatedMeshExport,
+    ValidatedVisualizationData as ExportPreludeValidatedVisualizationData,
+    VisualizationData as ExportPreludeVisualizationData,
+    VisualizationTopologyGuarantee as ExportPreludeVisualizationTopologyGuarantee,
+    VisualizationTopologyKind as ExportPreludeVisualizationTopologyKind,
+};
 use delaunay::prelude::generators::{
     CoordinateRange, CoordinateRangeError, InvalidPositiveScalar,
     RandomPointGenerationError as GeneratorRandomPointGenerationError, RandomTriangulationBuilder,
@@ -178,6 +189,15 @@ use delaunay::topology::{
     BoundaryFacetClassification as TopologyBoundaryFacetClassification,
     classify_boundary_facet as topology_classify_boundary_facet,
 };
+use delaunay::{
+    MESH_EXPORT_SCHEMA as RootMeshExportSchema, MeshExport as RootMeshExport,
+    MeshExportError as RootMeshExportError,
+    MeshExportValidationError as RootMeshExportValidationError,
+    ValidatedMeshExport as RootValidatedMeshExport,
+    ValidatedVisualizationData as RootValidatedVisualizationData,
+    VisualizationTopologyGuarantee as RootVisualizationTopologyGuarantee,
+    VisualizationTopologyKind as RootVisualizationTopologyKind,
+};
 #[derive(Debug, thiserror::Error)]
 enum RootApiExportTestError {
     #[error(transparent)]
@@ -190,6 +210,10 @@ enum RootApiExportTestError {
     DelaunayRepair(#[from] delaunay::flips::DelaunayRepairError),
     #[error(transparent)]
     Delaunayize(#[from] delaunay::delaunayize::DelaunayizeError),
+    #[error(transparent)]
+    MeshExport(#[from] RootMeshExportError),
+    #[error(transparent)]
+    MeshExportValidation(#[from] RootMeshExportValidationError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -212,6 +236,10 @@ enum PreludeExportTestError {
     DelaunayRepair(#[from] DelaunayRepairError),
     #[error(transparent)]
     Delaunayize(#[from] DelaunayizeError),
+    #[error(transparent)]
+    MeshExport(#[from] ExportPreludeMeshExportError),
+    #[error(transparent)]
+    MeshExportValidation(#[from] ExportPreludeMeshExportValidationError),
     #[error(transparent)]
     Insertion(#[from] InsertionError),
     #[error(transparent)]
@@ -361,13 +389,13 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
     let focused_error = DelaunayError::from(source.clone());
     assert_matches!(
         focused_error,
-        DelaunayError::CoordinateConversion { source: err } if err == source
+        DelaunayError::CoordinateConversion { source: err } if err.as_ref() == &source
     );
 
     let root_error = RootDelaunayError::from(source.clone());
     assert_matches!(
         root_error,
-        RootDelaunayError::CoordinateConversion { source: err } if err == source
+        RootDelaunayError::CoordinateConversion { source: err } if err.as_ref() == &source
     );
 
     let no_vertices: [Vertex<(), 2>; 0] = [];
@@ -376,11 +404,13 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
         .expect_err("empty Delaunay construction should fail");
     assert_matches!(
         DelaunayError::from(construction),
-        DelaunayError::Construction {
-            source: DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::InsufficientVertices { dimension: 2, .. }
+        DelaunayError::Construction { source }
+            if matches!(
+                source.as_ref(),
+                DelaunayTriangulationConstructionError::Triangulation(
+                    DelaunayConstructionFailure::InsufficientVertices { dimension: 2, .. }
+                )
             )
-        }
     );
 
     let insertion = InsertionError::DuplicateCoordinates {
@@ -388,7 +418,7 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
     };
     assert_matches!(
         DelaunayError::from(insertion.clone()),
-        DelaunayError::Insertion { source: err } if err == insertion
+        DelaunayError::Insertion { source: err } if err.as_ref() == &insertion
     );
 
     let delete_vertex = DeleteVertexError::VertexNotFound {
@@ -396,13 +426,22 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
     };
     assert_matches!(
         DelaunayError::from(delete_vertex.clone()),
-        DelaunayError::DeleteVertex { source: err } if err == delete_vertex
+        DelaunayError::DeleteVertex { source: err } if err.as_ref() == &delete_vertex
     );
 
     let flip = FlipError::DegenerateSimplex;
     assert_matches!(
         DelaunayError::from(flip.clone()),
-        DelaunayError::Flip { source: err } if err == flip
+        DelaunayError::Flip { source: err } if err.as_ref() == &flip
+    );
+
+    let tds_mutation = TdsMutationError::from(TdsError::SimplexNotFound {
+        simplex_key: SimplexKey::from(KeyData::from_ffi(3)),
+        context: "prelude smoke test".to_owned(),
+    });
+    assert_matches!(
+        DelaunayError::from(tds_mutation.clone()),
+        DelaunayError::TdsMutation { source: err } if err.as_ref() == &tds_mutation
     );
 
     let configuration =
@@ -418,7 +457,7 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
     assert_matches!(
         DelaunayError::from(configuration),
         DelaunayError::ValidationConfiguration { source: err }
-            if err == expected_configuration
+            if err.as_ref() == &expected_configuration
     );
 
     let toroidal_domain = ToroidalDomainError::InvalidPeriod {
@@ -427,9 +466,12 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
     };
     assert_matches!(
         DelaunayError::from(toroidal_domain),
-        DelaunayError::ToroidalDomain {
-            source: ToroidalDomainError::InvalidPeriod { axis, period }
-        } if axis == 0 && period.to_bits() == 0.0_f64.to_bits()
+        DelaunayError::ToroidalDomain { source }
+            if matches!(
+                source.as_ref(),
+                ToroidalDomainError::InvalidPeriod { axis: 0, period }
+                    if period.to_bits() == 0.0_f64.to_bits()
+            )
     );
 
     let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
@@ -440,7 +482,7 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
     };
     assert_matches!(
         DelaunayError::from(validation.clone()),
-        DelaunayError::Validation { source: err } if err == validation
+        DelaunayError::Validation { source: err } if err.as_ref() == &validation
     );
 
     let focused_result: DelaunayResult<()> = Ok(());
@@ -700,6 +742,24 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
 
     let validation_result: Result<(), DelaunayTriangulationValidationError> = dt.validate();
     validation_result?;
+    let root_mesh_export: RootMeshExport<3> = dt.to_mesh_export()?;
+    assert_eq!(root_mesh_export.metadata.schema, RootMeshExportSchema);
+    assert_eq!(
+        root_mesh_export.metadata.topology_kind,
+        RootVisualizationTopologyKind::Euclidean
+    );
+    assert_eq!(
+        root_mesh_export.metadata.topology_guarantee,
+        RootVisualizationTopologyGuarantee::PLManifold
+    );
+    let root_validated_export: RootValidatedMeshExport<3> = root_mesh_export.into_validated()?;
+    assert_eq!(
+        root_validated_export.metadata().schema,
+        RootMeshExportSchema
+    );
+    let root_validated_data: RootValidatedVisualizationData<3> =
+        dt.to_visualization_data()?.into_validated()?;
+    assert_eq!(root_validated_data.metadata().schema, RootMeshExportSchema);
     assert_bistellar_flips(&dt);
     assert_root_bistellar_flips(&dt);
 
@@ -812,6 +872,65 @@ fn assert_facet_incidence_exports(
     Ok(())
 }
 
+fn assert_export_prelude_exports<K, U, V, const D: usize>(
+    dt: &DelaunayTriangulation<K, U, V, D>,
+) -> Result<(), PreludeExportTestError> {
+    let focused_mesh_export: ExportPreludeMeshExport<D> = dt.to_mesh_export()?;
+    let focused_visualization_data: ExportPreludeVisualizationData<D> =
+        dt.to_visualization_data()?;
+    assert_eq!(
+        focused_mesh_export.metadata.schema,
+        ExportPreludeMeshExportSchema
+    );
+    assert_eq!(
+        focused_visualization_data.metadata.schema,
+        ExportPreludeMeshExportSchema
+    );
+    assert_eq!(
+        focused_visualization_data.metadata.topology_kind,
+        ExportPreludeVisualizationTopologyKind::Euclidean
+    );
+    assert_eq!(
+        focused_visualization_data.metadata.topology_guarantee,
+        ExportPreludeVisualizationTopologyGuarantee::PLManifold
+    );
+    let focused_validated_mesh_export: ExportPreludeValidatedMeshExport<D> =
+        focused_mesh_export.into_validated()?;
+    let focused_validated_visualization_data: ExportPreludeValidatedVisualizationData<D> =
+        focused_visualization_data.into_validated()?;
+    assert_eq!(
+        focused_validated_mesh_export.metadata().schema,
+        ExportPreludeMeshExportSchema
+    );
+    assert_eq!(
+        focused_validated_visualization_data.metadata().schema,
+        ExportPreludeMeshExportSchema
+    );
+    assert_eq!(ExportPreludeInvalidCoordinateValue::Nan.to_string(), "NaN");
+    Ok(())
+}
+
+fn assert_insertion_prelude_empty_tds_exports() -> Result<(), PreludeExportTestError> {
+    let mut empty_tds: InsertionTds<(), (), 2> = InsertionTds::empty();
+    let _tds_all_facets: TdsAllFacetsIter<'_, (), (), 2> = empty_tds.facets();
+    let tds_boundary_facets: Option<TdsBoundaryFacetsIter<'static, (), (), 2>> = None;
+    assert!(tds_boundary_facets.is_none());
+    assert_eq!(
+        repair_neighbor_pointers_local(&mut empty_tds, &[], None)?,
+        0
+    );
+    assert_eq!(
+        CavityRepairStage::PrimaryInsertion.to_string(),
+        "primary insertion"
+    );
+    assert_matches!(LocateResult::Outside, LocateResult::Outside);
+    assert_matches!(
+        ValidationCadence::from_optional_every(Some(128)),
+        ValidationCadence::EveryN(every) if every.get() == 128
+    );
+    Ok(())
+}
+
 #[test]
 fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     let _generated_points: Vec<Point<2>> = try_generate_random_points_seeded(3, (0.0, 1.0), 42)?;
@@ -831,6 +950,7 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     let dt = DelaunayTriangulation::try_new_with_options(&vertices, options)?;
 
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
+    assert_export_prelude_exports(&dt)?;
     let _query_facade_all_facets: QueryFacadeAllFacetsIter<'_, (), (), 3> = dt.facets();
     let _query_facade_boundary_facets: QueryFacadeBoundaryFacetsIter<'_, (), (), 3> =
         dt.boundary_facets()?;
@@ -862,23 +982,7 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     assert_bistellar_flips(&dt);
     assert_pachner_prelude_exports(&dt, simplex_key)?;
 
-    let mut empty_tds: InsertionTds<(), (), 2> = InsertionTds::empty();
-    let _tds_all_facets: TdsAllFacetsIter<'_, (), (), 2> = empty_tds.facets();
-    let tds_boundary_facets: Option<TdsBoundaryFacetsIter<'static, (), (), 2>> = None;
-    assert!(tds_boundary_facets.is_none());
-    assert_eq!(
-        repair_neighbor_pointers_local(&mut empty_tds, &[], None)?,
-        0
-    );
-    assert_eq!(
-        CavityRepairStage::PrimaryInsertion.to_string(),
-        "primary insertion"
-    );
-    assert_matches!(LocateResult::Outside, LocateResult::Outside);
-    assert_matches!(
-        ValidationCadence::from_optional_every(Some(128)),
-        ValidationCadence::EveryN(every) if every.get() == 128
-    );
+    assert_insertion_prelude_empty_tds_exports()?;
     assert_send_sync_unpin::<TdsMutationError>();
     assert_send_sync_unpin::<NeighborRebuildError>();
     assert_send_sync_unpin::<ConstructionSkipSample>();

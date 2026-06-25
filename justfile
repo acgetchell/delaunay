@@ -201,8 +201,7 @@ bench-allocations:
 bench-ci:
     cargo bench --profile perf --bench ci_performance_suite
 
-# Compile benchmarks without running them. Manifest lints enforce the warning
-# policy without using RUSTFLAGS that fragment Cargo artifact caches.
+# Compile benchmark harnesses without running them.
 bench-compile:
     cargo bench --workspace --no-run --features bench
 
@@ -215,12 +214,8 @@ bench-perf-summary: _ensure-uv
 bench-smoke:
     CRIT_SAMPLE_SIZE=10 CRIT_MEASUREMENT_MS=500 CRIT_WARMUP_MS=200 cargo bench --workspace --profile perf --features bench
 
-# Compile benchmarks and integration tests without running. This catches
-# release-profile-only warnings (e.g. cfg-gated unused-mut) that debug-mode
-# clippy/test won't see.
-bench-test-compile: _ensure-nextest
-    cargo bench --workspace --no-run --features bench
-    cargo nextest run --release --tests --no-run
+# Compile benchmarks and release integration tests without running.
+bench-test-compile: bench-compile test-integration-compile
 
 # Build commands
 build:
@@ -254,7 +249,7 @@ changelog-update: changelog
     @echo "To create a git tag with changelog content for a specific version, run:"
     @echo "  just tag <version>  # e.g., just tag v0.4.2"
 
-# Check (non-mutating): run all linters/validators.
+# Check (non-mutating): run non-test validators.
 check: lint
     @echo "✅ Checks complete!"
 
@@ -263,8 +258,7 @@ check-fast:
     cargo check
 
 # CI simulation: comprehensive validation.
-# Runs: checks + test workflow + examples
-ci: check test examples
+ci: github-actions-check markdown-ci json-check toml-ci yaml-ci python-ci notebook-check rust-core-check test-rust-ci test-doc bench-compile examples
     @echo "🎯 CI checks complete!"
 
 # CI followed by an explicit persistent local baseline refresh.
@@ -288,13 +282,15 @@ clean:
     rm -rf coverage
 
 # Code quality and formatting
-clippy:
-    cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+clippy: clippy-core
 
-    # All features, split by target class so feature-gated benchmark/example
-    # code stays covered without rebuilding every target in one oversized graph.
-    cargo clippy --workspace --lib --tests --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
-    cargo clippy --workspace --benches --examples --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+clippy-all-targets:
+    cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+    cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+
+clippy-core:
+    cargo clippy --workspace --lib -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+    cargo clippy --workspace --lib --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
 # Coverage analysis for local development (HTML output)
 coverage: _ensure-cargo-llvm-cov
@@ -340,20 +336,43 @@ fmt:
 fmt-check:
     cargo fmt --all -- --check
 
+github-actions-check: action-lint zizmor
+    @echo "✅ GitHub Actions checks complete!"
+
 help-workflows:
     @echo "Recommended Just workflow:"
     @echo "  just check             # Run all non-mutating lints/validators"
     @echo "  just fix               # Apply formatters/auto-fixes (mutating)"
-    @echo "  just test              # Run tests + default-profile benchmark/release compile smoke"
-    @echo "  just ci                # Comprehensive checks + tests + examples"
+    @echo "  just test              # Run default test buckets"
+    @echo "  just ci                # GitHub-equivalent union of every validation bucket"
+    @echo ""
+    @echo "Focused validation:"
+    @echo "  just rust-core-check   # Formatting, core clippy, docs, and Semgrep"
+    @echo "  just python-ci         # Python lint/typecheck + pytest"
+    @echo "  just notebook-check    # Notebook hygiene + fast headless execution"
+    @echo "  just markdown-ci       # Markdown lint + spell check"
+    @echo "  just toml-ci           # TOML parse/lint/format checks"
+    @echo "  just yaml-ci           # YAML/CFF format/lint/citation checks"
+    @echo "  just github-actions-check # actionlint + zizmor"
     @echo ""
     @echo "Focused testing:"
-    @echo "  just test-unit         # Lib and doc tests only"
+    @echo "  just test-rust         # Rust unit, doctest, and integration tests"
+    @echo "  just test-rust-ci      # CI Rust unit + integration tests in one release nextest run"
+    @echo "  just test-unit         # Rust lib unit tests only"
+    @echo "  just test-doc          # Rust doctests only, in release profile"
     @echo "  just test-integration  # All integration tests (includes proptests)"
     @echo "  just test-integration-fast # Integration tests (skips proptests)"
+    @echo "  just test-integration-compile # Compile integration tests without running"
     @echo "  just test-python       # Python tests only (pytest)"
     @echo "  just test-slow         # Run correctness tests over the 10s default-suite budget"
     @echo "  just examples          # Run all examples"
+    @echo ""
+    @echo "Notebook workflows:"
+    @echo "  just notebook          # Launch the default notebook with uv-managed dependencies"
+    @echo "  just notebook-lint     # Validate notebook JSON, output hygiene, and extracted code"
+    @echo "  just notebook-check    # Lint notebooks and execute fast notebooks under target/notebooks"
+    @echo "  just notebook-check-slow # Include slow notebook execution"
+    @echo "  just notebook-clear-outputs-all # Clear source notebook outputs"
     @echo ""
     @echo "Active large-scale debugging:"
     @echo "  just test-diagnostics      # Run diagnostics tools with output"
@@ -363,6 +382,7 @@ help-workflows:
     @echo "  just debug-large-scale-5d [n] [repair_every] # Issue #342: 5D feasibility (defaults n=140, repair_every=1)"
     @echo ""
     @echo "Benchmark workflows:"
+    @echo "  just bench-compile      # Compile benchmark harnesses without running"
     @echo "  just bench-smoke        # Smoke-test benchmark harnesses (minimal samples)"
     @echo "  just bench              # Run all benchmarks with perf profile (ThinLTO)"
     @echo "  just bench-ci           # CI regression benchmarks with perf profile (~5-10 min)"
@@ -396,16 +416,16 @@ json-check: _ensure-jq
     fi
 
 # All linting: code + documentation + configuration
-lint: lint-code lint-docs lint-config
+lint: github-actions-check markdown-ci json-check toml-ci yaml-ci python-check notebook-lint rust-core-check shell-lint
 
-# Code linting: Rust (fmt-check, clippy, docs, Semgrep) + Python (Ruff, Ty) + Shell scripts
-lint-code: fmt-check clippy doc-check semgrep semgrep-test python-lint shell-lint
+# Code linting: Rust, Python, notebooks, and shell scripts.
+lint-code: rust-core-check python-check notebook-lint shell-lint
 
 # Configuration checks: JSON, TOML, YAML/CFF, GitHub Actions workflows
-lint-config: json-check toml-check toml-lint toml-fmt-check yaml-check citation-check action-lint zizmor
+lint-config: json-check toml-ci yaml-ci github-actions-check
 
 # Documentation linting: Markdown + spell checking
-lint-docs: markdown-check spell-check
+lint-docs: markdown-ci
 
 markdown-check: _ensure-rumdl
     #!/usr/bin/env bash
@@ -438,6 +458,9 @@ markdown-check: _ensure-rumdl
         echo "No markdown files found to check."
     fi
 
+markdown-ci: markdown-check spell-check
+    @echo "✅ Markdown checks complete!"
+
 # Shell, markdown, and YAML quality
 markdown-fix: _ensure-rumdl
     #!/usr/bin/env bash
@@ -457,6 +480,90 @@ markdown-fix: _ensure-rumdl
     fi
 
 markdown-lint: markdown-check
+
+notebook notebook="notebooks/00_quickstart.ipynb": _ensure-uv
+    #!/usr/bin/env bash
+    set -euo pipefail
+    notebook_cache="$(pwd)/target/notebooks"
+    mkdir -p "$notebook_cache/.ipython" "$notebook_cache/.matplotlib"
+    MPLBACKEND=Agg IPYTHONDIR="$notebook_cache/.ipython" MPLCONFIGDIR="$notebook_cache/.matplotlib" uv run --group notebooks jupyter lab --ServerApp.open_browser=True --LabApp.open_browser=True "{{ notebook }}"
+
+notebook-check: notebook-lint notebook-execute-fast
+    @echo "📓 Notebook checks complete!"
+
+notebook-check-slow: notebook-check notebook-execute-slow
+    @echo "📓 Slow notebook checks complete!"
+
+notebook-clear-outputs notebook="notebooks/00_quickstart.ipynb": _ensure-uv
+    uv run --group notebooks jupyter nbconvert --clear-output --inplace "{{ notebook }}"
+
+notebook-clear-outputs-all: _ensure-uv
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -d notebooks ]; then
+        echo "No notebooks found to clear."
+        exit 0
+    fi
+    found=0
+    while IFS= read -r notebook; do
+        found=1
+        uv run --group notebooks jupyter nbconvert --clear-output --inplace "$notebook"
+    done < <(find notebooks -type f -name '*.ipynb' ! -path '*/.ipynb_checkpoints/*' | sort)
+    if [ "$found" -eq 0 ]; then
+        echo "No notebooks found to clear."
+    fi
+
+notebook-execute notebook="notebooks/00_quickstart.ipynb" output_dir="target/notebooks": _ensure-uv
+    #!/usr/bin/env bash
+    set -euo pipefail
+    output_path="$(pwd)/{{ output_dir }}"
+    mkdir -p "$output_path/.ipython" "$output_path/.matplotlib"
+    MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout=600 --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "{{ output_dir }}" "{{ notebook }}"
+
+notebook-execute-fast output_dir="target/notebooks": _ensure-uv
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -d notebooks ]; then
+        echo "No fast notebooks found to execute."
+        exit 0
+    fi
+    output_path="$(pwd)/{{ output_dir }}"
+    mkdir -p "$output_path/.ipython" "$output_path/.matplotlib"
+    found=0
+    while IFS= read -r notebook; do
+        found=1
+        MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout=600 --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "{{ output_dir }}" "$notebook"
+    done < <(find notebooks -type f -name '*.ipynb' ! -path '*/.ipynb_checkpoints/*' ! -path 'notebooks/slow/*' ! -name '*_slow.ipynb' | sort)
+    if [ "$found" -eq 0 ]; then
+        echo "No fast notebooks found to execute."
+    fi
+
+notebook-execute-slow output_dir="target/notebooks": _ensure-uv
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -d notebooks ]; then
+        echo "No slow notebooks found to execute."
+        exit 0
+    fi
+    output_path="$(pwd)/{{ output_dir }}"
+    mkdir -p "$output_path/.ipython" "$output_path/.matplotlib"
+    found=0
+    while IFS= read -r notebook; do
+        found=1
+        MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout=1800 --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "{{ output_dir }}" "$notebook"
+    done < <(find notebooks -type f \( -path 'notebooks/slow/*' -o -name '*_slow.ipynb' \) ! -path '*/.ipynb_checkpoints/*' | sort)
+    if [ "$found" -eq 0 ]; then
+        echo "No slow notebooks found to execute."
+    fi
+
+notebook-lint: _ensure-uv
+    uv run --group dev --group notebooks notebook-check lint --repo-root .
+
+notebook-output-check: _ensure-uv
+    uv run --group dev --group notebooks notebook-check lint --repo-root . --no-ruff --no-format --no-ty
+
+notebook-setup: _ensure-uv
+    uv sync --group notebooks
 
 # Generate a same-machine dev-mode baseline for a GitHub ref.
 perf-baseline ref="main": _ensure-uv
@@ -767,6 +874,9 @@ python-check: _ensure-uv
     uv run ruff check scripts/
     just python-typecheck
 
+python-ci: python-check test-python
+    @echo "✅ Python checks complete!"
+
 # Python code quality
 python-fix: _ensure-uv
     uv run ruff check scripts/ --fix
@@ -779,6 +889,9 @@ python-sync: _ensure-uv
 
 python-typecheck: _ensure-uv
     uv run ty check scripts/ --error all
+
+rust-core-check: fmt-check clippy-core doc-check semgrep semgrep-test
+    @echo "✅ Rust core checks complete!"
 
 # Repository-owned Semgrep rules for project-specific Rust diagnostics.
 semgrep: _ensure-uv
@@ -1082,12 +1195,12 @@ tag-force version: python-sync
     uv run tag-release {{ version }} --force
 
 # Testing
-# test: runs default-profile benchmark/release compile checks plus all tests.
-test: bench-test-compile test-all
+# test: runs each default test bucket once.
+test: test-all
     @echo "✅ Test workflow passed!"
 
-# test-all: runs lib, doc, integration, and Python tests (comprehensive)
-test-all: test-unit test-integration test-python
+# test-all: runs Rust and Python tests.
+test-all: test-rust test-python
     @echo "✅ All tests passed!"
 
 test-allocation: _ensure-nextest
@@ -1096,9 +1209,17 @@ test-allocation: _ensure-nextest
 test-diagnostics: _ensure-nextest
     cargo nextest run --profile ci --test circumsphere_debug_tools --features diagnostics -- --nocapture
 
+# test-doc: runs Rust doctests in release profile.
+test-doc:
+    cargo test --doc --release --verbose
+
 # test-integration: runs all default integration tests under the 10s per-test budget.
 test-integration: _ensure-nextest
     cargo nextest run --release --profile ci --tests
+
+# Compile release integration tests without running them.
+test-integration-compile: _ensure-nextest
+    cargo nextest run --release --tests --no-run
 
 # test-integration-fast: runs integration tests but skips proptests (tests prefixed with `prop_`)
 #
@@ -1112,9 +1233,15 @@ test-integration-fast: _ensure-nextest
 test-python: _ensure-uv
     uv run pytest
 
-test-release: _ensure-nextest
-    cargo nextest run --release --profile ci
-    cargo test --doc --release
+test-release: test-rust-ci test-doc
+
+# test-rust: runs each default Rust correctness target class once.
+test-rust: test-rust-ci test-doc
+    @echo "✅ Rust tests passed!"
+
+# test-rust-ci: runs Rust lib unit tests and integration tests in one release-profile nextest invocation.
+test-rust-ci: _ensure-nextest
+    cargo nextest run --release --profile ci --lib --tests
 
 # Run correctness tests that exceed the 10s default-suite budget.
 # Slow tests run in release mode because debug exact-predicate paths can turn
@@ -1125,10 +1252,9 @@ test-slow: _ensure-nextest
 
 test-slow-release: test-slow
 
-# test-unit: runs lib and doc tests.
+# test-unit: runs Rust lib unit tests.
 test-unit: _ensure-nextest
     cargo nextest run --profile ci --lib
-    cargo test --doc --verbose
 
 # Check TOML files parse cleanly.
 toml-check: _ensure-uv
@@ -1143,6 +1269,9 @@ toml-check: _ensure-uv
     else
         echo "No TOML files found to check."
     fi
+
+toml-ci: toml-check toml-lint toml-fmt-check
+    @echo "✅ TOML checks complete!"
 
 toml-fix: toml-fmt
 
@@ -1213,6 +1342,9 @@ verify-expect-counts:
     check_count 'src/**/*.rs doc-comment .expect(' 0 '^\s*//[/!].*\.expect\(' src
 
 yaml-check: yaml-fmt-check yaml-lint
+
+yaml-ci: yaml-check citation-check
+    @echo "✅ YAML/CFF checks complete!"
 
 yaml-fix: _ensure-dprint
     #!/usr/bin/env bash

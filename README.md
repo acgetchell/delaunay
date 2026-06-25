@@ -80,6 +80,8 @@ meshing, or production-scale dynamic remeshing.
   normalized volume, plus Jaccard set-similarity diagnostics.
 - [x] Incremental insertion, insertion statistics, and transactional `delete_vertex` rollback on failed
   repair/canonicalization.
+- [x] JSON-exportable simplicial-complex primitives with stable vertex/simplex UUIDs for notebooks and
+  downstream analysis tools.
 - [x] Optional Cargo feature gates for allocation counting, diagnostics, benchmark logging, and slow
   correctness tests.
 - [x] PL-manifold validation by default, with pseudomanifold checks available as an explicit opt-out.
@@ -163,6 +165,7 @@ explicit full-validation checkpoints.
 - [Examples](examples/README.md) - Runnable examples for construction, hulls, topology editing, diagnostics, and repair.
 - [Invariants](docs/invariants.md) - Topological and geometric invariants enforced by the crate.
 - [Limitations](docs/limitations.md) - Supported dimensions, predicate limits, toroidal modes, and feature gaps.
+- [Mesh Export](docs/mesh_export.md) - Stable UUID-based simplicial-complex export for notebooks and downstream tools.
 - [Numerical Robustness Guide](docs/numerical_robustness_guide.md) - Predicate kernels, SoS, retry, and repair behavior.
 - [Orientation Spec](docs/ORIENTATION_SPEC.md) - Coherent combinatorial and geometric orientation rules.
 - [Property Testing Summary](docs/property_testing_summary.md) - Property-test layout and coverage summary.

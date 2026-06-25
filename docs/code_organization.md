@@ -32,6 +32,8 @@ into architecture docs; link to the command guide instead.
 - `src/geometry/` owns points, coordinate ranges, kernels, predicates,
   geometric quality measures, convex hull support, and coordinate conversion
   utilities.
+- `src/io/` owns downstream-facing export data models for notebooks,
+  visualization, analysis, and interchange. It does not own TDS hydration.
 - `src/topology/` owns topology-space models, Euler characteristic helpers,
   manifold validation, ridge queries, and PL-manifold reasoning.
 - `src/lib.rs` wires public modules, root re-exports, focused preludes, and the
