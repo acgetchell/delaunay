@@ -15,16 +15,22 @@ Run the Python validators through the repository toolchain:
 
 ```bash
 just python-check
-just python-typecheck
 just test-python
 ```
 
-`just python-typecheck` runs `ty check scripts/ --error all`, which is the
-type-checking authority. Prefer reducing untyped surfaces in code and tests
-over adding more `ty` configuration.
+`just python-check` runs Ruff formatting checks, Ruff linting, and
+`just python-typecheck`. `just python-typecheck` runs
+`ty check scripts/ --error all`, which is the type-checking authority. Prefer
+reducing untyped surfaces in code and tests over adding more `ty`
+configuration.
 
 `just check` also runs Python formatting checks, Ruff, and `ty` as part of the
 normal repository validation bundle.
+
+Jupyter notebooks are validated separately through `just notebook-lint` and
+`just notebook-check`. Notebook cells are extracted and checked with Ruff and
+ty, but notebook edits should use the notebook validators rather than treating
+`.ipynb` files as ordinary Python scripts.
 
 ---
 

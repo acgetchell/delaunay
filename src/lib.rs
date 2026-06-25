@@ -744,6 +744,14 @@ pub(crate) mod triangulation;
 #[path = "delaunay/validation.rs"]
 pub mod validation;
 
+/// I/O and downstream-facing export data models.
+pub mod io {
+    /// Generic simplicial-complex export data for notebooks and downstream tools.
+    pub mod visualization;
+
+    pub use visualization::*;
+}
+
 // Re-export commonly used Delaunay-facing types at the crate root.
 pub use crate::builder::DelaunayTriangulationBuilder;
 pub use crate::construction::{
@@ -785,6 +793,14 @@ pub use crate::core::validation::{
     TopologyGuarantee, TriangulationValidationError, ValidationConfigurationError, ValidationPolicy,
 };
 pub use crate::deletion::DeleteVertexError;
+pub use crate::io::visualization::{
+    AdjacencyRecord, MESH_EXPORT_SCHEMA, MESH_EXPORT_SCHEMA_VERSION, MeshAdjacencyRecord,
+    MeshExport, MeshExportError, MeshExportValidationError, MeshSimplexRecord, MeshVertexRecord,
+    SimplexRecord, VISUALIZATION_SCHEMA, VISUALIZATION_SCHEMA_VERSION, ValidatedMeshExport,
+    ValidatedVisualizationData, VertexRecord, VisualizationData, VisualizationDataValidationError,
+    VisualizationExportError, VisualizationMetadata, VisualizationTopologyGuarantee,
+    VisualizationTopologyKind,
+};
 pub use crate::repair::{
     DelaunayCheckPolicy, DelaunayRepairHeuristicConfig, DelaunayRepairHeuristicSeeds,
     DelaunayRepairOperation, DelaunayRepairOutcome, DelaunayRepairPolicy,
@@ -1708,6 +1724,45 @@ pub mod prelude {
         pub use crate::{
             DelaunayViolationDetail, DelaunayViolationReport, debug_print_first_delaunay_violation,
             delaunay_violation_report,
+        };
+    }
+
+    /// Focused exports for generic simplicial-complex export data.
+    ///
+    /// These records are intended for notebooks, visualization tools, ML
+    /// pipelines, and downstream crates that want stable vertex/simplex ids
+    /// without depending on storage-local TDS handles.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayResult, DelaunayTriangulationBuilder, vertex,
+    /// };
+    /// use delaunay::prelude::export::MESH_EXPORT_SCHEMA;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = vec![
+    ///     vertex![0.0, 0.0]?,
+    ///     vertex![1.0, 0.0]?,
+    ///     vertex![0.0, 1.0]?,
+    /// ];
+    /// let triangulation = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let export = triangulation.to_mesh_export()?;
+    ///
+    /// assert_eq!(export.metadata.schema, MESH_EXPORT_SCHEMA);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub mod export {
+        pub use crate::geometry::traits::coordinate::InvalidCoordinateValue;
+        pub use crate::io::visualization::{
+            AdjacencyRecord, MESH_EXPORT_SCHEMA, MESH_EXPORT_SCHEMA_VERSION, MeshAdjacencyRecord,
+            MeshExport, MeshExportError, MeshExportValidationError, MeshSimplexRecord,
+            MeshVertexRecord, SimplexRecord, VISUALIZATION_SCHEMA, VISUALIZATION_SCHEMA_VERSION,
+            ValidatedMeshExport, ValidatedVisualizationData, VertexRecord, VisualizationData,
+            VisualizationDataValidationError, VisualizationExportError, VisualizationMetadata,
+            VisualizationTopologyGuarantee, VisualizationTopologyKind,
         };
     }
 

@@ -38,6 +38,7 @@ dependencies = [ "packaging" ]
 archive-changelog = "archive_changelog:main"
 benchmark-utils = "benchmark_utils:main"
 hardware-utils = "hardware_utils:main"
+notebook-check = "notebook_check:main"
 postprocess-changelog = "postprocess_changelog:main"
 tag-release = "tag_release:main"
 
@@ -48,6 +49,7 @@ py-modules = [
     "archive_changelog",
     "benchmark_utils",
     "hardware_utils",
+    "notebook_check",
     "postprocess_changelog",
     "subprocess_utils",
     "tag_release",
@@ -169,6 +171,7 @@ known-first-party = [
     "archive_changelog",
     "benchmark_utils",
     "hardware_utils",
+    "notebook_check",
     "postprocess_changelog",
     "subprocess_utils",
     "tag_release",
@@ -229,4 +232,14 @@ dev = [
     "shfmt-py==4.0.0",
     "ty==0.0.49",
     "yamllint==1.38.0",
+]
+notebooks = [
+    "ipykernel>=7.1.0",
+    "jupyterlab>=4.5.1",
+    "matplotlib>=3.10.8",
+    "nbclient>=0.10.2",
+    "nbconvert>=7.17.1",
+    "nbformat>=5.10.4",
+    "polars>=1.36.1",
+    "plotly>=6.5.0",
 ]

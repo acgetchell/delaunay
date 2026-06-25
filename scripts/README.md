@@ -39,6 +39,19 @@ Use `just changelog-unreleased vX.Y.Z` while preparing a release PR before the
 final tag exists. Use `just tag vX.Y.Z` after the release PR is merged to
 create the annotated release tag from the matching changelog section.
 
+### Notebook utilities
+
+```bash
+just notebook-lint
+just notebook-check
+uv run --group dev --group notebooks notebook-check --help
+```
+
+`notebook-check` validates notebook JSON, rejects committed outputs and
+execution counts, extracts code cells for Ruff and ty, and can execute notebooks
+headlessly. The `just notebook-check` recipe writes executed notebooks under
+`target/notebooks/` and leaves source notebooks unchanged.
+
 ### Benchmark utilities
 
 ```bash

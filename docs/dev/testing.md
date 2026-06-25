@@ -371,6 +371,29 @@ The test suite has two routine correctness buckets:
   Gate these with `#[cfg(feature = "slow-tests")]` and run them through
   `just test-slow`.
 
+Default test recipes are split by target class:
+
+- `just test-unit` runs Rust lib unit tests.
+- `just test-doc` runs Rust doctests.
+- `just test-integration` runs Rust integration tests.
+- `just test-python` runs Python tests.
+
+For test-only changes, run only the matching focused recipe. If multiple test
+target classes changed, compose those focused recipes once each. Use
+`just test` when you intentionally want the full default test suite; broad Rust
+test workflows use `just test-rust-ci` so lib unit tests and integration tests
+compile together under the release profile rather than as separate
+debug/release nextest passes.
+During iteration, prefer the targeted changed-test commands in
+[`commands.md`](commands.md); reserve full focused recipes such as
+`just test-doc`, `just test-unit`, and `just test-integration` for final bucket
+validation or broad changes.
+
+Notebook validation is separate from `just test`. Use `just notebook-lint` for
+notebook hygiene and extracted-code checks, `just notebook-check` for fast
+headless execution, and `just notebook-check-slow` for notebooks that exceed
+the routine execution budget.
+
 Do not mark deterministic slow correctness tests with `#[ignore]`; that makes
 them invisible to `just test-slow`. Benchmark-style tests should live in
 `benches/`, not as `#[cfg(feature = "bench")]` unit tests. Feature-gated
@@ -380,16 +403,40 @@ Those helpers should still have focused unit tests for their fixture contract.
 Known limitations should be asserted explicitly or tracked outside the routine
 test suite rather than hidden behind `#[ignore]`.
 
-Run standard tests:
+Run all default test buckets:
 
 ```bash
 just test
+```
+
+Run Rust lib unit tests and integration tests in the CI release-profile nextest bucket:
+
+```bash
+just test-rust-ci
+```
+
+Run Rust lib unit tests:
+
+```bash
+just test-unit
+```
+
+Run Rust doctests:
+
+```bash
+just test-doc
 ```
 
 Run integration tests:
 
 ```bash
 just test-integration
+```
+
+Run Python tests:
+
+```bash
+just test-python
 ```
 
 Run all tests:

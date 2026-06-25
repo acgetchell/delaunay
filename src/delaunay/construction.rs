@@ -90,6 +90,7 @@ use crate::geometry::traits::coordinate::{
     CoordinateConversionError, CoordinateValidationError, CoordinateValues,
 };
 use crate::geometry::util::{RandomPointGenerationError, safe_usize_to_scalar, simplex_volume};
+use crate::io::visualization::{VisualizationDataValidationError, VisualizationExportError};
 use crate::locality::{
     accumulate_live_simplex_seeds, clear_simplex_seed_set, retain_live_simplex_seeds,
 };
@@ -209,16 +210,17 @@ pub(crate) mod test_hooks {
 /// converting caller coordinates into vertices, constructing a
 /// [`DelaunayTriangulation`], editing it through the Delaunay insertion/deletion
 /// API or explicit flip/Pachner APIs, updating auxiliary vertex/simplex data
-/// through checked keys, and validating its Delaunay invariants. More specialized
-/// workflows such as convex hull extraction, repair, and delaunayize continue
-/// to expose their narrower error types directly.
+/// through checked keys, validating its Delaunay invariants, exporting mesh
+/// data, and validating the export schema. More specialized workflows such as
+/// convex hull extraction, repair, and delaunayize continue to expose their
+/// narrower error types directly.
 ///
 /// # Examples
 ///
 /// Use [`DelaunayResult`] for examples, binaries, and quick workflows whose
 /// fallible operations stay inside coordinate conversion, construction,
 /// checked auxiliary-data mutation, insertion/deletion, explicit flip editing,
-/// and validation:
+/// validation, mesh export, and export-schema validation:
 ///
 /// ```rust
 /// use delaunay::prelude::construction::{
@@ -306,6 +308,22 @@ pub enum DelaunayError {
         source: DelaunayTriangulationValidationError,
     },
 
+    /// Visualization or mesh export failed.
+    #[error(transparent)]
+    VisualizationExport {
+        /// Underlying visualization export failure.
+        #[from]
+        source: VisualizationExportError,
+    },
+
+    /// Visualization or mesh export schema validation failed.
+    #[error(transparent)]
+    VisualizationDataValidation {
+        /// Underlying visualization data validation failure.
+        #[from]
+        source: VisualizationDataValidationError,
+    },
+
     /// Toroidal-domain setup failed.
     #[error(transparent)]
     ToroidalDomain {
@@ -320,7 +338,8 @@ pub enum DelaunayError {
 /// This is equivalent to `Result<T, DelaunayError>` with [`DelaunayError`] as
 /// the error type, and is intended for caller-facing examples and applications
 /// that use the standard construction, checked auxiliary-data mutation,
-/// insertion/deletion, explicit flip editing, and validation APIs.
+/// insertion/deletion, explicit flip editing, validation, mesh export, and
+/// export-schema validation APIs.
 pub type DelaunayResult<T> = Result<T, DelaunayError>;
 
 /// Errors that can occur during Delaunay triangulation construction.

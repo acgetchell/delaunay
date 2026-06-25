@@ -50,32 +50,58 @@ These commands ensure:
 - static analysis
 - tests
 
+Treat this as a menu, not a required sequence. The validation matrix below is
+the handoff source of truth.
+
 ## Validation Command Selection
 
 Use the smallest non-mutating validator that covers the files you changed while
-iterating. For final handoff validation, match the command to the changed Rust
-surface instead of defaulting all Rust edits to full CI. Non-test Rust code
-still requires `just ci`; Rust test-only and benchmark-only changes use the
-focused validators below.
+iterating. For final handoff validation, match commands to the changed file
+surfaces instead of defaulting all edits to full CI.
+
+Core Rust code means production Rust or manifest changes that can affect library
+behavior, public API, features, examples, benchmarks, or downstream users. It
+does not include Rust doctest-only, unit-test-only, integration-test-only,
+benchmark-only, or example-only edits when the focused validator covers the
+changed surface.
 
 | Touched surface | Iteration validation | Final validation |
 |-----|-----|-----|
-| Documentation or configuration only | `just check` | `just check` |
-| Python-only changes under `scripts/` | `just python-check` | `just python-check` |
+| Markdown documentation (`*.md`) | `just markdown-check` | `just markdown-check` |
+| Python under `scripts/` | Targeted pytest or `just test-python`; add `just python-check` for logic/style | `just python-check` and `just test-python` |
+| Jupyter notebooks (`notebooks/**/*.ipynb`) | `just notebook-lint` | `just notebook-check` |
+| Configuration only (JSON, TOML, YAML, CFF, workflows) | Matching config validator | `just lint-config` |
 | Rust unit tests only (`#[cfg(test)]` in `src/**`) | Targeted `cargo test --lib <filter>` or `just test-unit` | `just test-unit` |
+| Rust doctests only (`///` examples or crate docs) | Targeted `cargo test --doc <filter>` or `just test-doc` | `just test-doc` |
 | Rust integration tests only (`tests/**`) | Targeted `cargo nextest run --test <name>` or `just test-integration-fast` | `just test-integration` |
 | Rust benchmark files only (`benches/**`) | Targeted benchmark command or `just bench-smoke` | Matching benchmark validator |
 | Rust examples only (`examples/**`) | Targeted `cargo run --example <name>` or `just examples` | `just examples` |
-| Cargo manifest, features, public API, or non-test Rust code | Focused checks, `just check`, or targeted tests | `just ci` |
-| Mixed Rust test categories | Run each matching focused validator | Run each matching focused validator |
-| Mixed non-test Rust plus tests/benches/examples | Focused checks while iterating | `just ci` |
+| Core Rust code | Focused checks or targeted tests while iterating | `just ci` |
+| Mixed focused surfaces without core Rust | Run each matching focused validator once | Run each matching focused validator once |
+| Mixed core Rust plus tests/benches/examples/docs/config | Focused checks while iterating | `just ci` |
 
-Do not run `just ci` merely because documentation, configuration, or Python
-files changed. Do not run `just ci` merely because a Rust file changed if the
-diff only touches unit tests, integration tests, examples, or benchmarks and
-the focused validator covers the changed surface. Run `just ci` before final
-handoff when non-test Rust code changed or when the maintainer explicitly asks
-for full CI.
+Do not run `just ci` merely because documentation, configuration, Python,
+notebook, or test-only Rust files changed. Do not run `just test` when a single
+focused test bucket covers the change unless you intentionally want the full
+default test suite. When a diff touches multiple focused test surfaces, compose
+the matching recipes once each; for example, run `just test-doc` and
+`just test-integration` for doctest plus integration-test changes. Broad Rust
+correctness workflows such as `just test-rust` and `just ci` use
+`just test-rust-ci`, which runs Rust lib unit tests and integration tests
+together in one release-profile nextest invocation.
+
+During fast code-writing cycles, start with the smallest changed test or
+doctest rather than the whole focused bucket. For single-item rustdoc edits, run
+`cargo test --doc <item-or-module-filter>`; for unit-test edits, run
+`cargo test --lib <test-or-module-filter>`; for integration-test crate edits,
+run the changed crate with `cargo nextest run --test <crate>`. Cargo's built-in
+test-name filter accepts one filter per invocation, so run separate filtered
+commands for unrelated changed tests or choose one shared module/name prefix
+that covers the intended small group. Use `just test-doc`, `just test-unit`, or
+`just test-integration` for final bucket validation or broad changes.
+
+Focused validators own one target class. Avoid adding a compile-only smoke
+recipe before a recipe that already compiles and runs the same target class.
 
 For benchmark-only changes, run the changed benchmark with
 `cargo bench --profile perf --bench <name>` when the change affects measured
@@ -148,8 +174,10 @@ examples, or benchmarks.
 just check-fast
 ```
 
-`just check` runs the default checks plus an `--all-features` pass. DenseSlotMap
-is the only supported storage backend.
+`rust-core-check` runs core library Clippy in the default and all-features
+configurations. `clippy-all-targets` is available as an optional broad sweep,
+but it is not part of `just ci` because tests, examples, and benchmark harnesses
+own their own validation buckets.
 
 ---
 
@@ -173,7 +201,7 @@ cargo doc
 
 ## Full CI Validation
 
-Before large Rust changes, broad API/test/benchmark changes, release-style
+Before core Rust changes, broad API-affecting changes, release-style
 validation, or explicit maintainer requests, run the full CI command:
 
 ```bash
@@ -183,11 +211,17 @@ just ci
 This runs:
 
 - formatting checks
-- lint checks
-- benchmark and release-test compile checks using Cargo's default release profile
-- unit tests
-- integration tests
-- documentation builds
+- GitHub Actions checks
+- Markdown checks
+- JSON/TOML/YAML/CFF checks
+- Python lint/typecheck
+- notebook hygiene and fast headless execution
+- Rust core lint, documentation, and Semgrep checks
+- benchmark harness compile checks
+- Rust lib unit tests
+- Rust doctests
+- Rust release integration tests
+- Python tests
 - example builds
 
 ---
@@ -199,15 +233,30 @@ For performance-sensitive code changes, follow
 when none covers the hot path, benchmark after editing, and preserve
 correctness invariants throughout.
 
-`just ci` is the comprehensive error-catching validation path. It runs the
-`check`, `test`, and `examples` recipes. The `test` recipe already depends on
-`bench-test-compile`, so CI compiles benchmark harnesses and release tests
-through that path; `bench-compile` is a standalone recipe that is **not**
-executed by `just ci`:
+`just ci` is the comprehensive error-catching validation path used by GitHub
+Actions. It is a flat union of leaf validators rather than a nested call to
+`just check`. The target classes are kept separate: `rust-core-check` covers
+formatting, core library Clippy, rustdoc, and Semgrep; `bench-compile` compiles
+benchmark harnesses once; `test-rust-ci` compiles and runs Rust lib unit tests
+and release integration tests in one release-profile nextest invocation;
+`test-doc` compiles and runs Rust doctests; `notebook-check` lints notebooks
+and executes fast notebooks headlessly once.
+
+`just test` is tests-only. `test-integration-compile` and `bench-test-compile`
+are explicit no-run smoke recipes for cases where a compile-only check is the
+desired validator; do not run them before `test-integration` unless you
+intentionally want a separate compile-only pass. `test-unit` and
+`test-integration` stay focused for targeted local validation; broad test and
+CI workflows use `test-rust-ci` to avoid a debug-plus-release profile split.
 
 ```bash
 just ci
-just test              # includes just bench-test-compile
+just test
+just rust-core-check
+just test-rust-ci
+just notebook-check
+just bench-compile
+just test-integration-compile
 just bench-test-compile
 ```
 
@@ -232,7 +281,7 @@ Use `just bench-smoke` only for quick harness validation with minimal samples;
 do not treat smoke output as performance data.
 
 Workspace-wide benchmark recipes (`just bench`, `just bench-smoke`,
-`just bench-compile`, and the benchmark compile step inside `just test`) enable
+`just bench-compile`, and the benchmark compile step inside `just ci`) enable
 `--features bench` so feature-gated benchmark fixtures are compiled.
 
 Some repair benchmarks need feature-gated fixtures that deliberately construct
@@ -399,6 +448,31 @@ under:
 
 ---
 
+## Notebook Validation
+
+Notebook source files should not commit generated outputs or execution counts.
+Notebook code is extracted and checked with Ruff and ty so `.ipynb` cells follow
+the same Python standards as repository scripts.
+
+Commands:
+
+```bash
+just notebook-lint
+just notebook-check
+just notebook-check-slow
+just notebook-clear-outputs-all
+```
+
+`notebook-check` runs notebook hygiene and fast headless execution. Headless
+execution writes executed notebooks under `target/notebooks/` and leaves source
+notebooks unchanged. Slow notebooks should be named `*_slow.ipynb` or placed
+under `notebooks/slow/`; those run through `notebook-check-slow`.
+
+Before notebooks exist, these recipes are clean no-ops so the CI shape can stay
+stable ahead of notebook work.
+
+---
+
 ## Markdown Checks
 
 Markdown files are checked and fixed with rumdl. Keep the non-mutating check
@@ -507,14 +581,22 @@ just action-lint
 | Fast compile check | `just check-fast` |
 | Check formatting | `just fmt-check` |
 | Apply formatters/auto-fixes | `just fix` |
-| Validate documentation/config-only changes | `just check` |
-| Validate Python-only changes | `just python-check` |
-| Run tests + compile smoke | `just test` |
-| Run unit/doc tests only | `just test-unit` |
+| Validate Markdown-only changes | `just markdown-check` |
+| Validate configuration-only changes | `just lint-config` |
+| Validate Python scripts/tests | `just python-check` and `just test-python` |
+| Validate notebook changes | `just notebook-check` |
+| Validate core Rust checks | `just rust-core-check` |
+| Run all default test buckets | `just test` |
+| Run Rust tests only | `just test-rust` |
+| Run Rust CI nextest bucket | `just test-rust-ci` |
+| Run Rust lib unit tests only | `just test-unit` |
+| Run doctests only | `just test-doc` |
 | Run integration tests | `just test-integration` |
 | Run all tests | `just test-all` |
+| Compile benchmark harnesses | `just bench-compile` |
+| Compile release integration tests without running | `just test-integration-compile` |
 | Run examples | `just examples` |
-| Run full CI | `just ci` |
+| Run full GitHub-equivalent CI | `just ci` |
 | Run perf-profile benchmarks | `just bench` |
 
 ---
@@ -523,20 +605,24 @@ just action-lint
 
 CI enforces:
 
-- formatting
-- clippy lints
-- documentation build
-- tests
+- GitHub Actions checks
+- Markdown, JSON, TOML, YAML, CFF, and spell checks
+- Python lint, type checks, and tests
+- notebook hygiene and fast headless execution
+- core Rust formatting, Clippy, rustdoc, and Semgrep checks
+- Rust unit, doctest, and integration tests
+- benchmark harness compilation
+- examples
 
 Rust warnings are denied by the manifest lint policy and Clippy warnings are
-denied by the `just clippy` invocations. Keep any intentional warning-level
+denied by the `just clippy-core` invocations. Keep any intentional warning-level
 exceptions explicit in `Cargo.toml`.
 
 Agents must ensure changes pass the appropriate local validator before
-proposing patches. Rust/Cargo/example/benchmark/test changes should pass
-`just ci` for final handoff validation; documentation/config-only changes
-should normally pass `just check`, and Python-only changes should normally pass
-`just python-check`.
+proposing patches. Use the validation matrix above for final handoff: core
+Rust/Cargo changes require `just ci`, while documentation, configuration,
+Python, test-only, benchmark-only, and example-only changes use their focused
+validators and compose them once each when multiple surfaces changed.
 
 ---
 
