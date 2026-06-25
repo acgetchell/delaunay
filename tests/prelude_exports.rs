@@ -389,13 +389,13 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
     let focused_error = DelaunayError::from(source.clone());
     assert_matches!(
         focused_error,
-        DelaunayError::CoordinateConversion { source: err } if err == source
+        DelaunayError::CoordinateConversion { source: err } if err.as_ref() == &source
     );
 
     let root_error = RootDelaunayError::from(source.clone());
     assert_matches!(
         root_error,
-        RootDelaunayError::CoordinateConversion { source: err } if err == source
+        RootDelaunayError::CoordinateConversion { source: err } if err.as_ref() == &source
     );
 
     let no_vertices: [Vertex<(), 2>; 0] = [];
@@ -404,11 +404,13 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
         .expect_err("empty Delaunay construction should fail");
     assert_matches!(
         DelaunayError::from(construction),
-        DelaunayError::Construction {
-            source: DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::InsufficientVertices { dimension: 2, .. }
+        DelaunayError::Construction { source }
+            if matches!(
+                source.as_ref(),
+                DelaunayTriangulationConstructionError::Triangulation(
+                    DelaunayConstructionFailure::InsufficientVertices { dimension: 2, .. }
+                )
             )
-        }
     );
 
     let insertion = InsertionError::DuplicateCoordinates {
@@ -416,7 +418,7 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
     };
     assert_matches!(
         DelaunayError::from(insertion.clone()),
-        DelaunayError::Insertion { source: err } if err == insertion
+        DelaunayError::Insertion { source: err } if err.as_ref() == &insertion
     );
 
     let delete_vertex = DeleteVertexError::VertexNotFound {
@@ -424,13 +426,13 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
     };
     assert_matches!(
         DelaunayError::from(delete_vertex.clone()),
-        DelaunayError::DeleteVertex { source: err } if err == delete_vertex
+        DelaunayError::DeleteVertex { source: err } if err.as_ref() == &delete_vertex
     );
 
     let flip = FlipError::DegenerateSimplex;
     assert_matches!(
         DelaunayError::from(flip.clone()),
-        DelaunayError::Flip { source: err } if err == flip
+        DelaunayError::Flip { source: err } if err.as_ref() == &flip
     );
 
     let configuration =
@@ -446,7 +448,7 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
     assert_matches!(
         DelaunayError::from(configuration),
         DelaunayError::ValidationConfiguration { source: err }
-            if err == expected_configuration
+            if err.as_ref() == &expected_configuration
     );
 
     let toroidal_domain = ToroidalDomainError::InvalidPeriod {
@@ -455,9 +457,12 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
     };
     assert_matches!(
         DelaunayError::from(toroidal_domain),
-        DelaunayError::ToroidalDomain {
-            source: ToroidalDomainError::InvalidPeriod { axis, period }
-        } if axis == 0 && period.to_bits() == 0.0_f64.to_bits()
+        DelaunayError::ToroidalDomain { source }
+            if matches!(
+                source.as_ref(),
+                ToroidalDomainError::InvalidPeriod { axis: 0, period }
+                    if period.to_bits() == 0.0_f64.to_bits()
+            )
     );
 
     let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
@@ -468,7 +473,7 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
     };
     assert_matches!(
         DelaunayError::from(validation.clone()),
-        DelaunayError::Validation { source: err } if err == validation
+        DelaunayError::Validation { source: err } if err.as_ref() == &validation
     );
 
     let focused_result: DelaunayResult<()> = Ok(());

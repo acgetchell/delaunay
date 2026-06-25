@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -21,6 +22,7 @@ from notebook_check import (
     lint,
     load_notebook,
     main,
+    ruff_lint_diagnostics,
 )
 
 
@@ -51,6 +53,16 @@ def code_cell(source: Any, *, outputs: Any = None, execution_count: Any = None) 
         "outputs": [] if outputs is None else outputs,
         "source": source,
     }
+
+
+def completed_process(
+    stdout: str = "",
+    stderr: str = "",
+    *,
+    returncode: int = 0,
+) -> subprocess.CompletedProcess[str]:
+    """Return a typed subprocess result for notebook checker command mocks."""
+    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
 
 
 def test_discover_notebooks_excludes_checkpoints(tmp_path: Path) -> None:
@@ -200,6 +212,79 @@ def test_external_tool_diagnostics_report_missing_tools(monkeypatch: pytest.Monk
     assert "ty is required for notebook linting; run through `uv run` or install ty" in messages
 
 
+def test_ruff_diagnostics_use_configured_project_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ruff checks should resolve configuration from the requested repo root."""
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    notebook_path = tmp_path / "clean.ipynb"
+    notebook = load_notebook_fixture(tmp_path, "clean.ipynb", [code_cell("value = 1\n")])
+    calls: list[Path | None] = []
+
+    def fake_run_safe_command(
+        command: str,
+        args: list[str],
+        cwd: Path | None = None,
+        **kwargs: Any,
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(cwd)
+        assert command == "ruff"
+        assert kwargs["input"]
+        return completed_process()
+
+    monkeypatch.setattr("notebook_check.shutil.which", lambda command: f"/bin/{command}")
+    monkeypatch.setattr("notebook_check.run_safe_command", fake_run_safe_command)
+
+    diagnostics = external_tool_diagnostics(
+        notebook_path,
+        notebook,
+        LintOptions(run_ty=False, project_root=project_root),
+    )
+
+    assert diagnostics == []
+    assert calls == [project_root, project_root]
+
+
+def test_ruff_inline_locations_map_to_notebook_cells(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ruff path:line:column diagnostics should map to the owning notebook cell."""
+    notebook_path = tmp_path / "inline.ipynb"
+    notebook = load_notebook_fixture(
+        tmp_path,
+        "inline.ipynb",
+        [
+            code_cell("first = 1\n"),
+            code_cell("import os\n"),
+        ],
+    )
+
+    def fake_run_safe_command(
+        command: str,
+        args: list[str],
+        cwd: Path | None = None,
+        **kwargs: Any,
+    ) -> subprocess.CompletedProcess[str]:
+        assert command == "ruff"
+        assert cwd == tmp_path
+        assert kwargs["input"]
+        return completed_process(
+            stdout="inline_notebook.py:5:1: F401 `os` imported but unused\nFound 1 error.\n",
+            returncode=1,
+        )
+
+    monkeypatch.setattr("notebook_check.run_safe_command", fake_run_safe_command)
+
+    diagnostics = ruff_lint_diagnostics(notebook_path, notebook, tmp_path)
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0].cell == 2
+    assert diagnostics[0].message.startswith("ruff check: inline_notebook.py:5:1:")
+
+
 def test_main_lint_reports_errors_to_stderr(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """CLI lint errors should be concise and actionable."""
     notebook = tmp_path / "dirty.ipynb"
@@ -227,6 +312,62 @@ def test_main_reports_missing_notebook_without_traceback(tmp_path: Path, capsys:
     assert "Traceback" not in captured.err
 
 
+def test_main_execute_reports_missing_nbclient_without_traceback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Missing optional execution dependencies should produce one-line errors."""
+    notebook = tmp_path / "valid.ipynb"
+    write_notebook(notebook, [code_cell("value = 1\n")])
+
+    def fake_import(name: str) -> SimpleNamespace:
+        raise ModuleNotFoundError(f"No module named {name!r}", name=name)
+
+    monkeypatch.setattr("notebook_check.import_module", fake_import)
+
+    result = main(["execute", "--repo-root", str(tmp_path), str(notebook)])
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert captured.out == ""
+    assert f"error: {notebook}: execute(): missing optional dependency 'nbclient'" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_main_execute_reports_invalid_nbclient_backend_without_traceback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Execution dependency shape errors should stay concise."""
+    notebook = tmp_path / "valid.ipynb"
+    write_notebook(notebook, [code_cell("value = 1\n")])
+    fake_nbformat = SimpleNamespace(read=lambda handle, as_version: {"handle": handle.name, "as_version": as_version})
+    fake_nbclient = SimpleNamespace(NotebookClient=object)
+    fake_nbclient_exceptions = SimpleNamespace()
+
+    def fake_import(name: str) -> SimpleNamespace:
+        if name == "nbformat":
+            return fake_nbformat
+        if name == "nbclient":
+            return fake_nbclient
+        if name == "nbclient.exceptions":
+            return fake_nbclient_exceptions
+        msg = f"unexpected import {name}"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr("notebook_check.import_module", fake_import)
+
+    result = main(["execute", "--repo-root", str(tmp_path), str(notebook)])
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert captured.out == ""
+    assert f"error: {notebook}: execute(): nbclient runtime exception types are unavailable" in captured.err
+    assert "Traceback" not in captured.err
+
+
 def test_main_rejects_non_positive_timeout(capsys: pytest.CaptureFixture[str]) -> None:
     """Execution timeouts must be positive."""
     with pytest.raises(SystemExit) as exc_info:
@@ -244,6 +385,19 @@ def test_main_returns_success_when_no_notebooks_are_found(tmp_path: Path, monkey
     assert main(["lint"]) == 0
 
     assert "No notebooks found." in capsys.readouterr().out
+
+
+def test_main_rejects_missing_repo_root(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Invalid repo roots should fail before notebook discovery."""
+    missing_repo_root = tmp_path / "missing-repo"
+
+    result = main(["lint", "--repo-root", str(missing_repo_root)])
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert captured.out == ""
+    assert "error: repository root does not exist or is not a directory:" in captured.err
+    assert "No notebooks found." not in captured.out
 
 
 def test_extract_code_maps_lines_to_source_cells(tmp_path: Path) -> None:
@@ -293,11 +447,18 @@ def test_execute_notebooks_uses_headless_kernel_context(
 
     fake_nbclient = SimpleNamespace(NotebookClient=FakeNotebookClient)
 
+    class FakeNotebookClientError(Exception):
+        """Fake nbclient base error."""
+
+    fake_nbclient_exceptions = SimpleNamespace(NotebookClientError=FakeNotebookClientError)
+
     def fake_import(name: str) -> SimpleNamespace:
         if name == "nbformat":
             return fake_nbformat
         if name == "nbclient":
             return fake_nbclient
+        if name == "nbclient.exceptions":
+            return fake_nbclient_exceptions
         msg = f"unexpected import {name}"
         raise AssertionError(msg)
 
@@ -313,3 +474,53 @@ def test_execute_notebooks_uses_headless_kernel_context(
     assert calls["executed"] is True
     assert os.environ["MPLBACKEND"] == "Agg"
     assert f"OK executed {notebook}" in capsys.readouterr().out
+
+
+def test_main_execute_reports_nbclient_failures_without_traceback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Notebook runtime failures should stay concise for CI logs."""
+    notebook = tmp_path / "notebooks" / "failing.ipynb"
+    notebook.parent.mkdir()
+    write_notebook(notebook, [code_cell("raise RuntimeError('boom')\n")])
+
+    class FakeCellExecutionError(Exception):
+        """Fake nbclient execution error."""
+
+    class FakeNotebookClient:
+        """Raise a fake execution failure from NotebookClient.execute."""
+
+        def __init__(self, notebook_value: dict[str, Any], **kwargs: Any) -> None:
+            self.notebook_value = notebook_value
+            self.kwargs = kwargs
+
+        def execute(self) -> None:
+            """Simulate a notebook cell failure."""
+            message = "cell failed\ntraceback line"
+            raise FakeCellExecutionError(message)
+
+    fake_nbformat = SimpleNamespace(read=lambda handle, as_version: {"handle": handle.name, "as_version": as_version})
+    fake_nbclient = SimpleNamespace(NotebookClient=FakeNotebookClient)
+    fake_nbclient_exceptions = SimpleNamespace(CellExecutionError=FakeCellExecutionError)
+
+    def fake_import(name: str) -> SimpleNamespace:
+        if name == "nbformat":
+            return fake_nbformat
+        if name == "nbclient":
+            return fake_nbclient
+        if name == "nbclient.exceptions":
+            return fake_nbclient_exceptions
+        msg = f"unexpected import {name}"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr("notebook_check.import_module", fake_import)
+
+    result = main(["execute", "--repo-root", str(tmp_path), str(notebook)])
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert captured.out == ""
+    assert (f"error: {notebook}: execute(): NotebookClient execution failed: FakeCellExecutionError: cell failed traceback line") in captured.err
+    assert "Traceback" not in captured.err

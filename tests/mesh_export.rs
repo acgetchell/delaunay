@@ -5,20 +5,20 @@
 use std::{
     assert_matches,
     collections::{HashMap, HashSet},
+    error::Error as StdError,
 };
 
 use delaunay::geometry::CoordinateConversionError;
-use delaunay::io::visualization::{
-    AdjacencyRecord, MESH_EXPORT_SCHEMA, MESH_EXPORT_SCHEMA_VERSION, MeshExport, MeshExportError,
-    SimplexRecord, ValidatedMeshExport, ValidatedVisualizationData, VertexRecord,
-    VisualizationData, VisualizationDataValidationError, VisualizationExportError,
-    VisualizationMetadata, VisualizationTopologyGuarantee, VisualizationTopologyKind,
-};
 use delaunay::prelude::construction::{
     DelaunayError, DelaunayResult, DelaunayTriangulationBuilder,
-    DelaunayTriangulationConstructionError, vertex,
+    DelaunayTriangulationConstructionError, Vertex, vertex,
 };
-use delaunay::prelude::geometry::InvalidCoordinateValue;
+use delaunay::prelude::export::{
+    AdjacencyRecord, InvalidCoordinateValue, MESH_EXPORT_SCHEMA, MESH_EXPORT_SCHEMA_VERSION,
+    MeshExport, MeshExportError, SimplexRecord, ValidatedMeshExport, ValidatedVisualizationData,
+    VertexRecord, VisualizationData, VisualizationDataValidationError, VisualizationExportError,
+    VisualizationMetadata, VisualizationTopologyGuarantee, VisualizationTopologyKind,
+};
 use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
@@ -62,6 +62,111 @@ fn sample_delaunay_result_export() -> DelaunayResult<MeshExport<2>> {
     let triangulation = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
     Ok(triangulation.to_mesh_export()?)
+}
+
+/// Builds the minimal affinely spanning fixture used by the dimension sweep.
+fn sample_vertices_for_dimension<const D: usize>() -> Result<Vec<Vertex<(), D>>, MeshExportTestError>
+{
+    let mut vertices = Vec::with_capacity(D + 2);
+    vertices.push(vertex!([0.0; D])?);
+    for axis in 0..D {
+        let mut coords = [0.0; D];
+        coords[axis] = 1.0;
+        vertices.push(vertex!(coords)?);
+    }
+    vertices.push(vertex!([0.125; D])?);
+    Ok(vertices)
+}
+
+/// Exports one dimension-sweep fixture through the public builder path.
+fn sample_export_for_dimension<const D: usize>() -> Result<MeshExport<D>, MeshExportTestError> {
+    let vertices = sample_vertices_for_dimension::<D>()?;
+    let triangulation = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    Ok(triangulation.to_mesh_export()?)
+}
+
+/// Builds a raw DTO where distinct facets reciprocate a self-neighbor link.
+fn reciprocal_self_neighbor_export() -> MeshExport<2> {
+    let vertex_ids = [
+        Uuid::from_u128(0x1000_0000_0000_0000_0000_0000_0000_0001),
+        Uuid::from_u128(0x1000_0000_0000_0000_0000_0000_0000_0002),
+        Uuid::from_u128(0x1000_0000_0000_0000_0000_0000_0000_0003),
+    ];
+    let simplex_id = Uuid::from_u128(0x2000_0000_0000_0000_0000_0000_0000_0001);
+
+    MeshExport {
+        metadata: VisualizationMetadata {
+            schema: MESH_EXPORT_SCHEMA.to_owned(),
+            schema_version: MESH_EXPORT_SCHEMA_VERSION,
+            producer: "delaunay-test".to_owned(),
+            dimension: 2,
+            vertex_count: vertex_ids.len(),
+            simplex_count: 1,
+            topology_kind: VisualizationTopologyKind::Euclidean,
+            topology_guarantee: VisualizationTopologyGuarantee::Pseudomanifold,
+            attributes: None,
+        },
+        vertices: vec![
+            VertexRecord {
+                id: vertex_ids[0],
+                coordinates: vec![0.0, 0.0],
+                attributes: None,
+            },
+            VertexRecord {
+                id: vertex_ids[1],
+                coordinates: vec![1.0, 0.0],
+                attributes: None,
+            },
+            VertexRecord {
+                id: vertex_ids[2],
+                coordinates: vec![0.0, 1.0],
+                attributes: None,
+            },
+        ],
+        simplices: vec![SimplexRecord {
+            id: simplex_id,
+            vertex_ids: vertex_ids.to_vec(),
+            attributes: None,
+        }],
+        adjacency: vec![
+            AdjacencyRecord {
+                simplex_id,
+                facet_index: 0,
+                neighbor_simplex_id: Some(simplex_id),
+                attributes: None,
+            },
+            AdjacencyRecord {
+                simplex_id,
+                facet_index: 1,
+                neighbor_simplex_id: Some(simplex_id),
+                attributes: None,
+            },
+            AdjacencyRecord {
+                simplex_id,
+                facet_index: 2,
+                neighbor_simplex_id: None,
+                attributes: None,
+            },
+        ],
+    }
+}
+
+/// Verifies const-generic export invariants and serde round-trip behavior.
+fn assert_mesh_export_round_trip_for_dimension<const D: usize>() -> Result<(), MeshExportTestError>
+{
+    let export = sample_export_for_dimension::<D>()?;
+    assert_eq!(export.metadata.dimension, D);
+    assert_eq!(export.metadata.vertex_count, export.vertices.len());
+    assert_eq!(export.metadata.simplex_count, export.simplices.len());
+    assert_eq!(export.adjacency.len(), export.simplices.len() * (D + 1));
+    assert_connectivity_ids_exist(&export);
+    export.validate()?;
+
+    let json = serde_json::to_string(&export)?;
+    let decoded: MeshExport<D> = serde_json::from_str(&json)?;
+    assert_connectivity_ids_exist(&decoded);
+    decoded.validate()?;
+    Ok(())
 }
 
 fn assert_connectivity_ids_exist<const D: usize>(export: &MeshExport<D>) {
@@ -161,6 +266,15 @@ fn mesh_export_json_contains_schema_ids_and_connectivity() -> Result<(), MeshExp
             .is_some_and(|adjacency| !adjacency.is_empty())
     );
 
+    Ok(())
+}
+
+#[test]
+fn mesh_export_round_trips_for_dimensions_2_through_5() -> Result<(), MeshExportTestError> {
+    assert_mesh_export_round_trip_for_dimension::<2>()?;
+    assert_mesh_export_round_trip_for_dimension::<3>()?;
+    assert_mesh_export_round_trip_for_dimension::<4>()?;
+    assert_mesh_export_round_trip_for_dimension::<5>()?;
     Ok(())
 }
 
@@ -551,6 +665,45 @@ fn mesh_export_validation_rejects_asymmetric_adjacency() -> Result<(), MeshExpor
 }
 
 #[test]
+fn mesh_export_validation_rejects_one_sided_self_neighbor() -> Result<(), MeshExportTestError> {
+    let mut export = sample_export()?;
+    let boundary = export
+        .adjacency
+        .iter_mut()
+        .find(|record| record.neighbor_simplex_id.is_none())
+        .expect("sample export should contain a boundary facet");
+    let simplex_id = boundary.simplex_id;
+    let facet_index = boundary.facet_index;
+    boundary.neighbor_simplex_id = Some(simplex_id);
+
+    assert_validation_error(
+        &export,
+        VisualizationDataValidationError::AsymmetricAdjacency {
+            simplex_id,
+            facet_index,
+            neighbor_simplex_id: simplex_id,
+        },
+    )
+}
+
+#[test]
+fn mesh_export_validation_accepts_reciprocal_self_neighbor() -> Result<(), MeshExportTestError> {
+    let export = reciprocal_self_neighbor_export();
+
+    let validated = export.into_validated()?;
+
+    assert_eq!(
+        validated
+            .adjacency()
+            .iter()
+            .filter(|record| record.neighbor_simplex_id == Some(record.simplex_id))
+            .count(),
+        2
+    );
+    Ok(())
+}
+
+#[test]
 fn delaunay_result_accepts_mesh_export_error_families() -> DelaunayResult<()> {
     let mut export = sample_delaunay_result_export()?;
     export.validate()?;
@@ -563,20 +716,21 @@ fn delaunay_result_accepts_mesh_export_error_families() -> DelaunayResult<()> {
     let validation_error = export.validate().expect_err("schema version should fail");
     assert_eq!(validation_error, expected_validation_error);
     let err = DelaunayError::from(validation_error);
-    assert_matches!(
-        err,
-        DelaunayError::VisualizationDataValidation { source }
-            if source == expected_validation_error
-    );
+    let source = StdError::source(&err)
+        .and_then(|source| source.downcast_ref::<Box<VisualizationDataValidationError>>())
+        .expect("DelaunayError should expose the typed boxed visualization validation source");
+    assert_eq!(source.as_ref(), &expected_validation_error);
+    assert_matches!(&err, DelaunayError::VisualizationDataValidation { .. });
 
     let export_error = VisualizationExportError::UnassignedNeighborBuffer {
         simplex_id: Uuid::nil(),
     };
     let err = DelaunayError::from(export_error.clone());
-    assert_matches!(
-        err,
-        DelaunayError::VisualizationExport { source } if source == export_error
-    );
+    let source = StdError::source(&err)
+        .and_then(|source| source.downcast_ref::<Box<VisualizationExportError>>())
+        .expect("DelaunayError should expose the typed boxed visualization export source");
+    assert_eq!(source.as_ref(), &export_error);
+    assert_matches!(&err, DelaunayError::VisualizationExport { .. });
 
     Ok(())
 }

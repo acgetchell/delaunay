@@ -15,16 +15,33 @@ import tempfile
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Literal, override
+from typing import TYPE_CHECKING, Any, Literal, override
 
 from subprocess_utils import run_safe_command
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 RUFF_EXTEND_IGNORE = "INP001"
 RUFF_LOCATION_RE = re.compile(r"\s*-->\s+.+?:(?P<line>\d+):(?P<column>\d+)")
+RUFF_INLINE_LOCATION_RE = re.compile(r"^.+?:(?P<line>\d+):(?P<column>\d+):")
 TY_LOCATION_RE = re.compile(r"^.+?:(?P<line>\d+):(?P<column>\d+): (?P<message>.+)$")
 
 type CellType = Literal["code", "markdown", "raw"]
 VALID_CELL_TYPES: set[CellType] = {"code", "markdown", "raw"}
+
+
+class NotebookExecutionError(RuntimeError):
+    """Raised when optional notebook execution dependencies or runtime fail."""
+
+
+@dataclass(frozen=True, slots=True)
+class NotebookExecutionBackend:
+    """Validated optional notebook execution imports."""
+
+    client_factory: Callable[..., Any]
+    read_notebook: Callable[..., Any]
+    runtime_error_types: tuple[type[BaseException], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +122,15 @@ def parse_positive_int(value: str) -> int:
         msg = f"expected a positive integer, got {value!r}"
         raise argparse.ArgumentTypeError(msg)
     return parsed
+
+
+def resolve_repo_root(path: Path) -> Path:
+    """Resolve and validate the repository root path."""
+    repo_root = path.resolve()
+    if not repo_root.is_dir():
+        msg = f"repository root does not exist or is not a directory: {repo_root}"
+        raise FileNotFoundError(msg)
+    return repo_root
 
 
 def parse_cell_source(source: Any, *, path: Path, index: int) -> str:
@@ -348,7 +374,19 @@ def extract_code(notebook: NotebookDocument) -> CodeSnapshot:
     return CodeSnapshot(source="".join(chunks), line_to_cell=line_to_cell)
 
 
-def ruff_lint_diagnostics(path: Path, notebook: NotebookDocument) -> list[Diagnostic]:
+def diagnostic_cell_from_ruff_line(line: str, snapshot: CodeSnapshot) -> int | None:
+    """Return the notebook cell for either Ruff diagnostic location format."""
+    match = RUFF_LOCATION_RE.match(line) or RUFF_INLINE_LOCATION_RE.match(line)
+    if match is None:
+        return None
+    return snapshot.line_to_cell.get(int(match.group("line")), 0)
+
+
+def ruff_lint_diagnostics(
+    path: Path,
+    notebook: NotebookDocument,
+    project_root: Path,
+) -> list[Diagnostic]:
     """Run Ruff lint checks on extracted notebook code when Ruff is available."""
     snapshot = extract_code(notebook)
     command = [
@@ -364,6 +402,7 @@ def ruff_lint_diagnostics(path: Path, notebook: NotebookDocument) -> list[Diagno
         result = run_safe_command(
             command[0],
             command[1:],
+            cwd=project_root,
             input=snapshot.source,
             timeout=30,
             check=False,
@@ -384,15 +423,19 @@ def ruff_lint_diagnostics(path: Path, notebook: NotebookDocument) -> list[Diagno
             continue
         cell = 0
         for line in lines:
-            match = RUFF_LOCATION_RE.match(line)
-            if match is not None:
-                cell = snapshot.line_to_cell.get(int(match.group("line")), 0)
+            parsed_cell = diagnostic_cell_from_ruff_line(line, snapshot)
+            if parsed_cell is not None:
+                cell = parsed_cell
                 break
         diagnostics.append(Diagnostic("error", cell, f"ruff check: {lines[0]}"))
     return diagnostics
 
 
-def ruff_format_diagnostics(path: Path, notebook: NotebookDocument) -> list[Diagnostic]:
+def ruff_format_diagnostics(
+    path: Path,
+    notebook: NotebookDocument,
+    project_root: Path,
+) -> list[Diagnostic]:
     """Run Ruff format check on extracted notebook code when Ruff is available."""
     snapshot = extract_code(notebook)
     command = ["ruff", "format", "--check", "--stdin-filename", f"{path.stem}_notebook.py", "-"]
@@ -400,6 +443,7 @@ def ruff_format_diagnostics(path: Path, notebook: NotebookDocument) -> list[Diag
         result = run_safe_command(
             command[0],
             command[1:],
+            cwd=project_root,
             input=snapshot.source,
             timeout=30,
             check=False,
@@ -481,19 +525,20 @@ def code_cell_diagnostics(path: Path, notebook: NotebookDocument, options: LintO
 def external_tool_diagnostics(path: Path, notebook: NotebookDocument, options: LintOptions) -> list[Diagnostic]:
     """Return diagnostics from Ruff and ty checks over extracted notebook code."""
     diagnostics: list[Diagnostic] = []
+    project_root = options.project_root or Path.cwd()
     if options.run_ruff or options.run_format:
         if shutil.which("ruff") is None:
             diagnostics.append(Diagnostic("error", 0, "ruff is required for notebook linting; run through `uv run` or install Ruff"))
         else:
             if options.run_ruff:
-                diagnostics.extend(ruff_lint_diagnostics(path, notebook))
+                diagnostics.extend(ruff_lint_diagnostics(path, notebook, project_root))
             if options.run_format:
-                diagnostics.extend(ruff_format_diagnostics(path, notebook))
+                diagnostics.extend(ruff_format_diagnostics(path, notebook, project_root))
     if options.run_ty:
         if shutil.which("ty") is None:
             diagnostics.append(Diagnostic("error", 0, "ty is required for notebook linting; run through `uv run` or install ty"))
         else:
-            diagnostics.extend(ty_diagnostics(path, notebook, options.project_root or Path.cwd()))
+            diagnostics.extend(ty_diagnostics(path, notebook, project_root))
     return diagnostics
 
 
@@ -517,21 +562,85 @@ def lint(path: Path, options: LintOptions) -> int:
     return 0
 
 
+def compact_exception(error: BaseException) -> str:
+    """Render an exception as a single-line diagnostic fragment."""
+    detail = " ".join(str(error).split())
+    if not detail:
+        return type(error).__name__
+    return f"{type(error).__name__}: {detail}"
+
+
+def nbclient_error_types(exceptions_module: Any) -> tuple[type[BaseException], ...]:
+    """Return nbclient runtime error classes available in the installed version."""
+    names = (
+        "CellExecutionError",
+        "CellTimeoutError",
+        "DeadKernelError",
+        "NotebookClientError",
+    )
+    error_types: list[type[BaseException]] = []
+    for name in names:
+        error_type = getattr(exceptions_module, name, None)
+        if isinstance(error_type, type) and issubclass(error_type, BaseException):
+            error_types.append(error_type)
+    return tuple(error_types)
+
+
+def load_notebook_execution_backend(path: Path) -> NotebookExecutionBackend:
+    """Load and validate optional notebook execution dependencies."""
+    try:
+        nbclient = import_module("nbclient")
+        nbclient_exceptions = import_module("nbclient.exceptions")
+        nbformat = import_module("nbformat")
+    except ModuleNotFoundError as error:
+        dependency = error.name or "notebook execution dependency"
+        msg = f"{path}: execute(): missing optional dependency {dependency!r}; run through `uv run`"
+        raise NotebookExecutionError(msg) from error
+
+    client_factory = getattr(nbclient, "NotebookClient", None)
+    if not callable(client_factory):
+        msg = f"{path}: execute(): nbclient.NotebookClient is unavailable"
+        raise NotebookExecutionError(msg)
+
+    read_notebook = getattr(nbformat, "read", None)
+    if not callable(read_notebook):
+        msg = f"{path}: execute(): nbformat.read is unavailable"
+        raise NotebookExecutionError(msg)
+
+    runtime_error_types = nbclient_error_types(nbclient_exceptions)
+    if not runtime_error_types:
+        msg = f"{path}: execute(): nbclient runtime exception types are unavailable"
+        raise NotebookExecutionError(msg)
+
+    return NotebookExecutionBackend(
+        client_factory=client_factory,
+        read_notebook=read_notebook,
+        runtime_error_types=runtime_error_types,
+    )
+
+
 def execute(path: Path, repo_root: Path, timeout: int) -> None:
     """Execute a notebook in memory without modifying it on disk."""
-    nbclient = import_module("nbclient")
-    nbformat = import_module("nbformat")
+    backend = load_notebook_execution_backend(path)
 
     os.environ.setdefault("MPLBACKEND", "Agg")
     with path.open(encoding="utf-8") as handle:
-        notebook = nbformat.read(handle, as_version=4)
-    client = nbclient.NotebookClient(
-        notebook,
-        timeout=timeout,
-        kernel_name="python3",
-        resources={"metadata": {"path": str(repo_root)}},
-    )
-    client.execute()
+        notebook = backend.read_notebook(handle, as_version=4)
+    try:
+        client = backend.client_factory(
+            notebook,
+            timeout=timeout,
+            kernel_name="python3",
+            resources={"metadata": {"path": str(repo_root)}},
+        )
+    except (AttributeError, TypeError, ValueError) as error:
+        msg = f"{path}: execute(): NotebookClient creation failed: {compact_exception(error)}"
+        raise NotebookExecutionError(msg) from error
+    try:
+        client.execute()
+    except backend.runtime_error_types as error:
+        msg = f"{path}: execute(): NotebookClient execution failed: {compact_exception(error)}"
+        raise NotebookExecutionError(msg) from error
     print(f"OK executed {path}")
 
 
@@ -575,7 +684,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def run(args: argparse.Namespace) -> int:
     """Run notebook checker actions for parsed arguments."""
-    repo_root = args.repo_root.resolve()
+    repo_root = resolve_repo_root(args.repo_root)
     paths = selected_notebooks(args.notebooks, repo_root)
     if not paths:
         print("No notebooks found.")
@@ -605,7 +714,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     try:
         return run(args)
-    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError) as error:
+    except (
+        FileNotFoundError,
+        json.JSONDecodeError,
+        NotebookExecutionError,
+        OSError,
+        TypeError,
+        ValueError,
+    ) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 

@@ -374,7 +374,7 @@ The test suite has two routine correctness buckets:
 Default test recipes are split by target class:
 
 - `just test-unit` runs Rust lib unit tests.
-- `just test-doc` runs Rust doctests.
+- `just test-doc` runs Rust doctests in release profile.
 - `just test-integration` runs Rust integration tests.
 - `just test-python` runs Python tests.
 
@@ -460,13 +460,13 @@ Public documentation examples must compile.
 Validate with:
 
 ```bash
-just doc-check
+just test-doc
 ```
 
 or:
 
 ```bash
-cargo test --doc
+cargo test --doc --release
 ```
 
 ---

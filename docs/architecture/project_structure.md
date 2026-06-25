@@ -48,6 +48,7 @@ delaunay/
 │   ├── diagnostics.md
 │   ├── invariants.md
 │   ├── limitations.md
+│   ├── mesh_export.md
 │   ├── numerical_robustness_guide.md
 │   ├── property_testing_summary.md
 │   ├── topology.md
@@ -61,6 +62,7 @@ delaunay/
 │   ├── benchmark_models.py
 │   ├── benchmark_utils.py
 │   ├── hardware_utils.py
+│   ├── notebook_check.py
 │   ├── postprocess_changelog.py
 │   ├── subprocess_utils.py
 │   └── tag_release.py
@@ -74,6 +76,7 @@ delaunay/
 ├── tests/
 │   ├── semgrep/
 │   ├── proptest_*.rs
+│   ├── mesh_export.rs
 │   ├── pachner_roundtrip.rs
 │   ├── prelude_exports.rs
 │   └── regressions.rs

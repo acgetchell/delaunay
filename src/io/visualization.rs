@@ -275,7 +275,8 @@ impl<const D: usize, VertexAttributes, SimplexAttributes, AdjacencyAttributes, G
     ///
     /// Returns [`VisualizationDataValidationError`] when schema metadata,
     /// coordinate values or arity, non-nil ids, connectivity, facet coverage,
-    /// or reciprocal facet-compatible adjacency are inconsistent.
+    /// or reciprocal facet-compatible adjacency, including distinct reciprocal
+    /// records for self-neighbor facets, are inconsistent.
     pub fn into_validated(
         self,
     ) -> Result<
@@ -304,7 +305,8 @@ impl<const D: usize, VertexAttributes, SimplexAttributes, AdjacencyAttributes, G
     ///
     /// Returns [`VisualizationDataValidationError`] when schema metadata,
     /// coordinate values or arity, non-nil ids, connectivity, facet coverage,
-    /// or reciprocal facet-compatible adjacency are inconsistent.
+    /// or reciprocal facet-compatible adjacency, including distinct reciprocal
+    /// records for self-neighbor facets, are inconsistent.
     ///
     /// # Examples
     ///
@@ -412,11 +414,12 @@ impl<const D: usize, VertexAttributes, SimplexAttributes, AdjacencyAttributes, G
 /// Raw visualization data keeps public fields for serde, external JSON, and
 /// fixtures. This wrapper is the parsed form to pass inward once schema
 /// metadata, finite coordinate values, dimensions, non-nil ids, connectivity,
-/// and facet-compatible adjacency have been checked. Parsing canonicalizes
-/// record order by stable ids so serialized validated values remain
-/// deterministic. This remains an owned, detached snapshot; its accessors
-/// borrow records from the validated snapshot, not from the source
-/// triangulation.
+/// facet coverage, and reciprocal facet-compatible adjacency have been checked.
+/// Self-neighbor facets require distinct reciprocal records so a one-sided
+/// self-gluing cannot validate as closed topology. Parsing canonicalizes record
+/// order by stable ids so serialized validated values remain deterministic.
+/// This remains an owned, detached snapshot; its accessors borrow records from
+/// the validated snapshot, not from the source triangulation.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct ValidatedVisualizationData<
@@ -451,7 +454,8 @@ impl<const D: usize, VertexAttributes, SimplexAttributes, AdjacencyAttributes, G
     ///
     /// Returns [`VisualizationDataValidationError`] when schema metadata,
     /// coordinate values or arity, non-nil ids, connectivity, facet coverage,
-    /// or reciprocal facet-compatible adjacency are inconsistent.
+    /// or reciprocal facet-compatible adjacency, including distinct reciprocal
+    /// records for self-neighbor facets, are inconsistent.
     pub fn try_from_raw(
         mut raw: VisualizationData<
             D,
@@ -603,7 +607,9 @@ pub struct AdjacencyRecord<Attributes = ()> {
     pub facet_index: usize,
     /// Stable id of the neighboring simplex across this facet.
     ///
-    /// `None` denotes a boundary facet.
+    /// `None` denotes a boundary facet. When this points back to `simplex_id`,
+    /// validation still requires a distinct reciprocal adjacency record for the
+    /// matching self-neighbor facet.
     pub neighbor_simplex_id: Option<Uuid>,
     /// Optional downstream per-adjacency metadata.
     #[serde(default = "no_attributes", skip_serializing_if = "Option::is_none")]
@@ -1112,7 +1118,7 @@ fn validate_metadata<const D: usize, Attributes>(
 }
 
 /// Validates that adjacency records reference known simplices, share their
-/// claimed source facet, and cover every facet once.
+/// claimed source facet, cover every facet once, and reciprocate neighbors.
 fn validate_adjacency<const D: usize, SimplexAttributes, AdjacencyAttributes>(
     adjacency: &[AdjacencyRecord<AdjacencyAttributes>],
     simplices: &[SimplexRecord<SimplexAttributes>],
@@ -1123,7 +1129,7 @@ fn validate_adjacency<const D: usize, SimplexAttributes, AdjacencyAttributes>(
         .collect();
     let max_exclusive = D + 1;
     let mut adjacency_slots = HashSet::with_capacity(adjacency.len());
-    let mut neighbor_edges = HashSet::with_capacity(adjacency.len());
+    let mut neighbor_edge_counts = HashMap::with_capacity(adjacency.len());
 
     for record in adjacency {
         let Some(source_simplex) = simplex_by_id.get(&record.simplex_id) else {
@@ -1160,7 +1166,9 @@ fn validate_adjacency<const D: usize, SimplexAttributes, AdjacencyAttributes>(
                     },
                 );
             }
-            neighbor_edges.insert((record.simplex_id, neighbor_simplex_id));
+            *neighbor_edge_counts
+                .entry((record.simplex_id, neighbor_simplex_id))
+                .or_insert(0) += 1;
         }
         if !adjacency_slots.insert((record.simplex_id, record.facet_index)) {
             return Err(VisualizationDataValidationError::DuplicateAdjacency {
@@ -1183,7 +1191,11 @@ fn validate_adjacency<const D: usize, SimplexAttributes, AdjacencyAttributes>(
 
     for record in adjacency {
         if let Some(neighbor_simplex_id) = record.neighbor_simplex_id
-            && !neighbor_edges.contains(&(neighbor_simplex_id, record.simplex_id))
+            && !has_reciprocal_adjacency(
+                &neighbor_edge_counts,
+                record.simplex_id,
+                neighbor_simplex_id,
+            )
         {
             return Err(VisualizationDataValidationError::AsymmetricAdjacency {
                 simplex_id: record.simplex_id,
@@ -1194,6 +1206,29 @@ fn validate_adjacency<const D: usize, SimplexAttributes, AdjacencyAttributes>(
     }
 
     Ok(())
+}
+
+/// Enforces the exported adjacency reciprocity contract.
+///
+/// Ordinary neighbors reciprocate when the neighbor simplex has any record
+/// pointing back to the source simplex. For self-neighbors, the edge count must
+/// exceed the current record because the record itself cannot satisfy
+/// reciprocity.
+fn has_reciprocal_adjacency(
+    neighbor_edge_counts: &HashMap<(Uuid, Uuid), usize>,
+    simplex_id: Uuid,
+    neighbor_simplex_id: Uuid,
+) -> bool {
+    let reciprocal_count = neighbor_edge_counts
+        .get(&(neighbor_simplex_id, simplex_id))
+        .copied()
+        .unwrap_or(0);
+
+    if neighbor_simplex_id == simplex_id {
+        reciprocal_count > 1
+    } else {
+        reciprocal_count > 0
+    }
 }
 
 /// Finds the first source-facet vertex absent from the candidate neighbor simplex.

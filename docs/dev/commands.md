@@ -67,12 +67,12 @@ changed surface.
 
 | Touched surface | Iteration validation | Final validation |
 |-----|-----|-----|
-| Markdown documentation (`*.md`) | `just markdown-check` | `just markdown-check` |
+| Markdown documentation (`*.md`) | `just markdown-check` | `just markdown-ci` |
 | Python under `scripts/` | Targeted pytest or `just test-python`; add `just python-check` for logic/style | `just python-check` and `just test-python` |
 | Jupyter notebooks (`notebooks/**/*.ipynb`) | `just notebook-lint` | `just notebook-check` |
 | Configuration only (JSON, TOML, YAML, CFF, workflows) | Matching config validator | `just lint-config` |
 | Rust unit tests only (`#[cfg(test)]` in `src/**`) | Targeted `cargo test --lib <filter>` or `just test-unit` | `just test-unit` |
-| Rust doctests only (`///` examples or crate docs) | Targeted `cargo test --doc <filter>` or `just test-doc` | `just test-doc` |
+| Rust doctests only (`///` examples or crate docs) | Targeted `cargo test --doc --release <filter>` or `just test-doc` | `just test-doc` |
 | Rust integration tests only (`tests/**`) | Targeted `cargo nextest run --test <name>` or `just test-integration-fast` | `just test-integration` |
 | Rust benchmark files only (`benches/**`) | Targeted benchmark command or `just bench-smoke` | Matching benchmark validator |
 | Rust examples only (`examples/**`) | Targeted `cargo run --example <name>` or `just examples` | `just examples` |
@@ -92,7 +92,7 @@ together in one release-profile nextest invocation.
 
 During fast code-writing cycles, start with the smallest changed test or
 doctest rather than the whole focused bucket. For single-item rustdoc edits, run
-`cargo test --doc <item-or-module-filter>`; for unit-test edits, run
+`cargo test --doc --release <item-or-module-filter>`; for unit-test edits, run
 `cargo test --lib <test-or-module-filter>`; for integration-test crate edits,
 run the changed crate with `cargo nextest run --test <crate>`. Cargo's built-in
 test-name filter accepts one filter per invocation, so run separate filtered
@@ -239,8 +239,8 @@ Actions. It is a flat union of leaf validators rather than a nested call to
 formatting, core library Clippy, rustdoc, and Semgrep; `bench-compile` compiles
 benchmark harnesses once; `test-rust-ci` compiles and runs Rust lib unit tests
 and release integration tests in one release-profile nextest invocation;
-`test-doc` compiles and runs Rust doctests; `notebook-check` lints notebooks
-and executes fast notebooks headlessly once.
+`test-doc` compiles and runs Rust doctests once in release profile;
+`notebook-check` lints notebooks and executes fast notebooks headlessly once.
 
 `just test` is tests-only. `test-integration-compile` and `bench-test-compile`
 are explicit no-run smoke recipes for cases where a compile-only check is the
@@ -475,12 +475,13 @@ stable ahead of notebook work.
 
 ## Markdown Checks
 
-Markdown files are checked and fixed with rumdl. Keep the non-mutating check
-before the mutating fixer in user-facing command examples.
+Markdown files are checked with rumdl and spell-checking for handoff. Keep the
+non-mutating check before the mutating fixer in user-facing command examples.
 
 Commands:
 
 ```bash
+just markdown-ci
 just markdown-check
 just markdown-fix
 ```
@@ -581,7 +582,7 @@ just action-lint
 | Fast compile check | `just check-fast` |
 | Check formatting | `just fmt-check` |
 | Apply formatters/auto-fixes | `just fix` |
-| Validate Markdown-only changes | `just markdown-check` |
+| Validate Markdown-only changes | `just markdown-ci` |
 | Validate configuration-only changes | `just lint-config` |
 | Validate Python scripts/tests | `just python-check` and `just test-python` |
 | Validate notebook changes | `just notebook-check` |

@@ -359,7 +359,7 @@ help-workflows:
     @echo "  just test-rust         # Rust unit, doctest, and integration tests"
     @echo "  just test-rust-ci      # CI Rust unit + integration tests in one release nextest run"
     @echo "  just test-unit         # Rust lib unit tests only"
-    @echo "  just test-doc          # Rust doctests only"
+    @echo "  just test-doc          # Rust doctests only, in release profile"
     @echo "  just test-integration  # All integration tests (includes proptests)"
     @echo "  just test-integration-fast # Integration tests (skips proptests)"
     @echo "  just test-integration-compile # Compile integration tests without running"
@@ -486,7 +486,7 @@ notebook notebook="notebooks/00_quickstart.ipynb": _ensure-uv
     set -euo pipefail
     notebook_cache="$(pwd)/target/notebooks"
     mkdir -p "$notebook_cache/.ipython" "$notebook_cache/.matplotlib"
-    MPLBACKEND=Agg IPYTHONDIR="$notebook_cache/.ipython" MPLCONFIGDIR="$notebook_cache/.matplotlib" uv run --group notebooks jupyter lab --ServerApp.open_browser=True --LabApp.open_browser=True "{{notebook}}"
+    MPLBACKEND=Agg IPYTHONDIR="$notebook_cache/.ipython" MPLCONFIGDIR="$notebook_cache/.matplotlib" uv run --group notebooks jupyter lab --ServerApp.open_browser=True --LabApp.open_browser=True "{{ notebook }}"
 
 notebook-check: notebook-lint notebook-execute-fast
     @echo "📓 Notebook checks complete!"
@@ -495,7 +495,7 @@ notebook-check-slow: notebook-check notebook-execute-slow
     @echo "📓 Slow notebook checks complete!"
 
 notebook-clear-outputs notebook="notebooks/00_quickstart.ipynb": _ensure-uv
-    uv run --group notebooks jupyter nbconvert --clear-output --inplace "{{notebook}}"
+    uv run --group notebooks jupyter nbconvert --clear-output --inplace "{{ notebook }}"
 
 notebook-clear-outputs-all: _ensure-uv
     #!/usr/bin/env bash
@@ -516,9 +516,9 @@ notebook-clear-outputs-all: _ensure-uv
 notebook-execute notebook="notebooks/00_quickstart.ipynb" output_dir="target/notebooks": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
-    output_path="$(pwd)/{{output_dir}}"
+    output_path="$(pwd)/{{ output_dir }}"
     mkdir -p "$output_path/.ipython" "$output_path/.matplotlib"
-    MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout=600 --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "{{output_dir}}" "{{notebook}}"
+    MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout=600 --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "{{ output_dir }}" "{{ notebook }}"
 
 notebook-execute-fast output_dir="target/notebooks": _ensure-uv
     #!/usr/bin/env bash
@@ -527,12 +527,12 @@ notebook-execute-fast output_dir="target/notebooks": _ensure-uv
         echo "No fast notebooks found to execute."
         exit 0
     fi
-    output_path="$(pwd)/{{output_dir}}"
+    output_path="$(pwd)/{{ output_dir }}"
     mkdir -p "$output_path/.ipython" "$output_path/.matplotlib"
     found=0
     while IFS= read -r notebook; do
         found=1
-        MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout=600 --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "{{output_dir}}" "$notebook"
+        MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout=600 --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "{{ output_dir }}" "$notebook"
     done < <(find notebooks -type f -name '*.ipynb' ! -path '*/.ipynb_checkpoints/*' ! -path 'notebooks/slow/*' ! -name '*_slow.ipynb' | sort)
     if [ "$found" -eq 0 ]; then
         echo "No fast notebooks found to execute."
@@ -545,12 +545,12 @@ notebook-execute-slow output_dir="target/notebooks": _ensure-uv
         echo "No slow notebooks found to execute."
         exit 0
     fi
-    output_path="$(pwd)/{{output_dir}}"
+    output_path="$(pwd)/{{ output_dir }}"
     mkdir -p "$output_path/.ipython" "$output_path/.matplotlib"
     found=0
     while IFS= read -r notebook; do
         found=1
-        MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout=1800 --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "{{output_dir}}" "$notebook"
+        MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout=1800 --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "{{ output_dir }}" "$notebook"
     done < <(find notebooks -type f \( -path 'notebooks/slow/*' -o -name '*_slow.ipynb' \) ! -path '*/.ipynb_checkpoints/*' | sort)
     if [ "$found" -eq 0 ]; then
         echo "No slow notebooks found to execute."
@@ -1209,9 +1209,9 @@ test-allocation: _ensure-nextest
 test-diagnostics: _ensure-nextest
     cargo nextest run --profile ci --test circumsphere_debug_tools --features diagnostics -- --nocapture
 
-# test-doc: runs Rust doctests.
+# test-doc: runs Rust doctests in release profile.
 test-doc:
-    cargo test --doc --verbose
+    cargo test --doc --release --verbose
 
 # test-integration: runs all default integration tests under the 10s per-test budget.
 test-integration: _ensure-nextest
@@ -1233,8 +1233,7 @@ test-integration-fast: _ensure-nextest
 test-python: _ensure-uv
     uv run pytest
 
-test-release: test-rust-ci
-    cargo test --doc --release
+test-release: test-rust-ci test-doc
 
 # test-rust: runs each default Rust correctness target class once.
 test-rust: test-rust-ci test-doc
