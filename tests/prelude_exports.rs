@@ -435,6 +435,15 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
         DelaunayError::Flip { source: err } if err.as_ref() == &flip
     );
 
+    let tds_mutation = TdsMutationError::from(TdsError::SimplexNotFound {
+        simplex_key: SimplexKey::from(KeyData::from_ffi(3)),
+        context: "prelude smoke test".to_owned(),
+    });
+    assert_matches!(
+        DelaunayError::from(tds_mutation.clone()),
+        DelaunayError::TdsMutation { source: err } if err.as_ref() == &tds_mutation
+    );
+
     let configuration =
         FocusedValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
             topology_guarantee: TopologyGuarantee::PLManifold,

@@ -11,7 +11,7 @@ use std::{
 use delaunay::geometry::CoordinateConversionError;
 use delaunay::prelude::construction::{
     DelaunayError, DelaunayResult, DelaunayTriangulationBuilder,
-    DelaunayTriangulationConstructionError, Vertex, vertex,
+    DelaunayTriangulationConstructionError, TopologyGuarantee, Vertex, vertex,
 };
 use delaunay::prelude::export::{
     AdjacencyRecord, InvalidCoordinateValue, MESH_EXPORT_SCHEMA, MESH_EXPORT_SCHEMA_VERSION,
@@ -19,6 +19,7 @@ use delaunay::prelude::export::{
     VertexRecord, VisualizationData, VisualizationDataValidationError, VisualizationExportError,
     VisualizationMetadata, VisualizationTopologyGuarantee, VisualizationTopologyKind,
 };
+use delaunay::prelude::topology::spaces::TopologyKind;
 use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
@@ -275,6 +276,72 @@ fn mesh_export_round_trips_for_dimensions_2_through_5() -> Result<(), MeshExport
     assert_mesh_export_round_trip_for_dimension::<3>()?;
     assert_mesh_export_round_trip_for_dimension::<4>()?;
     assert_mesh_export_round_trip_for_dimension::<5>()?;
+    Ok(())
+}
+
+#[test]
+fn visualization_topology_schema_categories_are_stable() -> Result<(), MeshExportTestError> {
+    for (source, expected, schema) in [
+        (
+            TopologyKind::Euclidean,
+            VisualizationTopologyKind::Euclidean,
+            "Euclidean",
+        ),
+        (
+            TopologyKind::Toroidal,
+            VisualizationTopologyKind::Toroidal,
+            "Toroidal",
+        ),
+        (
+            TopologyKind::Spherical,
+            VisualizationTopologyKind::Spherical,
+            "Spherical",
+        ),
+        (
+            TopologyKind::Hyperbolic,
+            VisualizationTopologyKind::Hyperbolic,
+            "Hyperbolic",
+        ),
+    ] {
+        let converted = VisualizationTopologyKind::from(source);
+
+        assert_eq!(converted, expected);
+        assert_eq!(converted.to_string(), schema);
+        assert_eq!(serde_json::to_value(&converted)?, serde_json::json!(schema));
+        assert_eq!(
+            serde_json::from_value::<VisualizationTopologyKind>(serde_json::json!(schema))?,
+            expected
+        );
+    }
+
+    for (source, expected, schema) in [
+        (
+            TopologyGuarantee::Pseudomanifold,
+            VisualizationTopologyGuarantee::Pseudomanifold,
+            "Pseudomanifold",
+        ),
+        (
+            TopologyGuarantee::PLManifold,
+            VisualizationTopologyGuarantee::PLManifold,
+            "PLManifold",
+        ),
+        (
+            TopologyGuarantee::PLManifoldStrict,
+            VisualizationTopologyGuarantee::PLManifoldStrict,
+            "PLManifoldStrict",
+        ),
+    ] {
+        let converted = VisualizationTopologyGuarantee::from(source);
+
+        assert_eq!(converted, expected);
+        assert_eq!(converted.to_string(), schema);
+        assert_eq!(serde_json::to_value(&converted)?, serde_json::json!(schema));
+        assert_eq!(
+            serde_json::from_value::<VisualizationTopologyGuarantee>(serde_json::json!(schema))?,
+            expected
+        );
+    }
+
     Ok(())
 }
 
@@ -850,6 +917,27 @@ fn visualization_data_into_validated_carries_validation_proof() -> Result<(), Me
         serde_json::to_value(&export)?
     );
     assert_eq!(validated.into_raw(), export);
+
+    Ok(())
+}
+
+#[test]
+fn visualization_data_try_from_carries_validation_proof() -> Result<(), MeshExportTestError> {
+    let export = sample_export()?;
+    let validated = ValidatedMeshExport::<2>::try_from(export.clone())?;
+
+    assert_eq!(validated.as_raw(), &export);
+
+    let mut invalid = export;
+    let actual = invalid.simplices.len();
+    invalid.metadata.simplex_count = actual + 1;
+    assert_eq!(
+        ValidatedMeshExport::<2>::try_from(invalid),
+        Err(VisualizationDataValidationError::SimplexCountMismatch {
+            expected: actual + 1,
+            actual,
+        })
+    );
 
     Ok(())
 }

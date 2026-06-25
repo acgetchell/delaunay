@@ -623,7 +623,7 @@ def execute(path: Path, repo_root: Path, timeout: int) -> None:
     """Execute a notebook in memory without modifying it on disk."""
     backend = load_notebook_execution_backend(path)
 
-    os.environ.setdefault("MPLBACKEND", "Agg")
+    os.environ["MPLBACKEND"] = "Agg"
     with path.open(encoding="utf-8") as handle:
         notebook = backend.read_notebook(handle, as_version=4)
     try:

@@ -462,7 +462,7 @@ def test_execute_notebooks_uses_headless_kernel_context(
         msg = f"unexpected import {name}"
         raise AssertionError(msg)
 
-    monkeypatch.delenv("MPLBACKEND", raising=False)
+    monkeypatch.setenv("MPLBACKEND", "TkAgg")
     monkeypatch.setattr("notebook_check.import_module", fake_import)
 
     execute_notebooks([notebook], repo_root, timeout=123)

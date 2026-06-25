@@ -1296,3 +1296,92 @@ fn push_adjacency_records<U, V, const D: usize>(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use slotmap::KeyData;
+
+    #[test]
+    fn push_adjacency_records_rejects_wrong_neighbor_arity() {
+        let tds: Tds<(), (), 2> = Tds::empty();
+        let simplex_id = Uuid::from_u128(0x3000_0000_0000_0000_0000_0000_0000_0001);
+        let mut adjacency = Vec::new();
+
+        let error = push_adjacency_records(
+            &tds,
+            simplex_id,
+            Some(&[NeighborSlot::Boundary]),
+            &mut adjacency,
+        )
+        .expect_err("neighbor buffers must have one slot per simplex facet");
+
+        assert_eq!(
+            error,
+            VisualizationExportError::InvalidNeighborCount {
+                simplex_id,
+                expected: 3,
+                actual: 1,
+            }
+        );
+        assert!(adjacency.is_empty());
+    }
+
+    #[test]
+    fn push_adjacency_records_rejects_unassigned_neighbor_slot() {
+        let tds: Tds<(), (), 2> = Tds::empty();
+        let simplex_id = Uuid::from_u128(0x3000_0000_0000_0000_0000_0000_0000_0002);
+        let mut adjacency = Vec::new();
+
+        let error = push_adjacency_records(
+            &tds,
+            simplex_id,
+            Some(&[
+                NeighborSlot::Unassigned,
+                NeighborSlot::Boundary,
+                NeighborSlot::Boundary,
+            ]),
+            &mut adjacency,
+        )
+        .expect_err("export must reject explicit unassigned neighbor slots");
+
+        assert_eq!(
+            error,
+            VisualizationExportError::UnassignedNeighborSlot {
+                simplex_id,
+                facet_index: 0,
+            }
+        );
+        assert!(adjacency.is_empty());
+    }
+
+    #[test]
+    fn push_adjacency_records_rejects_dangling_neighbor_key() {
+        let tds: Tds<(), (), 2> = Tds::empty();
+        let simplex_id = Uuid::from_u128(0x3000_0000_0000_0000_0000_0000_0000_0003);
+        let neighbor_key = SimplexKey::from(KeyData::from_ffi(1));
+        let mut adjacency = Vec::new();
+
+        let error = push_adjacency_records(
+            &tds,
+            simplex_id,
+            Some(&[
+                NeighborSlot::Neighbor(neighbor_key),
+                NeighborSlot::Boundary,
+                NeighborSlot::Boundary,
+            ]),
+            &mut adjacency,
+        )
+        .expect_err("export must reject neighbor keys absent from the TDS");
+
+        assert_eq!(
+            error,
+            VisualizationExportError::MissingNeighbor {
+                simplex_id,
+                facet_index: 0,
+                neighbor_key,
+            }
+        );
+        assert!(adjacency.is_empty());
+    }
+}
