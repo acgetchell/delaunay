@@ -243,7 +243,7 @@ loose `(snapshot, restore)` pairs. Use the TDS rollback primitives in
 methods that need to call back into `self` during the rollback window. Both
 compose through the same TDS snapshot primitive, restore on drop unless
 committed explicitly, and use rollback-preserving clone semantics for retries.
-Higher level
+Higher-level
 `DelaunayTriangulation` operations must use the Delaunay-level rollback guard
 when they also mutate insertion hints, spatial indexes, or repair bookkeeping;
 the guard must restore or intentionally invalidate that auxiliary state

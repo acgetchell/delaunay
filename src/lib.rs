@@ -586,7 +586,9 @@ mod core {
 
         pub use errors::*;
         pub use keys::{SimplexKey, VertexKey};
-        pub(crate) use rollback::{TdsRollbackSnapshot, TdsRollbackTransaction};
+        pub(crate) use rollback::{
+            TdsOwnerRollbackTransaction, TdsRollbackOwner, TdsRollbackTransaction,
+        };
         pub use storage::Tds;
     }
     /// Generic triangulation combining kernel + Tds.

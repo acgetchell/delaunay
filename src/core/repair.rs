@@ -1227,11 +1227,23 @@ where
     }
 
     /// Repair over-shared facets and return the local frontier for neighbor repair.
+    ///
+    /// An empty issue map returns an empty outcome without touching the TDS, which lets the public
+    /// transactional wrapper avoid snapshotting for no-op repairs.
     pub(crate) fn repair_local_facet_issues_with_frontier(
         &mut self,
         issues: &FacetIssuesMap,
         max_simplices_removed: usize,
     ) -> Result<LocalFacetRepairOutcome, InsertionError> {
+        if issues.is_empty() {
+            return Ok(LocalFacetRepairOutcome {
+                removed_count: 0,
+                removed_simplices: SimplexKeyBuffer::new(),
+                frontier_simplices: SimplexKeyBuffer::new(),
+                affected_vertices: IncidentRepairVertexBuffer::new(),
+            });
+        }
+
         let to_remove = self
             .simplices_for_local_facet_issue_repair(issues)
             .map_err(InsertionError::TopologyValidation)?;
@@ -1343,6 +1355,10 @@ where
         issues: &FacetIssuesMap,
         max_simplices_removed: usize,
     ) -> Result<usize, InsertionError> {
+        if issues.is_empty() {
+            return Ok(0);
+        }
+
         let mut transaction = TriangulationRollbackTransaction::begin(self);
         let repair_result = {
             let tri = transaction.triangulation_mut();
@@ -2059,6 +2075,38 @@ mod tests {
         assert!(!tri.tds.contains_vertex_key(isolated_vertex));
         assert_eq!(tri.tds.number_of_simplices(), simplex_count);
         tri.validate().unwrap();
+    }
+
+    #[test]
+    fn test_vertex_removal_outcome_rolls_back_failed_isolated_vertex_removal() {
+        let (mut tri, _, simplex_key) = build_single_tet();
+        let isolated_to_remove = tri
+            .tds
+            .insert_vertex_with_mapping(vertex![0.5, 0.5, 0.5].unwrap())
+            .unwrap();
+        let isolated_survivor = tri
+            .tds
+            .insert_vertex_with_mapping(vertex![0.25, 0.25, 0.25].unwrap())
+            .unwrap();
+        let vertex_count = tri.tds.number_of_vertices();
+        let simplex_count = tri.tds.number_of_simplices();
+
+        let result = tri.remove_vertex_with_repair_seeds(isolated_to_remove);
+
+        assert_matches!(
+            result,
+            Err(InvariantError::Triangulation(
+                TriangulationValidationError::IsolatedVertex {
+                    vertex_key,
+                    ..
+                },
+            )) if vertex_key == isolated_survivor
+        );
+        assert_eq!(tri.tds.number_of_vertices(), vertex_count);
+        assert_eq!(tri.tds.number_of_simplices(), simplex_count);
+        assert!(tri.tds.contains_vertex_key(isolated_to_remove));
+        assert!(tri.tds.contains_vertex_key(isolated_survivor));
+        assert!(tri.tds.contains_simplex(simplex_key));
     }
 
     #[test]

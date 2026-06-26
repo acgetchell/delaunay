@@ -32,7 +32,6 @@ use crate::core::validation::{TopologyGuarantee, TriangulationValidationError};
 use crate::core::vertex::Vertex;
 use crate::delaunay_rollback::{DelaunayRollbackTransaction, DelaunaySpatialIndexRollback};
 use crate::geometry::kernel::Kernel;
-use crate::repair::DelaunayRepairPolicy;
 use crate::topology::manifold::{ManifoldError, validate_ridge_links_for_simplices};
 use crate::triangulation::DelaunayTriangulation;
 #[cfg(test)]
@@ -81,8 +80,10 @@ where
         Ok(())
     }
 
-    /// Returns whether the post-insertion repair/check path needs an outer
-    /// Delaunay-level rollback window.
+    /// Returns whether the next insertion needs an outer Delaunay-level rollback window.
+    ///
+    /// This mirrors the post-insertion repair and validation cadence so ordinary insertions avoid
+    /// snapshotting when neither scheduled repair nor scheduled Delaunay checking can run.
     fn post_insertion_transaction_required(&self) -> bool {
         let next_insertion_count = self
             .insertion_state
@@ -90,12 +91,13 @@ where
             .saturating_add(1);
         let could_have_simplices_after_insertion = self.tri.tds.number_of_simplices() > 0
             || self.tri.tds.number_of_vertices().saturating_add(1) > D;
-        could_have_simplices_after_insertion
-            && (self.insertion_state.delaunay_repair_policy != DelaunayRepairPolicy::Never
-                || self
-                    .insertion_state
-                    .delaunay_check_policy
-                    .should_check(next_insertion_count))
+        let repair_scheduled = self
+            .should_run_delaunay_repair_for(self.tri.topology_guarantee(), next_insertion_count);
+        let check_scheduled = self
+            .insertion_state
+            .delaunay_check_policy
+            .should_check(next_insertion_count);
+        could_have_simplices_after_insertion && (repair_scheduled || check_scheduled)
     }
 
     /// Runs a Delaunay insertion operation with the rollback policy used by
@@ -620,10 +622,12 @@ mod tests {
     use crate::core::simplex::Simplex;
     use crate::core::tds::{Tds, TdsError};
     use crate::geometry::kernel::{AdaptiveKernel, RobustKernel};
+    use crate::repair::{DelaunayCheckPolicy, DelaunayRepairPolicy};
     use crate::topology::traits::topological_space::GlobalTopology;
     use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
+    use std::num::NonZeroUsize;
     use std::sync::Once;
 
     fn init_tracing() {
@@ -846,6 +850,34 @@ mod tests {
         );
         assert!(found_inserted_key);
         assert!(dt.validate().is_ok());
+    }
+
+    #[test]
+    fn post_insertion_transaction_required_respects_repair_and_check_cadence() {
+        init_tracing();
+        let vertices: Vec<Vertex<(), 2>> = vec![
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
+        ];
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::try_new(&vertices).unwrap();
+
+        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::EveryN(NonZeroUsize::new(3).unwrap()));
+        dt.set_delaunay_check_policy(DelaunayCheckPolicy::EndOnly);
+        dt.insertion_state.delaunay_repair_insertion_count = 0;
+        assert!(!dt.post_insertion_transaction_required());
+
+        dt.insertion_state.delaunay_repair_insertion_count = 2;
+        assert!(dt.post_insertion_transaction_required());
+
+        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
+        dt.set_delaunay_check_policy(DelaunayCheckPolicy::EveryN(NonZeroUsize::new(2).unwrap()));
+        dt.insertion_state.delaunay_repair_insertion_count = 0;
+        assert!(!dt.post_insertion_transaction_required());
+
+        dt.insertion_state.delaunay_repair_insertion_count = 1;
+        assert!(dt.post_insertion_transaction_required());
     }
 
     #[test]
