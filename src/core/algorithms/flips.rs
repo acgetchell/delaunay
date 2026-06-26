@@ -43,7 +43,8 @@ use crate::core::facet::{AllFacetsIter, FacetError, FacetHandle, facet_key_from_
 use crate::core::operations::TopologicalOperation;
 use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
 use crate::core::tds::{
-    EntityKind, NeighborValidationError, SimplexKey, Tds, TdsMutationError, VertexKey,
+    EntityKind, NeighborValidationError, SimplexKey, Tds, TdsMutationError, TdsRollbackTransaction,
+    VertexKey,
 };
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
@@ -6658,42 +6659,41 @@ where
 }
 
 fn run_full_reseed_retry<K, U, V, const D: usize>(
-    tds: &mut Tds<U, V, D>,
+    transaction: &mut TdsRollbackTransaction<'_, U, V, D>,
     kernel: &K,
     config: &RepairAttemptConfig,
-    snapshot: Tds<U, V, D>,
 ) -> Result<DelaunayRepairRun, DelaunayRepairError>
 where
     K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
-    *tds = snapshot.clone_for_rollback();
+    transaction.restore();
     let retry_seed_simplices = None;
     let attempt_result = if D == 2 {
-        repair_delaunay_with_flips_k2_attempt(tds, kernel, retry_seed_simplices, config)
-    } else {
-        repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, retry_seed_simplices, config)
-    };
-
-    match attempt_result {
-        Ok(outcome) => match verify_repair_postcondition(
-            tds,
+        repair_delaunay_with_flips_k2_attempt(
+            transaction.tds_mut(),
             kernel,
             retry_seed_simplices,
-            outcome.last_applied_flip.as_ref(),
-        ) {
-            Ok(()) => Ok(repair_run_from_attempt(outcome)),
-            Err(err) => {
-                *tds = snapshot;
-                Err(err)
-            }
-        },
-        Err(err) => {
-            *tds = snapshot;
-            Err(err)
-        }
-    }
+            config,
+        )
+    } else {
+        repair_delaunay_with_flips_k2_k3_attempt(
+            transaction.tds_mut(),
+            kernel,
+            retry_seed_simplices,
+            config,
+        )
+    };
+
+    let outcome = attempt_result?;
+    verify_repair_postcondition(
+        transaction.tds_mut(),
+        kernel,
+        retry_seed_simplices,
+        outcome.last_applied_flip.as_ref(),
+    )?;
+    Ok(repair_run_from_attempt(outcome))
 }
 
 /// Repair Delaunay violations and return the final validation frontier.
@@ -6744,34 +6744,43 @@ where
     };
 
     // Snapshot the pre-repair state so a failed attempt doesn't poison retries.
-    let tds_snapshot = tds.clone_for_rollback();
+    let mut transaction = TdsRollbackTransaction::begin(tds);
 
     let attempt1_result = if D == 2 {
-        repair_delaunay_with_flips_k2_attempt(tds, kernel, seed_simplices, &attempt1)
+        repair_delaunay_with_flips_k2_attempt(
+            transaction.tds_mut(),
+            kernel,
+            seed_simplices,
+            &attempt1,
+        )
     } else {
-        repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, seed_simplices, &attempt1)
+        repair_delaunay_with_flips_k2_k3_attempt(
+            transaction.tds_mut(),
+            kernel,
+            seed_simplices,
+            &attempt1,
+        )
     };
 
     match attempt1_result {
         Ok(outcome) => {
             if verify_repair_postcondition(
-                tds,
+                transaction.tds_mut(),
                 kernel,
                 seed_simplices,
                 outcome.last_applied_flip.as_ref(),
             )
             .is_ok()
             {
-                return Ok(repair_run_from_attempt(outcome));
+                let run = repair_run_from_attempt(outcome);
+                transaction.commit();
+                return Ok(run);
             }
             if repair_trace_enabled() {
                 tracing::debug!(
                     "[repair] attempt 1 postcondition failed; retrying with LIFO + full reseed"
                 );
             }
-
-            // Postcondition verification failed: rerun with LIFO + full reseed.
-            run_full_reseed_retry(tds, kernel, &attempt2, tds_snapshot)
         }
         Err(DelaunayRepairError::NonConvergent { .. }) => {
             if repair_trace_enabled() {
@@ -6779,11 +6788,21 @@ where
                     "[repair] attempt 1 non-convergent; retrying with LIFO + full reseed"
                 );
             }
-            // Retry with LIFO + full reseed.
-            run_full_reseed_retry(tds, kernel, &attempt2, tds_snapshot)
         }
         Err(err) => {
-            *tds = tds_snapshot;
+            transaction.rollback();
+            return Err(err);
+        }
+    }
+
+    // Retry with LIFO + full reseed.
+    match run_full_reseed_retry(&mut transaction, kernel, &attempt2) {
+        Ok(run) => {
+            transaction.commit();
+            Ok(run)
+        }
+        Err(err) => {
+            transaction.rollback();
             Err(err)
         }
     }
@@ -6863,15 +6882,20 @@ where
     };
     // Snapshot so a failed attempt does not leave the TDS in a partially-modified state.
     let snapshot_started = Instant::now();
-    let tds_snapshot = tds.clone_for_rollback();
+    let mut transaction = TdsRollbackTransaction::begin(tds);
     phase_timing.record_snapshot(snapshot_started.elapsed());
 
     let attempt_started = Instant::now();
     let attempt1_result = if D == 2 {
-        repair_delaunay_with_flips_k2_attempt(tds, kernel, Some(seed_simplices), &attempt1)
+        repair_delaunay_with_flips_k2_attempt(
+            transaction.tds_mut(),
+            kernel,
+            Some(seed_simplices),
+            &attempt1,
+        )
     } else {
         repair_delaunay_with_flips_k2_k3_attempt_timed(
-            tds,
+            transaction.tds_mut(),
             kernel,
             Some(seed_simplices),
             &attempt1,
@@ -6887,22 +6911,26 @@ where
             // the same local queues after every successful repair adds quadratic
             // predicate work without strengthening the final correctness gate.
             if !outcome.postcondition_required || D >= 4 {
+                let stats = outcome.stats;
+                transaction.commit();
                 publish_local_repair_phase_timing(&mut timing, phase_timing);
-                return Ok(outcome.stats);
+                return Ok(stats);
             }
             let postcondition_frontier =
                 local_postcondition_frontier(seed_simplices, &outcome.touched_simplices);
             let postcondition_started = Instant::now();
             let postcondition_result = verify_local_repair_postcondition(
-                tds,
+                transaction.tds_mut(),
                 kernel,
                 &postcondition_frontier,
                 outcome.last_applied_flip.as_ref(),
             );
             phase_timing.record_postcondition(postcondition_started.elapsed());
             if postcondition_result.is_ok() {
+                let stats = outcome.stats;
+                transaction.commit();
                 publish_local_repair_phase_timing(&mut timing, phase_timing);
-                return Ok(outcome.stats);
+                return Ok(stats);
             }
             if repair_trace_enabled() {
                 tracing::debug!("[repair] local attempt 1 postcondition failed; retrying LIFO");
@@ -6915,22 +6943,27 @@ where
         }
         Err(err) => {
             let restore_started = Instant::now();
-            *tds = tds_snapshot;
+            transaction.rollback();
             phase_timing.record_restore(restore_started.elapsed());
             publish_local_repair_phase_timing(&mut timing, phase_timing);
             return Err(err);
         }
     }
     let restore_started = Instant::now();
-    *tds = tds_snapshot.clone_for_rollback();
+    transaction.restore();
     phase_timing.record_restore(restore_started.elapsed());
 
     let attempt_started = Instant::now();
     let attempt2_result = if D == 2 {
-        repair_delaunay_with_flips_k2_attempt(tds, kernel, Some(seed_simplices), &attempt2)
+        repair_delaunay_with_flips_k2_attempt(
+            transaction.tds_mut(),
+            kernel,
+            Some(seed_simplices),
+            &attempt2,
+        )
     } else {
         repair_delaunay_with_flips_k2_k3_attempt_timed(
-            tds,
+            transaction.tds_mut(),
             kernel,
             Some(seed_simplices),
             &attempt2,
@@ -6944,14 +6977,16 @@ where
             // See attempt 1: D>=4 local postconditions are deferred to the
             // construction finalization/validation path.
             if !outcome.postcondition_required || D >= 4 {
+                let stats = outcome.stats;
+                transaction.commit();
                 publish_local_repair_phase_timing(&mut timing, phase_timing);
-                return Ok(outcome.stats);
+                return Ok(stats);
             }
             let postcondition_frontier =
                 local_postcondition_frontier(seed_simplices, &outcome.touched_simplices);
             let postcondition_started = Instant::now();
             let postcondition_result = verify_local_repair_postcondition(
-                tds,
+                transaction.tds_mut(),
                 kernel,
                 &postcondition_frontier,
                 outcome.last_applied_flip.as_ref(),
@@ -6959,14 +6994,16 @@ where
             phase_timing.record_postcondition(postcondition_started.elapsed());
             match postcondition_result {
                 Ok(()) => {
+                    let stats = outcome.stats;
+                    transaction.commit();
                     publish_local_repair_phase_timing(&mut timing, phase_timing);
-                    Ok(outcome.stats)
+                    Ok(stats)
                 }
                 Err(verifier_err) => {
                     // Postcondition failed: restore the TDS so callers that
                     // soft-fail receive a structurally valid triangulation.
                     let restore_started = Instant::now();
-                    *tds = tds_snapshot;
+                    transaction.rollback();
                     phase_timing.record_restore(restore_started.elapsed());
                     publish_local_repair_phase_timing(&mut timing, phase_timing);
                     Err(verifier_err)
@@ -6978,7 +7015,7 @@ where
             // soft-fail (e.g. D≥4 bulk construction) receive a structurally valid
             // triangulation rather than a partially-modified one.
             let restore_started = Instant::now();
-            *tds = tds_snapshot;
+            transaction.rollback();
             phase_timing.record_restore(restore_started.elapsed());
             publish_local_repair_phase_timing(&mut timing, phase_timing);
             Err(err)

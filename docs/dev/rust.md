@@ -236,6 +236,27 @@ live. Inside the mutable scope, collapse short-lived views into validated
 `*Handle`/`*Key` commit identifiers before mutating; a live view must not span a
 topology mutation.
 
+For failure-atomic topology mutation windows, prefer scoped rollback guards over
+loose `(snapshot, restore)` pairs. Use the TDS rollback primitives in
+`core::tds::rollback` for free functions that already own a `&mut Tds`, and use
+`TriangulationRollbackTransaction` from `core::rollback` for `Triangulation`
+methods that need to call back into `self` during the rollback window. Both
+compose through the same TDS snapshot primitive, restore on drop unless
+committed explicitly, and use rollback-preserving clone semantics for retries.
+Higher-level
+`DelaunayTriangulation` operations must use the Delaunay-level rollback guard
+when they also mutate insertion hints, spatial indexes, or repair bookkeeping;
+the guard must restore or intentionally invalidate that auxiliary state
+alongside the TDS. Do not wrap only the TDS when owner-coupled state can change.
+Issue #364 tracks this rollback-infrastructure coverage; issue #448 remains the
+separate `remove_vertex` orientation-correctness follow-up and should not be
+folded into infrastructure-only cleanup.
+
+Detached trial/scratch workspaces are a separate pattern: they may use
+`clone_for_rollback`/`clone_from_for_rollback` directly when the canonical owner
+is not mutated until the detached trial has validated and is swapped into place.
+Examples include flip trial workspaces and copy-on-success cleanup operations.
+
 Keep runtime identity or generation checks for detached handles, separately
 supplied indexes, serialization boundaries, and tests that intentionally corrupt
 metadata. Those checks complement lifetimes at API boundaries where Rust cannot
