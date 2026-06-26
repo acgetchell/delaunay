@@ -4,6 +4,8 @@
 //! detection, perturbation retry, conflict-region shaping, cavity insertion,
 //! and insertion telemetry for [`Triangulation`](crate::prelude::triangulation::Triangulation).
 
+#![forbid(unsafe_code)]
+
 use crate::core::algorithms::incremental_insertion::{
     CavityFillingError, CavityRepairStage, HullExtensionReason, InsertionError, extend_hull,
     external_facets_for_boundary, fill_cavity_replacing_simplices, wire_cavity_neighbors,
@@ -25,9 +27,10 @@ use crate::core::operations::{
     InsertionOutcome, InsertionResult, InsertionStatistics, InsertionTelemetry,
     InsertionTelemetryMode, SuspicionFlags,
 };
+use crate::core::rollback::TriangulationRollbackTransaction;
 #[cfg(debug_assertions)]
 use crate::core::simplex::Simplex;
-use crate::core::tds::{InvariantError, SimplexKey, Tds, TdsError, VertexKey};
+use crate::core::tds::{InvariantError, SimplexKey, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::vertex::Vertex;
@@ -618,8 +621,7 @@ where
             let simplices_before_attempt = self.tds.number_of_simplices();
             let vertices_before_attempt = self.tds.number_of_vertices();
 
-            // Clone TDS for rollback (transactional semantics)
-            let tds_snapshot = self.tds.clone_for_rollback();
+            let mut transaction = TriangulationRollbackTransaction::begin(self);
 
             // Try insertion.
             //
@@ -635,23 +637,23 @@ where
                     simplex_count: 3,
                 })
             } else {
-                self.try_insert_with_topology_safety_net(
+                Self::try_insert_with_topology_safety_net(
+                    &mut transaction,
                     current_vertex,
                     conflict_simplices,
                     hint,
                     attempt,
-                    &tds_snapshot,
                     &mut telemetry,
                     telemetry_mode,
                 )
             };
             #[cfg(not(test))]
-            let result = self.try_insert_with_topology_safety_net(
+            let result = Self::try_insert_with_topology_safety_net(
+                &mut transaction,
                 current_vertex,
                 conflict_simplices,
                 hint,
                 attempt,
-                &tds_snapshot,
                 &mut telemetry,
                 telemetry_mode,
             );
@@ -674,6 +676,7 @@ where
                     }
 
                     let (vertex_key, hint) = inserted;
+                    transaction.commit();
                     // Only the committed attempt updates the duplicate index. Earlier
                     // retries all rolled back to the pre-attempt triangulation state.
                     if let Some(index) = index.as_deref_mut()
@@ -691,8 +694,7 @@ where
                     });
                 }
                 Err(e) => {
-                    // Any error - rollback to snapshot
-                    self.tds = tds_snapshot;
+                    transaction.rollback();
 
                     // Handle duplicate coordinates specially - skip immediately without retry
                     if matches!(e, InsertionError::DuplicateCoordinates { .. }) {
@@ -1088,22 +1090,22 @@ where
 
     /// Attempt an insertion, and if Level 3 validation fails, roll back and try a
     /// conservative star-split fallback of the containing simplex.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Topology safety net needs transactional rollback context plus telemetry mode"
-    )]
     fn try_insert_with_topology_safety_net(
-        &mut self,
+        transaction: &mut TriangulationRollbackTransaction<'_, K, U, V, D>,
         vertex: Vertex<U, D>,
         conflict_simplices: Option<&SimplexKeyBuffer>,
         hint: Option<SimplexKey>,
         attempt: usize,
-        tds_snapshot: &Tds<U, V, D>,
         telemetry: &mut InsertionTelemetry,
         telemetry_mode: InsertionTelemetryMode,
     ) -> Result<TryInsertImplOk, InsertionError> {
-        let mut insert_ok =
-            self.try_insert_impl(vertex, conflict_simplices, hint, telemetry, telemetry_mode)?;
+        let mut insert_ok = transaction.triangulation_mut().try_insert_impl(
+            vertex,
+            conflict_simplices,
+            hint,
+            telemetry,
+            telemetry_mode,
+        )?;
 
         if attempt > 0 {
             insert_ok.suspicion.perturbation_used = true;
@@ -1113,27 +1115,31 @@ where
         }
 
         // Skip Level 3 validation during bootstrap (vertices but no simplices yet).
-        if self.tds.number_of_simplices() == 0 {
+        if transaction.triangulation_mut().tds.number_of_simplices() == 0 {
             return Ok(insert_ok);
         }
 
-        let validation_result = self.validate_after_insertion_and_record_telemetry(
-            insert_ok.suspicion,
-            &insert_ok.repair_seed_simplices,
-            telemetry,
-            telemetry_mode,
-        );
-        if let Err(validation_err) = validation_result {
-            // Roll back to snapshot and attempt a star-split fallback for interior points.
-            self.tds = tds_snapshot.clone_for_rollback();
-            return self.try_star_split_fallback_after_topology_failure(
-                vertex,
-                hint,
-                attempt,
-                validation_err,
+        let validation_result = transaction
+            .triangulation_mut()
+            .validate_after_insertion_and_record_telemetry(
+                insert_ok.suspicion,
+                &insert_ok.repair_seed_simplices,
                 telemetry,
                 telemetry_mode,
             );
+        if let Err(validation_err) = validation_result {
+            // Roll back to snapshot and attempt a star-split fallback for interior points.
+            transaction.restore();
+            return transaction
+                .triangulation_mut()
+                .try_star_split_fallback_after_topology_failure(
+                    vertex,
+                    hint,
+                    attempt,
+                    validation_err,
+                    telemetry,
+                    telemetry_mode,
+                );
         }
 
         Ok(insert_ok)

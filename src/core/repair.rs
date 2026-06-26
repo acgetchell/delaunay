@@ -3,6 +3,8 @@
 //! This module owns local facet issue detection/repair, stale incident-simplex
 //! repair, and vertex-removal cavity retriangulation for [`Triangulation`](crate::prelude::triangulation::Triangulation).
 
+#![forbid(unsafe_code)]
+
 use crate::core::algorithms::incremental_insertion::{
     CavityFillingError, CavityRepairStage, InsertionError, InsertionTopologyValidationContext,
     external_facets_for_boundary, fill_cavity_replacing_simplices, repair_neighbor_pointers,
@@ -14,6 +16,7 @@ use crate::core::collections::{
     SimplexKeyBuffer, SimplexKeySet, SmallBuffer, VertexKeySet, fast_hash_set_with_capacity,
 };
 use crate::core::facet::FacetHandle;
+use crate::core::rollback::TriangulationRollbackTransaction;
 use crate::core::tds::{InvariantError, SimplexKey, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
@@ -468,83 +471,95 @@ where
         affected_vertices: &VertexKeySet,
         apex_vertex_key: VertexKey,
     ) -> Result<VertexRemovalOutcome, InvariantError> {
-        // Snapshot before destructive retriangulation edits so we can roll back if any
-        // subsequent orientation/finalization step fails.
-        let tds_snapshot = self.tds.clone_for_rollback();
-        let retriangulation_result = (|| -> Result<VertexRemovalOutcome, InvariantError> {
-            // Fill cavity with fan triangulation BEFORE removing old simplices
-            // Use fan triangulation that skips boundary facets which already include the apex
-            let new_simplices = self
-                .fan_fill_cavity(apex_vertex_key, boundary_facets)
-                .map_err(|e| insertion_error_to_invariant_error(e, "Fan triangulation failed"))?;
-            self.canonicalize_positive_orientation_for_simplices(&new_simplices)
-                .map_err(|e| {
-                    insertion_error_to_invariant_error(
-                        e,
-                        "Orientation canonicalization failed after fan filling",
-                    )
-                })?;
-
-            // Wire neighbors for the new simplices (while both old and new simplices exist)
-            let external_facets =
-                external_facets_for_boundary(&self.tds, simplices_to_remove, boundary_facets)
+        let mut transaction = TriangulationRollbackTransaction::begin(self);
+        let retriangulation_result = {
+            let tri = transaction.triangulation_mut();
+            (|| -> Result<VertexRemovalOutcome, InvariantError> {
+                // Fill cavity with fan triangulation BEFORE removing old simplices
+                // Use fan triangulation that skips boundary facets which already include the apex
+                let new_simplices = tri
+                    .fan_fill_cavity(apex_vertex_key, boundary_facets)
                     .map_err(|e| {
-                        insertion_error_to_invariant_error(e, "External-facet collection failed")
+                        insertion_error_to_invariant_error(e, "Fan triangulation failed")
                     })?;
-            wire_cavity_neighbors(
-                &mut self.tds,
-                &new_simplices,
-                external_facets.iter().copied(),
-                Some(simplices_to_remove),
-            )
-            .map_err(|e| insertion_error_to_invariant_error(e, "Neighbor wiring failed"))?;
+                tri.canonicalize_positive_orientation_for_simplices(&new_simplices)
+                    .map_err(|e| {
+                        insertion_error_to_invariant_error(
+                            e,
+                            "Orientation canonicalization failed after fan filling",
+                        )
+                    })?;
 
-            // Remove the simplices containing the vertex (now that new simplices are wired up)
-            // Note: remove_simplices_by_keys() automatically clears neighbor pointers in surviving
-            // simplices that reference removed simplices (sets them to None/boundary)
-            let mut simplices_removed = self
-                .tds
-                .remove_simplices_by_keys(simplices_to_remove)
-                .map_err(|e| InvariantError::Tds(e.into_inner()))?;
-            let max_repair_simplices_removed = simplices_to_remove.len();
-            let mut post_repair_frontier = SimplexKeyBuffer::new();
+                // Wire neighbors for the new simplices (while both old and new simplices exist)
+                let external_facets =
+                    external_facets_for_boundary(&tri.tds, simplices_to_remove, boundary_facets)
+                        .map_err(|e| {
+                            insertion_error_to_invariant_error(
+                                e,
+                                "External-facet collection failed",
+                            )
+                        })?;
+                wire_cavity_neighbors(
+                    &mut tri.tds,
+                    &new_simplices,
+                    external_facets.iter().copied(),
+                    Some(simplices_to_remove),
+                )
+                .map_err(|e| insertion_error_to_invariant_error(e, "Neighbor wiring failed"))?;
 
-            self.repair_vertex_removal_facet_issues(
-                &new_simplices,
-                &mut simplices_removed,
-                &mut post_repair_frontier,
-                max_repair_simplices_removed,
-            )?;
+                // Remove the simplices containing the vertex (now that new simplices are wired up)
+                // Note: remove_simplices_by_keys() automatically clears neighbor pointers in surviving
+                // simplices that reference removed simplices (sets them to None/boundary)
+                let mut simplices_removed = tri
+                    .tds
+                    .remove_simplices_by_keys(simplices_to_remove)
+                    .map_err(|e| InvariantError::Tds(e.into_inner()))?;
+                let max_repair_simplices_removed = simplices_to_remove.len();
+                let mut post_repair_frontier = SimplexKeyBuffer::new();
 
-            self.tds
-                .remove_vertex(vertex_key)
-                .map_err(|e| InvariantError::Tds(e.into_inner()))?;
+                tri.repair_vertex_removal_facet_issues(
+                    &new_simplices,
+                    &mut simplices_removed,
+                    &mut post_repair_frontier,
+                    max_repair_simplices_removed,
+                )?;
 
-            let surviving_new_simplices = self.live_simplices_from(&new_simplices);
-            let validation_scope = self.vertex_removal_validation_scope(
-                &new_simplices,
-                &external_facets,
-                &post_repair_frontier,
-            );
-            self.normalize_vertex_removal_orientation(&validation_scope)?;
-            self.repair_affected_vertex_incidence_from_scope(affected_vertices, &validation_scope)?;
-            self.validate_vertex_removal_postconditions(
-                vertex_key,
-                affected_vertices,
-                &surviving_new_simplices,
-                &validation_scope,
-            )?;
+                tri.tds
+                    .remove_vertex(vertex_key)
+                    .map_err(|e| InvariantError::Tds(e.into_inner()))?;
 
-            Ok(VertexRemovalOutcome::with_repair_seed_simplices(
-                simplices_removed,
-                validation_scope,
-            ))
-        })();
+                let surviving_new_simplices = tri.live_simplices_from(&new_simplices);
+                let validation_scope = tri.vertex_removal_validation_scope(
+                    &new_simplices,
+                    &external_facets,
+                    &post_repair_frontier,
+                );
+                tri.normalize_vertex_removal_orientation(&validation_scope)?;
+                tri.repair_affected_vertex_incidence_from_scope(
+                    affected_vertices,
+                    &validation_scope,
+                )?;
+                tri.validate_vertex_removal_postconditions(
+                    vertex_key,
+                    affected_vertices,
+                    &surviving_new_simplices,
+                    &validation_scope,
+                )?;
+
+                Ok(VertexRemovalOutcome::with_repair_seed_simplices(
+                    simplices_removed,
+                    validation_scope,
+                ))
+            })()
+        };
 
         match retriangulation_result {
-            Ok(outcome) => Ok(outcome),
+            Ok(outcome) => {
+                transaction.commit();
+                Ok(outcome)
+            }
             Err(error) => {
-                self.tds = tds_snapshot;
+                transaction.rollback();
                 Err(error)
             }
         }
@@ -707,21 +722,27 @@ where
         &mut self,
         vertex_key: VertexKey,
     ) -> Result<usize, InvariantError> {
-        let tds_snapshot = self.tds.clone_for_rollback();
-        let result = (|| -> Result<usize, InvariantError> {
-            let simplices_removed = self
-                .tds
-                .remove_vertex(vertex_key)
-                .map_err(|e| InvariantError::Tds(e.into_inner()))?;
-            self.tds.is_valid().map_err(InvariantError::Tds)?;
-            self.is_valid()?;
-            Ok(simplices_removed)
-        })();
+        let mut transaction = TriangulationRollbackTransaction::begin(self);
+        let result = {
+            let tri = transaction.triangulation_mut();
+            (|| -> Result<usize, InvariantError> {
+                let simplices_removed = tri
+                    .tds
+                    .remove_vertex(vertex_key)
+                    .map_err(|e| InvariantError::Tds(e.into_inner()))?;
+                tri.tds.is_valid().map_err(InvariantError::Tds)?;
+                tri.is_valid()?;
+                Ok(simplices_removed)
+            })()
+        };
 
         match result {
-            Ok(simplices_removed) => Ok(simplices_removed),
+            Ok(simplices_removed) => {
+                transaction.commit();
+                Ok(simplices_removed)
+            }
             Err(error) => {
-                self.tds = tds_snapshot;
+                transaction.rollback();
                 Err(error)
             }
         }
@@ -1322,33 +1343,41 @@ where
         issues: &FacetIssuesMap,
         max_simplices_removed: usize,
     ) -> Result<usize, InsertionError> {
-        let tds_snapshot = self.tds.clone_for_rollback();
-        let repair_result = (|| -> Result<usize, InsertionError> {
-            let outcome =
-                self.repair_local_facet_issues_with_frontier(issues, max_simplices_removed)?;
-            if outcome.removed_count == 0 {
-                return Ok(0);
+        let mut transaction = TriangulationRollbackTransaction::begin(self);
+        let repair_result = {
+            let tri = transaction.triangulation_mut();
+            (|| -> Result<usize, InsertionError> {
+                let outcome =
+                    tri.repair_local_facet_issues_with_frontier(issues, max_simplices_removed)?;
+                if outcome.removed_count == 0 {
+                    return Ok(0);
+                }
+
+                let new_simplices = SimplexKeyBuffer::new();
+                tri.repair_neighbors_after_local_simplex_removal(
+                    &new_simplices,
+                    &outcome.frontier_simplices,
+                )?;
+                tri.tds
+                    .assign_incident_simplices()
+                    .map_err(|error| InsertionError::TopologyValidation(error.into_inner()))?;
+                tri.validate()
+                    .map_err(Self::invariant_error_to_insertion_error)?;
+
+                Ok(outcome.removed_count)
+            })()
+        };
+
+        match repair_result {
+            Ok(removed_count) => {
+                transaction.commit();
+                Ok(removed_count)
             }
-
-            let new_simplices = SimplexKeyBuffer::new();
-            self.repair_neighbors_after_local_simplex_removal(
-                &new_simplices,
-                &outcome.frontier_simplices,
-            )?;
-            self.tds
-                .assign_incident_simplices()
-                .map_err(|error| InsertionError::TopologyValidation(error.into_inner()))?;
-            self.validate()
-                .map_err(Self::invariant_error_to_insertion_error)?;
-
-            Ok(outcome.removed_count)
-        })();
-
-        if repair_result.is_err() {
-            self.tds = tds_snapshot;
+            Err(error) => {
+                transaction.rollback();
+                Err(error)
+            }
         }
-
-        repair_result
     }
 }
 

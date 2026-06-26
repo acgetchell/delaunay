@@ -570,6 +570,8 @@ mod core {
     pub mod query;
     /// Local topology repair for generic triangulations.
     pub mod repair;
+    /// Scoped rollback guards for internal topology mutation windows.
+    pub(crate) mod rollback;
     /// Triangulation data structure internals.
     pub mod tds {
         mod equality;
@@ -577,12 +579,14 @@ mod core {
         pub(crate) mod incidence;
         mod keys;
         mod mutation;
+        pub(crate) mod rollback;
         mod snapshot;
         mod storage;
         mod validation;
 
         pub use errors::*;
         pub use keys::{SimplexKey, VertexKey};
+        pub(crate) use rollback::{TdsRollbackSnapshot, TdsRollbackTransaction};
         pub use storage::Tds;
     }
     /// Generic triangulation combining kernel + Tds.
@@ -711,6 +715,9 @@ pub mod construction;
 /// Read-only Delaunay query, traversal, and accessor methods.
 #[path = "delaunay/query.rs"]
 pub(crate) mod delaunay_query;
+/// Delaunay-level rollback guards for mutation windows with auxiliary state.
+#[path = "delaunay/rollback.rs"]
+pub(crate) mod delaunay_rollback;
 /// End-to-end "repair then delaunayize" workflow.
 #[path = "delaunay/delaunayize.rs"]
 pub mod delaunayize;

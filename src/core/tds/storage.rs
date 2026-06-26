@@ -2427,8 +2427,14 @@ pub(in crate::core::tds) type SimplexUuidSortKey<const D: usize> =
 mod tests {
     use super::*;
     use crate::core::simplex::Simplex;
+    use crate::core::tds::TdsRollbackTransaction;
     use std::assert_matches;
     use std::sync::Arc;
+
+    fn insert_test_vertex<const D: usize>(tds: &mut Tds<(), (), D>, coordinate: f64) -> VertexKey {
+        let vertex = Vertex::<(), _>::try_new([coordinate; D]).unwrap();
+        tds.insert_vertex_with_mapping(vertex).unwrap()
+    }
 
     #[test]
     fn test_empty_initializes_storage_identity_and_counts() {
@@ -2727,6 +2733,77 @@ mod tests {
                             source_generation,
                             "clone_from_for_rollback must keep an independent generation counter"
                         );
+                    }
+
+                    #[test]
+                    fn [<test_rollback_transaction_drop_restores_snapshot_ $dim d>]() {
+                        let mut tds: Tds<(), (), $dim> = Tds::empty();
+                        let source_vertex = insert_test_vertex(&mut tds, 0.0);
+                        let source_generation = tds.generation();
+                        let source_identity = Arc::clone(tds.identity());
+
+                        {
+                            let mut transaction = TdsRollbackTransaction::begin(&mut tds);
+                            let _transient_vertex = insert_test_vertex(transaction.tds_mut(), 1.0);
+                        }
+
+                        assert!(Arc::ptr_eq(&source_identity, tds.identity()));
+                        assert_eq!(tds.generation(), source_generation);
+                        assert_eq!(tds.number_of_vertices(), 1);
+                        assert!(tds.vertex(source_vertex).is_some());
+                    }
+
+                    #[test]
+                    fn [<test_rollback_transaction_explicit_rollback_restores_snapshot_ $dim d>]() {
+                        let mut tds: Tds<(), (), $dim> = Tds::empty();
+                        let source_vertex = insert_test_vertex(&mut tds, 0.0);
+                        let source_generation = tds.generation();
+
+                        {
+                            let mut transaction = TdsRollbackTransaction::begin(&mut tds);
+                            let _transient_vertex = insert_test_vertex(transaction.tds_mut(), 1.0);
+                            transaction.rollback();
+                        }
+
+                        assert_eq!(tds.generation(), source_generation);
+                        assert_eq!(tds.number_of_vertices(), 1);
+                        assert!(tds.vertex(source_vertex).is_some());
+                    }
+
+                    #[test]
+                    fn [<test_rollback_transaction_restore_keeps_transaction_open_ $dim d>]() {
+                        let mut tds: Tds<(), (), $dim> = Tds::empty();
+                        let source_vertex = insert_test_vertex(&mut tds, 0.0);
+
+                        let committed_vertex = {
+                            let mut transaction = TdsRollbackTransaction::begin(&mut tds);
+                            let _transient_vertex = insert_test_vertex(transaction.tds_mut(), 1.0);
+                            transaction.restore();
+                            let committed_vertex = insert_test_vertex(transaction.tds_mut(), 2.0);
+                            transaction.commit();
+                            committed_vertex
+                        };
+
+                        assert_eq!(tds.number_of_vertices(), 2);
+                        assert!(tds.vertex(source_vertex).is_some());
+                        assert!(tds.vertex(committed_vertex).is_some());
+                    }
+
+                    #[test]
+                    fn [<test_rollback_transaction_commit_preserves_mutation_ $dim d>]() {
+                        let mut tds: Tds<(), (), $dim> = Tds::empty();
+                        let source_vertex = insert_test_vertex(&mut tds, 0.0);
+
+                        let committed_vertex = {
+                            let mut transaction = TdsRollbackTransaction::begin(&mut tds);
+                            let committed_vertex = insert_test_vertex(transaction.tds_mut(), 1.0);
+                            transaction.commit();
+                            committed_vertex
+                        };
+
+                        assert_eq!(tds.number_of_vertices(), 2);
+                        assert!(tds.vertex(source_vertex).is_some());
+                        assert!(tds.vertex(committed_vertex).is_some());
                     }
                 )+
             }

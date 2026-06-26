@@ -30,6 +30,7 @@ use crate::core::tds::{SimplexKey, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::core::validation::{TopologyGuarantee, TriangulationValidationError};
 use crate::core::vertex::Vertex;
+use crate::delaunay_rollback::{DelaunayRollbackTransaction, DelaunaySpatialIndexRollback};
 use crate::geometry::kernel::Kernel;
 use crate::repair::DelaunayRepairPolicy;
 use crate::topology::manifold::{ManifoldError, validate_ridge_links_for_simplices};
@@ -80,12 +81,56 @@ where
         Ok(())
     }
 
+    /// Returns whether the post-insertion repair/check path needs an outer
+    /// Delaunay-level rollback window.
+    fn post_insertion_transaction_required(&self) -> bool {
+        let next_insertion_count = self
+            .insertion_state
+            .delaunay_repair_insertion_count
+            .saturating_add(1);
+        let could_have_simplices_after_insertion = self.tri.tds.number_of_simplices() > 0
+            || self.tri.tds.number_of_vertices().saturating_add(1) > D;
+        could_have_simplices_after_insertion
+            && (self.insertion_state.delaunay_repair_policy != DelaunayRepairPolicy::Never
+                || self
+                    .insertion_state
+                    .delaunay_check_policy
+                    .should_check(next_insertion_count))
+    }
+
+    /// Runs a Delaunay insertion operation with the rollback policy used by
+    /// post-insertion repair/check failures.
+    fn with_post_insertion_rollback<T>(
+        &mut self,
+        operation: impl FnOnce(&mut Self) -> Result<T, InsertionError>,
+    ) -> Result<T, InsertionError> {
+        if !self.post_insertion_transaction_required() {
+            return operation(self);
+        }
+
+        let mut transaction =
+            DelaunayRollbackTransaction::begin(self, DelaunaySpatialIndexRollback::Invalidate);
+        match operation(transaction.delaunay_mut()) {
+            Ok(value) => {
+                transaction.commit();
+                Ok(value)
+            }
+            Err(error) => {
+                transaction.rollback();
+                Err(error)
+            }
+        }
+    }
+
     /// Insert a vertex into the Delaunay triangulation using incremental cavity-based algorithm.
     ///
     /// This method handles all stages of triangulation construction:
     /// - **Bootstrap (< D+1 vertices)**: Accumulates vertices without creating simplices
     /// - **Initial simplex (D+1 vertices)**: Automatically builds the first D-simplex
     /// - **Incremental (> D+1 vertices)**: Uses cavity-based insertion with point location
+    ///
+    /// If post-insertion Delaunay repair or validation fails, the failed insertion is rolled
+    /// back before this method returns the error.
     ///
     /// # Algorithm
     /// 1. Insert vertex into Tds
@@ -185,25 +230,10 @@ where
         //
         // Transactional guard: post-steps (flip repair and/or global Delaunay checks) can fail.
         // If they do, rollback to leave the triangulation unchanged.
-        let next_insertion_count = self
-            .insertion_state
-            .delaunay_repair_insertion_count
-            .saturating_add(1);
-        let could_have_simplices_after_insertion = self.tri.tds.number_of_simplices() > 0
-            || self.tri.tds.number_of_vertices().saturating_add(1) > D;
-        let snapshot_needed = could_have_simplices_after_insertion
-            && (self.insertion_state.delaunay_repair_policy != DelaunayRepairPolicy::Never
-                || self
-                    .insertion_state
-                    .delaunay_check_policy
-                    .should_check(next_insertion_count));
-        let snapshot =
-            snapshot_needed.then(|| (self.tri.tds.clone_for_rollback(), self.insertion_state));
-
-        let insertion_result = (|| {
-            let hint = self.insertion_state.last_inserted_simplex;
+        self.with_post_insertion_rollback(|delaunay| {
+            let hint = delaunay.insertion_state.last_inserted_simplex;
             let insert_detail = {
-                let (tri, spatial_index) = (&mut self.tri, &mut self.spatial_index);
+                let (tri, spatial_index) = (&mut delaunay.tri, &mut delaunay.spatial_index);
                 tri.insert_with_statistics_seeded_indexed_detailed(
                     vertex,
                     None,
@@ -221,32 +251,24 @@ where
                     vertex_key: v_key,
                     hint,
                 } => {
-                    self.insertion_state.last_inserted_simplex = hint;
-                    self.insertion_state.delaunay_repair_insertion_count = self
+                    delaunay.insertion_state.last_inserted_simplex = hint;
+                    delaunay.insertion_state.delaunay_repair_insertion_count = delaunay
                         .insertion_state
                         .delaunay_repair_insertion_count
                         .saturating_add(1);
                     if delaunay_repair_required {
-                        self.maybe_repair_after_insertion(v_key, hint, &repair_seed_simplices)?;
+                        delaunay.maybe_repair_after_insertion(
+                            v_key,
+                            hint,
+                            &repair_seed_simplices,
+                        )?;
                     }
-                    self.maybe_check_after_insertion()?;
+                    delaunay.maybe_check_after_insertion()?;
                     Ok(v_key)
                 }
                 InsertionOutcome::Skipped { error } => Err(error),
             }
-        })();
-
-        match insertion_result {
-            Ok(v_key) => Ok(v_key),
-            Err(err) => {
-                if let Some((tds, insertion_state)) = snapshot {
-                    self.spatial_index = None;
-                    self.tri.tds = tds;
-                    self.insertion_state = insertion_state;
-                }
-                Err(err)
-            }
-        }
+        })
     }
 
     /// Insert a vertex and return the insertion outcome plus statistics.
@@ -256,6 +278,8 @@ where
     /// Unlike [`insert_best_effort_with_statistics`](Self::insert_best_effort_with_statistics),
     /// skipped insertions are reported as [`InsertionError`] values so callers using `?`
     /// cannot accidentally ignore a duplicate or retry-exhausted degeneracy.
+    /// If post-insertion Delaunay repair or validation fails, the failed insertion is rolled
+    /// back before this method returns the error.
     ///
     /// # Errors
     ///
@@ -303,7 +327,9 @@ where
     /// and workloads that deliberately continue after duplicate coordinates or
     /// retry-exhausted geometric degeneracies. A skipped insertion returns
     /// `Ok((InsertionOutcome::Skipped { .. }, stats))`; the triangulation is
-    /// left unchanged for that vertex.
+    /// left unchanged for that vertex. If post-insertion Delaunay repair or
+    /// validation fails, the failed insertion is rolled back before this method
+    /// returns the error.
     ///
     /// # Errors
     ///
@@ -345,25 +371,10 @@ where
 
         // Transactional guard: post-steps (flip repair and/or global Delaunay checks) can fail.
         // If they do, rollback to leave the triangulation unchanged.
-        let next_insertion_count = self
-            .insertion_state
-            .delaunay_repair_insertion_count
-            .saturating_add(1);
-        let could_have_simplices_after_insertion = self.tri.tds.number_of_simplices() > 0
-            || self.tri.tds.number_of_vertices().saturating_add(1) > D;
-        let snapshot_needed = could_have_simplices_after_insertion
-            && (self.insertion_state.delaunay_repair_policy != DelaunayRepairPolicy::Never
-                || self
-                    .insertion_state
-                    .delaunay_check_policy
-                    .should_check(next_insertion_count));
-        let snapshot =
-            snapshot_needed.then(|| (self.tri.tds.clone_for_rollback(), self.insertion_state));
-
-        let insertion_result = (|| {
-            let hint = self.insertion_state.last_inserted_simplex;
+        self.with_post_insertion_rollback(|delaunay| {
+            let hint = delaunay.insertion_state.last_inserted_simplex;
             let insert_detail = {
-                let (tri, spatial_index) = (&mut self.tri, &mut self.spatial_index);
+                let (tri, spatial_index) = (&mut delaunay.tri, &mut delaunay.spatial_index);
                 tri.insert_with_statistics_seeded_indexed_detailed(
                     vertex,
                     None,
@@ -379,38 +390,26 @@ where
 
             let outcome = match insert_detail.outcome {
                 InsertionOutcome::Inserted { vertex_key, hint } => {
-                    self.insertion_state.last_inserted_simplex = hint;
-                    self.insertion_state.delaunay_repair_insertion_count = self
+                    delaunay.insertion_state.last_inserted_simplex = hint;
+                    delaunay.insertion_state.delaunay_repair_insertion_count = delaunay
                         .insertion_state
                         .delaunay_repair_insertion_count
                         .saturating_add(1);
                     if delaunay_repair_required {
-                        self.maybe_repair_after_insertion(
+                        delaunay.maybe_repair_after_insertion(
                             vertex_key,
                             hint,
                             &repair_seed_simplices,
                         )?;
                     }
-                    self.maybe_check_after_insertion()?;
+                    delaunay.maybe_check_after_insertion()?;
                     InsertionOutcome::Inserted { vertex_key, hint }
                 }
                 other @ InsertionOutcome::Skipped { .. } => other,
             };
 
             Ok((outcome, stats))
-        })();
-
-        match insertion_result {
-            Ok((outcome, stats)) => Ok((outcome, stats)),
-            Err(err) => {
-                if let Some((tds, insertion_state)) = snapshot {
-                    self.spatial_index = None;
-                    self.tri.tds = tds;
-                    self.insertion_state = insertion_state;
-                }
-                Err(err)
-            }
-        }
+        })
     }
 
     /// Keeps the default insertion path on the same repair helper as capped
@@ -846,6 +845,62 @@ mod tests {
             })
         );
         assert!(found_inserted_key);
+        assert!(dt.validate().is_ok());
+    }
+
+    #[test]
+    fn post_insertion_rollback_error_restores_state_and_invalidates_spatial_index() {
+        init_tracing();
+        let vertices: Vec<Vertex<(), 2>> = vec![
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
+        ];
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::try_new(&vertices).unwrap();
+        let vertex_count_before = dt.number_of_vertices();
+        let simplex_count_before = dt.number_of_simplices();
+        let hint_before = dt.simplices().next().map(|(key, _)| key);
+        dt.insertion_state.last_inserted_simplex = hint_before;
+
+        let mut spatial_index = HashGridIndex::<2>::try_new(1.0).unwrap();
+        for (vertex_key, vertex) in dt.vertices() {
+            spatial_index.insert_vertex(vertex_key, vertex.point().coords());
+        }
+        dt.spatial_index = Some(spatial_index);
+        assert!(dt.post_insertion_transaction_required());
+
+        let transient_vertex = vertex![0.25, 0.25].unwrap();
+        let transient_uuid = transient_vertex.uuid();
+        let result: Result<(), InsertionError> = dt.with_post_insertion_rollback(|delaunay| {
+            delaunay
+                .tri
+                .tds
+                .insert_vertex_with_mapping(transient_vertex)
+                .unwrap();
+            delaunay.insertion_state.last_inserted_simplex = None;
+            delaunay.spatial_index = Some(HashGridIndex::<2>::try_new(1.0).unwrap());
+            Err(InsertionError::MaxSimplicesRemovedExceeded {
+                max_simplices_removed: 0,
+                attempted: 1,
+            })
+        });
+
+        assert_matches!(
+            result,
+            Err(InsertionError::MaxSimplicesRemovedExceeded {
+                max_simplices_removed: 0,
+                attempted: 1,
+            })
+        );
+        assert_eq!(dt.number_of_vertices(), vertex_count_before);
+        assert_eq!(dt.number_of_simplices(), simplex_count_before);
+        assert_eq!(dt.insertion_state.last_inserted_simplex, hint_before);
+        assert!(
+            dt.spatial_index.is_none(),
+            "post-insertion rollback should invalidate the spatial index"
+        );
+        assert!(!dt.vertices().any(|(_, v)| v.uuid() == transient_uuid));
         assert!(dt.validate().is_ok());
     }
 

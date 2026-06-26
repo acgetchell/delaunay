@@ -17,6 +17,7 @@ use crate::core::collections::SimplexKeyBuffer;
 use crate::core::tds::{InvariantError, NeighborValidationError, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::core::validation::insertion_error_to_invariant_error;
+use crate::delaunay_rollback::{DelaunayRollbackTransaction, DelaunaySpatialIndexRollback};
 use crate::geometry::kernel::Kernel;
 use crate::repair::DelaunayRepairOperation;
 use crate::triangulation::DelaunayTriangulation;
@@ -205,95 +206,101 @@ where
             return Err(DeleteVertexError::VertexNotFound { vertex_key });
         };
         let removed_vertex_coords = *removed_vertex.point().coords();
-        let snapshot = (self.tri.tds.clone_for_rollback(), self.insertion_state);
 
-        let result: Result<usize, InvariantError> = (|| {
-            // Fast path: inverse k=1 flip when the vertex star is a simplex.
-            let mut seed_simplices: Option<SimplexKeyBuffer> = None;
-            let simplices_removed =
-                match apply_bistellar_flip_k1_inverse(&mut self.tri.tds, vertex_key) {
-                    Ok(info) => {
-                        seed_simplices = Some(info.new_simplices);
-                        info.removed_simplices.len()
-                    }
-                    Err(FlipError::NeighborWiring { reason }) => {
-                        return Err(TdsError::InvalidNeighbors {
-                            reason: NeighborValidationError::FlipNeighborWiring { reason },
+        let mut transaction =
+            DelaunayRollbackTransaction::begin(self, DelaunaySpatialIndexRollback::Restore);
+        let result: Result<usize, InvariantError> = {
+            let delaunay = transaction.delaunay_mut();
+            (|| {
+                // Fast path: inverse k=1 flip when the vertex star is a simplex.
+                let mut seed_simplices: Option<SimplexKeyBuffer> = None;
+                let simplices_removed =
+                    match apply_bistellar_flip_k1_inverse(&mut delaunay.tri.tds, vertex_key) {
+                        Ok(info) => {
+                            seed_simplices = Some(info.new_simplices);
+                            info.removed_simplices.len()
                         }
-                        .into());
-                    }
-                    Err(_) => {
-                        let outcome = self.tri.remove_vertex_with_repair_seeds(vertex_key)?;
-                        if !outcome.repair_seed_simplices.is_empty() {
-                            seed_simplices = Some(outcome.repair_seed_simplices);
+                        Err(FlipError::NeighborWiring { reason }) => {
+                            return Err(TdsError::InvalidNeighbors {
+                                reason: NeighborValidationError::FlipNeighborWiring { reason },
+                            }
+                            .into());
                         }
-                        outcome.simplices_removed
-                    }
-                };
+                        Err(_) => {
+                            let outcome =
+                                delaunay.tri.remove_vertex_with_repair_seeds(vertex_key)?;
+                            if !outcome.repair_seed_simplices.is_empty() {
+                                seed_simplices = Some(outcome.repair_seed_simplices);
+                            }
+                            outcome.simplices_removed
+                        }
+                    };
 
-            let topology = self.tri.topology_guarantee();
-            if self.should_run_delaunay_repair_after_mutation(topology) {
-                let seed_ref = seed_simplices.as_deref();
-                let repair_seed_count =
-                    seed_ref.map_or_else(|| self.tri.tds.number_of_simplices(), <[_]>::len);
-                let max_flips = local_repair_flip_budget::<D>(repair_seed_count);
-                let repair_result = {
-                    self.invalidate_locate_hint_cache();
-                    let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-                    repair_delaunay_with_flips_k2_k3(
-                        tds,
-                        kernel,
-                        seed_ref,
-                        topology,
-                        Some(max_flips),
-                    )
-                };
+                let topology = delaunay.tri.topology_guarantee();
+                if delaunay.should_run_delaunay_repair_after_mutation(topology) {
+                    let seed_ref = seed_simplices.as_deref();
+                    let repair_seed_count =
+                        seed_ref.map_or_else(|| delaunay.tri.tds.number_of_simplices(), <[_]>::len);
+                    let max_flips = local_repair_flip_budget::<D>(repair_seed_count);
+                    let repair_result = {
+                        delaunay.invalidate_locate_hint_cache();
+                        let (tds, kernel) = (&mut delaunay.tri.tds, &delaunay.tri.kernel);
+                        repair_delaunay_with_flips_k2_k3(
+                            tds,
+                            kernel,
+                            seed_ref,
+                            topology,
+                            Some(max_flips),
+                        )
+                    };
 
-                #[cfg(test)]
-                let repair_result = if test_hooks::force_repair_nonconvergent_enabled() {
-                    Err(test_hooks::synthetic_nonconvergent_error())
-                } else {
-                    repair_result
-                };
+                    #[cfg(test)]
+                    let repair_result = if test_hooks::force_repair_nonconvergent_enabled() {
+                        Err(test_hooks::synthetic_nonconvergent_error())
+                    } else {
+                        repair_result
+                    };
 
-                repair_result.map_err(|source| {
-                    InvariantError::Delaunay(
-                        DelaunayTriangulationValidationError::RepairOperationFailed {
-                            operation: DelaunayRepairOperation::VertexRemoval,
-                            source: Box::new(source),
-                        },
-                    )
-                })?;
-
-                // Re-canonicalize geometric orientation (#258): flip repair may leave
-                // the global sign negative.
-                self.tri
-                    .normalize_and_promote_positive_orientation()
-                    .map_err(|e| {
-                        insertion_error_to_invariant_error(
-                            e,
-                            "Orientation canonicalization failed after vertex deletion",
+                    repair_result.map_err(|source| {
+                        InvariantError::Delaunay(
+                            DelaunayTriangulationValidationError::RepairOperationFailed {
+                                operation: DelaunayRepairOperation::VertexRemoval,
+                                source: Box::new(source),
+                            },
                         )
                     })?;
-            } else {
-                self.is_valid().map_err(InvariantError::Delaunay)?;
-            }
 
-            Ok(simplices_removed)
-        })();
+                    // Re-canonicalize geometric orientation (#258): flip repair may leave
+                    // the global sign negative.
+                    delaunay
+                        .tri
+                        .normalize_and_promote_positive_orientation()
+                        .map_err(|e| {
+                            insertion_error_to_invariant_error(
+                                e,
+                                "Orientation canonicalization failed after vertex deletion",
+                            )
+                        })?;
+                } else {
+                    delaunay.is_valid().map_err(InvariantError::Delaunay)?;
+                }
+
+                Ok(simplices_removed)
+            })()
+        };
 
         match result {
             Ok(simplices_removed) => {
-                self.insertion_state.last_inserted_simplex = None;
-                if let Some(index) = self.spatial_index.as_mut() {
+                let delaunay = transaction.delaunay_mut();
+                delaunay.insertion_state.last_inserted_simplex = None;
+                if let Some(index) = delaunay.spatial_index.as_mut() {
                     index.remove_vertex(&vertex_key, &removed_vertex_coords);
                 }
+                transaction.commit();
                 Ok(simplices_removed)
             }
             Err(err) => {
-                let (tds, insertion_state) = snapshot;
-                self.tri.tds = tds;
-                self.insertion_state = insertion_state;
+                transaction.rollback();
                 Err(err.into())
             }
         }
