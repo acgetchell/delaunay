@@ -517,7 +517,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// Returns the insertion-time global topology validation policy used by the underlying
     /// triangulation.
     ///
-    /// This policy controls when Level 3 (`Triangulation::is_valid()`) is run automatically
+    /// This policy controls when Level 3 (`Triangulation::is_valid_topology()`) is run automatically
     /// during incremental insertion (as part of the topology safety net).
     ///
     /// # Examples
@@ -920,6 +920,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
             Ok(()) => Ok(()),
             Err(InvariantError::Tds(err)) => Err(err.into()),
             Err(InvariantError::Triangulation(err)) => Err(err.into()),
+            Err(InvariantError::Embedding(err)) => Err(err.into()),
             Err(InvariantError::Delaunay(err)) => Err(err),
         }
     }

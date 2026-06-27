@@ -109,8 +109,10 @@ coordinate model/API rather than loosening ordinary `f64` APIs.
 - `repair.rs` - Delaunay repair policies, rebuild config, and repair outcomes.
 - `serialization.rs` - conversion to/from `Tds` with topology metadata reset
   rules.
-- `validation.rs` - Level 4 validation errors and construction validation
+- `validation.rs` - Level 5 Delaunay validation errors and construction validation
   cadence helpers.
+- `property_validation.rs` - TDS-level Delaunay empty-circumsphere scans and
+  repair-oriented violation reports used by Level 5 validation APIs.
 
 `src/lib.rs` wires public modules, root re-exports, focused preludes, and the
 crate-level documentation map. Delaunay-facing modules are exposed directly as

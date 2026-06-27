@@ -4,25 +4,32 @@
 //! triangulation-level validation pipeline:
 //!
 //! - **Level 1** element validity remains implemented next to the element types:
-//!   [`Vertex::is_valid`](crate::prelude::Vertex::is_valid) and
-//!   [`Simplex::is_valid`](crate::prelude::tds::Simplex::is_valid).
+//!   [`Vertex::is_valid`](crate::prelude::Vertex::is_valid) /
+//!   [`Vertex::vertex_report`](crate::prelude::Vertex::vertex_report) and
+//!   [`Simplex::is_valid`](crate::prelude::tds::Simplex::is_valid) /
+//!   [`Simplex::simplex_report`](crate::prelude::tds::Simplex::simplex_report).
 //! - **Level 2** structural validation remains implemented by
 //!   [`Tds`](crate::prelude::tds::Tds).
 //! - **Level 3** topological validation is orchestrated here for
 //!   [`Triangulation`](crate::Triangulation).
+//! - **Level 4** faithful embedded-geometry validation is implemented by
+//!   [`Triangulation::validate_embedding`](crate::Triangulation::validate_embedding).
 //!
-//! Delaunay-specific Level 4 validation lives in [`crate::validation`]. Keeping
+//! Delaunay-specific Level 5 validation lives in [`crate::validation`]. Keeping
 //! the module boundary at the generic triangulation layer avoids one file per
 //! validation level while still making the layering explicit.
 //!
 //! # Validation Hierarchy
 //!
-//! The library provides **four levels** of validation, each building on the previous:
+//! The library provides **five levels** of validation, each building on the previous:
 //!
 //! ## Level 1: Element Validity
 //!
-//! - **Methods**: [`Simplex::is_valid()`](crate::prelude::tds::Simplex::is_valid),
-//!   [`Vertex::is_valid()`](crate::prelude::Vertex::is_valid)
+//! - **Methods**:
+//!   [`Simplex::is_valid()`](crate::prelude::tds::Simplex::is_valid),
+//!   [`Simplex::simplex_report()`](crate::prelude::tds::Simplex::simplex_report),
+//!   [`Vertex::is_valid()`](crate::prelude::Vertex::is_valid),
+//!   [`Vertex::vertex_report()`](crate::prelude::Vertex::vertex_report)
 //! - **Checks**: Basic data integrity (coordinate validity, UUID presence, proper initialization)
 //! - **Cost**: O(1) per element
 //!
@@ -41,7 +48,7 @@
 //!
 //! ## Level 3: Manifold Topology
 //!
-//! - **Method**: [`Triangulation::is_valid()`](crate::prelude::triangulation::Triangulation::is_valid)
+//! - **Method**: [`Triangulation::is_valid_topology()`](crate::prelude::triangulation::Triangulation::is_valid_topology)
 //! - **Checks**:
 //!   - **Codimension-1 incidence**: each facet is one-sided or two-sided
 //!   - **Topology-aware boundary manifoldness**: true boundary facets are closed ("no boundary of boundary")
@@ -53,14 +60,23 @@
 //! Use [`Triangulation::validate()`](crate::prelude::triangulation::Triangulation::validate)
 //! for cumulative Levels 1–3.
 //!
-//! ## Level 4: Delaunay Property
+//! ## Level 4: Faithful Embedding
 //!
-//! - **Method**: [`DelaunayTriangulation::is_valid()`](crate::DelaunayTriangulation::is_valid)
+//! - **Method**: [`Triangulation::validate_embedding`](crate::prelude::triangulation::Triangulation::validate_embedding)
+//! - **Checks**: Nondegenerate maximal simplices and no intersections outside shared faces
+//! - **Cost**: O(N²) worst case, dominated by pairwise simplex-intersection checks
+//!
+//! Use [`Triangulation::validate_embedding`](crate::prelude::triangulation::Triangulation::validate_embedding)
+//! for cumulative Levels 1–4.
+//!
+//! ## Level 5: Delaunay Property
+//!
+//! - **Method**: [`DelaunayTriangulation::is_valid_delaunay()`](crate::DelaunayTriangulation::is_valid_delaunay)
 //! - **Checks**: Empty circumsphere property (no vertex inside any simplex's circumsphere)
 //! - **Cost**: O(N×V) where N = simplices, V = vertices
 //!
 //! Use [`DelaunayTriangulation::validate()`](crate::DelaunayTriangulation::validate)
-//! for cumulative Levels 1–4.
+//! for cumulative Levels 1–5.
 //!
 //! ## Topology guarantees
 //!
@@ -110,7 +126,7 @@ use crate::topology::manifold::{
     validate_ridge_links_for_simplices, validate_vertex_links_from_validated_facet_map,
 };
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyError, TopologyKind};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -119,6 +135,7 @@ use uuid::Uuid;
 ///
 /// - `TopologyValidation(source)` → `InvariantError::Tds(source)` (Level 1–2 preserved)
 /// - `TopologyValidationFailed { source }` → `InvariantError::Triangulation(source)` (Level 3 preserved)
+/// - `DelaunayValidationFailed { source }` → `InvariantError::Delaunay(source)` (Level 5 preserved)
 /// - All other variants → `InvariantError::Tds(InconsistentDataStructure { .. })` with `context`
 pub(crate) fn insertion_error_to_invariant_error(
     error: InsertionError,
@@ -129,6 +146,7 @@ pub(crate) fn insertion_error_to_invariant_error(
         InsertionError::TopologyValidationFailed { source, .. } => {
             InvariantError::Triangulation(source)
         }
+        InsertionError::DelaunayValidationFailed { source } => InvariantError::Delaunay(source),
         other => InvariantError::Tds(TdsError::InconsistentDataStructure {
             message: format!("{context}: {other}"),
         }),
@@ -826,7 +844,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         Ok(())
     }
 
-    /// Shared Level-3 topology validation sequence used by both [`is_valid`](Self::is_valid)
+    /// Shared Level-3 topology validation sequence used by both [`is_valid_topology`](Self::is_valid_topology)
     /// and [`is_valid_topology_only`](Self::is_valid_topology_only).
     ///
     /// Checks connectedness, manifold facet degree, closed boundary, ridge/vertex
@@ -1194,11 +1212,11 @@ where
     ///     DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
     ///
     /// // Level 3: topology validation (manifold-with-boundary + Euler characteristic)
-    /// assert!(dt.as_triangulation().is_valid().is_ok());
+    /// assert!(dt.as_triangulation().is_valid_topology().is_ok());
     /// # Ok(())
     /// # }
     /// ```
-    pub fn is_valid(&self) -> Result<(), InvariantError> {
+    pub fn is_valid_topology(&self) -> Result<(), InvariantError> {
         self.validate_topology_core()?;
         // Check geometric orientation after manifold/link checks so topology-specific
         // diagnostics surface first when multiple invariants are violated.
@@ -1206,9 +1224,132 @@ where
         Ok(())
     }
 
+    /// Returns the first actionable Level 3 topology diagnostic, if any.
+    ///
+    /// This is the repair/retry-oriented counterpart to
+    /// [`is_valid_topology`](Self::is_valid_topology). It preserves the
+    /// [`InvariantKind`] grouping used by aggregate reports while returning at
+    /// most one local failure.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayResult, DelaunayTriangulationBuilder, vertex,
+    /// };
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     vertex![0.0, 0.0]?,
+    ///     vertex![1.0, 0.0]?,
+    ///     vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    ///
+    /// assert!(dt.as_triangulation().topology_diagnostic().is_none());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn topology_diagnostic(&self) -> Option<InvariantViolation> {
+        self.topology_report()
+            .err()
+            .and_then(|report| report.violations.into_iter().next())
+    }
+
+    /// Generate a Level 3 topology report.
+    ///
+    /// This report checks topology-layer invariants only. It assumes the TDS
+    /// structure is already valid; use [`validation_report`](Self::validation_report)
+    /// for cumulative Levels 1-4 diagnostics.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(TriangulationValidationReport)` when one or more checkable
+    /// topology-layer invariants fail.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayResult, DelaunayTriangulationBuilder, vertex,
+    /// };
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     vertex![0.0, 0.0]?,
+    ///     vertex![1.0, 0.0]?,
+    ///     vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    ///
+    /// assert!(dt.as_triangulation().topology_report().is_ok());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn topology_report(&self) -> Result<(), TriangulationValidationReport> {
+        let mut violations = Vec::new();
+
+        if let Err(source) = self.validate_global_connectedness() {
+            violations.push(InvariantViolation {
+                kind: InvariantKind::Connectedness,
+                error: InvariantError::Triangulation(source),
+            });
+        }
+
+        match self.tds.build_facet_to_simplices_map() {
+            Ok(facet_to_simplices) => {
+                match ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices) {
+                    Ok(validated_facets) => {
+                        if let Err(source) =
+                            self.validate_topology_core_from_validated_facet_map(validated_facets)
+                        {
+                            violations.push(InvariantViolation {
+                                kind: InvariantKind::Topology,
+                                error: source,
+                            });
+                        }
+                    }
+                    Err(source) => {
+                        violations.push(InvariantViolation {
+                            kind: InvariantKind::Topology,
+                            error: source.into(),
+                        });
+                    }
+                }
+            }
+            Err(source) => {
+                violations.push(InvariantViolation {
+                    kind: InvariantKind::Topology,
+                    error: source.into(),
+                });
+            }
+        }
+
+        if let Err(source) = self.validate_geometric_simplex_orientation() {
+            violations.push(InvariantViolation {
+                kind: InvariantKind::Topology,
+                error: source.into(),
+            });
+        }
+
+        if let Err(source) = self.validate_at_completion() {
+            violations.push(InvariantViolation {
+                kind: InvariantKind::Topology,
+                error: source,
+            });
+        }
+
+        if violations.is_empty() {
+            Ok(())
+        } else {
+            Err(TriangulationValidationReport { violations })
+        }
+    }
+
     /// Validates topological invariants **without** geometric orientation checks.
     ///
-    /// This is identical to [`is_valid`](Self::is_valid) but omits the
+    /// This is identical to [`is_valid_topology`](Self::is_valid_topology) but omits the
     /// `validate_geometric_simplex_orientation()` step. It is intended for
     /// explicit combinatorial construction where the user-provided vertex
     /// orderings may produce negative determinants that are nonetheless
@@ -1297,7 +1438,7 @@ where
     ///
     /// This validates:
     /// - **Level 1–2** via [`Tds::validate`](crate::prelude::tds::Tds::validate)
-    /// - **Level 3** via [`Triangulation::is_valid`](Self::is_valid)
+    /// - **Level 3** via [`Triangulation::is_valid_topology`](Self::is_valid_topology)
     /// - **Completion-time PL-manifold check** via [`Triangulation::validate_at_completion`](Self::validate_at_completion)
     ///
     /// # Errors
@@ -1353,8 +1494,9 @@ where
 
     /// Generate a comprehensive validation report for Levels 1–3.
     ///
-    /// This is intended for debugging/telemetry where you want to see *all* violated
-    /// invariants, not just the first one.
+    /// This is intended for debugging, telemetry, tests, and repair planning
+    /// where you want to see all checkable violated invariants, not just the
+    /// first one.
     ///
     /// # Notes
     /// - If UUID↔key mappings are inconsistent, this returns only mapping failures (other
@@ -1364,14 +1506,33 @@ where
     /// # Errors
     ///
     /// Returns `Err(TriangulationValidationReport)` containing all invariant violations.
-    pub(crate) fn validation_report(&self) -> Result<(), TriangulationValidationReport>
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    ///
+    /// assert!(dt.as_triangulation().validation_report().is_ok());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn validation_report(&self) -> Result<(), TriangulationValidationReport>
     where
         U: DataType,
         V: DataType,
     {
         let mut violations: Vec<InvariantViolation> = Vec::new();
 
-        // Level 2 (structural): reuse the TDS report.
+        // Levels 1-2: reuse the TDS cumulative report.
         match self.tds.validation_report() {
             Ok(()) => {}
             Err(report) => {
@@ -1387,38 +1548,9 @@ where
             }
         }
 
-        // Level 1 (element validity): vertices
-        for (_vertex_key, vertex) in self.tds.vertices() {
-            if let Err(source) = (*vertex).is_valid() {
-                violations.push(InvariantViolation {
-                    kind: InvariantKind::VertexValidity,
-                    error: InvariantError::Tds(TdsError::InvalidVertex {
-                        vertex_id: vertex.uuid(),
-                        source,
-                    }),
-                });
-            }
-        }
-
-        // Level 1 (element validity): simplices
-        for (_simplex_key, simplex) in self.tds.simplices() {
-            if let Err(source) = simplex.is_valid() {
-                violations.push(InvariantViolation {
-                    kind: InvariantKind::SimplexValidity,
-                    error: InvariantError::Tds(TdsError::InvalidSimplex {
-                        simplex_id: simplex.uuid(),
-                        source,
-                    }),
-                });
-            }
-        }
-
-        // Level 3 (topology)
-        if let Err(e) = self.is_valid() {
-            violations.push(InvariantViolation {
-                kind: InvariantKind::Topology,
-                error: e,
-            });
+        // Level 3: topology.
+        if let Err(report) = self.topology_report() {
+            violations.extend(report.violations);
         }
 
         if violations.is_empty() {
@@ -1432,6 +1564,7 @@ where
     ///
     /// - `InvariantError::Tds(e)` → `InsertionError::TopologyValidation(e)`
     /// - `InvariantError::Triangulation(e)` → `InsertionError::TopologyValidationFailed { source: e }`
+    /// - `InvariantError::Embedding(e)` → `InsertionError::DelaunayValidationFailed { source: e.into() }`
     /// - `InvariantError::Delaunay(e)` → `InsertionError::DelaunayValidationFailed { source: e }`
     pub(crate) fn invariant_error_to_insertion_error(err: InvariantError) -> InsertionError {
         match err {
@@ -1439,6 +1572,9 @@ where
             InvariantError::Triangulation(tri_err) => InsertionError::TopologyValidationFailed {
                 context: InsertionTopologyValidationContext::InvariantConversion,
                 source: tri_err,
+            },
+            InvariantError::Embedding(embedding_err) => InsertionError::DelaunayValidationFailed {
+                source: embedding_err.into(),
             },
             InvariantError::Delaunay(dt_err) => {
                 InsertionError::DelaunayValidationFailed { source: dt_err }
@@ -1479,6 +1615,9 @@ where
         // even when global validation is throttled. Run this after topology
         // checks so topology diagnostics still surface first.
         self.validate_geometric_simplex_orientation()?;
+        let simplex_keys: SimplexKeyBuffer = self.tds.simplex_keys().collect();
+        self.validate_local_embedding_nondegeneracy(&simplex_keys)
+            .map_err(InvariantError::Embedding)?;
 
         Ok(())
     }
@@ -1611,6 +1750,8 @@ where
         }
 
         self.validate_geometric_simplex_orientation_for_simplices(simplices)?;
+        self.validate_local_embedding_nondegeneracy(simplices)
+            .map_err(InvariantError::Embedding)?;
 
         Ok(())
     }
@@ -1637,6 +1778,24 @@ where
         }
     }
 
+    /// Reuses the Level 4 insertion-time guard for either caller-provided local
+    /// simplices or the full triangulation when no local scope is available.
+    fn validate_insertion_embedding_scope(
+        &self,
+        local_simplices: Option<&[SimplexKey]>,
+    ) -> Result<(), InvariantError> {
+        let all_simplex_keys;
+        let simplex_keys = if let Some(local_simplices) = local_simplices {
+            local_simplices
+        } else {
+            all_simplex_keys = self.tds.simplex_keys().collect::<SimplexKeyBuffer>();
+            &all_simplex_keys
+        };
+
+        self.validate_local_embedding_nondegeneracy(simplex_keys)
+            .map_err(InvariantError::Embedding)
+    }
+
     pub(crate) fn validate_after_insertion_with_scope(
         &self,
         suspicion: SuspicionFlags,
@@ -1648,7 +1807,10 @@ where
 
         log_validation_trigger_if_enabled(self.validation_policy, suspicion);
         match work {
-            InsertionValidationWork::FullValidation => self.is_valid(),
+            InsertionValidationWork::FullValidation => {
+                self.is_valid_topology()?;
+                self.validate_insertion_embedding_scope(local_simplices)
+            }
             InsertionValidationWork::RequiredTopologyLinks => local_simplices.map_or_else(
                 || self.validate_required_topology_links(),
                 |simplices| self.validate_required_topology_links_for_simplices(simplices),
@@ -1716,7 +1878,7 @@ fn record_topology_validation_telemetry(
 
 /// Convert a duration to nanoseconds while saturating at `u64::MAX`.
 #[inline]
-fn duration_nanos_saturating(duration: std::time::Duration) -> u64 {
+fn duration_nanos_saturating(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
 
@@ -1733,6 +1895,7 @@ mod tests {
     use crate::core::algorithms::incremental_insertion::CavityFillingError;
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
     use crate::core::collections::NeighborBuffer;
+    use crate::core::embedding::TriangulationEmbeddingValidationError;
     use crate::core::facet::FacetError;
     use crate::core::operations::InsertionOutcome;
     use crate::core::simplex::Simplex;
@@ -1745,6 +1908,7 @@ mod tests {
     use crate::repair::DelaunayRepairPolicy;
     use crate::triangulation::DelaunayTriangulation;
     use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
+    use crate::vertex;
     use slotmap::KeyData;
     use std::{assert_matches, iter};
 
@@ -1762,6 +1926,10 @@ mod tests {
         }
     }
 
+    fn test_vertex<const D: usize>(coords: [f64; D]) -> Vertex<(), D> {
+        vertex!(coords).unwrap()
+    }
+
     fn insert_test_vertex_with_coords<const D: usize>(
         tds: &mut Tds<(), (), D>,
         entries: &[(usize, f64)],
@@ -1770,10 +1938,7 @@ mod tests {
         for &(axis, value) in entries {
             coords[axis] = value;
         }
-        tds.insert_vertex_with_mapping(
-            crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap(),
-        )
-        .unwrap()
+        tds.insert_vertex_with_mapping(test_vertex(coords)).unwrap()
     }
 
     fn build_invalid_vertex_link_tds<const D: usize>() -> (Tds<(), (), D>, VertexKey) {
@@ -1811,12 +1976,8 @@ mod tests {
         for axis in 0..D {
             let mut coords = [0.0_f64; D];
             coords[axis] = 1.0;
-            first_simplex_vertices.push(
-                tds.insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap(),
-                )
-                .unwrap(),
-            );
+            first_simplex_vertices
+                .push(tds.insert_vertex_with_mapping(test_vertex(coords)).unwrap());
         }
 
         let mut second_simplex_vertices = vec![shared];
@@ -1824,12 +1985,8 @@ mod tests {
             let mut coords = [0.0_f64; D];
             coords[0] = 10.0;
             coords[axis] += 1.0;
-            second_simplex_vertices.push(
-                tds.insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap(),
-                )
-                .unwrap(),
-            );
+            second_simplex_vertices
+                .push(tds.insert_vertex_with_mapping(test_vertex(coords)).unwrap());
         }
 
         let _ = tds
@@ -1852,35 +2009,23 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let a0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 0.0]))
             .unwrap();
         let a1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([1.0, 0.0]))
             .unwrap();
         let a2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 1.0]))
             .unwrap();
 
         let b0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([10.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([10.0, 0.0]))
             .unwrap();
         let b1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([11.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([11.0, 0.0]))
             .unwrap();
         let b2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([10.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([10.0, 1.0]))
             .unwrap();
 
         let _ = tds
@@ -1901,29 +2046,19 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 0.0]))
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([1.0, 0.0]))
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 1.0]))
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, -1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, -1.0]))
             .unwrap();
         let v4 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([2.0, 0.0]))
             .unwrap();
 
         let _ = tds
@@ -1947,17 +2082,17 @@ mod tests {
 
     fn unit_simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
         let mut vertices = Vec::with_capacity(D + 1);
-        vertices.push(crate::core::vertex::Vertex::<(), _>::try_new([0.0_f64; D]).unwrap());
+        vertices.push(test_vertex([0.0_f64; D]));
         for axis in 0..D {
             let mut coords = [0.0_f64; D];
             coords[axis] = 1.0;
-            vertices.push(crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap());
+            vertices.push(test_vertex(coords));
         }
         vertices
     }
 
     fn unit_simplex_interior_vertex<const D: usize>() -> Vertex<(), D> {
-        crate::core::vertex::Vertex::<(), _>::try_new([0.125_f64; D]).unwrap()
+        test_vertex([0.125_f64; D])
     }
 
     fn build_single_tet() -> (
@@ -1967,24 +2102,16 @@ mod tests {
     ) {
         let mut tds: Tds<(), (), 3> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 0.0, 0.0]))
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([1.0, 0.0, 0.0]))
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 1.0, 0.0]))
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 0.0, 1.0]))
             .unwrap();
         let ck = tds
             .insert_simplex_with_mapping(
@@ -1998,6 +2125,35 @@ mod tests {
         (
             Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds),
             [v0, v1, v2, v3],
+            ck,
+        )
+    }
+
+    fn build_degenerate_tet() -> (Triangulation<FastKernel<f64>, (), (), 3>, SimplexKey) {
+        let mut tds: Tds<(), (), 3> = Tds::empty();
+        let v0 = tds
+            .insert_vertex_with_mapping(test_vertex([0.0, 0.0, 0.0]))
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(test_vertex([1.0, 0.0, 0.0]))
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(test_vertex([0.0, 1.0, 0.0]))
+            .unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(test_vertex([1.0, 1.0, 0.0]))
+            .unwrap();
+        let ck = tds
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2, v3], None).unwrap(),
+            )
+            .unwrap();
+        for vk in [v0, v1, v2, v3] {
+            tds.vertex_mut(vk).unwrap().set_incident_simplex(Some(ck));
+        }
+
+        (
+            Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds),
             ck,
         )
     }
@@ -2211,9 +2367,9 @@ mod tests {
     #[test]
     fn try_global_topology_setter_rejects_closed_metadata_for_euclidean_boundary() {
         let vertices: Vec<Vertex<(), 2>> = vec![
-            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            test_vertex([0.0, 0.0]),
+            test_vertex([1.0, 0.0]),
+            test_vertex([0.0, 1.0]),
         ];
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
@@ -2234,7 +2390,7 @@ mod tests {
             )
         );
         assert_eq!(tri.global_topology(), GlobalTopology::Euclidean);
-        assert!(tri.is_valid().is_ok());
+        assert!(tri.is_valid_topology().is_ok());
     }
 
     #[test]
@@ -2505,9 +2661,7 @@ mod tests {
         tri.set_validation_policy(ValidationPolicy::Always);
         let _ = tri
             .tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 0.0]))
             .unwrap();
         assert_eq!(tri.number_of_simplices(), 0);
 
@@ -2579,6 +2733,15 @@ mod tests {
         assert_eq!(
             insertion_error_to_invariant_error(error, "ctx"),
             InvariantError::Triangulation(inner)
+        );
+
+        let delaunay_source = synthetic_delaunay_verification_error("delaunay");
+        let error = InsertionError::DelaunayValidationFailed {
+            source: delaunay_source.clone(),
+        };
+        assert_eq!(
+            insertion_error_to_invariant_error(error, "ctx"),
+            InvariantError::Delaunay(delaunay_source)
         );
 
         let error = InsertionError::CavityFilling {
@@ -2672,12 +2835,10 @@ mod tests {
         let (mut tri, _, _) = build_single_tet();
         let iso = tri
             .tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.5, 0.5, 0.5]))
             .unwrap();
 
-        match tri.is_valid() {
+        match tri.is_valid_topology() {
             Err(InvariantError::Triangulation(TriangulationValidationError::IsolatedVertex {
                 vertex_key,
                 ..
@@ -2693,7 +2854,7 @@ mod tests {
         let tds = build_disconnected_two_triangles_tds_2d();
         let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
 
-        match tri.is_valid() {
+        match tri.is_valid_topology() {
             Err(InvariantError::Triangulation(TriangulationValidationError::Disconnected {
                 simplex_count,
             })) => assert_eq!(simplex_count, 2),
@@ -2720,9 +2881,7 @@ mod tests {
         let (mut tri, _, _) = build_single_tet();
         let _ = tri
             .tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.5, 0.5, 0.5]))
             .unwrap();
 
         match tri.validate() {
@@ -2738,11 +2897,11 @@ mod tests {
     #[test]
     fn validation_report_ok_for_valid_triangulation() {
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
+            test_vertex([0.0, 0.0, 0.0]),
+            test_vertex([1.0, 0.0, 0.0]),
+            test_vertex([0.0, 1.0, 0.0]),
+            test_vertex([0.0, 0.0, 1.0]),
+            test_vertex([0.5, 0.5, 0.5]),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -2754,9 +2913,7 @@ mod tests {
         let (mut tri, _, _) = build_single_tet();
         let _ = tri
             .tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.5, 0.5, 0.5]))
             .unwrap();
 
         let report = tri.validation_report().unwrap_err();
@@ -2789,7 +2946,7 @@ mod tests {
                 #[test]
                 fn [<is_valid_topology_ $dim d>]() {
                     let vertices: Vec<Vertex<(), $dim>> = vec![
-                        $(crate::core::vertex::Vertex::<(), _>::try_new($simplex_coords).unwrap()),+
+                        $(test_vertex($simplex_coords)),+
                     ];
 
                     let expected_vertices = vertices.len();
@@ -2799,7 +2956,7 @@ mod tests {
                         .expect("simplex construction should succeed");
                     let tri = dt.as_triangulation();
 
-                    assert!(tri.is_valid().is_ok());
+                    assert!(tri.is_valid_topology().is_ok());
                     assert_eq!(tri.number_of_vertices(), expected_vertices);
                     assert_eq!(tri.number_of_simplices(), 1);
                 }
@@ -2844,7 +3001,7 @@ mod tests {
         let tri: Triangulation<FastKernel<f64>, (), (), 3> =
             Triangulation::new_empty(FastKernel::new());
 
-        assert!(tri.is_valid().is_ok());
+        assert!(tri.is_valid_topology().is_ok());
     }
 
     #[test]
@@ -2852,24 +3009,16 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 0.0]))
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([1.0, 0.0]))
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 1.0]))
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([1.0, 1.0]))
             .unwrap();
 
         let _ = tds
@@ -2894,19 +3043,13 @@ mod tests {
             .unwrap();
 
         let v4 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([10.0, 10.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([10.0, 10.0]))
             .unwrap();
         let v5 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([11.0, 10.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([11.0, 10.0]))
             .unwrap();
         let v6 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([10.0, 11.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([10.0, 11.0]))
             .unwrap();
 
         let _ = tds
@@ -2937,7 +3080,7 @@ mod tests {
         tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
 
         assert_matches!(
-            tri.is_valid(),
+            tri.is_valid_topology(),
             Err(InvariantError::Triangulation(
                 TriangulationValidationError::Disconnected { .. }
             ))
@@ -2945,7 +3088,7 @@ mod tests {
 
         tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
 
-        match tri.is_valid() {
+        match tri.is_valid_topology() {
             Err(InvariantError::Triangulation(
                 TriangulationValidationError::VertexLinkNotManifold { vertex_key, .. },
             )) => assert_eq!(vertex_key, v0),
@@ -2968,20 +3111,16 @@ mod tests {
         let mut v: [[VertexKey; M]; N] = [[VertexKey::from(KeyData::from_ffi(0)); M]; N];
         for (i, row) in v.iter_mut().enumerate() {
             for (j, slot) in row.iter_mut().enumerate() {
-                let i_f = <f64 as std::convert::From<u32>>::from(u32::try_from(i).unwrap());
-                let j_f = <f64 as std::convert::From<u32>>::from(u32::try_from(j).unwrap());
+                let i_f = f64::from(u32::try_from(i).unwrap());
+                let j_f = f64::from(u32::try_from(j).unwrap());
                 *slot = tds
-                    .insert_vertex_with_mapping(
-                        crate::core::vertex::Vertex::<(), _>::try_new([i_f, j_f, 0.0]).unwrap(),
-                    )
+                    .insert_vertex_with_mapping(test_vertex([i_f, j_f, 0.0]))
                     .unwrap();
             }
         }
 
         let apex = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.5, 0.5, 1.0]))
             .unwrap();
 
         for i in 0..N {
@@ -3021,7 +3160,7 @@ mod tests {
 
         tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
 
-        match tri.is_valid() {
+        match tri.is_valid_topology() {
             Err(InvariantError::Triangulation(
                 TriangulationValidationError::VertexLinkNotManifold {
                     vertex_key,
@@ -3043,34 +3182,22 @@ mod tests {
         let mut tds: Tds<(), (), 3> = Tds::empty();
 
         let shared_edge_v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 0.0, 0.0]))
             .unwrap();
         let shared_edge_v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([1.0, 0.0, 0.0]))
             .unwrap();
         let tet1_v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 1.0, 0.0]))
             .unwrap();
         let tet1_v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 0.0, 1.0]))
             .unwrap();
         let tet2_v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, -1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, -1.0, 0.0]))
             .unwrap();
         let tet2_v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, -1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 0.0, -1.0]))
             .unwrap();
 
         let _ = tds
@@ -3094,7 +3221,7 @@ mod tests {
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
 
-        match tri.is_valid() {
+        match tri.is_valid_topology() {
             Err(InvariantError::Triangulation(TriangulationValidationError::Disconnected {
                 simplex_count,
             })) => assert_eq!(simplex_count, 2),
@@ -3105,10 +3232,10 @@ mod tests {
     #[test]
     fn validate_includes_tds_validation() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            test_vertex([0.0, 0.0, 0.0]),
+            test_vertex([1.0, 0.0, 0.0]),
+            test_vertex([0.0, 1.0, 0.0]),
+            test_vertex([0.0, 0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let tri = dt.as_triangulation();
@@ -3121,11 +3248,11 @@ mod tests {
     fn is_valid_rejects_bootstrap_phase_with_isolated_vertex() {
         let mut tri: Triangulation<FastKernel<f64>, (), (), 3> =
             Triangulation::new_empty(FastKernel::new());
-        let vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap();
+        let vertex = test_vertex([0.0, 0.0, 0.0]);
         let expected_uuid = vertex.uuid();
         let expected_vk = tri.tds.insert_vertex_with_mapping(vertex).unwrap();
 
-        match tri.is_valid() {
+        match tri.is_valid_topology() {
             Err(InvariantError::Triangulation(TriangulationValidationError::IsolatedVertex {
                 vertex_key,
                 vertex_uuid,
@@ -3140,10 +3267,10 @@ mod tests {
     #[test]
     fn is_valid_rejects_isolated_vertex_even_when_simplices_exist() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            test_vertex([0.0, 0.0, 0.0]),
+            test_vertex([1.0, 0.0, 0.0]),
+            test_vertex([0.0, 1.0, 0.0]),
+            test_vertex([0.0, 0.0, 1.0]),
         ];
 
         let tds =
@@ -3154,13 +3281,11 @@ mod tests {
 
         let _isolated_vk = tri
             .tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([10.0, 10.0, 10.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([10.0, 10.0, 10.0]))
             .unwrap();
 
         assert_matches!(
-            tri.is_valid(),
+            tri.is_valid_topology(),
             Err(InvariantError::Triangulation(
                 TriangulationValidationError::IsolatedVertex { .. }
             ))
@@ -3171,21 +3296,9 @@ mod tests {
     fn is_valid_rejects_disconnected_even_when_euler_matches() {
         let mut tds: Tds<(), (), 1> = Tds::empty();
 
-        let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap(),
-            )
-            .unwrap();
-        let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
-            )
-            .unwrap();
-        let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([2.0]).unwrap(),
-            )
-            .unwrap();
+        let v0 = tds.insert_vertex_with_mapping(test_vertex([0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(test_vertex([1.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(test_vertex([2.0])).unwrap();
         let e0 = tds
             .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![v0, v1], None).unwrap())
             .unwrap();
@@ -3193,21 +3306,9 @@ mod tests {
             .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![v1, v2], None).unwrap())
             .unwrap();
 
-        let v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([10.0]).unwrap(),
-            )
-            .unwrap();
-        let v4 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([11.0]).unwrap(),
-            )
-            .unwrap();
-        let v5 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([12.0]).unwrap(),
-            )
-            .unwrap();
+        let v3 = tds.insert_vertex_with_mapping(test_vertex([10.0])).unwrap();
+        let v4 = tds.insert_vertex_with_mapping(test_vertex([11.0])).unwrap();
+        let v5 = tds.insert_vertex_with_mapping(test_vertex([12.0])).unwrap();
         let c0 = tds
             .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![v3, v4], None).unwrap())
             .unwrap();
@@ -3248,7 +3349,7 @@ mod tests {
         assert_eq!(topology.expected, Some(1));
         assert_eq!(topology.chi, 1);
 
-        match tri.is_valid() {
+        match tri.is_valid_topology() {
             Err(InvariantError::Triangulation(TriangulationValidationError::Disconnected {
                 simplex_count,
             })) => assert_eq!(simplex_count, 5),
@@ -3259,10 +3360,10 @@ mod tests {
     #[test]
     fn tds_is_valid_rejects_boundary_facet_has_neighbor() {
         let vertices_simplex_1 = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            test_vertex([0.0, 0.0, 0.0]),
+            test_vertex([1.0, 0.0, 0.0]),
+            test_vertex([0.0, 1.0, 0.0]),
+            test_vertex([0.0, 0.0, 1.0]),
         ];
 
         let mut tds =
@@ -3271,24 +3372,16 @@ mod tests {
         let first_simplex_key = tds.simplex_keys().next().unwrap();
 
         let v4 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([10.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([10.0, 0.0, 0.0]))
             .unwrap();
         let v5 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([11.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([11.0, 0.0, 0.0]))
             .unwrap();
         let v6 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([10.0, 1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([10.0, 1.0, 0.0]))
             .unwrap();
         let v7 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([10.0, 0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([10.0, 0.0, 1.0]))
             .unwrap();
 
         let second_simplex_key = tds
@@ -3316,29 +3409,19 @@ mod tests {
         let mut tds: Tds<(), (), 3> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 0.0, 0.0]))
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([1.0, 0.0, 0.0]))
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 1.0, 0.0]))
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 0.0, 1.0]))
             .unwrap();
         let v4 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 2.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 0.0, 2.0]))
             .unwrap();
 
         let _ = tds
@@ -3365,34 +3448,22 @@ mod tests {
         let mut tds: Tds<(), (), 3> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 0.0, 0.0]))
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([1.0, 0.0, 0.0]))
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 1.0, 0.0]))
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 0.0, 1.0]))
             .unwrap();
         let v4 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 2.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 0.0, 2.0]))
             .unwrap();
         let v5 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 3.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 0.0, 3.0]))
             .unwrap();
 
         let _ = tds
@@ -3413,7 +3484,7 @@ mod tests {
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
 
-        match tri.is_valid() {
+        match tri.is_valid_topology() {
             Err(InvariantError::Triangulation(TriangulationValidationError::Disconnected {
                 ..
             })) => {}
@@ -3427,10 +3498,10 @@ mod tests {
     #[test]
     fn validation_report_returns_mapping_failures_only() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            test_vertex([0.0, 0.0, 0.0]),
+            test_vertex([1.0, 0.0, 0.0]),
+            test_vertex([0.0, 1.0, 0.0]),
+            test_vertex([0.0, 0.0, 1.0]),
         ];
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
@@ -3453,10 +3524,10 @@ mod tests {
     #[test]
     fn validation_report_includes_vertex_and_simplex_validity() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            test_vertex([0.0, 0.0, 0.0]),
+            test_vertex([1.0, 0.0, 0.0]),
+            test_vertex([0.0, 1.0, 0.0]),
+            test_vertex([0.0, 0.0, 1.0]),
         ];
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
@@ -3498,7 +3569,7 @@ mod tests {
         tri.set_validation_policy(ValidationPolicy::OnSuspicion);
         tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
 
-        assert!(tri.is_valid().is_err());
+        assert!(tri.is_valid_topology().is_err());
         tri.validate_after_insertion_with_scope(SuspicionFlags::default(), None)
             .unwrap();
     }
@@ -3606,7 +3677,7 @@ mod tests {
                             Some(&detail.repair_seed_simplices),
                         )
                         .unwrap();
-                        tri.is_valid().unwrap();
+                        tri.is_valid_topology().unwrap();
                     }
                 )+
             }
@@ -3621,9 +3692,7 @@ mod tests {
 
         let _ = tri
             .tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([5.0, 5.0, 5.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([5.0, 5.0, 5.0]))
             .unwrap();
 
         let simplex = tri.tds.simplex_mut(ck).unwrap();
@@ -3658,10 +3727,10 @@ mod tests {
     #[test]
     fn validate_after_insertion_ok_for_valid_simplex() {
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            test_vertex([0.0, 0.0, 0.0]),
+            test_vertex([1.0, 0.0, 0.0]),
+            test_vertex([0.0, 1.0, 0.0]),
+            test_vertex([0.0, 0.0, 1.0]),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -3674,6 +3743,51 @@ mod tests {
         assert!(
             tri.validate_after_insertion_with_scope(suspicion, None)
                 .is_ok()
+        );
+    }
+
+    #[test]
+    fn validate_after_insertion_rejects_local_degenerate_simplex_embedding() {
+        let (tri, ck) = build_degenerate_tet();
+        let mut scope = SimplexKeyBuffer::new();
+        scope.push(ck);
+
+        let err = tri
+            .validate_after_insertion_with_scope(SuspicionFlags::default(), Some(&scope))
+            .unwrap_err();
+
+        assert_matches!(
+            err,
+            InvariantError::Embedding(
+                TriangulationEmbeddingValidationError::DegenerateSimplex {
+                    simplex_key,
+                    dimension: 3,
+                    ..
+                }
+            ) if simplex_key == ck
+        );
+    }
+
+    #[test]
+    fn validate_after_insertion_full_validation_rejects_local_degenerate_simplex_embedding() {
+        let (mut tri, ck) = build_degenerate_tet();
+        tri.set_validation_policy(ValidationPolicy::Always);
+        let mut scope = SimplexKeyBuffer::new();
+        scope.push(ck);
+
+        let err = tri
+            .validate_after_insertion_with_scope(SuspicionFlags::default(), Some(&scope))
+            .unwrap_err();
+
+        assert_matches!(
+            err,
+            InvariantError::Embedding(
+                TriangulationEmbeddingValidationError::DegenerateSimplex {
+                    simplex_key,
+                    dimension: 3,
+                    ..
+                }
+            ) if simplex_key == ck
         );
     }
 
@@ -3728,9 +3842,9 @@ mod tests {
     #[test]
     fn required_topology_validation_records_telemetry() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            test_vertex([0.0, 0.0]),
+            test_vertex([1.0, 0.0]),
+            test_vertex([0.0, 1.0]),
         ];
 
         for guarantee in [
@@ -3747,7 +3861,7 @@ mod tests {
             let hint = tri.simplices().next().map(|(simplex_key, _)| simplex_key);
             let detail = tri
                 .insert_with_statistics_seeded_indexed_detailed(
-                    crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.25]).unwrap(),
+                    test_vertex([0.25, 0.25]),
                     None,
                     hint,
                     0,

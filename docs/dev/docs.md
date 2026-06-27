@@ -23,6 +23,11 @@ repository.
 - `docs/architecture/README.md` indexes focused architecture references.
 - `REFERENCES.md` owns literature references.
 - `CITATION.cff` owns citation metadata.
+- `README.md`'s first Introduction paragraph and `CITATION.cff`'s `abstract`
+  field intentionally mirror each other. When one changes, update the other in
+  the same patch. `scripts/tests/test_readme_citation_mirror.py` checks the
+  normalized text after Markdown links are stripped from the README prose.
+  Semgrep also rejects stale public validation-hierarchy wording.
 - `docs/archive/` stores historical plans, completed changelog series, and old
   design notes. Do not update archived docs as active guidance unless an
   explicit archive-maintenance task asks for it.

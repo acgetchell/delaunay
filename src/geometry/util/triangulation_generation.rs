@@ -1160,7 +1160,7 @@ mod tests {
             triangulation_2d.number_of_vertices()
         );
         assert_eq!(triangulation_2d.dim(), 2);
-        triangulation_2d.is_valid().unwrap();
+        triangulation_2d.is_valid_delaunay().unwrap();
 
         // Test 3D triangulation creation with data
         let triangulation_3d = try_generate_random_triangulation::<i32, (), 3>(
@@ -1177,7 +1177,7 @@ mod tests {
             triangulation_3d.number_of_vertices()
         );
         assert_eq!(triangulation_3d.dim(), 3);
-        triangulation_3d.is_valid().unwrap();
+        triangulation_3d.is_valid_delaunay().unwrap();
 
         // Exercise repeatable construction with two deterministic seeds.
         let triangulation_seeded = try_generate_random_triangulation::<(), (), 2>(
@@ -1196,8 +1196,8 @@ mod tests {
         )
         .unwrap();
 
-        triangulation_seeded.is_valid().unwrap();
-        triangulation_different_seed.is_valid().unwrap();
+        triangulation_seeded.is_valid_delaunay().unwrap();
+        triangulation_different_seed.is_valid_delaunay().unwrap();
         assert!(
             triangulation_seeded.number_of_vertices() >= 3,
             "Expected at least 3 vertices in seeded 2D triangulation, got {}",
@@ -1276,14 +1276,14 @@ mod tests {
             generate_random_triangulation_in_range::<(), (), 2>(nonzero(10), range, None, Some(42))
                 .unwrap();
         assert_eq!(triangulation.dim(), 2);
-        triangulation.is_valid().unwrap();
+        triangulation.is_valid_delaunay().unwrap();
 
         let builder_triangulation = RandomTriangulationBuilder::new_in_range(nonzero(10), range)
             .seed(43)
             .build::<(), (), 2>()
             .unwrap();
         assert_eq!(builder_triangulation.dim(), 2);
-        builder_triangulation.is_valid().unwrap();
+        builder_triangulation.is_valid_delaunay().unwrap();
 
         let guaranteed_triangulation =
             generate_random_triangulation_in_range_with_topology_guarantee::<(), (), 2>(
@@ -1298,7 +1298,7 @@ mod tests {
             guaranteed_triangulation.topology_guarantee(),
             TopologyGuarantee::Pseudomanifold
         );
-        guaranteed_triangulation.is_valid().unwrap();
+        guaranteed_triangulation.is_valid_delaunay().unwrap();
     }
 
     #[test]
@@ -1310,7 +1310,7 @@ mod tests {
             .unwrap();
         assert_eq!(triangulation.dim(), 2);
         assert!(triangulation.number_of_vertices() >= 3);
-        triangulation.is_valid().unwrap();
+        triangulation.is_valid_delaunay().unwrap();
 
         let triangulation_with_data = RandomTriangulationBuilder::try_new(nonzero(10), (-5.0, 5.0))
             .unwrap()
@@ -1327,7 +1327,7 @@ mod tests {
             triangulation_with_data.number_of_vertices()
         );
         assert!(vertex_data.iter().all(|&data| data == 7));
-        triangulation_with_data.is_valid().unwrap();
+        triangulation_with_data.is_valid_delaunay().unwrap();
 
         let too_few_vertices = RandomTriangulationBuilder::try_new(nonzero(2), (-1.0, 1.0))
             .unwrap()

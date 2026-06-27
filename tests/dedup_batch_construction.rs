@@ -3,7 +3,7 @@
 //! These tests verify that:
 //! - Explicit batch dedup removes exact duplicates during batch construction
 //! - Explicit Hilbert-sort dedup collapses quantization-resolution collisions
-//! - The resulting triangulations are valid (Levels 1–4)
+//! - The resulting triangulations are valid (Levels 1–5)
 //! - Simplex-level coordinate uniqueness validation catches no violations post-dedup
 //! - Explicit `DedupPolicy::Exact` works for non-Hilbert orderings
 //!
@@ -152,7 +152,7 @@ macro_rules! gen_dedup_batch_tests {
                 );
                 assert!(dt.number_of_simplices() > 0);
 
-                // Full validation (Levels 1–4) including coordinate uniqueness
+                // Full validation (Levels 1–5) including coordinate uniqueness
                 let validation = dt.validate();
                 assert!(
                     validation.is_ok(),

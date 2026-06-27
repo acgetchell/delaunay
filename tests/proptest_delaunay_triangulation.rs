@@ -348,7 +348,7 @@ fn has_no_cospherical_5_tuples_3d(vertices: &[Vertex<(), 3>]) -> bool {
 
 /// Assert the layered validation contract we rely on in these properties:
 /// - Levels 1–3 only (elements + structure + topology)
-/// - Level 4 (Delaunay empty-circumsphere) is intentionally NOT asserted here
+/// - Levels 4–5 (embedding + Delaunay empty-circumsphere) are intentionally NOT asserted here
 macro_rules! prop_assert_levels_1_to_3_valid {
     ($dim:expr, $dt:expr, $context:expr) => {{
         let validation = ($dt).as_triangulation().validate();
@@ -1012,7 +1012,7 @@ proptest! {
                     }
                     let dt = dt.prop_assume_ok()?;
 
-                    // Verify the triangulation satisfies the Delaunay property (Level 4)
+                    // Verify the triangulation satisfies the Delaunay property (Level 5)
                     // Use fast O(N) flip-based verification instead of O(N×V) brute-force
                     let delaunay_result = dt.is_delaunay_via_flips();
                     prop_assert!(
@@ -1115,7 +1115,7 @@ macro_rules! gen_high_dim_delaunay_smoke {
                     let delaunay_result = dt.is_delaunay_via_flips();
                     prop_assert!(
                         delaunay_result.is_ok(),
-                        "{}D active smoke triangulation should satisfy Level 4 Delaunay validation: {:?}",
+                        "{}D active smoke triangulation should satisfy Level 5 Delaunay validation: {:?}",
                         $dim,
                         delaunay_result.err()
                     );
@@ -1166,7 +1166,7 @@ macro_rules! gen_high_dim_delaunay_smoke {
                         &cloud_dt,
                         "active smoke duplicate-cloud construction"
                     );
-                    let cloud_delaunay = cloud_dt.is_valid();
+                    let cloud_delaunay = cloud_dt.is_valid_delaunay();
                     prop_assert!(
                         cloud_delaunay.is_ok(),
                         "{}D active smoke duplicate cloud should be globally Delaunay: {:?}",
@@ -1276,7 +1276,7 @@ macro_rules! gen_insertion_order_robustness_test {
                 /// - Both triangulations are structurally/topologically valid (Levels 1–3)
                 /// - Same vertex counts (all input points successfully inserted)
                 ///
-                /// The Delaunay property (Level 4) is not asserted here (see Issue #120).
+                /// The Delaunay property (Level 5) is not asserted here (see Issue #120).
                 ///
                 /// **Note**: The exact edge sets may differ between different insertion orders, as
                 /// Delaunay triangulation is not unique for degenerate/co-spherical point sets.
@@ -1356,8 +1356,8 @@ macro_rules! gen_insertion_order_robustness_test {
 
                     // TODO: Once bistellar flips are implemented to ensure unique canonical triangulations,
                     // add explicit Level-4 checks here:
-                    // prop_assert!(dt_a.is_valid().is_ok(), "{}D: Triangulation A must satisfy Delaunay property", $dim);
-                    // prop_assert!(dt_b.is_valid().is_ok(), "{}D: Triangulation B must satisfy Delaunay property", $dim);
+                    // prop_assert!(dt_a.is_valid_delaunay().is_ok(), "{}D: Triangulation A must satisfy Delaunay property", $dim);
+                    // prop_assert!(dt_b.is_valid_delaunay().is_ok(), "{}D: Triangulation B must satisfy Delaunay property", $dim);
                     // Bistellar flips will produce canonical triangulations, making edge-set comparison more meaningful.
                 }
             }
@@ -2039,7 +2039,7 @@ macro_rules! gen_duplicate_cloud_test {
 
                     // Delaunay validity (Level 4) for kept subset
                     let validate_start = std::time::Instant::now();
-                    let delaunay = dt.is_valid();
+                    let delaunay = dt.is_valid_delaunay();
                     let validate_elapsed = validate_start.elapsed();
                     if log_coverage {
                         tracing::info!(

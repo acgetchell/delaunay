@@ -59,6 +59,10 @@ workflow. Agents must load every file in `docs/dev/` before making changes.
   focused surfaces changed.
 - **Do not edit generated changelogs manually.** Changelog and documentation
   maintenance rules live in `docs/dev/docs.md`.
+- **Keep README and citation prose mirrored.** The first paragraph under
+  `README.md`'s Introduction is mirrored by the `abstract` field in
+  `CITATION.cff`; update both together. The invariant is checked by
+  `scripts/tests/test_readme_citation_mirror.py`.
 
 ## Project Context
 
@@ -99,10 +103,13 @@ When in doubt, favor the invariant over the convenient edit.
 
 ### Topological Correctness
 
-- Every mutating operation preserves the invariants checked by `Tds::is_valid`
-  (Levels 1-3) and `DelaunayTriangulation::is_valid` (Level 4). An operation
-  that cannot preserve them must fail explicitly rather than leave inconsistent
-  state behind.
+- Every mutating operation preserves the invariants checked by
+  `Tds::is_valid` / `validate` (Levels 1-2),
+  `Triangulation::is_valid_topology` / `validate` (Level 3),
+  `Triangulation::is_valid_embedding` / `validate_embedding` (Level 4), and
+  `DelaunayTriangulation::is_valid_delaunay` / `validate` (Level 5). An
+  operation that cannot preserve them must fail explicitly rather than leave
+  inconsistent state behind.
 - PL-manifold invariants: facets have multiplicity 1 (boundary) or 2
   (interior), ridges are linked consistently, and Euler characteristic matches
   the triangulation's `TopologyGuarantee`.
@@ -112,7 +119,7 @@ When in doubt, favor the invariant over the convenient edit.
 
 ### Validation Layers
 
-The library exposes four validation levels, each a superset of the last:
+The library exposes five validation levels, each a superset of the last:
 
 1. **Level 1 - elements**: individual simplices, vertices, and facets are
    internally consistent.
@@ -120,10 +127,23 @@ The library exposes four validation levels, each a superset of the last:
    incidence graph.
 3. **Level 3 - topology**: PL-manifold-with-boundary, Euler characteristic, and
    ridge-link consistency.
-4. **Level 4 - Delaunay property**: every facet is locally Delaunay.
+4. **Level 4 - embedding**: maximal simplices are nondegenerate and intersect
+   only in shared faces in the active affine chart.
+5. **Level 5 - Delaunay property**: every facet is locally Delaunay.
 
-Only Level 4 requires predicate evaluation. Levels 1-3 are pure graph checks.
-Validation code belongs at the lowest layer that owns the invariant.
+Level 4 uses orientation and exact barycentric geometry. Level 5 uses
+Delaunay predicates. Levels 1-3 are pure graph/topology checks. Validation code
+belongs at the lowest layer that owns the invariant.
+Each layer should expose the standard validation surface. Use plain
+`is_valid()` when the owner already names the invariant scope (`Vertex`,
+`Simplex`, and `Tds`); use `is_valid_*` when higher-level owners expose
+multiple validation layers. Use `*_diagnostic` for the first actionable
+repair/retry diagnostic, `*_report` for layer-local aggregate diagnostics, and
+`validate()` / `validation_report()` for cumulative roll-up through the owning
+layer. Report names should identify the layer being checked, e.g.
+`structure_report`, `topology_report`, `embedding_report`, and
+`delaunay_report`. Higher layers should roll lower diagnostics up without
+stringifying them.
 
 ### Symbolic Perturbation
 
@@ -175,6 +195,11 @@ enforce that contract.
 - Prefer small, focused patches.
 - Search `docs/`, `docs/dev/README.md`, and `docs/architecture/README.md`
   before inventing new conventions.
+- Opportunistically fix nearby issues discovered while working in a touched
+  area, even when they predate the current patch, when the fix is small,
+  clearly related, and improves correctness, clarity, tests, or
+  maintainability. Avoid broad mechanical churn; split repo-wide cleanup into
+  separate work.
 - Keep code simple and maintainable when multiple correct solutions exist.
 - Preserve numerical and topological invariants first; optimize only inside
   that envelope.

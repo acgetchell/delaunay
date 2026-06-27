@@ -160,22 +160,33 @@ use delaunay::prelude::triangulation::{
 };
 use delaunay::prelude::try_vertices_from_points as prelude_try_vertices_from_points;
 use delaunay::prelude::validation::{
-    TopologyGuarantee as FocusedValidationTopologyGuarantee, ValidationCadence,
+    DelaunayValidationError as FocusedDelaunayValidationError,
+    DelaunayViolationDetail as FocusedDelaunayViolationDetail,
+    DelaunayViolationReport as FocusedDelaunayViolationReport,
+    PeriodicDomainPeriodError as FocusedPeriodicDomainPeriodError,
+    TopologyGuarantee as FocusedValidationTopologyGuarantee,
+    TriangulationValidationReport as FocusedValidationReport, ValidationCadence,
     ValidationConfigurationError as FocusedValidationConfigurationError,
     ValidationPolicy as FocusedValidationPolicy,
+    delaunay_violation_report as focused_delaunay_violation_report,
+    find_delaunay_violations as focused_find_delaunay_violations,
 };
 use delaunay::prelude::{
     CoordinateRange as RootCoordinateRange, DelaunayError as RootDelaunayError,
-    DelaunayResult as RootDelaunayResult, EdgeIndex as RootEdgeIndex,
+    DelaunayResult as RootDelaunayResult, DelaunayViolationDetail as RootDelaunayViolationDetail,
+    DelaunayViolationReport as RootDelaunayViolationReport, EdgeIndex as RootEdgeIndex,
     FlipFailureKind as RootFlipFailureKind,
     FlipOrientationCheckStage as RootFlipOrientationCheckStage,
     GlobalTopology as RootGlobalTopology, GlobalTopologyModelError as RootGlobalTopologyModelError,
-    IncidenceView as RootIncidenceView, SecureHashMap, SecureHashSet,
-    SimplexNeighborIndex as RootSimplexNeighborIndex, TopologyError as RootTopologyError,
-    TopologyKind as RootTopologyKind, ToroidalConstructionMode as RootToroidalConstructionMode,
-    ToroidalDomain as RootToroidalDomain, ToroidalDomainError as RootToroidalDomainError,
+    IncidenceView as RootIncidenceView, PeriodicDomainPeriodError as RootPeriodicDomainPeriodError,
+    SecureHashMap, SecureHashSet, SimplexNeighborIndex as RootSimplexNeighborIndex,
+    TopologyError as RootTopologyError, TopologyKind as RootTopologyKind,
+    ToroidalConstructionMode as RootToroidalConstructionMode, ToroidalDomain as RootToroidalDomain,
+    ToroidalDomainError as RootToroidalDomainError,
     TriangulationAdjacency as RootTriangulationAdjacency,
-    ValidationConfigurationError as RootValidationConfigurationError, vertex as root_vertex,
+    TriangulationValidationReport as RootTriangulationValidationReport,
+    ValidationConfigurationError as RootValidationConfigurationError,
+    delaunay_violation_report as root_delaunay_violation_report, vertex as root_vertex,
 };
 use delaunay::query::{
     AllFacetsIter as QueryFacadeAllFacetsIter, BoundaryFacetsIter as QueryFacadeBoundaryFacetsIter,
@@ -477,7 +488,12 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
     let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
     let validation = ConstructionDelaunayTriangulationValidationError::VerificationFailed {
         source: Box::new(ConstructionDelaunayVerificationError::from(
-            DelaunayValidationError::DelaunayViolation { simplex_key },
+            DelaunayValidationError::DelaunayViolation {
+                simplex_key,
+                simplex_vertices: Default::default(),
+                offending_vertex: None,
+                neighbor_simplices: Default::default(),
+            },
         )),
     };
     assert_matches!(
@@ -549,7 +565,7 @@ fn construction_prelude_covers_typed_construction_failure_variants() {
     );
     assert_eq!(
         FinalDelaunayValidationContext::PeriodicQuotientDelaunay.to_string(),
-        "periodic quotient failed final Level 4 Delaunay validation"
+        "periodic quotient failed final Level 5 Delaunay validation"
     );
     assert_eq!(
         InsertionTopologyValidationContext::PostInsertion.to_string(),
@@ -1359,6 +1375,66 @@ fn validation_prelude_covers_configuration_error() {
             validation_policy: TriangulationValidationPolicy::Never,
         }
     );
+
+    let focused_report = FocusedValidationReport {
+        violations: Vec::new(),
+    };
+    let root_report: RootTriangulationValidationReport = focused_report;
+    assert!(root_report.is_empty());
+
+    let focused_period_error = FocusedPeriodicDomainPeriodError::NonPositivePeriod {
+        axis: 0,
+        period: 0.0,
+    };
+    assert_matches!(
+        focused_period_error,
+        FocusedPeriodicDomainPeriodError::NonPositivePeriod { axis: 0, .. }
+    );
+
+    let root_period_error = RootPeriodicDomainPeriodError::NonFinitePeriod {
+        axis: 1,
+        period: InvalidCoordinateValue::PositiveInfinity,
+    };
+    assert_matches!(
+        root_period_error,
+        RootPeriodicDomainPeriodError::NonFinitePeriod { axis: 1, .. }
+    );
+}
+
+#[test]
+fn validation_prelude_covers_delaunay_property_diagnostics() -> Result<(), PreludeExportTestError> {
+    let tds: Tds<(), (), 2> = Tds::empty();
+
+    let violations = focused_find_delaunay_violations(&tds, None)?;
+    assert!(violations.is_empty());
+
+    let report = focused_delaunay_violation_report(&tds, None)?;
+    let focused_report: FocusedDelaunayViolationReport = report;
+    let _focused_detail: Option<FocusedDelaunayViolationDetail> = None;
+    assert!(focused_report.is_valid());
+
+    let simplex_key = SimplexKey::from(KeyData::from_ffi(11));
+    let focused_error = FocusedDelaunayValidationError::DelaunayViolation {
+        simplex_key,
+        simplex_vertices: Default::default(),
+        offending_vertex: None,
+        neighbor_simplices: Default::default(),
+    };
+    assert_matches!(
+        focused_error,
+        FocusedDelaunayValidationError::DelaunayViolation {
+            simplex_key: key,
+            offending_vertex: None,
+            ..
+        } if key == simplex_key
+    );
+
+    let root_report = root_delaunay_violation_report(&tds, None)?;
+    let root_typed_report: RootDelaunayViolationReport = root_report;
+    let _root_typed_detail: Option<RootDelaunayViolationDetail> = None;
+    assert!(root_typed_report.is_valid());
+
+    Ok(())
 }
 
 fn simplex_prelude_vertices<const D: usize>(

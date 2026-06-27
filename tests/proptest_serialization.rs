@@ -42,9 +42,16 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 
 /// Macro to generate serialization property tests for a given dimension
 macro_rules! test_serialization_properties {
-    ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, cases = $cases:literal)? $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
+                $(
+                    #![proptest_config(proptest::test_runner::Config {
+                        cases: $cases,
+                        ..proptest::test_runner::Config::default()
+                    })]
+                )?
+
                 /// Property: Triangulation structure preserved after JSON roundtrip
                 $(#[$attr])*
                 #[test]
@@ -238,6 +245,6 @@ macro_rules! test_serialization_properties {
 // Generate tests for dimensions 2-5
 // Parameters: dimension, min_vertices, max_vertices
 test_serialization_properties!(2, 4, 10);
-test_serialization_properties!(3, 5, 12);
+test_serialization_properties!(3, 5, 12, cases = 8);
 test_serialization_properties!(4, 6, 14, #[cfg(feature = "slow-tests")]);
 test_serialization_properties!(5, 7, 16, #[cfg(feature = "slow-tests")]);

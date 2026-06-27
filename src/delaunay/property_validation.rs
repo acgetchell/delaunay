@@ -1,16 +1,16 @@
-//! Delaunay empty-circumsphere property validation utilities.
+//! Delaunay empty-circumsphere property scans over bare TDS storage.
+//!
+//! This module is the reusable Level 5 property engine: it answers whether a
+//! [`Tds`](crate::tds::Tds) violates the Delaunay empty-circumsphere condition and returns
+//! repair-oriented keys for offending simplices, vertices, and neighbors. It
+//! does not own wrapper-level validation policy, cumulative roll-up, or
+//! construction proofs; those live in `validation`.
 
 #![forbid(unsafe_code)]
 
-use crate::core::collections::ViolationBuffer;
-#[cfg(any(test, feature = "diagnostics"))]
-use crate::core::collections::{NeighborBuffer, SimplexVertexKeyBuffer};
-#[cfg(not(any(test, feature = "diagnostics")))]
-use crate::core::simplex::SimplexValidationError;
-#[cfg(any(test, feature = "diagnostics"))]
+use crate::core::collections::{NeighborBuffer, SimplexVertexKeyBuffer, ViolationBuffer};
 use crate::core::simplex::{NeighborSlot, SimplexValidationError};
 use crate::core::tds::{SimplexKey, Tds, TdsError, VertexKey};
-use crate::core::traits::data_type::DataType;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::InSphere;
 use crate::geometry::robust_predicates::robust_insphere;
@@ -24,11 +24,16 @@ use thiserror::Error;
 ///
 /// ```rust
 /// use delaunay::prelude::tds::SimplexKey;
-/// use delaunay::prelude::repair::DelaunayValidationError;
+/// use delaunay::prelude::validation::DelaunayValidationError;
 /// use slotmap::KeyData;
 ///
 /// let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
-/// let err = DelaunayValidationError::DelaunayViolation { simplex_key };
+/// let err = DelaunayValidationError::DelaunayViolation {
+///     simplex_key,
+///     simplex_vertices: Default::default(),
+///     offending_vertex: None,
+///     neighbor_simplices: Default::default(),
+/// };
 /// std::assert_matches!(err, DelaunayValidationError::DelaunayViolation { .. });
 /// ```
 #[derive(Clone, Debug, Error, PartialEq)]
@@ -36,11 +41,24 @@ use thiserror::Error;
 pub enum DelaunayValidationError {
     /// A simplex violates the Delaunay property (has an external vertex inside its circumsphere).
     #[error(
-        "Simplex violates Delaunay property: simplex contains vertex that is inside circumsphere"
+        "Simplex {simplex_key:?} violates Delaunay property; offending vertex: {offending_vertex:?}"
     )]
     DelaunayViolation {
-        /// The key of the simplex that violates the Delaunay property
+        /// The key of the simplex that violates the Delaunay property.
         simplex_key: SimplexKey,
+        /// Vertex keys stored by the violating simplex at report time.
+        ///
+        /// Boxed to keep the error enum small while preserving typed repair
+        /// context.
+        simplex_vertices: Box<SimplexVertexKeyBuffer>,
+        /// First external vertex found inside the simplex circumsphere, if one could
+        /// be identified.
+        offending_vertex: Option<VertexKey>,
+        /// Neighbor slots of the violating simplex, preserving facet-index order.
+        ///
+        /// Boxed to keep the error enum small while preserving typed repair
+        /// context.
+        neighbor_simplices: Box<NeighborBuffer<NeighborSlot>>,
     },
     /// TDS data structure corruption or other structural issues detected during validation.
     #[error("TDS corruption: {source}")]
@@ -75,15 +93,15 @@ pub enum DelaunayValidationError {
 
 /// Structured summary of Delaunay empty-circumsphere violations.
 ///
-/// This diagnostic report is available with the `diagnostics` feature and is
-/// intended for bug reports, regression tests, and local investigation. It
-/// records stable TDS keys rather than copying all coordinates; callers can
-/// look up coordinates, UUIDs, and simplex data in the original [`Tds`].
+/// This diagnostic report is intended for repair planning, bug reports,
+/// regression tests, and local investigation. It records stable TDS keys rather
+/// than copying all coordinates; callers can look up coordinates, UUIDs, and
+/// simplex data in the original [`Tds`].
 ///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::diagnostics::delaunay_violation_report;
+/// use delaunay::prelude::validation::delaunay_violation_report;
 /// use delaunay::prelude::*;
 ///
 /// # #[derive(Debug, thiserror::Error)]
@@ -108,8 +126,6 @@ pub enum DelaunayValidationError {
 /// # Ok(())
 /// # }
 /// ```
-#[cfg(any(test, feature = "diagnostics"))]
-#[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[must_use]
 pub struct DelaunayViolationReport {
@@ -125,31 +141,40 @@ pub struct DelaunayViolationReport {
     pub checked_simplices: usize,
     /// Simplices that failed the empty-circumsphere property.
     pub violating_simplices: ViolationBuffer,
-    /// Details for the first violating simplex, if one is still present in the TDS.
-    pub first_violation: Option<DelaunayViolationDetail>,
+    /// Details for each violating simplex that was still present in the TDS.
+    pub violation_details: Vec<DelaunayViolationDetail>,
 }
 
-#[cfg(any(test, feature = "diagnostics"))]
 impl DelaunayViolationReport {
     /// Returns `true` when no Delaunay violations were found.
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::diagnostics::DelaunayViolationReport;
+    /// use delaunay::prelude::validation::DelaunayViolationReport;
     ///
     /// let report = DelaunayViolationReport {
     ///     number_of_vertices: 0,
     ///     number_of_simplices: 0,
     ///     checked_simplices: 0,
     ///     violating_simplices: Default::default(),
-    ///     first_violation: None,
+    ///     violation_details: Vec::new(),
     /// };
     /// assert!(report.is_valid());
     /// ```
     #[must_use]
     pub fn is_valid(&self) -> bool {
-        self.violating_simplices.is_empty()
+        self.violating_simplices.is_empty() && self.violation_details.is_empty()
+    }
+
+    /// Returns the first violating-simplex detail, if one is present.
+    ///
+    /// This borrowed view is derived from
+    /// [`violation_details`](Self::violation_details), avoiding a second owned
+    /// copy that could diverge from the report's canonical detail list.
+    #[must_use]
+    pub fn first_violation(&self) -> Option<&DelaunayViolationDetail> {
+        self.violation_details.first()
     }
 }
 
@@ -165,8 +190,6 @@ impl DelaunayViolationReport {
 /// [`Boundary`](NeighborSlot::Boundary) hull facets,
 /// [`Unassigned`](NeighborSlot::Unassigned) missing wiring, and
 /// [`Neighbor`](NeighborSlot::Neighbor) simplex links.
-#[cfg(any(test, feature = "diagnostics"))]
-#[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[must_use]
 pub struct DelaunayViolationDetail {
@@ -194,11 +217,7 @@ fn validate_simplex_delaunay<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
     simplex_vertex_points: &mut SmallVec<[Point<D>; 8]>,
-) -> Result<Option<SimplexKey>, DelaunayValidationError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<Option<SimplexKey>, DelaunayValidationError> {
     Ok(
         first_delaunay_violation_witness(tds, simplex_key, simplex_vertex_points)?
             .map(|_| simplex_key),
@@ -210,11 +229,7 @@ fn first_delaunay_violation_witness<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
     simplex_vertex_points: &mut SmallVec<[Point<D>; 8]>,
-) -> Result<Option<VertexKey>, DelaunayValidationError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<Option<VertexKey>, DelaunayValidationError> {
     let Some(simplex) = tds.simplex(simplex_key) else {
         // Simplex doesn't exist (possibly removed), skip validation
         return Ok(None);
@@ -237,10 +252,9 @@ where
     for &vkey in &simplex_vertex_keys {
         let Some(v) = tds.vertex(vkey) else {
             return Err(DelaunayValidationError::TriangulationState {
-                source: TdsError::InconsistentDataStructure {
-                    message: format!(
-                        "Simplex {simplex_key:?} references non-existent vertex {vkey:?}"
-                    ),
+                source: TdsError::VertexNotFound {
+                    vertex_key: vkey,
+                    context: format!("Delaunay property validation for simplex {simplex_key:?}"),
                 },
             });
         };
@@ -359,13 +373,9 @@ where
 /// This performs the expensive geometric check but intentionally does **not** run
 /// `tds.is_valid()` up front. Callers that want cumulative validation should run
 /// lower-layer checks separately.
-pub(crate) fn is_delaunay_property_only<U, V, const D: usize>(
+pub fn is_delaunay_property_only<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
-) -> Result<(), DelaunayValidationError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<(), DelaunayValidationError> {
     // Reusable buffer to minimize allocations
     let mut simplex_vertex_points: SmallVec<[Point<D>; 8]> = SmallVec::with_capacity(D + 1);
 
@@ -374,9 +384,15 @@ where
         if let Some(violating_simplex) =
             validate_simplex_delaunay(tds, simplex_key, &mut simplex_vertex_points)?
         {
-            return Err(DelaunayValidationError::DelaunayViolation {
-                simplex_key: violating_simplex,
+            let detail = build_violation_detail(tds, violating_simplex).unwrap_or_else(|| {
+                DelaunayViolationDetail {
+                    simplex_key: violating_simplex,
+                    simplex_vertices: SimplexVertexKeyBuffer::new(),
+                    offending_vertex: None,
+                    neighbor_simplices: NeighborBuffer::new(),
+                }
             });
+            return Err(detail.into());
         }
     }
 
@@ -413,7 +429,7 @@ where
 ///
 /// ```
 /// use delaunay::prelude::*;
-/// use delaunay::prelude::repair::find_delaunay_violations;
+/// use delaunay::prelude::validation::find_delaunay_violations;
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -444,11 +460,7 @@ where
 pub fn find_delaunay_violations<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     simplices_to_check: Option<&[SimplexKey]>,
-) -> Result<ViolationBuffer, DelaunayValidationError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<ViolationBuffer, DelaunayValidationError> {
     let mut violating_simplices = ViolationBuffer::new();
     let mut simplex_vertex_points: SmallVec<[Point<D>; 8]> = SmallVec::with_capacity(D + 1);
 
@@ -507,7 +519,7 @@ where
 /// Build a structured Delaunay violation report.
 ///
 /// This is the structured counterpart to
-/// [`debug_print_first_delaunay_violation`]. It uses the same robust
+/// `debug_print_first_delaunay_violation`. It uses the same robust
 /// empty-circumsphere scan as [`find_delaunay_violations`] and returns compact,
 /// key-based diagnostics that can be attached to bug reports or inspected by
 /// tests without relying on tracing output.
@@ -528,7 +540,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::diagnostics::delaunay_violation_report;
+/// use delaunay::prelude::validation::delaunay_violation_report;
 /// use delaunay::prelude::*;
 ///
 /// # #[derive(Debug, thiserror::Error)]
@@ -554,42 +566,32 @@ where
 /// # Ok(())
 /// # }
 /// ```
-#[cfg(any(test, feature = "diagnostics"))]
-#[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
 pub fn delaunay_violation_report<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     simplices_to_check: Option<&[SimplexKey]>,
-) -> Result<DelaunayViolationReport, DelaunayValidationError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<DelaunayViolationReport, DelaunayValidationError> {
     let violating_simplices = find_delaunay_violations(tds, simplices_to_check)?;
     let checked_simplices =
         simplices_to_check.map_or_else(|| tds.number_of_simplices(), <[_]>::len);
-    let first_violation = violating_simplices
-        .first()
-        .and_then(|&simplex_key| build_violation_detail(tds, simplex_key));
+    let violation_details: Vec<_> = violating_simplices
+        .iter()
+        .filter_map(|&simplex_key| build_violation_detail(tds, simplex_key))
+        .collect();
 
     Ok(DelaunayViolationReport {
         number_of_vertices: tds.number_of_vertices(),
         number_of_simplices: tds.number_of_simplices(),
         checked_simplices,
         violating_simplices,
-        first_violation,
+        violation_details,
     })
 }
 
 /// Builds the compact detail record for a violating simplex that still exists in the TDS.
-#[cfg(any(test, feature = "diagnostics"))]
 fn build_violation_detail<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
-) -> Option<DelaunayViolationDetail>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Option<DelaunayViolationDetail> {
     let simplex = tds.simplex(simplex_key)?;
     let simplex_vertices = simplex.vertices().iter().copied().collect();
     let neighbor_simplices = simplex
@@ -606,19 +608,25 @@ where
 }
 
 /// Finds one external vertex that witnesses a simplex's Delaunay violation, if available.
-#[cfg(any(test, feature = "diagnostics"))]
 fn first_offending_vertex<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
-) -> Option<VertexKey>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Option<VertexKey> {
     let mut simplex_vertex_points: SmallVec<[Point<D>; 8]> = SmallVec::with_capacity(D + 1);
     first_delaunay_violation_witness(tds, simplex_key, &mut simplex_vertex_points)
         .ok()
         .flatten()
+}
+
+impl From<DelaunayViolationDetail> for DelaunayValidationError {
+    fn from(detail: DelaunayViolationDetail) -> Self {
+        Self::DelaunayViolation {
+            simplex_key: detail.simplex_key,
+            simplex_vertices: Box::new(detail.simplex_vertices),
+            offending_vertex: detail.offending_vertex,
+            neighbor_simplices: Box::new(detail.neighbor_simplices),
+        }
+    }
 }
 
 /// Debug helper: print detailed information about the first detected Delaunay
@@ -652,10 +660,7 @@ where
 pub fn debug_print_first_delaunay_violation<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     simplices_subset: Option<&[SimplexKey]>,
-) where
-    U: DataType,
-    V: DataType,
-{
+) {
     // First, build the structured report used by downstream diagnostics.
     let report = match delaunay_violation_report(tds, simplices_subset) {
         Ok(report) => report,
@@ -800,22 +805,29 @@ mod tests {
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
     use crate::core::simplex::{NeighborSlot, Simplex};
     use crate::core::triangulation::Triangulation;
+    use crate::core::vertex::Vertex;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::{CoordinateConversionError, InvalidCoordinateValue};
     use crate::triangulation::DelaunayTriangulation;
-    use std::assert_matches;
+    use crate::vertex;
+    use slotmap::KeyData;
+    use std::{assert_matches, sync::Once};
+
+    fn test_vertex<const D: usize>(coords: [f64; D]) -> Vertex<(), D> {
+        vertex!(coords).unwrap()
+    }
 
     #[test]
     fn delaunay_validator_reports_no_violations_for_simple_tetrahedron() {
         init_tracing();
-        println!("Testing Delaunay validator and debug helper on a simple 3D tetrahedron");
+        tracing::debug!("Testing Delaunay validator and debug helper on a simple 3D tetrahedron");
 
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            test_vertex([0.0, 0.0, 0.0]),
+            test_vertex([1.0, 0.0, 0.0]),
+            test_vertex([0.0, 1.0, 0.0]),
+            test_vertex([0.0, 0.0, 1.0]),
         ];
 
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -839,7 +851,7 @@ mod tests {
     }
 
     fn init_tracing() {
-        static INIT: std::sync::Once = std::sync::Once::new();
+        static INIT: Once = Once::new();
         INIT.call_once(|| {
             let filter = tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
@@ -854,24 +866,16 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 0.0]))
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([1.0, 0.0]))
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 1.0]))
             .unwrap();
         let d = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.8, 0.8]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.8, 0.8]))
             .unwrap();
 
         let simplex_1 = tds
@@ -893,24 +897,16 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 0.0]))
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([1.0, 0.0]))
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 1.0]))
             .unwrap();
         let d = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.8, 0.8]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.8, 0.8]))
             .unwrap();
 
         let simplex_1 = tds
@@ -922,8 +918,13 @@ mod tests {
         tds.assign_incident_simplices().unwrap();
 
         match is_delaunay_property_only(&tds) {
-            Err(DelaunayValidationError::DelaunayViolation { simplex_key }) => {
+            Err(DelaunayValidationError::DelaunayViolation {
+                simplex_key,
+                offending_vertex,
+                ..
+            }) => {
                 assert!(simplex_key == simplex_1 || simplex_key == simplex_2);
+                assert!(offending_vertex.is_some());
             }
             other => panic!("Expected DelaunayViolation, got {other:?}"),
         }
@@ -935,24 +936,16 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 0.0]))
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([1.0, 0.0]))
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 1.0]))
             .unwrap();
         let d = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.8, 0.8]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.8, 0.8]))
             .unwrap();
 
         let simplex_1 = tds
@@ -1003,19 +996,13 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 0.0]))
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([1.0, 0.0]))
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 1.0]))
             .unwrap();
 
         tds.insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, c], None).unwrap())
@@ -1031,8 +1018,8 @@ mod tests {
 
     #[test]
     fn numeric_predicate_error_display_includes_context() {
-        let simplex_key = SimplexKey::from(slotmap::KeyData::from_ffi(1));
-        let vertex_key = VertexKey::from(slotmap::KeyData::from_ffi(2));
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
+        let vertex_key = VertexKey::from(KeyData::from_ffi(2));
         let source = CoordinateConversionError::NonFiniteValue {
             coordinate_index: 0,
             coordinate_value: InvalidCoordinateValue::Nan,
@@ -1063,10 +1050,10 @@ mod tests {
     fn delaunay_violation_report_summarizes_valid_tds() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            test_vertex([0.0, 0.0, 0.0]),
+            test_vertex([1.0, 0.0, 0.0]),
+            test_vertex([0.0, 1.0, 0.0]),
+            test_vertex([0.0, 0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
@@ -1076,7 +1063,7 @@ mod tests {
         assert_eq!(report.number_of_vertices, 4);
         assert_eq!(report.number_of_simplices, 1);
         assert_eq!(report.checked_simplices, 1);
-        assert!(report.first_violation.is_none());
+        assert!(report.first_violation().is_none());
     }
 
     #[test]
@@ -1089,9 +1076,9 @@ mod tests {
         assert!(!report.is_valid());
         assert_eq!(report.violating_simplices.len(), 1);
         let detail = report
-            .first_violation
-            .as_ref()
+            .first_violation()
             .expect("violating report should include first violation details");
+        assert!(std::ptr::eq(detail, &report.violation_details[0]));
         assert!(detail.simplex_key == simplex_1 || detail.simplex_key == simplex_2);
         assert_eq!(detail.simplex_vertices.len(), 3);
         assert_eq!(detail.neighbor_simplices.len(), 3);
@@ -1114,19 +1101,13 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 0.0]))
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([1.0, 0.0]))
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(test_vertex([0.0, 1.0]))
             .unwrap();
         let simplex_key = tds
             .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, c], None).unwrap())
@@ -1161,10 +1142,7 @@ mod tests {
         assert_eq!(report.checked_simplices, 2);
         assert_eq!(report.violating_simplices.as_slice(), &[simplex_1]);
         assert_eq!(
-            report
-                .first_violation
-                .as_ref()
-                .map(|detail| detail.simplex_key),
+            report.first_violation().map(|detail| detail.simplex_key),
             Some(simplex_1)
         );
     }
@@ -1173,10 +1151,10 @@ mod tests {
     fn delaunay_property_only_reports_triangulation_state_on_missing_vertex() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            test_vertex([0.0, 0.0, 0.0]),
+            test_vertex([1.0, 0.0, 0.0]),
+            test_vertex([0.0, 1.0, 0.0]),
+            test_vertex([0.0, 0.0, 1.0]),
         ];
 
         let mut tds =
@@ -1186,7 +1164,7 @@ mod tests {
             let simplex = tds.simplex(simplex_key).unwrap();
             simplex.vertices().to_vec()
         };
-        let invalid_vkey = VertexKey::from(slotmap::KeyData::from_ffi(u64::MAX));
+        let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
 
         {
             let simplex = tds.simplex_mut(simplex_key).unwrap();
@@ -1201,16 +1179,25 @@ mod tests {
         }
 
         let err = is_delaunay_property_only(&tds).unwrap_err();
-        assert_matches!(err, DelaunayValidationError::TriangulationState { .. });
+        assert_matches!(
+            err,
+            DelaunayValidationError::TriangulationState {
+                source: TdsError::VertexNotFound {
+                    vertex_key,
+                    ref context,
+                },
+            } if vertex_key == invalid_vkey
+                && context.contains(&format!("{simplex_key:?}"))
+        );
     }
 
     #[test]
     fn is_delaunay_property_only_reports_invalid_simplex() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            test_vertex([0.0, 0.0]),
+            test_vertex([1.0, 0.0]),
+            test_vertex([0.0, 1.0]),
         ];
 
         let mut tds =

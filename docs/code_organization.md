@@ -48,7 +48,9 @@ into architecture docs; link to the command guide instead.
 - `edge.rs` and `facet.rs` stay in `src/core/` because they are direct TDS
   traversal primitives. Ridge query/view types belong in `src/topology/`
   because ridge shape and link semantics depend on dimension and topology.
-- Delaunay Level 4 validation belongs in `src/delaunay/validation.rs`; generic
+- Generic Level 4 embedding validation belongs in `src/core/embedding.rs`;
+  Delaunay Level 5 public validation APIs belong in `src/delaunay/validation.rs`,
+  with TDS-level Delaunay-property scan helpers under `src/delaunay/`; generic
   Level 1-3 validation belongs in the core/topology layers.
 - Focused preludes should stay narrow and workflow-specific. Use
   `delaunay::prelude::pachner::*` for local move workflows, and import

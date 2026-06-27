@@ -731,7 +731,7 @@ where
                     .remove_vertex(vertex_key)
                     .map_err(|e| InvariantError::Tds(e.into_inner()))?;
                 tri.tds.is_valid().map_err(InvariantError::Tds)?;
-                tri.is_valid()?;
+                tri.is_valid_topology()?;
                 Ok(simplices_removed)
             })()
         };
@@ -840,7 +840,7 @@ where
             || validation_scope.is_empty()
         {
             self.tds.is_valid().map_err(InvariantError::Tds)?;
-            self.is_valid()?;
+            self.is_valid_topology()?;
             return Ok(());
         }
 
@@ -857,7 +857,7 @@ where
         #[cfg(debug_assertions)]
         {
             self.tds.is_valid().map_err(InvariantError::Tds)?;
-            self.is_valid()?;
+            self.is_valid_topology()?;
         }
 
         Ok(())
@@ -2304,10 +2304,13 @@ mod tests {
             matches!(
                 error,
                 crate::DeleteVertexError::InvariantViolation {
-                    source: InvariantError::Triangulation(
+                    ref source
+                } if matches!(
+                    source.as_ref(),
+                    InvariantError::Triangulation(
                         TriangulationValidationError::IsolatedVertex { .. }
                     )
-                }
+                )
             ),
             "expected isolated-vertex invariant failure, got {error:?}"
         );

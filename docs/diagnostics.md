@@ -15,7 +15,7 @@ The crate exposes two kinds of diagnostics.
 
 Always available:
 
-- `validate()` and `validation_report()` for cumulative Levels 1-4 validation.
+- `validate()` and `validation_report()` for cumulative Levels 1-5 validation.
 - Typed construction, insertion, validation, topology, and repair errors.
 - Repair diagnostics attached to non-convergence and repair-neighbor failures.
 - Construction statistics and telemetry through
@@ -87,8 +87,25 @@ fn main() -> DelaunayResult<()> {
 }
 ```
 
-Use `validate()` when a pass/fail result is enough. Use `validation_report()`
-when you need all violated invariants instead of the first error.
+Use `validate()` when a cumulative pass/fail result is enough. Use
+`validation_report()` when you need all violated invariants across the stack
+instead of the first error.
+
+Layer-local diagnostics follow a standard naming pattern:
+
+- `is_valid()` for unambiguous element/TDS owners, and `is_valid_*` for
+  higher-level owners with multiple validation layers.
+- `*_diagnostic`: first actionable repair/retry diagnostic for that layer.
+- `*_report`: all checkable layer-local failures.
+
+For Level 4 embedding failures specifically, use
+`dt.as_triangulation().embedding_diagnostic()` for the first repair-oriented
+failure and `dt.as_triangulation().embedding_report()` for all checkable
+embedding failures. These report invalid simplices or simplex pairs with
+simplex keys, simplex UUIDs, offending vertex keys, and offending vertex UUIDs.
+That key-oriented payload is the intended starting point for explicit rollback,
+vertex deletion, or future repair workflows; the report itself is pure and does
+not mutate the triangulation.
 
 ## Construction Telemetry
 
@@ -110,7 +127,7 @@ For large-scale reproducible diagnostics, prefer the documented debug recipes in
 
 ## Delaunay Violation Reports
 
-Use `delaunay_violation_report` when you want key-based data about Level 4
+Use `delaunay_violation_report` when you want key-based data about Level 5
 empty-circumsphere violations:
 
 ```rust
@@ -155,8 +172,10 @@ Useful fields:
 - `number_of_vertices`, `number_of_simplices`: size of the inspected TDS.
 - `checked_simplices`: number of requested simplices considered by the scan.
 - `violating_simplices`: all simplices that violate the Delaunay property.
-- `first_violation`: first violating simplex, its vertex keys, neighbor slots, and
-  one offending external vertex when identified.
+- `violation_details`: per-violation repair seeds with the simplex vertices,
+  neighbor slots, and one offending external vertex when identified.
+- `first_violation()`: borrowed view of the first `violation_details` entry,
+  avoiding a duplicate stored detail that could drift from the aggregate report.
 
 ## Tracing Output
 

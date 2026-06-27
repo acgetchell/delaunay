@@ -21,7 +21,7 @@
 //!   and what errors mean.
 //!
 //!   In particular, this document covers:
-//!   - The validation hierarchy and invariant stack (Levels 1–4)
+//!   - The validation hierarchy and invariant stack (Levels 1–5)
 //!   - Topological guarantees (`TopologyGuarantee`) and insertion-time validation policy (`ValidationPolicy`)
 //!   - High-level error semantics and programming contract (transactional operations, duplicate rejection)
 //!
@@ -30,7 +30,7 @@
 //!   repairs, diagnostics, and statistics).
 //!
 //! - **docs/validation.md**:
-//!   Formal definitions of validation Levels 1–4, their costs, and guidance on when
+//!   Formal definitions of validation Levels 1–5, their costs, and guidance on when
 //!   each level should be applied.
 //!
 //! - **docs/diagnostics.md**:
@@ -59,10 +59,10 @@
 //! | Random points / triangulations for examples and tests | `use delaunay::prelude::generators::*` |
 //! | Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
 //! | Unified Pachner move workflow | `use delaunay::prelude::pachner::*` |
-//! | Delaunay repair and flip-based Level 4 validation | `use delaunay::prelude::repair::*` |
+//! | Delaunay repair and flip-based Level 5 validation | `use delaunay::prelude::repair::*` |
 //! | Delaunayize workflow (repair + flip) | `use delaunay::prelude::delaunayize::*` |
 //! | Construction telemetry diagnostics | `use delaunay::prelude::diagnostics::*` |
-//! | Construction validation cadence/policy | `use delaunay::prelude::validation::*` |
+//! | Validation policies, errors, reports, and Level 5 diagnostics | `use delaunay::prelude::validation::*` |
 //! | Topology validation, Euler characteristic, ridge queries | `use delaunay::prelude::topology::validation::*` |
 //! | Topological spaces, topology traits, lifted toroidal IDs | `use delaunay::prelude::topology::spaces::*` |
 //! | Low-level TDS simplices, facets, keys | `use delaunay::prelude::tds::*` |
@@ -97,7 +97,7 @@
 //!
 //! ## Examples (contract-oriented)
 //!
-//! ### Validation hierarchy (Levels 1–4)
+//! ### Validation hierarchy (Levels 1–5)
 //!
 //! ```rust
 //! use delaunay::prelude::construction::{
@@ -119,10 +119,13 @@
 //! // Levels 1–3: elements + structural + topology
 //! assert!(dt.as_triangulation().validate().is_ok());
 //!
-//! // Level 4 only: Delaunay property (assumes Levels 1–3)
-//! assert!(dt.is_valid().is_ok());
+//! // Levels 1–4: elements + structural + topology + faithful embedding
+//! assert!(dt.as_triangulation().validate_embedding().is_ok());
 //!
-//! // Levels 1–4: full cumulative validation
+//! // Level 5 only: Delaunay property (assumes Levels 1–4)
+//! assert!(dt.is_valid_delaunay().is_ok());
+//!
+//! // Levels 1–5: full cumulative validation
 //! assert!(dt.validate().is_ok());
 //! # Ok(())
 //! # }
@@ -199,8 +202,10 @@
 //!   - **Simplex shape** – exactly D+1 distinct vertex keys, valid UUID, and neighbor buffer length
 //!     (if present) is D+1.
 //!
-//!   These checks are surfaced via [`Vertex::is_valid`](crate::tds::Vertex::is_valid) and
-//!   [`Simplex::is_valid`](crate::tds::Simplex::is_valid), and are automatically run by
+//!   These checks are surfaced via [`Vertex::is_valid`](crate::tds::Vertex::is_valid),
+//!   [`Vertex::vertex_report`](crate::tds::Vertex::vertex_report),
+//!   [`Simplex::is_valid`](crate::tds::Simplex::is_valid), and
+//!   [`Simplex::simplex_report`](crate::tds::Simplex::simplex_report), and are automatically run by
 //!   [`Tds::validate`](crate::tds::Tds::validate) (Levels 1–2).
 //!
 //! - [`Tds`](crate::tds::Tds) (Triangulation Data Structure)
@@ -221,41 +226,53 @@
 //! - [`Triangulation`] builds on the TDS and validates
 //!   **manifold topology**.
 //!   Level 3 (topology) validation is performed by
-//!   [`Triangulation::is_valid`](crate::Triangulation::is_valid) (Level 3 only) and
+//!   [`Triangulation::is_valid_topology`](crate::Triangulation::is_valid_topology) (Level 3 only) and
 //!   [`Triangulation::validate`](crate::Triangulation::validate) (Levels 1–3), which:
 //!   - Strengthens facet incidence to the **manifold facet property**:
 //!     one-sided facets are valid only when the declared topology admits
 //!     boundary; two-sided facets are interior.
 //!   - Checks the **Euler characteristic** of the triangulation (using the topology module).
 //!
+//! - [`Triangulation`] also validates the **faithfulness of the embedding** in
+//!   the active affine chart. Level 4 (embedding) validation is performed by
+//!   [`Triangulation::is_valid_embedding`](crate::Triangulation::is_valid_embedding) (Level 4 only) and
+//!   [`Triangulation::validate_embedding`](crate::Triangulation::validate_embedding) (Levels 1–4).
+//!   Euclidean topology is checked directly in its ambient chart; toroidal
+//!   topology is checked in periodic covering-space charts.
+//!
 //! - [`DelaunayTriangulation`] builds on
 //!   `Triangulation` and validates the **geometric** Delaunay condition.
-//!   Level 4 (Delaunay property) validation is performed by
-//!   [`DelaunayTriangulation::is_valid`](crate::DelaunayTriangulation::is_valid) (Level 4 only) and
-//!   [`DelaunayTriangulation::validate`](crate::DelaunayTriangulation::validate) (Levels 1–4).
+//!   Level 5 (Delaunay property) validation is performed by
+//!   [`DelaunayTriangulation::is_valid_delaunay`](crate::DelaunayTriangulation::is_valid_delaunay) (Level 5 only) and
+//!   [`DelaunayTriangulation::validate`](crate::DelaunayTriangulation::validate) (Levels 1–5).
 //!   Batch construction runs final Delaunay validation before returning.
-//!   Incremental insertion can run global Level 4 checks according to
+//!   Incremental insertion can run global Level 5 checks according to
 //!   [`DelaunayCheckPolicy`](crate::repair::DelaunayCheckPolicy). If robust
 //!   fallback and repair cannot certify a checked result, the operation returns a
 //!   typed error rather than silently accepting a known violation.
 //!
 //! ## Validation
 //!
-//! The crate exposes four validation levels (element → structural → manifold → Delaunay). The
+//! The crate exposes five validation levels
+//! (element → structural → topology → embedding → Delaunay). The
 //! canonical guide (when to use each level, complexity, examples, troubleshooting) lives in
 //! `docs/validation.md`:
 //! <https://github.com/acgetchell/delaunay/blob/main/docs/validation.md>
 //!
 //! In brief:
-//! - Level 1 (elements / `Vertex` + `Simplex`): `Vertex::is_valid()` / `Simplex::is_valid()` for element
-//!   checks, or `dt.tds().validate()` for Levels 1–2.
+//! - Level 1 (elements / `Vertex` + `Simplex`): `Vertex::is_valid()` /
+//!   `Simplex::is_valid()` for fast checks, or `vertex_report()` /
+//!   `simplex_report()` for element-local diagnostics.
 //! - Level 2 (structural / `Tds`): `dt.tds().is_valid()` for a quick check, or `dt.tds().validate()` for
 //!   Levels 1–2.
-//! - Level 3 (topology / `Triangulation`): `dt.as_triangulation().is_valid()` for topology-only checks, or
+//! - Level 3 (topology / `Triangulation`): `dt.as_triangulation().is_valid_topology()` for topology-only checks, or
 //!   `dt.as_triangulation().validate()` for Levels 1–3.
-//! - Level 4 (Delaunay / `DelaunayTriangulation`): `dt.is_valid()` for the empty-circumsphere property, or
-//!   `dt.validate()` for Levels 1–4.
-//! - Full diagnostics: `dt.validation_report()` returns all violated invariants across Levels 1–4.
+//! - Level 4 (embedding / `Triangulation`): `dt.as_triangulation().validate_embedding()` for cumulative
+//!   faithful embedded-geometry checks, or `dt.as_triangulation().embedding_report()` for layer-local diagnostics.
+//! - Level 5 (Delaunay / `DelaunayTriangulation`): `dt.is_valid_delaunay()` for the Delaunay
+//!   property, or `dt.delaunay_report()` for layer-local diagnostics.
+//! - Cumulative Delaunay validation: `dt.validate()` for Levels 1–5, or
+//!   `dt.validation_report()` for full diagnostics.
 //!
 //! ### Automatic topology validation during insertion (`ValidationPolicy`)
 //!
@@ -269,7 +286,8 @@
 //! mandatory local topology checks still run during insertion, while full Level 3 validation is a
 //! caller-owned explicit checkpoint.
 //!
-//! This automatic pass only runs Level 3 (`Triangulation::is_valid()`). It does **not** run Level 4.
+//! This automatic pass only runs Level 3 (`Triangulation::is_valid_topology()`). It does **not** run
+//! Level 4 embedding validation or Level 5 Delaunay validation.
 //!
 //! ```rust
 //! use delaunay::prelude::construction::{
@@ -382,8 +400,8 @@
 //!   [`InsertionError::DuplicateCoordinates`](crate::prelude::insertion::InsertionError::DuplicateCoordinates).
 //!   Duplicate UUIDs return
 //!   [`InsertionError::DuplicateUuid`](crate::prelude::insertion::InsertionError::DuplicateUuid).
-//! - **Explicit verification**: Use `dt.validate()` for cumulative verification (Levels 1–4), or
-//!   `dt.is_valid()` for Level 4 only.
+//! - **Explicit verification**: Use `dt.validate()` for cumulative verification (Levels 1–5), or
+//!   `dt.is_valid_delaunay()` for Level 5 only.
 
 #![expect(
     clippy::multiple_crate_versions,
@@ -559,6 +577,8 @@ mod core {
     /// Generic triangulation construction helpers.
     pub mod construction;
     pub mod edge;
+    /// Embedded Euclidean geometry validation for generic triangulations.
+    pub mod embedding;
     pub mod facet;
     /// Incremental insertion for generic triangulations.
     pub mod insertion;
@@ -600,7 +620,6 @@ mod core {
     pub mod util {
         pub(crate) mod canonical_points;
         pub mod deduplication;
-        pub mod delaunay_validation;
         pub mod facet_keys;
         pub mod facet_utils;
         pub mod hashing;
@@ -611,7 +630,6 @@ mod core {
 
         // Re-export utility internals within the private core namespace.
         pub use deduplication::*;
-        pub use delaunay_validation::*;
         pub use facet_keys::*;
         pub use facet_utils::*;
         pub use hashing::*;
@@ -659,6 +677,9 @@ pub mod geometry {
     }
     /// Validated coordinate-range types.
     pub mod coordinate_range;
+    // Pure Level 4 embedding predicates are crate-internal implementation
+    // machinery; downstream users should use `Triangulation::embedding_report`.
+    pub(crate) mod embedding;
     #[macro_use]
     pub mod matrix;
     /// Geometric kernel abstraction (CGAL-style).
@@ -714,6 +735,9 @@ pub mod builder;
 /// Batch construction options, errors, statistics, and policy helpers.
 #[path = "delaunay/construction.rs"]
 pub mod construction;
+/// TDS-level implementation helpers for Level 5 Delaunay-property scans.
+#[path = "delaunay/property_validation.rs"]
+mod delaunay_property_validation;
 /// Read-only Delaunay query, traversal, and accessor methods.
 #[path = "delaunay/query.rs"]
 pub(crate) mod delaunay_query;
@@ -749,7 +773,7 @@ pub(crate) mod serialization;
 /// Delaunay triangulation layer with incremental insertion.
 #[path = "delaunay/triangulation.rs"]
 pub(crate) mod triangulation;
-/// Validation scheduling helpers for triangulation diagnostics.
+/// Delaunay-level validation APIs, reports, and construction diagnostics.
 #[path = "delaunay/validation.rs"]
 pub mod validation;
 
@@ -785,6 +809,12 @@ pub use crate::core::algorithms::pl_manifold_repair::{
 pub use crate::core::construction::{
     FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
 };
+pub use crate::core::embedding::{
+    PeriodicDomainPeriodError, TriangulationEmbeddingIntersectionDetail,
+    TriangulationEmbeddingSimplexDetail, TriangulationEmbeddingSimplexPairDetail,
+    TriangulationEmbeddingValidationError, TriangulationEmbeddingValidationErrorKind,
+    TriangulationEmbeddingValidationReport,
+};
 pub use crate::core::insertion::DuplicateDetectionMetrics;
 pub use crate::core::operations::{
     InsertionOutcome, InsertionResult, InsertionStatistics, RepairDecision, RepairSkipReason,
@@ -792,14 +822,14 @@ pub use crate::core::operations::{
 };
 pub use crate::core::triangulation::Triangulation;
 pub use crate::core::util::DeduplicationError;
-pub use crate::core::util::{DelaunayValidationError, find_delaunay_violations};
-#[cfg(feature = "diagnostics")]
-pub use crate::core::util::{
-    DelaunayViolationDetail, DelaunayViolationReport, debug_print_first_delaunay_violation,
-    delaunay_violation_report,
-};
 pub use crate::core::validation::{
     TopologyGuarantee, TriangulationValidationError, ValidationConfigurationError, ValidationPolicy,
+};
+#[cfg(feature = "diagnostics")]
+pub use crate::delaunay_property_validation::debug_print_first_delaunay_violation;
+pub use crate::delaunay_property_validation::{
+    DelaunayValidationError, DelaunayViolationDetail, DelaunayViolationReport,
+    delaunay_violation_report, find_delaunay_violations,
 };
 pub use crate::deletion::DeleteVertexError;
 pub use crate::io::visualization::{
@@ -813,6 +843,9 @@ pub use crate::io::visualization::{
 pub use crate::repair::{
     DelaunayCheckPolicy, DelaunayRepairHeuristicConfig, DelaunayRepairHeuristicSeeds,
     DelaunayRepairOperation, DelaunayRepairOutcome, DelaunayRepairPolicy,
+};
+pub use crate::tds::{
+    InvariantError, InvariantKind, InvariantViolation, TriangulationValidationReport,
 };
 pub use crate::triangulation::*;
 pub use crate::validation::{
@@ -1158,10 +1191,14 @@ pub mod prelude {
         DelaunayTriangulationConstructionErrorWithStatistics, DelaunayTriangulationValidationError,
         DelaunayVerificationError, DelaunayVerificationErrorKind, DuplicateDetectionMetrics,
         FinalDelaunayValidationContext, FinalTopologyValidationContext, InitialSimplexStrategy,
-        InsertionOrderStrategy, InsertionResult, PlManifoldRepairError, PlManifoldRepairStats,
-        RepairDecision, RepairSkipReason, RetryPolicy, TopologicalOperation, TopologyGuarantee,
-        Triangulation, TriangulationConstructionError, TriangulationValidationError,
-        ValidationConfigurationError, ValidationPolicy, try_vertices_from_points,
+        InsertionOrderStrategy, InsertionResult, PeriodicDomainPeriodError, PlManifoldRepairError,
+        PlManifoldRepairStats, RepairDecision, RepairSkipReason, RetryPolicy, TopologicalOperation,
+        TopologyGuarantee, Triangulation, TriangulationConstructionError,
+        TriangulationEmbeddingIntersectionDetail, TriangulationEmbeddingSimplexDetail,
+        TriangulationEmbeddingSimplexPairDetail, TriangulationEmbeddingValidationError,
+        TriangulationEmbeddingValidationErrorKind, TriangulationEmbeddingValidationReport,
+        TriangulationValidationError, TriangulationValidationReport, ValidationConfigurationError,
+        ValidationPolicy, try_vertices_from_points,
     };
 
     // Re-export utility items, but avoid exporting the util module names themselves.
@@ -1177,8 +1214,12 @@ pub mod prelude {
         try_hilbert_sort_by_stable, try_hilbert_sort_by_unstable, try_hilbert_sorted_indices,
     };
     pub use crate::core::util::{
-        DeduplicationError, DelaunayValidationError, dedup_vertices_epsilon, dedup_vertices_exact,
-        filter_vertices_excluding, find_delaunay_violations, try_dedup_vertices_epsilon,
+        DeduplicationError, dedup_vertices_epsilon, dedup_vertices_exact,
+        filter_vertices_excluding, try_dedup_vertices_epsilon,
+    };
+    pub use crate::delaunay_property_validation::{
+        DelaunayValidationError, DelaunayViolationDetail, DelaunayViolationReport,
+        delaunay_violation_report, find_delaunay_violations,
     };
     pub use crate::query::{
         JaccardComputationError, extract_edge_set, extract_facet_identifier_set,
@@ -1285,7 +1326,10 @@ pub mod prelude {
         pub use crate::geometry::traits::coordinate::CoordinateValidationError;
         pub use crate::geometry::util::{InvalidPositiveScalar, RandomPointGenerationError};
         pub use crate::repair::DelaunayRepairPolicy;
-        pub use crate::tds::{SimplexValidationError, Vertex, VertexValidationError};
+        pub use crate::tds::{
+            SimplexValidationError, SimplexValidationReport, Vertex, VertexValidationError,
+            VertexValidationReport,
+        };
         pub use crate::topology::traits::{
             GlobalTopology, GlobalTopologyModelError, TopologyKind, ToroidalConstructionMode,
             ToroidalDomain, ToroidalDomainError,
@@ -1359,8 +1403,12 @@ pub mod prelude {
         };
         pub use crate::vertex;
         pub use crate::{
-            InsertionError, SpatialIndexConstructionFailure, TopologyGuarantee, Triangulation,
-            TriangulationConstructionError, TriangulationValidationError,
+            InsertionError, PeriodicDomainPeriodError, SpatialIndexConstructionFailure,
+            TopologyGuarantee, Triangulation, TriangulationConstructionError,
+            TriangulationEmbeddingIntersectionDetail, TriangulationEmbeddingSimplexDetail,
+            TriangulationEmbeddingSimplexPairDetail, TriangulationEmbeddingValidationError,
+            TriangulationEmbeddingValidationErrorKind, TriangulationEmbeddingValidationReport,
+            TriangulationValidationError, TriangulationValidationReport,
             ValidationConfigurationError, ValidationPolicy,
         };
     }
@@ -1502,7 +1550,7 @@ pub mod prelude {
         };
     }
 
-    /// Flip-based Delaunay repair, diagnostics, and Level 4 validation.
+    /// Flip-based Delaunay repair, diagnostics, and Level 5 validation.
     ///
     /// ```rust
     /// use delaunay::prelude::repair::{
@@ -1542,7 +1590,10 @@ pub mod prelude {
             DelaunayTriangulationValidationError, DelaunayVerificationError,
             DelaunayVerificationErrorKind,
         };
-        pub use crate::{DelaunayValidationError, find_delaunay_violations};
+        pub use crate::{
+            DelaunayValidationError, DelaunayViolationDetail, DelaunayViolationReport,
+            delaunay_violation_report, find_delaunay_violations,
+        };
         pub use crate::{
             TopologyGuarantee, Triangulation, ValidationConfigurationError, ValidationPolicy,
         };
@@ -1559,7 +1610,7 @@ pub mod prelude {
         pub use crate::{PlManifoldRepairError, PlManifoldRepairStats};
     }
 
-    /// Validation scheduling helpers for construction diagnostics.
+    /// Delaunay-level validation APIs, reports, and construction diagnostics.
     ///
     /// # Examples
     ///
@@ -1574,8 +1625,16 @@ pub mod prelude {
         pub use crate::validation::*;
         pub use crate::{
             DelaunayTriangulationValidationError, DelaunayVerificationError,
-            DelaunayVerificationErrorKind, TopologyGuarantee, TriangulationValidationError,
+            DelaunayVerificationErrorKind, PeriodicDomainPeriodError, TopologyGuarantee,
+            TriangulationEmbeddingIntersectionDetail, TriangulationEmbeddingSimplexDetail,
+            TriangulationEmbeddingSimplexPairDetail, TriangulationEmbeddingValidationError,
+            TriangulationEmbeddingValidationErrorKind, TriangulationEmbeddingValidationReport,
+            TriangulationValidationError, TriangulationValidationReport,
             ValidationConfigurationError, ValidationPolicy,
+        };
+        pub use crate::{
+            DelaunayValidationError, DelaunayViolationDetail, DelaunayViolationReport,
+            delaunay_violation_report, find_delaunay_violations,
         };
     }
 
@@ -1724,15 +1783,15 @@ pub mod prelude {
         #[cfg(feature = "diagnostics")]
         #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
         pub use crate::algorithms::verify_conflict_region_completeness;
+        #[cfg(feature = "diagnostics")]
+        #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
+        pub use crate::debug_print_first_delaunay_violation;
         pub use crate::diagnostics::{
             BatchLocalRepairTrigger, ConstructionTelemetry, LocalRepairSample,
         };
         pub use crate::tds::NeighborSlot;
-        #[cfg(feature = "diagnostics")]
-        #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
         pub use crate::{
-            DelaunayViolationDetail, DelaunayViolationReport, debug_print_first_delaunay_violation,
-            delaunay_violation_report,
+            DelaunayViolationDetail, DelaunayViolationReport, delaunay_violation_report,
         };
     }
 

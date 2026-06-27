@@ -10,7 +10,7 @@
 //! 2. Convex hull extraction from completed triangulations
 //! 3. Convex hull visibility/containment queries
 //! 4. Boundary facet traversal
-//! 5. Full validation (Levels 1-4)
+//! 5. Full validation (Levels 1-5)
 //! 6. Incremental vertex insertion
 //! 7. Explicit bistellar flip workflows on stable and adversarial 2D-5D
 //!    PL-manifold cases

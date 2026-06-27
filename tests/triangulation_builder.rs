@@ -222,7 +222,7 @@ fn test_builder_canonicalized_toroidal_validates_2d() {
     );
 }
 
-/// Level 4 (Delaunay property) validation passes after toroidal-domain input canonicalization.
+/// Level 5 (Delaunay property) validation passes after toroidal-domain input canonicalization.
 #[test]
 fn test_builder_canonicalized_toroidal_delaunay_property_valid_2d() {
     let vertices = vec![
@@ -514,7 +514,7 @@ macro_rules! gen_toroidal_validation_test {
 
 gen_toroidal_validation_test!(2, levels_1_to_4, true);
 #[test]
-fn test_builder_toroidal_3d_validates_level_1_to_4() {
+fn test_builder_toroidal_3d_fails_fast_until_scalable_quotient() {
     let vertices = vec![
         Vertex::<(), _>::try_new([0.2_f64, 0.3, 0.4]).unwrap(),
         Vertex::<(), _>::try_new([0.8, 0.1, 0.2]).unwrap(),
@@ -525,29 +525,25 @@ fn test_builder_toroidal_3d_validates_level_1_to_4() {
         Vertex::<(), _>::try_new([0.9, 0.2, 0.6]).unwrap(),
     ];
     let kernel = RobustKernel::new();
-    let dt = DelaunayTriangulationBuilder::new(&vertices)
+    let err = DelaunayTriangulationBuilder::new(&vertices)
         .try_toroidal([1.0_f64; 3])
         .unwrap()
         .build_with_kernel::<_, ()>(&kernel)
-        .expect("compact periodic 3D quotient should validate after #413");
+        .expect_err("compact periodic 3D quotient remains pending scalable selection");
 
-    assert_eq!(dt.number_of_vertices(), vertices.len());
-    assert!(
-        dt.global_topology().is_periodic(),
-        "global_topology should use periodic image-point construction"
-    );
-    assert!(
-        dt.tds().is_valid().is_ok(),
-        "TDS structural validity should pass for periodic 3D"
-    );
-    assert!(
-        dt.as_triangulation().validate().is_ok(),
-        "Levels 1-3 topology validation should pass for periodic 3D"
-    );
-    assert!(
-        dt.validate().is_ok(),
-        "Levels 1-4 validation should pass for periodic 3D"
-    );
+    match err {
+        DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::PeriodicQuotientSelectionIncompleteCoverage {
+                dimension,
+                covered_vertex_count,
+                canonical_vertex_count,
+            },
+        ) => {
+            assert_eq!(dimension, 3);
+            assert!(covered_vertex_count < canonical_vertex_count);
+        }
+        other => panic!("expected 3D periodic quotient coverage guardrail, got {other:?}"),
+    }
 }
 
 macro_rules! gen_toroidal_high_dim_guardrail_test {
@@ -615,10 +611,10 @@ fn test_builder_toroidal_large_dimension_fails_before_expansion_math() {
 }
 
 /// Explicit 7-vertex torus (Heawood triangulation) with `GlobalTopology::Toroidal`
-/// is rejected until explicit non-Euclidean construction has Level 4 validation.
+/// is rejected until explicit non-Euclidean construction has quotient embedding validation.
 ///
 /// The 14-triangle closed mesh has χ = 0 (torus), but explicit quotient
-/// connectivity cannot yet be validated against the Level 4 Delaunay property.
+/// connectivity cannot yet be validated against a faithful quotient embedding.
 #[test]
 fn test_explicit_toroidal_heawood_torus_rejected() {
     // Regular heptagon: 7 well-separated points, no 3 collinear.
@@ -644,7 +640,7 @@ fn test_explicit_toroidal_heawood_torus_rejected() {
         .unwrap()
         .global_topology(topology)
         .build::<()>()
-        .expect_err("explicit toroidal connectivity requires a Level 4 quotient validator");
+        .expect_err("explicit toroidal connectivity requires a quotient embedding validator");
 
     match err {
         DelaunayTriangulationConstructionError::ExplicitConstruction(
@@ -1079,7 +1075,7 @@ fn test_explicit_non_delaunay_mesh() {
     );
     assert!(
         err.to_string().contains("Delaunay validation failed"),
-        "error should identify the Level 4 validation failure: {err}"
+        "error should identify the Level 5 validation failure: {err}"
     );
 }
 
@@ -1129,7 +1125,7 @@ fn test_explicit_preserves_vertex_data() {
     );
 }
 
-/// Full `validate()` (Levels 1–4) on a Delaunay-compatible explicit mesh.
+/// Full `validate()` (Levels 1–5) on a Delaunay-compatible explicit mesh.
 #[test]
 fn test_explicit_validate_delaunay_mesh() {
     // Use a known Delaunay configuration: the standard simplex.

@@ -135,7 +135,7 @@ pub enum ToroidalConstructionMode {
     ///
     /// No coordinate canonicalization or image-point expansion is performed. The
     /// current Delaunay builder rejects non-Euclidean explicit connectivity
-    /// because Level 4 quotient Delaunay validation is not implemented for that
+    /// because quotient embedding validation is not implemented for that
     /// construction path.
     Explicit,
 }

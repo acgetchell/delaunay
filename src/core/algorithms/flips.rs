@@ -3246,6 +3246,9 @@ pub enum FlipNeighborDelaunayValidationFailureKind {
     /// Lower-layer topology validation failed.
     #[error("triangulation")]
     Triangulation,
+    /// Embedded-geometry validation failed.
+    #[error("embedding")]
+    Embedding,
     /// Delaunay verification failed.
     #[error("verification failed")]
     VerificationFailed,
@@ -3259,6 +3262,7 @@ impl From<&DelaunayTriangulationValidationError> for FlipNeighborDelaunayValidat
         match source {
             DelaunayTriangulationValidationError::Tds(_) => Self::Tds,
             DelaunayTriangulationValidationError::Triangulation(_) => Self::Triangulation,
+            DelaunayTriangulationValidationError::Embedding(_) => Self::Embedding,
             DelaunayTriangulationValidationError::VerificationFailed { .. } => {
                 Self::VerificationFailed
             }
@@ -7089,7 +7093,7 @@ where
 
 /// Verify the Delaunay property via local flip predicates for a full triangulation.
 ///
-/// This is the preferred Level 4 validation entry point because it carries the
+/// This is the preferred Level 5 validation entry point because it carries the
 /// triangulation's global topology alongside the TDS.  For periodic topologies
 /// (e.g. toroidal), insphere predicates are evaluated in lifted coordinates so
 /// that facets spanning periodic boundaries are not reported as false violations.

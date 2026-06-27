@@ -534,7 +534,7 @@ mod tests {
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
 
-        assert!(tri.is_valid().is_ok());
+        assert!(tri.is_valid_topology().is_ok());
         assert!(tri.is_valid_topology_only().is_ok());
 
         let simplex_key = tri.tds.simplex_keys().next().unwrap();
@@ -544,7 +544,7 @@ mod tests {
             .swap_vertex_slots(0, 1);
 
         assert!(tri.is_valid_topology_only().is_ok());
-        assert!(tri.is_valid().is_err());
+        assert!(tri.is_valid_topology().is_err());
     }
 
     #[test]
@@ -587,7 +587,7 @@ mod tests {
             .swap_vertex_slots(0, 1);
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        let err = tri.is_valid().unwrap_err();
+        let err = tri.is_valid_topology().unwrap_err();
         assert_matches!(
             err,
             InvariantError::Tds(TdsError::Geometric(GeometricError::NegativeOrientation { message }))

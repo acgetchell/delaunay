@@ -41,27 +41,44 @@ struct TopologySnapshot {
     simplex_vertex_uuids: Vec<Vec<Uuid>>,
 }
 
+fn topology_and_delaunay_valid<const D: usize>(
+    dt: &DelaunayTriangulation<RobustKernel<f64>, (), (), D>,
+) -> bool {
+    dt.as_triangulation().validate().is_ok() && dt.is_valid_delaunay().is_ok()
+}
+
+fn assert_topology_and_delaunay_valid<const D: usize>(
+    dt: &DelaunayTriangulation<RobustKernel<f64>, (), (), D>,
+    context: &str,
+) {
+    dt.as_triangulation()
+        .validate()
+        .unwrap_or_else(|err| panic!("{context} should pass Levels 1-3: {err}"));
+    dt.is_valid_delaunay()
+        .unwrap_or_else(|err| panic!("{context} should pass Level 5: {err}"));
+}
+
 #[test]
 fn public_pachner_roundtrips_preserve_stable_4d_topology() {
     let base = build_stable_dt_4d();
-    base.validate().expect("stable 4D fixture should validate");
+    assert_topology_and_delaunay_valid(&base, "stable 4D fixture");
     let before = snapshot_topology(&base);
 
     let mut k1 = base.clone();
     roundtrip_k1(&mut k1);
-    k1.validate().expect("k=1 roundtrip should validate");
+    assert_topology_and_delaunay_valid(&k1, "k=1 roundtrip");
     assert_eq!(snapshot_topology(&k1), before);
 
     let k2_facet = flippable_k2_facet(&base);
     let mut k2 = base.clone();
     roundtrip_k2(&mut k2, k2_facet);
-    k2.validate().expect("k=2 roundtrip should validate");
+    assert_topology_and_delaunay_valid(&k2, "k=2 roundtrip");
     assert_eq!(snapshot_topology(&k2), before);
 
     let k3_ridge = flippable_k3_ridge(&base);
     let mut k3 = base;
     roundtrip_k3(&mut k3, k3_ridge);
-    k3.validate().expect("k=3 roundtrip should validate");
+    assert_topology_and_delaunay_valid(&k3, "k=3 roundtrip");
     assert_eq!(snapshot_topology(&k3), before);
 }
 
@@ -169,8 +186,7 @@ fn edge_to_facet_query_tracks_2d_k2_mutation_freshness() {
             .unwrap()
             .is_some()
     );
-    dt.validate()
-        .expect("2D k=2 mutation-freshness fixture should remain valid");
+    assert_topology_and_delaunay_valid(&dt, "2D k=2 mutation-freshness fixture");
 }
 
 /// Attempts a stale k=1 insert through the public `DelaunayResult` alias.
@@ -223,8 +239,7 @@ fn build_flippable_dt_2d() -> Dt2 {
         .expect("explicit 2D fixture connectivity should parse")
         .build_with_kernel::<_, ()>(&RobustKernel::new())
         .expect("stable 2D fixture should build");
-    dt.validate()
-        .expect("stable 2D fixture should validate before local edits");
+    assert_topology_and_delaunay_valid(&dt, "stable 2D fixture before local edits");
     dt
 }
 
@@ -245,7 +260,8 @@ fn flippable_k2_facet_2d(dt: &Dt2) -> FacetHandle {
             )
             .expect("interior 2D facet index should be valid");
             let mut trial = dt.clone();
-            if trial.attempt_pachner(PachnerMove::K2 { facet }).is_ok() && trial.validate().is_ok()
+            if trial.attempt_pachner(PachnerMove::K2 { facet }).is_ok()
+                && topology_and_delaunay_valid(&trial)
             {
                 return facet;
             }
@@ -594,7 +610,7 @@ fn flippable_k2_facet(dt: &Dt4) -> FacetHandle {
             if trial
                 .attempt_pachner(PachnerMove::K2Inverse { edge })
                 .is_ok()
-                && trial.validate().is_ok()
+                && topology_and_delaunay_valid(&trial)
             {
                 return facet;
             }
@@ -651,7 +667,7 @@ fn flippable_k3_ridge(dt: &Dt4) -> RidgeHandle {
                 if trial
                     .attempt_pachner(PachnerMove::K3Inverse { triangle })
                     .is_ok()
-                    && trial.validate().is_ok()
+                    && topology_and_delaunay_valid(&trial)
                 {
                     return ridge;
                 }

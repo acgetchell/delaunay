@@ -25,7 +25,7 @@ use crate::core::triangulation::Triangulation;
 /// insertion (see [`DelaunayRepairPolicy`](crate::DelaunayRepairPolicy)).
 ///
 /// For applications requiring explicit verification, you can still call
-/// [`is_valid`](Self::is_valid) (Level 4) or [`validate`](Self::validate) (Levels 1–4).
+/// [`is_valid_delaunay`](Self::is_valid_delaunay) (Level 5) or [`validate`](Self::validate) (Levels 1–5).
 /// If flip-based repair fails to converge, insertion returns an error and the
 /// triangulation is left structurally valid but not guaranteed Delaunay.
 ///

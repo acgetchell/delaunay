@@ -259,7 +259,7 @@ fn debug_issue_120_empty_circumsphere_5d() {
             test_debug_warn!("[Issue #120 debug] robust repair error: {err}");
         }
     }
-    if let Err(err) = dt_robust.is_valid() {
+    if let Err(err) = dt_robust.is_valid_delaunay() {
         test_debug_warn!("[Issue #120 debug] robust triangulation still invalid: {err:?}");
     }
     let mut rng = rand::rngs::StdRng::seed_from_u64(0x1200_5eed);
@@ -270,7 +270,7 @@ fn debug_issue_120_empty_circumsphere_5d() {
             &shuffled,
             TopologyGuarantee::PLManifold,
         ) {
-            if dt_alt.is_valid().is_ok() {
+            if dt_alt.is_valid_delaunay().is_ok() {
                 test_debug_info!(
                     "[Issue #120 debug] found valid triangulation after shuffle attempt {}",
                     attempt + 1
@@ -294,7 +294,7 @@ fn debug_issue_120_empty_circumsphere_5d() {
         }
     }
 
-    if let Err(err) = dt.is_valid() {
+    if let Err(err) = dt.is_valid_delaunay() {
         #[cfg(feature = "diagnostics")]
         {
             debug_print_first_delaunay_violation(dt.tds(), None);
@@ -771,33 +771,15 @@ fn test_cube_vertices_3d() {
         delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(),
     ];
 
-    let dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )
-        .unwrap();
+    let err = DelaunayTriangulation::<_, (), (), 3>::try_new_with_topology_guarantee(
+        &vertices,
+        TopologyGuarantee::PLManifold,
+    )
+    .expect_err("exact cube corners should fail before storing a zero-volume simplex");
 
-    // The eight cube corners are cospherical, so this intentionally exercises
-    // degenerate construction. Under `TopologyGuarantee::PLManifold`,
-    // `DelaunayTriangulation::try_new_with_topology_guarantee` may omit one
-    // boundary vertex while preserving a valid PL-manifold. This edge-case test
-    // checks that construction succeeds with a non-empty triangulation, not that
-    // the cospherical cube is meshed into a specific tetrahedralization.
-    let vertex_count = dt.number_of_vertices();
     assert!(
-        (7..=8).contains(&vertex_count),
-        "test_cube_vertices_3d using TopologyGuarantee::PLManifold should retain 7 or 8 vertices, got {vertex_count}"
-    );
-    let simplex_count = dt.number_of_simplices();
-    assert!(
-        simplex_count >= 1,
-        "test_cube_vertices_3d using TopologyGuarantee::PLManifold should produce at least one simplex, got {simplex_count}"
-    );
-    let validation = dt.is_valid();
-    assert!(
-        validation.is_ok(),
-        "test_cube_vertices_3d using TopologyGuarantee::PLManifold should produce a valid triangulation: {validation:?}"
+        format!("{err:?}").contains("DegenerateSimplex"),
+        "cube-corner failure should preserve the embedding degeneracy source: {err:?}"
     );
 }
 
