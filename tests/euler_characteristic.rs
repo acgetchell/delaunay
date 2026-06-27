@@ -318,7 +318,7 @@ fn test_2d_toroidal_explicit_construction_rejected() {
         .global_topology(topology)
         .topology_guarantee(TopologyGuarantee::Pseudomanifold)
         .build::<()>()
-        .expect_err("explicit toroidal connectivity requires a Level 4 quotient validator");
+        .expect_err("explicit toroidal connectivity requires a quotient embedding validator");
 
     match err {
         DelaunayTriangulationConstructionError::ExplicitConstruction(
@@ -400,7 +400,7 @@ fn test_3d_toroidal_explicit_construction_rejected() {
         .global_topology(topology)
         .topology_guarantee(TopologyGuarantee::Pseudomanifold)
         .build::<()>()
-        .expect_err("explicit toroidal connectivity requires a Level 4 quotient validator");
+        .expect_err("explicit toroidal connectivity requires a quotient embedding validator");
 
     match err {
         DelaunayTriangulationConstructionError::ExplicitConstruction(
@@ -521,7 +521,7 @@ test_complex_with_interior!(
         delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
         delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
         delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.25, 0.25, 0.25, 0.25]).unwrap(), // Interior point
+        delaunay::prelude::Vertex::<(), _>::try_new([0.21, 0.17, 0.13, 0.11]).unwrap(), // Interior point
     ],
     0 // S³ has χ = 0
 );

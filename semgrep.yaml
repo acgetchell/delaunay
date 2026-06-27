@@ -169,7 +169,12 @@ rules:
         triangulation snapshots and public error payloads should remain Vec.
     paths:
       include:
-        - "/src/**/*.rs"
+        - "/src/core/vertex.rs"
+        - "/src/core/simplex.rs"
+        - "/src/core/tds/validation.rs"
+        - "/src/core/validation.rs"
+        - "/src/core/embedding.rs"
+        - "/src/delaunay/validation.rs"
         - "/tests/semgrep/src/project_rules/**/*.rs"
     pattern-regex: >-
       \b(?:(?:(?:pending|repair|seed|soft_fail|touched|affected|frontier|sample)_[A-Za-z0-9_]*|conflict_preview|(?:new|removed)_simplices)\s*:\s*(?:&\s*mut\s*)?Vec\s*<\s*SimplexKey\s*>|let\s+(?:mut\s+)?(?:(?:pending|repair|seed|soft_fail|touched|affected|frontier|sample)_[A-Za-z0-9_]*|conflict_preview|(?:new|removed)_simplices)\s*=\s*Vec\s*::\s*(?:(?:<\s*SimplexKey\s*>\s*::\s*)?)(?:new|with_capacity)\s*\()
@@ -415,6 +420,31 @@ rules:
           mod $MOD {
               ...
           }
+
+  - id: delaunay.rust.validation-api-naming-standard
+    languages:
+      - generic
+    severity: WARNING
+    message: >-
+      Public validation APIs above the unambiguous element/TDS layers must
+      follow the v0.8 naming standard: is_valid_* for layer-local fast-fail
+      checks, *_diagnostic for first repair/retry diagnostics, *_report for
+      layer-local aggregate reports, and validate()/validation_report() for
+      cumulative roll-up.
+    metadata:
+      category: correctness
+      rationale: >-
+        Higher validation layers should advertise whether a method is
+        fast-fail, first-diagnostic, layer-local aggregate, or cumulative.
+        Bare is_valid() is reserved for unambiguous element and TDS owners.
+    paths:
+      include:
+        - "/src/core/validation.rs"
+        - "/src/core/embedding.rs"
+        - "/src/delaunay/validation.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-regex: >-
+      (?m)^\s*pub\s+fn\s+(?:is_valid\s*\(|[A-Za-z0-9_]+_validation_report\s*\()
 
   - id: delaunay.rust.no-public-surface-unwrap-panic
     languages:
@@ -1587,6 +1617,30 @@ rules:
       - pattern-regex: '(?ms)^\s*(?:@echo\s+"?\s*)?just\s+markdown-fix\b[^\n]*(?:\n\s*(?:#[^\n]*)?)*?\n\s*(?:@echo\s+"?\s*)?just\s+markdown-check\b' # yamllint disable-line rule:line-length
       - pattern-regex: '(?ms)^\s*(?:@echo\s+"?\s*)?just\s+toml-fix\b[^\n]*(?:\n\s*(?:#[^\n]*)?)*?\n\s*(?:@echo\s+"?\s*)?just\s+toml-check\b' # yamllint disable-line rule:line-length
       - pattern-regex: '(?ms)^\s*(?:@echo\s+"?\s*)?just\s+shell-fix\b[^\n]*(?:\n\s*(?:#[^\n]*)?)*?\n\s*(?:@echo\s+"?\s*)?just\s+shell-check\b' # yamllint disable-line rule:line-length
+
+  - id: delaunay.docs.no-stale-four-level-validation-hierarchy
+    languages:
+      - regex
+    severity: WARNING
+    message: "Validation documentation should describe the current five-level hierarchy."
+    metadata:
+      category: maintainability
+      rationale: >-
+        The validation stack now separates Level 4 embedding checks from Level 5
+        Delaunay predicates. Public docs and citation prose should not keep the
+        old four-level hierarchy wording.
+    paths:
+      include:
+        - "/README.md"
+        - "/CITATION.cff"
+        - "/docs/**/*.md"
+        - "/src/**/*.rs"
+        - "/tests/semgrep/docs/**/*.md"
+      exclude:
+        - "/docs/archive/**"
+    pattern-regex: >-
+      (?i)(?:\b4-level validation hierarchy\b|\bfour levels of validation\b|\blevel 4:\s*delaunay
+      property\b|\bdelaunay property\s*\(level 4\)|\bdelaunay level 4 validation\b)
 
   - id: delaunay.github-actions.external-action-sha-pinned
     languages:

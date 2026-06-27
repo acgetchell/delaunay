@@ -74,13 +74,15 @@
 //! | **Coherent Orientation** | `Tds::is_valid()` / `Tds::validate()` | Adjacent simplices induce opposite facet orientations |
 //! | **Simplex Vertex Keys** | `Tds::is_valid()` / `Tds::validate()` | Simplices reference only valid vertex keys |
 //! | **Vertex Incidence** | `Tds::is_valid()` / `Tds::validate()` | `Vertex::incident_simplex` is non-dangling and consistent (when present) |
-//! | **Simplex Validity** | `SimplexBuilder::validate()` (vertex count) + `simplex.is_valid()` (comprehensive) | Construction + runtime validation |
-//! | **Vertex Validity** | [`Point::try_new`](crate::geometry::point::Point::try_new) / [`Point`](crate::geometry::point::Point) coordinate conversion (coordinates) + UUID auto-gen + `vertex.is_valid()` | Construction + runtime validation |
+//! | **Simplex Validity** | `SimplexBuilder::validate()` (vertex count) + `simplex.is_valid()` / `simplex_report()` | Construction + runtime validation |
+//! | **Vertex Validity** | [`Point::try_new`](crate::geometry::point::Point::try_new) / [`Point`](crate::geometry::point::Point) coordinate conversion (coordinates) + UUID auto-gen + `vertex.is_valid()` / `vertex_report()` | Construction + runtime validation |
 //!
 //! The incremental insertion algorithm attempts to maintain the Delaunay property during
 //! construction, but rare violations can remain. Structural invariants are enforced
 //! **reactively** through validation methods. For a definitive Delaunay check, run
-//! Level 4 validation via `DelaunayTriangulation::is_valid()` / `DelaunayTriangulation::validate()`.
+//! Level 4 embedding validation via `Triangulation::validate_embedding()` and
+//! Level 5 Delaunay validation via `DelaunayTriangulation::is_valid_delaunay()` /
+//! `DelaunayTriangulation::validate()`.
 //!
 //! # Validation
 //!
@@ -99,10 +101,12 @@
 //!    - Coherent orientation (adjacent simplices induce opposite facet orientations)
 //!    - Facet sharing invariant (≤2 simplices per facet)
 //!    - Neighbor consistency
-//! 3. **Level 3: Manifold Topology** - [`Triangulation::is_valid()`]
+//! 3. **Level 3: Manifold Topology** - [`Triangulation::is_valid_topology()`]
 //!    - Builds on Level 2, and rejects isolated vertices (every vertex must be incident to ≥ 1 simplex)
 //!    - Adds manifold-with-boundary + Euler characteristic
-//! 4. **Level 4: Delaunay Property** - [`DelaunayTriangulation::is_valid()`]
+//! 4. **Level 4: Faithful Embedding** - [`Triangulation::validate_embedding()`](crate::Triangulation::validate_embedding)
+//!    - Nondegenerate embedded simplices and no intersections outside shared faces
+//! 5. **Level 5: Delaunay Property** - [`DelaunayTriangulation::is_valid_delaunay()`]
 //!    - Empty circumsphere property
 //!
 //! ## TDS Validation Methods
@@ -110,7 +114,7 @@
 //! - [`is_valid()`](Tds::is_valid) - Level 2 only (structural); returns first error, stops early
 //! - [`validate()`](Tds::validate) - Levels 1–2 (elements + structural); returns first error, stops early
 //!
-//! For cumulative diagnostics across the full stack (Levels 1–4), use
+//! For cumulative diagnostics across the full stack (Levels 1–5), use
 //! [`DelaunayTriangulation::validation_report()`].
 //!
 //! ## Example: Using Validation
@@ -172,8 +176,8 @@
 //!
 //! [`Simplex::is_valid()`]: crate::prelude::tds::Simplex::is_valid
 //! [`Vertex::is_valid()`]: crate::prelude::Vertex::is_valid
-//! [`Triangulation::is_valid()`]: crate::prelude::triangulation::Triangulation::is_valid
-//! [`DelaunayTriangulation::is_valid()`]: crate::DelaunayTriangulation::is_valid
+//! [`Triangulation::is_valid_topology()`]: crate::prelude::triangulation::Triangulation::is_valid_topology
+//! [`DelaunayTriangulation::is_valid_delaunay()`]: crate::DelaunayTriangulation::is_valid_delaunay
 //! [`DelaunayTriangulation::validation_report()`]: crate::DelaunayTriangulation::validation_report
 //!
 //! # Examples
@@ -1429,7 +1433,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// An empty triangulation (no simplices) is trivially connected.
     ///
     /// Connectivity is a **topology-layer** (Level 3) invariant: it is not checked
-    /// by [`Tds::is_valid`] (Level 2), but it *is* checked by [`Triangulation::is_valid`].
+    /// by [`Tds::is_valid`] (Level 2), but it *is* checked by [`Triangulation::is_valid_topology`].
     /// This method exposes the underlying BFS so that diagnostic code and the
     /// `Triangulation`-layer check can both reuse the same primitive without going
     /// through a full `Triangulation` wrapper.
@@ -1437,7 +1441,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// Time complexity: O(N · D), where N is the number of simplices (each simplex has at most
     /// D+1 neighbors, so the BFS visits at most N·(D+1) edges).
     ///
-    /// [`Triangulation::is_valid`]: crate::prelude::triangulation::Triangulation::is_valid
+    /// [`Triangulation::is_valid_topology`]: crate::prelude::triangulation::Triangulation::is_valid_topology
     ///
     /// # Examples
     ///

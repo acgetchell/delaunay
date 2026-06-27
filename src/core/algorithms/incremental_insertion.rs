@@ -1064,7 +1064,7 @@ pub enum InsertionErrorSourceKind {
     Tds(TdsErrorKind),
     /// Triangulation-layer topology validation failed.
     Triangulation(TriangulationValidationErrorKind),
-    /// Level 4 Delaunay validation failed.
+    /// Level 5 Delaunay validation failed.
     Delaunay(DelaunayValidationErrorKind),
     /// Flip repair failed.
     DelaunayRepair(DelaunayRepairErrorKind),
@@ -1616,10 +1616,10 @@ pub enum InsertionError {
     /// Global Delaunay validation failed after insertion.
     ///
     /// This indicates the triangulation is structurally valid but violates the
-    /// empty-circumsphere property (Level 4).
+    /// empty-circumsphere property (Level 5).
     #[error("Delaunay validation failed: {source}")]
     DelaunayValidationFailed {
-        /// The structured Level 4 validation error.
+        /// The structured Level 5 validation error.
         #[source]
         source: DelaunayTriangulationValidationError,
     },
@@ -2007,7 +2007,7 @@ impl InsertionError {
                     | TriangulationValidationErrorKind::OrientationPromotionNonConvergence
                     | TriangulationValidationErrorKind::IsolatedVertex
             ),
-            InvariantError::Delaunay(_) => false,
+            InvariantError::Embedding(_) | InvariantError::Delaunay(_) => false,
         }
     }
 

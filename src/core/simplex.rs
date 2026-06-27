@@ -183,6 +183,30 @@ pub enum SimplexValidationError {
     },
 }
 
+/// Aggregate report for standalone simplex validation failures.
+///
+/// This is the Level 1 element-local report counterpart to
+/// [`Simplex::is_valid`] and [`Simplex::simplex_diagnostic`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct SimplexValidationReport {
+    /// The ordered list of simplex invariant violations that occurred.
+    pub violations: Vec<SimplexValidationError>,
+}
+
+impl SimplexValidationReport {
+    /// Returns `true` if no violations were recorded.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.violations.is_empty()
+    }
+
+    /// Returns the recorded simplex invariant violations.
+    #[must_use]
+    pub fn violations(&self) -> &[SimplexValidationError] {
+        &self.violations
+    }
+}
+
 impl From<StackMatrixDispatchError> for SimplexValidationError {
     fn from(source: StackMatrixDispatchError) -> Self {
         CoordinateConversionError::from(source).into()
@@ -1716,6 +1740,70 @@ impl<V, const D: usize> Simplex<V, D> {
         }
 
         Ok(())
+    }
+
+    /// Returns the first standalone simplex validation diagnostic, if any.
+    #[must_use]
+    pub fn simplex_diagnostic(&self) -> Option<SimplexValidationError> {
+        self.is_valid().err()
+    }
+
+    /// Runs standalone simplex validation and returns all checkable failures.
+    ///
+    /// Unlike [`is_valid`](Self::is_valid), this method does
+    /// not stop after the first invalid field.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SimplexValidationReport`] containing all checkable simplex
+    /// violations.
+    pub fn simplex_report(&self) -> Result<(), SimplexValidationReport> {
+        let mut violations = Vec::new();
+
+        if let Err(source) = validate_uuid(&self.uuid) {
+            violations.push(SimplexValidationError::InvalidUuid { source });
+        }
+
+        if self.vertices.len() != D + 1 {
+            violations.push(SimplexValidationError::InsufficientVertices {
+                actual: self.vertices.len(),
+                expected: D + 1,
+                dimension: D,
+            });
+        }
+
+        // D is intentionally small in this crate; a fixed-size scan avoids a hash allocation.
+        let mut duplicate_vertices = false;
+        for (index, &vkey) in self.vertices.iter().enumerate() {
+            if self.vertices[..index].contains(&vkey) {
+                duplicate_vertices = true;
+                break;
+            }
+        }
+        if duplicate_vertices {
+            violations.push(SimplexValidationError::DuplicateVertices);
+        }
+
+        if let Some(ref neighbors) = self.neighbors {
+            if neighbors.len() != D + 1 {
+                violations.push(SimplexValidationError::InvalidNeighborsLength {
+                    actual: neighbors.len(),
+                    expected: D + 1,
+                    dimension: D,
+                });
+            }
+            for (facet_index, slot) in neighbors.iter().enumerate() {
+                if slot.is_unassigned() {
+                    violations.push(SimplexValidationError::UnassignedNeighborSlot { facet_index });
+                }
+            }
+        }
+
+        if violations.is_empty() {
+            Ok(())
+        } else {
+            Err(SimplexValidationReport { violations })
+        }
     }
 }
 

@@ -31,7 +31,8 @@ fn main() -> DelaunayResult<()> {
     let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
     // Optional verification (see docs/validation.md for when to use each):
-    assert!(dt.is_valid().is_ok()); // Level 4 only (Delaunay property)
+    assert!(dt.as_triangulation().validate_embedding().is_ok()); // Levels 1-4 (faithful embedding)
+    assert!(dt.is_valid_delaunay().is_ok()); // Level 5 only (Delaunay property)
     Ok(())
 }
 ```
@@ -83,7 +84,7 @@ flip-based repair passes during construction. Batch construction uses `Construct
 default repair cadence is `DelaunayRepairPolicy::EveryInsertion` plus final repair/validation. That
 cadence reflects the current #341 3D scale acceptance path: the release-mode
 `just debug-large-scale-3d 7500 1` harness is the current roughly one-minute
-maintainer-hardware envelope for final Levels 1–4 validation. The explicit
+maintainer-hardware envelope for final Levels 1–5 validation. The explicit
 `just debug-large-scale-3d 10000 1` run is a heavier characterization probe
 that has also passed the same final validation checks. Direct incremental insertion keeps the lower-level
 `DelaunayRepairPolicy` default at `EveryInsertion`.
@@ -403,7 +404,7 @@ For guidance on retry/skip behavior and choosing `RobustKernel`, see
 Vertex deletion is supported and preserves Levels 1–3. It uses an inverse k=1 fast path when
 possible and fan retriangulation otherwise, then runs flip-based Delaunay repair when the active
 `DelaunayRepairPolicy` allows it. If automatic repair is disabled, deletion still runs Level 4
-validation and rolls back on any Delaunay violation. If post-deletion repair, validation, or
+embedding validation and Level 5 Delaunay validation, rolling back on any violation. If post-deletion repair, validation, or
 orientation canonicalization fails, the operation rolls back to the pre-deletion triangulation.
 
 ```rust
@@ -444,15 +445,15 @@ fn main() -> Result<(), DeletionExampleError> {
 
     // If automatic repair is enabled, successful deletion has already attempted to
     // restore the Delaunay property.
-    assert!(dt.is_valid().is_ok());
+    assert!(dt.is_valid_delaunay().is_ok());
     Ok(())
 }
 ```
 
 When automatic repair fails after the mutation, `delete_vertex` reports
 `DeleteVertexError::InvariantViolation { source:
-InvariantError::Delaunay(DelaunayTriangulationValidationError::RepairOperationFailed { operation:
-DelaunayRepairOperation::VertexRemoval, source }) }`, preserving the underlying
+Box::new(InvariantError::Delaunay(DelaunayTriangulationValidationError::RepairOperationFailed {
+operation: DelaunayRepairOperation::VertexRemoval, source })) }`, preserving the underlying
 `DelaunayRepairError` for callers that need to inspect the exact repair failure.
 Successful deletions invalidate internal locate hints so stale simplex handles
 are not reused. The spatial index is retained, but the deleted vertex entry is
@@ -518,7 +519,7 @@ fn main() -> Result<(), FlipExampleError> {
 
     // If you need Delaunay after edits (requires K: ExactPredicates):
     // dt.repair_delaunay_with_flips()?;
-    // assert!(dt.is_valid().is_ok());
+    // assert!(dt.is_valid_delaunay().is_ok());
     Ok(())
 }
 ```

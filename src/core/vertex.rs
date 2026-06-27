@@ -89,6 +89,30 @@ pub enum VertexValidationError {
     },
 }
 
+/// Aggregate report for standalone vertex validation failures.
+///
+/// This is the Level 1 element-local report counterpart to
+/// [`Vertex::is_valid`] and [`Vertex::vertex_diagnostic`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VertexValidationReport {
+    /// The ordered list of vertex invariant violations that occurred.
+    pub violations: Vec<VertexValidationError>,
+}
+
+impl VertexValidationReport {
+    /// Returns `true` if no violations were recorded.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.violations.is_empty()
+    }
+
+    /// Returns the recorded vertex invariant violations.
+    #[must_use]
+    pub fn violations(&self) -> &[VertexValidationError] {
+        &self.violations
+    }
+}
+
 // =============================================================================
 // CONVENIENCE MACROS AND HELPERS
 // =============================================================================
@@ -646,6 +670,39 @@ impl<U, const D: usize> Vertex<U, D> {
         // - Tds::is_valid() validates simplex mappings and references
         // Individual vertices cannot validate incident_simplex without TDS context.
         // User data validation (if U: DataType requires it) could be added here.
+    }
+
+    /// Returns the first standalone vertex validation diagnostic, if any.
+    #[must_use]
+    pub fn vertex_diagnostic(&self) -> Option<VertexValidationError> {
+        self.is_valid().err()
+    }
+
+    /// Runs standalone vertex validation and returns all checkable failures.
+    ///
+    /// Unlike [`is_valid`](Self::is_valid), this method does not
+    /// stop after the first invalid field.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`VertexValidationReport`] containing all checkable vertex
+    /// violations.
+    pub fn vertex_report(&self) -> Result<(), VertexValidationReport> {
+        let mut violations = Vec::new();
+
+        if let Err(source) = self.point.validate() {
+            violations.push(VertexValidationError::InvalidPoint { source });
+        }
+
+        if let Err(source) = validate_uuid(&self.uuid()) {
+            violations.push(VertexValidationError::InvalidUuid { source });
+        }
+
+        if violations.is_empty() {
+            Ok(())
+        } else {
+            Err(VertexValidationReport { violations })
+        }
     }
 
     /// Creates a vertex with a caller-provided UUID after validating it.

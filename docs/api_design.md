@@ -291,7 +291,8 @@ After applying flips, you should:
 1. Manually verify the Delaunay property if needed:
 
    ```rust
-   assert!(dt.is_valid().is_ok()); // Check Level 4 (Delaunay property)
+   assert!(dt.as_triangulation().validate_embedding().is_ok()); // Check Level 4 (faithful embedding)
+   assert!(dt.is_valid_delaunay().is_ok()); // Check Level 5 (Delaunay property)
    ```
 
 2. Consider running a repair pass if you need the Delaunay property again (requires `K: ExactPredicates`):
@@ -340,7 +341,7 @@ fn main() -> Result<(), ExampleError> {
     dt.attempt_pachner(PachnerMove::K2 { facet })?;
 
     // 4. Verify Delaunay property if needed
-    if let Err(e) = dt.is_valid() {
+    if let Err(e) = dt.is_valid_delaunay() {
         eprintln!("Warning: Delaunay property violated after manual edit: {}", e);
         // Optionally restore using Builder API or custom repair
     }
@@ -356,7 +357,7 @@ Both APIs work with the same validation framework but have different guarantees:
 
 - ✅ Maintains **structural invariants** (Level 1-2)
 - ✅ Maintains **manifold topology** (Level 3, controlled by `TopologyGuarantee`)
-- ✅ Designed to maintain **Delaunay property** (Level 4)
+- ✅ Designed to maintain **faithful embedding** (Level 4) and **Delaunay property** (Level 5)
 - ✅ Fails gracefully if invariants cannot be maintained
 
 ### Pachner Move API Guarantees
@@ -375,10 +376,13 @@ Use the appropriate validation level for your needs:
 assert!(dt.tds().is_valid().is_ok());
 
 // Level 3: + Manifold topology
-assert!(dt.as_triangulation().is_valid().is_ok());
+assert!(dt.as_triangulation().is_valid_topology().is_ok());
 
-// Level 4: + Delaunay property (most comprehensive)
-assert!(dt.is_valid().is_ok());
+// Level 4: + Faithful embedding
+assert!(dt.as_triangulation().validate_embedding().is_ok());
+
+// Level 5: + Delaunay property (most comprehensive)
+assert!(dt.is_valid_delaunay().is_ok());
 
 // Full diagnostic report
 let report = dt.validation_report();

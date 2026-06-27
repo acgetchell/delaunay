@@ -168,7 +168,7 @@ fn assert_valid<const D: usize>(
     context: &str,
 ) -> Result<(), TestCaseError> {
     triangulation
-        .is_valid()
+        .is_valid_topology()
         .map_err(|err| TestCaseError::fail(format!("{context} invariant check failed: {err:?}")))?;
     triangulation
         .validate()

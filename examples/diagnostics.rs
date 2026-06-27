@@ -105,7 +105,7 @@ fn report_non_delaunay_triangulation() -> Result<(), DiagnosticsExampleError> {
     );
     assert!(!report.is_valid());
 
-    if let Some(detail) = &report.first_violation {
+    if let Some(detail) = report.first_violation() {
         println!("  first violating simplex: {:?}", detail.simplex_key);
         println!("  simplex vertex count: {}", detail.simplex_vertices.len());
         println!("  offending external vertex: {:?}", detail.offending_vertex);
@@ -145,7 +145,7 @@ fn build_non_delaunay_triangulation_2d()
                 if trial.attempt_pachner(PachnerMove::K2 { facet }).is_ok()
                     && trial.as_triangulation().validate().is_ok()
                     && matches!(
-                        trial.is_valid(),
+                        trial.is_valid_delaunay(),
                         Err(DelaunayTriangulationValidationError::VerificationFailed { .. })
                     )
                 {

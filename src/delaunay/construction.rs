@@ -991,7 +991,7 @@ pub enum DelaunayConstructionFailure {
         reason: HullExtensionReason,
     },
 
-    /// Level 4 Delaunay validation failed during insertion.
+    /// Level 5 Delaunay validation failed during insertion.
     #[error("Delaunay validation failed during insertion: {source}")]
     InsertionDelaunayValidation {
         /// Underlying Delaunay validation error.
@@ -3676,7 +3676,7 @@ where
         // batch construction.
         tracing::debug!("post-construction: starting Delaunay validation (build)");
         let delaunay_started = Instant::now();
-        let delaunay_result = dt.is_valid();
+        let delaunay_result = dt.is_valid_delaunay();
         tracing::debug!(
             elapsed = ?delaunay_started.elapsed(),
             success = delaunay_result.is_ok(),
@@ -3724,7 +3724,7 @@ where
         // batch construction.
         tracing::debug!("post-construction: starting Delaunay validation (build stats)");
         let delaunay_started = Instant::now();
-        let delaunay_result = dt.is_valid();
+        let delaunay_result = dt.is_valid_delaunay();
         let delaunay_elapsed = delaunay_started.elapsed();
         stats
             .telemetry
@@ -5987,7 +5987,7 @@ mod tests {
                     dt.insert_vertex(*vertices.last().unwrap()).unwrap();
                     assert_eq!(dt.number_of_vertices(), $dim + 1);
                     assert_eq!(dt.number_of_simplices(), 1);
-                    assert!(dt.is_valid().is_ok());
+                    assert!(dt.is_valid_delaunay().is_ok());
                 }
 
                 #[test]
@@ -6005,7 +6005,7 @@ mod tests {
                     dt.insert_vertex(vertex!($interior_point).unwrap()).unwrap();
                     assert_eq!(dt.number_of_vertices(), $dim + 2);
                     assert!(dt.number_of_simplices() > 1);
-                    assert!(dt.is_valid().is_ok());
+                    assert!(dt.is_valid_delaunay().is_ok());
                 }
 
                 #[test]
@@ -6027,8 +6027,8 @@ mod tests {
                         dt_bootstrap.number_of_simplices(),
                         dt_batch.number_of_simplices()
                     );
-                    assert!(dt_bootstrap.is_valid().is_ok());
-                    assert!(dt_batch.is_valid().is_ok());
+                    assert!(dt_bootstrap.is_valid_delaunay().is_ok());
+                    assert!(dt_batch.is_valid_delaunay().is_ok());
                 }
             }
         };

@@ -137,7 +137,7 @@ let vertices = vec![
 let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
     DelaunayTriangulation::try_with_kernel(&kernel, &vertices)?;
 
-assert!(dt.is_valid().is_ok());
+assert!(dt.is_valid_delaunay().is_ok());
 ```
 
 ### Identity-based SoS perturbation via canonical vertex ordering
@@ -243,10 +243,10 @@ You can also run repair manually:
 - `dt.repair_delaunay_with_flips()`
 - `dt.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())`
 
-After construction (or repair), verify the Delaunay property via `dt.is_valid()`
+After construction (or repair), verify the Delaunay property via `dt.is_valid_delaunay()`
 (which uses local flip predicates).
 
-For full-stack diagnostics (Levels 1-4), use `dt.validate()` or `dt.validation_report()`;
+For full-stack diagnostics (Levels 1-5), use `dt.validate()` or `dt.validation_report()`;
 see `docs/validation.md`.
 
 ### Exact circumcenter computation (v0.7.3+)

@@ -96,7 +96,7 @@ fn already_delaunay_3d() -> Result<(), DelaunayizeRepairExampleError> {
     print_outcome(&outcome);
 
     dt.validate()?;
-    println!("  ✓ Full validation (Levels 1–4) passed");
+    println!("  ✓ Full validation (Levels 1–5) passed");
     Ok(())
 }
 
@@ -115,7 +115,6 @@ fn already_delaunay_4d() -> Result<(), DelaunayizeRepairExampleError> {
         vertex![0.0, 1.0, 0.0, 0.0]?,
         vertex![0.0, 0.0, 1.0, 0.0]?,
         vertex![0.0, 0.0, 0.0, 1.0]?,
-        vertex![0.25, 0.25, 0.25, 0.25]?,
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 4> = DelaunayTriangulation::try_new(&vertices)?;
 
@@ -129,7 +128,7 @@ fn already_delaunay_4d() -> Result<(), DelaunayizeRepairExampleError> {
     print_outcome(&outcome);
 
     dt.validate()?;
-    println!("  ✓ Full validation (Levels 1–4) passed");
+    println!("  ✓ Full validation (Levels 1–5) passed");
     Ok(())
 }
 
@@ -178,7 +177,9 @@ fn flip_then_repair_2d() -> Result<(), DelaunayizeRepairExampleError> {
     let mut violating_facet = None;
     for facet in facets {
         let mut trial = dt.clone();
-        if trial.attempt_pachner(PachnerMove::K2 { facet }).is_ok() && trial.is_valid().is_err() {
+        if trial.attempt_pachner(PachnerMove::K2 { facet }).is_ok()
+            && trial.is_valid_delaunay().is_err()
+        {
             violating_facet = Some(facet);
             break;
         }
@@ -191,7 +192,7 @@ fn flip_then_repair_2d() -> Result<(), DelaunayizeRepairExampleError> {
 
     let selected_flip = dt.attempt_pachner(PachnerMove::K2 { facet })?;
     assert!(!selected_flip.new_simplices.is_empty());
-    match dt.is_valid() {
+    match dt.is_valid_delaunay() {
         Ok(()) => {
             println!(
                 "  Applied selected k=2 flip, but Delaunay property remained satisfied (unexpected)"

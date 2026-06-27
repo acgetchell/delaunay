@@ -120,7 +120,7 @@ proptest! {
     #[test]
     fn triangulation_is_valid(points in point_cloud_strategy()) {
         let tri = build_triangulation(points);
-        assert!(tri.is_valid());
+        assert!(tri.validate().is_ok());
     }
 }
 ```
@@ -300,7 +300,7 @@ Whenever possible, prefer validating triangulations using invariant checks.
 Example:
 
 ```rust
-assert!(tri.is_valid());
+assert!(tri.validate().is_ok());
 ```
 
 Validation helpers are preferred over writing manual assertions about
@@ -320,7 +320,8 @@ docs/invariants.md
 
 Tests should verify behavior consistent with that specification.
 
-For details on validation helpers such as `tri.is_valid()`, see:
+For details on validation helpers such as `validate()`, `is_valid()`,
+`is_valid_topology()`, and `is_valid_delaunay()`, see:
 
 ```text
 docs/validation.md
@@ -344,7 +345,7 @@ When writing tests that construct or modify a triangulation, agents should
 prefer validating the following checklist rather than writing ad‑hoc
 assertions:
 
-- `tri.is_valid()` returns true
+- `tri.validate()` returns `Ok(())`
 - every simplex references existing vertices
 - adjacency relationships are symmetric
 - vertex stars form closed topological neighborhoods
@@ -352,7 +353,7 @@ assertions:
 - orientation predicates are consistent across neighbors
 
 Whenever possible, prefer a single invariant validation call (e.g.
-`tri.is_valid()`) rather than duplicating these checks manually.
+`tri.validate()`) rather than duplicating these checks manually.
 
 Invariant-based testing is the most reliable way to validate geometric
 algorithms.

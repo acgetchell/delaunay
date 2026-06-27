@@ -3460,7 +3460,7 @@ mod tests {
                 .all(|incident_simplices| incident_simplices.len() <= 2),
             "hull extension should leave every facet with at most two incident simplices"
         );
-        assert!(tri.is_valid().is_ok());
+        assert!(tri.is_valid_topology().is_ok());
     }
 
     #[test]
@@ -3513,7 +3513,7 @@ mod tests {
                 .all(|incident_simplices| incident_simplices.len() <= 2),
             "hull extension should leave every facet with at most two incident simplices"
         );
-        assert!(tri.is_valid().is_ok());
+        assert!(tri.is_valid_topology().is_ok());
     }
 
     #[test]
@@ -3551,7 +3551,7 @@ mod tests {
             !detail.delaunay_repair_required,
             "caller-provided conflict simplices should preserve the cavity insertion repair flag"
         );
-        assert!(tri.is_valid().is_ok());
+        assert!(tri.is_valid_topology().is_ok());
     }
 
     #[test]
@@ -4354,7 +4354,11 @@ mod tests {
 
                     assert!(hint.is_some(), "{}D: hint returned after D+2 insertion", $dim);
                     assert!(tri.number_of_simplices() > 1, "{}D: simplex count increased", $dim);
-                    assert!(tri.is_valid().is_ok(), "{}D: topology valid after insertion", $dim);
+                    assert!(
+                        tri.is_valid_topology().is_ok(),
+                        "{}D: topology valid after insertion",
+                        $dim
+                    );
                 }
             }
         };

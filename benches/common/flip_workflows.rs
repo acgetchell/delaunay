@@ -321,6 +321,16 @@ pub enum FlipWorkflowError {
         #[source]
         source: DelaunayTriangulationValidationError,
     },
+
+    /// A roundtrip produced a triangulation that failed topology validation.
+    #[error("{context} produced invalid topology after roundtrip: {source}")]
+    InvalidTopologyAfterRoundtrip {
+        /// Roundtrip context label.
+        context: String,
+        /// Underlying topology validation failure.
+        #[source]
+        source: Box<InvariantError>,
+    },
 }
 
 /// Jaccard report category used by
@@ -1051,12 +1061,7 @@ pub fn verify_k1_roundtrip<const D: usize>(
     let before = snapshot_topology(base_dt)?;
     let mut trial = base_dt.clone();
     roundtrip_k1(&mut trial, simplex_key)?;
-    trial
-        .validate()
-        .map_err(|source| FlipWorkflowError::InvalidAfterRoundtrip {
-            context: context.to_string(),
-            source,
-        })?;
+    validate_topology_and_delaunay(&trial, context)?;
     assert_same_topology(&trial, &before, context)
 }
 
@@ -1078,12 +1083,7 @@ pub fn verify_k2_roundtrip<const D: usize>(
     let before = snapshot_topology(base_dt)?;
     let mut trial = base_dt.clone();
     roundtrip_k2(&mut trial, facet)?;
-    trial
-        .validate()
-        .map_err(|source| FlipWorkflowError::InvalidAfterRoundtrip {
-            context: context.to_string(),
-            source,
-        })?;
+    validate_topology_and_delaunay(&trial, context)?;
     assert_same_topology(&trial, &before, context)
 }
 
@@ -1105,13 +1105,25 @@ pub fn verify_k3_roundtrip<const D: usize>(
     let before = snapshot_topology(base_dt)?;
     let mut trial = base_dt.clone();
     roundtrip_k3(&mut trial, ridge)?;
-    trial
-        .validate()
+    validate_topology_and_delaunay(&trial, context)?;
+    assert_same_topology(&trial, &before, context)
+}
+
+fn validate_topology_and_delaunay<const D: usize>(
+    dt: &FlipTriangulation<D>,
+    context: &str,
+) -> FlipWorkflowResult<()> {
+    dt.as_triangulation().validate().map_err(|source| {
+        FlipWorkflowError::InvalidTopologyAfterRoundtrip {
+            context: context.to_string(),
+            source: Box::new(source),
+        }
+    })?;
+    dt.is_valid_delaunay()
         .map_err(|source| FlipWorkflowError::InvalidAfterRoundtrip {
             context: context.to_string(),
             source,
-        })?;
-    assert_same_topology(&trial, &before, context)
+        })
 }
 
 /// Reports whether a k=2 facet support touches an adversarial fixture feature.

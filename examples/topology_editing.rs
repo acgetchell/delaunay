@@ -251,7 +251,7 @@ fn pachner_2d_k2() -> ExampleResult {
     println!("Initial square (2 triangles):");
     print_stats_2d(&dt);
 
-    let initial_valid = dt.is_valid().is_ok();
+    let initial_valid = dt.is_valid_delaunay().is_ok();
     println!(
         "  Initial Delaunay: {}",
         if initial_valid { "✓" } else { "⚠️" }
@@ -271,7 +271,7 @@ fn pachner_2d_k2() -> ExampleResult {
     println!("  Inserted: {} simplices", flip_info.new_simplices.len());
 
     // Check if Delaunay property changed
-    let after_valid = dt.is_valid().is_ok();
+    let after_valid = dt.is_valid_delaunay().is_ok();
     println!(
         "  Delaunay after flip: {}",
         if after_valid { "✓" } else { "⚠️" }
@@ -328,7 +328,7 @@ fn builder_api_3d() -> ExampleResult {
 
     // Insert vertices using Builder API
     println!("Inserting 2 vertices using Builder API:");
-    let new_vertices = vec![vertex![1.0, 0.5, 0.5]?, vertex![0.8, 0.8, 0.8]?];
+    let new_vertices = vec![vertex![1.0, 0.5, 0.5]?, vertex![1.0, 0.9, 0.8]?];
 
     for (i, v) in new_vertices.into_iter().enumerate() {
         dt.insert_vertex(v)?;

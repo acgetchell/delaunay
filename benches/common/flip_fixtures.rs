@@ -108,7 +108,7 @@ pub const ADVERSARIAL_POINTS_3D: &[[f64; 3]] = &[
     [1.0, 0.0, 0.0],
     [0.0, 1.0, 0.0],
     [0.0, 0.0, 1.0],
-    [1.0, 1.0, 0.0],
+    [1.0, 1.0, 1.0],
     [1.0e-9, 0.25, 0.25],
     [0.25, 1.0e-9, 0.25],
     [0.25, 0.25, 1.0e-9],
@@ -127,7 +127,7 @@ pub const ADVERSARIAL_POINTS_4D: &[[f64; 4]] = &[
     [0.0, 1.0, 0.0, 0.0],
     [0.0, 0.0, 1.0, 0.0],
     [0.0, 0.0, 0.0, 1.0],
-    [1.0, 1.0, 0.0, 0.0],
+    [1.0, 1.0, 1.0, 1.0],
     [1.0e-9, 0.20, 0.20, 0.20],
     [0.20, 1.0e-9, 0.20, 0.20],
     [0.20, 0.20, 1.0e-9, 0.20],
@@ -149,7 +149,7 @@ pub const ADVERSARIAL_POINTS_5D: &[[f64; 5]] = &[
     [0.0, 0.0, 1.0, 0.0, 0.0],
     [0.0, 0.0, 0.0, 1.0, 0.0],
     [0.0, 0.0, 0.0, 0.0, 1.0],
-    [1.0, 1.0, 0.0, 0.0, 0.0],
+    [1.0, 1.0, 1.0, 1.0, 1.0],
     [1.0e-9, 0.16, 0.16, 0.16, 0.16],
     [0.16, 1.0e-9, 0.16, 0.16, 0.16],
     [0.16, 0.16, 1.0e-9, 0.16, 0.16],
@@ -158,4 +158,21 @@ pub const ADVERSARIAL_POINTS_5D: &[[f64; 5]] = &[
     [0.16, 0.16, 0.16, 0.16, 0.16 + 1.0e-12],
     [0.160_000_001, 0.16, 0.16, 0.16, 0.16],
     [1.0e6, -1.0e6, 1.0e6, -1.0e6, 1.0e6],
+];
+
+/// Intentionally invalid 3D fixture used to prove benchmark setup rejects
+/// degenerate inputs instead of silently sanitizing them.
+///
+/// All points are coplanar (`z = 0`), so no faithful 3D simplex embedding can
+/// be formed.
+#[allow(
+    dead_code,
+    reason = "negative fixture is imported by integration tests, not every benchmark target"
+)]
+pub const DEGENERATE_POINTS_3D: &[[f64; 3]] = &[
+    [0.0, 0.0, 0.0],
+    [1.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0],
+    [1.0, 1.0, 0.0],
+    [0.5, 0.25, 0.0],
 ];

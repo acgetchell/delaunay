@@ -1416,7 +1416,7 @@ where
                 if inserted_this_loop
                     && had_simplices
                     && validation_cadence.should_validate(summary.inserted)
-                    && let Err(e) = dt.as_triangulation().is_valid()
+                    && let Err(e) = dt.as_triangulation().is_valid_topology()
                 {
                     println!("Topology validation failed at idx={idx}: {e}");
                     let outcome = if let Err(report) = dt.validation_report() {
@@ -1512,7 +1512,7 @@ where
     }
 
     println!();
-    println!("Running validation_report (Levels 1–4)...");
+    println!("Running validation_report (Levels 1–5)...");
     let t_validate = Instant::now();
     let validation_result = dt.validation_report();
     println!("validation_report wall time: {:?}", t_validate.elapsed());

@@ -5,6 +5,7 @@
 
 use super::{SimplexKey, VertexKey};
 use crate::core::algorithms::flips::{FlipError, FlipNeighborWiringError};
+use crate::core::embedding::TriangulationEmbeddingValidationError;
 use crate::core::facet::FacetError;
 use crate::core::simplex::SimplexValidationError;
 use crate::core::validation::TriangulationValidationError;
@@ -179,7 +180,7 @@ pub enum GeometricError {
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// assert_eq!(dt.number_of_vertices(), 4);
-/// assert!(dt.is_valid().is_ok());
+/// assert!(dt.is_valid_delaunay().is_ok());
 /// # Ok(())
 /// # }
 /// ```
@@ -949,6 +950,8 @@ pub enum InvariantKind {
     Connectedness,
     /// Triangulation/topology invariants (manifold-with-boundary, Euler characteristic).
     Topology,
+    /// Embedded Euclidean geometry (nondegenerate simplices, no illegal overlap).
+    Embedding,
     /// Delaunay empty-circumsphere property.
     DelaunayProperty,
 }
@@ -980,7 +983,11 @@ pub enum InvariantError {
     #[error(transparent)]
     Triangulation(#[from] TriangulationValidationError),
 
-    /// Level 4 (Delaunay property).
+    /// Level 4 (embedded Euclidean geometry).
+    #[error(transparent)]
+    Embedding(#[from] TriangulationEmbeddingValidationError),
+
+    /// Level 5 (Delaunay property).
     #[error(transparent)]
     Delaunay(#[from] DelaunayTriangulationValidationError),
 }
@@ -1045,7 +1052,7 @@ impl From<&TriangulationValidationError> for TriangulationValidationErrorKind {
     }
 }
 
-/// Discriminant for compact Level 4 Delaunay-validation summaries.
+/// Discriminant for compact Level 5 Delaunay-validation summaries.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum DelaunayValidationErrorKind {
@@ -1053,6 +1060,8 @@ pub enum DelaunayValidationErrorKind {
     Tds,
     /// Lower-layer topology validation failed.
     Triangulation,
+    /// Lower-layer embedded-geometry validation failed.
+    Embedding,
     /// Delaunay verification failed.
     VerificationFailed,
     /// Typed repair validation failed.
@@ -1064,6 +1073,7 @@ impl From<&DelaunayTriangulationValidationError> for DelaunayValidationErrorKind
         match source {
             DelaunayTriangulationValidationError::Tds(_) => Self::Tds,
             DelaunayTriangulationValidationError::Triangulation(_) => Self::Triangulation,
+            DelaunayTriangulationValidationError::Embedding(_) => Self::Embedding,
             DelaunayTriangulationValidationError::VerificationFailed { .. } => {
                 Self::VerificationFailed
             }

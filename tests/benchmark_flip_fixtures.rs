@@ -21,17 +21,21 @@ use std::assert_matches;
 
 use delaunay::flips::{FacetHandle, FlipError, RidgeHandle};
 use delaunay::prelude::construction::{
-    DelaunayConstructionFailure, DelaunayTriangulationConstructionError,
+    DelaunayConstructionFailure, DelaunayConstructionRetryFailure,
+    DelaunayTriangulationConstructionError,
 };
 use delaunay::prelude::tds::{FacetError, SimplexKey};
+use delaunay::prelude::validation::{
+    DelaunayTriangulationValidationError, TriangulationEmbeddingValidationError,
+};
 use slotmap::KeyData;
 
 use flip_fixtures::{
     ADVERSARIAL_POINTS_2D, ADVERSARIAL_POINTS_3D, ADVERSARIAL_POINTS_4D, ADVERSARIAL_POINTS_5D,
-    STABLE_POINTS_2D, STABLE_POINTS_3D, STABLE_POINTS_4D, STABLE_POINTS_5D,
+    DEGENERATE_POINTS_3D, STABLE_POINTS_2D, STABLE_POINTS_3D, STABLE_POINTS_4D, STABLE_POINTS_5D,
 };
 use flip_workflows::{
-    CandidateFilter, FlipWorkflowError, assert_same_topology, build_flip_dt,
+    CandidateFilter, FlipTriangulation, FlipWorkflowError, assert_same_topology, build_flip_dt,
     facet_support_touches_adversarial_feature, flippable_k2_facet, flippable_k3_ridge, forward_k2,
     forward_k3, largest_volume_simplex, ridge_support_touches_adversarial_feature, roundtrip_k1,
     simplex_touches_adversarial_feature, snapshot_topology, verify_k1_roundtrip,
@@ -93,6 +97,23 @@ fn empty_flip_fixture_returns_construction_error() {
             }
         }
         other => panic!("unexpected construction error: {other}"),
+    }
+}
+
+/// Verifies malformed flip fixtures fail with a typed degeneracy source.
+#[test]
+fn degenerate_flip_fixture_is_rejected_instead_of_sanitized() {
+    let err = build_flip_dt(DEGENERATE_POINTS_3D).expect_err("degenerate fixture should not build");
+
+    match err {
+        FlipWorkflowError::Construction { dimension, source } => {
+            assert_eq!(dimension, 3);
+            assert!(
+                construction_error_is_degenerate(&source),
+                "degenerate fixture should fail with a typed degeneracy source: {source:#?}"
+            );
+        }
+        other => panic!("unexpected degenerate fixture error: {other}"),
     }
 }
 
@@ -263,9 +284,7 @@ fn topology_mismatch_reports_jaccard_diagnostics() {
 /// Verifies all selected 2D public flip workflows for one fixture.
 fn verify_2d_fixture(points: &[[f64; 2]], filter: CandidateFilter) {
     let base_dt = build_flip_dt(points).expect("2D benchmark flip fixture should build");
-    base_dt
-        .validate()
-        .expect("2D benchmark flip fixture should validate");
+    assert_topology_and_delaunay_valid(&base_dt, "2D benchmark flip fixture");
 
     let simplex_key = largest_volume_simplex(&base_dt, filter)
         .expect("2D benchmark fixture should provide a selected k=1 simplex");
@@ -298,9 +317,7 @@ fn verify_2d_fixture(points: &[[f64; 2]], filter: CandidateFilter) {
 /// Verifies all selected 3D public flip workflows for one fixture.
 fn verify_3d_fixture(points: &[[f64; 3]], filter: CandidateFilter) {
     let base_dt = build_flip_dt(points).expect("3D benchmark flip fixture should build");
-    base_dt
-        .validate()
-        .expect("3D benchmark flip fixture should validate");
+    assert_topology_and_delaunay_valid(&base_dt, "3D benchmark flip fixture");
 
     let simplex_key = largest_volume_simplex(&base_dt, filter)
         .expect("3D benchmark fixture should provide a selected k=1 simplex");
@@ -345,9 +362,7 @@ fn verify_3d_fixture(points: &[[f64; 3]], filter: CandidateFilter) {
 /// Verifies all selected roundtrip-capable public flip workflows for one dimension.
 fn verify_roundtrip_fixture<const D: usize>(points: &[[f64; D]], filter: CandidateFilter) {
     let base_dt = build_flip_dt(points).expect("benchmark flip fixture should build");
-    base_dt
-        .validate()
-        .expect("benchmark flip fixture should validate");
+    assert_topology_and_delaunay_valid(&base_dt, "benchmark flip fixture");
 
     let simplex_key = largest_volume_simplex(&base_dt, filter)
         .expect("benchmark fixture should provide a selected k=1 simplex");
@@ -384,6 +399,46 @@ fn verify_roundtrip_fixture<const D: usize>(points: &[[f64; D]], filter: Candida
     }
     verify_k3_roundtrip(&base_dt, ridge, "k=3 n=1 ergodicity roundtrip")
         .expect("k=3 roundtrip should recover the same triangulation");
+}
+
+fn assert_topology_and_delaunay_valid<const D: usize>(dt: &FlipTriangulation<D>, context: &str) {
+    dt.as_triangulation()
+        .validate()
+        .unwrap_or_else(|err| panic!("{context} should pass Levels 1-3: {err}"));
+    dt.is_valid_delaunay()
+        .unwrap_or_else(|err| panic!("{context} should pass Level 5: {err}"));
+}
+
+fn construction_error_is_degenerate(error: &DelaunayTriangulationConstructionError) -> bool {
+    match error {
+        DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::GeometricDegeneracy { .. },
+        ) => true,
+        DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::FinalDelaunayValidation { source, .. },
+        ) => validation_error_is_degenerate(source),
+        DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::ShuffledRetryExhausted { source, .. },
+        ) => match source.as_ref() {
+            DelaunayConstructionRetryFailure::Construction { source } => {
+                construction_error_is_degenerate(source)
+            }
+            DelaunayConstructionRetryFailure::DelaunayValidation { .. } => false,
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+fn validation_error_is_degenerate(error: &DelaunayTriangulationValidationError) -> bool {
+    matches!(
+        error,
+        DelaunayTriangulationValidationError::Embedding(source)
+            if matches!(
+                source.as_ref(),
+                TriangulationEmbeddingValidationError::DegenerateSimplex { .. }
+            )
+    )
 }
 
 /// Creates a synthetic simplex key that cannot be live in fixture triangulations.
