@@ -64,17 +64,19 @@ as a full audit and as input to future repair workflows.
 The library always provides **explicit** validation APIs (Levels 1–5) that you can call when you need them.
 
 Separately, incremental construction (`new()` / `insert*()`) can run an **automatic**
-*Level 3* topology validation pass after an insertion attempt, controlled by a
-`ValidationPolicy` on the triangulation.
+global Level 3 topology pass plus changed-scope Level 4 embedding guards after an insertion attempt,
+controlled by a `ValidationPolicy` on the triangulation.
 
-This is a performance vs certainty knob: Level 3 (`Triangulation::is_valid_topology()`) is
-relatively expensive, so the default behavior is to validate only when something
-looks “off”.
+This is a performance vs certainty knob: Level 3 (`Triangulation::is_valid_topology()`) and
+full pairwise Level 4 (`Triangulation::is_valid_embedding()`) are relatively expensive, so the
+default behavior is to run automatic global topology and changed-scope embedding checks only when
+something looks “off”.
 
 ### What is validated automatically?
 
-Only **Level 3** (`Triangulation::is_valid_topology()`), using the triangulation’s current
-`TopologyGuarantee` (default: `PLManifold`):
+When the policy triggers automatic validation, it runs **Level 3**
+(`Triangulation::is_valid_topology()`), using the triangulation’s current `TopologyGuarantee`
+(default: `PLManifold`):
 
 - Codimension-1 manifoldness (facet degree: 1 or 2 incident simplices per facet)
 - Codimension-2 boundary manifoldness (the boundary is closed; "no boundary of boundary")
@@ -87,9 +89,12 @@ Only **Level 3** (`Triangulation::is_valid_topology()`), using the triangulation
 Note: neighbor-pointer consistency is a **Level 2** structural invariant checked by
 `Tds::is_valid()` / `Tds::validate()`, and is intentionally not part of Level 3.
 
-Automatic validation does **not** run Level 4 embedding validation or Level 5 Delaunay
-empty-circumsphere validation. If you need geometric verification, call
-`dt.as_triangulation().validate_embedding()`, `dt.is_valid_delaunay()`, or `dt.validate()` explicitly.
+The same automatic validation pass then runs **Level 4** embedding guards for the changed simplex
+scope. It always checks changed simplices for degeneracy and checks changed-vs-current pairwise
+intersections. It does **not** rescan old-vs-old simplex pairs. It also does **not** run Level 5
+Delaunay empty-circumsphere validation. If you need a complete embedding or
+Delaunay-property check, call `dt.as_triangulation().validate_embedding()`, `dt.is_valid_delaunay()`,
+`dt.delaunay_report()`, or `dt.validate()` explicitly.
 
 ### Default: derived from `TopologyGuarantee`
 
@@ -98,8 +103,8 @@ uses `ValidationPolicy::ExplicitOnly`, `PLManifoldStrict` uses
 `ValidationPolicy::Always`, and `Pseudomanifold` uses
 `ValidationPolicy::OnSuspicion`.
 
-With `ValidationPolicy::OnSuspicion`, Level 3 validation runs only when insertion
-deviates from the happy-path and trips internal **suspicion flags**, e.g.:
+With `ValidationPolicy::OnSuspicion`, global Level 3 plus changed-scope Level 4 guards run only when
+insertion deviates from the happy-path and trips internal **suspicion flags**, e.g.:
 
 - A perturbation retry was required (geometric degeneracy).
 - The insertion fell back to a conservative “star-split” of the containing simplex.
@@ -108,15 +113,18 @@ deviates from the happy-path and trips internal **suspicion flags**, e.g.:
 
 ### Available policies
 
-- `ValidationPolicy::Never`: never run full Level 3 automatically; compatible only with
+- `ValidationPolicy::Never`: never run automatic global Level 3/changed-scope Level 4 checks; compatible only with
   `TopologyGuarantee::Pseudomanifold`.
-- `ValidationPolicy::ExplicitOnly` *(default for `PLManifold`)*: run full Level 3
-  only through explicit validation calls while still keeping topology checks required
-  by the active `TopologyGuarantee`.
-- `ValidationPolicy::OnSuspicion` *(default for `Pseudomanifold`)*: run Level 3
+- `ValidationPolicy::ExplicitOnly` *(default for `PLManifold`)*: do not run policy-triggered
+  global Level 3/changed-scope Level 4 checks during insertion; caller-owned explicit validation
+  APIs remain available, and insertion still keeps topology checks required by the active
+  `TopologyGuarantee`.
+- `ValidationPolicy::OnSuspicion` *(default for `Pseudomanifold`)*: run global Level 3/changed-scope Level 4 checks
   only when insertion is suspicious.
-- `ValidationPolicy::Always`: run Level 3 after every insertion attempt (slowest, best for tests).
-- `ValidationPolicy::DebugOnly`: always run Level 3 in debug builds; in release behaves like `OnSuspicion`.
+- `ValidationPolicy::Always`: run global Level 3/changed-scope Level 4 checks after every insertion attempt
+  (slowest, best for tests).
+- `ValidationPolicy::DebugOnly`: always run global Level 3/changed-scope Level 4 checks in debug builds; in release
+  behaves like `OnSuspicion`.
 
 ### Example: configuring validation policy
 
@@ -485,6 +493,10 @@ model-specific chart validators are implemented.
   bounding-box pruning before exact rational barycentric witness construction.
 - **Space**: O(D²) to O(simplices) temporary space depending on the number of candidate overlaps.
 
+For the broad-phase overlap-detection references, see the
+[Embedded-Geometry Overlap Detection](../REFERENCES.md#embedded-geometry-overlap-detection-level-4-validation)
+section of `REFERENCES.md`.
+
 ### When to Use
 
 - **Tests**: After construction or manual edits when embedded correctness matters.
@@ -710,7 +722,7 @@ pub fn my_algorithm(
 ```rust
 use delaunay::prelude::query::*;
 use delaunay::prelude::tds::{InvariantError, TdsError};
-use delaunay::{
+use delaunay::prelude::validation::{
     DelaunayTriangulationValidationError, TriangulationEmbeddingValidationError,
 };
 

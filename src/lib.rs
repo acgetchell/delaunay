@@ -55,7 +55,7 @@
 //! | Post-construction vertex deletion errors and keys | `use delaunay::prelude::deletion::*` |
 //! | Read-only queries, traversal, convex hull | `use delaunay::prelude::query::*` |
 //! | Point location and conflict-region algorithms | `use delaunay::prelude::algorithms::*` |
-//! | Geometry helpers, coordinate ranges, predicates, points | `use delaunay::prelude::geometry::*` |
+//! | Geometry helpers, simplex embeddings, coordinate ranges, predicates, points | `use delaunay::prelude::geometry::*` |
 //! | Random points / triangulations for examples and tests | `use delaunay::prelude::generators::*` |
 //! | Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
 //! | Unified Pachner move workflow | `use delaunay::prelude::pachner::*` |
@@ -274,20 +274,22 @@
 //! - Cumulative Delaunay validation: `dt.validate()` for Levels 1–5, or
 //!   `dt.validation_report()` for full diagnostics.
 //!
-//! ### Automatic topology validation during insertion (`ValidationPolicy`)
+//! ### Automatic topology and changed-scope embedding validation during insertion (`ValidationPolicy`)
 //!
 //! In addition to explicit validation calls, incremental construction (`new()` / `insert*()`) can run an
-//! automatic **Level 3** topology validation pass after insertion, controlled by
+//! automatic **global Level 3 plus changed-scope Level 4** validation pass after insertion, controlled by
 //! [`ValidationPolicy`](crate::prelude::validation::ValidationPolicy).
 //!
 //! The initial policy is derived from the active topology guarantee. The default
 //! [`TopologyGuarantee::PLManifold`](crate::prelude::TopologyGuarantee::PLManifold)
 //! uses [`ValidationPolicy::ExplicitOnly`](crate::prelude::validation::ValidationPolicy::ExplicitOnly):
-//! mandatory local topology checks still run during insertion, while full Level 3 validation is a
-//! caller-owned explicit checkpoint.
+//! mandatory local topology and nondegenerate-embedding checks still run during insertion, while automatic
+//! global-topology/changed-scope embedding validation is a caller-owned explicit checkpoint.
 //!
-//! This automatic pass only runs Level 3 (`Triangulation::is_valid_topology()`). It does **not** run
-//! Level 4 embedding validation or Level 5 Delaunay validation.
+//! This automatic pass runs Level 3 (`Triangulation::is_valid_topology()`), changed-simplex
+//! Level 4 nondegeneracy checks, and changed-vs-current Level 4 pairwise checks. It does
+//! **not** run Level 5 Delaunay validation, and old-vs-old Level 4 rescans remain an explicit
+//! `Triangulation::validate_embedding()` checkpoint.
 //!
 //! ```rust
 //! use delaunay::prelude::construction::{
@@ -677,9 +679,8 @@ pub mod geometry {
     }
     /// Validated coordinate-range types.
     pub mod coordinate_range;
-    // Pure Level 4 embedding predicates are crate-internal implementation
-    // machinery; downstream users should use `Triangulation::embedding_report`.
-    pub(crate) mod embedding;
+    /// Pure labeled-simplex embedding predicates used by Level 4 validation.
+    pub mod embedding;
     #[macro_use]
     pub mod matrix;
     /// Geometric kernel abstraction (CGAL-style).
@@ -721,6 +722,7 @@ pub mod geometry {
     }
     pub use algorithms::*;
     pub use coordinate_range::*;
+    pub use embedding::*;
     pub use matrix::*;
     pub use point::*;
     pub use predicates::*;
@@ -1697,12 +1699,19 @@ pub mod prelude {
         pub use crate::tds::*;
     }
 
-    /// Focused exports for geometry types, predicates, and helpers.
+    /// Focused exports for geometry types, simplex embeddings, predicates, and helpers.
     pub mod geometry {
         pub use crate::geometry::{
             coordinate_range::{
                 CoordinateRange, CoordinateRangeBound, CoordinateRangeError,
                 CoordinateRangeOrdering, InvalidCoordinateValue,
+            },
+            embedding::{
+                LabeledSimplexEmbedding, LabeledSimplexEmbeddingError, PeriodicSimplexSpan,
+                PeriodicSimplexSpanError, SimplexEmbeddingBuffer, SimplexIntersectionFailure,
+                SimplexIntersectionWitness, axis_aligned_bounding_boxes_overlap,
+                coordinate_range_for_axis, try_periodic_simplex_span,
+                validate_simplex_embeddings_intersect_only_in_shared_faces,
             },
             kernel::{AdaptiveKernel, ExactPredicates, FastKernel, Kernel, RobustKernel},
             matrix::{LaError, Matrix, MatrixError, determinant},

@@ -193,6 +193,9 @@ fn regression_empty_circumsphere_2d_minimal_case() {
 
     dt.repair_delaunay_with_flips().unwrap();
 
+    dt.as_triangulation()
+        .validate_embedding()
+        .expect("2D triangulation should preserve lower-layer invariants after global flip repair");
     assert!(
         dt.is_valid_delaunay().is_ok(),
         "2D triangulation should be a valid PL-manifold after global flip repair"

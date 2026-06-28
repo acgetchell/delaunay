@@ -46,6 +46,17 @@ impl<const D: usize> ValidatedCoordinates<D> {
         Ok(Self { values })
     }
 
+    /// Builds validated coordinates from values whose finiteness was already proved.
+    #[inline]
+    pub(in crate::geometry) fn from_prevalidated_finite_values(mut values: [f64; D]) -> Self {
+        for coord in &mut values {
+            if *coord == 0.0 {
+                *coord = 0.0;
+            }
+        }
+        Self { values }
+    }
+
     #[inline]
     pub(crate) const fn as_array(&self) -> &[f64; D] {
         &self.values
@@ -1659,6 +1670,15 @@ mod tests {
         point_neg_zero.hash(&mut hasher_neg_zero);
 
         assert_eq!(hasher_pos_zero.finish(), hasher_neg_zero.finish());
+    }
+
+    #[test]
+    fn prevalidated_finite_coordinates_canonicalize_signed_zero() {
+        let coords = ValidatedCoordinates::from_prevalidated_finite_values([-0.0, 1.0]);
+        let point = Point::from_validated_coordinates(coords);
+
+        assert_eq!(point.coords()[0].to_bits(), 0.0_f64.to_bits());
+        assert_eq!(point.coords()[1].to_bits(), 1.0_f64.to_bits());
     }
 
     #[test]

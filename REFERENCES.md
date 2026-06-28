@@ -50,7 +50,7 @@ These references support specialized features and high-dimensional computations 
 
 ### High-Dimensional Computational Geometry
 
-- Avis, D., and Bremner, D. "How Good Are Convex Hull Algorithms?" *Computational Geometry* 7,
+- Avis, D., Bremner, D., and Seidel, R. "How Good Are Convex Hull Algorithms?" *Computational Geometry* 7,
   no. 5-6 (1997): 265-301. DOI: [10.1016/S0925-7721(96)00023-5](https://doi.org/10.1016/S0925-7721(96)00023-5)
 - Chazelle, B. "An Optimal Convex Hull Algorithm in Any Fixed Dimension."
   *Discrete & Computational Geometry* 10, no. 4 (1993): 377-409. DOI: [10.1007/BF02573985](https://doi.org/10.1007/BF02573985)
@@ -241,7 +241,7 @@ These references ensure the library's geometric computations are mathematically 
 
 ### Geometric Tie-Breaking and Deterministic Perturbations
 
-- Burnikel, C., Funke, S., and Mehlhorn, K. "Exact Geometric Computation Made Easy."
+- Burnikel, C., Fleischer, R., Mehlhorn, K., and Schirra, S. "Efficient Exact Geometric Computation Made Easy."
   *Proceedings of the Fifteenth Annual Symposium on Computational Geometry* (1999): 341-350.
   DOI: [10.1145/304893.304988](https://doi.org/10.1145/304893.304988)
 - Yap, C. K. "Towards Exact Geometric Computation."
@@ -306,7 +306,7 @@ These references inform the library's performance optimization strategies and me
 
 ### Memory-Efficient Data Structures
 
-- Blandford, D.K., Blelloch, G.E., Dahle, C., and Karp, R. "Compact Representations of Simplicial Meshes in Two and Three Dimensions."
+- Blandford, D.K., Blelloch, G.E., Cardoze, D.E., and Kadow, C. "Compact Representations of Simplicial Meshes in Two and Three Dimensions."
   *International Journal of Computational Geometry & Applications* 15, no. 1 (2005): 3-24.
   DOI: [10.1142/S0218195905001580](https://doi.org/10.1142/S0218195905001580)
 - Geuzaine, C., and Remacle, J.-F. "Gmsh: A 3-D Finite Element Mesh Generator
@@ -360,3 +360,23 @@ library (facet degree, closed-boundary checks, and links of simplices).
 - Rourke, C. P., and Sanderson, B. J. *Introduction to Piecewise-Linear Topology*. Springer, 1972.
 - Stillwell, J. *Euler's Gem: The Polyhedron Formula and the Birth of Topology*. Princeton University Press, 2010.
 - Zomorodian, A. *Topology for Computing*. Cambridge University Press, 2005.
+
+## Embedded-Geometry Overlap Detection (Level 4 Validation)
+
+These references support the embedded-geometry (Level 4) validator, which certifies that maximal
+simplices are nondegenerate and intersect only in their shared faces. Candidate overlapping pairs
+are found with a sweep-and-prune broad phase over axis-aligned bounding boxes before exact rational
+barycentric intersection tests are applied. Two axis-aligned boxes intersect if and only if their
+projections overlap on every coordinate axis (the separating-axis test), and sorting boxes by their
+lower endpoint on one axis while retiring boxes whose upper endpoint precedes the current lower
+endpoint examines a superset of all axis-overlapping pairs, so no intersecting pair is skipped.
+
+- Baraff, D. "Dynamic Simulation of Non-Penetrating Rigid Bodies." PhD thesis, Cornell University, 1992.
+  Introduces coordinate sorting ("sort and sweep") for axis-aligned bounding-box overlap detection.
+  Available at: <https://www.cs.cmu.edu/~baraff/papers/index.html>
+- Cohen, J. D., Lin, M. C., Manocha, D., and Ponamgi, M. "I-COLLIDE: An Interactive and Exact Collision
+  Detection System for Large-Scale Environments." *Proceedings of the 1995 Symposium on Interactive 3D
+  Graphics* (1995): 189-196. DOI: [10.1145/199404.199437](https://doi.org/10.1145/199404.199437)
+- Ericson, C. *Real-Time Collision Detection*. Morgan Kaufmann, 2005. ISBN: 978-1-55860-732-3.
+  (Chapter 7: sweep-and-prune broad phase; Chapters 4-5: axis-aligned bounding boxes and the
+  separating-axis test for box intersection.)

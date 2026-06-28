@@ -1355,7 +1355,7 @@ macro_rules! gen_insertion_order_robustness_test {
                     // point sets, which is expected and valid behavior
 
                     // TODO: Once bistellar flips are implemented to ensure unique canonical triangulations,
-                    // add explicit Level-4 checks here:
+                    // add explicit Level-5 checks here:
                     // prop_assert!(dt_a.is_valid_delaunay().is_ok(), "{}D: Triangulation A must satisfy Delaunay property", $dim);
                     // prop_assert!(dt_b.is_valid_delaunay().is_ok(), "{}D: Triangulation B must satisfy Delaunay property", $dim);
                     // Bistellar flips will produce canonical triangulations, making edge-set comparison more meaningful.
@@ -2037,7 +2037,7 @@ macro_rules! gen_duplicate_cloud_test {
                     // Structural/topological validity (Levels 1–3) for kept subset
                     prop_assert_levels_1_to_3_valid!($dim, &dt, "triangulation (kept subset)");
 
-                    // Delaunay validity (Level 4) for kept subset
+                    // Delaunay validity (Level 5) for kept subset
                     let validate_start = std::time::Instant::now();
                     let delaunay = dt.is_valid_delaunay();
                     let validate_elapsed = validate_start.elapsed();

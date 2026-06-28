@@ -39,6 +39,7 @@ use crate::core::collections::{
     SimplexKeyBuffer, SmallBuffer,
 };
 use crate::core::edge::{EdgeKey, EdgeKeyError};
+use crate::core::embedding::TriangulationEmbeddingValidationErrorKind;
 use crate::core::facet::{AllFacetsIter, FacetError, FacetHandle, facet_key_from_vertices};
 use crate::core::operations::TopologicalOperation;
 use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
@@ -3454,6 +3455,12 @@ pub enum FlipNeighborWiringError {
         /// Structured validation reason.
         reason: FlipNeighborDelaunayValidationFailureKind,
     },
+    /// Embedding validation failed while preparing flip neighbor wiring.
+    #[error("embedding validation error reached flip neighbor wiring: {reason:?}")]
+    EmbeddingValidation {
+        /// Structured embedding-validation reason.
+        reason: TriangulationEmbeddingValidationErrorKind,
+    },
     /// Delaunay repair failed while preparing flip neighbor wiring.
     #[error("Delaunay repair error reached flip neighbor wiring: {reason}")]
     DelaunayRepair {
@@ -3536,6 +3543,9 @@ impl From<InsertionError> for FlipNeighborWiringError {
             },
             InsertionError::DelaunayValidationFailed { source } => Self::DelaunayValidation {
                 reason: source.into(),
+            },
+            InsertionError::EmbeddingValidationFailed { source } => Self::EmbeddingValidation {
+                reason: TriangulationEmbeddingValidationErrorKind::from(&source),
             },
             InsertionError::DelaunayRepairFailed { source, context: _ } => Self::DelaunayRepair {
                 reason: FlipNeighborRepairFailure::from(*source),
@@ -5069,6 +5079,9 @@ const fn insertion_error_kind(source: &InsertionError) -> InsertionErrorKind {
         InsertionError::HullExtension { .. } => InsertionErrorKind::HullExtension,
         InsertionError::DelaunayValidationFailed { .. } => {
             InsertionErrorKind::DelaunayValidationFailed
+        }
+        InsertionError::EmbeddingValidationFailed { .. } => {
+            InsertionErrorKind::EmbeddingValidationFailed
         }
         InsertionError::DelaunayRepairFailed { .. } => InsertionErrorKind::DelaunayRepairFailed,
         InsertionError::DuplicateCoordinates { .. } => InsertionErrorKind::DuplicateCoordinates,

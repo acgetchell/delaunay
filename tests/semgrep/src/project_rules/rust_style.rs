@@ -173,6 +173,11 @@ impl ValidationApiNamingFixture {
     }
 
     // ok: delaunay.rust.validation-api-naming-standard
+    pub fn validate_embedding(&self) -> Result<(), ()> {
+        Ok(())
+    }
+
+    // ok: delaunay.rust.validation-api-naming-standard
     pub fn validation_report(&self) -> Result<(), ()> {
         Ok(())
     }

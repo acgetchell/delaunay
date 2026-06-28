@@ -1198,9 +1198,9 @@ mod tests {
         let simplex_key = SimplexKey::default();
         let source = DelaunayVerificationError::from(DelaunayValidationError::DelaunayViolation {
             simplex_key,
-            simplex_vertices: Default::default(),
+            simplex_vertices: Box::default(),
             offending_vertex: None,
-            neighbor_simplices: Default::default(),
+            neighbor_simplices: Box::default(),
         });
 
         assert_eq!(

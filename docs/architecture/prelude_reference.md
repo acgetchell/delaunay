@@ -18,7 +18,7 @@ they exercise.
 | Low-level incremental insertion building blocks | `use delaunay::prelude::insertion::*` |
 | Post-construction vertex deletion errors and keys | `use delaunay::prelude::deletion::*` |
 | Low-level TDS simplices, facets, keys, and validation reports | `use delaunay::prelude::tds::*` |
-| Points, coordinate ranges, kernels, predicates, and geometric measures | `use delaunay::prelude::geometry::*` |
+| Points, simplex embeddings, coordinate ranges, kernels, predicates, and geometric measures | `use delaunay::prelude::geometry::*` |
 | Random points or triangulations for examples, tests, and benchmarks | `use delaunay::prelude::generators::*` |
 | Read-only traversal, adjacency, convex hulls, and comparison helpers | `use delaunay::prelude::query::*` |
 | Topological spaces, topology traits, and lifted toroidal IDs | `use delaunay::prelude::topology::spaces::*` |

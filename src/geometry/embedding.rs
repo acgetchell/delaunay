@@ -2,11 +2,45 @@
 //!
 //! This module has no TDS, topology, or triangulation storage dependencies. It
 //! answers geometric questions about labeled maximal simplices after another
-//! layer has chosen the appropriate affine chart.
+//! layer has chosen the appropriate affine chart. Algorithmic provenance for
+//! the Level 4 overlap broad phase is summarized in `REFERENCES.md`,
+//! "Embedded-Geometry Overlap Detection (Level 4 Validation)".
+//!
+//! Use [`Triangulation::embedding_report`](crate::Triangulation::embedding_report)
+//! when validating a stored triangulation. Use this module directly when a
+//! caller already has chart-local simplex coordinates and wants the pure
+//! geometric Level 4 predicate without TDS storage.
+//!
+//! # Examples
+//!
+//! ```rust
+//! use delaunay::prelude::geometry::{
+//!     LabeledSimplexEmbedding, LabeledSimplexEmbeddingError, SimplexIntersectionFailure,
+//!     validate_simplex_embeddings_intersect_only_in_shared_faces,
+//! };
+//!
+//! # fn main() -> Result<(), LabeledSimplexEmbeddingError> {
+//! let first = LabeledSimplexEmbedding::try_new(
+//!     [0_usize, 1, 2],
+//!     [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+//! )?;
+//! let second = LabeledSimplexEmbedding::try_new(
+//!     [0_usize, 1, 3],
+//!     [[0.0, 0.0], [1.0, 0.0], [0.25, 0.25]],
+//! )?;
+//!
+//! std::assert_matches!(
+//!     validate_simplex_embeddings_intersect_only_in_shared_faces(&first, &second),
+//!     Err(SimplexIntersectionFailure::IntersectionOutsideSharedFace { .. })
+//! );
+//! # Ok(())
+//! # }
+//! ```
 
 #![forbid(unsafe_code)]
 
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
+use crate::geometry::point::{Point, ValidatedCoordinates};
 use crate::geometry::traits::coordinate::InvalidCoordinateValue;
 use la_stack::{BigInt, BigRational, FromPrimitive, Signed};
 use thiserror::Error;
@@ -14,6 +48,12 @@ use thiserror::Error;
 /// Stack-backed buffer for per-simplex embedding labels and coordinates.
 pub type SimplexEmbeddingBuffer<T> = SmallBuffer<T, MAX_PRACTICAL_DIMENSION_SIZE>;
 
+/// Validated coordinates for one labeled D-simplex in an affine chart.
+///
+/// Labels implement [`Eq`] and are unique within the simplex so intersection
+/// witnesses can distinguish shared faces from accidental duplicate vertices.
+/// Coordinates are finite `f64` values ready to be converted into exact
+/// predicate inputs by the triangulation-level embedding validator.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LabeledSimplexEmbedding<L, const D: usize> {
     labels: SimplexEmbeddingBuffer<L>,
@@ -21,11 +61,49 @@ pub struct LabeledSimplexEmbedding<L, const D: usize> {
 }
 
 impl<L, const D: usize> LabeledSimplexEmbedding<L, D> {
-    /// Builds a labeled D-simplex embedding after checking arity and finite coordinates.
+    /// Builds a labeled D-simplex embedding after checking arity, uniqueness, and finite coordinates.
+    ///
+    /// This is the parse boundary for pure simplex-embedding predicates: callers
+    /// supply labels and coordinates in matching order, and the constructor
+    /// stores only embeddings with exactly `D + 1` distinct labels. Labels use
+    /// [`Eq`] because they represent vertex identity, not an approximate value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LabeledSimplexEmbeddingError::LabelCoordinateLengthMismatch`]
+    /// when the two iterators produce different lengths,
+    /// [`LabeledSimplexEmbeddingError::InvalidArity`] when the simplex does not
+    /// contain exactly `D + 1` vertices,
+    /// [`LabeledSimplexEmbeddingError::DuplicateLabel`] when a label appears
+    /// more than once, or
+    /// [`LabeledSimplexEmbeddingError::NonFiniteCoordinate`] when any coordinate
+    /// is NaN or infinite.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::geometry::{
+    ///     LabeledSimplexEmbedding, LabeledSimplexEmbeddingError,
+    /// };
+    ///
+    /// # fn main() -> Result<(), LabeledSimplexEmbeddingError> {
+    /// let simplex = LabeledSimplexEmbedding::try_new(
+    ///     ["a", "b", "c"],
+    ///     [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+    /// )?;
+    ///
+    /// assert_eq!(simplex.labels(), ["a", "b", "c"]);
+    /// assert_eq!(simplex.coordinates().len(), 3);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn try_new(
         labels: impl IntoIterator<Item = L>,
         coordinates: impl IntoIterator<Item = [f64; D]>,
-    ) -> Result<Self, LabeledSimplexEmbeddingError> {
+    ) -> Result<Self, LabeledSimplexEmbeddingError>
+    where
+        L: Eq,
+    {
         let labels: SimplexEmbeddingBuffer<L> = labels.into_iter().collect();
         let coordinates: SimplexEmbeddingBuffer<[f64; D]> = coordinates.into_iter().collect();
 
@@ -46,17 +124,19 @@ impl<L, const D: usize> LabeledSimplexEmbedding<L, D> {
             });
         }
 
-        for (vertex_index, coords) in coordinates.iter().enumerate() {
-            for (coordinate_index, coordinate) in coords.iter().enumerate() {
-                if !coordinate.is_finite() {
-                    return Err(LabeledSimplexEmbeddingError::NonFiniteCoordinate {
-                        vertex_index,
-                        coordinate_index,
-                        coordinate_value: InvalidCoordinateValue::from_debug(coordinate),
-                    });
-                }
+        for (first_index, first_label) in labels.iter().enumerate() {
+            if let Some(duplicate_offset) = labels[first_index + 1..]
+                .iter()
+                .position(|label| label == first_label)
+            {
+                return Err(LabeledSimplexEmbeddingError::DuplicateLabel {
+                    first_index,
+                    duplicate_index: first_index + duplicate_offset + 1,
+                });
             }
         }
+
+        validate_coordinate_rows(&coordinates)?;
 
         Ok(Self {
             labels,
@@ -65,13 +145,60 @@ impl<L, const D: usize> LabeledSimplexEmbedding<L, D> {
     }
 
     /// Returns labels in the same order as the simplex coordinates.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::geometry::{
+    ///     LabeledSimplexEmbedding, LabeledSimplexEmbeddingError,
+    /// };
+    ///
+    /// # fn main() -> Result<(), LabeledSimplexEmbeddingError> {
+    /// let simplex = LabeledSimplexEmbedding::try_new(
+    ///     ["left", "right", "apex"],
+    ///     [[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]],
+    /// )?;
+    ///
+    /// assert_eq!(simplex.labels(), ["left", "right", "apex"]);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn labels(&self) -> &[L] {
         &self.labels
     }
 
     /// Returns the D-dimensional coordinates paired with [`labels`](Self::labels).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use approx::assert_abs_diff_eq;
+    /// use delaunay::prelude::geometry::{
+    ///     LabeledSimplexEmbedding, LabeledSimplexEmbeddingError,
+    /// };
+    ///
+    /// # fn main() -> Result<(), LabeledSimplexEmbeddingError> {
+    /// let simplex = LabeledSimplexEmbedding::try_new(
+    ///     [0_usize, 1, 2],
+    ///     [[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]],
+    /// )?;
+    ///
+    /// assert_abs_diff_eq!(simplex.coordinates()[2][0], 0.5, epsilon = f64::EPSILON);
+    /// assert_abs_diff_eq!(simplex.coordinates()[2][1], 1.0, epsilon = f64::EPSILON);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn coordinates(&self) -> &[[f64; D]] {
         &self.coordinates
+    }
+
+    /// Rehydrates a validated coordinate row as a [`Point`] without rechecking finiteness.
+    pub(crate) fn point_at(&self, vertex_index: usize) -> Option<Point<D>> {
+        self.coordinates.get(vertex_index).copied().map(|coords| {
+            Point::from_validated_coordinates(
+                ValidatedCoordinates::from_prevalidated_finite_values(coords),
+            )
+        })
     }
 
     /// Returns an embedding translated by integer multiples of the periodic domain.
@@ -79,6 +206,34 @@ impl<L, const D: usize> LabeledSimplexEmbedding<L, D> {
     /// The translated coordinates are re-validated so overflow to non-finite
     /// values becomes a typed embedding error rather than a hidden predicate
     /// input.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LabeledSimplexEmbeddingError::InvalidPeriodicDomainPeriod`] if a
+    /// period is non-finite or non-positive, or
+    /// [`LabeledSimplexEmbeddingError::NonFiniteCoordinate`] if translating by
+    /// `shift * period` produces a NaN or infinite coordinate.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::geometry::{
+    ///     LabeledSimplexEmbedding, LabeledSimplexEmbeddingError,
+    /// };
+    /// use approx::assert_abs_diff_eq;
+    ///
+    /// # fn main() -> Result<(), LabeledSimplexEmbeddingError> {
+    /// let simplex = LabeledSimplexEmbedding::try_new(
+    ///     [0_usize, 1, 2],
+    ///     [[0.0, 0.0], [0.5, 0.0], [0.0, 0.5]],
+    /// )?;
+    /// let translated = simplex.try_translated(&[1.0, 1.0], &[1, -1])?;
+    ///
+    /// assert_abs_diff_eq!(translated.coordinates()[0][0], 1.0, epsilon = f64::EPSILON);
+    /// assert_abs_diff_eq!(translated.coordinates()[0][1], -1.0, epsilon = f64::EPSILON);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn try_translated(
         &self,
         periods: &[f64; D],
@@ -95,8 +250,30 @@ impl<L, const D: usize> LabeledSimplexEmbedding<L, D> {
                 coords[axis] = f64::from(shift[axis]).mul_add(periods[axis], coords[axis]);
             }
         }
-        Self::try_new(self.labels.iter().cloned(), translated_coordinates)
+        validate_coordinate_rows(&translated_coordinates)?;
+        Ok(Self {
+            labels: self.labels.clone(),
+            coordinates: translated_coordinates,
+        })
     }
+}
+
+/// Validates translated or newly parsed coordinate rows before predicate use.
+fn validate_coordinate_rows<const D: usize>(
+    coordinates: &SimplexEmbeddingBuffer<[f64; D]>,
+) -> Result<(), LabeledSimplexEmbeddingError> {
+    for (vertex_index, coords) in coordinates.iter().enumerate() {
+        for (coordinate_index, coordinate) in coords.iter().enumerate() {
+            if !coordinate.is_finite() {
+                return Err(LabeledSimplexEmbeddingError::NonFiniteCoordinate {
+                    vertex_index,
+                    coordinate_index,
+                    coordinate_value: InvalidCoordinateValue::from_debug(coordinate),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Errors produced while parsing a labeled simplex embedding.
@@ -118,6 +295,14 @@ pub enum LabeledSimplexEmbeddingError {
         expected: usize,
         /// Actual vertex count supplied by the caller.
         actual: usize,
+    },
+    /// A simplex label appeared more than once.
+    #[error("duplicate simplex embedding label at indices {first_index} and {duplicate_index}")]
+    DuplicateLabel {
+        /// First index containing the duplicated label.
+        first_index: usize,
+        /// Later index containing the same label.
+        duplicate_index: usize,
     },
     /// A coordinate was NaN or infinite.
     #[error(
@@ -174,12 +359,19 @@ pub struct SimplexIntersectionWitness<L> {
 }
 
 /// Failure modes for exact simplex-intersection validation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum SimplexIntersectionFailure<L> {
     /// The first simplex basis is singular, so barycentric coordinates are undefined.
+    #[error("simplex barycentric basis is singular")]
     SingularBarycentricBasis,
     /// The simplices intersect at a point involving non-shared vertices.
-    IntersectionOutsideSharedFace(SimplexIntersectionWitness<L>),
+    #[error("simplices intersect outside their shared face")]
+    #[non_exhaustive]
+    IntersectionOutsideSharedFace {
+        /// Barycentric witness for the illegal intersection.
+        witness: SimplexIntersectionWitness<L>,
+    },
 }
 
 /// Coordinate-span witness for a simplex that is too wide for one periodic chart.
@@ -194,6 +386,33 @@ pub struct PeriodicSimplexSpan {
 }
 
 /// Returns the closed coordinate range of a simplex along one axis.
+///
+/// Returns [`None`] when `axis >= D`.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::{
+///     LabeledSimplexEmbedding, LabeledSimplexEmbeddingError, coordinate_range_for_axis,
+/// };
+/// use approx::abs_diff_eq;
+///
+/// # fn main() -> Result<(), LabeledSimplexEmbeddingError> {
+/// let simplex = LabeledSimplexEmbedding::try_new(
+///     [0_usize, 1, 2],
+///     [[-1.0, 0.0], [2.0, 0.5], [0.0, 1.0]],
+/// )?;
+///
+/// std::assert_matches!(
+///     coordinate_range_for_axis(&simplex, 0),
+///     Some((min, max))
+///         if abs_diff_eq!(min, -1.0, epsilon = f64::EPSILON)
+///             && abs_diff_eq!(max, 2.0, epsilon = f64::EPSILON)
+/// );
+/// assert_eq!(coordinate_range_for_axis(&simplex, 2), None);
+/// # Ok(())
+/// # }
+/// ```
 pub fn coordinate_range_for_axis<L, const D: usize>(
     simplex: &LabeledSimplexEmbedding<L, D>,
     axis: usize,
@@ -209,6 +428,33 @@ pub fn coordinate_range_for_axis<L, const D: usize>(
 }
 
 /// Returns whether two simplex axis-aligned bounding boxes overlap.
+///
+/// This is a conservative broad-phase predicate: a `true` result means the
+/// boxes overlap and exact simplex-intersection validation may be needed, not
+/// that the simplices themselves necessarily intersect.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::{
+///     LabeledSimplexEmbedding, LabeledSimplexEmbeddingError,
+///     axis_aligned_bounding_boxes_overlap,
+/// };
+///
+/// # fn main() -> Result<(), LabeledSimplexEmbeddingError> {
+/// let first = LabeledSimplexEmbedding::try_new(
+///     [0_usize, 1, 2],
+///     [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+/// )?;
+/// let second = LabeledSimplexEmbedding::try_new(
+///     [3_usize, 4, 5],
+///     [[2.0, 2.0], [3.0, 2.0], [2.0, 3.0]],
+/// )?;
+///
+/// assert!(!axis_aligned_bounding_boxes_overlap(&first, &second));
+/// # Ok(())
+/// # }
+/// ```
 pub fn axis_aligned_bounding_boxes_overlap<L1, L2, const D: usize>(
     first: &LabeledSimplexEmbedding<L1, D>,
     second: &LabeledSimplexEmbedding<L2, D>,
@@ -230,6 +476,34 @@ pub fn axis_aligned_bounding_boxes_overlap<L1, L2, const D: usize>(
 ///
 /// Returns [`PeriodicSimplexSpanError`] when any period is non-finite or not
 /// strictly positive.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::{
+///     LabeledSimplexEmbedding, LabeledSimplexEmbeddingError,
+///     PeriodicSimplexSpanError, try_periodic_simplex_span,
+/// };
+///
+/// #[derive(Debug, thiserror::Error)]
+/// enum ExampleError {
+///     #[error(transparent)]
+///     Embedding(#[from] LabeledSimplexEmbeddingError),
+///     #[error(transparent)]
+///     PeriodicSpan(#[from] PeriodicSimplexSpanError),
+/// }
+///
+/// # fn main() -> Result<(), ExampleError> {
+/// let simplex = LabeledSimplexEmbedding::try_new(
+///     [0_usize, 1, 2],
+///     [[0.0, 0.0], [1.0, 0.0], [0.0, 0.25]],
+/// )?;
+///
+/// let span = try_periodic_simplex_span(&simplex, &[1.0, 2.0])?;
+/// assert_eq!(span.map(|witness| witness.axis), Some(0));
+/// # Ok(())
+/// # }
+/// ```
 pub fn try_periodic_simplex_span<L, const D: usize>(
     simplex: &LabeledSimplexEmbedding<L, D>,
     periods: &[f64; D],
@@ -237,8 +511,13 @@ pub fn try_periodic_simplex_span<L, const D: usize>(
     validate_periods(periods)?;
 
     for (axis, &period) in periods.iter().enumerate() {
-        let (min_coord, max_coord) = coordinate_range_for_axis(simplex, axis)
-            .expect("axis generated from periods.iter().enumerate() must be valid");
+        let (min_coord, max_coord) = simplex.coordinates().iter().fold(
+            (f64::INFINITY, f64::NEG_INFINITY),
+            |(min_coord, max_coord), coords| {
+                let coord = coords[axis];
+                (min_coord.min(coord), max_coord.max(coord))
+            },
+        );
         let span = max_coord - min_coord;
         if span >= period {
             return Ok(Some(PeriodicSimplexSpan { axis, span, period }));
@@ -268,6 +547,39 @@ fn validate_periods<const D: usize>(periods: &[f64; D]) -> Result<(), PeriodicSi
 /// This is the pure geometric core of Level 4 overlap validation. It uses
 /// exact rational barycentric arithmetic after coordinates have been parsed as
 /// finite f64 values.
+///
+/// # Errors
+///
+/// Returns [`SimplexIntersectionFailure::SingularBarycentricBasis`] when the
+/// first simplex cannot define barycentric coordinates, or
+/// [`SimplexIntersectionFailure::IntersectionOutsideSharedFace`] when the
+/// two simplex interiors overlap away from their shared labels.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::{
+///     LabeledSimplexEmbedding, LabeledSimplexEmbeddingError, SimplexIntersectionFailure,
+///     validate_simplex_embeddings_intersect_only_in_shared_faces,
+/// };
+///
+/// # fn main() -> Result<(), LabeledSimplexEmbeddingError> {
+/// let first = LabeledSimplexEmbedding::try_new(
+///     [0_usize, 1, 2],
+///     [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+/// )?;
+/// let second = LabeledSimplexEmbedding::try_new(
+///     [0_usize, 1, 3],
+///     [[0.0, 0.0], [1.0, 0.0], [0.25, 0.25]],
+/// )?;
+///
+/// std::assert_matches!(
+///     validate_simplex_embeddings_intersect_only_in_shared_faces(&first, &second),
+///     Err(SimplexIntersectionFailure::IntersectionOutsideSharedFace { .. })
+/// );
+/// # Ok(())
+/// # }
+/// ```
 pub fn validate_simplex_embeddings_intersect_only_in_shared_faces<L, const D: usize>(
     first: &LabeledSimplexEmbedding<L, D>,
     second: &LabeledSimplexEmbedding<L, D>,
@@ -287,13 +599,13 @@ where
             positive_nonshared_labels(&beta, second.labels(), &shared_labels);
 
         if !first_only_witness_labels.is_empty() || !second_only_witness_labels.is_empty() {
-            return Err(SimplexIntersectionFailure::IntersectionOutsideSharedFace(
-                SimplexIntersectionWitness {
+            return Err(SimplexIntersectionFailure::IntersectionOutsideSharedFace {
+                witness: SimplexIntersectionWitness {
                     shared: shared_labels,
                     first_only_witness: first_only_witness_labels,
                     second_only_witness: second_only_witness_labels,
                 },
-            ));
+            });
         }
     }
 
@@ -572,7 +884,11 @@ fn rational_one() -> BigRational {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use approx::assert_abs_diff_eq;
     use std::assert_matches;
+
+    #[derive(Clone)]
+    struct CloneOnlyLabel;
 
     #[test]
     fn labeled_simplex_embedding_rejects_label_coordinate_length_mismatch() {
@@ -602,6 +918,23 @@ mod tests {
             LabeledSimplexEmbeddingError::InvalidArity {
                 expected: 3,
                 actual: 4,
+            }
+        );
+    }
+
+    #[test]
+    fn labeled_simplex_embedding_rejects_duplicate_labels() {
+        let err = LabeledSimplexEmbedding::<_, 2>::try_new(
+            vec![0, 1, 0],
+            vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+        )
+        .unwrap_err();
+
+        assert_matches!(
+            err,
+            LabeledSimplexEmbeddingError::DuplicateLabel {
+                first_index: 0,
+                duplicate_index: 2,
             }
         );
     }
@@ -654,6 +987,21 @@ mod tests {
     }
 
     #[test]
+    fn labeled_simplex_embedding_rehydrates_points_from_validated_rows() {
+        let simplex = LabeledSimplexEmbedding::try_new(
+            vec![0, 1, 2],
+            vec![[-0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+        )
+        .unwrap();
+
+        let point = simplex.point_at(0).expect("vertex index exists");
+
+        assert_eq!(point.coords()[0].to_bits(), 0.0_f64.to_bits());
+        assert_eq!(point.coords()[1].to_bits(), 0.0_f64.to_bits());
+        assert!(simplex.point_at(3).is_none());
+    }
+
+    #[test]
     fn translated_embedding_rejects_non_finite_coordinates() {
         let simplex = LabeledSimplexEmbedding::try_new(
             vec![0, 1, 2],
@@ -697,6 +1045,25 @@ mod tests {
     }
 
     #[test]
+    fn translated_embedding_requires_only_clone_labels() {
+        let simplex = LabeledSimplexEmbedding {
+            labels: vec![CloneOnlyLabel, CloneOnlyLabel, CloneOnlyLabel]
+                .into_iter()
+                .collect(),
+            coordinates: vec![[0.0, 0.0], [0.5, 0.0], [0.0, 0.5]]
+                .into_iter()
+                .collect(),
+        };
+
+        let translated = simplex
+            .try_translated(&[1.0, 1.0], &[1, 0])
+            .expect("translation preserves already-validated labels");
+
+        assert_eq!(translated.labels().len(), 3);
+        assert_abs_diff_eq!(translated.coordinates()[1][0], 1.5, epsilon = f64::EPSILON);
+    }
+
+    #[test]
     fn crossing_triangles_report_positive_nonshared_witnesses() {
         let first = LabeledSimplexEmbedding::try_new(
             vec![0, 1, 2],
@@ -713,7 +1080,7 @@ mod tests {
             .unwrap_err();
         assert_matches!(
             err,
-            SimplexIntersectionFailure::IntersectionOutsideSharedFace(witness)
+            SimplexIntersectionFailure::IntersectionOutsideSharedFace { witness, .. }
                 if witness.first_only_witness.iter().any(|label| [0, 1, 2].contains(label))
                     && witness.second_only_witness.iter().any(|label| [3, 4, 5].contains(label))
         );
@@ -731,8 +1098,8 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(span.axis, 0);
-        assert_eq!(span.span, 1.0);
-        assert_eq!(span.period, 1.0);
+        assert_abs_diff_eq!(span.span, 1.0, epsilon = f64::EPSILON);
+        assert_abs_diff_eq!(span.period, 1.0, epsilon = f64::EPSILON);
     }
 
     #[test]

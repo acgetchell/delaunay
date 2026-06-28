@@ -11,8 +11,10 @@ use delaunay::prelude::construction::{
 use delaunay::prelude::geometry::RobustKernel;
 use delaunay::prelude::pachner::{
     BistellarFlipKind, EdgeKey, EdgeKeyError, FacetHandle, FlipDirection, FlipError, PachnerMove,
-    PachnerMoveResult, PachnerMoves, RidgeHandle, SimplexKey, TriangleHandle, VertexKey,
+    PachnerMoveResult, PachnerMoves, SimplexKey, VertexKey,
 };
+#[cfg(feature = "slow-tests")]
+use delaunay::prelude::pachner::{RidgeHandle, TriangleHandle};
 use uuid::Uuid;
 
 type Dt4 = DelaunayTriangulation<RobustKernel<f64>, (), (), 4>;
@@ -44,7 +46,9 @@ struct TopologySnapshot {
 fn topology_and_delaunay_valid<const D: usize>(
     dt: &DelaunayTriangulation<RobustKernel<f64>, (), (), D>,
 ) -> bool {
-    dt.as_triangulation().validate().is_ok() && dt.is_valid_delaunay().is_ok()
+    dt.as_triangulation().validate().is_ok()
+        && dt.as_triangulation().is_valid_embedding().is_ok()
+        && dt.is_valid_delaunay().is_ok()
 }
 
 fn assert_topology_and_delaunay_valid<const D: usize>(
@@ -54,11 +58,15 @@ fn assert_topology_and_delaunay_valid<const D: usize>(
     dt.as_triangulation()
         .validate()
         .unwrap_or_else(|err| panic!("{context} should pass Levels 1-3: {err}"));
+    dt.as_triangulation()
+        .is_valid_embedding()
+        .unwrap_or_else(|err| panic!("{context} should pass Level 4 embedding: {err}"));
     dt.is_valid_delaunay()
         .unwrap_or_else(|err| panic!("{context} should pass Level 5: {err}"));
 }
 
 #[test]
+#[cfg(feature = "slow-tests")]
 fn public_pachner_roundtrips_preserve_stable_4d_topology() {
     let base = build_stable_dt_4d();
     assert_topology_and_delaunay_valid(&base, "stable 4D fixture");
@@ -83,14 +91,42 @@ fn public_pachner_roundtrips_preserve_stable_4d_topology() {
 }
 
 #[test]
-fn stale_pachner_requests_fail_without_mutating_topology() {
+fn stale_k1_insert_request_fails_without_mutating_topology() {
     let base = build_stable_dt_4d();
+    assert_stale_k1_insert_preserves_topology(base);
+}
 
-    assert_stale_k1_insert_preserves_topology(base.clone());
-    assert_stale_k1_remove_preserves_topology(base.clone());
-    assert_stale_k2_preserves_topology(base.clone());
-    assert_stale_k2_inverse_preserves_topology(base.clone());
-    assert_stale_k3_preserves_topology(base.clone());
+#[test]
+fn stale_k1_remove_request_fails_without_mutating_topology() {
+    let base = build_stable_dt_4d();
+    assert_stale_k1_remove_preserves_topology(base);
+}
+
+#[test]
+#[cfg(feature = "slow-tests")]
+fn stale_k2_request_fails_without_mutating_topology() {
+    let base = build_stable_dt_4d();
+    assert_stale_k2_preserves_topology(base);
+}
+
+#[test]
+#[cfg(feature = "slow-tests")]
+fn stale_k2_inverse_request_fails_without_mutating_topology() {
+    let base = build_stable_dt_4d();
+    assert_stale_k2_inverse_preserves_topology(base);
+}
+
+#[test]
+#[cfg(feature = "slow-tests")]
+fn stale_k3_request_fails_without_mutating_topology() {
+    let base = build_stable_dt_4d();
+    assert_stale_k3_preserves_topology(base);
+}
+
+#[test]
+#[cfg(feature = "slow-tests")]
+fn stale_k3_inverse_request_fails_without_mutating_topology() {
+    let base = build_stable_dt_4d();
     assert_stale_k3_inverse_preserves_topology(base);
 }
 
@@ -408,6 +444,7 @@ fn assert_stale_k1_remove_preserves_topology(mut dt: Dt4) {
 }
 
 /// Makes a k=2 facet proposal stale, then proves retrying it is failure-atomic.
+#[cfg(feature = "slow-tests")]
 fn assert_stale_k2_preserves_topology(mut dt: Dt4) {
     let facet = flippable_k2_facet(&dt);
     let flipped = dt
@@ -427,6 +464,7 @@ fn assert_stale_k2_preserves_topology(mut dt: Dt4) {
 }
 
 /// Makes an inverse k=2 edge proposal stale, then proves retrying it is failure-atomic.
+#[cfg(feature = "slow-tests")]
 fn assert_stale_k2_inverse_preserves_topology(mut dt: Dt4) {
     let facet = flippable_k2_facet(&dt);
     let info = dt
@@ -451,6 +489,7 @@ fn assert_stale_k2_inverse_preserves_topology(mut dt: Dt4) {
 }
 
 /// Makes a k=3 ridge proposal stale, then proves retrying it is failure-atomic.
+#[cfg(feature = "slow-tests")]
 fn assert_stale_k3_preserves_topology(mut dt: Dt4) {
     let ridge = flippable_k3_ridge(&dt);
     let flipped = dt
@@ -470,6 +509,7 @@ fn assert_stale_k3_preserves_topology(mut dt: Dt4) {
 }
 
 /// Makes an inverse k=3 triangle proposal stale, then proves retrying it is failure-atomic.
+#[cfg(feature = "slow-tests")]
 fn assert_stale_k3_inverse_preserves_topology(mut dt: Dt4) {
     let ridge = flippable_k3_ridge(&dt);
     let info = dt
@@ -558,6 +598,7 @@ fn simplex_centroid(dt: &Dt4, simplex_key: SimplexKey) -> [f64; 4] {
 }
 
 /// Applies a k=1 insert/remove pair and checks the reported move metadata.
+#[cfg(feature = "slow-tests")]
 fn roundtrip_k1(dt: &mut Dt4) {
     let simplex_key = first_simplex(dt);
     let new_vertex: Vertex<(), 4> = vertex!(simplex_centroid(dt, simplex_key)).unwrap();
@@ -587,6 +628,7 @@ fn roundtrip_k1(dt: &mut Dt4) {
 }
 
 /// Searches the fixture for a k=2 facet that also supports the public inverse API.
+#[cfg(feature = "slow-tests")]
 fn flippable_k2_facet(dt: &Dt4) -> FacetHandle {
     for (simplex_key, simplex) in dt.simplices() {
         let Some(neighbors) = simplex.neighbors() else {
@@ -620,6 +662,7 @@ fn flippable_k2_facet(dt: &Dt4) -> FacetHandle {
 }
 
 /// Applies a k=2 forward/inverse pair and checks both move reports.
+#[cfg(feature = "slow-tests")]
 fn roundtrip_k2(dt: &mut Dt4, facet: FacetHandle) {
     let info: PachnerMoveResult<4> = dt
         .attempt_pachner(PachnerMove::K2 { facet })
@@ -637,6 +680,7 @@ fn roundtrip_k2(dt: &mut Dt4, facet: FacetHandle) {
 }
 
 /// Parses the inserted face of a k=2 move into the edge expected by the inverse API.
+#[cfg(feature = "slow-tests")]
 fn inserted_edge(dt: &Dt4, vertices: &[VertexKey]) -> EdgeKey {
     let [a, b] = vertices else {
         panic!(
@@ -648,6 +692,7 @@ fn inserted_edge(dt: &Dt4, vertices: &[VertexKey]) -> EdgeKey {
 }
 
 /// Searches the fixture for a k=3 ridge that also supports the public inverse API.
+#[cfg(feature = "slow-tests")]
 fn flippable_k3_ridge(dt: &Dt4) -> RidgeHandle {
     for (simplex_key, simplex) in dt.simplices() {
         for i in 0..simplex.number_of_vertices() {
@@ -678,6 +723,7 @@ fn flippable_k3_ridge(dt: &Dt4) -> RidgeHandle {
 }
 
 /// Applies a k=3 forward/inverse pair and checks both move reports.
+#[cfg(feature = "slow-tests")]
 fn roundtrip_k3(dt: &mut Dt4, ridge: RidgeHandle) {
     let info: PachnerMoveResult<4> = dt
         .attempt_pachner(PachnerMove::K3 { ridge })
@@ -696,6 +742,7 @@ fn roundtrip_k3(dt: &mut Dt4, ridge: RidgeHandle) {
 }
 
 /// Parses the inserted face of a k=3 move into the triangle expected by the inverse API.
+#[cfg(feature = "slow-tests")]
 fn inserted_triangle(vertices: &[VertexKey]) -> TriangleHandle {
     let [a, b, c] = vertices else {
         panic!(

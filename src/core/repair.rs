@@ -858,6 +858,8 @@ where
         {
             self.tds.is_valid().map_err(InvariantError::Tds)?;
             self.is_valid_topology()?;
+            self.is_valid_embedding()
+                .map_err(InvariantError::Embedding)?;
         }
 
         Ok(())

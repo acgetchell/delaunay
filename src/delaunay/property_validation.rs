@@ -812,7 +812,7 @@ mod tests {
     use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
     use slotmap::KeyData;
-    use std::{assert_matches, sync::Once};
+    use std::{assert_matches, ptr, sync::Once};
 
     fn test_vertex<const D: usize>(coords: [f64; D]) -> Vertex<(), D> {
         vertex!(coords).unwrap()
@@ -1078,7 +1078,10 @@ mod tests {
         let detail = report
             .first_violation()
             .expect("violating report should include first violation details");
-        assert!(std::ptr::eq(detail, &report.violation_details[0]));
+        assert!(ptr::eq(
+            ptr::from_ref(detail),
+            ptr::from_ref(&report.violation_details[0]),
+        ));
         assert!(detail.simplex_key == simplex_1 || detail.simplex_key == simplex_2);
         assert_eq!(detail.simplex_vertices.len(), 3);
         assert_eq!(detail.neighbor_simplices.len(), 3);

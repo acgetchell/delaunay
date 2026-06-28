@@ -889,8 +889,12 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// structure is invalid while checking topology, or
     /// [`DelaunayTriangulationValidationError::Triangulation`] when Level 3
     /// topology violates the requested metadata, for example when Euclidean
-    /// boundary facets are relabeled as closed spherical or toroidal topology.
-    /// The previous topology metadata is restored before the error is returned.
+    /// boundary facets are relabeled as closed spherical or toroidal topology,
+    /// [`DelaunayTriangulationValidationError::Embedding`] when Level 4 rejects
+    /// the requested embedding model, or
+    /// [`DelaunayTriangulationValidationError::VerificationFailed`] when Level 5
+    /// Delaunay validation fails. The previous topology metadata is restored
+    /// before the error is returned.
     ///
     /// # Examples
     ///

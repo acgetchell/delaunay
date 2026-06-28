@@ -59,7 +59,7 @@ let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty()
 // Enforce stricter topology checks.
 dt.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
 
-// In tests/debugging, validate Level 3 after every insertion.
+// In tests/debugging, validate global Level 3 and changed-scope Level 4 after every insertion.
 dt.set_validation_policy(ValidationPolicy::Always);
 ```
 

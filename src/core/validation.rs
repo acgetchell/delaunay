@@ -135,6 +135,7 @@ use uuid::Uuid;
 ///
 /// - `TopologyValidation(source)` → `InvariantError::Tds(source)` (Level 1–2 preserved)
 /// - `TopologyValidationFailed { source }` → `InvariantError::Triangulation(source)` (Level 3 preserved)
+/// - `EmbeddingValidationFailed { source }` → `InvariantError::Embedding(source)` (Level 4 preserved)
 /// - `DelaunayValidationFailed { source }` → `InvariantError::Delaunay(source)` (Level 5 preserved)
 /// - All other variants → `InvariantError::Tds(InconsistentDataStructure { .. })` with `context`
 pub(crate) fn insertion_error_to_invariant_error(
@@ -146,6 +147,7 @@ pub(crate) fn insertion_error_to_invariant_error(
         InsertionError::TopologyValidationFailed { source, .. } => {
             InvariantError::Triangulation(source)
         }
+        InsertionError::EmbeddingValidationFailed { source } => InvariantError::Embedding(source),
         InsertionError::DelaunayValidationFailed { source } => InvariantError::Delaunay(source),
         other => InvariantError::Tds(TdsError::InconsistentDataStructure {
             message: format!("{context}: {other}"),
@@ -471,10 +473,9 @@ fn invariant_error_from_topology_error(err: TopologyError) -> InvariantError {
 ///
 /// **Note**: [`TopologyGuarantee::PLManifold`] is incompatible with [`ValidationPolicy::Never`].
 /// `PLManifold` requires at least caller-owned completion validation to certify full
-/// PL-manifoldness. Use [`ValidationPolicy::ExplicitOnly`] when you want to run full
-/// topology validation only through explicit validation calls, [`ValidationPolicy::OnSuspicion`]
-/// for suspicion-triggered validation, or [`ValidationPolicy::Always`] for maximum safety during
-/// incremental operations.
+/// PL-manifoldness. Use [`ValidationPolicy::ExplicitOnly`] when callers own explicit validation
+/// checkpoints, [`ValidationPolicy::OnSuspicion`] for suspicion-triggered validation, or
+/// [`ValidationPolicy::Always`] for maximum safety during incremental operations.
 ///
 /// # Examples
 ///
@@ -495,10 +496,10 @@ pub enum ValidationPolicy {
     /// full validation checkpoints are owned by the caller.
     Never,
 
-    /// Run full topology validation only when callers invoke explicit validation APIs.
+    /// Do not run policy-triggered global topology/changed-scope embedding validation during insertion.
     ///
     /// Mandatory local topology checks required by the active [`TopologyGuarantee`] still run
-    /// during insertion, but suspicion-triggered full Level 3 validation is disabled.
+    /// during insertion, but suspicion-triggered global Level 3/changed-scope Level 4 validation is disabled.
     ExplicitOnly,
 
     /// Validate only if the operation is suspicious (e.g. degeneracy).
@@ -1333,13 +1334,6 @@ where
             });
         }
 
-        if let Err(source) = self.validate_at_completion() {
-            violations.push(InvariantViolation {
-                kind: InvariantKind::Topology,
-                error: source,
-            });
-        }
-
         if violations.is_empty() {
             Ok(())
         } else {
@@ -1553,6 +1547,13 @@ where
             violations.extend(report.violations);
         }
 
+        if let Err(source) = self.validate_at_completion() {
+            violations.push(InvariantViolation {
+                kind: InvariantKind::Topology,
+                error: source,
+            });
+        }
+
         if violations.is_empty() {
             Ok(())
         } else {
@@ -1564,7 +1565,7 @@ where
     ///
     /// - `InvariantError::Tds(e)` → `InsertionError::TopologyValidation(e)`
     /// - `InvariantError::Triangulation(e)` → `InsertionError::TopologyValidationFailed { source: e }`
-    /// - `InvariantError::Embedding(e)` → `InsertionError::DelaunayValidationFailed { source: e.into() }`
+    /// - `InvariantError::Embedding(e)` → `InsertionError::EmbeddingValidationFailed { source: e }`
     /// - `InvariantError::Delaunay(e)` → `InsertionError::DelaunayValidationFailed { source: e }`
     pub(crate) fn invariant_error_to_insertion_error(err: InvariantError) -> InsertionError {
         match err {
@@ -1573,8 +1574,8 @@ where
                 context: InsertionTopologyValidationContext::InvariantConversion,
                 source: tri_err,
             },
-            InvariantError::Embedding(embedding_err) => InsertionError::DelaunayValidationFailed {
-                source: embedding_err.into(),
+            InvariantError::Embedding(embedding_err) => InsertionError::EmbeddingValidationFailed {
+                source: embedding_err,
             },
             InvariantError::Delaunay(dt_err) => {
                 InsertionError::DelaunayValidationFailed { source: dt_err }
@@ -1778,29 +1779,15 @@ where
         }
     }
 
-    /// Reuses the Level 4 insertion-time guard for either caller-provided local
-    /// simplices or the full triangulation when no local scope is available.
-    fn validate_insertion_embedding_scope(
-        &self,
-        local_simplices: Option<&[SimplexKey]>,
-    ) -> Result<(), InvariantError> {
-        let all_simplex_keys;
-        let simplex_keys = if let Some(local_simplices) = local_simplices {
-            local_simplices
-        } else {
-            all_simplex_keys = self.tds.simplex_keys().collect::<SimplexKeyBuffer>();
-            &all_simplex_keys
-        };
-
-        self.validate_local_embedding_nondegeneracy(simplex_keys)
-            .map_err(InvariantError::Embedding)
-    }
-
     pub(crate) fn validate_after_insertion_with_scope(
         &self,
         suspicion: SuspicionFlags,
         local_simplices: Option<&[SimplexKey]>,
-    ) -> Result<(), InvariantError> {
+    ) -> Result<(), InvariantError>
+    where
+        U: DataType,
+        V: DataType,
+    {
         let Some(work) = self.validation_after_insertion_work(suspicion) else {
             return Ok(());
         };
@@ -1808,8 +1795,13 @@ where
         log_validation_trigger_if_enabled(self.validation_policy, suspicion);
         match work {
             InsertionValidationWork::FullValidation => {
-                self.is_valid_topology()?;
-                self.validate_insertion_embedding_scope(local_simplices)
+                self.validate()?;
+                match local_simplices {
+                    Some([]) => Ok(()),
+                    Some(simplices) => self.validate_embedding_for_simplices(simplices),
+                    None => self.is_valid_embedding(),
+                }
+                .map_err(InvariantError::Embedding)
             }
             InsertionValidationWork::RequiredTopologyLinks => local_simplices.map_or_else(
                 || self.validate_required_topology_links(),
@@ -1825,7 +1817,11 @@ where
         local_simplices: &[SimplexKey],
         telemetry: &mut InsertionTelemetry,
         telemetry_mode: InsertionTelemetryMode,
-    ) -> Result<(), InvariantError> {
+    ) -> Result<(), InvariantError>
+    where
+        U: DataType,
+        V: DataType,
+    {
         let validation_work = self.validation_after_insertion_work(suspicion);
         let validation_started =
             validation_work.and_then(|_| start_insertion_timing(telemetry_mode));
@@ -1894,12 +1890,14 @@ mod tests {
     use crate::core::algorithms::flips::{DelaunayRepairError, DelaunayRepairPostconditionFailure};
     use crate::core::algorithms::incremental_insertion::CavityFillingError;
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
-    use crate::core::collections::NeighborBuffer;
+    use crate::core::collections::{NeighborBuffer, SimplexVertexKeyBuffer};
     use crate::core::embedding::TriangulationEmbeddingValidationError;
     use crate::core::facet::FacetError;
     use crate::core::operations::InsertionOutcome;
     use crate::core::simplex::Simplex;
-    use crate::core::tds::{GeometricError, NeighborValidationError, Tds};
+    use crate::core::tds::{
+        GeometricError, NeighborValidationError, Tds, TriangulationConstructionState,
+    };
     use crate::core::vertex::Vertex;
     use crate::geometry::coordinate_range::CoordinateRange;
     use crate::geometry::kernel::FastKernel;
@@ -1923,6 +1921,13 @@ mod tests {
                 }),
             })
             .into(),
+        }
+    }
+
+    const fn synthetic_embedding_error() -> TriangulationEmbeddingValidationError {
+        TriangulationEmbeddingValidationError::UnsupportedTopology {
+            topology: TopologyKind::Spherical,
+            dimension: 3,
         }
     }
 
@@ -2078,6 +2083,44 @@ mod tests {
             .unwrap();
 
         tds
+    }
+
+    fn build_topologically_valid_self_overlapping_tds_2d() -> (Tds<(), (), 2>, SimplexKeyBuffer) {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let mut vertices = Vec::new();
+        for coords in [
+            [1.850_341_970_997_476_4, 3.808_736_162_215_642_4],
+            [-1.705_108_018_057_679, 3.541_228_835_829_82],
+            [-1.151_312_061_387_885_3, 0.227_299_663_756_810_77],
+            [0.478_746_443_632_698_25, 2.055_189_799_064_582],
+            [-1.383_321_070_900_029, -1.797_028_018_114_396_3],
+            [3.030_089_610_961_752_6, 2.181_406_554_808_236_6],
+        ] {
+            vertices.push(tds.insert_vertex_with_mapping(test_vertex(coords)).unwrap());
+        }
+
+        let mut simplex_keys = SimplexKeyBuffer::new();
+        for simplex_vertices in [
+            [vertices[0], vertices[2], vertices[3]],
+            [vertices[5], vertices[3], vertices[2]],
+            [vertices[4], vertices[3], vertices[1]],
+            [vertices[3], vertices[4], vertices[0]],
+            [vertices[3], vertices[5], vertices[1]],
+        ] {
+            let simplex_vertices: SimplexVertexKeyBuffer = simplex_vertices.into_iter().collect();
+            simplex_keys.push(
+                tds.insert_simplex_with_mapping(
+                    Simplex::try_new_with_data(simplex_vertices, None).unwrap(),
+                )
+                .unwrap(),
+            );
+        }
+
+        tds.construction_state = TriangulationConstructionState::Constructed;
+        tds.assign_neighbors().unwrap();
+        tds.assign_incident_simplices().unwrap();
+
+        (tds, simplex_keys)
     }
 
     fn unit_simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
@@ -2686,6 +2729,19 @@ mod tests {
     }
 
     #[test]
+    fn validate_after_insertion_full_validation_includes_tds_layer() {
+        let (mut tri, [v0, _, _, _], _) = build_single_tet();
+        let uuid = tri.tds.vertex(v0).unwrap().uuid();
+        tri.tds.uuid_to_vertex_key.remove(&uuid);
+        tri.set_validation_policy(ValidationPolicy::Always);
+
+        match tri.validate_after_insertion_with_scope(SuspicionFlags::default(), None) {
+            Err(InvariantError::Tds(TdsError::MappingInconsistency { .. })) => {}
+            other => panic!("Expected InvariantError::Tds(MappingInconsistency), got {other:?}"),
+        }
+    }
+
+    #[test]
     fn validation_after_insertion_work_matches_policy_and_link_requirements() {
         let tds = build_disconnected_two_triangles_tds_2d();
         let mut tri =
@@ -2735,6 +2791,15 @@ mod tests {
             InvariantError::Triangulation(inner)
         );
 
+        let embedding_source = synthetic_embedding_error();
+        let error = InsertionError::EmbeddingValidationFailed {
+            source: embedding_source.clone(),
+        };
+        assert_eq!(
+            insertion_error_to_invariant_error(error, "ctx"),
+            InvariantError::Embedding(embedding_source)
+        );
+
         let delaunay_source = synthetic_delaunay_verification_error("delaunay");
         let error = InsertionError::DelaunayValidationFailed {
             source: delaunay_source.clone(),
@@ -2774,6 +2839,11 @@ mod tests {
         let ins =
             Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(inv);
         assert_matches!(ins, InsertionError::TopologyValidationFailed { .. });
+
+        let inv = InvariantError::Embedding(synthetic_embedding_error());
+        let ins =
+            Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(inv);
+        assert_matches!(ins, InsertionError::EmbeddingValidationFailed { .. });
 
         let inv = InvariantError::Delaunay(synthetic_delaunay_verification_error("test"));
         let ins =
@@ -3788,6 +3858,55 @@ mod tests {
                     ..
                 }
             ) if simplex_key == ck
+        );
+    }
+
+    #[test]
+    fn validate_after_insertion_full_validation_rejects_global_embedding_intersection() {
+        let (tds, scope) = build_topologically_valid_self_overlapping_tds_2d();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        tri.set_validation_policy(ValidationPolicy::Always);
+
+        tri.is_valid_topology()
+            .expect("fixture should isolate a Level 4 embedding failure");
+
+        let err = tri
+            .validate_after_insertion_with_scope(SuspicionFlags::default(), Some(&scope[..1]))
+            .unwrap_err();
+
+        assert_matches!(
+            err,
+            InvariantError::Embedding(
+                TriangulationEmbeddingValidationError::SimplexIntersectionOutsideSharedFace { .. }
+            )
+        );
+    }
+
+    #[test]
+    fn validate_after_insertion_full_validation_checks_large_raw_embedding_scope() {
+        let (tds, scope) = build_topologically_valid_self_overlapping_tds_2d();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        tri.set_validation_policy(ValidationPolicy::Always);
+
+        tri.is_valid_topology()
+            .expect("fixture should isolate a Level 4 embedding failure");
+
+        let mut large_scope = SimplexKeyBuffer::new();
+        for _ in 0..9 {
+            large_scope.push(scope[0]);
+        }
+
+        let err = tri
+            .validate_after_insertion_with_scope(SuspicionFlags::default(), Some(&large_scope))
+            .unwrap_err();
+
+        assert_matches!(
+            err,
+            InvariantError::Embedding(
+                TriangulationEmbeddingValidationError::SimplexIntersectionOutsideSharedFace { .. }
+            )
         );
     }
 

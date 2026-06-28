@@ -129,8 +129,9 @@ Cumulative validation is exposed through the `validate` / `validation_report` AP
 [`docs/validation.md`](validation.md).
 
 Automatic validation during construction is intentionally topology-oriented: `ValidationPolicy`
-controls Level 3 checks during insertion, while Level 4 embedding and Level 5 Delaunay validation
-remain explicit certification steps for workflows that need them.
+controls Level 3 checks during insertion and can enable local insertion-time embedding checks.
+Full/global Level 4 embedding certification and Level 5 Delaunay validation remain explicit
+certification steps for workflows that need them.
 
 ---
 

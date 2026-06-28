@@ -698,7 +698,7 @@ mod tests {
 
         let err = dt
             .delete_vertex(vertex_key)
-            .expect_err("disabled repair should roll back a Level 4 violation");
+            .expect_err("disabled repair should roll back a Level 5 violation");
 
         let DeleteVertexError::InvariantViolation { source } = err else {
             panic!("expected invariant violation, got {err:?}");

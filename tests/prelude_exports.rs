@@ -10,15 +10,32 @@
     reason = "tests preserve typed construction, repair, and delaunayize errors"
 )]
 
-use std::{assert_matches, mem::size_of, num::NonZeroUsize};
+use std::{assert_matches, error::Error, mem::size_of, num::NonZeroUsize};
 
-use approx::assert_relative_eq;
+use approx::{abs_diff_eq, assert_relative_eq};
 use slotmap::KeyData;
 
-use delaunay::flips::{
-    BistellarFlips, FlipOrientationCheckStage as DirectFlipOrientationCheckStage,
+use delaunay::builder::DelaunayTriangulationBuilder as BuilderModuleBuilder;
+use delaunay::construction::{
+    ConstructionOptions as ConstructionModuleOptions,
+    InsertionOrderStrategy as ConstructionModuleInsertionOrderStrategy,
 };
-use delaunay::geometry::CoordinateRange as GeometryCoordinateRange;
+use delaunay::delaunayize::{
+    DelaunayizeConfig as DelaunayizeModuleConfig, DelaunayizeError as DelaunayizeModuleError,
+    delaunayize_by_flips as module_delaunayize_by_flips,
+};
+use delaunay::flips::{
+    BistellarFlips, DelaunayRepairError as DirectDelaunayRepairError,
+    FlipFailureKind as DirectFlipFailureKind,
+    FlipOrientationCheckStage as DirectFlipOrientationCheckStage,
+};
+use delaunay::geometry::{
+    CoordinateConversionError as GeometryModuleCoordinateConversionError,
+    CoordinateRange as GeometryCoordinateRange,
+    LabeledSimplexEmbedding as GeometryModuleLabeledSimplexEmbedding,
+    validate_simplex_embeddings_intersect_only_in_shared_faces as geometry_module_validate_simplex_embeddings_intersect_only_in_shared_faces,
+};
+use delaunay::pachner::PachnerMoves as DirectPachnerMoves;
 use delaunay::prelude::DelaunayValidationError;
 use delaunay::prelude::algorithms::LocateResult;
 #[cfg(feature = "diagnostics")]
@@ -82,14 +99,17 @@ use delaunay::prelude::geometry::{
     ArrayConversionFailureReason, CircumcenterError, CircumcenterFailureReason,
     CoordinateConversionError, CoordinateConversionValue, CoordinateValidationError,
     CoordinateValues, DegenerateGeometry, DegenerateMeasure, DegenerateSimplexReason,
-    FiniteCoordinateValue, InvalidCoordinateValue, LaError, MatrixError, Point,
-    QualitySimplexVerticesError, SurfaceMeasureError, ValueConversionError,
-    ValueConversionFailureReason,
+    FiniteCoordinateValue, InvalidCoordinateValue, LaError, LabeledSimplexEmbedding,
+    LabeledSimplexEmbeddingError, MatrixError, PeriodicSimplexSpan, PeriodicSimplexSpanError,
+    Point, QualitySimplexVerticesError, SimplexEmbeddingBuffer, SimplexIntersectionFailure,
+    SimplexIntersectionWitness, SurfaceMeasureError, ValueConversionError,
+    ValueConversionFailureReason, axis_aligned_bounding_boxes_overlap, coordinate_range_for_axis,
+    try_periodic_simplex_span, validate_simplex_embeddings_intersect_only_in_shared_faces,
 };
 use delaunay::prelude::insertion::{
     InitialSimplexConstructionError, InitialSimplexUnexpectedInsertionStage, InsertionError,
-    InsertionTopologyValidationContext, NeighborRebuildError, Tds as InsertionTds,
-    TdsMutationError, repair_neighbor_pointers_local,
+    InsertionErrorKind as FocusedInsertionErrorKind, InsertionTopologyValidationContext,
+    NeighborRebuildError, Tds as InsertionTds, TdsMutationError, repair_neighbor_pointers_local,
 };
 use delaunay::prelude::ordering::{
     HilbertBitDepth, HilbertError, HilbertQuantizedBatch, MAX_HILBERT_BITS, hilbert_index_in_range,
@@ -173,19 +193,24 @@ use delaunay::prelude::validation::{
 };
 use delaunay::prelude::{
     CoordinateRange as RootCoordinateRange, DelaunayError as RootDelaunayError,
-    DelaunayResult as RootDelaunayResult, DelaunayViolationDetail as RootDelaunayViolationDetail,
+    DelaunayResult as RootDelaunayResult, DelaunayTriangulation as RootDelaunayTriangulation,
+    DelaunayTriangulationBuilder as RootDelaunayTriangulationBuilder,
+    DelaunayViolationDetail as RootDelaunayViolationDetail,
     DelaunayViolationReport as RootDelaunayViolationReport, EdgeIndex as RootEdgeIndex,
-    FlipFailureKind as RootFlipFailureKind,
+    FacetIncidenceView as RootFacetIncidenceView, FlipFailureKind as RootFlipFailureKind,
     FlipOrientationCheckStage as RootFlipOrientationCheckStage,
     GlobalTopology as RootGlobalTopology, GlobalTopologyModelError as RootGlobalTopologyModelError,
-    IncidenceView as RootIncidenceView, PeriodicDomainPeriodError as RootPeriodicDomainPeriodError,
-    SecureHashMap, SecureHashSet, SimplexNeighborIndex as RootSimplexNeighborIndex,
-    TopologyError as RootTopologyError, TopologyKind as RootTopologyKind,
+    IncidenceView as RootIncidenceView,
+    InitialSimplexUnexpectedInsertionStage as RootInitialSimplexUnexpectedInsertionStage,
+    PeriodicDomainPeriodError as RootPeriodicDomainPeriodError, SecureHashMap, SecureHashSet,
+    SimplexNeighborIndex as RootSimplexNeighborIndex, TopologyError as RootTopologyError,
+    TopologyGuarantee as RootTopologyGuarantee, TopologyKind as RootTopologyKind,
     ToroidalConstructionMode as RootToroidalConstructionMode, ToroidalDomain as RootToroidalDomain,
     ToroidalDomainError as RootToroidalDomainError,
     TriangulationAdjacency as RootTriangulationAdjacency,
     TriangulationValidationReport as RootTriangulationValidationReport,
     ValidationConfigurationError as RootValidationConfigurationError,
+    ValidationPolicy as RootValidationPolicy,
     delaunay_violation_report as root_delaunay_violation_report, vertex as root_vertex,
 };
 use delaunay::query::{
@@ -196,11 +221,23 @@ use delaunay::query::{
     SimplexNeighborIndex as QueryFacadeSimplexNeighborIndex,
     TriangulationAdjacency as QueryFacadeTriangulationAdjacency,
 };
+use delaunay::repair::{
+    DelaunayCheckPolicy as RepairModuleDelaunayCheckPolicy,
+    DelaunayRepairPolicy as RepairModuleDelaunayRepairPolicy,
+};
 use delaunay::topology::{
     BoundaryFacetClassification as TopologyBoundaryFacetClassification,
     classify_boundary_facet as topology_classify_boundary_facet,
 };
+use delaunay::validation::{
+    DelaunayTriangulationValidationError as ValidationModuleDelaunayTriangulationValidationError,
+    ValidationCadence as ValidationModuleCadence,
+};
 use delaunay::{
+    ConstructionOptions as RootConstructionOptions,
+    DelaunayConstructionRetryFailure as RootConstructionRetryFailure,
+    DelaunayTriangulationConstructionError as RootDelaunayTriangulationConstructionError,
+    DelaunayTriangulationValidationError as RootDelaunayTriangulationValidationError,
     MESH_EXPORT_SCHEMA as RootMeshExportSchema, MeshExport as RootMeshExport,
     MeshExportError as RootMeshExportError,
     MeshExportValidationError as RootMeshExportValidationError,
@@ -212,15 +249,15 @@ use delaunay::{
 #[derive(Debug, thiserror::Error)]
 enum RootApiExportTestError {
     #[error(transparent)]
-    Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    Construction(#[from] RootDelaunayTriangulationConstructionError),
     #[error(transparent)]
-    CoordinateConversion(#[from] delaunay::geometry::CoordinateConversionError),
+    CoordinateConversion(#[from] GeometryModuleCoordinateConversionError),
     #[error(transparent)]
-    Validation(#[from] delaunay::DelaunayTriangulationValidationError),
+    Validation(#[from] RootDelaunayTriangulationValidationError),
     #[error(transparent)]
-    DelaunayRepair(#[from] delaunay::flips::DelaunayRepairError),
+    DelaunayRepair(#[from] DirectDelaunayRepairError),
     #[error(transparent)]
-    Delaunayize(#[from] delaunay::delaunayize::DelaunayizeError),
+    Delaunayize(#[from] DelaunayizeModuleError),
     #[error(transparent)]
     MeshExport(#[from] RootMeshExportError),
     #[error(transparent)]
@@ -279,8 +316,7 @@ enum PreludeExportTestError {
 const fn assert_bistellar_flips(_: &impl BistellarFlips<3, VertexData = ()>) {}
 
 /// Proves the root flips module exports the same public trait bound.
-const fn assert_root_bistellar_flips(_: &impl delaunay::flips::BistellarFlips<3, VertexData = ()>) {
-}
+const fn assert_root_bistellar_flips(_: &impl BistellarFlips<3, VertexData = ()>) {}
 
 struct NonKernelMarker;
 
@@ -291,7 +327,7 @@ const fn assert_bistellar_flips_without_kernel<T: BistellarFlips<2, VertexData =
 const fn assert_pachner_moves(_: &impl PachnerMoves<3, VertexData = ()>) {}
 
 /// Proves the root Pachner module exports the same unified workflow trait.
-const fn assert_root_pachner_moves(_: &impl delaunay::pachner::PachnerMoves<3, VertexData = ()>) {}
+const fn assert_root_pachner_moves(_: &impl DirectPachnerMoves<3, VertexData = ()>) {}
 
 /// Proves unified Pachner dispatch inherits the kernel-free explicit flip contract.
 const fn assert_pachner_moves_without_kernel<T: PachnerMoves<2, VertexData = ()>>() {}
@@ -340,6 +376,8 @@ fn assert_pachner_prelude_exports(
 }
 
 const fn assert_send_sync_unpin<T: Send + Sync + Unpin>() {}
+
+const fn assert_error<T: Error>() {}
 
 const fn assert_query_facet_incidence_trait_export<T>(_: &T)
 where
@@ -454,7 +492,10 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
         DelaunayError::from(tds_mutation.clone()),
         DelaunayError::TdsMutation { source: err } if err.as_ref() == &tds_mutation
     );
+}
 
+#[test]
+fn construction_prelude_exports_validation_and_result_aliases() {
     let configuration =
         FocusedValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
             topology_guarantee: TopologyGuarantee::PLManifold,
@@ -490,9 +531,9 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
         source: Box::new(ConstructionDelaunayVerificationError::from(
             DelaunayValidationError::DelaunayViolation {
                 simplex_key,
-                simplex_vertices: Default::default(),
+                simplex_vertices: Box::default(),
                 offending_vertex: None,
-                neighbor_simplices: Default::default(),
+                neighbor_simplices: Box::default(),
             },
         )),
     };
@@ -695,22 +736,6 @@ fn construction_prelude_covers_retry_exhaustion_source() {
 
 #[test]
 fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestError> {
-    use delaunay::builder::DelaunayTriangulationBuilder as BuilderModuleBuilder;
-    use delaunay::construction::{
-        ConstructionOptions as ConstructionModuleOptions, InsertionOrderStrategy,
-    };
-    use delaunay::delaunayize::{
-        DelaunayizeConfig as DelaunayizeModuleConfig, delaunayize_by_flips,
-    };
-    use delaunay::repair::{DelaunayCheckPolicy, DelaunayRepairPolicy};
-    use delaunay::validation::{DelaunayTriangulationValidationError, ValidationCadence};
-    use delaunay::{
-        ConstructionOptions, DelaunayConstructionRetryFailure as RootConstructionRetryFailure,
-        DelaunayTriangulation, DelaunayTriangulationBuilder,
-        InitialSimplexUnexpectedInsertionStage as RootInitialSimplexUnexpectedInsertionStage,
-        TopologyGuarantee, ValidationPolicy,
-    };
-
     let vertices = vec![
         vertex![0.0, 0.0, 0.0]?,
         vertex![1.0, 0.0, 0.0]?,
@@ -718,14 +743,14 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
         vertex![0.0, 0.0, 1.0]?,
     ];
 
-    let options: ConstructionOptions =
-        ConstructionModuleOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
+    let options: RootConstructionOptions = ConstructionModuleOptions::default()
+        .with_insertion_order(ConstructionModuleInsertionOrderStrategy::Input);
     let builder: BuilderModuleBuilder<'_, (), 3> =
-        DelaunayTriangulationBuilder::new(&vertices).construction_options(options);
-    let mut dt: DelaunayTriangulation<_, (), (), 3> = builder.build::<()>()?;
+        RootDelaunayTriangulationBuilder::new(&vertices).construction_options(options);
+    let mut dt: RootDelaunayTriangulation<_, (), (), 3> = builder.build::<()>()?;
 
-    assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
-    assert_eq!(dt.validation_policy(), ValidationPolicy::ExplicitOnly);
+    assert_eq!(dt.topology_guarantee(), RootTopologyGuarantee::PLManifold);
+    assert_eq!(dt.validation_policy(), RootValidationPolicy::ExplicitOnly);
     assert_matches!(
         RootInitialSimplexUnexpectedInsertionStage::NonManifoldTopology {
             facet_hash: 0x00C0_FFEE,
@@ -747,16 +772,17 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
         RootConstructionRetryFailure::Construction { .. }
     );
     assert_matches!(
-        ValidationCadence::from_optional_every(Some(2)),
-        ValidationCadence::EveryN(every) if every.get() == 2
+        ValidationModuleCadence::from_optional_every(Some(2)),
+        ValidationModuleCadence::EveryN(every) if every.get() == 2
     );
     assert_eq!(
-        DelaunayRepairPolicy::default(),
-        DelaunayRepairPolicy::EveryInsertion
+        RepairModuleDelaunayRepairPolicy::default(),
+        RepairModuleDelaunayRepairPolicy::EveryInsertion
     );
-    assert!(!DelaunayCheckPolicy::default().should_check(1));
+    assert!(!RepairModuleDelaunayCheckPolicy::default().should_check(1));
 
-    let validation_result: Result<(), DelaunayTriangulationValidationError> = dt.validate();
+    let validation_result: Result<(), ValidationModuleDelaunayTriangulationValidationError> =
+        dt.validate();
     validation_result?;
     let root_mesh_export: RootMeshExport<3> = dt.to_mesh_export()?;
     assert_eq!(root_mesh_export.metadata.schema, RootMeshExportSchema);
@@ -779,7 +805,7 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
     assert_bistellar_flips(&dt);
     assert_root_bistellar_flips(&dt);
 
-    let outcome = delaunayize_by_flips(&mut dt, DelaunayizeModuleConfig::default())?;
+    let outcome = module_delaunayize_by_flips(&mut dt, DelaunayizeModuleConfig::default())?;
     assert!(!outcome.used_fallback_rebuild);
     assert!(outcome.topology_repair.succeeded);
     Ok(())
@@ -803,8 +829,8 @@ fn flip_exports_cover_orientation_check_stage() {
         RootFlipOrientationCheckStage::AfterTrialMutation
     );
     assert_matches!(
-        delaunay::flips::FlipOrientationCheckStage::BeforeMutation,
-        delaunay::flips::FlipOrientationCheckStage::BeforeMutation
+        DirectFlipOrientationCheckStage::BeforeMutation,
+        DirectFlipOrientationCheckStage::BeforeMutation
     );
 }
 
@@ -856,7 +882,7 @@ fn assert_facet_incidence_exports(
     let incidence = facet_index
         .get(&facet_view.key())
         .expect("fresh index should contain the facet view key");
-    let root_incidence: delaunay::prelude::FacetIncidenceView<'_, '_, (), (), 3> = incidence;
+    let root_incidence: RootFacetIncidenceView<'_, '_, (), (), 3> = incidence;
     let query_incidence: QueryFacetIncidenceView<'_, '_, (), (), 3> = incidence;
     let tds_incidence: TdsFacetIncidenceView<'_, '_, (), (), 3> = incidence;
 
@@ -1233,6 +1259,82 @@ fn geometry_prelude_covers_typed_error_variants() {
 }
 
 #[test]
+fn geometry_prelude_covers_simplex_embedding_validation() {
+    let first =
+        LabeledSimplexEmbedding::try_new([0_usize, 1, 2], [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+            .expect("valid labeled simplex embedding");
+    let second =
+        LabeledSimplexEmbedding::try_new([0_usize, 1, 3], [[0.0, 0.0], [1.0, 0.0], [0.25, 0.25]])
+            .expect("valid labeled simplex embedding");
+
+    assert_matches!(
+        coordinate_range_for_axis(&first, 0),
+        Some((min, max))
+            if abs_diff_eq!(min, 0.0, epsilon = f64::EPSILON)
+                && abs_diff_eq!(max, 1.0, epsilon = f64::EPSILON)
+    );
+    assert!(axis_aligned_bounding_boxes_overlap(&first, &second));
+    assert_matches!(
+        validate_simplex_embeddings_intersect_only_in_shared_faces(&first, &second),
+        Err(SimplexIntersectionFailure::IntersectionOutsideSharedFace {
+            witness: SimplexIntersectionWitness {
+                shared,
+                first_only_witness,
+                second_only_witness,
+            },
+            ..
+        }) if shared.as_slice() == [0, 1]
+            && first_only_witness.as_slice() == [2]
+            && second_only_witness.as_slice() == [3]
+    );
+    let module_root_simplex = GeometryModuleLabeledSimplexEmbedding::try_new(
+        [10_usize, 11, 12],
+        [[2.0, 2.0], [3.0, 2.0], [2.0, 3.0]],
+    )
+    .expect("geometry module root re-exports labeled simplex embedding");
+    geometry_module_validate_simplex_embeddings_intersect_only_in_shared_faces(
+        &first,
+        &module_root_simplex,
+    )
+    .expect("geometry module root re-exports simplex-intersection validation");
+
+    let spanning_simplex =
+        LabeledSimplexEmbedding::try_new([4_usize, 5, 6], [[0.0, 0.0], [1.0, 0.0], [0.0, 0.25]])
+            .expect("valid labeled simplex embedding");
+    assert_matches!(
+        try_periodic_simplex_span(&spanning_simplex, &[1.0, 2.0]),
+        Ok(Some(PeriodicSimplexSpan { axis: 0, span, period }))
+            if abs_diff_eq!(span, 1.0, epsilon = f64::EPSILON)
+                && abs_diff_eq!(period, 1.0, epsilon = f64::EPSILON)
+    );
+
+    let duplicate = LabeledSimplexEmbedding::<_, 2>::try_new(
+        [7_usize, 7, 8],
+        [[0.0, 0.0], [0.5, 0.0], [0.0, 0.5]],
+    );
+    assert_matches!(
+        duplicate,
+        Err(LabeledSimplexEmbeddingError::DuplicateLabel {
+            first_index: 0,
+            duplicate_index: 1
+        })
+    );
+    assert_matches!(
+        try_periodic_simplex_span(&first, &[0.0, 1.0]),
+        Err(PeriodicSimplexSpanError::NonPositivePeriod {
+            axis: 0,
+            period: 0.0
+        })
+    );
+
+    let _labels: SimplexEmbeddingBuffer<usize> = [0, 1].into_iter().collect();
+    assert_send_sync_unpin::<LabeledSimplexEmbeddingError>();
+    assert_send_sync_unpin::<PeriodicSimplexSpanError>();
+    assert_send_sync_unpin::<SimplexIntersectionFailure<usize>>();
+    assert_error::<SimplexIntersectionFailure<usize>>();
+}
+
+#[test]
 fn generator_prelude_covers_validated_coordinate_ranges() -> Result<(), PreludeExportTestError> {
     let generated_range = CoordinateRange::try_new(0.0_f64, 1.0)?;
     let range_points: Vec<Point<2>> =
@@ -1244,9 +1346,11 @@ fn generator_prelude_covers_validated_coordinate_ranges() -> Result<(), PreludeE
     let _ = builder;
 
     let root_range = RootCoordinateRange::try_new(-1.0_f64, 1.0)?;
-    assert_eq!(root_range.bounds(), (-1.0, 1.0));
+    assert_relative_eq!(root_range.bounds().0, -1.0, epsilon = f64::EPSILON);
+    assert_relative_eq!(root_range.bounds().1, 1.0, epsilon = f64::EPSILON);
     let geometry_range = GeometryCoordinateRange::try_new(-2.0_f64, -1.0)?;
-    assert_eq!(geometry_range.bounds(), (-2.0, -1.0));
+    assert_relative_eq!(geometry_range.bounds().0, -2.0, epsilon = f64::EPSILON);
+    assert_relative_eq!(geometry_range.bounds().1, -1.0, epsilon = f64::EPSILON);
     assert_eq!(range_points.len(), 3);
     assert_eq!(grid_points.len(), 1);
     assert_matches!(
@@ -1416,9 +1520,9 @@ fn validation_prelude_covers_delaunay_property_diagnostics() -> Result<(), Prelu
     let simplex_key = SimplexKey::from(KeyData::from_ffi(11));
     let focused_error = FocusedDelaunayValidationError::DelaunayViolation {
         simplex_key,
-        simplex_vertices: Default::default(),
+        simplex_vertices: Box::default(),
         offending_vertex: None,
-        neighbor_simplices: Default::default(),
+        neighbor_simplices: Box::default(),
     };
     assert_matches!(
         focused_error,
@@ -1812,16 +1916,16 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
         FlipFailureKind::DegenerateSimplex
     );
     let dangling_vertex_incidence = FlipError::DanglingVertexIncidence {
-        vertex_key: VertexKey::from(slotmap::KeyData::from_ffi(1)),
-        simplex_key: SimplexKey::from(slotmap::KeyData::from_ffi(2)),
+        vertex_key: VertexKey::from(KeyData::from_ffi(1)),
+        simplex_key: SimplexKey::from(KeyData::from_ffi(2)),
     };
     assert_eq!(
         RootFlipFailureKind::from(&dangling_vertex_incidence),
         RootFlipFailureKind::DanglingVertexIncidence
     );
     assert_eq!(
-        delaunay::flips::FlipFailureKind::from(&dangling_vertex_incidence),
-        delaunay::flips::FlipFailureKind::DanglingVertexIncidence
+        DirectFlipFailureKind::from(&dangling_vertex_incidence),
+        DirectFlipFailureKind::DanglingVertexIncidence
     );
     let orientation_reason = DelaunayRepairOrientationCanonicalizationFailure::AfterFlipRepair {
         source: Box::new(InsertionError::DuplicateCoordinates {
@@ -1830,7 +1934,7 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
     };
     assert!(orientation_reason.to_string().contains("after flip repair"));
     let orientation_kind = DelaunayRepairOrientationCanonicalizationFailureKind::AfterFlipRepair {
-        source_kind: delaunay::prelude::insertion::InsertionErrorKind::DuplicateCoordinates,
+        source_kind: FocusedInsertionErrorKind::DuplicateCoordinates,
     };
     assert_matches!(
         orientation_kind,

@@ -63,6 +63,8 @@ PL-manifold validation. Ridge ownership therefore belongs in `src/topology/`.
 
 - `coordinate_range.rs` - validated coordinate-range value type for random
   point and triangulation generator APIs.
+- `embedding.rs` - pure labeled-simplex embedding predicates and witnesses
+  used by generic Level 4 validation.
 - `kernel.rs` - kernel abstraction (`AdaptiveKernel`, `RobustKernel`,
   `FastKernel`) and `ExactPredicates` marker trait.
 - `point.rs` - finite/NaN-aware point operations.

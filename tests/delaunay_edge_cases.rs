@@ -20,6 +20,9 @@ use delaunay::prelude::generators::{
     try_generate_random_triangulation_with_topology_guarantee,
 };
 use delaunay::prelude::geometry::RobustKernel;
+use delaunay::prelude::validation::{
+    DelaunayTriangulationValidationError, TriangulationEmbeddingValidationError,
+};
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use std::num::NonZeroUsize;
@@ -68,6 +71,42 @@ fn is_geometric_degeneracy_or_retry_exhausted(
                 if is_geometric_degeneracy_error(source)
         ),
         other => is_geometric_degeneracy_error(other),
+    }
+}
+
+fn validation_error_is_degenerate_simplex(error: &DelaunayTriangulationValidationError) -> bool {
+    matches!(
+        error,
+        DelaunayTriangulationValidationError::Embedding(source)
+            if matches!(
+                source.as_ref(),
+                TriangulationEmbeddingValidationError::DegenerateSimplex { .. }
+            )
+    )
+}
+
+fn construction_error_is_degenerate_simplex(
+    error: &DelaunayTriangulationConstructionError,
+) -> bool {
+    match error {
+        DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::FinalDelaunayValidation { source, .. },
+        ) => validation_error_is_degenerate_simplex(source),
+        DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::InsertionEmbeddingValidation { source },
+        ) => matches!(
+            source,
+            TriangulationEmbeddingValidationError::DegenerateSimplex { .. }
+        ),
+        DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::ShuffledRetryExhausted { source, .. },
+        ) => match source.as_ref() {
+            DelaunayConstructionRetryFailure::Construction { source } => {
+                construction_error_is_degenerate_simplex(source)
+            }
+            _ => false,
+        },
+        _ => false,
     }
 }
 
@@ -778,7 +817,7 @@ fn test_cube_vertices_3d() {
     .expect_err("exact cube corners should fail before storing a zero-volume simplex");
 
     assert!(
-        format!("{err:?}").contains("DegenerateSimplex"),
+        construction_error_is_degenerate_simplex(&err),
         "cube-corner failure should preserve the embedding degeneracy source: {err:?}"
     );
 }

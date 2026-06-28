@@ -202,8 +202,9 @@ drive repair, but replacement-simplex orientation itself uses `robust_orientatio
   and then enforces the Delaunay property.
 - `.try_toroidal([..])` builds an image-point triangulation and then runs
   orientation normalization, lifted geometric orientation validation, final
-  Levels 1-3 topology validation, and final Level 5 Delaunay validation before
-  returning the quotient triangulation.
+  Levels 1-3 topology validation, Level 4 embedding validation in periodic
+  covering-space charts, and final Level 5 Delaunay validation before returning
+  the quotient triangulation.
 
 ## Degenerate Simplices
 

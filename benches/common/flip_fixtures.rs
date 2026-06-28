@@ -45,6 +45,13 @@ pub const STABLE_POINTS_3D: &[[f64; 3]] = &[
 ///
 /// The unit 4-simplex hull plus clustered but non-degenerate interior vertices
 /// is the control case for 4D k=1/k=2/k=3 roundtrip benchmarks.
+#[cfg_attr(
+    not(feature = "slow-tests"),
+    allow(
+        dead_code,
+        reason = "4D fixture certification is gated behind slow-tests in the integration suite"
+    )
+)]
 pub const STABLE_POINTS_4D: &[[f64; 4]] = &[
     [0.0, 0.0, 0.0, 0.0],
     [1.0, 0.0, 0.0, 0.0],
@@ -64,6 +71,13 @@ pub const STABLE_POINTS_4D: &[[f64; 4]] = &[
 ///
 /// The unit 5-simplex hull plus clustered but non-degenerate interior vertices
 /// is the control case for 5D k=1/k=2/k=3 roundtrip benchmarks.
+#[cfg_attr(
+    not(feature = "slow-tests"),
+    allow(
+        dead_code,
+        reason = "5D fixture certification is gated behind slow-tests in the integration suite"
+    )
+)]
 pub const STABLE_POINTS_5D: &[[f64; 5]] = &[
     [0.0, 0.0, 0.0, 0.0, 0.0],
     [1.0, 0.0, 0.0, 0.0, 0.0],
@@ -121,6 +135,13 @@ pub const ADVERSARIAL_POINTS_3D: &[[f64; 3]] = &[
 /// Combines a D+2 cospherical set from the simplex vertices plus one extra
 /// hypercube corner, near-boundary interior points, nearly degenerate interior
 /// clustering, and a large-coordinate hull point.
+#[cfg_attr(
+    not(feature = "slow-tests"),
+    allow(
+        dead_code,
+        reason = "4D fixture certification is gated behind slow-tests in the integration suite"
+    )
+)]
 pub const ADVERSARIAL_POINTS_4D: &[[f64; 4]] = &[
     [0.0, 0.0, 0.0, 0.0],
     [1.0, 0.0, 0.0, 0.0],
@@ -142,6 +163,13 @@ pub const ADVERSARIAL_POINTS_4D: &[[f64; 4]] = &[
 /// Combines a D+2 cospherical set from the simplex vertices plus one extra
 /// hypercube corner, near-boundary interior points, nearly degenerate interior
 /// clustering, and a large-coordinate hull point.
+#[cfg_attr(
+    not(feature = "slow-tests"),
+    allow(
+        dead_code,
+        reason = "5D fixture certification is gated behind slow-tests in the integration suite"
+    )
+)]
 pub const ADVERSARIAL_POINTS_5D: &[[f64; 5]] = &[
     [0.0, 0.0, 0.0, 0.0, 0.0],
     [1.0, 0.0, 0.0, 0.0, 0.0],

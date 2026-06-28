@@ -163,8 +163,8 @@ for topology guarantee and validation policy details.
   typed repair diagnostics where available, for example
   `RepairOperationFailed { operation, source }`.
 - **Validation**: The active `ValidationPolicy` (set with
-  `dt.try_set_validation_policy(...)` or `dt.set_validation_policy(...)`) governs automatic topology validation for
-  subsequent construction/modification operations
+  `dt.try_set_validation_policy(...)` or `dt.set_validation_policy(...)`) governs automatic topology and
+  changed-scope embedding guards for subsequent construction/modification operations
 
 ## Pachner Move API Reference
 

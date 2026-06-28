@@ -16,6 +16,9 @@ Correctness tests live in two routine buckets:
 Do not use `#[ignore]` as a slow-test marker. Slow correctness tests belong
 behind `#[cfg(feature = "slow-tests")]`; benchmark-style measurements belong in
 `benches/`; known limitations should be asserted explicitly instead of hidden.
+High-dimensional benchmark-fixture certification that runs full Levels 1-5
+validation also belongs behind `slow-tests`; keep the 2D/3D fixture smoke checks
+in the default suite.
 
 ## Test Categories
 
