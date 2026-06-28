@@ -514,6 +514,10 @@ macro_rules! gen_toroidal_validation_test {
 
 gen_toroidal_validation_test!(2, levels_1_to_4, true);
 #[test]
+#[cfg_attr(
+    debug_assertions,
+    ignore = "release-mode guardrail; debug/coverage quotient search is intentionally skipped"
+)]
 fn test_builder_toroidal_3d_fails_fast_until_scalable_quotient() {
     let vertices = vec![
         Vertex::<(), _>::try_new([0.2_f64, 0.3, 0.4]).unwrap(),

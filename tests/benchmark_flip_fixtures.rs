@@ -66,10 +66,15 @@ fn flip_fixtures_cover_2d_workflows() {
     );
 }
 
-/// Verifies the stable and adversarial 3D public flip fixture workflows.
+/// Verifies the stable 3D public flip fixture workflows.
 #[test]
-fn flip_fixtures_cover_3d_workflows() {
+fn flip_fixtures_cover_stable_3d_workflows() {
     verify_3d_fixture(STABLE_POINTS_3D, CandidateFilter::Any);
+}
+
+/// Verifies the adversarial 3D public flip fixture workflows.
+#[test]
+fn flip_fixtures_cover_adversarial_3d_workflows() {
     verify_3d_fixture(
         ADVERSARIAL_POINTS_3D,
         CandidateFilter::TouchesAdversarialFeature,

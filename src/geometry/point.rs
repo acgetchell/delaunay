@@ -46,9 +46,20 @@ impl<const D: usize> ValidatedCoordinates<D> {
         Ok(Self { values })
     }
 
-    /// Builds validated coordinates from values whose finiteness was already proved.
+    /// Builds validated coordinates from finite values while preserving point equality semantics.
+    ///
+    /// Callers must prove finiteness before calling this trusted constructor. Debug builds assert
+    /// that contract, then the constructor canonicalizes signed zero so hashing and ordering match
+    /// [`Point`] equality.
     #[inline]
     pub(in crate::geometry) fn from_prevalidated_finite_values(mut values: [f64; D]) -> Self {
+        #[cfg(debug_assertions)]
+        {
+            assert!(
+                values.iter().all(|coord| coord.is_finite()),
+                "from_prevalidated_finite_values requires finite coordinates"
+            );
+        }
         for coord in &mut values {
             if *coord == 0.0 {
                 *coord = 0.0;
@@ -1679,6 +1690,13 @@ mod tests {
 
         assert_eq!(point.coords()[0].to_bits(), 0.0_f64.to_bits());
         assert_eq!(point.coords()[1].to_bits(), 1.0_f64.to_bits());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "from_prevalidated_finite_values requires finite coordinates")]
+    fn prevalidated_finite_coordinates_reject_non_finite_in_debug_builds() {
+        let _ = ValidatedCoordinates::<2>::from_prevalidated_finite_values([f64::NAN, 1.0]);
     }
 
     #[test]

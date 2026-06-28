@@ -295,6 +295,7 @@ Proptest automatically captures minimal failing test cases in `.proptest-regress
 **Current Proptest Regression Files:**
 
 - `proptest_delaunay_triangulation.proptest-regressions`
+- `proptest_sos.proptest-regressions`
 
 These generated property-test corpora are separate from fixed-bug integration
 regressions, which belong in [`regressions.rs`](./regressions.rs).

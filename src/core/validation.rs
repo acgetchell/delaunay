@@ -1261,8 +1261,10 @@ where
     /// Generate a Level 3 topology report.
     ///
     /// This report checks topology-layer invariants only. It assumes the TDS
-    /// structure is already valid; use [`validation_report`](Self::validation_report)
-    /// for cumulative Levels 1-4 diagnostics.
+    /// structure is already valid. Use [`validation_report`](Self::validation_report)
+    /// for cumulative Levels 1-3 diagnostics, and
+    /// [`embedding_report`](Self::embedding_report) for Level 4 embedded-geometry
+    /// diagnostics.
     ///
     /// # Errors
     ///
@@ -1797,9 +1799,8 @@ where
             InsertionValidationWork::FullValidation => {
                 self.validate()?;
                 match local_simplices {
-                    Some([]) => Ok(()),
+                    Some([]) | None => self.is_valid_embedding(),
                     Some(simplices) => self.validate_embedding_for_simplices(simplices),
-                    None => self.is_valid_embedding(),
                 }
                 .map_err(InvariantError::Embedding)
             }
@@ -3881,6 +3882,27 @@ mod tests {
                 TriangulationEmbeddingValidationError::SimplexIntersectionOutsideSharedFace { .. }
             )
         );
+    }
+
+    #[test]
+    fn validate_after_insertion_full_validation_checks_empty_local_embedding_scope() {
+        let (tds, _) = build_topologically_valid_self_overlapping_tds_2d();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        tri.set_validation_policy(ValidationPolicy::Always);
+
+        tri.is_valid_topology()
+            .expect("fixture should isolate a Level 4 embedding failure");
+        let expected_embedding_error = tri
+            .is_valid_embedding()
+            .expect_err("fixture should fail whole-triangulation Level 4 validation");
+
+        let empty_scope = SimplexKeyBuffer::new();
+        let err = tri
+            .validate_after_insertion_with_scope(SuspicionFlags::default(), Some(&empty_scope))
+            .unwrap_err();
+
+        assert_eq!(err, InvariantError::Embedding(expected_embedding_error));
     }
 
     #[test]

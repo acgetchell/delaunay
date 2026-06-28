@@ -22,6 +22,15 @@ type Dt2 = DelaunayTriangulation<RobustKernel<f64>, (), (), 2>;
 
 const FLIPPABLE_POINTS_2D: &[[f64; 2]] = &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
 
+const MINIMAL_POINTS_4D: &[[f64; 4]] = &[
+    [0.0, 0.0, 0.0, 0.0],
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0],
+];
+
+#[cfg(feature = "slow-tests")]
 const STABLE_POINTS_4D: &[[f64; 4]] = &[
     [0.0, 0.0, 0.0, 0.0],
     [1.0, 0.0, 0.0, 0.0],
@@ -92,13 +101,13 @@ fn public_pachner_roundtrips_preserve_stable_4d_topology() {
 
 #[test]
 fn stale_k1_insert_request_fails_without_mutating_topology() {
-    let base = build_stable_dt_4d();
+    let base = build_minimal_dt_4d();
     assert_stale_k1_insert_preserves_topology(base);
 }
 
 #[test]
 fn stale_k1_remove_request_fails_without_mutating_topology() {
-    let base = build_stable_dt_4d();
+    let base = build_minimal_dt_4d();
     assert_stale_k1_remove_preserves_topology(base);
 }
 
@@ -132,7 +141,7 @@ fn stale_k3_inverse_request_fails_without_mutating_topology() {
 
 #[test]
 fn stale_pachner_error_propagates_through_delaunay_result() {
-    let mut dt = build_stable_dt_4d();
+    let mut dt = build_minimal_dt_4d();
     let stale_simplex = first_simplex(&dt);
     let vertex_coords = simplex_centroid(&dt, stale_simplex);
     let vertex: Vertex<(), 4> =
@@ -246,8 +255,19 @@ fn try_stale_k1_insert(
 }
 
 /// Builds the deterministic 4D fixture used to find reversible public Pachner moves.
+#[cfg(feature = "slow-tests")]
 fn build_stable_dt_4d() -> Dt4 {
-    let vertices = STABLE_POINTS_4D
+    build_dt_4d(STABLE_POINTS_4D, "stable")
+}
+
+/// Builds the smallest 4D fixture needed by stale-handle atomicity checks.
+fn build_minimal_dt_4d() -> Dt4 {
+    build_dt_4d(MINIMAL_POINTS_4D, "minimal")
+}
+
+/// Builds a deterministic 4D fixture with input-order construction.
+fn build_dt_4d(points: &[[f64; 4]], fixture_name: &str) -> Dt4 {
+    let vertices = points
         .iter()
         .map(|coords| vertex!(*coords).unwrap())
         .collect::<Vec<_>>();
@@ -260,7 +280,7 @@ fn build_stable_dt_4d() -> Dt4 {
         TopologyGuarantee::PLManifold,
         options,
     )
-    .expect("stable 4D fixture should build")
+    .unwrap_or_else(|err| panic!("{fixture_name} 4D fixture should build: {err}"))
 }
 
 /// Builds a deterministic 2D fixture with at least one public k=2 move.

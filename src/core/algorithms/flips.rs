@@ -39,7 +39,7 @@ use crate::core::collections::{
     SimplexKeyBuffer, SmallBuffer,
 };
 use crate::core::edge::{EdgeKey, EdgeKeyError};
-use crate::core::embedding::TriangulationEmbeddingValidationErrorKind;
+use crate::core::embedding::TriangulationEmbeddingValidationError;
 use crate::core::facet::{AllFacetsIter, FacetError, FacetHandle, facet_key_from_vertices};
 use crate::core::operations::TopologicalOperation;
 use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
@@ -3456,10 +3456,11 @@ pub enum FlipNeighborWiringError {
         reason: FlipNeighborDelaunayValidationFailureKind,
     },
     /// Embedding validation failed while preparing flip neighbor wiring.
-    #[error("embedding validation error reached flip neighbor wiring: {reason:?}")]
+    #[error("embedding validation error reached flip neighbor wiring: {source}")]
     EmbeddingValidation {
-        /// Structured embedding-validation reason.
-        reason: TriangulationEmbeddingValidationErrorKind,
+        /// Underlying embedding validation error, preserving simplex/pair witness context.
+        #[source]
+        source: TriangulationEmbeddingValidationError,
     },
     /// Delaunay repair failed while preparing flip neighbor wiring.
     #[error("Delaunay repair error reached flip neighbor wiring: {reason}")]
@@ -3544,9 +3545,9 @@ impl From<InsertionError> for FlipNeighborWiringError {
             InsertionError::DelaunayValidationFailed { source } => Self::DelaunayValidation {
                 reason: source.into(),
             },
-            InsertionError::EmbeddingValidationFailed { source } => Self::EmbeddingValidation {
-                reason: TriangulationEmbeddingValidationErrorKind::from(&source),
-            },
+            InsertionError::EmbeddingValidationFailed { source } => {
+                Self::EmbeddingValidation { source }
+            }
             InsertionError::DelaunayRepairFailed { source, context: _ } => Self::DelaunayRepair {
                 reason: FlipNeighborRepairFailure::from(*source),
             },
@@ -4105,6 +4106,7 @@ impl From<&FlipError> for FlipFailureKind {
             FlipError::NeighborWiring { reason } => match reason.as_ref() {
                 FlipNeighborWiringError::TopologyValidation { .. }
                 | FlipNeighborWiringError::DelaunayValidation { .. }
+                | FlipNeighborWiringError::EmbeddingValidation { .. }
                 | FlipNeighborWiringError::TopologyValidationFailed { .. } => {
                     Self::WiringValidation
                 }
@@ -10433,7 +10435,8 @@ mod tests {
         DelaunayRepairFailureContext, repair_neighbor_pointers,
     };
     use crate::core::algorithms::locate::LocateResult;
-    use crate::core::collections::Uuid;
+    use crate::core::collections::{SimplexVertexKeyBuffer, SimplexVertexUuidBuffer, Uuid};
+    use crate::core::embedding::TriangulationEmbeddingSimplexDetail;
     use crate::core::validation::TopologyGuarantee;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::geometry::traits::coordinate::CoordinateConversionValue;
@@ -15255,6 +15258,56 @@ mod tests {
                     value: CoordinateConversionValue::from_f64(0.0),
                 },
             }
+        );
+    }
+
+    #[test]
+    fn flip_neighbor_wiring_preserves_embedding_validation_source() {
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(9_101));
+        let simplex_uuid = Uuid::from_u128(0x9101);
+        let vertices: SimplexVertexKeyBuffer = [
+            VertexKey::from(KeyData::from_ffi(9_201)),
+            VertexKey::from(KeyData::from_ffi(9_202)),
+            VertexKey::from(KeyData::from_ffi(9_203)),
+        ]
+        .into_iter()
+        .collect();
+        let vertex_uuids: SimplexVertexUuidBuffer = [
+            Uuid::from_u128(0x9201),
+            Uuid::from_u128(0x9202),
+            Uuid::from_u128(0x9203),
+        ]
+        .into_iter()
+        .collect();
+
+        let embedding_source = TriangulationEmbeddingValidationError::DegenerateSimplex {
+            simplex_key,
+            simplex_uuid,
+            detail: Box::new(TriangulationEmbeddingSimplexDetail {
+                key: simplex_key,
+                uuid: simplex_uuid,
+                vertices,
+                vertex_uuids,
+            }),
+            dimension: 2,
+        };
+
+        let embedding_wiring =
+            FlipNeighborWiringError::from(InsertionError::EmbeddingValidationFailed {
+                source: embedding_source.clone(),
+            });
+        let FlipNeighborWiringError::EmbeddingValidation { source } = &embedding_wiring else {
+            panic!("expected preserved embedding validation source, got {embedding_wiring:?}");
+        };
+        assert_eq!(source, &embedding_source);
+        let error_source = embedding_wiring
+            .source()
+            .and_then(|source| source.downcast_ref::<TriangulationEmbeddingValidationError>())
+            .expect("embedding validation should remain the typed error source");
+        assert_eq!(error_source, &embedding_source);
+        assert_eq!(
+            FlipFailureKind::from(&FlipError::from(embedding_wiring)),
+            FlipFailureKind::WiringValidation
         );
     }
 
