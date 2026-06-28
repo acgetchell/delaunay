@@ -21,22 +21,40 @@ use std::assert_matches;
 
 use delaunay::flips::{FacetHandle, FlipError, RidgeHandle};
 use delaunay::prelude::construction::{
-    DelaunayConstructionFailure, DelaunayTriangulationConstructionError,
+    DelaunayConstructionFailure, DelaunayConstructionRetryFailure,
+    DelaunayTriangulationConstructionError,
 };
 use delaunay::prelude::tds::{FacetError, SimplexKey};
+use delaunay::prelude::validation::{
+    DelaunayTriangulationValidationError, TriangulationEmbeddingValidationError,
+};
 use slotmap::KeyData;
 
 use flip_fixtures::{
-    ADVERSARIAL_POINTS_2D, ADVERSARIAL_POINTS_3D, ADVERSARIAL_POINTS_4D, ADVERSARIAL_POINTS_5D,
-    STABLE_POINTS_2D, STABLE_POINTS_3D, STABLE_POINTS_4D, STABLE_POINTS_5D,
+    ADVERSARIAL_POINTS_2D, ADVERSARIAL_POINTS_3D, DEGENERATE_POINTS_3D, STABLE_POINTS_2D,
+    STABLE_POINTS_3D,
 };
+#[cfg(feature = "slow-tests")]
+use flip_fixtures::{
+    ADVERSARIAL_POINTS_4D, ADVERSARIAL_POINTS_5D, STABLE_POINTS_4D, STABLE_POINTS_5D,
+};
+#[cfg(feature = "slow-tests")]
+use flip_workflows::verify_k3_roundtrip;
 use flip_workflows::{
-    CandidateFilter, FlipWorkflowError, assert_same_topology, build_flip_dt,
+    CandidateFilter, FlipTriangulation, FlipWorkflowError, assert_same_topology, build_flip_dt,
     facet_support_touches_adversarial_feature, flippable_k2_facet, flippable_k3_ridge, forward_k2,
     forward_k3, largest_volume_simplex, ridge_support_touches_adversarial_feature, roundtrip_k1,
     simplex_touches_adversarial_feature, snapshot_topology, verify_k1_roundtrip,
-    verify_k2_roundtrip, verify_k3_roundtrip,
+    verify_k2_roundtrip,
 };
+
+#[cfg(feature = "slow-tests")]
+#[derive(Clone, Copy, Debug)]
+enum RoundtripMove {
+    K1,
+    K2,
+    K3,
+}
 
 /// Verifies the stable and adversarial 2D public flip fixture workflows.
 #[test]
@@ -48,10 +66,15 @@ fn flip_fixtures_cover_2d_workflows() {
     );
 }
 
-/// Verifies the stable and adversarial 3D public flip fixture workflows.
+/// Verifies the stable 3D public flip fixture workflows.
 #[test]
-fn flip_fixtures_cover_3d_workflows() {
+fn flip_fixtures_cover_stable_3d_workflows() {
     verify_3d_fixture(STABLE_POINTS_3D, CandidateFilter::Any);
+}
+
+/// Verifies the adversarial 3D public flip fixture workflows.
+#[test]
+fn flip_fixtures_cover_adversarial_3d_workflows() {
     verify_3d_fixture(
         ADVERSARIAL_POINTS_3D,
         CandidateFilter::TouchesAdversarialFeature,
@@ -59,22 +82,100 @@ fn flip_fixtures_cover_3d_workflows() {
 }
 
 /// Verifies the stable and adversarial 4D public flip fixture workflows.
+#[cfg(feature = "slow-tests")]
 #[test]
-fn flip_fixtures_cover_4d_workflows() {
-    verify_roundtrip_fixture(STABLE_POINTS_4D, CandidateFilter::Any);
-    verify_roundtrip_fixture(
+fn flip_fixtures_cover_stable_4d_k1_workflow() {
+    verify_roundtrip_fixture_move(STABLE_POINTS_4D, CandidateFilter::Any, RoundtripMove::K1);
+}
+
+#[cfg(feature = "slow-tests")]
+#[test]
+fn flip_fixtures_cover_stable_4d_k2_workflow() {
+    verify_roundtrip_fixture_move(STABLE_POINTS_4D, CandidateFilter::Any, RoundtripMove::K2);
+}
+
+#[cfg(feature = "slow-tests")]
+#[test]
+fn flip_fixtures_cover_stable_4d_k3_workflow() {
+    verify_roundtrip_fixture_move(STABLE_POINTS_4D, CandidateFilter::Any, RoundtripMove::K3);
+}
+
+#[cfg(feature = "slow-tests")]
+#[test]
+fn flip_fixtures_cover_adversarial_4d_k1_workflow() {
+    verify_roundtrip_fixture_move(
         ADVERSARIAL_POINTS_4D,
         CandidateFilter::TouchesAdversarialFeature,
+        RoundtripMove::K1,
+    );
+}
+
+#[cfg(feature = "slow-tests")]
+#[test]
+fn flip_fixtures_cover_adversarial_4d_k2_workflow() {
+    verify_roundtrip_fixture_move(
+        ADVERSARIAL_POINTS_4D,
+        CandidateFilter::TouchesAdversarialFeature,
+        RoundtripMove::K2,
+    );
+}
+
+#[cfg(feature = "slow-tests")]
+#[test]
+fn flip_fixtures_cover_adversarial_4d_k3_workflow() {
+    verify_roundtrip_fixture_move(
+        ADVERSARIAL_POINTS_4D,
+        CandidateFilter::TouchesAdversarialFeature,
+        RoundtripMove::K3,
     );
 }
 
 /// Verifies the stable and adversarial 5D public flip fixture workflows.
+#[cfg(feature = "slow-tests")]
 #[test]
-fn flip_fixtures_cover_5d_workflows() {
-    verify_roundtrip_fixture(STABLE_POINTS_5D, CandidateFilter::Any);
-    verify_roundtrip_fixture(
+fn flip_fixtures_cover_stable_5d_k1_workflow() {
+    verify_roundtrip_fixture_move(STABLE_POINTS_5D, CandidateFilter::Any, RoundtripMove::K1);
+}
+
+#[cfg(feature = "slow-tests")]
+#[test]
+fn flip_fixtures_cover_stable_5d_k2_workflow() {
+    verify_roundtrip_fixture_move(STABLE_POINTS_5D, CandidateFilter::Any, RoundtripMove::K2);
+}
+
+#[cfg(feature = "slow-tests")]
+#[test]
+fn flip_fixtures_cover_stable_5d_k3_workflow() {
+    verify_roundtrip_fixture_move(STABLE_POINTS_5D, CandidateFilter::Any, RoundtripMove::K3);
+}
+
+#[cfg(feature = "slow-tests")]
+#[test]
+fn flip_fixtures_cover_adversarial_5d_k1_workflow() {
+    verify_roundtrip_fixture_move(
         ADVERSARIAL_POINTS_5D,
         CandidateFilter::TouchesAdversarialFeature,
+        RoundtripMove::K1,
+    );
+}
+
+#[cfg(feature = "slow-tests")]
+#[test]
+fn flip_fixtures_cover_adversarial_5d_k2_workflow() {
+    verify_roundtrip_fixture_move(
+        ADVERSARIAL_POINTS_5D,
+        CandidateFilter::TouchesAdversarialFeature,
+        RoundtripMove::K2,
+    );
+}
+
+#[cfg(feature = "slow-tests")]
+#[test]
+fn flip_fixtures_cover_adversarial_5d_k3_workflow() {
+    verify_roundtrip_fixture_move(
+        ADVERSARIAL_POINTS_5D,
+        CandidateFilter::TouchesAdversarialFeature,
+        RoundtripMove::K3,
     );
 }
 
@@ -93,6 +194,23 @@ fn empty_flip_fixture_returns_construction_error() {
             }
         }
         other => panic!("unexpected construction error: {other}"),
+    }
+}
+
+/// Verifies malformed flip fixtures fail with a typed degeneracy source.
+#[test]
+fn degenerate_flip_fixture_is_rejected_instead_of_sanitized() {
+    let err = build_flip_dt(DEGENERATE_POINTS_3D).expect_err("degenerate fixture should not build");
+
+    match err {
+        FlipWorkflowError::Construction { dimension, source } => {
+            assert_eq!(dimension, 3);
+            assert!(
+                construction_error_is_degenerate(&source),
+                "degenerate fixture should fail with a typed degeneracy source: {source:#?}"
+            );
+        }
+        other => panic!("unexpected degenerate fixture error: {other}"),
     }
 }
 
@@ -263,9 +381,7 @@ fn topology_mismatch_reports_jaccard_diagnostics() {
 /// Verifies all selected 2D public flip workflows for one fixture.
 fn verify_2d_fixture(points: &[[f64; 2]], filter: CandidateFilter) {
     let base_dt = build_flip_dt(points).expect("2D benchmark flip fixture should build");
-    base_dt
-        .validate()
-        .expect("2D benchmark flip fixture should validate");
+    assert_topology_and_delaunay_valid(&base_dt, "2D benchmark flip fixture");
 
     let simplex_key = largest_volume_simplex(&base_dt, filter)
         .expect("2D benchmark fixture should provide a selected k=1 simplex");
@@ -298,9 +414,7 @@ fn verify_2d_fixture(points: &[[f64; 2]], filter: CandidateFilter) {
 /// Verifies all selected 3D public flip workflows for one fixture.
 fn verify_3d_fixture(points: &[[f64; 3]], filter: CandidateFilter) {
     let base_dt = build_flip_dt(points).expect("3D benchmark flip fixture should build");
-    base_dt
-        .validate()
-        .expect("3D benchmark flip fixture should validate");
+    assert_topology_and_delaunay_valid(&base_dt, "3D benchmark flip fixture");
 
     let simplex_key = largest_volume_simplex(&base_dt, filter)
         .expect("3D benchmark fixture should provide a selected k=1 simplex");
@@ -342,48 +456,105 @@ fn verify_3d_fixture(points: &[[f64; 3]], filter: CandidateFilter) {
         .expect("3D benchmark k=3 forward flip should preserve topology");
 }
 
-/// Verifies all selected roundtrip-capable public flip workflows for one dimension.
-fn verify_roundtrip_fixture<const D: usize>(points: &[[f64; D]], filter: CandidateFilter) {
+/// Verifies one selected roundtrip-capable public flip workflow for one dimension.
+#[cfg(feature = "slow-tests")]
+fn verify_roundtrip_fixture_move<const D: usize>(
+    points: &[[f64; D]],
+    filter: CandidateFilter,
+    roundtrip_move: RoundtripMove,
+) {
     let base_dt = build_flip_dt(points).expect("benchmark flip fixture should build");
-    base_dt
+    assert_topology_and_delaunay_valid(&base_dt, "benchmark flip fixture");
+
+    match roundtrip_move {
+        RoundtripMove::K1 => {
+            let simplex_key = largest_volume_simplex(&base_dt, filter)
+                .expect("benchmark fixture should provide a selected k=1 simplex");
+            if filter == CandidateFilter::TouchesAdversarialFeature {
+                assert!(
+                    simplex_touches_adversarial_feature(&base_dt, simplex_key)
+                        .expect("k=1 support should be inspectable"),
+                    "adversarial k=1 support should touch an adversarial fixture feature"
+                );
+            }
+            verify_k1_roundtrip(&base_dt, simplex_key, "k=1 n=1 ergodicity roundtrip")
+                .expect("k=1 roundtrip should recover the same triangulation");
+        }
+        RoundtripMove::K2 => {
+            let facet = flippable_k2_facet(&base_dt, true, filter)
+                .expect("benchmark fixture should provide a selected k=2 facet");
+            if filter == CandidateFilter::TouchesAdversarialFeature {
+                assert!(
+                    facet_support_touches_adversarial_feature(&base_dt, facet)
+                        .expect("k=2 support should be inspectable"),
+                    "adversarial k=2 support should touch an adversarial fixture feature"
+                );
+            }
+            verify_k2_roundtrip(&base_dt, facet, "k=2 n=1 ergodicity roundtrip")
+                .expect("k=2 roundtrip should recover the same triangulation");
+        }
+        RoundtripMove::K3 => {
+            let ridge = flippable_k3_ridge(&base_dt, true, filter)
+                .expect("benchmark fixture should provide a selected k=3 ridge");
+            if filter == CandidateFilter::TouchesAdversarialFeature {
+                assert!(
+                    ridge_support_touches_adversarial_feature(&base_dt, ridge)
+                        .expect("k=3 support should be inspectable"),
+                    "adversarial k=3 support should touch an adversarial fixture feature"
+                );
+            }
+            verify_k3_roundtrip(&base_dt, ridge, "k=3 n=1 ergodicity roundtrip")
+                .expect("k=3 roundtrip should recover the same triangulation");
+        }
+    }
+}
+
+fn assert_topology_and_delaunay_valid<const D: usize>(dt: &FlipTriangulation<D>, context: &str) {
+    dt.as_triangulation()
         .validate()
-        .expect("benchmark flip fixture should validate");
+        .unwrap_or_else(|err| panic!("{context} should pass Levels 1-3: {err}"));
+    dt.as_triangulation()
+        .is_valid_embedding()
+        .unwrap_or_else(|err| panic!("{context} should pass Level 4 embedding: {err}"));
+    dt.is_valid_delaunay()
+        .unwrap_or_else(|err| panic!("{context} should pass Level 5: {err}"));
+}
 
-    let simplex_key = largest_volume_simplex(&base_dt, filter)
-        .expect("benchmark fixture should provide a selected k=1 simplex");
-    if filter == CandidateFilter::TouchesAdversarialFeature {
-        assert!(
-            simplex_touches_adversarial_feature(&base_dt, simplex_key)
-                .expect("k=1 support should be inspectable"),
-            "adversarial k=1 support should touch an adversarial fixture feature"
-        );
+fn construction_error_is_degenerate(error: &DelaunayTriangulationConstructionError) -> bool {
+    match error {
+        DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::GeometricDegeneracy { .. },
+        ) => true,
+        DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::FinalDelaunayValidation { source, .. },
+        ) => validation_error_is_degenerate(source),
+        DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::InsertionEmbeddingValidation { source },
+        ) => matches!(
+            source,
+            TriangulationEmbeddingValidationError::DegenerateSimplex { .. }
+        ),
+        DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::ShuffledRetryExhausted { source, .. },
+        ) => match source.as_ref() {
+            DelaunayConstructionRetryFailure::Construction { source } => {
+                construction_error_is_degenerate(source)
+            }
+            _ => false,
+        },
+        _ => false,
     }
-    verify_k1_roundtrip(&base_dt, simplex_key, "k=1 n=1 ergodicity roundtrip")
-        .expect("k=1 roundtrip should recover the same triangulation");
+}
 
-    let facet = flippable_k2_facet(&base_dt, true, filter)
-        .expect("benchmark fixture should provide a selected k=2 facet");
-    if filter == CandidateFilter::TouchesAdversarialFeature {
-        assert!(
-            facet_support_touches_adversarial_feature(&base_dt, facet)
-                .expect("k=2 support should be inspectable"),
-            "adversarial k=2 support should touch an adversarial fixture feature"
-        );
-    }
-    verify_k2_roundtrip(&base_dt, facet, "k=2 n=1 ergodicity roundtrip")
-        .expect("k=2 roundtrip should recover the same triangulation");
-
-    let ridge = flippable_k3_ridge(&base_dt, true, filter)
-        .expect("benchmark fixture should provide a selected k=3 ridge");
-    if filter == CandidateFilter::TouchesAdversarialFeature {
-        assert!(
-            ridge_support_touches_adversarial_feature(&base_dt, ridge)
-                .expect("k=3 support should be inspectable"),
-            "adversarial k=3 support should touch an adversarial fixture feature"
-        );
-    }
-    verify_k3_roundtrip(&base_dt, ridge, "k=3 n=1 ergodicity roundtrip")
-        .expect("k=3 roundtrip should recover the same triangulation");
+fn validation_error_is_degenerate(error: &DelaunayTriangulationValidationError) -> bool {
+    matches!(
+        error,
+        DelaunayTriangulationValidationError::Embedding(source)
+            if matches!(
+                source.as_ref(),
+                TriangulationEmbeddingValidationError::DegenerateSimplex { .. }
+            )
+    )
 }
 
 /// Creates a synthetic simplex key that cannot be live in fixture triangulations.

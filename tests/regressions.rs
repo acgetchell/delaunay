@@ -186,15 +186,18 @@ fn regression_empty_circumsphere_2d_minimal_case() {
         )
         .unwrap();
 
-    if dt.is_valid().is_err() {
+    if dt.is_valid_delaunay().is_err() {
         #[cfg(feature = "diagnostics")]
         debug_print_first_delaunay_violation(dt.tds(), None);
     }
 
     dt.repair_delaunay_with_flips().unwrap();
 
+    dt.as_triangulation()
+        .validate_embedding()
+        .expect("2D triangulation should preserve lower-layer invariants after global flip repair");
     assert!(
-        dt.is_valid().is_ok(),
+        dt.is_valid_delaunay().is_ok(),
         "2D triangulation should be a valid PL-manifold after global flip repair"
     );
 }
@@ -322,7 +325,7 @@ fn regression_issue_307_4d_bulk_repair_keeps_positive_orientation() {
     );
     assert_eq!(stats.total_skipped(), 0);
     assert!(
-        dt.as_triangulation().is_valid().is_ok(),
+        dt.as_triangulation().is_valid_topology().is_ok(),
         "bulk repair must leave all simplices in positive geometric orientation",
     );
     assert!(

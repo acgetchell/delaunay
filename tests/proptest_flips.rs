@@ -168,11 +168,14 @@ fn assert_valid<const D: usize>(
     context: &str,
 ) -> Result<(), TestCaseError> {
     triangulation
-        .is_valid()
+        .is_valid_topology()
         .map_err(|err| TestCaseError::fail(format!("{context} invariant check failed: {err:?}")))?;
     triangulation
         .validate()
         .map_err(|err| TestCaseError::fail(format!("{context} validation failed: {err:?}")))?;
+    triangulation.is_valid_embedding().map_err(|err| {
+        TestCaseError::fail(format!("{context} embedding validation failed: {err:?}"))
+    })?;
     Ok(())
 }
 

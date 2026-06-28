@@ -490,7 +490,7 @@ fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_p
 
     group.bench_function("validate_topology", |b| {
         b.iter(|| {
-            if let Err(error) = tri.is_valid() {
+            if let Err(error) = tri.is_valid_topology() {
                 abort_benchmark(format_args!(
                     "triangulation should be structurally valid during validation benchmark: {error}"
                 ));
@@ -1062,9 +1062,9 @@ macro_rules! benchmark_validation_components_dimension {
                 });
             });
 
-            group.bench_function("tri_is_valid", |b| {
+            group.bench_function("is_valid_topology", |b| {
                 b.iter(|| {
-                    if let Err(error) = black_box(dt.as_triangulation().is_valid()) {
+                    if let Err(error) = black_box(dt.as_triangulation().is_valid_topology()) {
                         abort_benchmark(format_args!(
                             "triangulation validation should pass for benchmark triangulation: {error}"
                         ));
@@ -1072,9 +1072,19 @@ macro_rules! benchmark_validation_components_dimension {
                 });
             });
 
+            group.bench_function("validate_embedding", |b| {
+                b.iter(|| {
+                    if let Err(error) = black_box(dt.as_triangulation().validate_embedding()) {
+                        abort_benchmark(format_args!(
+                            "embedding validation should pass for benchmark triangulation: {error}"
+                        ));
+                    }
+                });
+            });
+
             group.bench_function("is_valid_delaunay", |b| {
                 b.iter(|| {
-                    if let Err(error) = black_box(dt.is_valid()) {
+                    if let Err(error) = black_box(dt.is_valid_delaunay()) {
                         abort_benchmark(format_args!(
                             "Delaunay validation should pass for benchmark triangulation: {error}"
                         ));

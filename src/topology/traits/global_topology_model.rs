@@ -125,6 +125,16 @@ pub trait GlobalTopologyModel<const D: usize> {
         None
     }
 
+    /// Indicates whether this topology has an affine chart suitable for Level 4
+    /// embedded-geometry validation.
+    ///
+    /// Euclidean topology validates directly in its ambient chart. Toroidal
+    /// topology validates in its periodic covering-space charts. Curved models
+    /// return `false` until they provide model-specific chart validators.
+    fn supports_affine_embedding_validation(&self) -> bool {
+        false
+    }
+
     /// Indicates whether periodic facet/signature behavior is available.
     ///
     /// Returns `true` for periodic topologies that support lattice-offset tracking on simplices.
@@ -177,6 +187,10 @@ impl<const D: usize> GlobalTopologyModel<D> for EuclideanModel {
             });
         }
         Ok(coords)
+    }
+
+    fn supports_affine_embedding_validation(&self) -> bool {
+        true
     }
 }
 
@@ -281,6 +295,10 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
 
     fn periodic_domain(&self) -> Option<ToroidalDomain<D>> {
         Some(self.domain)
+    }
+
+    fn supports_affine_embedding_validation(&self) -> bool {
+        true
     }
 
     fn supports_periodic_facet_signatures(&self) -> bool {
@@ -519,6 +537,23 @@ impl<const D: usize> GlobalTopologyModel<D> for GlobalTopologyModelAdapter<D> {
             }
             Self::Hyperbolic(model) => {
                 GlobalTopologyModel::<D>::supports_periodic_orientation_offsets(model)
+            }
+        }
+    }
+
+    fn supports_affine_embedding_validation(&self) -> bool {
+        match self {
+            Self::Euclidean(model) => {
+                GlobalTopologyModel::<D>::supports_affine_embedding_validation(model)
+            }
+            Self::Toroidal(model) => {
+                GlobalTopologyModel::<D>::supports_affine_embedding_validation(model)
+            }
+            Self::Spherical(model) => {
+                GlobalTopologyModel::<D>::supports_affine_embedding_validation(model)
+            }
+            Self::Hyperbolic(model) => {
+                GlobalTopologyModel::<D>::supports_affine_embedding_validation(model)
             }
         }
     }

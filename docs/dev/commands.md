@@ -174,10 +174,10 @@ examples, or benchmarks.
 just check-fast
 ```
 
-`rust-core-check` runs core library Clippy in the default and all-features
-configurations. `clippy-all-targets` is available as an optional broad sweep,
-but it is not part of `just ci` because tests, examples, and benchmark harnesses
-own their own validation buckets.
+`rust-core-check` runs all-targets Clippy in the default and all-features
+configurations. This intentionally includes the all-targets, all-features
+surface uploaded by the PR Clippy SARIF workflow, so `just ci` fails locally on
+the same warning classes that would become GitHub code-scanning annotations.
 
 ---
 
@@ -236,7 +236,7 @@ correctness invariants throughout.
 `just ci` is the comprehensive error-catching validation path used by GitHub
 Actions. It is a flat union of leaf validators rather than a nested call to
 `just check`. The target classes are kept separate: `rust-core-check` covers
-formatting, core library Clippy, rustdoc, and Semgrep; `bench-compile` compiles
+formatting, all-targets Clippy, rustdoc, and Semgrep; `bench-compile` compiles
 benchmark harnesses once; `test-rust-ci` compiles and runs Rust lib unit tests
 and release integration tests in one release-profile nextest invocation;
 `test-doc` compiles and runs Rust doctests once in release profile;
@@ -616,8 +616,8 @@ CI enforces:
 - examples
 
 Rust warnings are denied by the manifest lint policy and Clippy warnings are
-denied by the `just clippy-core` invocations. Keep any intentional warning-level
-exceptions explicit in `Cargo.toml`.
+denied by the `just clippy` / `just clippy-all-targets` invocations. Keep any
+intentional warning-level exceptions explicit in `Cargo.toml`.
 
 Agents must ensure changes pass the appropriate local validator before
 proposing patches. Use the validation matrix above for final handoff: core

@@ -13,6 +13,7 @@ use crate::core::algorithms::incremental_insertion::{
 };
 use crate::core::algorithms::locate::{ConflictError, LocateError};
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
+use crate::core::embedding::TriangulationEmbeddingValidationError;
 use crate::core::simplex::{Simplex, SimplexValidationError};
 use crate::core::tds::{
     InvariantError, SimplexKey, Tds, TdsConstructionError, TdsError, VertexKey,
@@ -64,7 +65,7 @@ impl std::fmt::Display for FinalTopologyValidationContext {
     }
 }
 
-/// Classifies the construction phase that failed final Level 4 validation.
+/// Classifies the construction phase that failed final Level 5 Delaunay validation.
 ///
 /// This context is carried by
 /// [`TriangulationConstructionError::FinalDelaunayValidation`] so callers can
@@ -73,9 +74,9 @@ impl std::fmt::Display for FinalTopologyValidationContext {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FinalDelaunayValidationContext {
-    /// Standard final Level 4 Delaunay validation after construction.
+    /// Standard final Level 5 Delaunay validation after construction.
     ConstructionFinalize,
-    /// Final Level 4 Delaunay validation for a periodic quotient.
+    /// Final Level 5 Delaunay validation for a periodic quotient.
     PeriodicQuotientDelaunay,
 }
 
@@ -86,7 +87,7 @@ impl std::fmt::Display for FinalDelaunayValidationContext {
                 f.write_str("Delaunay validation failed after construction")
             }
             Self::PeriodicQuotientDelaunay => {
-                f.write_str("periodic quotient failed final Level 4 Delaunay validation")
+                f.write_str("periodic quotient failed final Level 5 Delaunay validation")
             }
         }
     }
@@ -500,12 +501,20 @@ pub enum TriangulationConstructionError {
         reason: HullExtensionReason,
     },
 
-    /// Level 4 Delaunay validation failed during incremental construction.
+    /// Level 5 Delaunay validation failed during incremental construction.
     #[error("Delaunay validation failed during insertion: {source}")]
     InsertionDelaunayValidation {
         /// Underlying Delaunay validation error.
         #[source]
         source: DelaunayTriangulationValidationError,
+    },
+
+    /// Level 4 embedding validation failed during incremental construction.
+    #[error("Embedding validation failed during insertion: {source}")]
+    InsertionEmbeddingValidation {
+        /// Underlying embedding validation error.
+        #[source]
+        source: TriangulationEmbeddingValidationError,
     },
 
     /// Level 3 topology validation failed during incremental construction.
@@ -782,7 +791,7 @@ mod tests {
         );
         assert_eq!(
             FinalDelaunayValidationContext::PeriodicQuotientDelaunay.to_string(),
-            "periodic quotient failed final Level 4 Delaunay validation"
+            "periodic quotient failed final Level 5 Delaunay validation"
         );
     }
 

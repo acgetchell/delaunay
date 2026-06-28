@@ -73,7 +73,7 @@ Toroidal support has two modes:
 - `.try_toroidal([..])` uses the 3^D image-point method to construct a
   true periodic quotient with rewired neighbor pointers. This path is release
   covered in 2D and compact 3D, where periodic triangulations validate as
-  closed tori through Levels 1-4. 4D/5D periodic construction fails fast until
+  closed tori through Levels 1-5. 4D/5D periodic construction fails fast until
   issue #416 makes quotient selection scalable and diagnosable enough for
   release validation.
 
@@ -100,7 +100,7 @@ release characterization, not a portable performance promise:
 - `just debug-large-scale-{2,3,4,5}d [n] [repair_every]` runs the same
   release-mode `slow-tests` harness shape across dimensions: deterministic point
   generation, batch construction, final flip repair, and `validation_report`
-  for Levels 1–4.
+  for Levels 1–5.
 - The `just` helper defaults are dimension-aware rather than identical: 2D
   defaults to 36,000 vertices, 3D defaults to 7,500 vertices, 4D defaults to
   800 vertices, and 5D defaults to 140 vertices. Pass `n` explicitly when a
@@ -125,12 +125,12 @@ Current 3D scale envelope:
 - `just debug-large-scale-3d 7500 1` is the current release-mode acceptance
   harness for the 7,500-vertex 3D path.
 - This helper is the default near-one-minute acceptance/profiling target for
-  final flip repair and `validation_report` coverage across Levels 1–4.
+  final flip repair and `validation_report` coverage across Levels 1–5.
 - Wall time is hardware- and load-sensitive. Recent Apple M4 Max-class local
   runs complete in roughly 56 seconds; treat that as an envelope, not a
   portable guarantee.
 - `just debug-large-scale-3d 10000 1` is a heavier characterization probe that
-  has also passed final Levels 1–4 validation; use it when the 10,000-vertex
+  has also passed final Levels 1–5 validation; use it when the 10,000-vertex
   envelope matters more than one-minute feedback.
 
 Current 4D scale envelope:

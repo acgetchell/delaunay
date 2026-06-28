@@ -282,15 +282,11 @@ clean:
     rm -rf coverage
 
 # Code quality and formatting
-clippy: clippy-core
+clippy: clippy-all-targets
 
 clippy-all-targets:
     cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
     cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
-
-clippy-core:
-    cargo clippy --workspace --lib -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
-    cargo clippy --workspace --lib --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
 # Coverage analysis for local development (HTML output)
 coverage: _ensure-cargo-llvm-cov
@@ -347,7 +343,7 @@ help-workflows:
     @echo "  just ci                # GitHub-equivalent union of every validation bucket"
     @echo ""
     @echo "Focused validation:"
-    @echo "  just rust-core-check   # Formatting, core clippy, docs, and Semgrep"
+    @echo "  just rust-core-check   # Formatting, all-targets Clippy, docs, and Semgrep"
     @echo "  just python-ci         # Python lint/typecheck + pytest"
     @echo "  just notebook-check    # Notebook hygiene + fast headless execution"
     @echo "  just markdown-ci       # Markdown lint + spell check"
@@ -655,11 +651,15 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
 
         echo ""
         echo "▶ ${dimension}: ${test_name} (${n_points} vertices, ${max_secs}s cap)"
+        # Construction wall-clock guard: validate Levels 1-3 + Level 5 only.
+        # Level 4 embedding overlap validation runs at scale under `just test-slow`
+        # (full scope); see issue #482.
         if env \
             DELAUNAY_BULK_PROGRESS_EVERY="$progress_every" \
             DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS="$max_secs" \
             "$n_env=$n_points" \
             DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=1 \
+            DELAUNAY_LARGE_DEBUG_VALIDATION=construction \
             cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug "$test_name" -- --exact --nocapture 2>&1 | tee "$log_file"; then
             echo "✅ ${dimension} completed within the ${max_secs}s test-runtime cap"
             case_status="PASS"
@@ -890,7 +890,7 @@ python-sync: _ensure-uv
 python-typecheck: _ensure-uv
     uv run ty check scripts/ --error all
 
-rust-core-check: fmt-check clippy-core doc-check semgrep semgrep-test
+rust-core-check: fmt-check clippy-all-targets doc-check semgrep semgrep-test
     @echo "✅ Rust core checks complete!"
 
 # Repository-owned Semgrep rules for project-specific Rust diagnostics.

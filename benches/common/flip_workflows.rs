@@ -303,6 +303,13 @@ pub enum FlipWorkflowError {
     },
 
     /// A flip reported three inserted triangle vertices that do not form a real triangle.
+    #[cfg_attr(
+        not(feature = "slow-tests"),
+        allow(
+            dead_code,
+            reason = "k=3 inverse roundtrip diagnostics are exercised by slow 4D/5D fixture tests"
+        )
+    )]
     #[error("{move_kind} flip reported an invalid inserted triangle: {source}")]
     InvalidInsertedTriangle {
         /// Flip move kind.
@@ -997,6 +1004,13 @@ pub fn forward_k3<const D: usize>(
 /// flip does not report an inserted triangle, or
 /// [`FlipWorkflowError::InverseFlipFailed`] when the inverse triangle move
 /// fails.
+#[cfg_attr(
+    not(feature = "slow-tests"),
+    allow(
+        dead_code,
+        reason = "k=3 inverse roundtrips are exercised by slow 4D/5D fixture tests"
+    )
+)]
 pub fn roundtrip_k3<const D: usize>(
     dt: &mut FlipTriangulation<D>,
     ridge: RidgeHandle,
@@ -1051,12 +1065,7 @@ pub fn verify_k1_roundtrip<const D: usize>(
     let before = snapshot_topology(base_dt)?;
     let mut trial = base_dt.clone();
     roundtrip_k1(&mut trial, simplex_key)?;
-    trial
-        .validate()
-        .map_err(|source| FlipWorkflowError::InvalidAfterRoundtrip {
-            context: context.to_string(),
-            source,
-        })?;
+    validate_topology_and_delaunay(&trial, context)?;
     assert_same_topology(&trial, &before, context)
 }
 
@@ -1078,12 +1087,7 @@ pub fn verify_k2_roundtrip<const D: usize>(
     let before = snapshot_topology(base_dt)?;
     let mut trial = base_dt.clone();
     roundtrip_k2(&mut trial, facet)?;
-    trial
-        .validate()
-        .map_err(|source| FlipWorkflowError::InvalidAfterRoundtrip {
-            context: context.to_string(),
-            source,
-        })?;
+    validate_topology_and_delaunay(&trial, context)?;
     assert_same_topology(&trial, &before, context)
 }
 
@@ -1097,6 +1101,13 @@ pub fn verify_k2_roundtrip<const D: usize>(
 /// Returns an error when snapshotting, the k=3 roundtrip,
 /// [`DelaunayTriangulation::validate`] validation, or exact topology comparison
 /// fails.
+#[cfg_attr(
+    not(feature = "slow-tests"),
+    allow(
+        dead_code,
+        reason = "k=3 inverse roundtrips are exercised by slow 4D/5D fixture tests"
+    )
+)]
 pub fn verify_k3_roundtrip<const D: usize>(
     base_dt: &FlipTriangulation<D>,
     ridge: RidgeHandle,
@@ -1105,13 +1116,19 @@ pub fn verify_k3_roundtrip<const D: usize>(
     let before = snapshot_topology(base_dt)?;
     let mut trial = base_dt.clone();
     roundtrip_k3(&mut trial, ridge)?;
-    trial
-        .validate()
+    validate_topology_and_delaunay(&trial, context)?;
+    assert_same_topology(&trial, &before, context)
+}
+
+fn validate_topology_and_delaunay<const D: usize>(
+    dt: &FlipTriangulation<D>,
+    context: &str,
+) -> FlipWorkflowResult<()> {
+    dt.validate()
         .map_err(|source| FlipWorkflowError::InvalidAfterRoundtrip {
             context: context.to_string(),
             source,
-        })?;
-    assert_same_topology(&trial, &before, context)
+        })
 }
 
 /// Reports whether a k=2 facet support touches an adversarial fixture feature.

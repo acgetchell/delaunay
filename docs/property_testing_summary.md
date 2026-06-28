@@ -149,6 +149,7 @@ Proptest automatically records minimized failures in
 Current generated corpus:
 
 - `tests/proptest_delaunay_triangulation.proptest-regressions`
+- `tests/proptest_sos.proptest-regressions`
 
 ## Writing New Properties
 

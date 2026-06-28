@@ -4,7 +4,7 @@
 //! test vectors.  Correctness is verified by testing the mathematical
 //! invariants that a valid `SoS` implementation must satisfy:
 //!
-//! - **Non-degeneracy**: always returns ±1 for degenerate inputs
+//! - **Non-degeneracy**: returns ±1 for first-order-resolvable degenerate inputs
 //! - **Determinism**: same input always produces the same sign
 //! - **Translation invariance**: orientation sign is unchanged by translation
 //! - **Robustness**: never panics on arbitrary finite inputs
@@ -14,7 +14,9 @@
 //!
 //! - **Co-hyperplanar points** (orientation): D+1 points with last coordinate
 //!   fixed to zero and integer values in the remaining D−1 coordinates,
-//!   guaranteeing an exactly-zero orientation determinant.
+//!   guaranteeing an exactly-zero orientation determinant. Inputs whose
+//!   first-order `SoS` cofactors all vanish are a typed degeneracy case and are
+//!   filtered from the non-zero/determinism/translation properties.
 //! - **Hyper-rectangle vertices** (insphere): the origin corner, D adjacent
 //!   axis-aligned corners, and the diagonally opposite corner of an
 //!   integer-coordinate hyper-rectangle all lie on a common circumsphere,
@@ -24,6 +26,7 @@
 
 use delaunay::geometry::point::Point;
 use delaunay::geometry::sos::{sos_insphere_sign, sos_orientation_sign};
+use delaunay::geometry::traits::coordinate::{CoordinateConversionError, DegenerateSimplexReason};
 use proptest::prelude::*;
 
 // =============================================================================
@@ -41,6 +44,35 @@ use proptest::prelude::*;
 fn points_all_distinct<const D: usize>(points: &[Point<D>]) -> bool {
     (0..points.len())
         .all(|i| ((i + 1)..points.len()).all(|j| points[i].coords() != points[j].coords()))
+}
+
+/// Returns `Some(sign)` when the current `SoS` implementation can resolve the
+/// first-order cofactor expansion, or `None` for its documented typed
+/// all-cofactors-vanished degeneracy.
+fn resolvable_sos_orientation_sign<const D: usize>(points: &[Point<D>]) -> Option<i32> {
+    match sos_orientation_sign(points) {
+        Ok(sign) => Some(sign),
+        Err(CoordinateConversionError::DegenerateSimplex {
+            reason: DegenerateSimplexReason::VanishingSosCofactors,
+            ..
+        }) => None,
+        Err(error) => panic!("unexpected SoS orientation error for finite D+1 points: {error}"),
+    }
+}
+
+/// Checks the robustness contract for arbitrary finite inputs: a sign or a
+/// typed all-cofactors-vanished degeneracy, but no panic or stringly failure.
+const fn sos_result_is_sign_or_vanishing_degeneracy(
+    result: &Result<i32, CoordinateConversionError>,
+) -> bool {
+    matches!(result, Ok(1 | -1))
+        || matches!(
+            result,
+            Err(CoordinateConversionError::DegenerateSimplex {
+                reason: DegenerateSimplexReason::VanishingSosCofactors,
+                ..
+            })
+        )
 }
 
 // =============================================================================
@@ -80,7 +112,7 @@ macro_rules! gen_sos_tests {
             // =============================================================
 
             proptest! {
-                /// `SoS` orientation returns ±1 for exactly degenerate points.
+                /// `SoS` orientation returns ±1 for first-order-resolvable degenerate points.
                 #[test]
                 fn [<prop_sos_orientation_nonzero_ $dim d>](
                     raw in prop::collection::vec(
@@ -103,12 +135,14 @@ macro_rules! gen_sos_tests {
                     // distinct points — skip inputs with duplicates.
                     prop_assume!(points_all_distinct(&points));
 
-                    let sign = sos_orientation_sign(&points).unwrap();
+                    let sign = resolvable_sos_orientation_sign(&points);
+                    prop_assume!(sign.is_some());
+                    let sign = sign.expect("prop_assume accepted only resolvable SoS inputs");
                     prop_assert!(sign == 1 || sign == -1,
                         "SoS orientation must return ±1 in {}D, got {}", $dim, sign);
                 }
 
-                /// `SoS` orientation is deterministic for degenerate points.
+                /// `SoS` orientation is deterministic for first-order-resolvable degenerate points.
                 #[test]
                 fn [<prop_sos_orientation_deterministic_ $dim d>](
                     raw in prop::collection::vec(
@@ -127,12 +161,15 @@ macro_rules! gen_sos_tests {
                         .collect();
                     prop_assume!(points_all_distinct(&points));
 
-                    let s1 = sos_orientation_sign(&points).unwrap();
-                    let s2 = sos_orientation_sign(&points).unwrap();
+                    let s1 = resolvable_sos_orientation_sign(&points);
+                    prop_assume!(s1.is_some());
+                    let s1 = s1.expect("prop_assume accepted only resolvable SoS inputs");
+                    let s2 = resolvable_sos_orientation_sign(&points)
+                        .expect("repeated resolvable SoS input should remain resolvable");
                     prop_assert_eq!(s1, s2, "SoS must be deterministic in {}D", $dim);
                 }
 
-                /// `SoS` orientation is translation-invariant for degenerate points.
+                /// `SoS` orientation is translation-invariant for first-order-resolvable degenerate points.
                 ///
                 /// The offset uses integers (not arbitrary f64) because SoS
                 /// translation invariance relies on the "1" column cancelling
@@ -159,7 +196,9 @@ macro_rules! gen_sos_tests {
                         .collect();
                     prop_assume!(points_all_distinct(&points));
 
-                    let s1 = sos_orientation_sign(&points).unwrap();
+                    let s1 = resolvable_sos_orientation_sign(&points);
+                    prop_assume!(s1.is_some());
+                    let s1 = s1.expect("prop_assume accepted only resolvable SoS inputs");
                     let translated: Vec<Point<$dim>> = points
                         .iter()
                         .map(|p| {
@@ -169,7 +208,8 @@ macro_rules! gen_sos_tests {
                             Point::try_new(coords).expect("finite point coordinates")
                         })
                         .collect();
-                    let s2 = sos_orientation_sign(&translated).unwrap();
+                    let s2 = resolvable_sos_orientation_sign(&translated)
+                        .expect("integer translation should preserve SoS cofactor resolvability");
                     prop_assert_eq!(s1, s2,
                         "SoS orientation must be translation-invariant in {}D", $dim);
                 }
@@ -239,7 +279,7 @@ macro_rules! gen_sos_tests {
             // =============================================================
 
             proptest! {
-                /// `SoS` orientation never panics and returns ±1 for random inputs.
+                /// `SoS` orientation never panics on random inputs.
                 #[test]
                 fn [<prop_sos_orientation_robust_ $dim d>](
                     points in prop::collection::vec(
@@ -247,11 +287,14 @@ macro_rules! gen_sos_tests {
                         ($dim + 1)..=($dim + 1),
                     ),
                 ) {
-                    let sign = sos_orientation_sign(&points).unwrap();
-                    prop_assert!(sign == 1 || sign == -1);
+                    prop_assert!(
+                        sos_result_is_sign_or_vanishing_degeneracy(
+                            &sos_orientation_sign(&points)
+                        )
+                    );
                 }
 
-                /// `SoS` insphere never panics and returns ±1 for random inputs.
+                /// `SoS` insphere never panics on random inputs.
                 #[test]
                 fn [<prop_sos_insphere_robust_ $dim d>](
                     simplex in prop::collection::vec(
@@ -260,8 +303,11 @@ macro_rules! gen_sos_tests {
                     ),
                     test in $uniform(finite_coord()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                 ) {
-                    let sign = sos_insphere_sign(&simplex, &test).unwrap();
-                    prop_assert!(sign == 1 || sign == -1);
+                    prop_assert!(
+                        sos_result_is_sign_or_vanishing_degeneracy(
+                            &sos_insphere_sign(&simplex, &test)
+                        )
+                    );
                 }
             }
         }

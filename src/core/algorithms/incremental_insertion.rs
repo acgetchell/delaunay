@@ -38,6 +38,7 @@ use crate::core::collections::{
 use crate::core::construction::{
     FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
 };
+use crate::core::embedding::TriangulationEmbeddingValidationError;
 use crate::core::facet::{FacetError, FacetHandle};
 use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
 use crate::core::tds::{
@@ -631,6 +632,14 @@ pub enum InitialSimplexUnexpectedInsertionStage {
         source: DelaunayTriangulationValidationError,
     },
 
+    /// Embedding validation escaped initial-simplex construction.
+    #[error("embedding validation failed during insertion: {source}")]
+    EmbeddingValidation {
+        /// Underlying embedding validation error.
+        #[source]
+        source: TriangulationEmbeddingValidationError,
+    },
+
     /// Topology validation escaped initial-simplex construction.
     #[error("{context}: {source}")]
     TopologyValidation {
@@ -839,6 +848,13 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
                     ),
                 }
             }
+            TriangulationConstructionError::InsertionEmbeddingValidation { source } => {
+                Self::UnexpectedInsertionStage {
+                    reason: Box::new(
+                        InitialSimplexUnexpectedInsertionStage::EmbeddingValidation { source },
+                    ),
+                }
+            }
             TriangulationConstructionError::OrientationCanonicalizationGeometric { source }
             | TriangulationConstructionError::OrientationCanonicalizationInternal { source } => {
                 Self::UnexpectedInsertionStage {
@@ -1038,6 +1054,8 @@ pub enum InsertionErrorKind {
     HullExtension,
     /// Delaunay validation failed after insertion.
     DelaunayValidationFailed,
+    /// Embedded-geometry validation failed after insertion.
+    EmbeddingValidationFailed,
     /// Flip-based Delaunay repair failed.
     DelaunayRepairFailed,
     /// Duplicate coordinates were supplied.
@@ -1064,7 +1082,9 @@ pub enum InsertionErrorSourceKind {
     Tds(TdsErrorKind),
     /// Triangulation-layer topology validation failed.
     Triangulation(TriangulationValidationErrorKind),
-    /// Level 4 Delaunay validation failed.
+    /// Level 4 embedding validation failed.
+    Embedding,
+    /// Level 5 Delaunay validation failed.
     Delaunay(DelaunayValidationErrorKind),
     /// Flip repair failed.
     DelaunayRepair(DelaunayRepairErrorKind),
@@ -1616,12 +1636,23 @@ pub enum InsertionError {
     /// Global Delaunay validation failed after insertion.
     ///
     /// This indicates the triangulation is structurally valid but violates the
-    /// empty-circumsphere property (Level 4).
+    /// empty-circumsphere property (Level 5).
     #[error("Delaunay validation failed: {source}")]
     DelaunayValidationFailed {
-        /// The structured Level 4 validation error.
+        /// The structured Level 5 validation error.
         #[source]
         source: DelaunayTriangulationValidationError,
+    },
+
+    /// Global embedding validation failed after insertion.
+    ///
+    /// This indicates the triangulation is structurally and topologically valid
+    /// but violates the embedded-geometry invariant (Level 4).
+    #[error("Embedding validation failed: {source}")]
+    EmbeddingValidationFailed {
+        /// The structured Level 4 validation error.
+        #[source]
+        source: TriangulationEmbeddingValidationError,
     },
 
     /// Flip-based Delaunay repair failed.
@@ -1861,6 +1892,7 @@ impl InsertionError {
             // `NonManifoldTopology` variant.
             Self::NeighborWiring { .. }
             | Self::Location(_)
+            | Self::EmbeddingValidationFailed { .. }
             | Self::DelaunayValidationFailed { .. }
             | Self::DelaunayRepairFailed { .. }
             | Self::DuplicateCoordinates { .. }
@@ -1985,6 +2017,7 @@ impl InsertionError {
             | InitialSimplexUnexpectedInsertionStage::OrientationCanonicalization { .. }
             | InitialSimplexUnexpectedInsertionStage::Location { .. }
             | InitialSimplexUnexpectedInsertionStage::DelaunayValidation { .. }
+            | InitialSimplexUnexpectedInsertionStage::EmbeddingValidation { .. }
             | InitialSimplexUnexpectedInsertionStage::SpatialIndexConstruction { .. } => false,
         }
     }
@@ -2007,7 +2040,7 @@ impl InsertionError {
                     | TriangulationValidationErrorKind::OrientationPromotionNonConvergence
                     | TriangulationValidationErrorKind::IsolatedVertex
             ),
-            InvariantError::Delaunay(_) => false,
+            InvariantError::Embedding(_) | InvariantError::Delaunay(_) => false,
         }
     }
 

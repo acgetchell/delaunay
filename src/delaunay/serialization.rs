@@ -154,7 +154,7 @@ mod tests {
         let message = err.to_string();
         assert!(
             message.contains("Delaunay verification failed"),
-            "serde error should preserve the Level 4 validation failure: {message}"
+            "serde error should preserve the Level 5 validation failure: {message}"
         );
     }
 

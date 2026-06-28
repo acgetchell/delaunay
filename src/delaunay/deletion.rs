@@ -40,8 +40,16 @@ pub enum DeleteVertexError {
     InvariantViolation {
         /// Structured invariant failure produced by the deletion attempt.
         #[from]
-        source: InvariantError,
+        source: Box<InvariantError>,
     },
+}
+
+impl From<InvariantError> for DeleteVertexError {
+    fn from(source: InvariantError) -> Self {
+        Self::InvariantViolation {
+            source: Box::new(source),
+        }
+    }
 }
 
 // =============================================================================
@@ -74,7 +82,7 @@ where
     /// [`InvariantError::Triangulation`], and the pre-deletion state is restored. Both the inverse
     /// k=1 fast-path and fan triangulation may temporarily violate the Delaunay property in some
     /// cases. If the [`DelaunayRepairPolicy`](crate::DelaunayRepairPolicy) allows it, a flip-based
-    /// repair pass is run automatically after deletion. Otherwise, Level 4 validation is run without
+    /// repair pass is run automatically after deletion. Otherwise, Level 5 validation is run without
     /// mutating repair, and Delaunay violations roll back as invariant failures.
     ///
     /// The post-deletion repair and orientation canonicalization steps are
@@ -87,7 +95,7 @@ where
     ///
     /// **Future Enhancement**: Delaunay-aware cavity retriangulation will be added for
     /// deletions. For now, local retriangulation can still require post-deletion flip repair; if
-    /// automatic repair is disabled and Level 4 validation detects a violation, deletion fails and
+    /// automatic repair is disabled and Level 5 validation detects a violation, deletion fails and
     /// rolls back.
     ///
     /// # Arguments
@@ -113,7 +121,7 @@ where
     /// - Delaunay flip-based repair fails after deletion
     ///   ([`DeleteVertexError::InvariantViolation`] wrapping [`InvariantError::Delaunay`] wrapping
     ///   [`DelaunayTriangulationValidationError::RepairOperationFailed`]).
-    /// - Level 4 Delaunay validation fails after deletion when automatic repair is disabled
+    /// - Level 5 Delaunay validation fails after deletion when automatic repair is disabled
     ///   ([`DeleteVertexError::InvariantViolation`] wrapping [`InvariantError::Delaunay`] wrapping
     ///   [`DelaunayTriangulationValidationError::VerificationFailed`]).
     /// - Orientation canonicalization fails after repair
@@ -173,6 +181,8 @@ where
     /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// #     #[error(transparent)]
+    /// #     Delete(#[from] DeleteVertexError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
@@ -188,13 +198,12 @@ where
     /// let err = dt
     ///     .delete_vertex(vertex_key)
     ///     .expect_err("deletion should leave an isolated vertex");
+    /// let DeleteVertexError::InvariantViolation { source } = err else {
+    ///     return Err(err.into());
+    /// };
     /// std::assert_matches!(
-    ///     err,
-    ///     DeleteVertexError::InvariantViolation {
-    ///         source: InvariantError::Triangulation(
-    ///             TriangulationValidationError::IsolatedVertex { .. }
-    ///         )
-    ///     }
+    ///     source.as_ref(),
+    ///     InvariantError::Triangulation(TriangulationValidationError::IsolatedVertex { .. })
     /// );
     /// assert_eq!(dt.number_of_vertices(), 3);
     /// assert_eq!(dt.number_of_simplices(), 1);
@@ -282,7 +291,9 @@ where
                             )
                         })?;
                 } else {
-                    delaunay.is_valid().map_err(InvariantError::Delaunay)?;
+                    delaunay
+                        .is_valid_delaunay()
+                        .map_err(InvariantError::Delaunay)?;
                 }
 
                 Ok(simplices_removed)
@@ -414,25 +425,24 @@ mod tests {
         let result = dt.delete_vertex(vertex_key);
         let err = result.expect_err("forced repair failure should make deletion fail");
         match err {
-            DeleteVertexError::InvariantViolation {
-                source:
-                    InvariantError::Delaunay(
-                        DelaunayTriangulationValidationError::RepairOperationFailed {
-                            operation: DelaunayRepairOperation::VertexRemoval,
-                            source,
-                        },
-                    ),
-            } if matches!(
-                source.as_ref(),
-                DelaunayRepairError::NonConvergent { max_flips: 0, .. }
-            ) => {}
-            DeleteVertexError::InvariantViolation {
-                source:
-                    InvariantError::Triangulation(
-                        TriangulationValidationError::OrientationPromotionNonConvergence { .. },
-                    )
-                    | InvariantError::Tds(TdsError::FacetSharingViolation { .. }),
-            } => {}
+            DeleteVertexError::InvariantViolation { source } => match source.as_ref() {
+                InvariantError::Delaunay(
+                    DelaunayTriangulationValidationError::RepairOperationFailed {
+                        operation: DelaunayRepairOperation::VertexRemoval,
+                        source,
+                    },
+                ) if matches!(
+                    source.as_ref(),
+                    DelaunayRepairError::NonConvergent { max_flips: 0, .. }
+                ) => {}
+                InvariantError::Triangulation(
+                    TriangulationValidationError::OrientationPromotionNonConvergence { .. },
+                )
+                | InvariantError::Tds(TdsError::FacetSharingViolation { .. }) => {}
+                other => panic!(
+                    "expected vertex-deletion rollback error from forced repair path, got {other:?}"
+                ),
+            },
             other => panic!(
                 "expected vertex-deletion rollback error from forced repair path, got {other:?}"
             ),
@@ -664,7 +674,7 @@ mod tests {
         let deleted_uuid = vertices[4].uuid();
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
-        dt.is_valid().unwrap();
+        dt.is_valid_delaunay().unwrap();
         dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
         dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
 
@@ -688,15 +698,16 @@ mod tests {
 
         let err = dt
             .delete_vertex(vertex_key)
-            .expect_err("disabled repair should roll back a Level 4 violation");
+            .expect_err("disabled repair should roll back a Level 5 violation");
 
+        let DeleteVertexError::InvariantViolation { source } = err else {
+            panic!("expected invariant violation, got {err:?}");
+        };
         assert_matches!(
-            err,
-            DeleteVertexError::InvariantViolation {
-                source: InvariantError::Delaunay(
-                    DelaunayTriangulationValidationError::VerificationFailed { .. },
-                ),
-            }
+            source.as_ref(),
+            InvariantError::Delaunay(
+                DelaunayTriangulationValidationError::VerificationFailed { .. }
+            )
         );
         assert_eq!(dt.number_of_vertices(), vertex_count_before);
         assert_eq!(dt.number_of_simplices(), simplex_count_before);
@@ -711,6 +722,6 @@ mod tests {
             spatial_index_before
         );
         assert!(dt.vertices().any(|(_, v)| v.uuid() == deleted_uuid));
-        dt.is_valid().unwrap();
+        dt.is_valid_delaunay().unwrap();
     }
 }

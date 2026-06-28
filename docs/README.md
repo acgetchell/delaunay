@@ -9,7 +9,7 @@ Historical design notes, investigations, and completed optimization roadmaps liv
 
 - [`api_design.md`](api_design.md): construction, vertex lifecycle, and Pachner move APIs.
 - [`topology.md`](topology.md): Level 3 topology invariants (manifold checks, Euler characteristic).
-- [`validation.md`](validation.md): the four-level validation model (Levels 1–4) and how to configure it.
+- [`validation.md`](validation.md): the five-level validation model (Levels 1–5) and how to configure it.
 - [`diagnostics.md`](diagnostics.md): opt-in diagnostic helpers, structured reports, and debug switches.
 - [`mesh_export.md`](mesh_export.md): stable simplicial-complex export schema for notebooks and downstream tools.
 - [`workflows.md`](workflows.md): practical recipes for construction, deletion, and local Pachner moves.

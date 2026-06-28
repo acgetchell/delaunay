@@ -474,7 +474,7 @@ pub enum ExplicitConstructionError {
         #[source]
         source: Box<TdsError>,
     },
-    /// Level 4 Delaunay validation failed before returning the wrapper.
+    /// Level 5 Delaunay validation failed before returning the wrapper.
     #[error("Delaunay validation failed during explicit construction: {source}")]
     DelaunayValidation {
         /// Underlying Delaunay validation error.
@@ -483,7 +483,7 @@ pub enum ExplicitConstructionError {
     },
     /// Explicit quotient connectivity is not supported for the requested topology.
     #[error(
-        "Explicit non-Euclidean connectivity is not supported for {topology:?}; Level 4 quotient validation is required"
+        "Explicit non-Euclidean connectivity is not supported for {topology:?}; quotient embedding validation is required"
     )]
     UnsupportedExplicitTopology {
         /// Requested global topology metadata.
@@ -1436,7 +1436,7 @@ where
                         source: Box::new(e),
                     }
                 })?;
-                dt.is_valid().map_err(|e| {
+                dt.is_valid_delaunay().map_err(|e| {
                     TriangulationConstructionError::FinalDelaunayValidation {
                         context: FinalDelaunayValidationContext::PeriodicQuotientDelaunay,
                         source: e,
@@ -1451,9 +1451,10 @@ where
     ///
     /// This is a purely combinatorial construction that assembles a valid TDS from
     /// the given connectivity without Delaunay point insertion. Euclidean explicit
-    /// meshes are validated at Levels 1–4 (elements, structure, topology, and the
-    /// Delaunay property). Non-Euclidean explicit connectivity is rejected because
-    /// it requires Level 4 quotient-topology validation before the public
+    /// meshes are validated at Levels 1–5 (elements, structure, topology,
+    /// embedding, and the Delaunay property). Non-Euclidean explicit
+    /// connectivity is rejected because it requires quotient embedding
+    /// validation before the public
     /// `DelaunayTriangulation` wrapper can accept it.
     ///
     /// # Algorithm
@@ -1465,13 +1466,13 @@ where
     /// 5. Wrap in a validation candidate.
     /// 6. Normalize coherent orientation and promote to positive canonical sign
     ///    via `normalize_and_promote_positive_orientation()`.
-    /// 7. Reject non-Euclidean explicit connectivity until Level 4 quotient
+    /// 7. Reject non-Euclidean explicit connectivity until quotient embedding
     ///    validation exists.
     /// 8. Validate Levels 1–2 (TDS structural: `tds.validate()`).
     /// 9. Validate Level 3 topology (excluding geometric orientation).
     /// 10. Validate PL-manifold completion (vertex links, if required).
     /// 11. Validate geometric nondegeneracy (reject zero-volume simplices).
-    /// 12. Validate the Euclidean Level 4 Delaunay property.
+    /// 12. Validate the Euclidean Level 5 Delaunay property.
     fn build_explicit<K, V>(
         kernel: &K,
         vertices: &[Vertex<U, D>],
@@ -1615,12 +1616,13 @@ where
         Ok(candidate.into_validated_delaunay(proof))
     }
 
-    /// Enforces Level 4 validation before returning the Delaunay wrapper.
+    /// Enforces Level 5 validation before returning the Delaunay wrapper.
     ///
     /// The public return type is `DelaunayTriangulation`, so Euclidean explicit
     /// connectivity must prove the empty-circumsphere property before it crosses
     /// this API boundary. Explicit non-Euclidean topology is rejected earlier in
-    /// `build_explicit` until a Level 4 validator exists for quotient connectivity.
+    /// `build_explicit` until quotient embedding validation exists for explicit
+    /// connectivity.
     fn enforce_explicit_delaunay_property<K, V>(
         candidate: &DelaunayTriangulationCandidate<K, U, V, D>,
     ) -> Result<DelaunayTriangulationValidationProof, DelaunayTriangulationConstructionError>
@@ -1636,7 +1638,7 @@ where
         })
     }
 
-    /// Rejects explicit quotient connectivity until Level 4 validation supports it.
+    /// Rejects explicit quotient connectivity until embedding validation supports it.
     fn reject_explicit_non_euclidean_topology(
         global_topology: GlobalTopology<D>,
     ) -> Result<(), DelaunayTriangulationConstructionError> {

@@ -5,7 +5,7 @@ Level 3 manifold validation, Euler characteristic checks, and support for
 different topological spaces (Euclidean and toroidal are fully integrated;
 spherical and hyperbolic are currently scaffolded for future integration).
 
-If you want the user-facing guide to the full validation stack (Levels 1–4), start
+If you want the user-facing guide to the full validation stack (Levels 1–5), start
 with `docs/validation.md`.
 
 For the theoretical background and rationale behind the invariants themselves, see
@@ -52,13 +52,13 @@ Notes:
   validated `Point` coordinates; exact-coordinate input, if added in the future,
   should be an explicit documented API rather than incidental generic support.
 
-## Level 3 topology validation (`Triangulation::is_valid()`)
+## Level 3 topology validation (`Triangulation::is_valid_topology()`)
 
-`Triangulation::is_valid()` validates *topology-only* invariants (Level 3). It
+`Triangulation::is_valid_topology()` validates *topology-only* invariants (Level 3). It
 intentionally does **not** validate lower layers (elements or TDS structure).
 
 For cumulative validation, use `Triangulation::validate()` (Levels 1–3) or
-`DelaunayTriangulation::validate()` (Levels 1–4).
+`DelaunayTriangulation::validate()` (Levels 1–5).
 
 ### Always-checked invariants
 
@@ -93,7 +93,7 @@ Level 3 always checks:
 Implementation pointers:
 
 - Level 3 entry points and validation vocabulary: `src/core/validation.rs`
-  (`Triangulation::is_valid`, `Triangulation::validate`)
+  (`Triangulation::is_valid_topology`, `Triangulation::validate`)
 - Public manifold validators: `src/topology/manifold.rs`
   (`validate_closed_boundary`, `validate_vertex_links`, `validate_ridge_links`)
 - Internal raw-map reuse helpers: `src/topology/manifold.rs`

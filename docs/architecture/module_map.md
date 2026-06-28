@@ -63,6 +63,8 @@ PL-manifold validation. Ridge ownership therefore belongs in `src/topology/`.
 
 - `coordinate_range.rs` - validated coordinate-range value type for random
   point and triangulation generator APIs.
+- `embedding.rs` - pure labeled-simplex embedding predicates and witnesses
+  used by generic Level 4 validation.
 - `kernel.rs` - kernel abstraction (`AdaptiveKernel`, `RobustKernel`,
   `FastKernel`) and `ExactPredicates` marker trait.
 - `point.rs` - finite/NaN-aware point operations.
@@ -109,8 +111,10 @@ coordinate model/API rather than loosening ordinary `f64` APIs.
 - `repair.rs` - Delaunay repair policies, rebuild config, and repair outcomes.
 - `serialization.rs` - conversion to/from `Tds` with topology metadata reset
   rules.
-- `validation.rs` - Level 4 validation errors and construction validation
+- `validation.rs` - Level 5 Delaunay validation errors and construction validation
   cadence helpers.
+- `property_validation.rs` - TDS-level Delaunay empty-circumsphere scans and
+  repair-oriented violation reports used by Level 5 validation APIs.
 
 `src/lib.rs` wires public modules, root re-exports, focused preludes, and the
 crate-level documentation map. Delaunay-facing modules are exposed directly as

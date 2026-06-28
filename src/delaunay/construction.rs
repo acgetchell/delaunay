@@ -63,6 +63,7 @@ use crate::core::construction::{
     FinalDelaunayValidationContext, FinalTopologyValidationContext,
     PeriodicQuotientFacetKeyDerivationFailure, TriangulationConstructionError,
 };
+use crate::core::embedding::TriangulationEmbeddingValidationError;
 use crate::core::insertion::record_duplicate_detection_metrics;
 use crate::core::operations::{
     DelaunayInsertionState, InsertionOutcome, InsertionResult, InsertionStatistics,
@@ -991,12 +992,20 @@ pub enum DelaunayConstructionFailure {
         reason: HullExtensionReason,
     },
 
-    /// Level 4 Delaunay validation failed during insertion.
+    /// Level 5 Delaunay validation failed during insertion.
     #[error("Delaunay validation failed during insertion: {source}")]
     InsertionDelaunayValidation {
         /// Underlying Delaunay validation error.
         #[source]
         source: DelaunayTriangulationValidationError,
+    },
+
+    /// Level 4 embedding validation failed during insertion.
+    #[error("embedding validation failed during insertion: {source}")]
+    InsertionEmbeddingValidation {
+        /// Underlying embedding validation error.
+        #[source]
+        source: TriangulationEmbeddingValidationError,
     },
 
     /// Level 3 topology validation failed during insertion.
@@ -1227,6 +1236,9 @@ impl From<TriangulationConstructionError> for DelaunayConstructionFailure {
             }
             TriangulationConstructionError::InsertionDelaunayValidation { source } => {
                 Self::InsertionDelaunayValidation { source }
+            }
+            TriangulationConstructionError::InsertionEmbeddingValidation { source } => {
+                Self::InsertionEmbeddingValidation { source }
             }
             TriangulationConstructionError::InsertionTopologyValidation { context, source } => {
                 Self::InsertionTopologyValidation { context, source }
@@ -3676,7 +3688,7 @@ where
         // batch construction.
         tracing::debug!("post-construction: starting Delaunay validation (build)");
         let delaunay_started = Instant::now();
-        let delaunay_result = dt.is_valid();
+        let delaunay_result = dt.is_valid_delaunay();
         tracing::debug!(
             elapsed = ?delaunay_started.elapsed(),
             success = delaunay_result.is_ok(),
@@ -3724,7 +3736,7 @@ where
         // batch construction.
         tracing::debug!("post-construction: starting Delaunay validation (build stats)");
         let delaunay_started = Instant::now();
-        let delaunay_result = dt.is_valid();
+        let delaunay_result = dt.is_valid_delaunay();
         let delaunay_elapsed = delaunay_started.elapsed();
         stats
             .telemetry
@@ -3816,16 +3828,12 @@ where
         // construction validation in finalize_bulk_construction catches any issues
         // that slip through.
         //
-        // Exception: PLManifoldStrict requires per-insertion vertex-link validation,
-        // so we must use ValidationPolicy::Always to satisfy that guarantee.
+        // PLManifoldStrict still uses OnSuspicion here: the topology guarantee
+        // independently forces RequiredTopologyLinks after every insertion,
+        // including vertex-link validation. Suspicious insertions still escalate
+        // to full validation without making every bulk insertion pay that cost.
         let original_validation_policy = dt.tri.validation_policy;
-        dt.tri.validation_policy = if dt
-            .tri
-            .topology_guarantee
-            .requires_vertex_links_during_insertion()
-        {
-            ValidationPolicy::Always
-        } else if dt.tri.topology_guarantee.requires_ridge_links() {
+        dt.tri.validation_policy = if dt.tri.topology_guarantee.requires_ridge_links() {
             ValidationPolicy::OnSuspicion
         } else {
             ValidationPolicy::DebugOnly
@@ -3948,16 +3956,12 @@ where
         // per-insertion validation (see _with_construction_statistics variant for
         // rationale: O(n²) avoidance + post-construction validation fallback).
         //
-        // Exception: PLManifoldStrict requires per-insertion vertex-link validation,
-        // so we must use ValidationPolicy::Always to satisfy that guarantee.
+        // PLManifoldStrict still uses OnSuspicion here: the topology guarantee
+        // independently forces RequiredTopologyLinks after every insertion,
+        // including vertex-link validation. Suspicious insertions still escalate
+        // to full validation without making every bulk insertion pay that cost.
         let original_validation_policy = dt.tri.validation_policy;
-        dt.tri.validation_policy = if dt
-            .tri
-            .topology_guarantee
-            .requires_vertex_links_during_insertion()
-        {
-            ValidationPolicy::Always
-        } else if dt.tri.topology_guarantee.requires_ridge_links() {
+        dt.tri.validation_policy = if dt.tri.topology_guarantee.requires_ridge_links() {
             ValidationPolicy::OnSuspicion
         } else {
             ValidationPolicy::DebugOnly
@@ -5389,6 +5393,7 @@ where
                     | DelaunayConstructionFailure::CanonicalizedUnsupportedGlobalTopology { .. }
                     | DelaunayConstructionFailure::PeriodicImageConflictingGlobalTopology { .. }
                     | DelaunayConstructionFailure::SpatialIndexConstruction { .. }
+                    | DelaunayConstructionFailure::InsertionEmbeddingValidation { .. }
                     | DelaunayConstructionFailure::InsertionTopologyValidation { .. }
                     | DelaunayConstructionFailure::LocalRepairBudgetExceeded { .. }
                     | DelaunayConstructionFailure::ShuffledRetryExhausted { .. }
@@ -5476,6 +5481,7 @@ where
             | InsertionError::Location(_)
             | InsertionError::NonManifoldTopology { .. }
             | InsertionError::HullExtension { .. }
+            | InsertionError::EmbeddingValidationFailed { .. }
             | InsertionError::DelaunayValidationFailed { .. }
             | InsertionError::DuplicateCoordinates { .. }
             | InsertionError::PerturbedCoordinateInvalid { .. }) => {
@@ -5567,6 +5573,9 @@ where
             }
             InsertionError::DelaunayValidationFailed { source } => {
                 TriangulationConstructionError::InsertionDelaunayValidation { source }
+            }
+            InsertionError::EmbeddingValidationFailed { source } => {
+                TriangulationConstructionError::InsertionEmbeddingValidation { source }
             }
             InsertionError::TopologyValidationFailed { context, source } => {
                 TriangulationConstructionError::InsertionTopologyValidation { context, source }
@@ -5987,7 +5996,7 @@ mod tests {
                     dt.insert_vertex(*vertices.last().unwrap()).unwrap();
                     assert_eq!(dt.number_of_vertices(), $dim + 1);
                     assert_eq!(dt.number_of_simplices(), 1);
-                    assert!(dt.is_valid().is_ok());
+                    assert!(dt.is_valid_delaunay().is_ok());
                 }
 
                 #[test]
@@ -6005,7 +6014,7 @@ mod tests {
                     dt.insert_vertex(vertex!($interior_point).unwrap()).unwrap();
                     assert_eq!(dt.number_of_vertices(), $dim + 2);
                     assert!(dt.number_of_simplices() > 1);
-                    assert!(dt.is_valid().is_ok());
+                    assert!(dt.is_valid_delaunay().is_ok());
                 }
 
                 #[test]
@@ -6027,8 +6036,8 @@ mod tests {
                         dt_bootstrap.number_of_simplices(),
                         dt_batch.number_of_simplices()
                     );
-                    assert!(dt_bootstrap.is_valid().is_ok());
-                    assert!(dt_batch.is_valid().is_ok());
+                    assert!(dt_bootstrap.is_valid_delaunay().is_ok());
+                    assert!(dt_batch.is_valid_delaunay().is_ok());
                 }
             }
         };

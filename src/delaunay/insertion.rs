@@ -610,7 +610,7 @@ where
             return Ok(());
         }
 
-        self.is_valid()
+        self.is_valid_delaunay()
             .map_err(|e| InsertionError::DelaunayValidationFailed { source: e })
     }
 }
@@ -811,7 +811,7 @@ mod tests {
         dt.insert_vertex(vertex![0.0, 0.0, 1.0].unwrap()).unwrap();
         assert_eq!(dt.number_of_simplices(), 1); // Initial simplex created
 
-        assert!(dt.is_valid().is_ok());
+        assert!(dt.is_valid_delaunay().is_ok());
     }
 
     /// When the primary per-insertion repair returns `NonConvergent`, the robust

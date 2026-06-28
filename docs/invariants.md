@@ -27,6 +27,7 @@ the guarantees stated in the public API documentation.
   - [Validation layering](#validation-layering)
   - [Coherent orientation](#coherent-orientation)
   - [Geometric invariants](#geometric-invariants)
+    - [Faithful embedding in affine charts](#faithful-embedding-in-affine-charts)
     - [Delaunay condition (empty circumsphere property)](#delaunay-condition-empty-circumsphere-property)
     - [Robust predicate envelope](#robust-predicate-envelope)
   - [PL-manifold conditions](#pl-manifold-conditions)
@@ -103,7 +104,7 @@ This is why the TDS validation layer checks coherent orientation alongside neigh
 
 ## Validation layering
 
-The implementation separates invariants into four validation levels. Keeping these layers distinct
+The implementation separates invariants into five validation levels. Keeping these layers distinct
 prevents geometric checks from leaking into purely combinatorial validation and makes it clear which
 operation has certified which part of the structure:
 
@@ -115,17 +116,22 @@ operation has certified which part of the structure:
 3. **Level 3 — topology**: the triangulation satisfies the requested `TopologyGuarantee`
    (pseudomanifold, PL manifold, or strict PL manifold) through incidence, connectivity,
    Euler-characteristic, and link checks.
-4. **Level 4 — Delaunay property**: the embedded triangulation satisfies the local Delaunay
+4. **Level 4 — embedding**: each maximal simplex is nondegenerate in the active affine chart, and
+   maximal simplices intersect only along their shared faces. Euclidean topology validates in the
+   ambient chart; toroidal topology validates in periodic covering-space charts.
+5. **Level 5 — Delaunay property**: the embedded triangulation satisfies the local Delaunay
    predicates for its facets.
 
-`Triangulation::is_valid()` is a Level 3 topology check. `DelaunayTriangulation::is_valid()` is a
-Level 4 Delaunay-property check for an already-formed Delaunay triangulation. Cumulative validation
-is exposed through the `validate` / `validation_report` APIs described in
+`Triangulation::is_valid_topology()` is a Level 3 topology check. `DelaunayTriangulation::is_valid_delaunay()` is a
+Level 5 Delaunay-property check for an already-formed Delaunay triangulation. `Triangulation` also
+exposes Level 4 embedding validation through `is_valid_embedding` / `validate_embedding`.
+Cumulative validation is exposed through the `validate` / `validation_report` APIs described in
 [`docs/validation.md`](validation.md).
 
 Automatic validation during construction is intentionally topology-oriented: `ValidationPolicy`
-controls Level 3 checks during insertion, while Level 4 Delaunay validation remains an explicit
-certification step for workflows that need it.
+controls Level 3 checks during insertion and can enable local insertion-time embedding checks.
+Full/global Level 4 embedding certification and Level 5 Delaunay validation remain explicit
+certification steps for workflows that need them.
 
 ---
 
@@ -154,6 +160,27 @@ map, and test expectations.
 
 ## Geometric invariants
 
+### Faithful embedding in affine charts
+
+Levels 1-3 validate the abstract oriented simplicial complex: elements, incidence, neighbor
+reciprocity, coherent orientation, manifoldness, links, connectedness, and Euler consistency. These
+checks do not by themselves prove that the complex is faithfully realized by its coordinates. A
+topologically valid complex can still fold over itself, contain a zero-volume maximal simplex, or
+identify simplices in a way that overlaps in the chosen geometric chart.
+
+Level 4 is the embedded-realization check. It is independent of the Delaunay predicate and enforces:
+
+- every maximal simplex has nonzero `D`-volume under the robust orientation predicate;
+- every pair of maximal simplices intersects only in the face spanned by their shared vertices;
+- toroidal triangulations are checked in periodic covering-space charts, including translated
+  images that can overlap across the fundamental-domain boundary.
+
+This is intentionally separate from topology. Non-orientable spaces are valid objects in topology in
+general, but this crate's TDS contract maintains coherent orientation for the oriented complexes its
+construction, flip, and predicate machinery operate on. Level 4 then asks whether that oriented
+complex is faithfully embedded in the active affine chart. Spherical and hyperbolic topologies need
+model-specific chart validators before they can offer the same Level 4 guarantee.
+
 ### Delaunay condition (empty circumsphere property)
 
 A Delaunay triangulation is characterized by the **empty circumsphere** condition:[^deberg2008][^edelsbrunner2001]
@@ -178,10 +205,11 @@ In practice, floating-point degeneracy matters:
 
 - For near-degenerate configurations, robust predicates (and/or retry/repair strategies) may be
   required to construct or certify the Delaunay property.
-- Validation can be performed explicitly via the Level 4 Delaunay-property check
-  (`DelaunayTriangulation::is_valid`) when a workflow requires certainty.
+- Validation can be performed explicitly via the Level 5 Delaunay-property check
+  (`DelaunayTriangulation::is_valid_delaunay`) when a workflow requires
+  certainty.
 
-Internally, the crate’s Level 4 verifier prefers fast, local flip-based checks over the naive
+Internally, the crate’s Level 5 verifier prefers fast, local flip-based checks over the naive
 O(simplices × vertices) brute-force test. This reflects the standard theoretical relationship between
 Delaunay optimality and local flip predicates.[^edelshah1996][^impl-flips][^impl-delaunay-validation]
 
@@ -433,7 +461,7 @@ The crate therefore treats flip/repair as a best-effort procedure with explicit 
 
 - Prefer to validate Level 3 topology (`Triangulation::validate` / `TopologyGuarantee`) when running
   flip-heavy workflows.
-- Validate the Delaunay property (Level 4) explicitly when inputs are near-degenerate.
+- Validate the Delaunay property (Level 5) explicitly when inputs are near-degenerate.
 
 See the public API docs (<https://docs.rs/delaunay>) and [`docs/workflows.md`](workflows.md) for practical guidance.
 
@@ -491,7 +519,7 @@ For the project-wide bibliography (including references not cited here), see [`R
 [^pachner1991]: Udo Pachner. “P.L. Homeomorphic Manifolds Are Equivalent by Elementary Shellings.”
     *European Journal of Combinatorics* 12(2), 1991. DOI: <https://doi.org/10.1016/S0195-6698(13)80080-7>.
 [^impl-flips]: Implementation: [src/core/algorithms/flips.rs](../src/core/algorithms/flips.rs).
-[^impl-delaunay-validation]: Implementation: [src/core/util/delaunay_validation.rs](../src/core/util/delaunay_validation.rs).
+[^impl-delaunay-validation]: Implementation: [src/delaunay/property_validation.rs](../src/delaunay/property_validation.rs).
 [^hatcher2002]: Allen Hatcher. *Algebraic Topology*. Cambridge University Press, 2002.
     Free online version: <https://pi.math.cornell.edu/~hatcher/AT/ATpage>. (See Appendix A: “PL Manifolds and Links”.)
 [^rourke-sanderson]: C. P. Rourke and B. J. Sanderson. *Introduction to Piecewise-Linear Topology*. Springer, 1972.

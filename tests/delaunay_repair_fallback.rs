@@ -220,7 +220,7 @@ fn explicit_repair_call_validates_result() {
         .expect("Triangulation should be valid after explicit repair");
 
     // Verify Delaunay property specifically
-    dt.is_valid()
+    dt.is_valid_delaunay()
         .expect("Should satisfy Delaunay property after repair");
 }
 

@@ -3,7 +3,7 @@
 //! This module separates mutating Delaunay repair policy from validation-only
 //! checking. [`DelaunayRepairPolicy`] controls when construction and editing
 //! paths may run local flip repair, while [`DelaunayCheckPolicy`] controls
-//! global Level 4 validation cadence without mutating topology.
+//! global Level 5 Delaunay validation cadence without mutating topology.
 //!
 //! Import these APIs through [`crate::prelude::repair`](crate::prelude::repair)
 //! for downstream examples, tests, and applications.
@@ -309,7 +309,7 @@ pub enum DelaunayCheckPolicy {
     ///
     /// Incremental insertion does not automatically run a final global check because there is no
     /// intrinsic “end” signal; call
-    /// [`DelaunayTriangulation::is_valid`](crate::DelaunayTriangulation::is_valid)
+    /// [`DelaunayTriangulation::is_valid_delaunay`](crate::DelaunayTriangulation::is_valid_delaunay)
     /// or
     /// [`DelaunayTriangulation::validate`](crate::DelaunayTriangulation::validate)
     /// when you are done inserting.
@@ -326,7 +326,7 @@ impl DelaunayCheckPolicy {
     pub const fn should_check(self, insertion_count: usize) -> bool {
         match self {
             Self::EndOnly => false,
-            Self::EveryN(n) => insertion_count.is_multiple_of(n.get()),
+            Self::EveryN(n) => insertion_count != 0 && insertion_count.is_multiple_of(n.get()),
         }
     }
 }
@@ -1527,7 +1527,7 @@ mod tests {
     fn check_policy_every_n_checks_on_multiples() {
         let every_2 = DelaunayCheckPolicy::EveryN(NonZeroUsize::new(2).unwrap());
 
-        assert!(every_2.should_check(0));
+        assert!(!every_2.should_check(0));
         assert!(!every_2.should_check(1));
         assert!(every_2.should_check(2));
         assert!(!every_2.should_check(3));

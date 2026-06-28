@@ -30,7 +30,7 @@
 #![cfg_attr(not(feature = "slow-tests"), allow(dead_code))]
 //!
 //! Each should insert all vertices with zero skips, run final repair, and pass
-//! `validation_report` for Levels 1–4. Use local harness output for exact
+//! `validation_report` for Levels 1–5. Use local harness output for exact
 //! timing.
 //!
 //! Override defaults via environment variables:
@@ -610,6 +610,42 @@ fn debug_mode_from_env() -> DebugMode {
     }
 
     panic!("invalid DELAUNAY_LARGE_DEBUG_DEBUG_MODE={raw:?} (expected 'cadenced' or 'strict')");
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ValidationScope {
+    /// Cumulative Levels 1–5, including the Level 4 embedding overlap scan.
+    Full,
+    /// Construction correctness only: Levels 1–3 (structure + topology) plus
+    /// Level 5 (Delaunay property), skipping the expensive Level 4 embedding
+    /// overlap scan. Used by the `perf-large-scale-smoke` wall-clock guard.
+    Construction,
+}
+
+impl ValidationScope {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Construction => "construction",
+        }
+    }
+}
+
+fn validation_scope_from_env() -> ValidationScope {
+    let Ok(raw) = env::var("DELAUNAY_LARGE_DEBUG_VALIDATION") else {
+        return ValidationScope::Full;
+    };
+
+    let raw = raw.trim();
+    if raw.is_empty() || raw.eq_ignore_ascii_case("full") {
+        return ValidationScope::Full;
+    }
+
+    if raw.eq_ignore_ascii_case("construction") {
+        return ValidationScope::Construction;
+    }
+
+    panic!("invalid DELAUNAY_LARGE_DEBUG_VALIDATION={raw:?} (expected 'full' or 'construction')");
 }
 
 fn seed_for_case<const D: usize>(base_seed: u64, n_points: usize) -> u64 {
@@ -1208,6 +1244,7 @@ where
         }
     });
     let validation_cadence = ValidationCadence::from_optional_every(validate_every);
+    let validation_scope = validation_scope_from_env();
 
     println!("=============================================");
     println!("Large-scale triangulation debug: {dimension_name}");
@@ -1243,6 +1280,7 @@ where
         ConstructionMode::Incremental => println!("  progress_every:{progress_every}"),
     }
     println!("  validation_cadence: {validation_cadence:?}");
+    println!("  validation_scope: {}", validation_scope.name());
     println!("  allow_skips:   {allow_skips}");
     println!("  max_skip_pct:  {max_skip_pct}");
     println!("  skip_final_repair: {skip_final_repair}");
@@ -1416,7 +1454,7 @@ where
                 if inserted_this_loop
                     && had_simplices
                     && validation_cadence.should_validate(summary.inserted)
-                    && let Err(e) = dt.as_triangulation().is_valid()
+                    && let Err(e) = dt.as_triangulation().is_valid_topology()
                 {
                     println!("Topology validation failed at idx={idx}: {e}");
                     let outcome = if let Err(report) = dt.validation_report() {
@@ -1512,19 +1550,53 @@ where
     }
 
     println!();
-    println!("Running validation_report (Levels 1–4)...");
-    let t_validate = Instant::now();
-    let validation_result = dt.validation_report();
-    println!("validation_report wall time: {:?}", t_validate.elapsed());
-    match validation_result {
-        Ok(()) => println!("validation_report: OK"),
-        Err(report) => {
-            print_validation_report(&report);
-            let outcome = classify_validation_report(&report);
-            print_abort_summary::<D>(&outcome, seed, n_points, "final validation");
-            return outcome;
+    match validation_scope {
+        ValidationScope::Full => {
+            println!("Running validation_report (Levels 1–5)...");
+            let t_validate = Instant::now();
+            let validation_result = dt.validation_report();
+            println!("validation_report wall time: {:?}", t_validate.elapsed());
+            if let Err(report) = validation_result {
+                print_validation_report(&report);
+                let outcome = classify_validation_report(&report);
+                print_abort_summary::<D>(&outcome, seed, n_points, "final validation");
+                return outcome;
+            }
+        }
+        ValidationScope::Construction => {
+            // Levels 1–3 (structure + topology) plus the fast O(simplices)
+            // flip-based Level 5 Delaunay check. This skips the expensive Level 4
+            // embedding overlap scan and the full report's all-violations Delaunay
+            // scan, keeping the wall-clock guard focused on construction
+            // correctness. Level 4 is exercised at scale by `just test-slow`
+            // (full scope); see issue #482.
+            println!("Running validation (Levels 1–3 + fast Level 5; embedding skipped)...");
+            let t_validate = Instant::now();
+            let topology_result = dt.as_triangulation().validation_report();
+            let delaunay_result = if topology_result.is_ok() {
+                dt.is_valid_delaunay()
+            } else {
+                Ok(())
+            };
+            println!("validation wall time: {:?}", t_validate.elapsed());
+            if let Err(report) = topology_result {
+                print_validation_report(&report);
+                let outcome = classify_validation_report(&report);
+                print_abort_summary::<D>(&outcome, seed, n_points, "final validation");
+                return outcome;
+            }
+            if let Err(error) = delaunay_result {
+                println!("Delaunay property (Level 5) validation failed: {error}");
+                let outcome = DebugOutcome::ValidationFailure {
+                    kind: InvariantKind::DelaunayProperty,
+                    details: format!("{error}"),
+                };
+                print_abort_summary::<D>(&outcome, seed, n_points, "final validation");
+                return outcome;
+            }
         }
     }
+    println!("validation_report: OK");
 
     // If repair failed but validation passed, surface the repair failure as the outcome.
     // This ensures operators see repair non-convergence even when the triangulation

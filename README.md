@@ -39,22 +39,24 @@ Rust crate providing D-dimensional [Delaunay triangulations] and [convex hulls][
 [pseudomanifold][Pseudomanifold] guarantee on finite point sets with Euclidean and toroidal global
 topologies. Uses [exact predicates] and [Simulation of Simplicity] for robustness and degeneracy
 handling, and [Hilbert curve]s for deterministic insertion ordering and efficient spatial indexing.
-Provides an explicit [4-level validation hierarchy][Validation Guide] on individual elements,
-triangulation data structure validity, manifold topology, and Delaunay property adherence. Allows for
-the complete set of [Pachner moves] up to D=5 using bistellar flips, vertex insertion and deletion,
-and the conversion of non-Delaunay triangulations into Delaunay triangulations via bounded
-flip/rebuilds. Auxiliary data may be stored directly in vertices and simplices with external
-[secondary maps][Secondary maps] provided for vertex- and simplex-keyed algorithm use, and the entire
-data structure is serializable/deserializable. Written in safe Rust with no unsafe code.
+Provides an explicit [5-level validation hierarchy][Validation Guide] on individual elements,
+triangulation data structure validity, manifold topology, faithful embedding in the active affine
+chart, and Delaunay property adherence. Allows for the complete set of [Pachner moves] up to D=5
+using bistellar flips, vertex insertion and deletion, and the conversion of non-Delaunay
+triangulations into Delaunay triangulations via bounded flip/rebuilds. Auxiliary data may be stored
+directly in vertices and simplices with external [secondary maps][Secondary maps] provided for
+vertex- and simplex-keyed algorithm use, and the entire data structure is
+serializable/deserializable. Written in safe Rust with no unsafe code.
 
 Use this crate when you want:
 
 - Delaunay triangulations or convex hulls in 2D through 5D.
 - Exact predicates and deterministic SoS handling for degenerate inputs.
+- Faithful Euclidean and toroidal affine embedding validation independent of Delaunay predicates.
 - PL-manifold checks and explicit topology guarantees.
 - PL-manifold-aware editing via bistellar flips and bounded Delaunay repair.
 - Typed construction, insertion, validation, topology, and repair diagnostics.
-- Validation reports that separate element, structure, topology, and Delaunay failures.
+- Validation reports that separate element, structure, topology, embedding, and Delaunay failures.
 
 This is not a replacement for full meshing packages such as [CGAL], TetGen, or Gmsh when you need
 constrained Delaunay triangulations, direct Voronoi extraction, out-of-core meshing, GPU/parallel
@@ -147,14 +149,21 @@ and [`docs/numerical_robustness_guide.md`](docs/numerical_robustness_guide.md).
 | Level | Validates | Primary API |
 |---|---|---|
 | 1 | Vertex, simplex, and facet element invariants | `vertex.is_valid()` / `simplex.is_valid()` |
-| 2 | TDS keys, incidences, and neighbor links | `dt.tds().is_valid()` |
-| 3 | Manifold topology, ridge links, and Euler consistency | `dt.as_triangulation().is_valid()` |
-| 4 | Delaunay property via local predicates | `dt.is_valid()` |
-| 1-4 | Cumulative diagnostics | `dt.validate()` / `dt.validation_report()` |
+| 2 | TDS keys, incidences, and neighbor links | `dt.tds().is_valid()` / `dt.tds().structure_report()` |
+| 3 | Manifold topology, ridge links, and Euler consistency | `dt.as_triangulation().is_valid_topology()` / `dt.as_triangulation().topology_report()` |
+| 4 | Faithful embedding | `dt.as_triangulation().is_valid_embedding()` / `dt.as_triangulation().embedding_report()` |
+| 5 | Delaunay property via local predicates | `dt.is_valid_delaunay()` / `dt.delaunay_report()` |
+| 1-5 | Cumulative diagnostics | `dt.validate()` / `dt.validation_report()` |
 
 `TopologyGuarantee` controls which Level 3 topology invariants are enforced. `ValidationPolicy`
-controls when Level 3 checks run during incremental insertion. The default is PL-manifold topology with
-explicit full-validation checkpoints.
+controls when Level 3 checks run during incremental insertion. Level 4 embedding validation is
+topology-aware for Euclidean and toroidal affine charts and runs before Level 5 Delaunay predicate
+validation. Use `dt.as_triangulation().validate_embedding()` when you want cumulative Levels 1-4
+validation. `dt.as_triangulation().embedding_report()` returns simplex keys, simplex UUIDs, and
+offending vertex keys/UUIDs for Level 4 repair planning. The default is PL-manifold topology with explicit full-validation
+checkpoints. Layer-local APIs use `is_valid()` for unambiguous element/TDS owners, `is_valid_*`
+for higher-level fast-fail checks, and `*_diagnostic` / `*_report` for diagnostics; cumulative
+APIs use `validate()` / `validation_report()`.
 
 ## 🗺️ Documentation Map
 

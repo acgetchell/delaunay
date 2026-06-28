@@ -413,6 +413,12 @@ The following previously deferred checks are now repository-owned Semgrep rules:
 - `delaunay.rust.prefer-vertex-macro-for-workflow-fixtures` keeps incidental
   vertex setup in workflow tests, examples, and benchmarks on `vertex!`, while
   leaving constructor-focused tests free to exercise `Vertex::try_new` directly.
+- `delaunay.rust.validation-api-naming-standard` keeps higher-layer validation
+  APIs on the v0.8 naming pattern: `is_valid_*` for layer-local fast-fail
+  checks, `*_diagnostic` for first actionable diagnostics, `*_report` for
+  layer-local aggregate reports, and `validate()` / `validation_report()` for
+  cumulative roll-ups. Plain `is_valid()` remains reserved for unambiguous
+  element and TDS owners.
 
 ## Retired Repository Rules
 

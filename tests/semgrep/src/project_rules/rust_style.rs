@@ -139,6 +139,50 @@ pub fn production_debug_assert_bypass(value: usize) {
     debug_assert!(value > 0);
 }
 
+pub struct ValidationApiNamingFixture;
+
+impl ValidationApiNamingFixture {
+    // ruleid: delaunay.rust.validation-api-naming-standard
+    pub fn is_valid(&self) -> Result<(), ()> {
+        Ok(())
+    }
+
+    // ruleid: delaunay.rust.validation-api-naming-standard
+    pub fn embedding_validation_report(&self) -> Result<(), ()> {
+        Ok(())
+    }
+
+    // ok: delaunay.rust.validation-api-naming-standard
+    pub fn is_valid_embedding(&self) -> Result<(), ()> {
+        Ok(())
+    }
+
+    // ok: delaunay.rust.validation-api-naming-standard
+    pub fn embedding_diagnostic(&self) -> Option<()> {
+        None
+    }
+
+    // ok: delaunay.rust.validation-api-naming-standard
+    pub fn embedding_report(&self) -> Result<(), ()> {
+        Ok(())
+    }
+
+    // ok: delaunay.rust.validation-api-naming-standard
+    pub fn validate(&self) -> Result<(), ()> {
+        Ok(())
+    }
+
+    // ok: delaunay.rust.validation-api-naming-standard
+    pub fn validate_embedding(&self) -> Result<(), ()> {
+        Ok(())
+    }
+
+    // ok: delaunay.rust.validation-api-naming-standard
+    pub fn validation_report(&self) -> Result<(), ()> {
+        Ok(())
+    }
+}
+
 // ruleid: delaunay.rust.no-legacy-coordinate-generic-api
 type LegacyPoint = Point<f64, 3>;
 

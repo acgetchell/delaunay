@@ -1,5 +1,7 @@
 //! TDS structural validation and diagnostic reporting.
 
+#![forbid(unsafe_code)]
+
 use super::errors::{
     EntityKind, InvariantKind, InvariantViolation, NeighborValidationError,
     SharedFacetMismatchSide, TdsError, TriangulationValidationReport,
@@ -302,7 +304,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// Note: at the TDS structural layer (Level 2), isolated vertices (vertices not referenced by
     /// any simplex) are allowed, so `Vertex::incident_simplex` may be `None`.
     ///
-    /// Level 3 topology validation (`Triangulation::is_valid`) rejects isolated vertices.
+    /// Level 3 topology validation (`Triangulation::is_valid_topology`) rejects isolated vertices.
     ///
     /// However, any `incident_simplex` pointer that *is* present must:
     /// - point to an existing simplex key, and
@@ -932,7 +934,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// This is a **Level 2 (TDS structural)** check in the validation hierarchy.
     /// It intentionally does **not** validate individual vertices/simplices (Level 1),
-    /// nor triangulation topology (Level 3), nor the Delaunay property (Level 4).
+    /// nor triangulation topology (Level 3), faithful embedding (Level 4), or the Delaunay property (Level 5).
     ///
     /// # Structural invariants checked
     /// - Vertex UUID↔key mapping consistency
@@ -953,6 +955,19 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// For a cumulative validator that also checks vertices/simplices (Level 1), use
     /// [`Tds::validate`](Self::validate).
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`TdsError`] if any structural invariant fails.
+    ///
+    /// Checks whether the triangulation data structure is structurally valid.
+    ///
+    /// This is the canonical Level 2 fast-fail API. It returns the first
+    /// structural error that proves the TDS incidence graph is invalid.
+    ///
+    /// For an actionable first diagnostic use
+    /// [`structure_diagnostic`](Self::structure_diagnostic). For all checkable
+    /// structural failures use [`structure_report`](Self::structure_report).
     ///
     /// # Errors
     ///
@@ -993,7 +1008,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// ```
     pub fn is_valid(&self) -> Result<(), TdsError> {
         // Fast-fail: return the first violated invariant.
-        // For full diagnostics across all structural invariants, use `validation_report()`.
+        // For full diagnostics across all structural invariants, use `structure_report()`.
         self.validate_vertex_mappings()?;
         self.validate_simplex_mappings()?;
 
@@ -1014,6 +1029,28 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         self.validate_coherent_orientation()?;
 
         Ok(())
+    }
+
+    /// Returns the first actionable Level 2 structural diagnostic, if any.
+    ///
+    /// This is the repair/retry-oriented counterpart to
+    /// [`is_valid`](Self::is_valid): it preserves the
+    /// [`InvariantKind`] grouping used by aggregate reports while still
+    /// returning at most one local failure.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::tds::Tds;
+    ///
+    /// let tds = Tds::<(), (), 2>::empty();
+    /// assert!(tds.structure_diagnostic().is_none());
+    /// ```
+    #[must_use]
+    pub fn structure_diagnostic(&self) -> Option<InvariantViolation> {
+        self.structure_report()
+            .err()
+            .and_then(|report| report.violations.into_iter().next())
     }
 
     /// Performs cumulative validation for Levels 1–2.
@@ -1096,10 +1133,10 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         self.is_valid()
     }
 
-    /// Runs structural validation checks and returns a report containing **all** failed invariants.
+    /// Runs Level 2 structure checks and returns all checkable structural failures.
     ///
-    /// Unlike [`is_valid()`](Self::is_valid), this method does **not** stop at the
-    /// first error. Instead it records a [`TdsError`] for each
+    /// Unlike [`is_valid`](Self::is_valid), this method does
+    /// **not** stop at the first error. Instead it records a [`TdsError`] for each
     /// invariant group that fails and returns them as a
     /// [`TriangulationValidationReport`].
     ///
@@ -1110,22 +1147,28 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// key-reference failure (and any vertex-incidence failures) and skips derived
     /// invariants that assume key validity.
     ///
-    /// This is primarily intended for debugging, diagnostics, and tests that
-    /// want to surface every violated invariant at once.
+    /// This is primarily intended for debugging, diagnostics, tests, and repair
+    /// planning that need local structured failures instead of only the first
+    /// error.
     ///
     /// **Note**: This does NOT check the Delaunay property. Use
-    /// `DelaunayTriangulation::is_valid()` (Level 4) or `DelaunayTriangulation::validate()` (Levels 1–4)
-    /// for geometric validation.
+    /// `Triangulation::validate_embedding()` for Levels 1–4, `DelaunayTriangulation::is_valid_delaunay()`
+    /// for Level 5 only, or `DelaunayTriangulation::validate()` for cumulative Levels 1–5.
     ///
     /// # Errors
     ///
     /// Returns a [`TriangulationValidationReport`] containing all invariant
     /// violations if any validation step fails.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "validation report aggregation is intentionally linear and simplex nomenclature makes existing names longer"
-    )]
-    pub(crate) fn validation_report(&self) -> Result<(), TriangulationValidationReport> {
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let tds: Tds<(), (), 2> = Tds::empty();
+    /// assert!(tds.structure_report().is_ok());
+    /// ```
+    pub fn structure_report(&self) -> Result<(), TriangulationValidationReport> {
         let mut violations = Vec::new();
 
         // 1. Mapping consistency (vertex + simplex UUID↔key mappings)
@@ -1245,24 +1288,61 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             });
         }
 
-        // 8. Connectivity (topology-layer invariant; reported here for comprehensive diagnostics).
-        //
-        // Note: connectivity is NOT part of Level-2 `is_valid()` — it belongs at Level 3
-        // (Triangulation::is_valid). It is included here in the diagnostic report so that
-        // `DelaunayTriangulation::validation_report()` surfaces it together with all other
-        // structural failures, even when the Triangulation wrapper is not available.
-        if !self.is_connected() {
-            violations.push(InvariantViolation {
-                kind: InvariantKind::Connectedness,
-                error: TdsError::InconsistentDataStructure {
-                    message: format!(
-                        "Disconnected triangulation: simplex neighbor graph is not a single \
-                         connected component ({} simplices total)",
-                        self.simplices.len()
-                    ),
-                }
-                .into(),
-            });
+        if violations.is_empty() {
+            Ok(())
+        } else {
+            Err(TriangulationValidationReport { violations })
+        }
+    }
+
+    /// Generate a cumulative validation report for Levels 1–2.
+    ///
+    /// This report combines Level 1 element validity with the Level 2
+    /// [`structure_report`](Self::structure_report).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(TriangulationValidationReport)` containing all checkable
+    /// Level 1-2 invariant violations.
+    pub fn validation_report(&self) -> Result<(), TriangulationValidationReport> {
+        let mut violations = Vec::new();
+
+        for (_vertex_key, vertex) in &self.vertices {
+            if let Err(report) = (*vertex).vertex_report() {
+                violations.extend(report.violations.into_iter().map(|source| {
+                    InvariantViolation {
+                        kind: InvariantKind::VertexValidity,
+                        error: TdsError::InvalidVertex {
+                            vertex_id: vertex.uuid(),
+                            source,
+                        }
+                        .into(),
+                    }
+                }));
+            }
+        }
+
+        for (simplex_key, simplex) in &self.simplices {
+            if let Err(report) = simplex.simplex_report() {
+                violations.extend(report.violations.into_iter().map(|source| {
+                    let error = self.simplex_uuid_from_key(simplex_key).map_or_else(
+                        || TdsError::InconsistentDataStructure {
+                            message: format!(
+                                "Simplex key {simplex_key:?} has no UUID mapping during validation",
+                            ),
+                        },
+                        |simplex_id| TdsError::InvalidSimplex { simplex_id, source },
+                    );
+                    InvariantViolation {
+                        kind: InvariantKind::SimplexValidity,
+                        error: error.into(),
+                    }
+                }));
+            }
+        }
+
+        if let Err(report) = self.structure_report() {
+            violations.extend(report.violations);
         }
 
         if violations.is_empty() {

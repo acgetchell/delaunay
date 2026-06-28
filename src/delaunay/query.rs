@@ -517,7 +517,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// Returns the insertion-time global topology validation policy used by the underlying
     /// triangulation.
     ///
-    /// This policy controls when Level 3 (`Triangulation::is_valid()`) is run automatically
+    /// This policy controls when Level 3 (`Triangulation::is_valid_topology()`) is run automatically
     /// during incremental insertion (as part of the topology safety net).
     ///
     /// # Examples
@@ -889,8 +889,12 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// structure is invalid while checking topology, or
     /// [`DelaunayTriangulationValidationError::Triangulation`] when Level 3
     /// topology violates the requested metadata, for example when Euclidean
-    /// boundary facets are relabeled as closed spherical or toroidal topology.
-    /// The previous topology metadata is restored before the error is returned.
+    /// boundary facets are relabeled as closed spherical or toroidal topology,
+    /// [`DelaunayTriangulationValidationError::Embedding`] when Level 4 rejects
+    /// the requested embedding model, or
+    /// [`DelaunayTriangulationValidationError::VerificationFailed`] when Level 5
+    /// Delaunay validation fails. The previous topology metadata is restored
+    /// before the error is returned.
     ///
     /// # Examples
     ///
@@ -920,6 +924,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
             Ok(()) => Ok(()),
             Err(InvariantError::Tds(err)) => Err(err.into()),
             Err(InvariantError::Triangulation(err)) => Err(err.into()),
+            Err(InvariantError::Embedding(err)) => Err(err.into()),
             Err(InvariantError::Delaunay(err)) => Err(err),
         }
     }
