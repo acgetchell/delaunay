@@ -39,6 +39,10 @@ pub(crate) struct TdsStructureValidationProof(());
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct DelaunayTriangulationValidationProof(());
 
+/// Proof that a candidate passed Levels 1-4 through embedded-geometry validation.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TriangulationEmbeddingValidationProof(());
+
 /// Internal assembly stage for a triangulation that has not crossed its validation boundary yet.
 ///
 /// This keeps raw or freshly assembled [`Tds`] values out of the final
@@ -102,6 +106,14 @@ impl<K, U, V, const D: usize> DelaunayTriangulationCandidate<K, U, V, D> {
     pub(crate) fn into_structurally_valid_delaunay(
         self,
         _proof: TdsStructureValidationProof,
+    ) -> DelaunayTriangulation<K, U, V, D> {
+        self.candidate
+    }
+
+    /// Converts a candidate after the caller has proved Levels 1-4 validity.
+    pub(crate) fn into_embedding_validated_delaunay(
+        self,
+        _proof: TriangulationEmbeddingValidationProof,
     ) -> DelaunayTriangulation<K, U, V, D> {
         self.candidate
     }
@@ -171,6 +183,14 @@ where
         }
 
         Ok(DelaunayTriangulationValidationProof(()))
+    }
+
+    /// Validates Levels 1-4 without enforcing the Level 5 Delaunay property.
+    pub(crate) fn validate_embedding_only(
+        &self,
+    ) -> Result<TriangulationEmbeddingValidationProof, DelaunayTriangulationValidationError> {
+        self.candidate.tri.validate_embedding()?;
+        Ok(TriangulationEmbeddingValidationProof(()))
     }
 }
 

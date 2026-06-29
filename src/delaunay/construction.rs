@@ -1511,6 +1511,13 @@ const fn default_batch_repair_policy() -> DelaunayRepairPolicy {
 }
 
 /// Options controlling batch construction behavior.
+///
+/// Defaults prioritize strict [`DelaunayTriangulation`] construction: insertion
+/// includes local repair and the completed triangulation must pass final Level 5
+/// Delaunay validation. Exact degenerate workloads that need to preserve a
+/// valid triangulation without proving strict empty-circumsphere validity can
+/// opt out with
+/// [`without_final_delaunay_enforcement`](Self::without_final_delaunay_enforcement).
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct ConstructionOptions {
@@ -1519,6 +1526,7 @@ pub struct ConstructionOptions {
     pub(crate) initial_simplex: InitialSimplexStrategy,
     pub(crate) retry_policy: RetryPolicy,
     pub(crate) batch_repair_policy: DelaunayRepairPolicy,
+    pub(crate) enforce_final_delaunay: bool,
     /// Whether final bulk repair can fall back to a global repair pass.
     pub(crate) use_global_repair_fallback: bool,
 }
@@ -1531,6 +1539,7 @@ impl Default for ConstructionOptions {
             initial_simplex: InitialSimplexStrategy::default(),
             retry_policy: RetryPolicy::default(),
             batch_repair_policy: default_batch_repair_policy(),
+            enforce_final_delaunay: true,
             use_global_repair_fallback: true,
         }
     }
@@ -1561,10 +1570,37 @@ impl ConstructionOptions {
         self.retry_policy
     }
 
-    /// Returns the automatic local Delaunay repair policy used during batch construction.
+    /// Returns the effective automatic local Delaunay repair policy used during batch construction.
+    ///
+    /// When final Level 5 Delaunay enforcement is disabled, construction does not
+    /// run automatic Delaunay repair and this returns [`DelaunayRepairPolicy::Never`].
     #[must_use]
     pub const fn batch_repair_policy(&self) -> DelaunayRepairPolicy {
-        self.batch_repair_policy
+        self.effective_batch_repair_policy()
+    }
+
+    /// Returns whether construction enforces final Level 5 Delaunay validity.
+    ///
+    /// When this is `true`, public constructors repair and validate the strict
+    /// Delaunay property before returning. When this is `false`, constructors
+    /// may return after Levels 1-4 validation so callers can preserve exact
+    /// degenerate connectivity and handle Level 5 policy externally.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::ConstructionOptions;
+    ///
+    /// assert!(ConstructionOptions::default().enforces_final_delaunay());
+    /// assert!(
+    ///     !ConstructionOptions::default()
+    ///         .without_final_delaunay_enforcement()
+    ///         .enforces_final_delaunay()
+    /// );
+    /// ```
+    #[must_use]
+    pub const fn enforces_final_delaunay(&self) -> bool {
+        self.enforce_final_delaunay
     }
 
     /// Sets the input ordering strategy used for batch construction.
@@ -1599,12 +1635,50 @@ impl ConstructionOptions {
     }
 
     /// Sets the automatic local Delaunay repair policy used during batch construction.
+    ///
+    /// This setting is effective only while
+    /// [`enforces_final_delaunay`](Self::enforces_final_delaunay) is `true`.
+    /// Non-enforcing construction always reports and uses
+    /// [`DelaunayRepairPolicy::Never`], so this setter is a no-op after
+    /// [`without_final_delaunay_enforcement`](Self::without_final_delaunay_enforcement).
     #[must_use]
     pub const fn with_batch_repair_policy(
         mut self,
         batch_repair_policy: DelaunayRepairPolicy,
     ) -> Self {
-        self.batch_repair_policy = batch_repair_policy;
+        if self.enforce_final_delaunay {
+            self.batch_repair_policy = batch_repair_policy;
+        }
+        self
+    }
+
+    /// Disables final Level 5 Delaunay enforcement during batch construction.
+    ///
+    /// The default constructor repairs and validates the strict Delaunay property
+    /// before returning. Exact degenerate inputs can have multiple valid
+    /// triangulations under symbolic perturbation, and flip-based strict repair
+    /// may cycle among equivalent choices. Use this mode when callers need a
+    /// valid Levels 1-4 triangulation that preserves exact coordinates and will
+    /// validate or repair the Level 5 Delaunay property separately.
+    ///
+    /// This also disables automatic batch Delaunay repair by setting
+    /// [`batch_repair_policy`](Self::batch_repair_policy) to
+    /// [`DelaunayRepairPolicy::Never`].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{ConstructionOptions, DelaunayRepairPolicy};
+    ///
+    /// let options = ConstructionOptions::default().without_final_delaunay_enforcement();
+    ///
+    /// assert!(!options.enforces_final_delaunay());
+    /// assert_eq!(options.batch_repair_policy(), DelaunayRepairPolicy::Never);
+    /// ```
+    #[must_use]
+    pub const fn without_final_delaunay_enforcement(mut self) -> Self {
+        self.batch_repair_policy = DelaunayRepairPolicy::Never;
+        self.enforce_final_delaunay = false;
         self
     }
 
@@ -1613,6 +1687,15 @@ impl ConstructionOptions {
     pub(crate) const fn without_global_repair_fallback(mut self) -> Self {
         self.use_global_repair_fallback = false;
         self
+    }
+
+    /// Returns the batch repair policy that construction will actually apply.
+    pub(crate) const fn effective_batch_repair_policy(&self) -> DelaunayRepairPolicy {
+        if self.enforce_final_delaunay {
+            self.batch_repair_policy
+        } else {
+            DelaunayRepairPolicy::Never
+        }
     }
 }
 
@@ -3173,6 +3256,7 @@ where
         base_seed: Option<u64>,
         grid_cell_size: Option<f64>,
         batch_repair_policy: DelaunayRepairPolicy,
+        enforce_final_delaunay: bool,
         use_global_repair_fallback: bool,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
         let base_seed = base_seed.unwrap_or_else(|| Self::construction_shuffle_seed(vertices));
@@ -3197,33 +3281,39 @@ where
             vertices,
             topology_guarantee,
             0_u64,
-            true,
+            enforce_final_delaunay,
             grid_cell_size,
             batch_repair_policy,
             use_global_repair_fallback,
         ) {
-            Ok(candidate) => match candidate.is_delaunay_via_flips() {
-                Ok(()) => {
+            Ok(candidate) => {
+                if !enforce_final_delaunay {
                     log_construction_retry_result(0, None, 0_u64, "succeeded", None, None);
                     return Ok(candidate);
                 }
-                Err(source) if is_non_retryable_repair_error(&source) => {
-                    let err = Self::map_final_delaunay_repair_error(source);
-                    let err_string = err.to_string();
-                    log_construction_retry_result(
-                        0,
-                        None,
-                        0_u64,
-                        "failed",
-                        Some(&err_string),
-                        None,
-                    );
-                    return Err(err);
+                match candidate.is_delaunay_via_flips() {
+                    Ok(()) => {
+                        log_construction_retry_result(0, None, 0_u64, "succeeded", None, None);
+                        return Ok(candidate);
+                    }
+                    Err(source) if is_non_retryable_repair_error(&source) => {
+                        let err = Self::map_final_delaunay_repair_error(source);
+                        let err_string = err.to_string();
+                        log_construction_retry_result(
+                            0,
+                            None,
+                            0_u64,
+                            "failed",
+                            Some(&err_string),
+                            None,
+                        );
+                        return Err(err);
+                    }
+                    Err(source) => DelaunayConstructionRetryFailure::DelaunayValidation {
+                        source: Box::new(source),
+                    },
                 }
-                Err(source) => DelaunayConstructionRetryFailure::DelaunayValidation {
-                    source: Box::new(source),
-                },
-            },
+            }
             Err(err) => {
                 let err_string = err.to_string();
                 if Self::is_non_retryable_construction_error(&err) {
@@ -3286,13 +3376,13 @@ where
                 &shuffled,
                 topology_guarantee,
                 perturbation_seed,
-                true,
+                enforce_final_delaunay,
                 grid_cell_size,
                 batch_repair_policy,
                 use_global_repair_fallback,
             ) {
-                Ok(candidate) => match candidate.is_delaunay_via_flips() {
-                    Ok(()) => {
+                Ok(candidate) => {
+                    if !enforce_final_delaunay {
                         log_construction_retry_result(
                             attempt,
                             Some(attempt_seed),
@@ -3303,26 +3393,39 @@ where
                         );
                         return Ok(candidate);
                     }
-                    Err(source) => {
-                        if is_non_retryable_repair_error(&source) {
-                            let err = Self::map_final_delaunay_repair_error(source);
-                            let err_string = err.to_string();
+                    match candidate.is_delaunay_via_flips() {
+                        Ok(()) => {
                             log_construction_retry_result(
                                 attempt,
                                 Some(attempt_seed),
                                 perturbation_seed,
-                                "failed",
-                                Some(&err_string),
+                                "succeeded",
+                                None,
                                 None,
                             );
-                            return Err(err);
+                            return Ok(candidate);
                         }
-                        last_failure = DelaunayConstructionRetryFailure::DelaunayValidation {
-                            source: Box::new(source),
-                        };
-                        last_error = last_failure.to_string();
+                        Err(source) => {
+                            if is_non_retryable_repair_error(&source) {
+                                let err = Self::map_final_delaunay_repair_error(source);
+                                let err_string = err.to_string();
+                                log_construction_retry_result(
+                                    attempt,
+                                    Some(attempt_seed),
+                                    perturbation_seed,
+                                    "failed",
+                                    Some(&err_string),
+                                    None,
+                                );
+                                return Err(err);
+                            }
+                            last_failure = DelaunayConstructionRetryFailure::DelaunayValidation {
+                                source: Box::new(source),
+                            };
+                            last_error = last_failure.to_string();
+                        }
                     }
-                },
+                }
                 Err(err) => {
                     let err_string = err.to_string();
                     if Self::is_non_retryable_construction_error(&err) {
@@ -3395,6 +3498,7 @@ where
         base_seed: Option<u64>,
         grid_cell_size: Option<f64>,
         batch_repair_policy: DelaunayRepairPolicy,
+        enforce_final_delaunay: bool,
         use_global_repair_fallback: bool,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
@@ -3424,12 +3528,24 @@ where
                 vertices,
                 topology_guarantee,
                 0_u64,
-                true,
+                enforce_final_delaunay,
                 grid_cell_size,
                 batch_repair_policy,
                 use_global_repair_fallback,
             ) {
                 Ok((candidate, mut stats)) => {
+                    if !enforce_final_delaunay {
+                        aggregate_stats.merge_from(&stats);
+                        log_construction_retry_result(
+                            0,
+                            None,
+                            0_u64,
+                            "succeeded",
+                            None,
+                            Some(&stats),
+                        );
+                        return Ok((candidate, aggregate_stats));
+                    }
                     let delaunay_started = Instant::now();
                     let delaunay_result = candidate.is_delaunay_via_flips();
                     stats
@@ -3551,12 +3667,24 @@ where
                 &shuffled,
                 topology_guarantee,
                 perturbation_seed,
-                true,
+                enforce_final_delaunay,
                 grid_cell_size,
                 batch_repair_policy,
                 use_global_repair_fallback,
             ) {
                 Ok((candidate, mut stats)) => {
+                    if !enforce_final_delaunay {
+                        aggregate_stats.merge_from(&stats);
+                        log_construction_retry_result(
+                            attempt,
+                            Some(attempt_seed),
+                            perturbation_seed,
+                            "succeeded",
+                            None,
+                            Some(&stats),
+                        );
+                        return Ok((candidate, aggregate_stats));
+                    }
                     let delaunay_started = Instant::now();
                     let delaunay_result = candidate.is_delaunay_via_flips();
                     stats
@@ -3671,6 +3799,7 @@ where
         topology_guarantee: TopologyGuarantee,
         grid_cell_size: Option<f64>,
         batch_repair_policy: DelaunayRepairPolicy,
+        enforce_final_delaunay: bool,
         use_global_repair_fallback: bool,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
         let dt = Self::build_with_kernel_inner_seeded(
@@ -3678,7 +3807,7 @@ where
             vertices,
             topology_guarantee,
             0,
-            true,
+            enforce_final_delaunay,
             grid_cell_size,
             batch_repair_policy,
             use_global_repair_fallback,
@@ -3686,22 +3815,24 @@ where
 
         // `DelaunayCheckPolicy::EndOnly`: always run a final global Delaunay validation pass after
         // batch construction.
-        tracing::debug!("post-construction: starting Delaunay validation (build)");
-        let delaunay_started = Instant::now();
-        let delaunay_result = dt.is_valid_delaunay();
-        tracing::debug!(
-            elapsed = ?delaunay_started.elapsed(),
-            success = delaunay_result.is_ok(),
-            "post-construction: Delaunay validation (build) completed"
-        );
-        delaunay_result.map_err(|source| {
-            DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::FinalDelaunayValidation {
-                    context: FinalDelaunayValidationContext::ConstructionFinalize,
-                    source,
-                },
-            )
-        })?;
+        if enforce_final_delaunay {
+            tracing::debug!("post-construction: starting Delaunay validation (build)");
+            let delaunay_started = Instant::now();
+            let delaunay_result = dt.is_valid_delaunay();
+            tracing::debug!(
+                elapsed = ?delaunay_started.elapsed(),
+                success = delaunay_result.is_ok(),
+                "post-construction: Delaunay validation (build) completed"
+            );
+            delaunay_result.map_err(|source| {
+                DelaunayTriangulationConstructionError::Triangulation(
+                    DelaunayConstructionFailure::FinalDelaunayValidation {
+                        context: FinalDelaunayValidationContext::ConstructionFinalize,
+                        source,
+                    },
+                )
+            })?;
+        }
 
         Ok(dt)
     }
@@ -3718,6 +3849,7 @@ where
         topology_guarantee: TopologyGuarantee,
         grid_cell_size: Option<f64>,
         batch_repair_policy: DelaunayRepairPolicy,
+        enforce_final_delaunay: bool,
         use_global_repair_fallback: bool,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
@@ -3726,7 +3858,7 @@ where
             vertices,
             topology_guarantee,
             0,
-            true,
+            enforce_final_delaunay,
             grid_cell_size,
             batch_repair_policy,
             use_global_repair_fallback,
@@ -3734,30 +3866,32 @@ where
 
         // `DelaunayCheckPolicy::EndOnly`: always run a final global Delaunay validation pass after
         // batch construction.
-        tracing::debug!("post-construction: starting Delaunay validation (build stats)");
-        let delaunay_started = Instant::now();
-        let delaunay_result = dt.is_valid_delaunay();
-        let delaunay_elapsed = delaunay_started.elapsed();
-        stats
-            .telemetry
-            .record_construction_final_delaunay_validation_timing(duration_nanos_saturating(
-                delaunay_elapsed,
-            ));
-        tracing::debug!(
-            elapsed = ?delaunay_elapsed,
-            success = delaunay_result.is_ok(),
-            "post-construction: Delaunay validation (build stats) completed"
-        );
-        if let Err(err) = delaunay_result {
-            return Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                error: DelaunayTriangulationConstructionError::Triangulation(
-                    DelaunayConstructionFailure::FinalDelaunayValidation {
-                        context: FinalDelaunayValidationContext::ConstructionFinalize,
-                        source: err,
-                    },
-                ),
-                statistics: stats,
-            });
+        if enforce_final_delaunay {
+            tracing::debug!("post-construction: starting Delaunay validation (build stats)");
+            let delaunay_started = Instant::now();
+            let delaunay_result = dt.is_valid_delaunay();
+            let delaunay_elapsed = delaunay_started.elapsed();
+            stats
+                .telemetry
+                .record_construction_final_delaunay_validation_timing(duration_nanos_saturating(
+                    delaunay_elapsed,
+                ));
+            tracing::debug!(
+                elapsed = ?delaunay_elapsed,
+                success = delaunay_result.is_ok(),
+                "post-construction: Delaunay validation (build stats) completed"
+            );
+            if let Err(err) = delaunay_result {
+                return Err(DelaunayTriangulationConstructionErrorWithStatistics {
+                    error: DelaunayTriangulationConstructionError::Triangulation(
+                        DelaunayConstructionFailure::FinalDelaunayValidation {
+                            context: FinalDelaunayValidationContext::ConstructionFinalize,
+                            source: err,
+                        },
+                    ),
+                    statistics: stats,
+                });
+            }
         }
 
         Ok((dt, stats))
@@ -5002,13 +5136,15 @@ where
         topology_guarantee: TopologyGuarantee,
         options: ConstructionOptions,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
+        let batch_repair_policy = options.effective_batch_repair_policy();
         let ConstructionOptions {
             insertion_order,
             dedup_policy,
             initial_simplex,
             retry_policy,
-            batch_repair_policy,
+            enforce_final_delaunay,
             use_global_repair_fallback,
+            ..
         } = options;
 
         let preprocessed = Self::preprocess_vertices_for_construction(
@@ -5037,6 +5173,7 @@ where
                             base_seed,
                             grid_cell_size,
                             batch_repair_policy,
+                            enforce_final_delaunay,
                             use_global_repair_fallback,
                         );
                     }
@@ -5056,6 +5193,7 @@ where
                             base_seed,
                             grid_cell_size,
                             batch_repair_policy,
+                            enforce_final_delaunay,
                             use_global_repair_fallback,
                         );
                     }
@@ -5068,6 +5206,7 @@ where
                 topology_guarantee,
                 grid_cell_size,
                 batch_repair_policy,
+                enforce_final_delaunay,
                 use_global_repair_fallback,
             )
         };
@@ -5144,13 +5283,15 @@ where
         options: ConstructionOptions,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
+        let batch_repair_policy = options.effective_batch_repair_policy();
         let ConstructionOptions {
             insertion_order,
             dedup_policy,
             initial_simplex,
             retry_policy,
-            batch_repair_policy,
+            enforce_final_delaunay,
             use_global_repair_fallback,
+            ..
         } = options;
 
         let preprocessing_started = Instant::now();
@@ -5195,6 +5336,7 @@ where
                             base_seed,
                             grid_cell_size,
                             batch_repair_policy,
+                            enforce_final_delaunay,
                             use_global_repair_fallback,
                         );
                     }
@@ -5214,6 +5356,7 @@ where
                             base_seed,
                             grid_cell_size,
                             batch_repair_policy,
+                            enforce_final_delaunay,
                             use_global_repair_fallback,
                         );
                     }
@@ -5226,6 +5369,7 @@ where
                 topology_guarantee,
                 grid_cell_size,
                 batch_repair_policy,
+                enforce_final_delaunay,
                 use_global_repair_fallback,
             )
         };
@@ -6316,6 +6460,7 @@ mod tests {
             ConstructionOptions::default().batch_repair_policy(),
             DelaunayRepairPolicy::EveryInsertion
         );
+        assert!(ConstructionOptions::default().enforces_final_delaunay());
         assert_eq!(
             DelaunayRepairPolicy::default(),
             DelaunayRepairPolicy::EveryInsertion
@@ -6337,6 +6482,23 @@ mod tests {
             DelaunayRepairPolicy::EveryN(NonZeroUsize::new(4).unwrap())
         );
         assert_eq!(opts.retry_policy(), RetryPolicy::Disabled);
+        assert!(opts.enforces_final_delaunay());
+
+        let non_enforcing = opts.without_final_delaunay_enforcement();
+        assert!(!non_enforcing.enforces_final_delaunay());
+        assert_eq!(
+            non_enforcing.batch_repair_policy(),
+            DelaunayRepairPolicy::Never
+        );
+
+        let late_repair_policy = non_enforcing
+            .with_batch_repair_policy(DelaunayRepairPolicy::EveryN(NonZeroUsize::new(8).unwrap()));
+        assert!(!late_repair_policy.enforces_final_delaunay());
+        assert_eq!(
+            late_repair_policy.batch_repair_policy(),
+            DelaunayRepairPolicy::Never
+        );
+        assert_eq!(late_repair_policy, non_enforcing);
     }
 
     #[test]

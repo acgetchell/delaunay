@@ -54,9 +54,11 @@ use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
+#[cfg(debug_assertions)]
+use crate::geometry::traits::coordinate::DEFAULT_TOLERANCE_F64;
 use crate::geometry::traits::coordinate::{
     CoordinateConversionError, CoordinateConversionValue, CoordinateValidationError,
-    CoordinateValues, DEFAULT_TOLERANCE_F64, InvalidCoordinateValue,
+    CoordinateValues, InvalidCoordinateValue,
 };
 use crate::validation::DelaunayTriangulationValidationError;
 use std::fmt;
@@ -89,8 +91,13 @@ pub enum HullExtensionReason {
         actual: usize,
     },
     /// Boundary-edge split matched more than one candidate facet.
-    #[error("2D boundary edge split matched multiple facets")]
-    MultipleBoundaryEdgeSplitFacets,
+    #[error("2D boundary edge split matched multiple facets: first={first:?}, second={second:?}")]
+    MultipleBoundaryEdgeSplitFacets {
+        /// First matching boundary facet.
+        first: FacetHandle,
+        /// Second matching boundary facet.
+        second: FacetHandle,
+    },
     /// Visible facets form a disconnected or non-manifold patch.
     #[error(
         "visible patch is disconnected or non-manifold: boundary_ridges={boundary_ridges}, ridge_fans={ridge_fans}, components={components}, boundary_components={boundary_components}, boundary_subface_nonmanifold={boundary_subface_nonmanifold}"
@@ -1882,7 +1889,7 @@ impl InsertionError {
                     reason,
                     HullExtensionReason::NoVisibleFacets
                         | HullExtensionReason::BoundaryEdgeSplitFacetCount { .. }
-                        | HullExtensionReason::MultipleBoundaryEdgeSplitFacets
+                        | HullExtensionReason::MultipleBoundaryEdgeSplitFacets { .. }
                         | HullExtensionReason::DisconnectedVisiblePatch { .. }
                 )
             }
@@ -2001,7 +2008,7 @@ impl InsertionError {
                 reason,
                 HullExtensionReason::NoVisibleFacets
                     | HullExtensionReason::BoundaryEdgeSplitFacetCount { .. }
-                    | HullExtensionReason::MultipleBoundaryEdgeSplitFacets
+                    | HullExtensionReason::MultipleBoundaryEdgeSplitFacets { .. }
                     | HullExtensionReason::DisconnectedVisiblePatch { .. }
             ),
             InitialSimplexUnexpectedInsertionStage::TopologyValidation { source, .. } => {
@@ -3768,46 +3775,7 @@ where
     U: DataType,
     V: DataType,
 {
-    // 2D special-case: if the point is collinear with a boundary edge and lies on
-    // that edge segment, split the edge instead of building new hull triangles.
-    if D == 2
-        && let Some(edge_facet) = find_boundary_edge_split_facet(tds, point)?
-    {
-        #[cfg(debug_assertions)]
-        if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
-            tracing::debug!(
-                point = ?point,
-                simplex_key = ?edge_facet.simplex_key(),
-                facet_index = usize::from(edge_facet.facet_index()),
-                "extend_hull: 2D boundary-edge split"
-            );
-        }
-
-        let mut conflict_simplices = SimplexKeyBuffer::new();
-        conflict_simplices.push(edge_facet.simplex_key());
-
-        let mut boundary_facets = extract_cavity_boundary(tds, &conflict_simplices)
-            .map_err(InsertionError::ConflictRegion)?;
-        boundary_facets.retain(|facet| {
-            facet.simplex_key() != edge_facet.simplex_key()
-                || facet.facet_index() != edge_facet.facet_index()
-        });
-
-        validate_boundary_edge_split_facet_count(boundary_facets.len())?;
-
-        let external_facets =
-            external_facets_for_boundary(tds, &conflict_simplices, &boundary_facets)?;
-
-        let new_simplices = fill_cavity_replacing_simplices(tds, new_vertex_key, &boundary_facets)?;
-        wire_cavity_neighbors(
-            tds,
-            &new_simplices,
-            external_facets.iter().copied(),
-            Some(&conflict_simplices),
-        )?;
-        tds.remove_simplices_by_keys(&conflict_simplices)
-            .map_err(|e| InsertionError::TopologyValidation(e.into_inner()))?;
-
+    if let Some(new_simplices) = split_2d_boundary_edge_if_needed(tds, new_vertex_key, point)? {
         return Ok(new_simplices);
     }
 
@@ -3857,6 +3825,104 @@ where
     // Wire neighbors using comprehensive facet matching
     // For hull extension, no conflict simplices (nothing is removed)
     wire_cavity_neighbors(tds, &new_simplices, visible_facets.iter().copied(), None)?;
+
+    Ok(new_simplices)
+}
+
+/// Split a 2D boundary edge when `point` lies exactly on it.
+///
+/// This handles the degenerate boundary insertion that geometric point-location
+/// may classify as either outside or inside depending on symbolic perturbation.
+pub(crate) fn split_2d_boundary_edge_if_needed<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
+    new_vertex_key: VertexKey,
+    point: &Point<D>,
+) -> Result<Option<SimplexKeyBuffer>, InsertionError>
+where
+    U: DataType,
+    V: DataType,
+{
+    let Some(edge_facet) = find_boundary_edge_split_facet(tds, point)? else {
+        return Ok(None);
+    };
+
+    split_2d_boundary_edge_at_facet(tds, new_vertex_key, point, edge_facet).map(Some)
+}
+
+/// Split a 2D boundary edge of `start_simplex` when `point` lies exactly on it.
+///
+/// The localized variant avoids walking every hull edge after point-location
+/// has already identified a simplex adjacent to the degenerate point.
+pub(crate) fn split_2d_boundary_edge_in_simplex_if_needed<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
+    new_vertex_key: VertexKey,
+    point: &Point<D>,
+    start_simplex: SimplexKey,
+) -> Result<Option<SimplexKeyBuffer>, InsertionError>
+where
+    U: DataType,
+    V: DataType,
+{
+    let Some(edge_facet) = find_boundary_edge_split_facet_in_simplex(tds, point, start_simplex)?
+    else {
+        return Ok(None);
+    };
+
+    split_2d_boundary_edge_at_facet(tds, new_vertex_key, point, edge_facet).map(Some)
+}
+
+/// Replaces one 2D boundary triangle with two triangles that include the new vertex.
+///
+/// This is the mutation behind exact layered-boundary support: the inserted
+/// point is already present in the TDS, and this helper preserves its original
+/// coordinates while splitting the containing boundary facet instead of asking
+/// hull extension or Delaunay repair to infer a perturbation-based outcome.
+fn split_2d_boundary_edge_at_facet<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
+    new_vertex_key: VertexKey,
+    point: &Point<D>,
+    edge_facet: FacetHandle,
+) -> Result<SimplexKeyBuffer, InsertionError>
+where
+    U: DataType,
+    V: DataType,
+{
+    #[cfg(not(debug_assertions))]
+    let _ = point;
+
+    #[cfg(debug_assertions)]
+    if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
+        tracing::debug!(
+            point = ?point,
+            simplex_key = ?edge_facet.simplex_key(),
+            facet_index = usize::from(edge_facet.facet_index()),
+            "2D boundary-edge split"
+        );
+    }
+
+    let mut conflict_simplices = SimplexKeyBuffer::new();
+    conflict_simplices.push(edge_facet.simplex_key());
+
+    let mut boundary_facets = extract_cavity_boundary(tds, &conflict_simplices)
+        .map_err(InsertionError::ConflictRegion)?;
+    boundary_facets.retain(|facet| {
+        facet.simplex_key() != edge_facet.simplex_key()
+            || facet.facet_index() != edge_facet.facet_index()
+    });
+
+    validate_boundary_edge_split_facet_count(boundary_facets.len())?;
+
+    let external_facets = external_facets_for_boundary(tds, &conflict_simplices, &boundary_facets)?;
+
+    let new_simplices = fill_cavity_replacing_simplices(tds, new_vertex_key, &boundary_facets)?;
+    wire_cavity_neighbors(
+        tds,
+        &new_simplices,
+        external_facets.iter().copied(),
+        Some(&conflict_simplices),
+    )?;
+    tds.remove_simplices_by_keys(&conflict_simplices)
+        .map_err(|e| InsertionError::TopologyValidation(e.into_inner()))?;
 
     Ok(new_simplices)
 }
@@ -3943,20 +4009,20 @@ const fn visible_patch_failure_reason(
     }
 }
 
+/// Searches all 2D hull edges for the unique boundary facet containing `point`.
+///
+/// The full scan is used from hull extension when point location has classified
+/// the point outside the current triangulation. Returning a typed multiple-match
+/// error protects callers from silently accepting ambiguous boundary geometry.
 fn find_boundary_edge_split_facet<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     point: &Point<D>,
-) -> Result<Option<FacetHandle>, InsertionError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<Option<FacetHandle>, InsertionError> {
     if D != 2 {
         return Ok(None);
     }
 
     let mut match_facet: Option<FacetHandle> = None;
-    let tol = DEFAULT_TOLERANCE_F64;
 
     let boundary_facets = tds
         .one_sided_facets()
@@ -3968,96 +4034,163 @@ where
         let facet_view = facet_view.map_err(boundary_facet_iteration_error)?;
         let simplex_key = facet_view.simplex_key();
         let facet_index = facet_view.facet_index();
-        let simplex = tds.simplex(simplex_key).ok_or_else(|| {
-            missing_boundary_simplex(simplex_key, "2D boundary edge split facet lookup")
-        })?;
 
-        let mut edge_points = SmallBuffer::<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-        let mut opposite_point: Option<Point<D>> = None;
-
-        for (i, &vkey) in simplex.vertices().iter().enumerate() {
-            let vertex = tds.vertex(vkey).ok_or_else(|| {
-                missing_boundary_vertex(vkey, simplex_key, "2D boundary edge split facet")
-            })?;
-            if i == usize::from(facet_index) {
-                opposite_point = Some(*vertex.point());
-            } else {
-                edge_points.push(*vertex.point());
-            }
-        }
-
-        if edge_points.len() != 2 {
-            continue;
-        }
-
-        let opposite_point = opposite_point
-            .ok_or_else(|| invalid_boundary_facet_index(facet_index, simplex.vertices().len()))?;
-
-        let mut simplex_points = SmallBuffer::<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-        simplex_points.extend(edge_points.iter().copied());
-        simplex_points.push(opposite_point);
-
-        // Use exact orientation (not kernel SoS) to detect true degeneracy.
-        // SoS-based kernels never return 0, which would mask the geometric
-        // property we need here: is the opposite simplex truly degenerate?
-        let opposite_degenerate = matches!(
-            robust_orientation(&simplex_points).map_err(|e| InsertionError::HullExtension {
-                reason: HullExtensionReason::PredicateFailed(e),
-            })?,
-            Orientation::DEGENERATE
-        );
-
-        if opposite_degenerate {
-            continue;
-        }
-
-        let mut edge_line = SmallBuffer::<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-        edge_line.extend(edge_points.iter().copied());
-        edge_line.push(*point);
-
-        // Use exact orientation (not kernel SoS) to detect true collinearity.
-        // SoS-based kernels never return 0, which would mask the geometric
-        // property we need here: is the point truly on the line through the edge?
-        let is_collinear = matches!(
-            robust_orientation(&edge_line).map_err(|e| InsertionError::HullExtension {
-                reason: HullExtensionReason::PredicateFailed(e),
-            })?,
-            Orientation::DEGENERATE
-        );
-
-        if !is_collinear {
-            continue;
-        }
-
-        let p0 = edge_points[0].coords();
-        let p1 = edge_points[1].coords();
-        let p = point.coords();
-        let (min_x, max_x) = if p0[0] <= p1[0] {
-            (p0[0], p1[0])
-        } else {
-            (p1[0], p0[0])
-        };
-        let (min_y, max_y) = if p0[1] <= p1[1] {
-            (p0[1], p1[1])
-        } else {
-            (p1[1], p0[1])
-        };
-        let on_segment = p[0] >= min_x - tol
-            && p[0] <= max_x + tol
-            && p[1] >= min_y - tol
-            && p[1] <= max_y + tol;
-
-        if on_segment {
-            if match_facet.is_some() {
-                return Err(InsertionError::HullExtension {
-                    reason: HullExtensionReason::MultipleBoundaryEdgeSplitFacets,
-                });
-            }
-            match_facet = Some(FacetHandle::from_validated(simplex_key, facet_index));
+        if boundary_edge_split_facet_matches(tds, point, simplex_key, facet_index)? {
+            let current_facet = FacetHandle::from_validated(simplex_key, facet_index);
+            record_boundary_edge_split_match(&mut match_facet, current_facet)?;
         }
     }
 
     Ok(match_facet)
+}
+
+/// Searches boundary facets of a located simplex for an exact 2D edge split.
+///
+/// This localized path handles points that symbolic perturbation can classify as
+/// inside or on a facet even though their physical coordinates lie exactly on a
+/// hull edge. It preserves the public contract that distinct boundary vertices
+/// are kept without applying coordinate jitter.
+fn find_boundary_edge_split_facet_in_simplex<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    point: &Point<D>,
+    start_simplex: SimplexKey,
+) -> Result<Option<FacetHandle>, InsertionError> {
+    if D != 2 {
+        return Ok(None);
+    }
+
+    let simplex = tds
+        .simplex(start_simplex)
+        .ok_or_else(|| missing_boundary_simplex(start_simplex, "2D local boundary edge split"))?;
+    let facet_count = simplex.number_of_vertices();
+
+    let mut match_facet: Option<FacetHandle> = None;
+
+    for facet_idx in 0..facet_count {
+        if !matches!(simplex.neighbor_key(facet_idx), Some(None)) {
+            continue;
+        }
+        let facet_index = u8::try_from(facet_idx)
+            .map_err(|_| invalid_boundary_facet_index(u8::MAX, facet_count))?;
+        if boundary_edge_split_facet_matches(tds, point, start_simplex, facet_index)? {
+            let current_facet = FacetHandle::from_validated(start_simplex, facet_index);
+            record_boundary_edge_split_match(&mut match_facet, current_facet)?;
+        }
+    }
+
+    Ok(match_facet)
+}
+
+const fn record_boundary_edge_split_match(
+    match_facet: &mut Option<FacetHandle>,
+    current_facet: FacetHandle,
+) -> Result<(), InsertionError> {
+    if let Some(first) = *match_facet {
+        return Err(InsertionError::HullExtension {
+            reason: HullExtensionReason::MultipleBoundaryEdgeSplitFacets {
+                first,
+                second: current_facet,
+            },
+        });
+    }
+
+    *match_facet = Some(current_facet);
+    Ok(())
+}
+
+/// Tests whether a boundary facet should be split by `point`.
+///
+/// The test uses exact non-SoS orientation to distinguish true collinearity from
+/// symbolic tie-breaking, then applies exact segment bounds. Degenerate opposite
+/// simplices are ignored so the split only operates on a valid 2D boundary
+/// triangle.
+fn boundary_edge_split_facet_matches<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    point: &Point<D>,
+    simplex_key: SimplexKey,
+    facet_index: u8,
+) -> Result<bool, InsertionError> {
+    let simplex = tds.simplex(simplex_key).ok_or_else(|| {
+        missing_boundary_simplex(simplex_key, "2D boundary edge split facet lookup")
+    })?;
+
+    let mut edge_points = SmallBuffer::<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+    let mut opposite_point: Option<Point<D>> = None;
+
+    for (i, &vkey) in simplex.vertices().iter().enumerate() {
+        let vertex = tds.vertex(vkey).ok_or_else(|| {
+            missing_boundary_vertex(vkey, simplex_key, "2D boundary edge split facet")
+        })?;
+        if i == usize::from(facet_index) {
+            opposite_point = Some(*vertex.point());
+        } else {
+            edge_points.push(*vertex.point());
+        }
+    }
+
+    if edge_points.len() != 2 {
+        return Ok(false);
+    }
+
+    let opposite_point = opposite_point
+        .ok_or_else(|| invalid_boundary_facet_index(facet_index, simplex.vertices().len()))?;
+
+    let p0 = edge_points[0].coords();
+    let p1 = edge_points[1].coords();
+    let p = point.coords();
+    let (min_x, max_x) = if p0[0] <= p1[0] {
+        (p0[0], p1[0])
+    } else {
+        (p1[0], p0[0])
+    };
+    let (min_y, max_y) = if p0[1] <= p1[1] {
+        (p0[1], p1[1])
+    } else {
+        (p1[1], p0[1])
+    };
+
+    // Segment bounds are a cheap necessary condition before exact orientation.
+    if p[0] < min_x || p[0] > max_x || p[1] < min_y || p[1] > max_y {
+        return Ok(false);
+    }
+
+    let mut simplex_points = SmallBuffer::<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+    simplex_points.extend(edge_points.iter().copied());
+    simplex_points.push(opposite_point);
+
+    // Use exact orientation (not kernel SoS) to detect true degeneracy.
+    // SoS-based kernels never return 0, which would mask the geometric
+    // property we need here: is the opposite simplex truly degenerate?
+    let opposite_degenerate = matches!(
+        robust_orientation(&simplex_points).map_err(|e| InsertionError::HullExtension {
+            reason: HullExtensionReason::PredicateFailed(e),
+        })?,
+        Orientation::DEGENERATE
+    );
+
+    if opposite_degenerate {
+        return Ok(false);
+    }
+
+    let mut edge_line = SmallBuffer::<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+    edge_line.extend(edge_points.iter().copied());
+    edge_line.push(*point);
+
+    // Use exact orientation (not kernel SoS) to detect true collinearity.
+    // SoS-based kernels never return 0, which would mask the geometric
+    // property we need here: is the point truly on the line through the edge?
+    let is_collinear = matches!(
+        robust_orientation(&edge_line).map_err(|e| InsertionError::HullExtension {
+            reason: HullExtensionReason::PredicateFailed(e),
+        })?,
+        Orientation::DEGENERATE
+    );
+
+    if !is_collinear {
+        return Ok(false);
+    }
+
+    Ok(true)
 }
 
 /// Find all boundary facets visible from a point.
@@ -6786,8 +6919,11 @@ mod tests {
         assert_matches!(
             err,
             InsertionError::HullExtension {
-                reason: HullExtensionReason::MultipleBoundaryEdgeSplitFacets,
-            }
+                reason: HullExtensionReason::MultipleBoundaryEdgeSplitFacets {
+                    first,
+                    second,
+                },
+            } if first != second
         );
     }
 
@@ -6800,6 +6936,21 @@ mod tests {
         ];
         let dt = DelaunayTriangulation::<_, (), (), 2>::try_new(&vertices).unwrap();
         let point = Point::try_new([2.0, 0.0]).expect("finite point coordinates"); // collinear with an edge line, outside segment
+
+        let facet = find_boundary_edge_split_facet(dt.tds(), &point).unwrap();
+        assert!(facet.is_none());
+    }
+
+    #[test]
+    fn test_find_boundary_edge_split_facet_next_after_endpoint_returns_none_2d() {
+        let vertices = vec![
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        ];
+        let dt = DelaunayTriangulation::<_, (), (), 2>::try_new(&vertices).unwrap();
+        let point = Point::try_new([f64::from_bits(1.0_f64.to_bits() + 1), 0.0])
+            .expect("finite point coordinates");
 
         let facet = find_boundary_edge_split_facet(dt.tds(), &point).unwrap();
         assert!(facet.is_none());

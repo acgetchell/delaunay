@@ -8,7 +8,8 @@
 
 use crate::core::algorithms::incremental_insertion::{
     CavityFillingError, CavityRepairStage, HullExtensionReason, InsertionError, extend_hull,
-    external_facets_for_boundary, fill_cavity_replacing_simplices, wire_cavity_neighbors,
+    external_facets_for_boundary, fill_cavity_replacing_simplices,
+    split_2d_boundary_edge_in_simplex_if_needed, wire_cavity_neighbors,
 };
 #[cfg(debug_assertions)]
 use crate::core::algorithms::locate::locate;
@@ -670,6 +671,7 @@ where
                     delaunay_repair_required,
                     ..
                 }) => {
+                    let (vertex_key, hint) = inserted;
                     stats.simplices_removed_during_repair = simplices_removed;
                     stats.result = InsertionResult::Inserted;
                     #[cfg(debug_assertions)]
@@ -679,7 +681,6 @@ where
                         );
                     }
 
-                    let (vertex_key, hint) = inserted;
                     transaction.commit();
                     // Only the committed attempt updates the duplicate index. Earlier
                     // retries all rolled back to the pre-attempt triangulation state.
@@ -1147,6 +1148,93 @@ where
         }
 
         Ok(insert_ok)
+    }
+
+    /// Splits an exact 2D boundary edge from the located simplex before `SoS` turns it interior.
+    ///
+    /// This preserves the public construction contract for exact layered 2D
+    /// inputs: a vertex whose physical coordinates lie on a hull edge should be
+    /// inserted as a boundary split, even when symbolic perturbation gives point
+    /// location an interior tie-break result. The returned insertion outcome
+    /// seeds the usual local validation and repair bookkeeping.
+    fn try_split_2d_boundary_edge_in_located_simplex(
+        &mut self,
+        v_key: VertexKey,
+        point: &Point<D>,
+        start_simplex: SimplexKey,
+        telemetry: &mut InsertionTelemetry,
+        telemetry_mode: InsertionTelemetryMode,
+    ) -> Result<Option<TryInsertImplOk>, InsertionError> {
+        if D != 2 {
+            return Ok(None);
+        }
+
+        let split_started = Self::start_insertion_timing(telemetry_mode);
+        let split_result =
+            split_2d_boundary_edge_in_simplex_if_needed(&mut self.tds, v_key, point, start_simplex);
+
+        let new_simplices = match split_result {
+            Ok(Some(new_simplices)) => {
+                Self::record_hull_extension_telemetry(
+                    telemetry,
+                    split_started.map(|started| Self::duration_nanos_saturating(started.elapsed())),
+                );
+                new_simplices
+            }
+            Ok(None) => return Ok(None),
+            Err(err) => {
+                Self::record_hull_extension_telemetry(
+                    telemetry,
+                    split_started.map(|started| Self::duration_nanos_saturating(started.elapsed())),
+                );
+                return Err(err);
+            }
+        };
+
+        self.canonicalize_positive_orientation_for_simplices(&new_simplices)?;
+
+        let mut incident_repair_vertices =
+            SmallBuffer::<VertexKey, CLEANUP_OPERATION_BUFFER_SIZE>::new();
+        Self::push_incident_repair_vertex(&mut incident_repair_vertices, v_key);
+        self.extend_incident_repair_vertices_from_simplices(
+            &new_simplices,
+            &mut incident_repair_vertices,
+        );
+
+        let mut orientation_simplices = SimplexKeyBuffer::new();
+        append_live_unique_simplex_seeds(&self.tds, &new_simplices, &mut orientation_simplices);
+        self.validate_local_orientation_for_simplices(&orientation_simplices)?;
+
+        let hint = new_simplices.iter().copied().find(|&simplex_key| {
+            self.tds
+                .simplex(simplex_key)
+                .is_some_and(|simplex| simplex.contains_vertex(v_key))
+        });
+        if let Some(incident_simplex) = hint
+            && let Some(vertex) = self.tds.vertex_mut(v_key)
+        {
+            vertex.set_incident_simplex(Some(incident_simplex));
+        }
+
+        self.repair_stale_incident_simplices(&incident_repair_vertices)?;
+        self.validate_connectedness(&new_simplices)?;
+
+        let mut repair_seed_simplices = SimplexKeyBuffer::new();
+        append_live_unique_simplex_seeds(&self.tds, &new_simplices, &mut repair_seed_simplices);
+        let embedding_validation_simplices = new_simplices
+            .iter()
+            .copied()
+            .filter(|simplex_key| self.tds.contains_simplex(*simplex_key))
+            .collect();
+
+        Ok(Some(TryInsertImplOk {
+            inserted: (v_key, hint),
+            simplices_removed: 0,
+            suspicion: SuspicionFlags::default(),
+            repair_seed_simplices,
+            embedding_validation_simplices,
+            delaunay_repair_required: true,
+        }))
     }
 
     /// After a Level 3 topology validation failure, try to recover by performing a star-split
@@ -2122,6 +2210,24 @@ where
                 fallback = ?locate_stats.fallback,
                 "try_insert_impl: locate stats"
             );
+        }
+
+        let local_boundary_split_simplex = match location {
+            LocateResult::InsideSimplex(start_simplex)
+            | LocateResult::OnFacet(start_simplex, _)
+            | LocateResult::OnEdge(start_simplex) => Some(start_simplex),
+            LocateResult::Outside | LocateResult::OnVertex(_) => None,
+        };
+        if let Some(start_simplex) = local_boundary_split_simplex
+            && let Some(outcome) = self.try_split_2d_boundary_edge_in_located_simplex(
+                v_key,
+                &point,
+                start_simplex,
+                telemetry,
+                telemetry_mode,
+            )?
+        {
+            return Ok(outcome);
         }
 
         // 4. Determine the supported insertion site and any conflict simplices it needs.

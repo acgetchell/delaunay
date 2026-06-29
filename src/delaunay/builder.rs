@@ -420,16 +420,19 @@ pub enum ExplicitConstructionError {
     /// Toroidal topology is incompatible with explicit simplex construction.
     #[error("Toroidal topology cannot be combined with explicit simplex construction")]
     IncompatibleTopology,
-    /// Non-default [`ConstructionOptions`] were set on an explicit-simplex builder.
+    /// Unsupported [`ConstructionOptions`] were set on an explicit-simplex builder.
     ///
-    /// [`ConstructionOptions`] (insertion order, deduplication, retry policy) apply
-    /// only to the Delaunay point-insertion path and are not meaningful for
-    /// explicit simplex construction.
+    /// Most [`ConstructionOptions`] (insertion order, deduplication, retry
+    /// policy) apply only to the Delaunay point-insertion path and are not
+    /// meaningful for explicit simplex construction. The supported exception is
+    /// [`ConstructionOptions::without_final_delaunay_enforcement`], which lets
+    /// callers import valid Levels 1-4 explicit connectivity without proving the
+    /// Level 5 Delaunay property.
     ///
     /// [`ConstructionOptions`]: crate::construction::ConstructionOptions
     #[error(
-        "ConstructionOptions are not applicable to explicit simplex construction \
-         and must be left at their default values"
+        "Only default ConstructionOptions or without_final_delaunay_enforcement() \
+         are supported for explicit simplex construction"
     )]
     UnsupportedConstructionOptions,
     /// Neighbor assignment failed while assembling explicit connectivity.
@@ -473,6 +476,13 @@ pub enum ExplicitConstructionError {
         /// Underlying TDS/geometric validation error.
         #[source]
         source: Box<TdsError>,
+    },
+    /// Level 4 embedding validation failed before returning the wrapper.
+    #[error("Embedding validation failed during explicit construction: {source}")]
+    EmbeddingValidation {
+        /// Underlying cumulative embedding validation error.
+        #[source]
+        source: Box<DelaunayTriangulationValidationError>,
     },
     /// Level 5 Delaunay validation failed before returning the wrapper.
     #[error("Delaunay validation failed during explicit construction: {source}")]
@@ -739,11 +749,13 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// Simplex arity, bounds, and duplicate indices are validated before the
     /// builder stores the explicit connectivity. Euclidean explicit meshes are
     /// checked at Levels 1–4 during [`build`](Self::build) or
-    /// [`build_with_kernel`](Self::build_with_kernel), including the Delaunay
-    /// empty-circumsphere property. Non-Euclidean explicit connectivity is
-    /// rejected at build time because there is no successful Levels 1–3-only
-    /// path for the public `DelaunayTriangulation` wrapper; quotient meshes need
-    /// Level 4 handling before they can be accepted.
+    /// [`build_with_kernel`](Self::build_with_kernel). By default they must also
+    /// prove the Level 5 Delaunay empty-circumsphere property. Use
+    /// [`ConstructionOptions::without_final_delaunay_enforcement`] when importing
+    /// exact degenerate or externally constrained connectivity that should be
+    /// valid as a triangulation but is not required to be strict Delaunay.
+    /// Non-Euclidean explicit connectivity is rejected at build time because
+    /// quotient meshes need Level 4 handling before they can be accepted.
     ///
     /// # Errors
     ///
@@ -1061,9 +1073,14 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
         self
     }
 
-    /// Sets the [`ConstructionOptions`] (insertion order, deduplication, retry policy).
+    /// Sets the [`ConstructionOptions`] for construction and final validation.
     ///
-    /// Defaults to [`ConstructionOptions::default`].
+    /// Defaults to [`ConstructionOptions::default`], which enforces final Level
+    /// 5 Delaunay validation. Explicit-simplex builders accept either the
+    /// default options or
+    /// [`ConstructionOptions::without_final_delaunay_enforcement`] when callers
+    /// intentionally import valid Levels 1-4 connectivity without requiring a
+    /// strict Delaunay proof.
     ///
     /// # Examples
     ///
@@ -1256,6 +1273,10 @@ where
     /// - Toroidal canonicalization fails (non-finite coordinate in input).
     /// - The underlying triangulation construction fails (insufficient vertices,
     ///   geometric degeneracy, etc.).
+    /// - Explicit-simplex construction is requested with unsupported
+    ///   [`ConstructionOptions`], non-Euclidean topology, invalid topology or
+    ///   embedding, or a failed Level 5 Delaunay check when final enforcement is
+    ///   enabled.
     ///
     /// # Examples
     ///
@@ -1307,8 +1328,9 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`DelaunayTriangulationConstructionError`] if canonicalization or
-    /// construction fails (see [`build`](Self::build) for details).
+    /// Returns [`DelaunayTriangulationConstructionError`] if canonicalization,
+    /// point-insertion construction, or explicit-simplex construction fails (see
+    /// [`build`](Self::build) for the policy-level conditions).
     ///
     /// # Examples
     ///
@@ -1347,7 +1369,7 @@ where
             if !matches!(self.topology, BuilderTopology::Euclidean) {
                 return Err(ExplicitConstructionError::IncompatibleTopology.into());
             }
-            if self.construction_options != ConstructionOptions::default() {
+            if !Self::supports_explicit_construction_options(self.construction_options) {
                 return Err(ExplicitConstructionError::UnsupportedConstructionOptions.into());
             }
             return Self::build_explicit(
@@ -1356,6 +1378,7 @@ where
                 simplices.as_slice(),
                 self.topology_guarantee,
                 self.global_topology_or_default(),
+                self.construction_options.enforces_final_delaunay(),
             );
         }
 
@@ -1447,38 +1470,54 @@ where
         }
     }
 
+    /// Checks whether explicit-simplex construction can honor the requested options.
+    ///
+    /// Explicit connectivity bypasses insertion ordering, deduplication, and
+    /// retry policies, so accepting arbitrary [`ConstructionOptions`] would make
+    /// those knobs look meaningful when they are ignored. The one supported
+    /// non-default policy is
+    /// [`ConstructionOptions::without_final_delaunay_enforcement`], which is the
+    /// public opt-in for importing valid Levels 1-4 constrained connectivity.
+    fn supports_explicit_construction_options(options: ConstructionOptions) -> bool {
+        options == ConstructionOptions::default()
+            || options == ConstructionOptions::default().without_final_delaunay_enforcement()
+    }
+
     /// Builds a triangulation from explicit vertex and simplex specifications.
     ///
     /// This is a purely combinatorial construction that assembles a valid TDS from
     /// the given connectivity without Delaunay point insertion. Euclidean explicit
-    /// meshes are validated at Levels 1–5 (elements, structure, topology,
-    /// embedding, and the Delaunay property). Non-Euclidean explicit
-    /// connectivity is rejected because it requires quotient embedding
-    /// validation before the public
+    /// meshes are validated at Levels 1–4 and, by default, Level 5. When
+    /// [`ConstructionOptions::without_final_delaunay_enforcement`] is used, the
+    /// explicit connectivity is returned after Levels 1–4 validation without
+    /// Delaunay repair or proof. Non-Euclidean explicit connectivity is rejected
+    /// because it requires quotient embedding validation before the public
     /// `DelaunayTriangulation` wrapper can accept it.
     ///
     /// # Algorithm
     ///
     /// 1. Validate input: each simplex has D+1 in-bounds, unique vertex indices.
-    /// 2. Build a `Tds`: insert all vertices, then insert simplices from the specifications.
-    /// 3. Compute adjacency via `assign_neighbors()`.
-    /// 4. Assign incident simplices via `assign_incident_simplices()`.
-    /// 5. Wrap in a validation candidate.
-    /// 6. Normalize coherent orientation and promote to positive canonical sign
-    ///    via `normalize_and_promote_positive_orientation()`.
-    /// 7. Reject non-Euclidean explicit connectivity until quotient embedding
+    /// 2. Reject non-Euclidean explicit connectivity until quotient embedding
     ///    validation exists.
+    /// 3. Build a `Tds`: insert all vertices, then insert simplices from the specifications.
+    /// 4. Compute adjacency via `assign_neighbors()`.
+    /// 5. Assign incident simplices via `assign_incident_simplices()`.
+    /// 6. Wrap in a validation candidate.
+    /// 7. Normalize coherent orientation and promote to positive canonical sign
+    ///    via `normalize_and_promote_positive_orientation()`.
     /// 8. Validate Levels 1–2 (TDS structural: `tds.validate()`).
     /// 9. Validate Level 3 topology (excluding geometric orientation).
     /// 10. Validate PL-manifold completion (vertex links, if required).
     /// 11. Validate geometric nondegeneracy (reject zero-volume simplices).
-    /// 12. Validate the Euclidean Level 5 Delaunay property.
+    /// 12. Validate the Euclidean Level 5 Delaunay property unless final
+    ///     enforcement was disabled in [`ConstructionOptions`].
     fn build_explicit<K, V>(
         kernel: &K,
         vertices: &[Vertex<U, D>],
         simplices: &[Vec<usize>],
         topology_guarantee: TopologyGuarantee,
         global_topology: GlobalTopology<D>,
+        enforce_final_delaunay: bool,
     ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
         K: Kernel<D, Scalar = f64>,
@@ -1611,8 +1650,16 @@ where
             .into());
         }
 
-        let proof = Self::enforce_explicit_delaunay_property(&candidate)?;
+        if !enforce_final_delaunay {
+            let proof = candidate.validate_embedding_only().map_err(|source| {
+                ExplicitConstructionError::EmbeddingValidation {
+                    source: Box::new(source),
+                }
+            })?;
+            return Ok(candidate.into_embedding_validated_delaunay(proof));
+        }
 
+        let proof = Self::enforce_explicit_delaunay_property(&candidate)?;
         Ok(candidate.into_validated_delaunay(proof))
     }
 

@@ -3221,7 +3221,7 @@ impl From<&HullExtensionReason> for FlipNeighborHullExtensionFailureKind {
             HullExtensionReason::BoundaryEdgeSplitFacetCount { .. } => {
                 Self::BoundaryEdgeSplitFacetCount
             }
-            HullExtensionReason::MultipleBoundaryEdgeSplitFacets => {
+            HullExtensionReason::MultipleBoundaryEdgeSplitFacets { .. } => {
                 Self::MultipleBoundaryEdgeSplitFacets
             }
             HullExtensionReason::DisconnectedVisiblePatch { .. } => Self::DisconnectedVisiblePatch,
@@ -15149,7 +15149,10 @@ mod tests {
         );
 
         assert_hull_extension_failure_kind(
-            &HullExtensionReason::MultipleBoundaryEdgeSplitFacets,
+            &HullExtensionReason::MultipleBoundaryEdgeSplitFacets {
+                first: FacetHandle::from_validated(SimplexKey::default(), 0),
+                second: FacetHandle::from_validated(SimplexKey::default(), 1),
+            },
             FlipNeighborHullExtensionFailureKind::MultipleBoundaryEdgeSplitFacets,
             "multiple boundary edge split facets",
         );
