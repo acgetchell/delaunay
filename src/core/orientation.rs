@@ -8,7 +8,10 @@
 use crate::core::algorithms::incremental_insertion::{
     InsertionError, InsertionTopologyValidationContext,
 };
-use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer, SmallBuffer};
+use crate::core::collections::{
+    MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer, SimplexKeySet, SmallBuffer,
+    fast_hash_set_with_capacity,
+};
 use crate::core::simplex::Simplex;
 use crate::core::tds::{GeometricError, SimplexKey, TdsError, VertexKey};
 use crate::core::triangulation::Triangulation;
@@ -257,7 +260,11 @@ where
         Ok(true)
     }
 
-    /// Check whether any simplex still requires positive-orientation promotion.
+    /// Checks whether any simplex still violates the positive-orientation contract.
+    ///
+    /// This read-only convergence guard lets construction, repair, and deletion
+    /// distinguish a completed orientation pass from a residual negative simplex
+    /// that must surface as a typed invariant failure.
     fn simplices_require_positive_orientation_promotion(&self) -> Result<bool, InsertionError> {
         for (simplex_key, simplex) in self.tds.simplices() {
             let orientation = self.evaluate_simplex_orientation_for_context(
@@ -277,35 +284,74 @@ where
         Ok(false)
     }
 
-    /// For connected non-periodic triangulations, canonicalize the coherent global sign.
-    fn canonicalize_global_orientation_sign(&mut self) -> Result<(), InsertionError> {
-        let representative_sign = {
-            let mut sign = None;
-            for (simplex_key, simplex) in self.tds.simplices() {
+    /// Canonicalizes each coherent component to the positive geometric sign.
+    ///
+    /// Coherent orientation fixes relative facet orientation inside each
+    /// simplex-neighbor component, but either global sign remains valid
+    /// combinatorially. This helper chooses the positive geometric sign per
+    /// component so public construction, repair, and deletion paths can preserve
+    /// the triangulation-level positive-orientation invariant without assuming
+    /// the TDS has a single connected component at this intermediate boundary.
+    fn canonicalize_component_orientation_signs(&mut self) -> Result<(), InsertionError> {
+        let simplex_keys: Vec<SimplexKey> = self.tds.simplex_keys().collect();
+        let mut visited: SimplexKeySet = fast_hash_set_with_capacity(simplex_keys.len());
+        let mut simplices_to_flip = Vec::new();
+
+        for root_simplex_key in simplex_keys {
+            if !visited.insert(root_simplex_key) {
+                continue;
+            }
+
+            let mut component = Vec::new();
+            let mut stack = vec![root_simplex_key];
+            let mut representative_sign = None;
+
+            while let Some(simplex_key) = stack.pop() {
+                let simplex =
+                    self.tds
+                        .simplex(simplex_key)
+                        .ok_or_else(|| TdsError::SimplexNotFound {
+                            simplex_key,
+                            context: "component orientation-sign canonicalization".to_string(),
+                        })?;
+
                 let orientation = self.evaluate_simplex_orientation_for_context(
                     simplex_key,
                     simplex,
-                    "global orientation-sign canonicalization",
-                    "Geometric orientation predicate failed while canonicalizing global orientation sign for simplex",
+                    "component orientation-sign canonicalization",
+                    "Geometric orientation predicate failed while canonicalizing component orientation sign for simplex",
                 )?;
-                if orientation != 0 {
-                    sign = Some(orientation);
-                    break;
+                if representative_sign.is_none() && orientation != 0 {
+                    representative_sign = Some(orientation);
+                }
+
+                component.push(simplex_key);
+
+                let Some(neighbors) = simplex.neighbor_keys() else {
+                    continue;
+                };
+
+                for neighbor_key in neighbors.flatten() {
+                    if visited.insert(neighbor_key) {
+                        stack.push(neighbor_key);
+                    }
                 }
             }
-            sign
-        };
 
-        if representative_sign != Some(-1) {
-            return Ok(());
+            if representative_sign == Some(-1) {
+                simplices_to_flip.extend(component);
+            }
         }
 
-        let simplex_keys: Vec<SimplexKey> = self.tds.simplex_keys().collect();
         let mut flipped_any = false;
-        for simplex_key in simplex_keys {
-            let Some(simplex) = self.tds.simplex_mut(simplex_key) else {
-                continue;
-            };
+        for simplex_key in simplices_to_flip {
+            let simplex =
+                self.tds
+                    .simplex_mut(simplex_key)
+                    .ok_or_else(|| TdsError::SimplexNotFound {
+                        simplex_key,
+                        context: "applying component orientation-sign canonicalization".to_string(),
+                    })?;
             if simplex.number_of_vertices() >= 2 {
                 simplex.swap_vertex_slots(0, 1);
                 flipped_any = true;
@@ -319,18 +365,26 @@ where
         Ok(())
     }
 
-    /// Normalize coherent orientation and promote geometric orientation to the positive sign.
+    /// Normalizes coherent orientation and promotes geometric orientation to the positive sign.
+    ///
+    /// Public mutation paths call this after local topology edits or flip repair
+    /// because those operations may leave a structurally coherent TDS whose
+    /// stored simplex order has the wrong geometric sign. The bounded retry loop
+    /// alternates local promotion with coherent-orientation normalization so the
+    /// returned triangulation satisfies both orientation layers or reports a
+    /// typed non-convergence diagnostic.
     pub(crate) fn normalize_and_promote_positive_orientation(
         &mut self,
     ) -> Result<(), InsertionError> {
         self.tds.normalize_coherent_orientation()?;
-        self.canonicalize_global_orientation_sign()?;
+        self.canonicalize_component_orientation_signs()?;
 
         for _ in 0..3 {
             if !self.promote_simplices_to_positive_orientation()? {
                 break;
             }
             self.tds.normalize_coherent_orientation()?;
+            self.canonicalize_component_orientation_signs()?;
         }
 
         if self.simplices_require_positive_orientation_promotion()? {
@@ -359,7 +413,6 @@ where
                 },
             });
         }
-        self.canonicalize_global_orientation_sign()?;
         Ok(())
     }
 
@@ -513,7 +566,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::tds::InvariantError;
+    use crate::core::simplex::Simplex;
+    use crate::core::tds::{InvariantError, Tds};
     use crate::geometry::kernel::FastKernel;
     use crate::topology::traits::topological_space::{
         GlobalTopology, ToroidalConstructionMode, ToroidalDomainError,
@@ -669,6 +723,52 @@ mod tests {
 
         let after: Vec<_> = tri.tds.simplex(simplex_key).unwrap().vertices().to_vec();
         assert_eq!(before, after);
+    }
+
+    #[test]
+    fn canonicalize_component_orientation_signs_flips_each_component_independently() {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let component_vertices = [
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [2.0, 0.0],
+            [3.0, 0.0],
+            [2.0, 1.0],
+        ];
+        let mut vertex_keys = Vec::with_capacity(component_vertices.len());
+        for coords in component_vertices {
+            vertex_keys.push(
+                tds.insert_vertex_with_mapping(vertex!(coords).unwrap())
+                    .unwrap(),
+            );
+        }
+
+        tds.insert_simplex_with_mapping(
+            Simplex::try_new_with_data(vec![vertex_keys[0], vertex_keys[1], vertex_keys[2]], None)
+                .unwrap(),
+        )
+        .unwrap();
+        tds.insert_simplex_with_mapping(
+            Simplex::try_new_with_data(vec![vertex_keys[3], vertex_keys[5], vertex_keys[4]], None)
+                .unwrap(),
+        )
+        .unwrap();
+
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        assert!(
+            tri.simplices_require_positive_orientation_promotion()
+                .unwrap()
+        );
+
+        tri.canonicalize_component_orientation_signs().unwrap();
+
+        assert!(
+            !tri.simplices_require_positive_orientation_promotion()
+                .unwrap()
+        );
+        assert!(tri.validate_geometric_simplex_orientation().is_ok());
     }
 
     #[test]

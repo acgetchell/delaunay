@@ -124,8 +124,10 @@ where
     /// - Level 5 Delaunay validation fails after deletion when automatic repair is disabled
     ///   ([`DeleteVertexError::InvariantViolation`] wrapping [`InvariantError::Delaunay`] wrapping
     ///   [`DelaunayTriangulationValidationError::VerificationFailed`]).
-    /// - Orientation canonicalization fails after repair
-    ///   ([`DeleteVertexError::InvariantViolation`] wrapping [`InvariantError::Tds`]).
+    /// - Orientation canonicalization fails after repair, either as a TDS-level predicate or
+    ///   lookup failure ([`DeleteVertexError::InvariantViolation`] wrapping [`InvariantError::Tds`])
+    ///   or as triangulation-level positive-orientation non-convergence
+    ///   ([`DeleteVertexError::InvariantViolation`] wrapping [`InvariantError::Triangulation`]).
     ///
     /// # Examples
     ///
@@ -280,7 +282,7 @@ where
                     })?;
 
                     // Re-canonicalize geometric orientation (#258): flip repair may leave
-                    // the global sign negative.
+                    // one or more simplex-neighbor components with a negative sign.
                     delaunay
                         .tri
                         .normalize_and_promote_positive_orientation()
@@ -657,6 +659,49 @@ mod tests {
         assert_eq!(dt.number_of_vertices(), vertex_count_before_stale_attempt);
         assert_eq!(dt.number_of_simplices(), simplex_count_before_stale_attempt);
         assert!(dt.as_triangulation().validate().is_ok());
+    }
+
+    #[test]
+    fn regression_issue_448_delete_vertex_2d_strip_cavity_keeps_positive_orientation() {
+        init_tracing();
+        let vertices = [
+            vertex![0.00, 0.00].unwrap(),
+            vertex![1.00, 0.02].unwrap(),
+            vertex![2.00, -0.015].unwrap(),
+            vertex![3.00, 0.01].unwrap(),
+            vertex![4.00, -0.02].unwrap(),
+            vertex![0.25, 1.01].unwrap(),
+            vertex![1.20, 0.96].unwrap(),
+            vertex![2.10, 1.04].unwrap(),
+            vertex![3.05, 0.98].unwrap(),
+            vertex![3.85, 1.03].unwrap(),
+            vertex![0.00, 2.00].unwrap(),
+            vertex![1.00, 2.02].unwrap(),
+            vertex![2.00, 1.985].unwrap(),
+            vertex![3.00, 2.01].unwrap(),
+            vertex![4.00, 1.99].unwrap(),
+        ];
+        let deleted_uuid = vertices[7].uuid();
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::try_new(&vertices).unwrap();
+        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::EveryInsertion);
+        dt.as_triangulation().validate().unwrap();
+        dt.is_valid_delaunay().unwrap();
+
+        let vertex_key = dt
+            .vertices()
+            .find_map(|(key, vertex)| (vertex.uuid() == deleted_uuid).then_some(key))
+            .expect("fixture vertex should be present");
+        let removed_simplices = dt.delete_vertex(vertex_key).unwrap();
+
+        assert!(removed_simplices > 0);
+        assert!(
+            dt.vertices()
+                .all(|(_, vertex)| vertex.uuid() != deleted_uuid)
+        );
+        assert!(dt.as_triangulation().validate().is_ok());
+        assert!(dt.is_valid_delaunay().is_ok());
     }
 
     #[test]
