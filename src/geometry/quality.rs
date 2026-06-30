@@ -580,6 +580,7 @@ mod tests {
     use crate::core::triangulation::Triangulation;
     use crate::geometry::kernel::FastKernel;
     use crate::triangulation::DelaunayTriangulation;
+    use crate::vertex;
     use approx::assert_relative_eq;
     use std::assert_matches;
 
@@ -638,7 +639,7 @@ let key_base = dt_base.simplices().next().unwrap().0;
 	                        // Scale by 10x
 	                        let vertices_scaled: Vec<_> = vertices_base.iter().map(|v| {
 	                            let coords: [f64; $dim] = std::array::from_fn(|idx| v.point().coords()[idx] * 10.0);
-	                            crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap()
+	                            vertex!(coords).unwrap()
 	                        }).collect();
                         let dt_scaled: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::try_new(&vertices_scaled).unwrap();
 let key_scaled = dt_scaled.simplices().next().unwrap().0;
@@ -662,7 +663,7 @@ let key_base = dt_base.simplices().next().unwrap().0;
 	                        // Translate by [5.0, 5.0, ...]
 	                        let vertices_translated: Vec<_> = vertices_base.iter().map(|v| {
 	                            let coords: [f64; $dim] = std::array::from_fn(|idx| v.point().coords()[idx] + 5.0);
-	                            crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap()
+	                            vertex!(coords).unwrap()
 	                        }).collect();
                         let dt_translated: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::try_new(&vertices_translated).unwrap();
 let key_translated = dt_translated.simplices().next().unwrap().0;
@@ -684,74 +685,74 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
     test_quality_dimensions! {
         quality_2d_unit => 2 => "unit simplex" =>
             vec![
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+                vertex!([0.0, 0.0]).unwrap(),
+                vertex!([1.0, 0.0]).unwrap(),
+                vertex!([0.0, 1.0]).unwrap(),
             ],
             2.0, 3.0,
 
         quality_2d_equilateral => 2 => "equilateral triangle" =>
             vec![
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.866_025]).unwrap(),
+                vertex!([0.0, 0.0]).unwrap(),
+                vertex!([1.0, 0.0]).unwrap(),
+                vertex!([0.5, 0.866_025]).unwrap(),
             ],
             1.9, 2.1,
 
         quality_2d_right => 2 => "right triangle" =>
             vec![
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([3.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 4.0]).unwrap(),
+                vertex!([0.0, 0.0]).unwrap(),
+                vertex!([3.0, 0.0]).unwrap(),
+                vertex!([0.0, 4.0]).unwrap(),
             ],
             2.0, 5.0,
 
         quality_3d_unit => 3 => "unit simplex" =>
             vec![
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+                vertex!([0.0, 0.0, 0.0]).unwrap(),
+                vertex!([1.0, 0.0, 0.0]).unwrap(),
+                vertex!([0.0, 1.0, 0.0]).unwrap(),
+                vertex!([0.0, 0.0, 1.0]).unwrap(),
             ],
             3.0, 5.0,
 
         quality_3d_regular => 3 => "regular tetrahedron" =>
             vec![
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.866_025, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.288_675, 0.816_497]).unwrap(),
+                vertex!([0.0, 0.0, 0.0]).unwrap(),
+                vertex!([1.0, 0.0, 0.0]).unwrap(),
+                vertex!([0.5, 0.866_025, 0.0]).unwrap(),
+                vertex!([0.5, 0.288_675, 0.816_497]).unwrap(),
             ],
             2.8, 3.2,
 
         quality_4d_unit => 4 => "unit simplex" =>
             vec![
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
+                vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+                vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+                vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+                vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+                vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
             ],
             4.0, 7.0,
 
         quality_4d_regular => 4 => "regular simplex" =>
             vec![
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.866_025, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.288_675, 0.816_497, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.288_675, 0.204_124, 0.790_569]).unwrap(),
+                vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+                vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+                vertex!([0.5, 0.866_025, 0.0, 0.0]).unwrap(),
+                vertex!([0.5, 0.288_675, 0.816_497, 0.0]).unwrap(),
+                vertex!([0.5, 0.288_675, 0.204_124, 0.790_569]).unwrap(),
             ],
             3.8, 4.2,
 
         quality_5d_unit => 5 => "unit simplex" =>
             vec![
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+                vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+                vertex!([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+                vertex!([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+                vertex!([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+                vertex!([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+                vertex!([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
             ],
             5.0, 15.0,
     }
@@ -764,9 +765,9 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
     fn test_degenerate_nearly_collinear() {
         // Nearly collinear points - tests both metrics
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.001]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([2.0, 0.001]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -921,9 +922,9 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
         // Both metrics should agree on relative quality
         // Good quality triangle (equilateral)
         let vertices_good = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.866_025]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.5, 0.866_025]).unwrap(),
         ];
         let dt_good: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices_good).unwrap();
@@ -931,9 +932,9 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
 
         // Poor quality triangle (very flat)
         let vertices_poor = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.01]).unwrap(), // Nearly flat
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.5, 0.01]).unwrap(), // Nearly flat
         ];
         let dt_poor: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices_poor).unwrap();
@@ -962,9 +963,9 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
         // Currently, collinear points are accepted during construction but produce
         // degenerate simplices with very poor quality metrics.
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(), // Collinear
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([2.0, 0.0]).unwrap(), // Collinear
         ];
         let dt_result: Result<
             DelaunayTriangulation<_, (), (), 2>,
@@ -991,9 +992,9 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
     fn test_quality_near_duplicate_vertices() {
         // Two vertices very close together
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.000_000_1, 0.000_000_1]).unwrap(), // Nearly duplicate
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([1.000_000_1, 0.000_000_1]).unwrap(), // Nearly duplicate
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -1009,9 +1010,9 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
     fn test_quality_mixed_scale_coordinates() {
         // Mix of large and small coordinates
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1e10, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1e-10, 1e10]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1e10, 0.0]).unwrap(),
+            vertex!([1e-10, 1e10]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -1034,13 +1035,13 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
     fn test_quality_6d_simplex() {
         // 6D simplex at unit hypercube corners
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 6> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -1079,54 +1080,54 @@ let simplex_key = dt.simplices().next().unwrap().0;
     test_poor_quality! {
         poor_quality_2d_flat => 2 => "very flat triangle" =>
             vec![
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([100.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([50.0, 0.1]).unwrap(),
+                vertex!([0.0, 0.0]).unwrap(),
+                vertex!([100.0, 0.0]).unwrap(),
+                vertex!([50.0, 0.1]).unwrap(),
             ],
             50.0,
 
         poor_quality_3d_nearly_coplanar => 3 => "nearly coplanar tetrahedron" =>
             vec![
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([10.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([5.0, 8.66, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([5.0, 2.89, 0.01]).unwrap(),
+                vertex!([0.0, 0.0, 0.0]).unwrap(),
+                vertex!([10.0, 0.0, 0.0]).unwrap(),
+                vertex!([5.0, 8.66, 0.0]).unwrap(),
+                vertex!([5.0, 2.89, 0.01]).unwrap(),
             ],
             30.0,
 
         poor_quality_4d_degenerate => 4 => "nearly 3D subspace" =>
             vec![
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.866, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.289, 0.816, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.289, 0.204, 0.001]).unwrap(),
+                vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+                vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+                vertex!([0.5, 0.866, 0.0, 0.0]).unwrap(),
+                vertex!([0.5, 0.289, 0.816, 0.0]).unwrap(),
+                vertex!([0.5, 0.289, 0.204, 0.001]).unwrap(),
             ],
             10.0,
 
         poor_quality_3d_sliver => 3 => "sliver tetrahedron" =>
             vec![
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.866_025, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.288_675, 0.001]).unwrap(),
+                vertex!([0.0, 0.0, 0.0]).unwrap(),
+                vertex!([1.0, 0.0, 0.0]).unwrap(),
+                vertex!([0.5, 0.866_025, 0.0]).unwrap(),
+                vertex!([0.5, 0.288_675, 0.001]).unwrap(),
             ],
             100.0,
 
         poor_quality_2d_needle => 2 => "needle triangle" =>
             vec![
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([100.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.1]).unwrap(),
+                vertex!([0.0, 0.0]).unwrap(),
+                vertex!([100.0, 0.0]).unwrap(),
+                vertex!([0.0, 0.1]).unwrap(),
             ],
             50.0,
 
         poor_quality_3d_cap => 3 => "cap tetrahedron" =>
             vec![
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.866_025, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.288_675, 10.0]).unwrap(),
+                vertex!([0.0, 0.0, 0.0]).unwrap(),
+                vertex!([1.0, 0.0, 0.0]).unwrap(),
+                vertex!([0.5, 0.866_025, 0.0]).unwrap(),
+                vertex!([0.5, 0.288_675, 10.0]).unwrap(),
             ],
             10.0,
     }
@@ -1139,9 +1140,9 @@ let simplex_key = dt.simplices().next().unwrap().0;
     fn test_quality_invalid_simplex_key() {
         // Create triangulation
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.866_025]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.5, 0.866_025]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -1196,9 +1197,9 @@ let simplex_key = dt.simplices().next().unwrap().0;
         // Test both ranking consistency and threshold validation in one test
         // Best: equilateral (good quality threshold)
         let vertices_best = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.866_025]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.5, 0.866_025]).unwrap(),
         ];
         let dt_best: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices_best).unwrap();
@@ -1206,9 +1207,9 @@ let simplex_key = dt.simplices().next().unwrap().0;
 
         // Medium: right triangle (acceptable quality)
         let vertices_medium = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([3.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 4.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([3.0, 0.0]).unwrap(),
+            vertex!([0.0, 4.0]).unwrap(),
         ];
         let dt_medium: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices_medium).unwrap();
@@ -1216,9 +1217,9 @@ let simplex_key = dt.simplices().next().unwrap().0;
 
         // Worst: very flat (poor quality)
         let vertices_worst = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([10.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([5.0, 0.1]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([10.0, 0.0]).unwrap(),
+            vertex!([5.0, 0.1]).unwrap(),
         ];
         let dt_worst: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices_worst).unwrap();
@@ -1252,9 +1253,9 @@ let simplex_key = dt.simplices().next().unwrap().0;
     fn test_special_triangles() {
         // Test right triangle
         let vertices_right = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt_right: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices_right).unwrap();
@@ -1264,9 +1265,9 @@ let simplex_key = dt.simplices().next().unwrap().0;
 
         // Test isosceles triangle
         let vertices_iso = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([2.0, 0.0]).unwrap(),
+            vertex!([1.0, 2.0]).unwrap(),
         ];
         let dt_iso: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices_iso).unwrap();
@@ -1287,9 +1288,9 @@ let simplex_key = dt.simplices().next().unwrap().0;
     fn test_simplex_points_valid() {
         // Test simplex_points helper with valid simplex
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.866_025]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.5, 0.866_025]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -1303,9 +1304,9 @@ let simplex_key = dt.simplices().next().unwrap().0;
     fn test_simplex_points_invalid_key() {
         // Test simplex_points with invalid simplex key
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.866_025]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.5, 0.866_025]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -1382,9 +1383,9 @@ let simplex_key = dt.simplices().next().unwrap().0;
     fn test_radius_ratio_wrong_vertex_count() {
         // Create a triangulation to test vertex count validation in radius_ratio
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.866_025]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.5, 0.866_025]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -1399,10 +1400,10 @@ let simplex_key = dt.simplices().next().unwrap().0;
     fn test_normalized_volume_wrong_vertex_count() {
         // Test normalized_volume with proper vertex count
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -1417,9 +1418,9 @@ let simplex_key = dt.simplices().next().unwrap().0;
     fn test_radius_ratio_numerical_edge_cases() {
         // Test with coordinates near numerical limits
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 1e-15]).unwrap(), // Very small but non-zero height
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.5, 1e-15]).unwrap(), // Very small but non-zero height
         ];
         let dt_result: Result<
             DelaunayTriangulation<_, (), (), 2>,
@@ -1455,10 +1456,10 @@ let simplex_key = dt.simplices().next().unwrap().0;
     fn test_normalized_volume_numerical_edge_cases() {
         // Test normalized_volume with numerical edge cases
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1e-14]).unwrap(), // Very small but non-zero
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1e-14]).unwrap(), // Very small but non-zero
         ];
         let dt_result: Result<
             DelaunayTriangulation<_, (), (), 3>,
@@ -1497,19 +1498,13 @@ let simplex_key = dt.simplices().next().unwrap().0;
     fn normalized_volume_uses_dimensionally_consistent_volume_threshold() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0e-30]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0e-30]).unwrap())
             .unwrap();
         let simplex_key = tds
             .insert_simplex_with_mapping(
@@ -1555,9 +1550,9 @@ let simplex_key = dt.simplices().next().unwrap().0;
     fn test_degenerate_simplex_error_details() {
         // Test that degenerate errors include helpful details when they occur.
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 1e-20]).unwrap(), // Nearly collinear
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([2.0, 1e-20]).unwrap(), // Nearly collinear
         ];
         let dt_result: Result<
             DelaunayTriangulation<_, (), (), 2>,

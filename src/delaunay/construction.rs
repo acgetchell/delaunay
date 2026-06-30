@@ -42,7 +42,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::builder::DelaunayTriangulationBuilder;
+use crate::builder::{DelaunayTriangulationBuilder, ExplicitConstructionError};
 use crate::core::algorithms::flips::{
     DelaunayRepairError, DelaunayRepairStats, FlipError, LocalRepairPhaseTiming,
     repair_delaunay_local_single_pass, repair_delaunay_local_single_pass_timed,
@@ -443,7 +443,7 @@ pub enum DelaunayTriangulationConstructionError {
 
     /// Input validation error from explicit combinatorial construction.
     #[error(transparent)]
-    ExplicitConstruction(#[from] crate::builder::ExplicitConstructionError),
+    ExplicitConstruction(#[from] ExplicitConstructionError),
 }
 
 impl From<TriangulationConstructionError> for DelaunayTriangulationConstructionError {
@@ -1510,6 +1510,79 @@ const fn default_batch_repair_policy() -> DelaunayRepairPolicy {
     DelaunayRepairPolicy::EveryInsertion
 }
 
+/// Final Level 5 policy for batch construction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FinalDelaunayEnforcement {
+    /// Run strict Delaunay repair/validation with the configured batch policy.
+    Strict {
+        /// Automatic local Delaunay repair cadence used during batch construction.
+        batch_repair_policy: DelaunayRepairPolicy,
+        /// Whether final bulk repair can fall back to a global repair pass.
+        use_global_repair_fallback: bool,
+    },
+    /// Return after Levels 1-4 validation without attempting Level 5 repair.
+    Disabled,
+}
+
+impl FinalDelaunayEnforcement {
+    const fn strict_default() -> Self {
+        Self::Strict {
+            batch_repair_policy: default_batch_repair_policy(),
+            use_global_repair_fallback: true,
+        }
+    }
+
+    const fn enforces_final_delaunay(self) -> bool {
+        matches!(self, Self::Strict { .. })
+    }
+
+    const fn batch_repair_policy(self) -> DelaunayRepairPolicy {
+        match self {
+            Self::Strict {
+                batch_repair_policy,
+                ..
+            } => batch_repair_policy,
+            Self::Disabled => DelaunayRepairPolicy::Never,
+        }
+    }
+
+    const fn use_global_repair_fallback(self) -> bool {
+        match self {
+            Self::Strict {
+                use_global_repair_fallback,
+                ..
+            } => use_global_repair_fallback,
+            Self::Disabled => false,
+        }
+    }
+
+    const fn with_batch_repair_policy(self, batch_repair_policy: DelaunayRepairPolicy) -> Self {
+        match self {
+            Self::Strict {
+                use_global_repair_fallback,
+                ..
+            } => Self::Strict {
+                batch_repair_policy,
+                use_global_repair_fallback,
+            },
+            Self::Disabled => Self::Disabled,
+        }
+    }
+
+    const fn without_global_repair_fallback(self) -> Self {
+        match self {
+            Self::Strict {
+                batch_repair_policy,
+                ..
+            } => Self::Strict {
+                batch_repair_policy,
+                use_global_repair_fallback: false,
+            },
+            Self::Disabled => Self::Disabled,
+        }
+    }
+}
+
 /// Options controlling batch construction behavior.
 ///
 /// Defaults prioritize strict [`DelaunayTriangulation`] construction: insertion
@@ -1525,10 +1598,7 @@ pub struct ConstructionOptions {
     pub(crate) dedup_policy: DedupPolicy,
     pub(crate) initial_simplex: InitialSimplexStrategy,
     pub(crate) retry_policy: RetryPolicy,
-    pub(crate) batch_repair_policy: DelaunayRepairPolicy,
-    pub(crate) enforce_final_delaunay: bool,
-    /// Whether final bulk repair can fall back to a global repair pass.
-    pub(crate) use_global_repair_fallback: bool,
+    pub(crate) final_delaunay: FinalDelaunayEnforcement,
 }
 
 impl Default for ConstructionOptions {
@@ -1538,9 +1608,7 @@ impl Default for ConstructionOptions {
             dedup_policy: DedupPolicy::default(),
             initial_simplex: InitialSimplexStrategy::default(),
             retry_policy: RetryPolicy::default(),
-            batch_repair_policy: default_batch_repair_policy(),
-            enforce_final_delaunay: true,
-            use_global_repair_fallback: true,
+            final_delaunay: FinalDelaunayEnforcement::strict_default(),
         }
     }
 }
@@ -1574,9 +1642,19 @@ impl ConstructionOptions {
     ///
     /// When final Level 5 Delaunay enforcement is disabled, construction does not
     /// run automatic Delaunay repair and this returns [`DelaunayRepairPolicy::Never`].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{ConstructionOptions, DelaunayRepairPolicy};
+    ///
+    /// let options = ConstructionOptions::default().without_final_delaunay_enforcement();
+    ///
+    /// assert_eq!(options.batch_repair_policy(), DelaunayRepairPolicy::Never);
+    /// ```
     #[must_use]
     pub const fn batch_repair_policy(&self) -> DelaunayRepairPolicy {
-        self.effective_batch_repair_policy()
+        self.final_delaunay.batch_repair_policy()
     }
 
     /// Returns whether construction enforces final Level 5 Delaunay validity.
@@ -1600,7 +1678,7 @@ impl ConstructionOptions {
     /// ```
     #[must_use]
     pub const fn enforces_final_delaunay(&self) -> bool {
-        self.enforce_final_delaunay
+        self.final_delaunay.enforces_final_delaunay()
     }
 
     /// Sets the input ordering strategy used for batch construction.
@@ -1641,14 +1719,30 @@ impl ConstructionOptions {
     /// Non-enforcing construction always reports and uses
     /// [`DelaunayRepairPolicy::Never`], so this setter is a no-op after
     /// [`without_final_delaunay_enforcement`](Self::without_final_delaunay_enforcement).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{ConstructionOptions, DelaunayRepairPolicy};
+    /// use std::num::NonZeroUsize;
+    ///
+    /// let every = NonZeroUsize::MIN;
+    /// let options = ConstructionOptions::default()
+    ///     .with_batch_repair_policy(DelaunayRepairPolicy::EveryN(every));
+    ///
+    /// assert_eq!(options.batch_repair_policy(), DelaunayRepairPolicy::EveryN(every));
+    ///
+    /// let non_enforcing = options.without_final_delaunay_enforcement();
+    /// assert_eq!(non_enforcing.batch_repair_policy(), DelaunayRepairPolicy::Never);
+    /// ```
     #[must_use]
     pub const fn with_batch_repair_policy(
         mut self,
         batch_repair_policy: DelaunayRepairPolicy,
     ) -> Self {
-        if self.enforce_final_delaunay {
-            self.batch_repair_policy = batch_repair_policy;
-        }
+        self.final_delaunay = self
+            .final_delaunay
+            .with_batch_repair_policy(batch_repair_policy);
         self
     }
 
@@ -1677,25 +1771,15 @@ impl ConstructionOptions {
     /// ```
     #[must_use]
     pub const fn without_final_delaunay_enforcement(mut self) -> Self {
-        self.batch_repair_policy = DelaunayRepairPolicy::Never;
-        self.enforce_final_delaunay = false;
+        self.final_delaunay = FinalDelaunayEnforcement::Disabled;
         self
     }
 
     /// Disables the D<4 global repair fallback.
     #[must_use]
     pub(crate) const fn without_global_repair_fallback(mut self) -> Self {
-        self.use_global_repair_fallback = false;
+        self.final_delaunay = self.final_delaunay.without_global_repair_fallback();
         self
-    }
-
-    /// Returns the batch repair policy that construction will actually apply.
-    pub(crate) const fn effective_batch_repair_policy(&self) -> DelaunayRepairPolicy {
-        if self.enforce_final_delaunay {
-            self.batch_repair_policy
-        } else {
-            DelaunayRepairPolicy::Never
-        }
     }
 }
 
@@ -2961,7 +3045,10 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # Errors
     /// Returns [`DelaunayTriangulationConstructionErrorWithStatistics`] if
     /// construction fails. The error includes partial statistics collected
-    /// before failure.
+    /// before failure. If
+    /// [`ConstructionOptions::without_final_delaunay_enforcement`] is selected,
+    /// construction still fails when Levels 1–4 validation fails; only final
+    /// Level 5 Delaunay repair and validation are skipped.
     ///
     /// # Examples
     ///
@@ -3019,7 +3106,10 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # Errors
     /// Returns [`DelaunayTriangulationConstructionErrorWithStatistics`] if
     /// construction fails. The error includes partial statistics collected
-    /// before failure.
+    /// before failure. If
+    /// [`ConstructionOptions::without_final_delaunay_enforcement`] is selected,
+    /// construction still fails when Levels 1–4 validation fails; only final
+    /// Level 5 Delaunay repair and validation are skipped.
     ///
     /// # Examples
     ///
@@ -3087,7 +3177,10 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// when skipped-input observability is required.
     ///
     /// # Errors
-    /// Returns an error if construction fails, or if the selected options are invalid.
+    /// Returns an error if construction fails, or if the selected options are
+    /// invalid. If [`ConstructionOptions::without_final_delaunay_enforcement`]
+    /// is selected, construction still fails when Levels 1–4 validation fails;
+    /// only final Level 5 Delaunay repair and validation are skipped.
     ///
     /// # Examples
     ///
@@ -3244,10 +3337,6 @@ where
         clippy::too_many_lines,
         reason = "construction retry flow keeps seed selection, validation, and diagnostics together"
     )]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "private construction retry helper threads orthogonal batch knobs explicitly"
-    )]
     pub(crate) fn build_with_shuffled_retries(
         kernel: &K,
         vertices: &[Vertex<U, D>],
@@ -3255,11 +3344,10 @@ where
         attempts: NonZeroUsize,
         base_seed: Option<u64>,
         grid_cell_size: Option<f64>,
-        batch_repair_policy: DelaunayRepairPolicy,
-        enforce_final_delaunay: bool,
-        use_global_repair_fallback: bool,
+        final_delaunay: FinalDelaunayEnforcement,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
         let base_seed = base_seed.unwrap_or_else(|| Self::construction_shuffle_seed(vertices));
+        let enforce_final_delaunay = final_delaunay.enforces_final_delaunay();
 
         #[cfg(debug_assertions)]
         let log_shuffle = env::var_os("DELAUNAY_DEBUG_SHUFFLE").is_some();
@@ -3281,10 +3369,8 @@ where
             vertices,
             topology_guarantee,
             0_u64,
-            enforce_final_delaunay,
             grid_cell_size,
-            batch_repair_policy,
-            use_global_repair_fallback,
+            final_delaunay,
         ) {
             Ok(candidate) => {
                 if !enforce_final_delaunay {
@@ -3376,10 +3462,8 @@ where
                 &shuffled,
                 topology_guarantee,
                 perturbation_seed,
-                enforce_final_delaunay,
                 grid_cell_size,
-                batch_repair_policy,
-                use_global_repair_fallback,
+                final_delaunay,
             ) {
                 Ok(candidate) => {
                     if !enforce_final_delaunay {
@@ -3486,10 +3570,6 @@ where
         clippy::result_large_err,
         reason = "Internal helper propagates public by-value construction-statistics error type"
     )]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "statistics retry helper mirrors the non-statistics construction path"
-    )]
     pub(crate) fn build_with_shuffled_retries_with_construction_statistics(
         kernel: &K,
         vertices: &[Vertex<U, D>],
@@ -3497,12 +3577,11 @@ where
         attempts: NonZeroUsize,
         base_seed: Option<u64>,
         grid_cell_size: Option<f64>,
-        batch_repair_policy: DelaunayRepairPolicy,
-        enforce_final_delaunay: bool,
-        use_global_repair_fallback: bool,
+        final_delaunay: FinalDelaunayEnforcement,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
         let base_seed = base_seed.unwrap_or_else(|| Self::construction_shuffle_seed(vertices));
+        let enforce_final_delaunay = final_delaunay.enforces_final_delaunay();
 
         #[cfg(debug_assertions)]
         let log_shuffle = env::var_os("DELAUNAY_DEBUG_SHUFFLE").is_some();
@@ -3528,10 +3607,8 @@ where
                 vertices,
                 topology_guarantee,
                 0_u64,
-                enforce_final_delaunay,
                 grid_cell_size,
-                batch_repair_policy,
-                use_global_repair_fallback,
+                final_delaunay,
             ) {
                 Ok((candidate, mut stats)) => {
                     if !enforce_final_delaunay {
@@ -3667,10 +3744,8 @@ where
                 &shuffled,
                 topology_guarantee,
                 perturbation_seed,
-                enforce_final_delaunay,
                 grid_cell_size,
-                batch_repair_policy,
-                use_global_repair_fallback,
+                final_delaunay,
             ) {
                 Ok((candidate, mut stats)) => {
                     if !enforce_final_delaunay {
@@ -3798,20 +3873,17 @@ where
         vertices: &[Vertex<U, D>],
         topology_guarantee: TopologyGuarantee,
         grid_cell_size: Option<f64>,
-        batch_repair_policy: DelaunayRepairPolicy,
-        enforce_final_delaunay: bool,
-        use_global_repair_fallback: bool,
+        final_delaunay: FinalDelaunayEnforcement,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
         let dt = Self::build_with_kernel_inner_seeded(
             kernel,
             vertices,
             topology_guarantee,
             0,
-            enforce_final_delaunay,
             grid_cell_size,
-            batch_repair_policy,
-            use_global_repair_fallback,
+            final_delaunay,
         )?;
+        let enforce_final_delaunay = final_delaunay.enforces_final_delaunay();
 
         // `DelaunayCheckPolicy::EndOnly`: always run a final global Delaunay validation pass after
         // batch construction.
@@ -3848,9 +3920,7 @@ where
         vertices: &[Vertex<U, D>],
         topology_guarantee: TopologyGuarantee,
         grid_cell_size: Option<f64>,
-        batch_repair_policy: DelaunayRepairPolicy,
-        enforce_final_delaunay: bool,
-        use_global_repair_fallback: bool,
+        final_delaunay: FinalDelaunayEnforcement,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
         let (dt, mut stats) = Self::build_with_kernel_inner_seeded_with_construction_statistics(
@@ -3858,11 +3928,10 @@ where
             vertices,
             topology_guarantee,
             0,
-            enforce_final_delaunay,
             grid_cell_size,
-            batch_repair_policy,
-            use_global_repair_fallback,
+            final_delaunay,
         )?;
+        let enforce_final_delaunay = final_delaunay.enforces_final_delaunay();
 
         // `DelaunayCheckPolicy::EndOnly`: always run a final global Delaunay validation pass after
         // batch construction.
@@ -3903,21 +3972,19 @@ where
         clippy::result_large_err,
         reason = "Internal helper propagates public by-value construction-statistics error type"
     )]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "seeded construction helper carries retry, repair, and validation knobs"
-    )]
     fn build_with_kernel_inner_seeded_with_construction_statistics(
         kernel: K,
         vertices: &[Vertex<U, D>],
         topology_guarantee: TopologyGuarantee,
         perturbation_seed: u64,
-        run_final_repair: bool,
         grid_cell_size: Option<f64>,
-        batch_repair_policy: DelaunayRepairPolicy,
-        use_global_repair_fallback: bool,
+        final_delaunay: FinalDelaunayEnforcement,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
+        let batch_repair_policy = final_delaunay.batch_repair_policy();
+        let run_final_repair = final_delaunay.enforces_final_delaunay();
+        let use_global_repair_fallback = final_delaunay.use_global_repair_fallback();
+
         if vertices.len() < D + 1 {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                 error: TriangulationConstructionError::InsufficientVertices {
@@ -4044,20 +4111,18 @@ where
 
     /// Implements the non-statistics seeded construction core for callers that
     /// only need the triangulation.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "seeded construction helper carries retry, repair, and validation knobs"
-    )]
     fn build_with_kernel_inner_seeded(
         kernel: K,
         vertices: &[Vertex<U, D>],
         topology_guarantee: TopologyGuarantee,
         perturbation_seed: u64,
-        run_final_repair: bool,
         grid_cell_size: Option<f64>,
-        batch_repair_policy: DelaunayRepairPolicy,
-        use_global_repair_fallback: bool,
+        final_delaunay: FinalDelaunayEnforcement,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
+        let batch_repair_policy = final_delaunay.batch_repair_policy();
+        let run_final_repair = final_delaunay.enforces_final_delaunay();
+        let use_global_repair_fallback = final_delaunay.use_global_repair_fallback();
+
         if vertices.len() < D + 1 {
             return Err(TriangulationConstructionError::InsufficientVertices {
                 dimension: D,
@@ -5101,7 +5166,10 @@ where
     ///
     /// # Errors
     /// Returns an error if construction fails, if validation fails, or if the
-    /// selected preprocessing options are invalid.
+    /// selected preprocessing options are invalid. If
+    /// [`ConstructionOptions::without_final_delaunay_enforcement`] is selected,
+    /// construction still fails when Levels 1–4 validation fails; only final
+    /// Level 5 Delaunay repair and validation are skipped.
     ///
     /// # Examples
     ///
@@ -5136,15 +5204,12 @@ where
         topology_guarantee: TopologyGuarantee,
         options: ConstructionOptions,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
-        let batch_repair_policy = options.effective_batch_repair_policy();
         let ConstructionOptions {
             insertion_order,
             dedup_policy,
             initial_simplex,
             retry_policy,
-            enforce_final_delaunay,
-            use_global_repair_fallback,
-            ..
+            final_delaunay,
         } = options;
 
         let preprocessed = Self::preprocess_vertices_for_construction(
@@ -5172,9 +5237,7 @@ where
                             attempts,
                             base_seed,
                             grid_cell_size,
-                            batch_repair_policy,
-                            enforce_final_delaunay,
-                            use_global_repair_fallback,
+                            final_delaunay,
                         );
                     }
                 }
@@ -5192,9 +5255,7 @@ where
                             attempts,
                             base_seed,
                             grid_cell_size,
-                            batch_repair_policy,
-                            enforce_final_delaunay,
-                            use_global_repair_fallback,
+                            final_delaunay,
                         );
                     }
                 }
@@ -5205,9 +5266,7 @@ where
                 vertices,
                 topology_guarantee,
                 grid_cell_size,
-                batch_repair_policy,
-                enforce_final_delaunay,
-                use_global_repair_fallback,
+                final_delaunay,
             )
         };
 
@@ -5232,7 +5291,10 @@ where
     /// # Errors
     /// Returns [`DelaunayTriangulationConstructionErrorWithStatistics`] if
     /// construction fails. The error includes the partial statistics collected
-    /// before failure.
+    /// before failure. If
+    /// [`ConstructionOptions::without_final_delaunay_enforcement`] is selected,
+    /// construction still fails when Levels 1–4 validation fails; only final
+    /// Level 5 Delaunay repair and validation are skipped.
     ///
     /// # Examples
     ///
@@ -5283,15 +5345,12 @@ where
         options: ConstructionOptions,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
-        let batch_repair_policy = options.effective_batch_repair_policy();
         let ConstructionOptions {
             insertion_order,
             dedup_policy,
             initial_simplex,
             retry_policy,
-            enforce_final_delaunay,
-            use_global_repair_fallback,
-            ..
+            final_delaunay,
         } = options;
 
         let preprocessing_started = Instant::now();
@@ -5335,9 +5394,7 @@ where
                             attempts,
                             base_seed,
                             grid_cell_size,
-                            batch_repair_policy,
-                            enforce_final_delaunay,
-                            use_global_repair_fallback,
+                            final_delaunay,
                         );
                     }
                 }
@@ -5355,9 +5412,7 @@ where
                             attempts,
                             base_seed,
                             grid_cell_size,
-                            batch_repair_policy,
-                            enforce_final_delaunay,
-                            use_global_repair_fallback,
+                            final_delaunay,
                         );
                     }
                 }
@@ -5368,9 +5423,7 @@ where
                 vertices,
                 topology_guarantee,
                 grid_cell_size,
-                batch_repair_policy,
-                enforce_final_delaunay,
-                use_global_repair_fallback,
+                final_delaunay,
             )
         };
 
@@ -6064,10 +6117,10 @@ mod tests {
     fn test_finalize_bulk_construction_validates_pseudomanifold_topology() {
         init_tracing();
         let vertices: Vec<Vertex<(), 2>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 2.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([2.0, 0.0]).unwrap(),
+            vertex!([0.0, 2.0]).unwrap(),
+            vertex!([2.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::try_new_with_topology_guarantee(
             &vertices,
@@ -6229,9 +6282,9 @@ mod tests {
     fn test_with_kernel_fast_kernel() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
 
         let dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
@@ -6245,9 +6298,9 @@ mod tests {
     fn test_with_kernel_robust_kernel() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
 
         let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 2> =
@@ -6260,10 +6313,7 @@ mod tests {
     #[test]
     fn test_with_kernel_insufficient_vertices_2d() {
         init_tracing();
-        let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        ];
+        let vertices = vec![vertex!([0.0, 0.0]).unwrap(), vertex!([1.0, 0.0]).unwrap()];
 
         let result: Result<DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2>, _> =
             DelaunayTriangulation::try_with_kernel(&AdaptiveKernel::new(), &vertices);
@@ -6280,9 +6330,9 @@ mod tests {
     fn test_with_kernel_insufficient_vertices_3d() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
         ];
 
         let result: Result<DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>, _> =
@@ -6300,9 +6350,9 @@ mod tests {
     fn test_with_kernel_aborts_on_duplicate_uuid_in_insertion_loop() {
         init_tracing();
         let mut vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 2.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([2.0, 0.0]).unwrap(),
+            vertex!([0.0, 2.0]).unwrap(),
         ];
 
         let dup_uuid = vertices[0].uuid();
@@ -6332,11 +6382,11 @@ mod tests {
     fn test_batch_3d_construction_with_extra_vertex_triggers_incremental_repair() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.3, 0.3]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.3, 0.3, 0.3]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -6348,11 +6398,11 @@ mod tests {
     fn test_batch_3d_construction_statistics_with_extra_vertex_triggers_incremental_repair() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.3, 0.3]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.3, 0.3, 0.3]).unwrap(),
         ];
         let (dt, stats) =
             DelaunayTriangulation::<_, (), (), 3>::try_new_with_construction_statistics(&vertices)
@@ -6366,13 +6416,13 @@ mod tests {
     fn test_batch_4d_forced_nonconvergent_local_repair_canonicalizes_without_stats() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.35, 0.25, 0.15, 0.3]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.2, 0.2, 0.2, 0.2]).unwrap(),
+            vertex!([0.35, 0.25, 0.15, 0.3]).unwrap(),
         ];
 
         let _guard = ForceRepairNonconvergentGuard::enable();
@@ -6390,13 +6440,13 @@ mod tests {
     fn test_batch_4d_forced_nonconvergent_local_repair_canonicalizes_with_stats() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.35, 0.25, 0.15, 0.3]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.2, 0.2, 0.2, 0.2]).unwrap(),
+            vertex!([0.35, 0.25, 0.15, 0.3]).unwrap(),
         ];
 
         let _guard = ForceRepairNonconvergentGuard::enable();
@@ -6421,13 +6471,13 @@ mod tests {
     fn test_batch_4d_every_n_repair_cadence_runs_with_pending_seeds() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.35, 0.25, 0.15, 0.3]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.2, 0.2, 0.2, 0.2]).unwrap(),
+            vertex!([0.35, 0.25, 0.15, 0.3]).unwrap(),
         ];
 
         test_hooks::reset_batch_local_repair_calls();
@@ -6504,16 +6554,16 @@ mod tests {
     #[test]
     fn construction_options_global_repair_fallback_toggle() {
         let default_opts = ConstructionOptions::default();
-        assert!(default_opts.use_global_repair_fallback);
+        assert!(default_opts.final_delaunay.use_global_repair_fallback());
 
         let disabled_opts = default_opts.without_global_repair_fallback();
-        assert!(!disabled_opts.use_global_repair_fallback);
+        assert!(!disabled_opts.final_delaunay.use_global_repair_fallback());
 
         let chained_opts = ConstructionOptions::default()
             .with_insertion_order(InsertionOrderStrategy::Input)
             .without_global_repair_fallback()
             .with_retry_policy(RetryPolicy::Disabled);
-        assert!(!chained_opts.use_global_repair_fallback);
+        assert!(!chained_opts.final_delaunay.use_global_repair_fallback());
         assert_eq!(
             chained_opts.insertion_order(),
             InsertionOrderStrategy::Input
@@ -6709,8 +6759,7 @@ mod tests {
     #[test]
     fn test_vertex_coords_f64_converts_f64_vertex_coords() {
         init_tracing();
-        let vertex: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([1.25, -2.5, 3.75]).unwrap();
+        let vertex: Vertex<(), 3> = vertex!([1.25, -2.5, 3.75]).unwrap();
 
         assert_eq!(vertex_coords_f64(&vertex), Some(vec![1.25, -2.5, 3.75]));
     }
@@ -6730,9 +6779,9 @@ mod tests {
     fn order_vertices_input_preserves_order() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            vertex!([2.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
         ];
         let expected = coord_sequence_2d(&vertices);
 
@@ -6745,10 +6794,10 @@ mod tests {
     fn preprocess_hilbert_with_dedup_off_preserves_duplicate_vertices() {
         init_tracing();
         let vertices: Vec<Vertex<(), 2>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
         ];
 
         let preprocess = TestDelaunay::<2>::preprocess_vertices_for_construction(
@@ -6766,10 +6815,10 @@ mod tests {
     fn dedup_exact_sorted_without_grid() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
 
         let unique = dedup_vertices_exact_sorted(vertices);
@@ -6784,9 +6833,9 @@ mod tests {
     fn dedup_exact_grid_fallback() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
         ];
         let mut grid = HashGridIndex::<2, usize>::try_new(1.0e-10).unwrap();
 
@@ -6795,8 +6844,8 @@ mod tests {
         assert_eq!(coord_sequence_2d(&unique), vec![[0.0, 0.0], [1.0, 0.0]]);
 
         let vertices_6d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
         ];
         let mut unusable_grid = HashGridIndex::<6, usize>::try_new(1.0e-10).unwrap();
 
@@ -6809,27 +6858,25 @@ mod tests {
     fn epsilon_dedup_quantized_paths() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.09, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([0.09, 0.0]).unwrap(),
+            vertex!([0.25, 0.0]).unwrap(),
         ];
 
         let unique = dedup_vertices_epsilon_quantized(vertices, 0.1);
 
         assert_eq!(coord_sequence_2d(&unique), vec![[0.0, 0.0], [0.25, 0.0]]);
 
-        let zero_epsilon_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        ];
+        let zero_epsilon_vertices =
+            vec![vertex!([0.0, 0.0]).unwrap(), vertex!([0.0, 0.0]).unwrap()];
         let zero_epsilon_unique = dedup_vertices_epsilon_quantized(zero_epsilon_vertices, 0.0);
         assert_eq!(zero_epsilon_unique.len(), 2);
 
         assert!(Point::<2>::try_new([f64::NAN, 0.0]).is_err());
 
         let vertices_6d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.01, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.01, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
         ];
         let fallback_unique = dedup_vertices_epsilon_quantized(vertices_6d, 0.1);
         assert_eq!(fallback_unique.len(), 1);
@@ -6839,9 +6886,9 @@ mod tests {
     fn dedup_epsilon_grid_fallback() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.05, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([0.05, 0.0]).unwrap(),
+            vertex!([0.25, 0.0]).unwrap(),
         ];
         let mut grid = HashGridIndex::<2, usize>::try_new(0.1).unwrap();
 
@@ -6849,10 +6896,7 @@ mod tests {
 
         assert_eq!(coord_sequence_2d(&unique), vec![[0.0, 0.0], [0.25, 0.0]]);
 
-        let fallback_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.05, 0.0]).unwrap(),
-        ];
+        let fallback_vertices = vec![vertex!([0.0, 0.0]).unwrap(), vertex!([0.05, 0.0]).unwrap()];
         let mut unusable_grid = HashGridIndex::<2, usize>::try_new(0.1).unwrap();
         unusable_grid.remove_vertex(&0, &[f64::NAN, 0.0]);
 
@@ -6866,9 +6910,9 @@ mod tests {
     fn preprocess_falls_back_when_grid_unusable() {
         init_tracing();
         let exact_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
         ];
 
         let exact = TestDelaunay::<6>::preprocess_vertices_for_construction(
@@ -6883,9 +6927,9 @@ mod tests {
         assert!(exact.grid_cell_size().is_none());
 
         let epsilon_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.01, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.01, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.5, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
         ];
 
         let epsilon = TestDelaunay::<6>::preprocess_vertices_for_construction(
@@ -6904,9 +6948,9 @@ mod tests {
     fn preprocess_zero_epsilon_keeps_base() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
         ];
 
         let preprocess = TestDelaunay::<3>::preprocess_vertices_for_construction(
@@ -6965,10 +7009,7 @@ mod tests {
     #[test]
     fn hilbert_fallback_for_unsupported_dim() {
         init_tracing();
-        let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0; 17]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0; 17]).unwrap(),
-        ];
+        let vertices = vec![vertex!([1.0; 17]).unwrap(), vertex!([0.0; 17]).unwrap()];
 
         let ordered = order_vertices_hilbert(vertices, true);
 
@@ -6980,9 +7021,9 @@ mod tests {
     fn test_select_balanced_simplex_indices_insufficient_vertices() {
         init_tracing();
         let vertices: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
         ];
 
         let result = select_balanced_simplex_indices(&vertices);
@@ -7000,7 +7041,7 @@ mod tests {
             #[test]
             fn $test_name() {
                 init_tracing();
-                let vertices: Vec<Vertex<(), $dimension>> = vec![$(crate::core::vertex::Vertex::<(), _>::try_new($coords).unwrap()),+];
+                let vertices: Vec<Vertex<(), $dimension>> = vec![$(vertex!($coords).unwrap()),+];
 
                 let result = select_max_volume_simplex_indices(&vertices)
                     .expect("max-volume simplex selection failed");
@@ -7086,10 +7127,10 @@ mod tests {
     fn test_select_max_volume_simplex_indices_rejects_degenerate_pool() {
         init_tracing();
         let vertices: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([3.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([2.0, 0.0, 0.0]).unwrap(),
+            vertex!([3.0, 0.0, 0.0]).unwrap(),
         ];
 
         let result = select_max_volume_simplex_indices(&vertices);
@@ -7100,11 +7141,11 @@ mod tests {
     fn test_reorder_vertices_for_simplex_valid_and_invalid() {
         init_tracing();
         let vertices: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 2.0, 2.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([2.0, 2.0, 2.0]).unwrap(),
         ];
 
         let indices = [2_usize, 0, 3, 1];
@@ -7134,11 +7175,11 @@ mod tests {
     fn test_preprocess_vertices_for_construction_balanced_sets_fallback() {
         init_tracing();
         let vertices: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 2.0, 2.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([2.0, 2.0, 2.0]).unwrap(),
         ];
 
         let preprocess = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::preprocess_vertices_for_construction(
@@ -7159,13 +7200,13 @@ mod tests {
     fn test_preprocess_vertices_for_construction_max_volume_sets_largest_simplex_first() {
         init_tracing();
         let vertices: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([10.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 10.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 10.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([10.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 10.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 10.0]).unwrap(),
         ];
 
         let preprocess = DelaunayTriangulation::<
@@ -7245,7 +7286,7 @@ mod tests {
     ) -> Vec<Vertex<(), 3>> {
         permutation
             .iter()
-            .map(|&i| crate::core::vertex::Vertex::<(), _>::try_new(coords[i]).unwrap())
+            .map(|&i| vertex!(coords[i]).unwrap())
             .collect()
     }
 
@@ -7254,13 +7295,13 @@ mod tests {
         init_tracing();
         // Test that epsilon-based deduplication removes near-duplicates
         let vertices: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.25, 0.25]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.25, 0.25, 0.25]).unwrap(),
             // Near-duplicate within tolerance 1e-10
-            crate::core::vertex::Vertex::<(), _>::try_new([0.25 + 5e-11, 0.25, 0.25]).unwrap(),
+            vertex!([0.25 + 5e-11, 0.25, 0.25]).unwrap(),
         ];
 
         let opts = ConstructionOptions::default()
@@ -7325,11 +7366,11 @@ mod tests {
     /// Build D+1 standard simplex vertices: origin + D unit vectors.
     fn simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
         let mut verts = Vec::with_capacity(D + 1);
-        verts.push(crate::core::vertex::Vertex::<(), _>::try_new([0.0; D]).unwrap());
+        verts.push(vertex!([0.0; D]).unwrap());
         for i in 0..D {
             let mut coords = [0.0; D];
             coords[i] = 1.0;
-            verts.push(crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap());
+            verts.push(vertex!(coords).unwrap());
         }
         verts
     }
@@ -7339,10 +7380,10 @@ mod tests {
         let mut verts = simplex_vertices::<D>();
         let distinct = verts.len();
         // Duplicate the origin and first unit vector
-        verts.push(crate::core::vertex::Vertex::<(), _>::try_new([0.0; D]).unwrap());
+        verts.push(vertex!([0.0; D]).unwrap());
         let mut unit = [0.0; D];
         unit[0] = 1.0;
-        verts.push(crate::core::vertex::Vertex::<(), _>::try_new(unit).unwrap());
+        verts.push(vertex!(unit).unwrap());
         (verts, distinct)
     }
 
@@ -7351,7 +7392,7 @@ mod tests {
         let mut verts = simplex_vertices::<D>();
         let dimension = safe_usize_to_scalar(D).expect("test dimensions fit in f64");
         let interior = [0.1_f64 / dimension; D];
-        verts.push(crate::core::vertex::Vertex::<(), _>::try_new(interior).unwrap());
+        verts.push(vertex!(interior).unwrap());
         verts
     }
 
@@ -7399,9 +7440,9 @@ mod tests {
                 fn [<test_hilbert_sort_dedup_all_identical_ $dim d>]() {
                     init_tracing();
                     let vertices: Vec<Vertex<(), $dim>> = vec![
-                        crate::core::vertex::Vertex::<(), _>::try_new([0.5; $dim]).unwrap(),
-                        crate::core::vertex::Vertex::<(), _>::try_new([0.5; $dim]).unwrap(),
-                        crate::core::vertex::Vertex::<(), _>::try_new([0.5; $dim]).unwrap(),
+                        vertex!([0.5; $dim]).unwrap(),
+                        vertex!([0.5; $dim]).unwrap(),
+                        vertex!([0.5; $dim]).unwrap(),
                     ];
                     let result = order_vertices_hilbert(vertices, true);
                     assert_eq!(
@@ -7433,8 +7474,7 @@ mod tests {
 
     #[test]
     fn test_hilbert_dedup_single_vertex() {
-        let vertices: Vec<Vertex<(), 3>> =
-            vec![crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap()];
+        let vertices: Vec<Vertex<(), 3>> = vec![vertex!([1.0, 2.0, 3.0]).unwrap()];
         let result = order_vertices_hilbert(vertices, true);
         assert_eq!(result.len(), 1, "single vertex must be preserved");
     }
@@ -7443,10 +7483,10 @@ mod tests {
     fn test_hilbert_dedup_already_unique() {
         // Distinct vertices — dedup should be a no-op.
         let vertices: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let n = vertices.len();
         let result = order_vertices_hilbert(vertices, true);
@@ -7457,11 +7497,11 @@ mod tests {
     fn test_try_new_with_options_hilbert_smoke_3d() {
         init_tracing();
         let vertices: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.25, 0.25]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.25, 0.25, 0.25]).unwrap(),
         ];
 
         let opts = ConstructionOptions::default()
@@ -7479,11 +7519,11 @@ mod tests {
     fn test_try_new_with_options_shuffled_retry_policy_smoke_3d() {
         init_tracing();
         let vertices: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.25, 0.25]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.25, 0.25, 0.25]).unwrap(),
         ];
 
         let opts = ConstructionOptions::default()
@@ -7504,10 +7544,10 @@ mod tests {
     fn test_try_new_with_options_smoke_3d() {
         init_tracing();
         let vertices: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let opts = ConstructionOptions::default().with_retry_policy(RetryPolicy::Disabled);
@@ -7580,7 +7620,7 @@ mod tests {
     fn assert_duplicate_skip_statistics<const D: usize>() {
         init_tracing();
         let mut vertices = simplex_vertices::<D>();
-        vertices.push(Vertex::<(), _>::try_new([0.0; D]).unwrap());
+        vertices.push(vertex!([0.0; D]).unwrap());
         let duplicate_index = vertices.len() - 1;
         let duplicate_uuid = vertices[duplicate_index].uuid();
 
@@ -7650,9 +7690,9 @@ mod tests {
     fn test_new_with_topology_guarantee_sets_pl() {
         init_tracing();
         let vertices: Vec<Vertex<(), 2>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 2> =

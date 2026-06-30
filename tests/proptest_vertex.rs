@@ -57,15 +57,15 @@ macro_rules! test_vertex_properties {
                 /// Property: Vertex equality is reflexive (v == v)
                 #[test]
                 fn [<prop_vertex_equality_reflexive_ $dim d>](coords in prop::array::[<uniform $dim>](finite_coordinate())) {
-                    let vertex: Vertex<(), $dim> = delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap();
+                    let vertex: Vertex<(), $dim> = Vertex::<(), _>::try_new(coords).unwrap();
                     prop_assert_eq!(vertex, vertex, "{}D: Vertex should equal itself", $dim);
                 }
 
                 /// Property: Vertex equality is symmetric (v1 == v2 implies v2 == v1)
                 #[test]
                 fn [<prop_vertex_equality_symmetric_ $dim d>](coords in prop::array::[<uniform $dim>](finite_coordinate())) {
-                    let v1: Vertex<(), $dim> = delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap();
-                    let v2: Vertex<(), $dim> = delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap();
+                    let v1: Vertex<(), $dim> = Vertex::<(), _>::try_new(coords).unwrap();
+                    let v2: Vertex<(), $dim> = Vertex::<(), _>::try_new(coords).unwrap();
                     prop_assert_eq!(v1, v2, "{}D: Vertices with same coords should be equal", $dim);
                     prop_assert_eq!(v2, v1, "{}D: Equality should be symmetric", $dim);
                 }
@@ -73,9 +73,9 @@ macro_rules! test_vertex_properties {
                 /// Property: Vertex equality is transitive (v1 == v2 and v2 == v3 implies v1 == v3)
                 #[test]
                 fn [<prop_vertex_equality_transitive_ $dim d>](coords in prop::array::[<uniform $dim>](finite_coordinate())) {
-                    let v1: Vertex<(), $dim> = delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap();
-                    let v2: Vertex<(), $dim> = delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap();
-                    let v3: Vertex<(), $dim> = delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap();
+                    let v1: Vertex<(), $dim> = Vertex::<(), _>::try_new(coords).unwrap();
+                    let v2: Vertex<(), $dim> = Vertex::<(), _>::try_new(coords).unwrap();
+                    let v3: Vertex<(), $dim> = Vertex::<(), _>::try_new(coords).unwrap();
 
                     prop_assert_eq!(v1, v2, "{}D: v1 should equal v2", $dim);
                     prop_assert_eq!(v2, v3, "{}D: v2 should equal v3", $dim);
@@ -85,8 +85,8 @@ macro_rules! test_vertex_properties {
                 /// Property: Equal vertices have equal hashes (Eq/Hash contract)
                 #[test]
                 fn [<prop_vertex_hash_consistency_ $dim d>](coords in prop::array::[<uniform $dim>](finite_coordinate())) {
-                    let v1: Vertex<(), $dim> = delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap();
-                    let v2: Vertex<(), $dim> = delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap();
+                    let v1: Vertex<(), $dim> = Vertex::<(), _>::try_new(coords).unwrap();
+                    let v2: Vertex<(), $dim> = Vertex::<(), _>::try_new(coords).unwrap();
 
                     prop_assert_eq!(v1, v2, "{}D: Vertices should be equal", $dim);
 
@@ -101,8 +101,8 @@ macro_rules! test_vertex_properties {
                 /// Property: Vertices with different coordinates have different equality
                 #[test]
                 fn [<prop_vertex_inequality_ $dim d>](coords1 in prop::array::[<uniform $dim>](finite_coordinate()), coords2 in prop::array::[<uniform $dim>](finite_coordinate())) {
-                    let v1: Vertex<(), $dim> = delaunay::prelude::Vertex::<(), _>::try_new(coords1).unwrap();
-                    let v2: Vertex<(), $dim> = delaunay::prelude::Vertex::<(), _>::try_new(coords2).unwrap();
+                    let v1: Vertex<(), $dim> = Vertex::<(), _>::try_new(coords1).unwrap();
+                    let v2: Vertex<(), $dim> = Vertex::<(), _>::try_new(coords2).unwrap();
 
                     // If coordinates differ (component-wise), vertices should not be equal
                     if coords1.iter().zip(coords2.iter()).any(|(a, b)| (a - b).abs() > 1e-12) {
@@ -115,7 +115,7 @@ macro_rules! test_vertex_properties {
                 fn [<prop_vertex_uuid_uniqueness_ $dim d>](coords_list in prop::collection::vec(prop::array::[<uniform $dim>](finite_coordinate()), 1..=20_usize)) {
                     let vertices: Vec<Vertex<(), $dim>> = coords_list
                         .into_iter()
-                        .map(|coords| delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap())
+                        .map(|coords| Vertex::<(), _>::try_new(coords).unwrap())
                         .collect();
 
                     let mut seen_uuids = HashSet::new();
@@ -142,13 +142,13 @@ macro_rules! test_vertex_properties {
 
                     // Insert vertices with their indices
                     for (i, coords) in coords_list.iter().enumerate() {
-                        let vertex: Vertex<(), $dim> = delaunay::prelude::Vertex::<(), _>::try_new(*coords).unwrap();
+                        let vertex: Vertex<(), $dim> = Vertex::<(), _>::try_new(*coords).unwrap();
                         map.insert(vertex, i);
                     }
 
                     // Lookup using new vertices with same coordinates
                     for (expected_index, coords) in coords_list.iter().enumerate() {
-                        let lookup_vertex: Vertex<(), $dim> = delaunay::prelude::Vertex::<(), _>::try_new(*coords).unwrap();
+                        let lookup_vertex: Vertex<(), $dim> = Vertex::<(), _>::try_new(*coords).unwrap();
                         if let Some(&actual_index) = map.get(&lookup_vertex) {
                             prop_assert_eq!(
                                 actual_index,
@@ -168,14 +168,14 @@ macro_rules! test_vertex_properties {
                 /// Property: Vertex dimension matches const parameter
                 #[test]
                 fn [<prop_vertex_dimension_ $dim d>](coords in prop::array::[<uniform $dim>](finite_coordinate())) {
-                    let vertex: Vertex<(), $dim> = delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap();
+                    let vertex: Vertex<(), $dim> = Vertex::<(), _>::try_new(coords).unwrap();
                     prop_assert_eq!(vertex.dim(), $dim, "{}D: Vertex dimension should match D", $dim);
                 }
 
                 /// Property: Valid vertices pass validation
                 #[test]
                 fn [<prop_vertex_validation_ $dim d>](coords in prop::array::[<uniform $dim>](finite_coordinate())) {
-                    let vertex: Vertex<(), $dim> = delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap();
+                    let vertex: Vertex<(), $dim> = Vertex::<(), _>::try_new(coords).unwrap();
                     prop_assert!(
                         vertex.is_valid().is_ok(),
                         "{}D: Vertex with finite coordinates should be valid",
@@ -186,8 +186,8 @@ macro_rules! test_vertex_properties {
                 /// Property: Vertex ordering is consistent with lexicographic coordinate order
                 #[test]
                 fn [<prop_vertex_ordering_ $dim d>](coords1 in prop::array::[<uniform $dim>](finite_coordinate()), coords2 in prop::array::[<uniform $dim>](finite_coordinate())) {
-                    let v1: Vertex<(), $dim> = delaunay::prelude::Vertex::<(), _>::try_new(coords1).unwrap();
-                    let v2: Vertex<(), $dim> = delaunay::prelude::Vertex::<(), _>::try_new(coords2).unwrap();
+                    let v1: Vertex<(), $dim> = Vertex::<(), _>::try_new(coords1).unwrap();
+                    let v2: Vertex<(), $dim> = Vertex::<(), _>::try_new(coords2).unwrap();
 
                     // Compare vertices
                     let vertex_cmp = v1.partial_cmp(&v2);
@@ -205,7 +205,7 @@ macro_rules! test_vertex_properties {
                 /// Property: Vertex data is preserved
                 #[test]
                 fn [<prop_vertex_data_preservation_ $dim d>](coords in prop::array::[<uniform $dim>](finite_coordinate()), data in prop::num::i32::ANY) {
-                    let vertex: Vertex<i32, $dim> = delaunay::prelude::Vertex::<_, _>::try_new_with_data(coords, data).unwrap();
+                    let vertex: Vertex<i32, $dim> = Vertex::<_, _>::try_new_with_data(coords, data).unwrap();
                     prop_assert_eq!(
                     vertex.data().copied(),
                         Some(data),
@@ -217,7 +217,7 @@ macro_rules! test_vertex_properties {
                 /// Property: Vertex point() returns correct coordinates
                 #[test]
                 fn [<prop_vertex_point_access_ $dim d>](coords in prop::array::[<uniform $dim>](finite_coordinate())) {
-                    let vertex: Vertex<(), $dim> = delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap();
+                    let vertex: Vertex<(), $dim> = Vertex::<(), _>::try_new(coords).unwrap();
                     let point = vertex.point();
                     let point_coords = *point.coords();
 
@@ -233,7 +233,7 @@ macro_rules! test_vertex_properties {
                 /// Property: Vertices can be converted to coordinate arrays
                 #[test]
                 fn [<prop_vertex_to_array_conversion_ $dim d>](coords in prop::array::[<uniform $dim>](finite_coordinate())) {
-                    let vertex: Vertex<(), $dim> = delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap();
+                    let vertex: Vertex<(), $dim> = Vertex::<(), _>::try_new(coords).unwrap();
                     let array: [f64; $dim] = vertex.into();
 
                     for (i, (&original, &converted)) in coords.iter().zip(array.iter()).enumerate() {

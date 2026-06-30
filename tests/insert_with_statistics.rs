@@ -15,6 +15,7 @@
 //! - Bootstrap phase (< D+1 vertices)
 //! - Post-bootstrap phase (≥ D+1 vertices)
 
+use delaunay::vertex;
 use std::assert_matches;
 
 use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
@@ -32,7 +33,7 @@ fn delaunay_insert_with_statistics_basic_2d() {
 
     // Insert first vertex
     let (outcome, stats) = dt
-        .insert_with_statistics(delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+        .insert_with_statistics(vertex!([0.0, 0.0]).unwrap())
         .expect("insertion should succeed");
 
     assert_matches!(outcome, InsertionOutcome::Inserted { .. });
@@ -46,7 +47,7 @@ fn delaunay_insert_with_statistics_basic_2d() {
 
     // Insert second vertex
     let (outcome, stats) = dt
-        .insert_with_statistics(delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+        .insert_with_statistics(vertex!([1.0, 0.0]).unwrap())
         .expect("insertion should succeed");
 
     assert_matches!(outcome, InsertionOutcome::Inserted { .. });
@@ -55,7 +56,7 @@ fn delaunay_insert_with_statistics_basic_2d() {
 
     // Insert third vertex (completes simplex)
     let (outcome, stats) = dt
-        .insert_with_statistics(delaunay::prelude::Vertex::<(), _>::try_new([0.5, 1.0]).unwrap())
+        .insert_with_statistics(vertex!([0.5, 1.0]).unwrap())
         .expect("insertion should succeed");
 
     assert_matches!(outcome, InsertionOutcome::Inserted { hint, .. } if hint.is_some());
@@ -71,22 +72,14 @@ fn delaunay_insert_with_statistics_hint_caching_3d() {
         DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     // Build initial simplex
-    dt.insert_with_statistics(
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-    )
-    .unwrap();
-    dt.insert_with_statistics(
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-    )
-    .unwrap();
-    dt.insert_with_statistics(
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-    )
-    .unwrap();
+    dt.insert_with_statistics(vertex!([0.0, 0.0, 0.0]).unwrap())
+        .unwrap();
+    dt.insert_with_statistics(vertex!([1.0, 0.0, 0.0]).unwrap())
+        .unwrap();
+    dt.insert_with_statistics(vertex!([0.0, 1.0, 0.0]).unwrap())
+        .unwrap();
     let (outcome, _) = dt
-        .insert_with_statistics(
-            delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-        )
+        .insert_with_statistics(vertex!([0.0, 0.0, 1.0]).unwrap())
         .unwrap();
 
     // After simplex creation, hint should be available
@@ -94,9 +87,7 @@ fn delaunay_insert_with_statistics_hint_caching_3d() {
 
     // Insert interior point - should benefit from hint
     let (outcome, stats) = dt
-        .insert_with_statistics(
-            delaunay::prelude::Vertex::<(), _>::try_new([0.25, 0.25, 0.25]).unwrap(),
-        )
+        .insert_with_statistics(vertex!([0.25, 0.25, 0.25]).unwrap())
         .unwrap();
 
     assert_matches!(outcome, InsertionOutcome::Inserted { hint: Some(_), .. });
@@ -112,13 +103,13 @@ fn delaunay_insert_with_statistics_multiple_vertices_4d() {
         DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.8, 0.1, 0.1, 0.1]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.2, 0.2, 0.2, 0.2]).unwrap(),
+        vertex!([0.8, 0.1, 0.1, 0.1]).unwrap(),
     ];
 
     let input_count = vertices.len();
@@ -156,13 +147,13 @@ fn delaunay_insert_with_statistics_handles_degenerate_k2_flips_4d() {
         DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.8, 0.1, 0.1, 0.1]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.2, 0.2, 0.2, 0.2]).unwrap(),
+        vertex!([0.8, 0.1, 0.1, 0.1]).unwrap(),
     ];
 
     for v in vertices {
@@ -180,13 +171,12 @@ fn delaunay_insert_with_statistics_duplicate_coordinates_2d() {
         DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     // Insert first vertex
-    dt.insert_with_statistics(delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap())
+    dt.insert_with_statistics(vertex!([1.0, 2.0]).unwrap())
         .expect("first insertion should succeed");
 
     // The strict statistics API reports skipped insertions as errors so callers
     // using `?` cannot miss them.
-    let result =
-        dt.insert_with_statistics(delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap());
+    let result = dt.insert_with_statistics(vertex!([1.0, 2.0]).unwrap());
     let duplicate_coordinates = CoordinateValues::from([1.0, 2.0]);
     assert!(
         matches!(
@@ -198,9 +188,7 @@ fn delaunay_insert_with_statistics_duplicate_coordinates_2d() {
     );
 
     // The explicitly best-effort API preserves the skipped outcome plus telemetry.
-    let result = dt.insert_best_effort_with_statistics(
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap(),
-    );
+    let result = dt.insert_best_effort_with_statistics(vertex!([1.0, 2.0]).unwrap());
 
     match result {
         Ok((
@@ -231,10 +219,10 @@ fn delaunay_insert_with_statistics_bootstrap_happy_path_3d() {
 
     // Build simplex with well-separated points
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
     ];
 
     for v in vertices {
@@ -258,9 +246,7 @@ fn delaunay_insert_with_statistics_statistics_fields_3d() {
             coords[i - 1] = 1.0;
         }
 
-        let (outcome, stats) = dt
-            .insert_with_statistics(delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap())
-            .unwrap();
+        let (outcome, stats) = dt.insert_with_statistics(vertex!(coords).unwrap()).unwrap();
 
         // Verify all statistics fields
         assert_matches!(outcome, InsertionOutcome::Inserted { .. });
@@ -288,11 +274,11 @@ fn statistics_invariants() {
 
     // Build simplex
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.25, 0.25, 0.25]).unwrap(),
+        vertex!([0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.25, 0.25, 0.25]).unwrap(),
     ];
 
     for v in vertices {
@@ -346,10 +332,10 @@ fn insert_with_statistics_2d_coverage() {
         DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
+        vertex!([0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
+        vertex!([0.5, 0.5]).unwrap(),
     ];
 
     for v in vertices {
@@ -366,11 +352,11 @@ fn insert_with_statistics_3d_coverage() {
         DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
+        vertex!([0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.5, 0.5, 0.5]).unwrap(),
     ];
 
     for v in vertices {
@@ -387,12 +373,12 @@ fn insert_with_statistics_4d_coverage() {
         DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.2, 0.2, 0.2, 0.2]).unwrap(),
     ];
 
     for v in vertices {
@@ -409,12 +395,12 @@ fn insert_with_statistics_5d_coverage() {
         DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
     ];
 
     for v in vertices {

@@ -29,6 +29,8 @@ use crate::core::algorithms::flips::{
     apply_bistellar_flip_k2, apply_bistellar_flip_k3, build_k2_flip_context,
     build_k2_flip_context_from_edge, build_k3_flip_context, build_k3_flip_context_from_triangle,
 };
+#[cfg(test)]
+use crate::core::facet::FacetError;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::vertex::Vertex;
@@ -396,6 +398,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vertex;
     use std::assert_matches;
 
     use crate::TopologyGuarantee;
@@ -406,10 +409,10 @@ mod tests {
     #[test]
     fn triangulation_flip_k1_insert_and_remove_roundtrip() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new_with_topology_guarantee(
@@ -421,10 +424,7 @@ mod tests {
         let simplex_key = tri.simplices().next().unwrap().0;
 
         let inserted = tri
-            .flip_k1_insert(
-                simplex_key,
-                crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.25, 0.25]).unwrap(),
-            )
+            .flip_k1_insert(simplex_key, vertex!([0.25, 0.25, 0.25]).unwrap())
             .unwrap();
         let inserted_vertex = inserted.inserted_face_vertices[0];
         assert!(!inserted.new_simplices.is_empty());
@@ -438,10 +438,10 @@ mod tests {
     #[test]
     fn flip_k1_insert_invalidates_caches() {
         let vertices: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -454,11 +454,8 @@ mod tests {
         }
         dt.spatial_index = Some(spatial_index);
 
-        dt.flip_k1_insert(
-            simplex_key,
-            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2]).unwrap(),
-        )
-        .unwrap();
+        dt.flip_k1_insert(simplex_key, vertex!([0.2, 0.2, 0.2]).unwrap())
+            .unwrap();
 
         assert!(dt.insertion_state.last_inserted_simplex.is_none());
         assert!(dt.spatial_index.is_none());
@@ -468,10 +465,10 @@ mod tests {
     #[test]
     fn triangulation_flip_k2_rejects_invalid_facet_index() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new_with_topology_guarantee(
@@ -486,7 +483,7 @@ mod tests {
 
         assert_matches!(
             err,
-            crate::prelude::tds::FacetError::InvalidFacetIndex {
+            FacetError::InvalidFacetIndex {
                 index: u8::MAX,
                 facet_count: 4,
             }

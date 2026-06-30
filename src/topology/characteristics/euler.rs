@@ -856,6 +856,7 @@ pub fn expected_chi_for(classification: &TopologyClassification) -> Option<isize
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vertex;
 
     use crate::core::simplex::Simplex;
     use slotmap::{KeyData, SlotMap};
@@ -1101,24 +1102,16 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
             .unwrap();
 
         let _ = tds

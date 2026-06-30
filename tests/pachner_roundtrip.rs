@@ -2,11 +2,12 @@
 
 //! Public API roundtrip tests for Pachner/bistellar flips.
 
+use delaunay::vertex;
 use std::assert_matches;
 
 use delaunay::prelude::construction::{
     ConstructionOptions, DelaunayError, DelaunayResult, DelaunayTriangulation,
-    DelaunayTriangulationBuilder, InsertionOrderStrategy, TopologyGuarantee, Vertex, vertex,
+    DelaunayTriangulationBuilder, InsertionOrderStrategy, TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::geometry::RobustKernel;
 use delaunay::prelude::pachner::{
@@ -287,7 +288,7 @@ fn build_dt_4d(points: &[[f64; 4]], fixture_name: &str) -> Dt4 {
 fn build_flippable_dt_2d() -> Dt2 {
     let vertices = FLIPPABLE_POINTS_2D
         .iter()
-        .map(|coords| Vertex::<(), 2>::try_new(*coords).expect("stable 2D fixture coordinates"))
+        .map(|coords| vertex!(*coords).expect("stable 2D fixture coordinates"))
         .collect::<Vec<_>>();
     let simplices = vec![vec![0, 1, 2], vec![0, 2, 3]];
 

@@ -2324,43 +2324,43 @@ mod tests {
     // Generate tests for dimensions 1D through 6D
     test_hull_dimensions! {
         hull_1d_segment => 1 => "line segment" => 2 => vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
+            vertex!([0.0]).unwrap(),
+            vertex!([1.0]).unwrap(),
         ],
         hull_2d_triangle => 2 => "triangle" => 3 => vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ],
         hull_3d_tetrahedron => 3 => "tetrahedron" => 4 => vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.5, 1.0, 0.0]).unwrap(),
+            vertex!([0.5, 0.5, 1.0]).unwrap(),
         ],
         hull_4d_simplex => 4 => "4-simplex" => 5 => vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
         ],
         hull_5d_simplex => 5 => "5-simplex" => 6 => vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
         ],
         hull_6d_simplex => 6 => "6-simplex" => 7 => vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
         ],
     }
 
@@ -2368,10 +2368,10 @@ mod tests {
     fn test_empty_hull_comprehensive() {
         // Create a triangulation for validation purposes
         let vertices_3d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_3d = create_triangulation(&vertices_3d);
 
@@ -2443,9 +2443,9 @@ mod tests {
         // ========================================================================
         test_debug!("  Testing 2D visibility algorithms...");
         let vertices_2d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt_2d = create_triangulation(&vertices_2d);
         let hull_2d: ConvexHull2D<(), ()> =
@@ -2490,10 +2490,10 @@ mod tests {
         // ========================================================================
         test_debug!("  Testing 3D visibility algorithms...");
         let vertices_3d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_3d = create_triangulation(&vertices_3d);
         let hull_3d: ConvexHull3D<(), ()> =
@@ -2653,11 +2653,11 @@ mod tests {
         // ========================================================================
         test_debug!("  Testing 4D visibility algorithms...");
         let vertices_4d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_4d = create_triangulation(&vertices_4d);
         let hull_4d: ConvexHull4D<(), ()> =
@@ -2686,12 +2686,12 @@ mod tests {
         // ========================================================================
         test_debug!("  Testing 5D visibility algorithms...");
         let vertices_5d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_5d = create_triangulation(&vertices_5d);
         let hull_5d: ConvexHull<(), (), 5> =
@@ -2735,10 +2735,10 @@ mod tests {
         // Test distance-based heuristic with 3D tetrahedron
         test_debug!("  Testing distance-based heuristic...");
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -2874,9 +2874,9 @@ mod tests {
 
         // Test 2D fallback
         let vertices_2d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt_2d = create_triangulation(&vertices_2d);
         let hull_2d: ConvexHull<(), (), 2> =
@@ -2893,11 +2893,11 @@ mod tests {
 
         // Test 4D fallback
         let vertices_4d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_4d = create_triangulation(&vertices_4d);
         let hull_4d: ConvexHull<(), (), 4> =
@@ -2929,9 +2929,9 @@ mod tests {
 
         // Create a minimal valid triangulation first to ensure the path works
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation());
@@ -2944,10 +2944,10 @@ mod tests {
     #[test]
     fn test_is_facet_visible_from_point_error_cases() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -2975,10 +2975,10 @@ mod tests {
         let empty_hull: ConvexHull<(), (), 3> = ConvexHull::default();
         // Create a dummy triangulation for validation
         let dummy_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dummy_dt = create_triangulation(&dummy_vertices);
         assert!(
@@ -2988,10 +2988,10 @@ mod tests {
 
         // Test valid hull validation (should pass)
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -3024,10 +3024,7 @@ mod tests {
         test_debug!("  Testing valid hull validation in different dimensions...");
 
         // Test 1D hull (empty hull validation)
-        let dummy_vertices_1d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
-        ];
+        let dummy_vertices_1d = vec![vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()];
         let dummy_dt_1d = create_triangulation(&dummy_vertices_1d);
         let hull_1d: ConvexHull<(), (), 1> = ConvexHull::default();
         assert!(
@@ -3038,9 +3035,9 @@ mod tests {
 
         // Test 2D hull
         let vertices_2d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt_2d = create_triangulation(&vertices_2d);
         let hull_2d: ConvexHull<(), (), 2> =
@@ -3074,10 +3071,10 @@ mod tests {
 
         // Test 3D hull
         let vertices_3d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_3d = create_triangulation(&vertices_3d);
         let hull_3d: ConvexHull<(), (), 3> =
@@ -3111,11 +3108,11 @@ mod tests {
 
         // Test 4D hull
         let vertices_4d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_4d = create_triangulation(&vertices_4d);
         let hull_4d: ConvexHull<(), (), 4> =
@@ -3149,12 +3146,12 @@ mod tests {
 
         // Test 5D hull (minimum required coverage)
         let vertices_5d: Vec<_> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_5d = create_triangulation(&vertices_5d);
         let hull_5d: ConvexHull<(), (), 5> =
@@ -3196,10 +3193,10 @@ mod tests {
 
         // Test with integer vertex data
         let vertices_int = vec![
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 1i32).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 2i32).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 3i32).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 4i32).unwrap(),
+            vertex!([0.0, 0.0, 0.0]; data = 1i32).unwrap(),
+            vertex!([1.0, 0.0, 0.0]; data = 2i32).unwrap(),
+            vertex!([0.0, 1.0, 0.0]; data = 3i32).unwrap(),
+            vertex!([0.0, 0.0, 1.0]; data = 4i32).unwrap(),
         ];
         let dt_int = DelaunayTriangulation::<AdaptiveKernel<f64>, i32, (), 3>::try_with_kernel(
             &AdaptiveKernel::new(),
@@ -3214,10 +3211,10 @@ mod tests {
 
         // Test with character vertex data
         let vertices_char = vec![
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 'A').unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 'B').unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 'C').unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 'D').unwrap(),
+            vertex!([0.0, 0.0, 0.0]; data = 'A').unwrap(),
+            vertex!([1.0, 0.0, 0.0]; data = 'B').unwrap(),
+            vertex!([0.0, 1.0, 0.0]; data = 'C').unwrap(),
+            vertex!([0.0, 0.0, 1.0]; data = 'D').unwrap(),
         ];
         let dt_char = DelaunayTriangulation::<AdaptiveKernel<f64>, char, (), 3>::try_with_kernel(
             &AdaptiveKernel::new(),
@@ -3240,33 +3237,30 @@ mod tests {
             // Large coordinates
             (
                 vec![
-                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-                    crate::core::vertex::Vertex::<(), _>::try_new([1e15, 0.0, 0.0]).unwrap(),
-                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1e15, 0.0]).unwrap(),
-                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1e15]).unwrap(),
+                    vertex!([0.0, 0.0, 0.0]).unwrap(),
+                    vertex!([1e15, 0.0, 0.0]).unwrap(),
+                    vertex!([0.0, 1e15, 0.0]).unwrap(),
+                    vertex!([0.0, 0.0, 1e15]).unwrap(),
                 ],
                 "large",
             ),
             // Small coordinates
             (
                 vec![
-                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-                    crate::core::vertex::Vertex::<(), _>::try_new([1e-15, 0.0, 0.0]).unwrap(),
-                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1e-15, 0.0]).unwrap(),
-                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1e-15]).unwrap(),
+                    vertex!([0.0, 0.0, 0.0]).unwrap(),
+                    vertex!([1e-15, 0.0, 0.0]).unwrap(),
+                    vertex!([0.0, 1e-15, 0.0]).unwrap(),
+                    vertex!([0.0, 0.0, 1e-15]).unwrap(),
                 ],
                 "small",
             ),
             // Mixed extreme coordinates
             (
                 vec![
-                    crate::core::vertex::Vertex::<(), _>::try_new([f64::MIN_POSITIVE, 0.0, 0.0])
-                        .unwrap(),
-                    crate::core::vertex::Vertex::<(), _>::try_new([f64::MAX / 1e10, 0.0, 0.0])
-                        .unwrap(),
-                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, f64::EPSILON, 0.0])
-                        .unwrap(),
-                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+                    vertex!([f64::MIN_POSITIVE, 0.0, 0.0]).unwrap(),
+                    vertex!([f64::MAX / 1e10, 0.0, 0.0]).unwrap(),
+                    vertex!([0.0, f64::EPSILON, 0.0]).unwrap(),
+                    vertex!([0.0, 0.0, 1.0]).unwrap(),
                 ],
                 "mixed",
             ),
@@ -3388,10 +3382,10 @@ mod tests {
 
         // Performance test - validate 100 times
         let perf_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let perf_dt = create_triangulation(&perf_vertices);
         let perf_hull: ConvexHull<(), (), 3> =
@@ -3424,10 +3418,10 @@ mod tests {
     #[test]
     fn test_find_nearest_visible_facet_comprehensive() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -3474,10 +3468,10 @@ mod tests {
     #[test]
     fn test_facet_access_edge_cases() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -3517,10 +3511,10 @@ mod tests {
     fn test_generic_types_comprehensive() {
         // Test coordinate type validation with f64
         let vertices_f64 = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0f64, 0.0f64, 0.0f64]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0f64, 0.0f64, 0.0f64]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0f64, 1.0f64, 0.0f64]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0f64, 0.0f64, 1.0f64]).unwrap(),
+            vertex!([0.0f64, 0.0f64, 0.0f64]).unwrap(),
+            vertex!([1.0f64, 0.0f64, 0.0f64]).unwrap(),
+            vertex!([0.0f64, 1.0f64, 0.0f64]).unwrap(),
+            vertex!([0.0f64, 0.0f64, 1.0f64]).unwrap(),
         ];
         let dt_f64 = create_triangulation(&vertices_f64);
         let hull_f64 = ConvexHull::try_from_triangulation(dt_f64.as_triangulation()).unwrap();
@@ -3536,14 +3530,10 @@ mod tests {
 
         // Test with high precision f64 coordinates
         let vertices_high_precision = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.000_000_000_000_001, 0.0, 0.0])
-                .unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.000_000_000_000_001, 0.0, 0.0])
-                .unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.000_000_000_000_001, 0.0])
-                .unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.000_000_000_000_001])
-                .unwrap(),
+            vertex!([0.000_000_000_000_001, 0.0, 0.0]).unwrap(),
+            vertex!([1.000_000_000_000_001, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.000_000_000_000_001, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.000_000_000_000_001]).unwrap(),
         ];
         let dt_hp = create_triangulation(&vertices_high_precision);
         let hull_hp = ConvexHull::try_from_triangulation(dt_hp.as_triangulation()).unwrap();
@@ -3555,10 +3545,10 @@ mod tests {
 
         // Test with integer vertex data
         let vertices_int = vec![
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 1i32).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 2i32).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 3i32).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 4i32).unwrap(),
+            vertex!([0.0, 0.0, 0.0]; data = 1i32).unwrap(),
+            vertex!([1.0, 0.0, 0.0]; data = 2i32).unwrap(),
+            vertex!([0.0, 1.0, 0.0]; data = 3i32).unwrap(),
+            vertex!([0.0, 0.0, 1.0]; data = 4i32).unwrap(),
         ];
         let dt_int = DelaunayTriangulation::<AdaptiveKernel<f64>, i32, (), 3>::try_with_kernel(
             &AdaptiveKernel::new(),
@@ -3573,10 +3563,10 @@ mod tests {
 
         // Test with character vertex data
         let vertices_char = vec![
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 'A').unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 'B').unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 'C').unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 'D').unwrap(),
+            vertex!([0.0, 0.0, 0.0]; data = 'A').unwrap(),
+            vertex!([1.0, 0.0, 0.0]; data = 'B').unwrap(),
+            vertex!([0.0, 1.0, 0.0]; data = 'C').unwrap(),
+            vertex!([0.0, 0.0, 1.0]; data = 'D').unwrap(),
         ];
         let dt_char = DelaunayTriangulation::<AdaptiveKernel<f64>, char, (), 3>::try_with_kernel(
             &AdaptiveKernel::new(),
@@ -3591,14 +3581,10 @@ mod tests {
 
         // Test with Option<i32> vertex data
         let vertices_with_data = vec![
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], Some(1))
-                .unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], Some(2))
-                .unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], Some(3))
-                .unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], Some(4))
-                .unwrap(),
+            vertex!([0.0, 0.0, 0.0]; data = Some(1)).unwrap(),
+            vertex!([1.0, 0.0, 0.0]; data = Some(2)).unwrap(),
+            vertex!([0.0, 1.0, 0.0]; data = Some(3)).unwrap(),
+            vertex!([0.0, 0.0, 1.0]; data = Some(4)).unwrap(),
         ];
         let dt_with_data =
             DelaunayTriangulation::<AdaptiveKernel<f64>, Option<i32>, (), 3>::try_with_kernel(
@@ -3621,10 +3607,10 @@ mod tests {
     fn test_extreme_coordinate_values() {
         // Test with very large coordinates
         let vertices_large = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1e6, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1e6, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1e6]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1e6, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1e6, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1e6]).unwrap(),
         ];
         let dt_large = create_triangulation(&vertices_large);
         let hull_large = ConvexHull::try_from_triangulation(dt_large.as_triangulation()).unwrap();
@@ -3651,10 +3637,10 @@ mod tests {
         // Test with very small coordinates (but still large enough to avoid being
         // treated as numerically degenerate by the initial simplex search)
         let vertices_small = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1e-3, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1e-3, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1e-3]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1e-3, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1e-3, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1e-3]).unwrap(),
         ];
         let dt_small = create_triangulation(&vertices_small);
         let hull_small = ConvexHull::try_from_triangulation(dt_small.as_triangulation()).unwrap();
@@ -3666,10 +3652,10 @@ mod tests {
     #[test]
     fn test_trait_implementations_comprehensive() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -3691,9 +3677,9 @@ mod tests {
 
         // Test Default trait for various dimensions
         let dummy_vertices_2d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dummy_dt_2d = create_triangulation(&dummy_vertices_2d);
         let hull_2d: ConvexHull<(), (), 2> = ConvexHull::default();
@@ -3709,11 +3695,11 @@ mod tests {
         assert!(hull_3d_default.validate(dt.as_triangulation()).is_ok());
 
         let dummy_vertices_4d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
         ];
         let dummy_dt_4d = create_triangulation(&dummy_vertices_4d);
         let hull_4d: ConvexHull<(), (), 4> = ConvexHull::default();
@@ -3727,30 +3713,30 @@ mod tests {
     fn test_type_aliases() {
         // Test that type aliases compile and work correctly
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let _hull_2d: ConvexHull2D<(), ()> =
             ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
 
         let vertices_3d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_3d = create_triangulation(&vertices_3d);
         let _hull_3d: ConvexHull3D<(), ()> =
             ConvexHull::try_from_triangulation(dt_3d.as_triangulation()).unwrap();
 
         let vertices_4d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_4d = create_triangulation(&vertices_4d);
         let _hull_4d: ConvexHull4D<(), ()> =
@@ -3788,7 +3774,7 @@ mod tests {
         // Create a manually constructed TDS with vertices but no simplices
         // Note: We need to use the underlying TDS directly for this edge case test
         let mut tds = Tds::<(), (), 3>::empty();
-        let vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap();
+        let vertex = vertex!([0.0, 0.0, 0.0]).unwrap();
         tds.insert_vertex_with_mapping(vertex).unwrap();
 
         // Use the test-only constructor to avoid brittle struct literals.
@@ -3810,10 +3796,10 @@ mod tests {
         // by creating a TDS that would fail boundary facet extraction
         // For now, just test that the error mapping works with a valid TDS
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let result = ConvexHull::try_from_triangulation(dt.as_triangulation());
@@ -3826,10 +3812,10 @@ mod tests {
     fn test_visibility_check_insufficient_vertices_error() {
         // Create a hull and manually create a degenerate facet to test error path
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -3851,10 +3837,10 @@ mod tests {
     fn test_fallback_visibility_test_degenerate_facet() {
         // Test the fallback visibility algorithm with degenerate geometry
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -3890,10 +3876,10 @@ mod tests {
         // Consolidated test for inside point detection (no visible facets)
         // Tests both find_nearest_visible_facet and is_point_outside
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -3915,10 +3901,10 @@ mod tests {
     #[test]
     fn test_find_nearest_visible_facet_equidistant_cases() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -3933,10 +3919,10 @@ mod tests {
     #[test]
     fn test_hull_operations_extended() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -3960,10 +3946,10 @@ mod tests {
     #[test]
     fn test_invalidate_cache() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -3980,10 +3966,10 @@ mod tests {
     #[test]
     fn test_facet_cache_provider_implementation() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -4040,10 +4026,10 @@ mod tests {
     #[test]
     fn test_comprehensive_facet_iteration() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -4115,10 +4101,10 @@ mod tests {
 
         // Test with populated hull
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -4136,10 +4122,10 @@ mod tests {
         test_debug!("Testing error handling paths in convex hull methods");
 
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -4177,10 +4163,10 @@ mod tests {
         // Create a triangulation that might produce degenerate orientations
         // while still allowing the initial simplex search to succeed.
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1e-3, 0.0, 0.0]).unwrap(), // Small but not numerically wiped out
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1e-3, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1e-3]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1e-3, 0.0, 0.0]).unwrap(), // Small but not numerically wiped out
+            vertex!([0.0, 1e-3, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1e-3]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -4216,10 +4202,10 @@ mod tests {
 
         // Test with coordinates at the limits of f64 precision
         let vertices_extreme = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([f64::MIN_POSITIVE, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, f64::MIN_POSITIVE, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, f64::MIN_POSITIVE]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([f64::MIN_POSITIVE, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, f64::MIN_POSITIVE, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, f64::MIN_POSITIVE]).unwrap(),
         ];
 
         let dt_extreme_result = DelaunayTriangulation::try_new(&vertices_extreme);
@@ -4272,10 +4258,10 @@ mod tests {
 
         // Test with maximum finite values
         let vertices_max = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_max = create_triangulation(&vertices_max);
         let hull_max = ConvexHull::try_from_triangulation(dt_max.as_triangulation()).unwrap();
@@ -4296,10 +4282,10 @@ mod tests {
         test_debug!("Testing numeric cast error handling in find_nearest_visible_facet");
 
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -4353,10 +4339,10 @@ mod tests {
 
         // Create initial triangulation
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -4420,7 +4406,7 @@ mod tests {
         let stale_hull_gen = hull.cached_generation().load(Ordering::Acquire);
 
         // Add a new vertex - this will bump the generation
-        let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(); // Interior point
+        let new_vertex = vertex!([0.5, 0.5, 0.5]).unwrap(); // Interior point
         dt.insert_vertex(new_vertex)
             .expect("Failed to insert vertex into DelaunayTriangulation");
 
@@ -4593,10 +4579,10 @@ mod tests {
 
         // Create a triangulation
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -4652,7 +4638,7 @@ mod tests {
         let old_generation = dt.as_triangulation().tds.generation();
 
         // Add a new vertex to trigger generation bump
-        let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(); // Interior point
+        let new_vertex = vertex!([0.5, 0.5, 0.5]).unwrap(); // Interior point
         dt.insert_vertex(new_vertex)
             .expect("Failed to insert vertex");
 
@@ -4694,10 +4680,10 @@ mod tests {
 
         // Create a triangulation
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -4786,10 +4772,10 @@ mod tests {
         // connected and that the method signature returns the right error type.
 
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -4840,10 +4826,10 @@ mod tests {
 
         // Create a symmetric triangulation where multiple facets might be equidistant
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(), // Origin
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(), // X axis
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(), // Y axis
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(), // Z axis
+            vertex!([0.0, 0.0, 0.0]).unwrap(), // Origin
+            vertex!([1.0, 0.0, 0.0]).unwrap(), // X axis
+            vertex!([0.0, 1.0, 0.0]).unwrap(), // Y axis
+            vertex!([0.0, 0.0, 1.0]).unwrap(), // Z axis
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -4941,10 +4927,10 @@ mod tests {
 
         // Create a triangulation
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -5046,10 +5032,10 @@ mod tests {
 
         // Create a triangulation
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -5143,10 +5129,10 @@ mod tests {
 
         // Create a valid setup
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -5211,10 +5197,10 @@ mod tests {
 
         // Create a simple triangulation to test with
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -5633,10 +5619,10 @@ mod tests {
 
         // Test with very large coordinates (may cause numeric issues)
         let large_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([1e10, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1e10, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1e10]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1e10, 1e10, 1e10]).unwrap(),
+            vertex!([1e10, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1e10, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1e10]).unwrap(),
+            vertex!([1e10, 1e10, 1e10]).unwrap(),
         ];
 
         match DelaunayTriangulation::try_new(&large_vertices) {
@@ -5681,10 +5667,10 @@ mod tests {
 
         // Test with very small coordinates (may cause precision issues)
         let small_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([1e-15, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1e-15, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1e-15]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1e-15, 1e-15, 1e-15]).unwrap(),
+            vertex!([1e-15, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1e-15, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1e-15]).unwrap(),
+            vertex!([1e-15, 1e-15, 1e-15]).unwrap(),
         ];
 
         match DelaunayTriangulation::try_new(&small_vertices) {
@@ -5704,10 +5690,10 @@ mod tests {
 
         // Test fallback visibility with extreme coordinates
         let normal_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let normal_dt = create_triangulation(&normal_vertices);
         let normal_hull = ConvexHull::try_from_triangulation(normal_dt.as_triangulation()).unwrap();
@@ -5754,10 +5740,10 @@ mod tests {
 
         // Create basic triangulation to get valid facet structure
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -5863,10 +5849,10 @@ mod tests {
 
         // Create a triangulation with near-collinear points
         let near_collinear_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 1e-10, 0.0]).unwrap(), // Nearly collinear with first two
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 1.0]).unwrap(), // Out of plane
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([2.0, 1e-10, 0.0]).unwrap(), // Nearly collinear with first two
+            vertex!([0.5, 0.5, 1.0]).unwrap(),   // Out of plane
         ];
 
         match DelaunayTriangulation::try_new(&near_collinear_vertices) {
@@ -5914,10 +5900,10 @@ mod tests {
 
         // Create a triangulation where facets might have very small areas
         let tiny_area_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1e-6, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1e-6, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1e-6]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1e-6, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1e-6, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1e-6]).unwrap(),
         ];
 
         match DelaunayTriangulation::try_new(&tiny_area_vertices) {
@@ -5974,10 +5960,10 @@ mod tests {
 
         // Create a well-defined triangulation
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -6058,19 +6044,19 @@ mod tests {
             (
                 "equilateral-like triangle",
                 vec![
-                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-                    crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-                    crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.866, 0.0]).unwrap(),
-                    crate::core::vertex::Vertex::<(), _>::try_new([0.333, 0.289, 1.0]).unwrap(),
+                    vertex!([0.0, 0.0, 0.0]).unwrap(),
+                    vertex!([1.0, 0.0, 0.0]).unwrap(),
+                    vertex!([0.5, 0.866, 0.0]).unwrap(),
+                    vertex!([0.333, 0.289, 1.0]).unwrap(),
                 ],
             ),
             (
                 "elongated triangle",
                 vec![
-                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-                    crate::core::vertex::Vertex::<(), _>::try_new([10.0, 0.0, 0.0]).unwrap(), // Very long edge
-                    crate::core::vertex::Vertex::<(), _>::try_new([0.1, 0.1, 0.0]).unwrap(), // Short edge
-                    crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(),
+                    vertex!([0.0, 0.0, 0.0]).unwrap(),
+                    vertex!([10.0, 0.0, 0.0]).unwrap(), // Very long edge
+                    vertex!([0.1, 0.1, 0.0]).unwrap(),  // Short edge
+                    vertex!([1.0, 1.0, 1.0]).unwrap(),
                 ],
             ),
         ];
@@ -6136,9 +6122,9 @@ mod tests {
         test_debug!("  Testing perfectly collinear points in 2D...");
 
         let collinear_2d_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(), // Collinear with first two
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([2.0, 0.0]).unwrap(), // Collinear with first two
         ];
 
         match DelaunayTriangulation::try_new(&collinear_2d_vertices) {
@@ -6196,9 +6182,9 @@ mod tests {
         test_debug!("  Testing nearly collinear points with small perturbations...");
 
         let nearly_collinear_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1e-12]).unwrap(), // Nearly on the line y=0
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, -1e-12]).unwrap(), // Nearly on the line y=0
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 1e-12]).unwrap(),  // Nearly on the line y=0
+            vertex!([2.0, -1e-12]).unwrap(), // Nearly on the line y=0
         ];
 
         match DelaunayTriangulation::try_new(&nearly_collinear_vertices) {
@@ -6237,10 +6223,10 @@ mod tests {
         test_debug!("  Testing collinear points in 3D (degenerate configuration)...");
 
         let collinear_3d_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 2.0, 2.0]).unwrap(), // Collinear with first two
-            crate::core::vertex::Vertex::<(), _>::try_new([3.0, 3.0, 3.0]).unwrap(), // Also collinear
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 1.0, 1.0]).unwrap(),
+            vertex!([2.0, 2.0, 2.0]).unwrap(), // Collinear with first two
+            vertex!([3.0, 3.0, 3.0]).unwrap(), // Also collinear
         ];
 
         match DelaunayTriangulation::try_new(&collinear_3d_vertices) {
@@ -6271,10 +6257,10 @@ mod tests {
 
         // Four points in the same plane (z=0)
         let coplanar_3d_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 0.0]).unwrap(), // All in z=0 plane
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([1.0, 1.0, 0.0]).unwrap(), // All in z=0 plane
         ];
 
         match DelaunayTriangulation::try_new(&coplanar_3d_vertices) {
@@ -6293,10 +6279,10 @@ mod tests {
         test_debug!("  Testing nearly coplanar points with small z-perturbations...");
 
         let nearly_coplanar_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 1e-10]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, -1e-10]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 1e-10]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 1e-10]).unwrap(),
+            vertex!([0.0, 1.0, -1e-10]).unwrap(),
+            vertex!([1.0, 1.0, 1e-10]).unwrap(),
         ];
 
         match DelaunayTriangulation::try_new(&nearly_coplanar_vertices) {
@@ -6375,11 +6361,11 @@ mod tests {
 
         // Five points in the same 3D hyperplane (w=0)
         let coplanar_4d_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 1.0, 0.0]).unwrap(), // All in w=0 hyperplane
+            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([1.0, 1.0, 1.0, 0.0]).unwrap(), // All in w=0 hyperplane
         ];
 
         match DelaunayTriangulation::try_new(&coplanar_4d_vertices) {
@@ -6405,11 +6391,11 @@ mod tests {
         test_debug!("  Testing exact duplicate vertices...");
 
         let duplicate_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(), // Exact duplicate of first vertex
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(), // Exact duplicate of first vertex
         ];
 
         match DelaunayTriangulation::try_new(&duplicate_vertices) {
@@ -6453,11 +6439,11 @@ mod tests {
         test_debug!("  Testing nearly coincident vertices (within floating-point precision)...");
 
         let nearly_coincident_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1e-15, 1e-15, 1e-15]).unwrap(), // Nearly coincident with first
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([1e-15, 1e-15, 1e-15]).unwrap(), // Nearly coincident with first
         ];
 
         match DelaunayTriangulation::try_new(&nearly_coincident_vertices) {
@@ -6519,13 +6505,13 @@ mod tests {
 
         // Create a 6D simplex (7 vertices)
         let vertices_6d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.1, 0.1, 0.1, 0.1, 0.1, 0.1]).unwrap(), // Interior point to make it non-degenerate
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.1, 0.1, 0.1, 0.1, 0.1, 0.1]).unwrap(), // Interior point to make it non-degenerate
         ];
 
         match DelaunayTriangulation::try_new(&vertices_6d) {
@@ -6576,22 +6562,14 @@ mod tests {
         test_debug!("  Testing 7D convex hull...");
 
         let vertices_7d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-                .unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-                .unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0])
-                .unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
-                .unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
-                .unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0])
-                .unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
-                .unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
-                .unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]).unwrap(),
         ];
 
         match DelaunayTriangulation::try_new(&vertices_7d) {
@@ -6614,24 +6592,15 @@ mod tests {
         test_debug!("  Testing 8D convex hull (stress test)...");
 
         let vertices_8d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-                .unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-                .unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-                .unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0])
-                .unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
-                .unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
-                .unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0])
-                .unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
-                .unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
-                .unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]).unwrap(),
         ];
 
         match DelaunayTriangulation::try_new(&vertices_8d) {
@@ -6685,7 +6654,7 @@ mod tests {
             let x = radius * angle1.cos() * angle2.sin();
             let y = radius * angle1.sin() * angle2.sin();
             let z = radius * angle2.cos();
-            large_vertices.push(crate::core::vertex::Vertex::<(), _>::try_new([x, y, z]).unwrap());
+            large_vertices.push(vertex!([x, y, z]).unwrap());
         }
 
         test_debug!("    Generated {num_vertices} vertices");
@@ -6771,7 +6740,7 @@ mod tests {
             let radius = <f64 as From<_>>::from(i).mul_add(0.01, 1.0);
             let x = radius * angle.cos();
             let y = radius * angle.sin();
-            large_2d_vertices.push(crate::core::vertex::Vertex::<(), _>::try_new([x, y]).unwrap());
+            large_2d_vertices.push(vertex!([x, y]).unwrap());
         }
 
         let start_2d = std::time::Instant::now();
@@ -6824,10 +6793,10 @@ mod tests {
 
         // Create a basic triangulation for testing
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -6843,12 +6812,8 @@ mod tests {
 
         // Rapidly modify the TDS to increment generation many times
         for i in 0..20 {
-            let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([
-                <f64 as From<_>>::from(i).mul_add(0.01, 0.1),
-                0.1,
-                0.1,
-            ])
-            .unwrap();
+            let new_vertex =
+                vertex!([<f64 as From<_>>::from(i).mul_add(0.01, 0.1), 0.1, 0.1]).unwrap();
             if dt.insert_vertex(new_vertex).is_ok() {
                 let current_gen = dt.as_triangulation().tds.generation();
                 test_debug!("    After modification {i}: TDS generation = {current_gen}");
@@ -6925,10 +6890,10 @@ mod tests {
         test_debug!("Testing cache consistency under rapid operations");
 
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -7063,10 +7028,10 @@ mod tests {
         test_debug!("  Testing cache memory cleanup...");
 
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -7167,10 +7132,10 @@ mod tests {
 
         // Step 1: Create hull from initial DelaunayTriangulation
         let mut dt = DelaunayTriangulation::try_new(&[
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ])
         .unwrap();
         let initial_gen = dt.as_triangulation().tds.generation();
@@ -7264,10 +7229,10 @@ mod tests {
     #[test]
     fn test_hull_rejects_different_tds_with_same_generation() {
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt1: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -7305,10 +7270,10 @@ mod tests {
     #[test]
     fn test_hull_rejects_cloned_tds_with_same_generation() {
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt1: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -7345,10 +7310,10 @@ mod tests {
     #[test]
     fn test_hull_cache_key_survives_failed_insert_rollback() {
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -7435,10 +7400,10 @@ mod tests {
         test_debug!("Testing that all hull operations fail on stale hull");
 
         let mut dt = DelaunayTriangulation::try_new(&[
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ])
         .unwrap();
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -7513,10 +7478,10 @@ mod tests {
 
         // Create hull with nearly coplanar points (z << x,y) but still valid simplex
         let dt = DelaunayTriangulation::try_new(&[
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 1e-6]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 1e-6]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 1e-6]).unwrap(),
+            vertex!([0.0, 1.0, 1e-6]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ])
         .unwrap();
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -7539,10 +7504,10 @@ mod tests {
 
         // Create a very flat triangulation (extreme aspect ratio)
         let dt = DelaunayTriangulation::try_new(&[
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1000.0, 0.0, 0.0]).unwrap(), // Very long in x
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.001, 0.0]).unwrap(), // Very short in y
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.001]).unwrap(), // Very short in z
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1000.0, 0.0, 0.0]).unwrap(), // Very long in x
+            vertex!([0.0, 0.001, 0.0]).unwrap(),  // Very short in y
+            vertex!([0.0, 0.0, 0.001]).unwrap(),  // Very short in z
         ])
         .unwrap();
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -7568,10 +7533,10 @@ mod tests {
         test_debug!("Testing points exactly on hull surface");
 
         let dt = create_triangulation(&[
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ]);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
 
@@ -7603,10 +7568,10 @@ mod tests {
         test_debug!("Testing points very close to hull surface (epsilon distance)");
 
         let dt = create_triangulation(&[
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ]);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
 
@@ -7636,8 +7601,7 @@ mod tests {
                 // Origin - use nested macro to get correct type
                 macro_rules! make_vertex {
                     ($coords:expr) => {{
-                        let v: Vertex<(), $dim> =
-                            crate::core::vertex::Vertex::<(), _>::try_new($coords).unwrap();
+                        let v: Vertex<(), $dim> = vertex!($coords).unwrap();
                         v
                     }};
                 }
@@ -7752,10 +7716,10 @@ mod tests {
         test_debug!("Testing cache lifecycle through multiple operations");
 
         let dt = create_triangulation(&[
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ]);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
 
@@ -7830,10 +7794,10 @@ mod tests {
         test_debug!("Testing cache independence between multiple hull instances");
 
         let dt = create_triangulation(&[
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ]);
 
         test_debug!("  Creating first hull and building cache...");

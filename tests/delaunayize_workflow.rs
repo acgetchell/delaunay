@@ -12,6 +12,7 @@ use delaunay::flips::BistellarFlips;
 use delaunay::flips::FacetHandle;
 use delaunay::prelude::construction::TriangulationConstructionError;
 use delaunay::prelude::delaunayize::*;
+use delaunay::vertex;
 use std::{error::Error, mem::size_of};
 
 // =============================================================================
@@ -45,11 +46,11 @@ fn test_delaunayize_config_default_values() {
 fn test_non_delaunay_pl_manifold_repaired_2d() {
     init_tracing();
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([4.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 4.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([4.0, 4.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 2.0]).unwrap(),
+        vertex!([0.0, 0.0]).unwrap(),
+        vertex!([4.0, 0.0]).unwrap(),
+        vertex!([0.0, 4.0]).unwrap(),
+        vertex!([4.0, 4.0]).unwrap(),
+        vertex!([2.0, 2.0]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
         DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -66,12 +67,12 @@ fn test_non_delaunay_pl_manifold_repaired_2d() {
 fn test_non_delaunay_pl_manifold_repaired_3d() {
     init_tracing();
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
+        vertex!([0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
+        vertex!([1.0, 1.0, 1.0]).unwrap(),
+        vertex!([0.5, 0.5, 0.5]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
         DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -90,10 +91,10 @@ fn test_non_delaunay_pl_manifold_repaired_3d() {
 fn test_fallback_off_does_not_rebuild() {
     init_tracing();
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
         DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -110,10 +111,10 @@ fn test_fallback_off_does_not_rebuild() {
 fn test_fallback_on_does_not_trigger_on_valid() {
     init_tracing();
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
         DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -136,11 +137,11 @@ fn test_fallback_on_does_not_trigger_on_valid() {
 fn test_outcome_stats_populated_3d() {
     init_tracing();
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
+        vertex!([0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.5, 0.5, 0.5]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
         DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -163,11 +164,11 @@ fn test_outcome_stats_populated_3d() {
 fn test_repeat_run_determinism_2d() {
     init_tracing();
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
+        vertex!([0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
+        vertex!([1.0, 1.0]).unwrap(),
+        vertex!([0.5, 0.5]).unwrap(),
     ];
 
     let config = DelaunayizeConfig::default();
@@ -203,12 +204,12 @@ fn test_repeat_run_determinism_2d() {
 fn test_repeat_run_determinism_3d() {
     init_tracing();
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
+        vertex!([0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
+        vertex!([1.0, 1.0, 1.0]).unwrap(),
+        vertex!([0.5, 0.5, 0.5]).unwrap(),
     ];
 
     let config = DelaunayizeConfig::default();
@@ -239,11 +240,11 @@ fn test_repeat_run_determinism_3d() {
 fn test_vertex_count_preserved_after_delaunayize() {
     init_tracing();
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
+        vertex!([1.0, 1.0, 1.0]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
         DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -267,11 +268,11 @@ fn test_flip_breaks_delaunay_then_delaunayize_restores() {
     init_tracing();
     // 5 points in 3D — produces multiple simplices with interior facets.
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
+        vertex!([0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.5, 0.5, 0.5]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
         DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -475,11 +476,11 @@ fn test_prelude_exports_error_payloads() {
 fn test_delaunayize_with_explicit_flip_budget_3d() {
     init_tracing();
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
+        vertex!([0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.5, 0.5, 0.5]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
         DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -500,11 +501,11 @@ fn test_delaunayize_with_explicit_flip_budget_3d() {
 fn test_delaunayize_with_flip_budget_and_fallback_2d() {
     init_tracing();
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
+        vertex!([0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
+        vertex!([1.0, 1.0]).unwrap(),
+        vertex!([0.5, 0.5]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
         DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -527,11 +528,11 @@ fn test_delaunayize_with_flip_budget_and_fallback_2d() {
 fn test_flip_breaks_then_delaunayize_with_budget_restores_3d() {
     init_tracing();
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
+        vertex!([0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.5, 0.5, 0.5]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
         DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -581,12 +582,12 @@ fn test_flip_breaks_then_delaunayize_with_budget_restores_3d() {
 fn test_full_validation_passes_after_delaunayize() {
     init_tracing();
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.25, 0.75]).unwrap(),
+        vertex!([0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
+        vertex!([1.0, 1.0]).unwrap(),
+        vertex!([0.5, 0.5]).unwrap(),
+        vertex!([0.25, 0.75]).unwrap(),
     ];
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
         DelaunayTriangulation::try_new(&vertices).unwrap();

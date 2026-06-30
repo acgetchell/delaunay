@@ -10,7 +10,7 @@
 #![forbid(unsafe_code)]
 
 use crate::core::algorithms::incremental_insertion::InsertionError;
-use crate::core::tds::SimplexKey;
+use crate::core::tds::{SimplexKey, VertexKey};
 use crate::core::validation::TopologyGuarantee;
 use crate::repair::{DelaunayCheckPolicy, DelaunayRepairPolicy};
 
@@ -382,9 +382,9 @@ pub enum InsertionOutcome {
     /// The vertex was inserted successfully.
     Inserted {
         /// Key of the inserted vertex.
-        vertex_key: crate::core::tds::VertexKey,
+        vertex_key: VertexKey,
         /// Optional simplex key that can be used as a hint for subsequent insertions.
-        hint: Option<crate::core::tds::SimplexKey>,
+        hint: Option<SimplexKey>,
     },
     /// The vertex was intentionally not inserted.
     ///

@@ -895,7 +895,7 @@ rust-core-check: fmt-check clippy-all-targets doc-check semgrep semgrep-test
 
 # Repository-owned Semgrep rules for project-specific Rust diagnostics.
 semgrep: _ensure-uv
-    uv run semgrep --error --strict --timeout 30 --config semgrep.yaml .
+    uv run semgrep --error --strict --timeout 120 --config semgrep.yaml .
 
 semgrep-test: _ensure-uv
     #!/usr/bin/env bash

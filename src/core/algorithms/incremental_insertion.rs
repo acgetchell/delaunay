@@ -4791,6 +4791,7 @@ mod tests {
     };
     use crate::topology::characteristics::euler::TopologyClassification;
     use crate::topology::traits::topological_space::TopologyKind;
+    use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
 
@@ -4950,50 +4951,50 @@ mod tests {
     test_fill_cavity!(
         2,
         vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ],
-        crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
+        vertex!([0.5, 0.5]).unwrap(),
         3 // D+1 facets for a 2-simplex
     );
 
     test_fill_cavity!(
         3,
         vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ],
-        crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.25, 0.25]).unwrap(),
+        vertex!([0.25, 0.25, 0.25]).unwrap(),
         4 // D+1 facets for a 3-simplex
     );
 
     test_fill_cavity!(
         4,
         vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
         ],
-        crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2]).unwrap(),
+        vertex!([0.2, 0.2, 0.2, 0.2]).unwrap(),
         5 // D+1 facets for a 4-simplex
     );
 
     test_fill_cavity!(
         5,
         vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
         ],
-        crate::core::vertex::Vertex::<(), _>::try_new([0.15, 0.15, 0.15, 0.15, 0.15]).unwrap(),
+        vertex!([0.15, 0.15, 0.15, 0.15, 0.15]).unwrap(),
         6 // D+1 facets for a 5-simplex
     );
 
@@ -5002,9 +5003,9 @@ mod tests {
     #[test]
     fn test_fill_cavity_with_invalid_vertex_key() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::<_, (), (), 2>::try_new(&vertices).unwrap();
         let tds = dt.tds_mut();
@@ -5028,17 +5029,15 @@ mod tests {
     #[test]
     fn test_fill_cavity_with_invalid_facet_simplex() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::<_, (), (), 2>::try_new(&vertices).unwrap();
         let tds = dt.tds_mut();
 
         let new_vkey = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.5, 0.5]).unwrap())
             .unwrap();
         let invalid_simplex_key = SimplexKey::from(KeyData::from_ffi(u64::MAX));
         let invalid_boundary_facets: Vec<FacetHandle> = (0..=2)
@@ -5058,17 +5057,15 @@ mod tests {
     #[test]
     fn test_fill_cavity_with_invalid_facet_index() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::<_, (), (), 2>::try_new(&vertices).unwrap();
         let tds = dt.tds_mut();
 
         let new_vkey = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.5, 0.5]).unwrap())
             .unwrap();
         let simplex_key = tds.simplex_keys().next().unwrap();
         let original_simplex_count = tds.number_of_simplices();
@@ -5092,9 +5089,9 @@ mod tests {
     #[test]
     fn test_wire_cavity_neighbors_with_invalid_simplices() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::<_, (), (), 2>::try_new(&vertices).unwrap();
         let tds = dt.tds_mut();
@@ -5118,34 +5115,22 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 2.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([2.0, 2.0]).unwrap())
             .unwrap();
         let v4 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([3.0, 2.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([3.0, 2.0]).unwrap())
             .unwrap();
         let v5 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 3.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([2.0, 3.0]).unwrap())
             .unwrap();
 
         let new_simplex = tds
@@ -5187,29 +5172,19 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, -1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0]).unwrap())
             .unwrap();
         let v4 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([2.0, 0.0]).unwrap())
             .unwrap();
 
         let new_simplex_a = tds
@@ -5277,19 +5252,13 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let simplex_key = tds
             .insert_simplex_with_mapping(
@@ -5323,24 +5292,16 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
             .unwrap();
 
         let c1 = tds
@@ -5388,17 +5349,15 @@ mod tests {
     #[test]
     fn test_fill_cavity_with_empty_boundary_facets() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::<_, (), (), 2>::try_new(&vertices).unwrap();
         let tds = dt.tds_mut();
 
         let new_vkey = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.5, 0.5]).unwrap())
             .unwrap();
         let empty_facets: Vec<FacetHandle> = vec![];
         let result = fill_cavity(tds, new_vkey, &empty_facets);
@@ -5410,18 +5369,16 @@ mod tests {
     #[test]
     fn test_fill_cavity_errors_on_boundary_simplex_wrong_vertex_count() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::<_, (), (), 2>::try_new(&vertices).unwrap();
         let tds = dt.tds_mut();
 
         // Insert a new vertex (apex)
         let new_vkey = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.5, 0.5]).unwrap())
             .unwrap();
 
         // Corrupt the single boundary simplex by adding one extra vertex key.
@@ -5448,29 +5405,19 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v_a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v_b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v_c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v_d = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, -1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0]).unwrap())
             .unwrap();
         let v_e = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
             .unwrap();
 
         let c1 = tds
@@ -5508,9 +5455,9 @@ mod tests {
     fn test_wire_cavity_neighbors_errors_on_wrong_simplex_arity() {
         // Force a 2D simplex away from triangle arity so wiring reports the invariant directly.
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::<_, (), (), 2>::try_new(&vertices).unwrap();
         let tds = dt.tds_mut();
@@ -6435,46 +6382,46 @@ mod tests {
     test_repair_neighbors!(
         2,
         vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([0.5, 0.5]).unwrap(),
         ]
     );
 
     test_repair_neighbors!(
         3,
         vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.25, 0.25]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.25, 0.25, 0.25]).unwrap(),
         ]
     );
 
     test_repair_neighbors!(
         4,
         vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.2, 0.2, 0.2, 0.2]).unwrap(),
         ]
     );
 
     test_repair_neighbors!(
         5,
         vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.15, 0.15, 0.15, 0.15, 0.15]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.15, 0.15, 0.15, 0.15, 0.15]).unwrap(),
         ]
     );
 
@@ -6482,10 +6429,10 @@ mod tests {
     fn test_repair_neighbor_pointers_reconstructs_missing_neighbors() {
         // Create a simple 2D triangulation with two triangles.
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.1]).unwrap(), // break cocircular symmetry
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 1.1]).unwrap(), // break cocircular symmetry
         ];
         let mut dt = DelaunayTriangulation::<_, (), (), 2>::try_new(&vertices).unwrap();
         let tds = dt.tds_mut();
@@ -6582,98 +6529,95 @@ mod tests {
     test_repair_neighbor_pointers_local_dimensions!(
         2,
         vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.1]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 1.1]).unwrap(),
         ],
+        vec![vertex!([0.0, 0.0]).unwrap(), vertex!([1.0, 0.0]).unwrap()],
         vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap()
-        ],
-        vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, -1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([0.0, -1.0]).unwrap(),
+            vertex!([2.0, 0.0]).unwrap(),
         ]
     );
 
     test_repair_neighbor_pointers_local_dimensions!(
         3,
         vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.25, 0.25]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.25, 0.25, 0.25]).unwrap(),
         ],
         vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
         ],
         vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, -1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, -1.0]).unwrap(),
+            vertex!([1.0, 1.0, 1.0]).unwrap(),
         ]
     );
 
     test_repair_neighbor_pointers_local_dimensions!(
         4,
         vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.2, 0.2, 0.2, 0.2]).unwrap(),
         ],
         vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
         ],
         vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, -1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 1.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, -1.0]).unwrap(),
+            vertex!([1.0, 1.0, 1.0, 1.0]).unwrap(),
         ]
     );
 
     test_repair_neighbor_pointers_local_dimensions!(
         5,
         vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.15, 0.15, 0.15, 0.15, 0.15]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.15, 0.15, 0.15, 0.15, 0.15]).unwrap(),
         ],
         vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
         ],
         vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, -1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 1.0, 1.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, -1.0]).unwrap(),
+            vertex!([1.0, 1.0, 1.0, 1.0, 1.0]).unwrap(),
         ]
     );
 
     #[test]
     fn test_repair_neighbor_pointers_local_replaces_stale_neighbor_slot() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.1]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 1.1]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::<_, (), (), 2>::try_new(&vertices).unwrap();
         let tds = dt.tds_mut();
@@ -6700,34 +6644,22 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v_a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v_b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v_c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v_d = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, -1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0]).unwrap())
             .unwrap();
         let v_e = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([2.0, 0.0]).unwrap())
             .unwrap();
         let v_f = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([2.0, 1.0]).unwrap())
             .unwrap();
 
         let c1 = tds
@@ -6769,11 +6701,11 @@ mod tests {
     #[test]
     fn test_repair_neighbor_pointers_local_does_not_scan_unseeded_simplices() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.1]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.35]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 1.1]).unwrap(),
+            vertex!([0.5, 0.35]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::<_, (), (), 2>::try_new(&vertices).unwrap();
         let tds = dt.tds_mut();
@@ -6796,9 +6728,9 @@ mod tests {
     #[test]
     fn test_extend_hull_adds_simplices_for_exterior_vertex() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::<_, (), (), 2>::try_new(&vertices).unwrap();
         let tds = dt.tds_mut();
@@ -6806,9 +6738,7 @@ mod tests {
         let kernel = FastKernel::<f64>::new();
         let p = Point::try_new([2.0, 2.0]).expect("finite point coordinates");
         let new_vkey = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 2.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([2.0, 2.0]).unwrap())
             .unwrap();
 
         let new_simplices = extend_hull(tds, &kernel, new_vkey, &p).unwrap();
@@ -6819,9 +6749,9 @@ mod tests {
     #[test]
     fn test_extend_hull_errors_when_no_visible_facets() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::<_, (), (), 2>::try_new(&vertices).unwrap();
         let tds = dt.tds_mut();
@@ -6829,9 +6759,7 @@ mod tests {
         let kernel = FastKernel::<f64>::new();
         let p = Point::try_new([0.25, 0.25]).expect("finite point coordinates"); // inside
         let new_vkey = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.25]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.25, 0.25]).unwrap())
             .unwrap();
 
         let err = extend_hull(tds, &kernel, new_vkey, &p).unwrap_err();
@@ -6892,9 +6820,9 @@ mod tests {
     #[test]
     fn test_find_boundary_edge_split_facet_on_segment_2d() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::<_, (), (), 2>::try_new(&vertices).unwrap();
         let point = Point::try_new([0.5, 0.0]).expect("finite point coordinates"); // on boundary edge
@@ -6906,9 +6834,9 @@ mod tests {
     #[test]
     fn test_find_boundary_edge_split_facet_hull_vertex_is_retryable_typed_reason() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::<_, (), (), 2>::try_new(&vertices).unwrap();
         let point = Point::try_new([0.0, 0.0]).expect("finite point coordinates");
@@ -6930,9 +6858,9 @@ mod tests {
     #[test]
     fn test_find_boundary_edge_split_facet_off_segment_returns_none_2d() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::<_, (), (), 2>::try_new(&vertices).unwrap();
         let point = Point::try_new([2.0, 0.0]).expect("finite point coordinates"); // collinear with an edge line, outside segment
@@ -6944,9 +6872,9 @@ mod tests {
     #[test]
     fn test_find_boundary_edge_split_facet_next_after_endpoint_returns_none_2d() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::<_, (), (), 2>::try_new(&vertices).unwrap();
         let point = Point::try_new([f64::from_bits(1.0_f64.to_bits() + 1), 0.0])
@@ -6959,9 +6887,9 @@ mod tests {
     #[test]
     fn test_find_visible_boundary_facets_inside_returns_empty_2d() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::<_, (), (), 2>::try_new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
@@ -6974,9 +6902,9 @@ mod tests {
     #[test]
     fn test_find_visible_boundary_facets_outside_returns_non_empty_2d() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::<_, (), (), 2>::try_new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
@@ -7005,19 +6933,13 @@ mod tests {
     fn test_set_neighbor_errors_on_invalid_facet_index() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let simplex_key = tds
             .insert_simplex_with_mapping(

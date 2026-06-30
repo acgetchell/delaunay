@@ -512,11 +512,7 @@ impl<'v> ValidatedExplicitSimplices<'v> {
         specs: &'v [Vec<usize>],
     ) -> Result<Self, ExplicitConstructionError> {
         validate_explicit_simplex_specs::<D>(vertex_count, specs)?;
-        Ok(Self::from_validated_specs(specs))
-    }
-
-    const fn from_validated_specs(specs: &'v [Vec<usize>]) -> Self {
-        Self { specs }
+        Ok(Self { specs })
     }
 
     const fn as_slice(self) -> &'v [Vec<usize>] {
@@ -635,10 +631,10 @@ enum BuilderTopology<const D: usize> {
 //
 // U is inferred from the vertex slice.
 //
-//   let vertices = vec![crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0])?, ...];
+//   let vertices = vec![Vertex::<(), _>::try_new([0.0, 0.0])?, ...];
 //   let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>();
 //
-//   let typed: [Vertex<i32, 2>; 3] = [crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 1)?, ...];
+//   let typed: [Vertex<i32, 2>; 3] = [Vertex::<_, _>::try_new_with_data([0.0, 0.0], 1)?, ...];
 //   let dt = DelaunayTriangulationBuilder::new(&typed).build::<()>();
 //
 // =============================================================================
@@ -1375,7 +1371,7 @@ where
             return Self::build_explicit(
                 kernel,
                 self.vertices,
-                simplices.as_slice(),
+                simplices,
                 self.topology_guarantee,
                 self.global_topology_or_default(),
                 self.construction_options.enforces_final_delaunay(),
@@ -1496,7 +1492,8 @@ where
     ///
     /// # Algorithm
     ///
-    /// 1. Validate input: each simplex has D+1 in-bounds, unique vertex indices.
+    /// 1. Receive prevalidated simplex specs: each simplex has D+1 in-bounds,
+    ///    unique vertex indices.
     /// 2. Reject non-Euclidean explicit connectivity until quotient embedding
     ///    validation exists.
     /// 3. Build a `Tds`: insert all vertices, then insert simplices from the specifications.
@@ -1514,7 +1511,7 @@ where
     fn build_explicit<K, V>(
         kernel: &K,
         vertices: &[Vertex<U, D>],
-        simplices: &[Vec<usize>],
+        simplices: ValidatedExplicitSimplices<'_>,
         topology_guarantee: TopologyGuarantee,
         global_topology: GlobalTopology<D>,
         enforce_final_delaunay: bool,
@@ -1523,10 +1520,10 @@ where
         K: Kernel<D, Scalar = f64>,
         V: DataType,
     {
-        validate_explicit_simplex_specs::<D>(vertices.len(), simplices)?;
         Self::reject_explicit_non_euclidean_topology(global_topology)?;
 
         let vertex_count = vertices.len();
+        let simplices = simplices.as_slice();
 
         // --- Build TDS ---
         let mut tds: Tds<U, V, D> = Tds::empty();
@@ -2798,6 +2795,7 @@ mod tests {
     use crate::topology::traits::topological_space::{
         GlobalTopology, TopologyKind, ToroidalConstructionMode, ToroidalDomainError,
     };
+    use crate::vertex;
     use approx::assert_relative_eq;
     use slotmap::Key;
     use std::assert_matches;
@@ -2823,13 +2821,13 @@ mod tests {
 
     fn periodic_fixture_vertices_2d() -> Vec<Vertex<(), 2>> {
         vec![
-            Vertex::<(), _>::try_new([0.1_f64, 0.2]).unwrap(),
-            Vertex::<(), _>::try_new([0.4, 0.7]).unwrap(),
-            Vertex::<(), _>::try_new([0.7, 0.3]).unwrap(),
-            Vertex::<(), _>::try_new([0.2, 0.9]).unwrap(),
-            Vertex::<(), _>::try_new([0.8, 0.6]).unwrap(),
-            Vertex::<(), _>::try_new([0.5, 0.1]).unwrap(),
-            Vertex::<(), _>::try_new([0.3, 0.5]).unwrap(),
+            vertex!([0.1_f64, 0.2]).unwrap(),
+            vertex!([0.4, 0.7]).unwrap(),
+            vertex!([0.7, 0.3]).unwrap(),
+            vertex!([0.2, 0.9]).unwrap(),
+            vertex!([0.8, 0.6]).unwrap(),
+            vertex!([0.5, 0.1]).unwrap(),
+            vertex!([0.3, 0.5]).unwrap(),
         ]
     }
 
@@ -2981,9 +2979,9 @@ mod tests {
     #[test]
     fn test_builder_euclidean_2d() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<()>()
@@ -2996,10 +2994,10 @@ mod tests {
     #[test]
     fn test_builder_euclidean_3d() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<()>()
@@ -3011,9 +3009,9 @@ mod tests {
     #[test]
     fn test_builder_euclidean_rejects_non_euclidean_global_topology() {
         let vertices = vec![
-            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let result = DelaunayTriangulationBuilder::new(&vertices)
             .global_topology(GlobalTopology::Spherical)
@@ -3032,9 +3030,9 @@ mod tests {
     #[test]
     fn test_builder_topology_guarantee_propagated() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .topology_guarantee(TopologyGuarantee::Pseudomanifold)
@@ -3046,9 +3044,9 @@ mod tests {
     #[test]
     fn test_builder_custom_options_propagated() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let opts =
             ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
@@ -3068,10 +3066,10 @@ mod tests {
     #[test]
     fn test_builder_canonicalized_toroidal_canonicalizes_out_of_domain_vertices() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.3]).unwrap(), // in domain
-            crate::core::vertex::Vertex::<(), _>::try_new([1.8, 0.1]).unwrap(), // x → 0.8
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.7]).unwrap(), // in domain
-            crate::core::vertex::Vertex::<(), _>::try_new([-0.4, 0.9]).unwrap(), // x → 0.6
+            vertex!([0.2, 0.3]).unwrap(),  // in domain
+            vertex!([1.8, 0.1]).unwrap(),  // x → 0.8
+            vertex!([0.5, 0.7]).unwrap(),  // in domain
+            vertex!([-0.4, 0.9]).unwrap(), // x → 0.6
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .try_canonicalized_toroidal([1.0, 1.0])
@@ -3092,9 +3090,9 @@ mod tests {
     #[test]
     fn test_builder_canonicalized_toroidal_in_domain_vertices_unchanged() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.1, 0.2]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.8, 0.3]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.4, 0.9]).unwrap(),
+            vertex!([0.1, 0.2]).unwrap(),
+            vertex!([0.8, 0.3]).unwrap(),
+            vertex!([0.4, 0.9]).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .try_canonicalized_toroidal([1.0, 1.0])
@@ -3112,10 +3110,10 @@ mod tests {
     #[test]
     fn test_builder_canonicalized_toroidal_build_succeeds_2d() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.3]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.8, 0.1]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.7]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.1, 0.9]).unwrap(),
+            vertex!([0.2, 0.3]).unwrap(),
+            vertex!([0.8, 0.1]).unwrap(),
+            vertex!([0.5, 0.7]).unwrap(),
+            vertex!([0.1, 0.9]).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .try_canonicalized_toroidal([1.0, 1.0])
@@ -3131,10 +3129,10 @@ mod tests {
     #[test]
     fn test_builder_canonicalized_toroidal_build_out_of_domain_input_2d() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([2.2, 3.3]).unwrap(), // → (0.2, 0.3)
-            crate::core::vertex::Vertex::<(), _>::try_new([-0.2, 1.1]).unwrap(), // → (0.8, 0.1)
-            crate::core::vertex::Vertex::<(), _>::try_new([1.5, 0.7]).unwrap(), // → (0.5, 0.7)
-            crate::core::vertex::Vertex::<(), _>::try_new([-0.9, 2.9]).unwrap(), // → (0.1, 0.9)
+            vertex!([2.2, 3.3]).unwrap(),  // → (0.2, 0.3)
+            vertex!([-0.2, 1.1]).unwrap(), // → (0.8, 0.1)
+            vertex!([1.5, 0.7]).unwrap(),  // → (0.5, 0.7)
+            vertex!([-0.9, 2.9]).unwrap(), // → (0.1, 0.9)
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .try_canonicalized_toroidal([1.0, 1.0])
@@ -3150,10 +3148,10 @@ mod tests {
     #[test]
     fn test_builder_canonicalized_toroidal_rejects_non_euclidean_global_topology() {
         let vertices = vec![
-            Vertex::<(), _>::try_new([0.2, 0.3]).unwrap(),
-            Vertex::<(), _>::try_new([0.8, 0.1]).unwrap(),
-            Vertex::<(), _>::try_new([0.5, 0.7]).unwrap(),
-            Vertex::<(), _>::try_new([0.1, 0.9]).unwrap(),
+            vertex!([0.2, 0.3]).unwrap(),
+            vertex!([0.8, 0.1]).unwrap(),
+            vertex!([0.5, 0.7]).unwrap(),
+            vertex!([0.1, 0.9]).unwrap(),
         ];
         let topology =
             GlobalTopology::try_toroidal([1.0, 1.0], ToroidalConstructionMode::Canonicalized)
@@ -3182,9 +3180,9 @@ mod tests {
     #[test]
     fn test_builder_canonicalized_toroidal_invalid_domain_is_error() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.3]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.8, 0.1]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.7]).unwrap(),
+            vertex!([0.2, 0.3]).unwrap(),
+            vertex!([0.8, 0.1]).unwrap(),
+            vertex!([0.5, 0.7]).unwrap(),
         ];
         let Err(err) =
             DelaunayTriangulationBuilder::new(&vertices).try_canonicalized_toroidal([0.0, 1.0])
@@ -3197,13 +3195,13 @@ mod tests {
     #[test]
     fn test_builder_toroidal_invalid_domain_is_error() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.1, 0.2]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.4, 0.7]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.7, 0.3]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.9]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.8, 0.6]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.1]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.5]).unwrap(),
+            vertex!([0.1, 0.2]).unwrap(),
+            vertex!([0.4, 0.7]).unwrap(),
+            vertex!([0.7, 0.3]).unwrap(),
+            vertex!([0.2, 0.9]).unwrap(),
+            vertex!([0.8, 0.6]).unwrap(),
+            vertex!([0.5, 0.1]).unwrap(),
+            vertex!([0.3, 0.5]).unwrap(),
         ];
         let Err(err) = DelaunayTriangulationBuilder::new(&vertices).try_toroidal([1.0, 0.0]) else {
             panic!("zero period should be rejected");
@@ -3234,7 +3232,7 @@ mod tests {
 
     #[test]
     fn test_builder_toroidal_rejects_dimension_above_validated_range() {
-        let vertices = vec![Vertex::<(), _>::try_new([0.1_f64, 0.2, 0.3, 0.4]).unwrap()];
+        let vertices = vec![vertex!([0.1_f64, 0.2, 0.3, 0.4]).unwrap()];
         let result = DelaunayTriangulationBuilder::new(&vertices)
             .try_toroidal([1.0, 1.0, 1.0, 1.0])
             .unwrap()
@@ -3372,9 +3370,9 @@ mod tests {
     #[test]
     fn test_builder_canonicalized_toroidal_idempotent_on_canonical_input() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.1, 0.2]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.8, 0.3]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.4, 0.9]).unwrap(),
+            vertex!([0.1, 0.2]).unwrap(),
+            vertex!([0.8, 0.3]).unwrap(),
+            vertex!([0.4, 0.9]).unwrap(),
         ];
         let dt_euclidean = DelaunayTriangulationBuilder::new(&vertices)
             .build::<()>()
@@ -3403,9 +3401,9 @@ mod tests {
     #[test]
     fn test_builder_new_preserves_vertex_data() {
         let vertices: Vec<Vertex<i32, 2>> = vec![
-            Vertex::try_new_with_data([0.2_f64, 0.3], 1_i32).unwrap(),
-            Vertex::try_new_with_data([1.8_f64, 0.1], 2_i32).unwrap(), // x → 0.8
-            Vertex::try_new_with_data([0.5_f64, 0.7], 3_i32).unwrap(),
+            vertex!([0.2_f64, 0.3]; data = 1_i32).unwrap(),
+            vertex!([1.8_f64, 0.1]; data = 2_i32).unwrap(), // x → 0.8
+            vertex!([0.5_f64, 0.7]; data = 3_i32).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .try_canonicalized_toroidal([1.0, 1.0])
@@ -3431,10 +3429,10 @@ mod tests {
     #[test]
     fn test_builder_with_robust_kernel() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let kernel = RobustKernel::<f64>::new();
         let dt = DelaunayTriangulationBuilder::new(&vertices)
@@ -3551,9 +3549,9 @@ mod tests {
     #[test]
     fn test_canonicalize_vertices_preserves_uuids() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([2.5, 3.7]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.8, -0.5]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.7]).unwrap(),
+            vertex!([2.5, 3.7]).unwrap(),
+            vertex!([1.8, -0.5]).unwrap(),
+            vertex!([0.5, 0.7]).unwrap(),
         ];
         let original_uuids: Vec<_> = vertices.iter().map(Vertex::uuid).collect();
         let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
@@ -3569,9 +3567,9 @@ mod tests {
     #[test]
     fn test_canonicalize_vertices_preserves_data() {
         let vertices: Vec<Vertex<i32, 2>> = vec![
-            Vertex::try_new_with_data([2.5_f64, 3.7], 10_i32).unwrap(),
-            Vertex::try_new_with_data([1.8_f64, -0.5], 20_i32).unwrap(),
-            Vertex::try_new_with_data([0.5_f64, 0.7], 30_i32).unwrap(),
+            vertex!([2.5_f64, 3.7]; data = 10_i32).unwrap(),
+            vertex!([1.8_f64, -0.5]; data = 20_i32).unwrap(),
+            vertex!([0.5_f64, 0.7]; data = 30_i32).unwrap(),
         ];
         let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let canonical =
@@ -3587,9 +3585,9 @@ mod tests {
     #[test]
     fn test_canonicalize_vertices_transforms_coordinates() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([2.5, 3.7]).unwrap(), // → (0.5, 0.7)
-            crate::core::vertex::Vertex::<(), _>::try_new([1.8, -0.5]).unwrap(), // → (1.8, 2.5)
-            crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.2]).unwrap(), // → (0.3, 0.2)
+            vertex!([2.5, 3.7]).unwrap(),  // → (0.5, 0.7)
+            vertex!([1.8, -0.5]).unwrap(), // → (1.8, 2.5)
+            vertex!([0.3, 0.2]).unwrap(),  // → (0.3, 0.2)
         ];
         let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let canonical =
@@ -3608,8 +3606,8 @@ mod tests {
     #[test]
     fn test_canonicalize_vertices_includes_vertex_context_on_error() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.25_f64, 0.75_f64]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.9_f64, 0.1_f64]).unwrap(),
+            vertex!([0.25_f64, 0.75_f64]).unwrap(),
+            vertex!([0.9_f64, 0.1_f64]).unwrap(),
         ];
         let result = DelaunayTriangulationBuilder::<(), 2>::canonicalize_vertices(
             &vertices,
@@ -3634,11 +3632,11 @@ mod tests {
     fn test_build_periodic_requires_periodic_domain() {
         let kernel = AdaptiveKernel::new();
         let canonical_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.1_f64, 0.1_f64]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.9_f64, 0.2_f64]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.2_f64, 0.8_f64]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.7_f64, 0.9_f64]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5_f64, 0.4_f64]).unwrap(),
+            vertex!([0.1_f64, 0.1_f64]).unwrap(),
+            vertex!([0.9_f64, 0.2_f64]).unwrap(),
+            vertex!([0.2_f64, 0.8_f64]).unwrap(),
+            vertex!([0.7_f64, 0.9_f64]).unwrap(),
+            vertex!([0.5_f64, 0.4_f64]).unwrap(),
         ];
         let result = DelaunayTriangulationBuilder::<(), 2>::build_periodic::<_, (), _>(
             &kernel,
@@ -3661,9 +3659,9 @@ mod tests {
     #[test]
     fn test_canonicalize_vertices_euclidean_identity() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([1.5, 2.5]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([3.7, 4.2]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([-1.0, -2.0]).unwrap(),
+            vertex!([1.5, 2.5]).unwrap(),
+            vertex!([3.7, 4.2]).unwrap(),
+            vertex!([-1.0, -2.0]).unwrap(),
         ];
         let model = EuclideanModel;
         let canonical =

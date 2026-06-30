@@ -747,6 +747,7 @@ mod tests {
     use crate::core::simplex::NeighborSlot;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::traits::coordinate::{CoordinateValidationError, InvalidCoordinateValue};
+    use crate::vertex;
     use std::assert_matches;
 
     #[test]
@@ -835,7 +836,7 @@ mod tests {
                 #[test]
                 fn [<build_initial_simplex_ $dim d>]() {
                     let vertices: Vec<Vertex<(), $dim>> = vec![
-                        $(crate::core::vertex::Vertex::<(), _>::try_new($simplex_coords).unwrap()),+
+                        $(vertex!($simplex_coords).unwrap()),+
                     ];
 
                     let expected_vertices = vertices.len();
@@ -901,8 +902,8 @@ mod tests {
     #[test]
     fn build_initial_simplex_insufficient_vertices() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
         ];
 
         let result = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices);
@@ -916,10 +917,10 @@ mod tests {
     #[test]
     fn build_initial_simplex_too_many_vertices() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([0.5, 0.5]).unwrap(),
         ];
 
         let result = Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices);
@@ -958,9 +959,9 @@ mod tests {
 
     #[test]
     fn build_initial_simplex_with_user_data() {
-        let v1 = Vertex::try_new_with_data([0.0, 0.0], 42_usize).unwrap();
-        let v2 = Vertex::try_new_with_data([1.0, 0.0], 43_usize).unwrap();
-        let v3 = Vertex::try_new_with_data([0.0, 1.0], 44_usize).unwrap();
+        let v1 = vertex!([0.0, 0.0]; data = 42_usize).unwrap();
+        let v2 = vertex!([1.0, 0.0]; data = 43_usize).unwrap();
+        let v3 = vertex!([0.0, 1.0]; data = 44_usize).unwrap();
 
         let vertices = vec![v1, v2, v3];
         let tds = Triangulation::<FastKernel<f64>, usize, (), 2>::build_initial_simplex(&vertices)
@@ -983,9 +984,9 @@ mod tests {
     #[test]
     fn build_initial_simplex_rejects_collinear_2d() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([2.0, 0.0]).unwrap(),
         ];
 
         let result = Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices);
@@ -999,10 +1000,10 @@ mod tests {
     #[test]
     fn build_initial_simplex_rejects_coplanar_3d() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.5, 0.5, 0.0]).unwrap(),
         ];
 
         let result = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices);

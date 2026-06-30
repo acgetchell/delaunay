@@ -117,6 +117,7 @@ use delaunay::prelude::insertion::{InsertionOutcome, InsertionStatistics};
 use delaunay::prelude::repair::{DelaunayCheckPolicy, DelaunayRepairHeuristicConfig};
 use delaunay::prelude::tds::{InvariantKind, TriangulationValidationReport};
 use delaunay::prelude::validation::ValidationCadence;
+use delaunay::vertex;
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 #[cfg(feature = "slow-tests")]
 use std::assert_matches;
@@ -1319,7 +1320,7 @@ where
     let t_vertices = Instant::now();
     let mut vertices: Vec<Vertex<(), D>> = points
         .into_iter()
-        .map(|p| delaunay::prelude::Vertex::<(), _>::try_new(p.into()).unwrap())
+        .map(|p| vertex!(p.into()).unwrap())
         .collect();
     println!(
         "Built {} vertices in {:?}",
@@ -1770,7 +1771,7 @@ fn regression_issue_228_3d_1000_flip_repair_convergence() {
         .expect("point generation should succeed");
     let vertices: Vec<Vertex<(), 3>> = points
         .into_iter()
-        .map(|p| delaunay::prelude::Vertex::<(), _>::try_new(p.into()).unwrap())
+        .map(|p| vertex!(p.into()).unwrap())
         .collect();
 
     // Use the default kernel (AdaptiveKernel — exact+SoS predicates) to match the
@@ -1813,7 +1814,7 @@ fn regression_issue_230_4d_100_orientation() {
         .expect("point generation should succeed");
     let vertices: Vec<Vertex<(), 4>> = points
         .into_iter()
-        .map(|p| delaunay::prelude::Vertex::<(), _>::try_new(p.into()).unwrap())
+        .map(|p| vertex!(p.into()).unwrap())
         .collect();
 
     let kernel = RobustKernel::<f64>::new();

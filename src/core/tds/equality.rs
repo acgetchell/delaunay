@@ -203,10 +203,12 @@ impl<U, V, const D: usize> PartialEq for Tds<U, V, D> {
 
 #[cfg(test)]
 mod tests {
+    use super::compare_coords;
     use crate::DelaunayTriangulation;
     use crate::core::collections::PeriodicOffsetBuffer;
     use crate::core::tds::VertexKey;
     use crate::core::vertex::Vertex;
+    use crate::vertex;
     use slotmap::KeyData;
     use std::cmp::Ordering as CmpOrdering;
 
@@ -217,25 +219,25 @@ mod tests {
     #[test]
     fn compare_coords_uses_total_coordinate_ordering() {
         assert_eq!(
-            super::compare_coords(&[f64::NAN, 1.0], &[0.0, 1.0]),
+            compare_coords(&[f64::NAN, 1.0], &[0.0, 1.0]),
             CmpOrdering::Greater
         );
     }
 
     fn standard_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
         let mut vertices = Vec::with_capacity(D + 1);
-        vertices.push(Vertex::<(), _>::try_new([0.0; D]).unwrap());
+        vertices.push(vertex!([0.0; D]).unwrap());
         for axis in 0..D {
             let mut coords = [0.0; D];
             coords[axis] = 1.0;
-            vertices.push(Vertex::<(), _>::try_new(coords).unwrap());
+            vertices.push(vertex!(coords).unwrap());
         }
         vertices
     }
 
     fn standard_vertices_with_extra<const D: usize>() -> Vec<Vertex<(), D>> {
         let mut vertices = standard_vertices::<D>();
-        vertices.push(Vertex::<(), _>::try_new([0.1; D]).unwrap());
+        vertices.push(vertex!([0.1; D]).unwrap());
         vertices
     }
 
@@ -305,14 +307,14 @@ mod tests {
     #[test]
     fn test_tds_partial_eq_different_structures_not_equal() {
         let verts_a = [
-            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let verts_b = [
-            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 2.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([2.0, 0.0]).unwrap(),
+            vertex!([0.0, 2.0]).unwrap(),
         ];
         let dt_a: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&verts_a).unwrap();

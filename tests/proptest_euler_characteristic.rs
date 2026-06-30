@@ -19,6 +19,7 @@
 use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
 use delaunay::prelude::generators::try_generate_random_triangulation_with_topology_guarantee;
 use delaunay::topology::characteristics::{euler, validation};
+use delaunay::vertex;
 use proptest::prelude::*;
 use std::num::NonZeroUsize;
 
@@ -67,7 +68,7 @@ macro_rules! test_euler_properties {
                 #[test]
                 fn [<prop_euler_matches_classification_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap()),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| vertex!(coords).unwrap()),
                         $min_vertices..$max_vertices
                     )
                 ) {
@@ -101,7 +102,7 @@ macro_rules! test_euler_properties {
                 #[test]
                 fn [<prop_simplex_counts_consistent_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap()),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| vertex!(coords).unwrap()),
                         $min_vertices..$max_vertices
                     )
                 ) {
@@ -141,7 +142,7 @@ macro_rules! test_euler_properties {
                 #[test]
                 fn [<prop_classification_chi_consistent_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap()),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| vertex!(coords).unwrap()),
                         $min_vertices..$max_vertices
                     )
                 ) {

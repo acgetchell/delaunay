@@ -35,10 +35,12 @@
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
 use ::uuid::Uuid;
+use delaunay::geometry::quality::QualityError;
 use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::tds::SimplexKey;
 use delaunay::try_vertices_from_points;
+use delaunay::vertex;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
 use std::cell::RefCell;
@@ -628,8 +630,8 @@ macro_rules! test_quality_properties {
                                 (Ok(_), Ok(_)) => (),  // Both succeed - OK
                                 (Err(rr_err), Err(nv_err)) => {
                                     // Both fail - verify they're both degeneracy errors or both other errors
-                                    let rr_is_degen = matches!(rr_err, delaunay::geometry::quality::QualityError::DegenerateSimplex { .. });
-                                    let nv_is_degen = matches!(nv_err, delaunay::geometry::quality::QualityError::DegenerateSimplex { .. });
+                                    let rr_is_degen = matches!(rr_err, QualityError::DegenerateSimplex { .. });
+                                    let nv_is_degen = matches!(nv_err, QualityError::DegenerateSimplex { .. });
 
                                     if rr_is_degen || nv_is_degen {
                                         prop_assert!(
@@ -688,7 +690,7 @@ macro_rules! test_facet_topology_invariant {
                 #[test]
                 fn [<prop_no_over_shared_facets_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap()),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| vertex!(coords).unwrap()),
                         $min_vertices..$max_vertices
                     )
                 ) {
@@ -718,7 +720,7 @@ macro_rules! test_facet_topology_invariant {
                 #[test]
                 fn [<prop_repair_fixes_all_issues_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap()),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| vertex!(coords).unwrap()),
                         $min_vertices..$max_vertices
                     )
                 ) {
@@ -754,7 +756,7 @@ macro_rules! test_facet_topology_invariant {
                 #[test]
                 fn [<prop_empty_simplex_list_no_issues_ $dim d>](
                     vertices in prop::collection::vec(
-                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap()),
+                        prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| vertex!(coords).unwrap()),
                         $min_vertices..$max_vertices
                     )
                 ) {
@@ -810,7 +812,7 @@ macro_rules! gen_high_dim_facet_topology_smoke {
                 let target_cases = config.cases;
                 let mut runner = TestRunner::new(config);
                 let strategy = prop::collection::vec(
-                    prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap()),
+                    prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| vertex!(coords).unwrap()),
                     $min_vertices..=$max_vertices,
                 );
                 let stats = RefCell::new(SmokeStats::default());

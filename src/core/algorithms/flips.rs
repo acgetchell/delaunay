@@ -10442,6 +10442,7 @@ mod tests {
     use crate::geometry::traits::coordinate::CoordinateConversionValue;
     use crate::repair::DelaunayRepairOperation;
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
+    use crate::vertex;
     use approx::assert_relative_eq;
     use proptest::prelude::*;
     use rand::{RngExt, SeedableRng, rngs::StdRng};
@@ -10506,17 +10507,13 @@ mod tests {
     ) -> Vec<VertexKey> {
         let mut vertices = Vec::with_capacity(D + 1);
         vertices.push(
-            tds.insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0; D]).unwrap(),
-            )
-            .unwrap(),
+            tds.insert_vertex_with_mapping(vertex!([0.0; D]).unwrap())
+                .unwrap(),
         );
         for axis in 0..D {
             vertices.push(
-                tds.insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<D>(axis)).unwrap(),
-                )
-                .unwrap(),
+                tds.insert_vertex_with_mapping(vertex!(unit_vector::<D>(axis)).unwrap())
+                    .unwrap(),
             );
         }
         vertices
@@ -10753,29 +10750,19 @@ mod tests {
         fn new() -> Self {
             let mut tds: Tds<(), (), 3> = Tds::empty();
             let origin_vertex = tds
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]).unwrap())
                 .unwrap();
             let x_axis_vertex = tds
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]).unwrap())
                 .unwrap();
             let y_axis_vertex = tds
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]).unwrap())
                 .unwrap();
             let upper_apex_vertex = tds
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]).unwrap())
                 .unwrap();
             let lower_apex_vertex = tds
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, -1.0]).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!([0.0, 0.0, -1.0]).unwrap())
                 .unwrap();
 
             let upper_tetrahedron = tds
@@ -11110,19 +11097,13 @@ mod tests {
     fn test_resolve_facet_handle_for_key_remaps_after_slot_swap() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
 
         let simplex_key = tds
@@ -11161,24 +11142,16 @@ mod tests {
     fn test_resolve_ridge_handle_for_key_remaps_after_slot_swap() {
         let mut tds: Tds<(), (), 3> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]).unwrap())
             .unwrap();
 
         let simplex_key = tds
@@ -11225,29 +11198,19 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v_left_bottom = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v_right_bottom = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([2.0, 0.0]).unwrap())
             .unwrap();
         let v_left_top = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 2.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 2.0]).unwrap())
             .unwrap();
         let v_right_top = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 2.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([2.0, 2.0]).unwrap())
             .unwrap();
         let v_external = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([-1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([-1.0, 1.0]).unwrap())
             .unwrap();
 
         // Flip cavity: two triangles sharing the bottom edge.
@@ -11341,29 +11304,19 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v_left_bottom = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v_right_bottom = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([2.0, 0.0]).unwrap())
             .unwrap();
         let v_left_top = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 2.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 2.0]).unwrap())
             .unwrap();
         let v_right_top = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 2.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([2.0, 2.0]).unwrap())
             .unwrap();
         let v_external = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([-1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([-1.0, 1.0]).unwrap())
             .unwrap();
 
         let offset_left_bottom = [0_i8, 0_i8];
@@ -11672,9 +11625,9 @@ mod tests {
                 fn [<test_replacement_orientation_helpers_cover_error_paths_ $dim d>]() {
                     let mut tds: Tds<(), (), $dim> = Tds::empty();
                     let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
-                    let v_square = tds.insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new([1.0; $dim]).unwrap()).unwrap();
+                    let v_square = tds.insert_vertex_with_mapping(vertex!([1.0; $dim]).unwrap()).unwrap();
                     let v_collinear = tds
-                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new(scaled_unit_vector::<$dim>(0, 2.0)).unwrap())
+                        .insert_vertex_with_mapping(vertex!(scaled_unit_vector::<$dim>(0, 2.0)).unwrap())
                         .unwrap();
 
                     let source = vertex_key_buffer(&simplex_vertices);
@@ -11770,7 +11723,7 @@ mod tests {
                 fn [<test_orient_replacement_simplices_aligns_external_and_internal_facets_ $dim d>]() {
                     let mut tds: Tds<(), (), $dim> = Tds::empty();
                     let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
-                    let v_square = tds.insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new([1.0; $dim]).unwrap()).unwrap();
+                    let v_square = tds.insert_vertex_with_mapping(vertex!([1.0; $dim]).unwrap()).unwrap();
                     let external_simplex_key = tds
                         .insert_simplex_with_mapping(Simplex::try_new_with_data(simplex_vertices.clone(), None).unwrap())
                         .unwrap();
@@ -11827,7 +11780,7 @@ mod tests {
                     let mut tds: Tds<(), (), $dim> = Tds::empty();
                     let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
                     let v_collinear = tds
-                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new(scaled_unit_vector::<$dim>(0, 2.0)).unwrap())
+                        .insert_vertex_with_mapping(vertex!(scaled_unit_vector::<$dim>(0, 2.0)).unwrap())
                         .unwrap();
 
                     let mut positive_vertices = simplex_vertices.clone();
@@ -11880,36 +11833,24 @@ mod tests {
         // NOTE: keep `v_edge_start` off the plane of (v_cycle_0, v_cycle_1, v_cycle_2)
         // so the post-flip inserted tetrahedra are non-degenerate.
         let v_edge_start = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let v_edge_end = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([2.0, 0.0, 0.0]).unwrap())
             .unwrap();
 
         let v_cycle_0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 2.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 2.0, 0.0]).unwrap())
             .unwrap();
         let v_cycle_1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 2.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 2.0]).unwrap())
             .unwrap();
         let v_cycle_2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 2.0, 2.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 2.0, 2.0]).unwrap())
             .unwrap();
 
         let v_external = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([-1.0, 1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([-1.0, 1.0, 1.0]).unwrap())
             .unwrap();
 
         // Three tetrahedra around the ridge (edge) (v_edge_start, v_edge_end).
@@ -12257,20 +12198,16 @@ mod tests {
     ) -> (Vec<VertexKey>, SimplexKey) {
         let mut vertices = Vec::with_capacity(D + 1);
         vertices.push(
-            tds.insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([offset; D]).unwrap(),
-            )
-            .unwrap(),
+            tds.insert_vertex_with_mapping(vertex!([offset; D]).unwrap())
+                .unwrap(),
         );
 
         for axis in 0..D {
             let mut coords = [offset; D];
             coords[axis] += 1.0;
             vertices.push(
-                tds.insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap(),
-                )
-                .unwrap(),
+                tds.insert_vertex_with_mapping(vertex!(coords).unwrap())
+                    .unwrap(),
             );
         }
 
@@ -12290,9 +12227,7 @@ mod tests {
         tds.assign_incident_simplices().unwrap();
 
         let isolated_vertex = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([20.0; D]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([20.0; D]).unwrap())
             .unwrap();
         tds.vertex_mut(isolated_vertex)
             .unwrap()
@@ -12301,8 +12236,7 @@ mod tests {
         let before = snapshot_topology(&tds);
         let before_incidence = snapshot_incidence(&tds);
         let denominator = f64::from(u32::try_from(D + 2).unwrap());
-        let new_vertex =
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0 / denominator; D]).unwrap();
+        let new_vertex = vertex!([1.0 / denominator; D]).unwrap();
 
         let result = apply_bistellar_flip_k1(&mut tds, first_simplex, new_vertex);
         match result {
@@ -12342,19 +12276,13 @@ mod tests {
     fn test_flip_trial_validation_rejects_unassigned_neighbor_slot() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let simplex_key = tds
             .insert_simplex_with_mapping(
@@ -12395,10 +12323,7 @@ mod tests {
         for i in 0..D {
             let vertex = tds
                 .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(
-                        translated_scaled_unit_vector::<D>(i, offset, scale),
-                    )
-                    .unwrap(),
+                    vertex!(translated_scaled_unit_vector::<D>(i, offset, scale)).unwrap(),
                 )
                 .map_err(|err| {
                     TestCaseError::fail(format!("shared vertex insertion failed: {err:?}"))
@@ -12407,14 +12332,10 @@ mod tests {
         }
 
         let opposite_a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([offset; D]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([offset; D]).unwrap())
             .map_err(|err| TestCaseError::fail(format!("opposite A insertion failed: {err:?}")))?;
         let opposite_b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([offset + scale; D]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([offset + scale; D]).unwrap())
             .map_err(|err| TestCaseError::fail(format!("opposite B insertion failed: {err:?}")))?;
 
         let mut vertices_with_first_opposite = shared_vertices.clone();
@@ -12527,10 +12448,7 @@ mod tests {
         for i in 0..ridge_vertex_count {
             let vertex = tds
                 .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(
-                        translated_scaled_unit_vector::<D>(i, offset, scale),
-                    )
-                    .unwrap(),
+                    vertex!(translated_scaled_unit_vector::<D>(i, offset, scale)).unwrap(),
                 )
                 .map_err(|err| {
                     TestCaseError::fail(format!("ridge vertex insertion failed: {err:?}"))
@@ -12539,13 +12457,11 @@ mod tests {
         }
 
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([offset; D]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([offset; D]).unwrap())
             .map_err(|err| TestCaseError::fail(format!("opposite A insertion failed: {err:?}")))?;
         let b = tds
             .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new(translated_scaled_unit_vector::<D>(
+                vertex!(translated_scaled_unit_vector::<D>(
                     ridge_vertex_count,
                     offset,
                     scale,
@@ -12555,10 +12471,7 @@ mod tests {
             .map_err(|err| TestCaseError::fail(format!("opposite B insertion failed: {err:?}")))?;
         let c = tds
             .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new(translated_scaled_skewed_point::<D>(
-                    offset, scale,
-                ))
-                .unwrap(),
+                vertex!(translated_scaled_skewed_point::<D>(offset, scale)).unwrap(),
             )
             .map_err(|err| TestCaseError::fail(format!("opposite C insertion failed: {err:?}")))?;
 
@@ -12748,12 +12661,12 @@ mod tests {
                     init_tracing();
                     let mut tds: Tds<(), (), $dim> = Tds::empty();
 
-                    let origin = tds.insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new([0.0; $dim]).unwrap()).unwrap();
+                    let origin = tds.insert_vertex_with_mapping(vertex!([0.0; $dim]).unwrap()).unwrap();
                     let mut vertices = Vec::with_capacity($dim + 1);
                     vertices.push(origin);
                     for i in 0..$dim {
                         let v = tds
-                            .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<$dim>(i)).unwrap())
+                            .insert_vertex_with_mapping(vertex!(unit_vector::<$dim>(i)).unwrap())
                             .unwrap();
                         vertices.push(v);
                     }
@@ -12764,7 +12677,7 @@ mod tests {
 
                     let before = snapshot_topology(&tds);
 
-                    let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.1; $dim]).unwrap();
+                    let new_vertex = vertex!([0.1; $dim]).unwrap();
                     let new_uuid = new_vertex.uuid();
                     let _info = apply_bistellar_flip_k1(&mut tds, simplex_key, new_vertex)
                         .unwrap();
@@ -12785,16 +12698,16 @@ mod tests {
                     let mut shared_vertices = Vec::with_capacity($dim);
                     for i in 0..$dim {
                         let v = tds
-                            .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<$dim>(i)).unwrap())
+                            .insert_vertex_with_mapping(vertex!(unit_vector::<$dim>(i)).unwrap())
                             .unwrap();
                         shared_vertices.push(v);
                     }
 
                     let opposite_a = tds
-                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new([0.0; $dim]).unwrap())
+                        .insert_vertex_with_mapping(vertex!([0.0; $dim]).unwrap())
                         .unwrap();
                     let opposite_b = tds
-                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new([1.0; $dim]).unwrap())
+                        .insert_vertex_with_mapping(vertex!([1.0; $dim]).unwrap())
                         .unwrap();
 
                     let mut vertices_with_first_opposite = shared_vertices.clone();
@@ -12868,19 +12781,19 @@ mod tests {
                     let mut ridge_vertices = Vec::with_capacity($dim - 1);
                     for i in 0..($dim - 1) {
                         let v = tds
-                            .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<$dim>(i)).unwrap())
+                            .insert_vertex_with_mapping(vertex!(unit_vector::<$dim>(i)).unwrap())
                             .unwrap();
                         ridge_vertices.push(v);
                     }
 
                     let a = tds
-                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new([0.0; $dim]).unwrap())
+                        .insert_vertex_with_mapping(vertex!([0.0; $dim]).unwrap())
                         .unwrap();
                     let b = tds
-                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<$dim>($dim - 1)).unwrap())
+                        .insert_vertex_with_mapping(vertex!(unit_vector::<$dim>($dim - 1)).unwrap())
                         .unwrap();
                     let c = tds
-                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new(skewed_point::<$dim>()).unwrap())
+                        .insert_vertex_with_mapping(vertex!(skewed_point::<$dim>()).unwrap())
                         .unwrap();
 
                     let mut c1_vertices = ridge_vertices.clone();
@@ -13132,24 +13045,16 @@ mod tests {
         init_tracing();
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let d = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.2]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.2]).unwrap())
             .unwrap();
 
         let c1 = tds
@@ -13186,24 +13091,16 @@ mod tests {
         init_tracing();
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let d = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.2]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.2]).unwrap())
             .unwrap();
 
         let c1 = tds
@@ -13235,43 +13132,29 @@ mod tests {
 
         // Opposite vertices across the shared face.
         let v_a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let v_b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]).unwrap())
             .unwrap();
 
         // Shared face vertices.
         let v_x = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]).unwrap())
             .unwrap();
         let v_y = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]).unwrap())
             .unwrap();
         let v_z = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 1.0]).unwrap())
             .unwrap();
 
         // Extra vertices for an existing tetrahedron containing the edge (v_a, v_b).
         let v_p = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([2.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let v_q = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([2.0, 1.0, 0.0]).unwrap())
             .unwrap();
 
         // Two tetrahedra sharing face (v_x, v_y, v_z): a k=2 flip across that face would insert edge (v_a, v_b).
@@ -13312,29 +13195,19 @@ mod tests {
         init_tracing();
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v_a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v_b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v_c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v_d = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.2]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.2]).unwrap())
             .unwrap();
         let v_e = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 2.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([2.0, 2.0]).unwrap())
             .unwrap();
 
         let c1 = tds
@@ -13370,29 +13243,19 @@ mod tests {
         init_tracing();
         let mut tds: Tds<(), (), 3> = Tds::empty();
         let v_a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let v_b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let v_c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]).unwrap())
             .unwrap();
         let v_d = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.2, 0.2, 1.0]).unwrap())
             .unwrap();
         let v_e = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.3, -0.1, -0.8]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.3, -0.1, -0.8]).unwrap())
             .unwrap();
 
         let c1 = tds
@@ -13421,29 +13284,19 @@ mod tests {
         init_tracing();
         let mut tds: Tds<(), (), 3> = Tds::empty();
         let r0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let r1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]).unwrap())
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]).unwrap())
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, -1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.2, 0.2, -1.0]).unwrap())
             .unwrap();
 
         let c1 = tds
@@ -13479,34 +13332,22 @@ mod tests {
         init_tracing();
         let mut tds: Tds<(), (), 4> = Tds::empty();
         let r0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let r1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let r2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0, 0.0]).unwrap())
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 1.0]).unwrap())
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.2, 0.2, 0.2, 0.2]).unwrap())
             .unwrap();
 
         let c1 = tds
@@ -13542,39 +13383,25 @@ mod tests {
         init_tracing();
         let mut tds: Tds<(), (), 5> = Tds::empty();
         let r0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let r1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let r2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let r3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap())
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap())
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2, 0.5]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.2, 0.2, 0.2, 0.2, 0.5]).unwrap())
             .unwrap();
 
         let c1 = tds
@@ -13610,19 +13437,13 @@ mod tests {
         init_tracing();
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let simplex = tds
             .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, c], None).unwrap())
@@ -13640,24 +13461,16 @@ mod tests {
         init_tracing();
         let mut tds: Tds<(), (), 3> = Tds::empty();
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]).unwrap())
             .unwrap();
         let d = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]).unwrap())
             .unwrap();
         let simplex = tds
             .insert_simplex_with_mapping(
@@ -13675,29 +13488,19 @@ mod tests {
         init_tracing();
         let mut tds: Tds<(), (), 3> = Tds::empty();
         let ridge_start = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let ridge_end = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let first_opposite = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]).unwrap())
             .unwrap();
         let second_opposite = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]).unwrap())
             .unwrap();
         let dangling_opposite = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0, 1.0]).unwrap())
             .unwrap();
         let simplex = tds
             .insert_simplex_with_mapping(
@@ -13745,22 +13548,16 @@ mod tests {
         let mut shared_vertices = Vec::with_capacity(4);
         for i in 0..4 {
             let v = tds
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<4>(i)).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!(unit_vector::<4>(i)).unwrap())
                 .unwrap();
             shared_vertices.push(v);
         }
 
         let opposite_a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0; 4]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0; 4]).unwrap())
             .unwrap();
         let opposite_b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0; 4]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0; 4]).unwrap())
             .unwrap();
 
         let mut vertices_with_first_opposite = shared_vertices.clone();
@@ -13789,17 +13586,13 @@ mod tests {
         init_tracing();
         let mut tds: Tds<(), (), 5> = Tds::empty();
         let origin = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0; 5]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0; 5]).unwrap())
             .unwrap();
         let mut vertices = Vec::with_capacity(6);
         vertices.push(origin);
         for i in 0..5 {
             let v = tds
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<5>(i)).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!(unit_vector::<5>(i)).unwrap())
                 .unwrap();
             vertices.push(v);
         }
@@ -13825,31 +13618,21 @@ mod tests {
         init_tracing();
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let simplex_key = tds
             .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, c], None).unwrap())
             .unwrap();
 
         let before = snapshot_topology(&tds);
-        let err = apply_bistellar_flip_k1(
-            &mut tds,
-            simplex_key,
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.0]).unwrap(),
-        )
-        .unwrap_err();
+        let err = apply_bistellar_flip_k1(&mut tds, simplex_key, vertex!([0.5, 0.0]).unwrap())
+            .unwrap_err();
 
         assert_matches!(err, FlipError::DegenerateSimplex);
         assert_eq!(snapshot_topology(&tds), before);
@@ -13863,22 +13646,16 @@ mod tests {
         let mut shared_vertices = Vec::with_capacity(4);
         for i in 0..4 {
             let v = tds
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<4>(i)).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!(unit_vector::<4>(i)).unwrap())
                 .unwrap();
             shared_vertices.push(v);
         }
 
         let opposite_a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0; 4]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0; 4]).unwrap())
             .unwrap();
         let opposite_b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0; 4]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0; 4]).unwrap())
             .unwrap();
 
         let mut vertices_with_first_opposite = shared_vertices.clone();
@@ -13915,39 +13692,25 @@ mod tests {
         init_tracing();
         let mut tds: Tds<(), (), 5> = Tds::empty();
         let r0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let r1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let r2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let r3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap())
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap())
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2, 0.5]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.2, 0.2, 0.2, 0.2, 0.5]).unwrap())
             .unwrap();
 
         let c1 = tds
@@ -13995,30 +13758,19 @@ mod tests {
 
             let mut tds: Tds<(), (), 3> = Tds::empty();
             let v_a = tds
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(jitter([0.0, 0.0, 0.0])).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!(jitter([0.0, 0.0, 0.0])).unwrap())
                 .unwrap();
             let v_b = tds
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(jitter([1.0, 0.0, 0.0])).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!(jitter([1.0, 0.0, 0.0])).unwrap())
                 .unwrap();
             let v_c = tds
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(jitter([0.0, 1.0, 0.0])).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!(jitter([0.0, 1.0, 0.0])).unwrap())
                 .unwrap();
             let v_d = tds
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(jitter([0.2, 0.2, 1.0])).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!(jitter([0.2, 0.2, 1.0])).unwrap())
                 .unwrap();
             let v_e = tds
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(jitter([0.3, -0.1, -0.8]))
-                        .unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!(jitter([0.3, -0.1, -0.8])).unwrap())
                 .unwrap();
 
             let c1 = tds
@@ -14066,24 +13818,16 @@ mod tests {
         for d_coords in d_candidates {
             let mut candidate: Tds<(), (), 2> = Tds::empty();
             let a = candidate
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(a_coords).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!(a_coords).unwrap())
                 .unwrap();
             let b = candidate
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(b_coords).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!(b_coords).unwrap())
                 .unwrap();
             let c = candidate
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(c_coords).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!(c_coords).unwrap())
                 .unwrap();
             let d = candidate
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(d_coords).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!(d_coords).unwrap())
                 .unwrap();
 
             let _c1 = candidate
@@ -14133,24 +13877,16 @@ mod tests {
         for d_coords in d_candidates {
             let mut candidate: Tds<(), (), 2> = Tds::empty();
             let a = candidate
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
                 .unwrap();
             let b = candidate
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
                 .unwrap();
             let c = candidate
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
                 .unwrap();
             let d = candidate
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(d_coords).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!(d_coords).unwrap())
                 .unwrap();
 
             let _c1 = candidate
@@ -14217,29 +13953,19 @@ mod tests {
 
         let mut tds: Tds<(), (), 3> = Tds::empty();
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]).unwrap())
             .unwrap();
         let d = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]).unwrap())
             .unwrap();
         let e = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.3, 0.3, 0.3]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.3, 0.3, 0.3]).unwrap())
             .unwrap();
 
         let _c1 = tds
@@ -14295,24 +14021,16 @@ mod tests {
         for d_coords in d_candidates {
             let mut candidate: Tds<(), (), 2> = Tds::empty();
             let a = candidate
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(a_coords).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!(a_coords).unwrap())
                 .unwrap();
             let b = candidate
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(b_coords).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!(b_coords).unwrap())
                 .unwrap();
             let c = candidate
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(c_coords).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!(c_coords).unwrap())
                 .unwrap();
             let d = candidate
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(d_coords).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!(d_coords).unwrap())
                 .unwrap();
 
             let _c1 = candidate
@@ -14369,24 +14087,16 @@ mod tests {
         init_tracing();
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let d = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1e-9]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 1e-9]).unwrap())
             .unwrap();
 
         let c1 = tds
@@ -14413,24 +14123,16 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         // a, c, d are collinear on the x-axis → replacement simplex {a,c,d} is degenerate
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let d = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.5, 0.0]).unwrap())
             .unwrap();
 
         let c1 = tds
@@ -14459,24 +14161,16 @@ mod tests {
         init_tracing();
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let d = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
             .unwrap();
 
         let c1 = tds
@@ -14504,22 +14198,16 @@ mod tests {
         let mut shared_vertices = Vec::with_capacity(4);
         for i in 0..4 {
             let v = tds
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<4>(i)).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!(unit_vector::<4>(i)).unwrap())
                 .unwrap();
             shared_vertices.push(v);
         }
 
         let opposite_a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0; 4]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0; 4]).unwrap())
             .unwrap();
         let opposite_b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0; 4]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0; 4]).unwrap())
             .unwrap();
 
         let mut vertices_with_first_opposite = shared_vertices.clone();
@@ -14560,17 +14248,13 @@ mod tests {
         init_tracing();
         let mut tds: Tds<(), (), 4> = Tds::empty();
         let origin = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0; 4]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0; 4]).unwrap())
             .unwrap();
         let mut vertices = Vec::with_capacity(5);
         vertices.push(origin);
         for i in 0..4 {
             let v = tds
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<4>(i)).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!(unit_vector::<4>(i)).unwrap())
                 .unwrap();
             vertices.push(v);
         }
@@ -14579,7 +14263,7 @@ mod tests {
             .insert_simplex_with_mapping(Simplex::try_new_with_data(vertices, None).unwrap())
             .unwrap();
 
-        let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.1; 4]).unwrap();
+        let new_vertex = vertex!([0.1; 4]).unwrap();
         let new_uuid = new_vertex.uuid();
         let info = apply_bistellar_flip_k1(&mut tds, simplex_key, new_vertex).unwrap();
 
@@ -14601,39 +14285,25 @@ mod tests {
         init_tracing();
         let mut tds: Tds<(), (), 5> = Tds::empty();
         let r0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let r1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let r2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let r3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap())
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap())
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2, 0.5]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.2, 0.2, 0.2, 0.2, 0.5]).unwrap())
             .unwrap();
 
         let c1 = tds
@@ -14684,22 +14354,16 @@ mod tests {
         let mut shared_vertices = Vec::with_capacity(5);
         for i in 0..5 {
             let v = tds
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<5>(i)).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!(unit_vector::<5>(i)).unwrap())
                 .unwrap();
             shared_vertices.push(v);
         }
 
         let opposite_a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0; 5]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0; 5]).unwrap())
             .unwrap();
         let opposite_b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0; 5]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0; 5]).unwrap())
             .unwrap();
 
         let mut vertices_with_first_opposite = shared_vertices.clone();
@@ -14740,17 +14404,13 @@ mod tests {
         init_tracing();
         let mut tds: Tds<(), (), 5> = Tds::empty();
         let origin = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0; 5]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0; 5]).unwrap())
             .unwrap();
         let mut vertices = Vec::with_capacity(6);
         vertices.push(origin);
         for i in 0..5 {
             let v = tds
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<5>(i)).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!(unit_vector::<5>(i)).unwrap())
                 .unwrap();
             vertices.push(v);
         }
@@ -14759,7 +14419,7 @@ mod tests {
             .insert_simplex_with_mapping(Simplex::try_new_with_data(vertices, None).unwrap())
             .unwrap();
 
-        let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.1; 5]).unwrap();
+        let new_vertex = vertex!([0.1; 5]).unwrap();
         let new_uuid = new_vertex.uuid();
         let info = apply_bistellar_flip_k1(&mut tds, simplex_key, new_vertex).unwrap();
 
@@ -14780,26 +14440,20 @@ mod tests {
         init_tracing();
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
 
         let simplex = tds
             .insert_simplex_with_mapping(Simplex::try_new_with_data(vec![a, b, c], None).unwrap())
             .unwrap();
 
-        let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2]).unwrap();
+        let new_vertex = vertex!([0.2, 0.2]).unwrap();
         let new_uuid = new_vertex.uuid();
         let info = apply_bistellar_flip_k1(&mut tds, simplex, new_vertex).unwrap();
 
@@ -14824,22 +14478,16 @@ mod tests {
         let mut shared_vertices = Vec::with_capacity(4);
         for i in 0..4 {
             let v = tds
-                .insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<4>(i)).unwrap(),
-                )
+                .insert_vertex_with_mapping(vertex!(unit_vector::<4>(i)).unwrap())
                 .unwrap();
             shared_vertices.push(v);
         }
 
         let opposite_a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0; 4]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0; 4]).unwrap())
             .unwrap();
         let opposite_b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0; 4]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0; 4]).unwrap())
             .unwrap();
 
         let mut vertices_with_first_opposite = shared_vertices.clone();
@@ -14883,39 +14531,25 @@ mod tests {
         init_tracing();
         let mut tds: Tds<(), (), 5> = Tds::empty();
         let r0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let r1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let r2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let r3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap())
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap())
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2, 0.5]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.2, 0.2, 0.2, 0.2, 0.5]).unwrap())
             .unwrap();
 
         let c1 = tds
@@ -16075,7 +15709,7 @@ mod tests {
                     let mut extra_coords = [0.0_f64; $dim];
                     extra_coords[0] = 2.0;
                     let extra_vertex = tds
-                        .insert_vertex_with_mapping(Vertex::<(), _>::try_new(extra_coords).unwrap())
+                        .insert_vertex_with_mapping(vertex!(extra_coords).unwrap())
                         .unwrap();
                     let mut mismatched_vertices = vertices[1..].to_vec();
                     mismatched_vertices.push(extra_vertex);
@@ -16203,10 +15837,8 @@ mod tests {
                     f64::from(u32::try_from(index + 2).expect("test index fits in u32")),
                     coords[next_index],
                 );
-                tds.insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap(),
-                )
-                .unwrap()
+                tds.insert_vertex_with_mapping(vertex!(coords).unwrap())
+                    .unwrap()
             })
             .collect()
     }
@@ -16218,7 +15850,7 @@ mod tests {
                 fn [<test_periodic_lift_helpers_use_simplex_offsets_ $dim d>]() {
                     let mut tds: Tds<(), (), $dim> = Tds::empty();
                     let lifted_vertex = tds
-                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<$dim>(0)).unwrap())
+                        .insert_vertex_with_mapping(vertex!(unit_vector::<$dim>(0)).unwrap())
                         .unwrap();
                     let mut simplex_vertices = Vec::with_capacity($dim + 1);
                     simplex_vertices.push(lifted_vertex);
@@ -16266,10 +15898,10 @@ mod tests {
                 fn [<test_periodic_lift_treats_missing_source_offsets_as_zero_frame_ $dim d>]() {
                     let mut tds: Tds<(), (), $dim> = Tds::empty();
                     let shared_vertex = tds
-                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new([0.0; $dim]).unwrap())
+                        .insert_vertex_with_mapping(vertex!([0.0; $dim]).unwrap())
                         .unwrap();
                     let lifted_vertex = tds
-                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<$dim>(0)).unwrap())
+                        .insert_vertex_with_mapping(vertex!(unit_vector::<$dim>(0)).unwrap())
                         .unwrap();
 
                     let mut target_vertices = Vec::with_capacity($dim + 1);
@@ -16307,15 +15939,15 @@ mod tests {
                 fn [<test_periodic_lift_rejects_conflicting_shared_translations_ $dim d>]() {
                     let mut tds: Tds<(), (), $dim> = Tds::empty();
                     let shared_a = tds
-                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new([0.0; $dim]).unwrap())
+                        .insert_vertex_with_mapping(vertex!([0.0; $dim]).unwrap())
                         .unwrap();
                     let mut shared_b_coords = [0.0; $dim];
                     shared_b_coords[0] = 0.2;
                     let shared_b = tds
-                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new(shared_b_coords).unwrap())
+                        .insert_vertex_with_mapping(vertex!(shared_b_coords).unwrap())
                         .unwrap();
                     let lifted_vertex = tds
-                        .insert_vertex_with_mapping(crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<$dim>(0)).unwrap())
+                        .insert_vertex_with_mapping(vertex!(unit_vector::<$dim>(0)).unwrap())
                         .unwrap();
 
                     let mut target_vertices = Vec::with_capacity($dim + 1);
@@ -16385,21 +16017,15 @@ mod tests {
         let mut face_vertices = Vec::with_capacity(D);
         for axis in 0..D {
             face_vertices.push(
-                tds.insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<D>(axis)).unwrap(),
-                )
-                .unwrap(),
+                tds.insert_vertex_with_mapping(vertex!(unit_vector::<D>(axis)).unwrap())
+                    .unwrap(),
             );
         }
         let opposite_a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0; D]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0; D]).unwrap())
             .unwrap();
         let opposite_b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.25; D]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.25; D]).unwrap())
             .unwrap();
 
         let lifted_vertex = face_vertices[0];
@@ -16439,26 +16065,18 @@ mod tests {
         let mut ridge_vertices = Vec::with_capacity(D - 1);
         for axis in 0..(D - 1) {
             ridge_vertices.push(
-                tds.insert_vertex_with_mapping(
-                    crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<D>(axis)).unwrap(),
-                )
-                .unwrap(),
+                tds.insert_vertex_with_mapping(vertex!(unit_vector::<D>(axis)).unwrap())
+                    .unwrap(),
             );
         }
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0; D]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0; D]).unwrap())
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new(unit_vector::<D>(D - 1)).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!(unit_vector::<D>(D - 1)).unwrap())
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new(skewed_point::<D>()).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!(skewed_point::<D>()).unwrap())
             .unwrap();
         let triangle_vertices = vec![a, b, c];
 
@@ -16671,10 +16289,10 @@ mod tests {
     fn test_repair_run_full_reseed_preserves_mutation_frontier() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.2]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 0.2]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -16703,10 +16321,10 @@ mod tests {
     fn test_repair_k2_empty_seed_does_not_full_reseed() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.2]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 0.2]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -16734,10 +16352,10 @@ mod tests {
     fn test_repair_queue_k2_local_seed() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.2]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 0.2]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();

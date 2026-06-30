@@ -9,7 +9,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
-use delaunay::prelude::geometry::CoordinateRange;
+use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange};
 use delaunay::prelude::query::FacetIncidenceAnalysis;
 use delaunay::try_vertices_from_points;
 use uuid::Uuid;
@@ -30,7 +30,7 @@ fn benchmark_bounds() -> CoordinateRange<f64> {
 
 fn boundary_triangulation_3d(
     requested_vertices: usize,
-) -> DelaunayTriangulation<delaunay::prelude::geometry::AdaptiveKernel<f64>, (), (), 3> {
+) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> {
     let points = generate_random_points_in_range_seeded::<3>(
         requested_vertices,
         benchmark_bounds(),
@@ -93,8 +93,7 @@ fn bench_boundary_facets_micro(c: &mut Criterion) {
     group.finish();
 }
 
-fn uuid_iter_source()
--> DelaunayTriangulation<delaunay::prelude::geometry::AdaptiveKernel<f64>, (), (), 3> {
+fn uuid_iter_source() -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> {
     let vertices = vec![
         vertex![0.0, 0.0, 0.0].or_abort(),
         vertex![1.0, 0.0, 0.0].or_abort(),

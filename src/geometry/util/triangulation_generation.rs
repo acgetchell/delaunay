@@ -1131,6 +1131,7 @@ mod tests {
     use crate::geometry::coordinate_range::{
         CoordinateRangeBound, CoordinateRangeOrdering, InvalidCoordinateValue,
     };
+    use crate::vertex;
     use approx::assert_relative_eq;
     use std::assert_matches;
 
@@ -1400,9 +1401,9 @@ mod tests {
     fn test_random_triangulation_try_with_vertices_exercises_fallbacks() {
         // Use a valid 2D simplex, but require more vertices than provided to force retries.
         let vertices: Vec<Vertex<(), 2>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
 
         let result = random_triangulation_try_with_vertices::<(), (), 2>(

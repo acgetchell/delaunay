@@ -433,10 +433,10 @@ use uuid::Uuid;
 /// ```
 pub struct Tds<U, V, const D: usize> {
     /// Storage map for vertices, allowing stable keys and efficient access.
-    pub(in crate::core::tds) vertices: StorageMap<VertexKey, Vertex<U, D>>,
+    pub(super) vertices: StorageMap<VertexKey, Vertex<U, D>>,
 
     /// Storage map for simplices, providing stable keys and efficient access.
-    pub(in crate::core::tds) simplices: StorageMap<SimplexKey, Simplex<V, D>>,
+    pub(super) simplices: StorageMap<SimplexKey, Simplex<V, D>>,
 
     /// Fast mapping from Vertex UUIDs to their `VertexKeys` for efficient UUID → Key lookups.
     /// This optimizes the common operation of looking up vertex keys by UUID.
@@ -466,7 +466,7 @@ pub struct Tds<U, V, const D: usize> {
     /// entries.
     ///
     /// Note: Not serialized - reconstructed during deserialization from simplices.
-    pub(in crate::core::tds) vertex_to_simplices: VertexIncidenceIndex,
+    pub(super) vertex_to_simplices: VertexIncidenceIndex,
 
     /// The current construction state of the triangulation.
     /// This field tracks whether the triangulation has enough vertices to form a complete
@@ -482,7 +482,7 @@ pub struct Tds<U, V, const D: usize> {
     /// Uses `Arc<AtomicU64>` for thread-safe operations in concurrent contexts while allowing Clone.
     ///
     /// Note: Not serialized - generation is runtime-only.
-    pub(in crate::core::tds) generation: Arc<AtomicU64>,
+    pub(super) generation: Arc<AtomicU64>,
 
     /// Runtime identity for cache/handle provenance checks.
     ///
@@ -491,7 +491,7 @@ pub struct Tds<U, V, const D: usize> {
     /// storage by generation alone.
     ///
     /// Note: Not serialized - identity is runtime-only.
-    pub(in crate::core::tds) identity: Arc<Uuid>,
+    pub(super) identity: Arc<Uuid>,
 }
 
 impl<U, V, const D: usize> Clone for Tds<U, V, D>
@@ -571,7 +571,7 @@ where
 //
 impl<U, V, const D: usize> Tds<U, V, D> {
     #[inline]
-    pub(in crate::core::tds) fn allows_periodic_self_neighbor(simplex: &Simplex<V, D>) -> bool {
+    pub(super) fn allows_periodic_self_neighbor(simplex: &Simplex<V, D>) -> bool {
         let Some(offsets) = simplex.periodic_vertex_offsets() else {
             return false;
         };
@@ -626,7 +626,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         )
     }
 
-    pub(in crate::core::tds) fn build_periodic_vertex_uuid_offsets(
+    pub(super) fn build_periodic_vertex_uuid_offsets(
         &self,
         simplex_key: SimplexKey,
         vertices: &[VertexKey],
@@ -669,7 +669,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         Ok(vertex_uuid_offsets)
     }
 
-    pub(in crate::core::tds) fn lifted_vertex_identities(
+    pub(super) fn lifted_vertex_identities(
         simplex_key: SimplexKey,
         simplex: &Simplex<V, D>,
     ) -> Result<SmallBuffer<(VertexKey, [i8; D]), MAX_PRACTICAL_DIMENSION_SIZE>, TdsError> {
@@ -697,7 +697,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         Ok(lifted_vertices)
     }
 
-    pub(in crate::core::tds) fn matching_lifted_facet_index(
+    pub(super) fn matching_lifted_facet_index(
         simplex: &Simplex<V, D>,
         neighbor: &Simplex<V, D>,
     ) -> Result<Option<usize>, TdsError> {
@@ -726,7 +726,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     }
 
     /// Finds the neighbor facet that matches a source facet in lifted periodic coordinates.
-    pub(in crate::core::tds) fn matching_lifted_mirror_facet_index(
+    pub(super) fn matching_lifted_mirror_facet_index(
         simplex: &Simplex<V, D>,
         facet_idx: usize,
         neighbor: &Simplex<V, D>,
@@ -1335,7 +1335,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 
     /// Refreshes the derived vertex count carried by an incomplete construction state.
     #[inline]
-    pub(in crate::core::tds) fn refresh_incomplete_construction_state(&mut self) {
+    pub(super) fn refresh_incomplete_construction_state(&mut self) {
         if matches!(
             self.construction_state,
             TriangulationConstructionState::Incomplete(_)
@@ -1524,7 +1524,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// This method is thread-safe due to the use of `Arc<AtomicU64>`.
     #[inline]
-    pub(in crate::core::tds) fn bump_generation(&self) {
+    pub(super) fn bump_generation(&self) {
         // Relaxed is fine for an invalidation counter
         self.generation.fetch_add(1, Ordering::Relaxed);
     }
@@ -2225,7 +2225,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 
     /// Registers an isolated vertex in the maintained vertex-to-simplices index.
     #[inline]
-    pub(in crate::core::tds) fn insert_empty_vertex_incidence(
+    pub(super) fn insert_empty_vertex_incidence(
         &mut self,
         vertex_key: VertexKey,
     ) -> Result<(), TdsError> {
@@ -2234,7 +2234,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 
     /// Removes a vertex from the maintained vertex-to-simplices index.
     #[inline]
-    pub(in crate::core::tds) fn remove_vertex_incidence(
+    pub(super) fn remove_vertex_incidence(
         &mut self,
         vertex_key: VertexKey,
     ) -> Result<(), TdsError> {
@@ -2242,7 +2242,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     }
 
     /// Registers a simplex under each of its vertices in the maintained incidence index.
-    pub(in crate::core::tds) fn add_simplex_to_vertex_incidence(
+    pub(super) fn add_simplex_to_vertex_incidence(
         &mut self,
         simplex_key: SimplexKey,
         vertices: &[VertexKey],
@@ -2256,9 +2256,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # Errors
     ///
     /// Returns [`TdsError::VertexNotFound`] if a simplex references a missing vertex key.
-    pub(in crate::core::tds) fn rebuild_vertex_to_simplices_index(
-        &mut self,
-    ) -> Result<(), TdsError> {
+    pub(super) fn rebuild_vertex_to_simplices_index(&mut self) -> Result<(), TdsError> {
         let mut vertex_to_simplices =
             VertexIncidenceIndex::with_vertex_capacity(self.vertices.len());
         for vertex_key in self.vertices.keys() {
@@ -2421,7 +2419,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 // TRAIT IMPLEMENTATIONS
 // =============================================================================
 
-pub(in crate::core::tds) type SimplexUuidSortKey<const D: usize> =
+pub(super) type SimplexUuidSortKey<const D: usize> =
     SmallBuffer<(Uuid, [i8; D]), MAX_PRACTICAL_DIMENSION_SIZE>;
 
 // =============================================================================
@@ -2432,11 +2430,12 @@ mod tests {
     use super::*;
     use crate::core::simplex::Simplex;
     use crate::core::tds::TdsRollbackTransaction;
+    use crate::vertex;
     use std::assert_matches;
     use std::sync::Arc;
 
     fn insert_test_vertex<const D: usize>(tds: &mut Tds<(), (), D>, coordinate: f64) -> VertexKey {
-        let vertex = Vertex::<(), _>::try_new([coordinate; D]).unwrap();
+        let vertex = vertex!([coordinate; D]).unwrap();
         tds.insert_vertex_with_mapping(vertex).unwrap()
     }
 
@@ -2463,7 +2462,7 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         assert_matches!(
             tds.construction_state(),
@@ -2471,7 +2470,7 @@ mod tests {
         );
 
         let _v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         assert_matches!(
             tds.construction_state(),
@@ -2489,13 +2488,13 @@ mod tests {
     fn test_vertex_to_simplices_index_tracks_simplex_insertion() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
 
         for vertex_key in [v0, v1, v2] {
@@ -2530,19 +2529,19 @@ mod tests {
     fn test_vertex_to_simplices_index_returns_disconnected_vertex_star() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let shared = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([-1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([-1.0, 0.0]).unwrap())
             .unwrap();
         let v4 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, -1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0]).unwrap())
             .unwrap();
 
         let first = tds
@@ -2570,13 +2569,13 @@ mod tests {
     fn test_facet_key_for_simplex_facet_maps_periodic_derivation_errors() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v_a = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v_b = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v_c = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
 
         let simplex_key = tds
@@ -2604,7 +2603,7 @@ mod tests {
         assert_eq!(tds.generation(), 0);
 
         let _v = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         assert!(tds.generation() > 0);
 
@@ -2621,13 +2620,13 @@ mod tests {
     fn test_simplex_vertices_errors_on_missing_vertex_key() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
 
         let ck = tds
@@ -2680,7 +2679,7 @@ mod tests {
                     fn [<test_clone_for_rollback_preserves_identity_with_independent_generation_ $dim d>]() {
                         let mut tds: Tds<(), (), $dim> = Tds::empty();
                         let _v = tds
-                            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0_f64; $dim]).unwrap())
+                            .insert_vertex_with_mapping(vertex!([0.0_f64; $dim]).unwrap())
                             .unwrap();
                         let snapshot = tds.clone_for_rollback();
                         let snapshot_generation = snapshot.generation();
@@ -2703,16 +2702,16 @@ mod tests {
                     fn [<test_clone_from_for_rollback_replaces_storage_and_preserves_identity_ $dim d>]() {
                         let mut source: Tds<(), (), $dim> = Tds::empty();
                         let source_vertex = source
-                            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0_f64; $dim]).unwrap())
+                            .insert_vertex_with_mapping(vertex!([0.0_f64; $dim]).unwrap())
                             .unwrap();
                         let source_generation = source.generation();
 
                         let mut target: Tds<(), (), $dim> = Tds::empty();
                         let _stale_vertex = target
-                            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0_f64; $dim]).unwrap())
+                            .insert_vertex_with_mapping(vertex!([1.0_f64; $dim]).unwrap())
                             .unwrap();
                         let _extra_stale_vertex = target
-                            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([2.0_f64; $dim]).unwrap())
+                            .insert_vertex_with_mapping(vertex!([2.0_f64; $dim]).unwrap())
                             .unwrap();
                         assert!(
                             !Arc::ptr_eq(source.identity(), target.identity()),

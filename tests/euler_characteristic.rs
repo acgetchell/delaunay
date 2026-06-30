@@ -14,6 +14,7 @@
 //!
 //! For property-based tests with random triangulations, see `proptest_euler_characteristic.rs`.
 
+use delaunay::vertex;
 use std::assert_matches;
 
 use delaunay::builder::DelaunayTriangulationBuilder;
@@ -57,9 +58,9 @@ fn test_empty_triangulation_euler() {
 fn test_2d_single_triangle() {
     // Single triangle: V=3, E=3, F=1 → χ = 3-3+1 = 1
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 1.0]).unwrap(),
+        vertex!([0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.5, 1.0]).unwrap(),
     ];
 
     let dt = DelaunayTriangulation::try_new_with_topology_guarantee(
@@ -83,9 +84,9 @@ fn test_2d_single_triangle() {
 #[test]
 fn test_euler_rejects_open_single_simplex_in_closed_topology() {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 1.0]).unwrap(),
+        vertex!([0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.5, 1.0]).unwrap(),
     ];
 
     let dt = DelaunayTriangulation::try_new_with_topology_guarantee(
@@ -127,10 +128,10 @@ fn test_euler_rejects_open_single_simplex_in_closed_topology() {
 fn test_2d_multiple_triangles() {
     // Four points forming multiple triangles
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.3]).unwrap(), // Interior point
+        vertex!([0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.5, 1.0]).unwrap(),
+        vertex!([0.5, 0.3]).unwrap(), // Interior point
     ];
 
     let dt = DelaunayTriangulation::try_new_with_topology_guarantee(
@@ -156,10 +157,10 @@ fn test_2d_multiple_triangles() {
 fn test_3d_single_tetrahedron() {
     // Single tetrahedron: V=4, E=6, F=4, C=1 → χ = 4-6+4-1 = 1
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
     ];
 
     let dt = DelaunayTriangulation::try_new_with_topology_guarantee(
@@ -185,11 +186,11 @@ fn test_3d_single_tetrahedron() {
 fn test_3d_with_interior_vertex() {
     // Tetrahedron with one interior vertex
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.25, 0.25, 0.25]).unwrap(), // Interior point
+        vertex!([0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.25, 0.25, 0.25]).unwrap(), // Interior point
     ];
 
     let dt = DelaunayTriangulation::try_new_with_topology_guarantee(
@@ -216,11 +217,11 @@ fn test_4d_single_simplex() {
     // Single 4-simplex: V=5, E=10, F=10, T=5, C=1
     // χ = 5 - 10 + 10 - 5 + 1 = 1
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
     ];
 
     let dt = DelaunayTriangulation::try_new_with_topology_guarantee(
@@ -247,12 +248,12 @@ fn test_4d_single_simplex() {
 fn test_5d_single_simplex() {
     // Single 5-simplex: χ = 1
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
     ];
 
     let dt = DelaunayTriangulation::try_new_with_topology_guarantee(
@@ -298,7 +299,7 @@ fn test_2d_toroidal_explicit_construction_rejected() {
     ];
     let vertices: Vec<_> = coords
         .iter()
-        .map(|c| delaunay::prelude::Vertex::<(), _>::try_new([c[0], c[1]]).unwrap())
+        .map(|c| vertex!([c[0], c[1]]).unwrap())
         .collect();
     let v = |i: usize, j: usize| -> usize { (i % N) * N + (j % N) };
     let mut simplices = Vec::with_capacity(2 * N * N);
@@ -354,7 +355,7 @@ fn test_3d_toroidal_explicit_construction_rejected() {
     for &x in &grid {
         for &y in &grid {
             for &z in &grid {
-                vertices.push(delaunay::prelude::Vertex::<(), _>::try_new([x, y, z]).unwrap());
+                vertices.push(vertex!([x, y, z]).unwrap());
             }
         }
     }
@@ -489,10 +490,10 @@ test_complex_with_interior!(
     test_2d_complex_with_interior,
     2,
     &[
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.5]).unwrap(), // Interior point
+        vertex!([0.0, 0.0]).unwrap(),
+        vertex!([2.0, 0.0]).unwrap(),
+        vertex!([1.0, 2.0]).unwrap(),
+        vertex!([1.0, 0.5]).unwrap(), // Interior point
     ],
     0 // S¹ has χ = 0
 );
@@ -502,11 +503,11 @@ test_complex_with_interior!(
     test_3d_complex_with_interior,
     3,
     &[
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 2.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.5, 2.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.5, 0.5]).unwrap(), // Interior point
+        vertex!([0.0, 0.0, 0.0]).unwrap(),
+        vertex!([2.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 2.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.5, 2.0]).unwrap(),
+        vertex!([1.0, 0.5, 0.5]).unwrap(), // Interior point
     ],
     2 // S² has χ = 2
 );
@@ -516,12 +517,12 @@ test_complex_with_interior!(
     test_4d_complex_with_interior,
     4,
     &[
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.21, 0.17, 0.13, 0.11]).unwrap(), // Interior point
+        vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.21, 0.17, 0.13, 0.11]).unwrap(), // Interior point
     ],
     0 // S³ has χ = 0
 );
@@ -531,13 +532,13 @@ test_complex_with_interior!(
     test_5d_complex_with_interior,
     5,
     &[
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2, 0.2]).unwrap(), // Interior point
+        vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.2, 0.2, 0.2, 0.2, 0.2]).unwrap(), // Interior point
     ],
     2 // S⁴ has χ = 2
 );

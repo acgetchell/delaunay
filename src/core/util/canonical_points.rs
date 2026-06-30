@@ -180,8 +180,8 @@ pub(crate) fn sorted_facet_points_with_extra<U, V, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::vertex::Vertex;
     use crate::geometry::kernel::{AdaptiveKernel, Kernel};
+    use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
 
@@ -197,7 +197,7 @@ mod tests {
         let mut tds = Tds::<(), (), D>::empty();
         let mut keys = Vec::with_capacity(coords.len());
         for c in coords {
-            let v = Vertex::<(), D>::try_new(*c).expect("finite point coordinates");
+            let v = vertex!(*c).expect("finite point coordinates");
             let vk = tds
                 .insert_vertex_with_mapping(v)
                 .expect("insert should succeed");

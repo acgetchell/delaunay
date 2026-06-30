@@ -6,17 +6,22 @@ use delaunay::prelude::construction::{
     DelaunayTriangulation, DelaunayTriangulationConstructionError,
 };
 use delaunay::prelude::geometry::{CoordinateConversionError, CoordinateValidationError};
-use delaunay::prelude::query::{ConvexHull, Point, QueryError};
+use delaunay::prelude::query::{
+    ConvexHull, ConvexHullConstructionError, ConvexHullValidationError, Point, QueryError,
+    TopologyIndexBuildError,
+};
+use delaunay::prelude::validation::DelaunayTriangulationValidationError;
+use delaunay::vertex;
 
 #[test]
 fn triangulation_and_hull_workflow_remains_valid() -> Result<(), WorkflowTestError> {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.35, 0.25, 0.20])?,
-        delaunay::prelude::Vertex::<(), _>::try_new([0.20, 0.60, 0.25])?,
+        vertex!([0.0, 0.0, 0.0])?,
+        vertex!([1.0, 0.0, 0.0])?,
+        vertex!([0.0, 1.0, 0.0])?,
+        vertex!([0.0, 0.0, 1.0])?,
+        vertex!([0.35, 0.25, 0.20])?,
+        vertex!([0.20, 0.60, 0.25])?,
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::try_new(&vertices)?;
@@ -66,33 +71,33 @@ enum WorkflowTestError {
     #[error(transparent)]
     CoordinateValidation(#[from] CoordinateValidationError),
     #[error(transparent)]
-    Validation(#[from] delaunay::prelude::validation::DelaunayTriangulationValidationError),
+    Validation(#[from] DelaunayTriangulationValidationError),
     #[error(transparent)]
-    TopologyIndex(#[from] delaunay::prelude::query::TopologyIndexBuildError),
+    TopologyIndex(#[from] TopologyIndexBuildError),
     #[error(transparent)]
     Query(#[from] QueryError),
     #[error("convex hull construction failed: {source}")]
     ConvexHullConstruction {
         #[source]
-        source: Box<delaunay::prelude::query::ConvexHullConstructionError>,
+        source: Box<ConvexHullConstructionError>,
     },
     #[error("convex hull validation failed: {source}")]
     ConvexHullValidation {
         #[source]
-        source: Box<delaunay::prelude::query::ConvexHullValidationError>,
+        source: Box<ConvexHullValidationError>,
     },
 }
 
-impl From<delaunay::prelude::query::ConvexHullConstructionError> for WorkflowTestError {
-    fn from(source: delaunay::prelude::query::ConvexHullConstructionError) -> Self {
+impl From<ConvexHullConstructionError> for WorkflowTestError {
+    fn from(source: ConvexHullConstructionError) -> Self {
         Self::ConvexHullConstruction {
             source: Box::new(source),
         }
     }
 }
 
-impl From<delaunay::prelude::query::ConvexHullValidationError> for WorkflowTestError {
-    fn from(source: delaunay::prelude::query::ConvexHullValidationError) -> Self {
+impl From<ConvexHullValidationError> for WorkflowTestError {
+    fn from(source: ConvexHullValidationError) -> Self {
         Self::ConvexHullValidation {
             source: Box::new(source),
         }

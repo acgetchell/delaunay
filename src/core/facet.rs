@@ -2240,6 +2240,7 @@ mod tests {
     use crate::core::vertex::Vertex;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::triangulation::DelaunayTriangulation;
+    use crate::vertex;
     use slotmap::{KeyData, SlotMap};
     use std::assert_matches;
     use std::{collections::HashSet, mem};
@@ -2294,10 +2295,7 @@ mod tests {
     #[test]
     fn test_facet_error_handling() {
         // Create a 1D triangulation (2 vertices forming an edge)
-        let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
-        ];
+        let vertices = vec![vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
@@ -2312,10 +2310,10 @@ mod tests {
     fn facet_new() {
         // Create a 3D triangulation with a tetrahedron
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
@@ -2329,10 +2327,10 @@ mod tests {
     #[test]
     fn facet_handle_view_roundtrip() {
         let vertices = vec![
-            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
@@ -2360,9 +2358,9 @@ mod tests {
     fn test_facet_new_success_coverage() {
         // Test 2D case: Create a triangle (2D simplex with 3 vertices)
         let vertices_2d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.5, 1.0]).unwrap(),
         ];
         let dt_2d = DelaunayTriangulation::try_new(&vertices_2d).unwrap();
         let simplex_key_2d = dt_2d.simplices().next().unwrap().0;
@@ -2374,10 +2372,7 @@ mod tests {
         assert_eq!(facet_2d.vertices().count(), 2); // 2D facet should have 2 vertices
 
         // Test 1D case: Create an edge (1D simplex with 2 vertices)
-        let vertices_1d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
-        ];
+        let vertices_1d = vec![vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()];
         let dt_1d = DelaunayTriangulation::try_new(&vertices_1d).unwrap();
         let simplex_key_1d = dt_1d.simplices().next().unwrap().0;
         let result_1d = FacetView::try_new(dt_1d.tds(), simplex_key_1d, 0);
@@ -2392,10 +2387,10 @@ mod tests {
     fn facet_new_with_incorrect_vertex() {
         // Create a 3D triangulation
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
@@ -2408,10 +2403,10 @@ mod tests {
     fn facet_vertices() {
         // Create a 3D triangulation with a tetrahedron
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
@@ -2429,10 +2424,10 @@ mod tests {
     fn facet_partial_eq() {
         // Create a 3D triangulation
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
@@ -2450,10 +2445,10 @@ mod tests {
     fn facet_clone() {
         // Create a 3D triangulation
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
@@ -2480,10 +2475,10 @@ mod tests {
     fn facet_debug() {
         // Create a 3D triangulation with a non-degenerate tetrahedron
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
@@ -2505,10 +2500,10 @@ mod tests {
     fn facet_with_typed_data() {
         // Create 3D triangulation with typed vertex data
         let vertices: Vec<Vertex<i32, 3>> = vec![
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 1).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 2).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 3).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 4).unwrap(),
+            vertex!([0.0, 0.0, 0.0]; data = 1).unwrap(),
+            vertex!([1.0, 0.0, 0.0]; data = 2).unwrap(),
+            vertex!([0.0, 1.0, 0.0]; data = 3).unwrap(),
+            vertex!([0.0, 0.0, 1.0]; data = 4).unwrap(),
         ];
         let options = ConstructionOptions::default()
             .with_insertion_order(InsertionOrderStrategy::Input)
@@ -2638,30 +2633,30 @@ mod tests {
     // Generate tests for dimensions 2D through 5D
     test_facet_dimensions! {
         facet_2d_triangle => 2 => "triangle" => 2 => vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.5, 1.0]).unwrap(),
         ],
         facet_3d_tetrahedron => 3 => "tetrahedron" => 3 => vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ],
         facet_4d_simplex => 4 => "4-simplex" => 4 => vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
         ],
         facet_5d_simplex => 5 => "5-simplex" => 5 => vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
         ],
     }
 
@@ -2669,10 +2664,7 @@ mod tests {
     #[test]
     fn facet_1d_edge() {
         // Create 1D triangulation (edge with 2 vertices)
-        let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
-        ];
+        let vertices = vec![vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()];
         let options = ConstructionOptions::default()
             .with_insertion_order(InsertionOrderStrategy::Input)
             .with_initial_simplex_strategy(InitialSimplexStrategy::First);
@@ -2724,7 +2716,7 @@ mod tests {
         for i in 0..=usize::from(u8::MAX) {
             let mut coords = [0.0; 255];
             coords[0] = f64::from(u32::try_from(i).unwrap());
-            let vertex = Vertex::<(), 255>::try_new(coords).unwrap();
+            let vertex = vertex!(coords).unwrap();
             vertex_keys.push(tds.insert_vertex_with_mapping(vertex).unwrap());
         }
         let simplex_key = tds
@@ -2745,9 +2737,9 @@ mod tests {
     /// vertices than can be represented by the `u8` facet-index storage.
     fn overwide_simplex_tds() -> Tds<(), (), 2> {
         let vertices = vec![
-            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut tds =
             Triangulation::<AdaptiveKernel<f64>, (), (), 2>::build_initial_simplex(&vertices)
@@ -2767,10 +2759,10 @@ mod tests {
 
     fn tetrahedron_tds() -> Tds<(), (), 3> {
         let vertices = vec![
-            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         Triangulation::<AdaptiveKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap()
     }
@@ -3039,10 +3031,10 @@ mod tests {
     fn test_facet_key_consistency() {
         // Create 3D triangulation with a tetrahedron
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
@@ -3070,10 +3062,7 @@ mod tests {
     #[test]
     fn facet_vertices_empty_simplex() {
         // Test edge case of minimal simplex (1D edge with 2 vertices)
-        let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
-        ];
+        let vertices = vec![vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
@@ -3090,10 +3079,10 @@ mod tests {
     fn facet_vertices_ordering() {
         // Test that vertices are filtered correctly
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
@@ -3110,10 +3099,10 @@ mod tests {
     fn facet_eq_different_vertices() {
         // Create a 3D triangulation
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
@@ -3137,10 +3126,10 @@ mod tests {
     fn facet_key_hash() {
         // Create a 3D triangulation
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
@@ -3209,10 +3198,10 @@ mod tests {
     #[test]
     fn test_facet_view_creation() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -3231,10 +3220,10 @@ mod tests {
     #[test]
     fn test_facet_view_vertices_iteration() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -3263,10 +3252,10 @@ mod tests {
     #[test]
     fn test_facet_view_opposite_vertex() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -3288,10 +3277,10 @@ mod tests {
     #[test]
     fn test_facet_view_key_computation() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -3307,10 +3296,10 @@ mod tests {
     #[test]
     fn test_try_simplex_facets() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -3336,10 +3325,10 @@ mod tests {
     #[test]
     fn test_facet_view_equality() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -3359,10 +3348,10 @@ mod tests {
     #[test]
     fn test_facet_view_debug() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();

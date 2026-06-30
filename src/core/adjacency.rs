@@ -354,7 +354,7 @@ impl SimplexNeighborIndex<'_> {
 mod tests {
     use super::*;
     use crate::DelaunayTriangulation;
-    use crate::core::vertex::Vertex;
+    use crate::vertex;
     use slotmap::SlotMap;
     use std::collections::HashSet;
 
@@ -395,12 +395,12 @@ mod tests {
         // Two tetrahedra sharing a triangular facet.
         let vertices: Vec<_> = vec![
             // Shared triangle
-            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 2.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([2.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 2.0, 0.0]).unwrap(),
             // Two apices
-            Vertex::<(), _>::try_new([1.0, 0.7, 1.5]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.7, -1.5]).unwrap(),
+            vertex!([1.0, 0.7, 1.5]).unwrap(),
+            vertex!([1.0, 0.7, -1.5]).unwrap(),
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =

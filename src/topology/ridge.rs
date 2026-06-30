@@ -1612,6 +1612,7 @@ mod tests {
         facet::facet_key_from_vertices,
         simplex::Simplex,
     };
+    use crate::vertex;
     use slotmap::{Key, KeyData};
     use std::iter;
 
@@ -1619,7 +1620,7 @@ mod tests {
         (Tds<(), (), 3>, SimplexKey, VertexKey, VertexKey, VertexKey);
 
     fn test_vertex<const D: usize>(coords: [f64; D]) -> Vertex<(), D> {
-        Vertex::try_new(coords).unwrap()
+        vertex!(coords).unwrap()
     }
 
     fn simplex(vertices: &[VertexKey]) -> LiftedVertexBuffer {

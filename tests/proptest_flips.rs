@@ -15,6 +15,7 @@ use delaunay::prelude::construction::{
 };
 use delaunay::prelude::geometry::{AdaptiveKernel, FastKernel, Kernel, Point, RobustKernel};
 use delaunay::try_vertices_from_points;
+use delaunay::vertex;
 use proptest::prelude::*;
 use std::collections::{BTreeSet, HashMap};
 
@@ -76,7 +77,7 @@ fn interior_simplex_vertex<const D: usize>(
     for (axis, edge_length) in edge_lengths.iter().copied().enumerate() {
         coordinates[axis] += edge_length / denominator;
     }
-    Vertex::try_new(coordinates).expect("finite point coordinates")
+    vertex!(coordinates).expect("finite point coordinates")
 }
 
 /// Captures the public vertex/simplex incidence needed to check round-trips.

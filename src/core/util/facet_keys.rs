@@ -362,6 +362,7 @@ pub fn usize_to_u8(idx: usize, facet_count: usize) -> Result<u8, FacetError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vertex;
     use std::assert_matches;
 
     use crate::core::simplex::Simplex;
@@ -468,10 +469,10 @@ mod tests {
 
         // Create a triangulation
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let tds = &dt.as_triangulation().tds;
@@ -608,10 +609,10 @@ mod tests {
     fn test_verify_facet_index_consistency_true_false_and_error_cases() {
         // True case: comparing a simplex to itself.
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let tds = &dt.as_triangulation().tds;
@@ -631,34 +632,22 @@ mod tests {
         // False case: two disjoint triangles in the same TDS share no facet keys.
         let mut tds2: Tds<(), (), 2> = Tds::empty();
         let v_a = tds2
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v_b = tds2
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v_c = tds2
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v_d = tds2
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([10.0, 10.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([10.0, 10.0]).unwrap())
             .unwrap();
         let v_e = tds2
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([11.0, 10.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([11.0, 10.0]).unwrap())
             .unwrap();
         let v_f = tds2
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([10.0, 11.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([10.0, 11.0]).unwrap())
             .unwrap();
 
         let c1 = tds2

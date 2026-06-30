@@ -6,6 +6,8 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(test)]
+use super::collections::FacetToSimplicesMap;
 use super::{
     facet::{FacetError, FacetToSimplicesIndex, FacetView, OneSidedFacetsIter},
     tds::{Tds, TdsError},
@@ -21,7 +23,7 @@ use std::ptr;
 /// being counted as boundary.
 #[cfg(test)]
 fn number_of_one_sided_facets_in_map(
-    facet_to_simplices: &super::collections::FacetToSimplicesMap,
+    facet_to_simplices: &FacetToSimplicesMap,
 ) -> Result<usize, TdsError> {
     let mut count = 0usize;
     for (&facet_key, simplices) in facet_to_simplices {
@@ -362,10 +364,10 @@ mod tests {
     use crate::core::query::QueryError;
     use crate::core::simplex::Simplex;
     use crate::core::tds::{SimplexKey, Tds, TdsError};
-    use crate::core::vertex::Vertex;
     use crate::geometry::point::Point;
     use crate::triangulation::DelaunayTriangulation;
     use crate::try_vertices_from_points;
+    use crate::vertex;
     use std::assert_matches;
 
     #[cfg(feature = "diagnostics")]
@@ -987,13 +989,13 @@ mod tests {
     fn periodic_self_identified_one_sided_facet_is_not_boundary() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::try_new([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::try_new([1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::try_new([0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
 
         let mut simplex = Simplex::try_new(vec![v0, v1, v2]).unwrap();

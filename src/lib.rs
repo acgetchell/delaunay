@@ -245,7 +245,10 @@
 //!   Level 5 (Delaunay property) validation is performed by
 //!   [`DelaunayTriangulation::is_valid_delaunay`](crate::DelaunayTriangulation::is_valid_delaunay) (Level 5 only) and
 //!   [`DelaunayTriangulation::validate`](crate::DelaunayTriangulation::validate) (Levels 1–5).
-//!   Batch construction runs final Delaunay validation before returning.
+//!   Batch construction normally runs final Delaunay validation before returning;
+//!   [`ConstructionOptions::without_final_delaunay_enforcement`](crate::construction::ConstructionOptions::without_final_delaunay_enforcement)
+//!   opts into returning after Levels 1–4 validation for exact degenerate or
+//!   externally constrained connectivity.
 //!   Incremental insertion can run global Level 5 checks according to
 //!   [`DelaunayCheckPolicy`](crate::repair::DelaunayCheckPolicy). If robust
 //!   fallback and repair cannot certify a checked result, the operation returns a
@@ -2058,6 +2061,7 @@ mod tests {
             verify_delaunay_for_triangulation, verify_delaunay_via_flip_predicates,
         },
         prelude::*,
+        vertex,
     };
     use std::assert_matches;
 
@@ -2165,9 +2169,9 @@ mod tests {
     #[test]
     fn prelude_repair_exports() {
         let vertices = vec![
-            crate::vertex![0.0, 0.0].unwrap(),
-            crate::vertex![1.0, 0.0].unwrap(),
-            crate::vertex![0.0, 1.0].unwrap(),
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
         ];
         let dt: RepairDelaunayTriangulation<_, (), (), 2> =
             RepairDelaunayTriangulation::try_new(&vertices).unwrap();
@@ -2208,9 +2212,9 @@ mod tests {
     fn prelude_quality_exports() {
         // Test that quality functions are accessible from prelude
         let vertices = vec![
-            crate::vertex![0.0, 0.0].unwrap(),
-            crate::vertex![1.0, 0.0].unwrap(),
-            crate::vertex![0.0, 1.0].unwrap(),
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -2279,16 +2283,16 @@ mod tests {
         assert_ne!(p1, p2);
 
         // Vertex construction via the fallible smart constructor.
-        let v1: Vertex<(), 3> = Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap();
-        let v2: Vertex<(), 3> = Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap();
+        let v1: Vertex<(), 3> = vertex!([0.0, 0.0, 0.0]).unwrap();
+        let v2: Vertex<(), 3> = vertex!([1.0, 0.0, 0.0]).unwrap();
         assert_ne!(v1.point(), v2.point());
 
         // DelaunayTriangulation construction
         let vertices = vec![
-            crate::vertex![0.0, 0.0, 0.0].unwrap(),
-            crate::vertex![1.0, 0.0, 0.0].unwrap(),
-            crate::vertex![0.0, 1.0, 0.0].unwrap(),
-            crate::vertex![0.0, 0.0, 1.0].unwrap(),
+            vertex![0.0, 0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0, 0.0].unwrap(),
+            vertex![0.0, 1.0, 0.0].unwrap(),
+            vertex![0.0, 0.0, 1.0].unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -2312,9 +2316,9 @@ mod tests {
     fn test_prelude_point_location() {
         // Test that point location algorithms are accessible
         let vertices = vec![
-            crate::vertex![0.0, 0.0].unwrap(),
-            crate::vertex![1.0, 0.0].unwrap(),
-            crate::vertex![0.0, 1.0].unwrap(),
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -2369,10 +2373,10 @@ mod tests {
     fn test_prelude_convex_hull() {
         // Test that convex hull operations are accessible
         let vertices = vec![
-            crate::vertex![0.0, 0.0, 0.0].unwrap(),
-            crate::vertex![1.0, 0.0, 0.0].unwrap(),
-            crate::vertex![0.0, 1.0, 0.0].unwrap(),
-            crate::vertex![0.0, 0.0, 1.0].unwrap(),
+            vertex![0.0, 0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0, 0.0].unwrap(),
+            vertex![0.0, 1.0, 0.0].unwrap(),
+            vertex![0.0, 0.0, 1.0].unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();

@@ -40,6 +40,7 @@ use delaunay::prelude::geometry::*;
 use delaunay::prelude::insertion::InsertionOutcome;
 use delaunay::prelude::validation::ValidationPolicy;
 use delaunay::try_vertices_from_points;
+use delaunay::vertex;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
 use rand::{SeedableRng, seq::SliceRandom};
@@ -423,9 +424,7 @@ fn assert_on_suspicion_sequence_valid<const D: usize>(
     dt.set_validation_policy(ValidationPolicy::OnSuspicion);
 
     for (idx, point) in points.into_iter().enumerate() {
-        let result = dt.insert_best_effort_with_statistics(
-            delaunay::prelude::Vertex::<(), _>::try_new(point.into()).unwrap(),
-        );
+        let result = dt.insert_best_effort_with_statistics(vertex!(point.into()).unwrap());
 
         if dt.number_of_simplices() > 0 {
             let validation = dt.validate();
@@ -698,7 +697,7 @@ macro_rules! gen_incremental_insertion_validity {
                     prop_assume!(has_no_coordinate_hyperplane_degeneracy(&initial_vertices));
 
                     let additional_vertex =
-                        delaunay::prelude::Vertex::<(), _>::try_new(additional_point.into())
+                        vertex!(additional_point.into())
                             .unwrap();
 
                     // Avoid duplicate insertion cases here; duplicate-handling is tested in dedicated suites.
@@ -769,7 +768,7 @@ proptest! {
         prop_assume!(has_no_cospherical_5_tuples_3d(&initial_vertices));
 
         let additional_vertex =
-            delaunay::prelude::Vertex::<(), _>::try_new(additional_point.into()).unwrap();
+            vertex!(additional_point.into()).unwrap();
 
         // Avoid duplicate insertion cases here; duplicate-handling is tested in dedicated suites.
         let add_coords = *additional_vertex.point().coords();

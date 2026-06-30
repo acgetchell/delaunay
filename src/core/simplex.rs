@@ -69,6 +69,8 @@ use super::{
     traits::{DataDeserialize, DataSerialize},
     util::{UuidValidationError, make_uuid, validate_uuid},
 };
+#[cfg(test)]
+use crate::core::collections::FastHashSet;
 use crate::core::collections::{
     FastHashMap, NeighborBuffer, PeriodicOffsetBuffer, SimplexVertexKeyBuffer,
     SimplexVertexUuidBuffer, fast_hash_map_with_capacity,
@@ -2037,12 +2039,14 @@ mod tests {
     use super::*;
     use crate::builder::DelaunayTriangulationBuilder;
     use crate::core::facet::FacetError;
+    use crate::core::vertex::Vertex;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::geometry::matrix::MAX_STACK_MATRIX_DIM;
     use crate::geometry::point::Point;
     use crate::geometry::predicates::insphere;
     use crate::geometry::util::{circumcenter, circumradius, circumradius_with_center};
     use crate::prelude::DelaunayTriangulation;
+    use crate::vertex;
     use approx::assert_relative_eq;
     use std::assert_matches;
     use std::{
@@ -2197,30 +2201,30 @@ mod tests {
     // Generate tests for dimensions 2D through 5D
     test_simplex_dimensions! {
         simplex_2d => 2 => vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ],
         simplex_3d => 3 => vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ],
         simplex_4d => 4 => vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
         ],
         simplex_5d => 5 => vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
         ],
     }
 
@@ -2242,18 +2246,18 @@ mod tests {
     // Helper functions for creating common test data
     fn create_test_vertices_3d() -> Vec<TestVertex3D> {
         vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ]
     }
 
     fn create_test_vertices_2d() -> Vec<TestVertex2D> {
         vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ]
     }
 
@@ -2263,10 +2267,10 @@ mod tests {
     fn simplex_from_triangulation_without_data() {
         // Public callers obtain simplices from a triangulation, not a standalone macro.
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(), // Need 4 vertices for 3D simplex
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(), // Need 4 vertices for 3D simplex
         ];
 
         // Create DT to get a simplex with TDS context.
@@ -2315,10 +2319,10 @@ mod tests {
     fn test_eq_by_vertices_same_coordinates_different_tds() {
         // Create two separate TDS instances with identical vertex coordinates
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt1 = DelaunayTriangulation::try_new(&vertices).unwrap();
         let dt2 = DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -2334,9 +2338,9 @@ mod tests {
     #[test]
     fn test_eq_by_vertices_2d() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt1 = DelaunayTriangulation::try_new(&vertices).unwrap();
         let dt2 = DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -2351,10 +2355,10 @@ mod tests {
     fn simplex_from_triangulation_with_data() {
         // Exercise simplex data by creating a TDS-backed simplex and modifying a clone.
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         // Build DT with integer simplex data type
@@ -2403,10 +2407,10 @@ mod tests {
     fn simplex_with_vertex_data() {
         // Test simplices with vertex data through TDS.
         let vertices = vec![
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 1).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 2).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 3).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 4).unwrap(), // Need 4 vertices for 3D simplex
+            vertex!([0.0, 0.0, 0.0]; data = 1).unwrap(),
+            vertex!([1.0, 0.0, 0.0]; data = 2).unwrap(),
+            vertex!([0.0, 1.0, 0.0]; data = 3).unwrap(),
+            vertex!([0.0, 0.0, 1.0]; data = 4).unwrap(), // Need 4 vertices for 3D simplex
         ];
 
         // Create DT with vertex data - simple constructor works since simplex data is ()
@@ -2442,10 +2446,10 @@ mod tests {
     fn simplex_partial_eq() {
         // Test PartialEq using simplices from TDS.
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let (_, simplex1) = dt.simplices().next().unwrap();
@@ -2465,11 +2469,11 @@ mod tests {
     fn simplex_partial_ord() {
         // Test PartialOrd using TDS with multiple simplices.
         let all_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 1.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&all_vertices).unwrap();
         let simplices: Vec<_> = dt.simplices().map(|(_, simplex)| simplex).collect();
@@ -2491,10 +2495,10 @@ mod tests {
     #[test]
     fn simplex_hash() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let (_, simplex1) = dt.simplices().next().unwrap();
@@ -2516,10 +2520,10 @@ mod tests {
     #[test]
     fn simplex_clone() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 1).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 1).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 1).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 1.0, 1.0], 2).unwrap(),
+            vertex!([0.0, 0.0, 1.0]; data = 1).unwrap(),
+            vertex!([0.0, 1.0, 0.0]; data = 1).unwrap(),
+            vertex!([1.0, 0.0, 0.0]; data = 1).unwrap(),
+            vertex!([1.0, 1.0, 1.0]; data = 2).unwrap(),
         ];
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, i32, 3> =
             DelaunayTriangulation::try_with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
@@ -2534,10 +2538,10 @@ mod tests {
     #[test]
     fn simplex_ordering_edge_cases() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let (_, simplex1) = dt.simplices().next().unwrap();
@@ -2576,10 +2580,10 @@ mod tests {
     fn simplex_mirror_facet_index_shared_facet_2d() {
         // Four points in convex position should yield two triangles that share an edge.
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.1]).unwrap(), // break cocircular symmetry
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 1.1]).unwrap(), // break cocircular symmetry
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
@@ -2598,7 +2602,7 @@ mod tests {
                 let simplex_a = simplices[i];
                 let simplex_b = simplices[j];
 
-                let shared: crate::core::collections::FastHashSet<VertexKey> = simplex_a
+                let shared: FastHashSet<VertexKey> = simplex_a
                     .vertices()
                     .iter()
                     .copied()
@@ -2651,11 +2655,11 @@ mod tests {
     fn simplex_mirror_facet_index_returns_none_when_simplices_do_not_share_facet_2d() {
         // Add a point strictly inside the convex hull to yield multiple triangles.
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 1.0]).unwrap(),
+            vertex!([0.5, 0.5]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
@@ -2695,9 +2699,9 @@ mod tests {
     #[test]
     fn simplex_mirror_facet_index_returns_none_for_mismatched_vertex_counts() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let (_, simplex_ref) = dt.simplices().next().unwrap();
@@ -2725,14 +2729,10 @@ mod tests {
 
     #[test]
     fn simplex_contains_vertex() {
-        let vertex1: Vertex<i32, 3> =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 1).unwrap();
-        let vertex2 =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 1).unwrap();
-        let vertex3 =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 1).unwrap();
-        let vertex4 =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 1.0, 1.0], 2).unwrap();
+        let vertex1: Vertex<i32, 3> = vertex!([0.0, 0.0, 1.0]; data = 1).unwrap();
+        let vertex2 = vertex!([0.0, 1.0, 0.0]; data = 1).unwrap();
+        let vertex3 = vertex!([1.0, 0.0, 0.0]; data = 1).unwrap();
+        let vertex4 = vertex!([1.0, 1.0, 1.0]; data = 2).unwrap();
 
         // Create DT to get VertexKeys - use generic constructor for vertex data
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
@@ -2755,10 +2755,10 @@ mod tests {
     fn simplex_has_vertex_in_common() {
         // Test has_vertex_in_common (replacement for deprecated contains_vertex_of)
         let vertices1 = vec![
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 1).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 1).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 1).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 1.0, 1.0], 2).unwrap(),
+            vertex!([0.0, 0.0, 1.0]; data = 1).unwrap(),
+            vertex!([0.0, 1.0, 0.0]; data = 1).unwrap(),
+            vertex!([1.0, 0.0, 0.0]; data = 1).unwrap(),
+            vertex!([1.0, 1.0, 1.0]; data = 2).unwrap(),
         ];
         let tds1: DelaunayTriangulation<AdaptiveKernel<f64>, i32, i32, 3> =
             DelaunayTriangulation::try_with_kernel(&AdaptiveKernel::new(), &vertices1).unwrap();
@@ -2767,10 +2767,10 @@ mod tests {
         simplex.data = Some(42);
 
         let vertices2 = vec![
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 1).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 1).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 1).unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 0).unwrap(),
+            vertex!([0.0, 0.0, 1.0]; data = 1).unwrap(),
+            vertex!([0.0, 1.0, 0.0]; data = 1).unwrap(),
+            vertex!([1.0, 0.0, 0.0]; data = 1).unwrap(),
+            vertex!([0.0, 0.0, 0.0]; data = 0).unwrap(),
         ];
         let tds2: DelaunayTriangulation<AdaptiveKernel<f64>, i32, i32, 3> =
             DelaunayTriangulation::try_with_kernel(&AdaptiveKernel::new(), &vertices2).unwrap();
@@ -2789,14 +2789,10 @@ mod tests {
     #[test]
     fn test_vertex_uuids_success() {
         // Test the vertex_uuids method returns correct vertex UUIDs vector
-        let vertex1 =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 10).unwrap();
-        let vertex2 =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 20).unwrap();
-        let vertex3 =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 30).unwrap();
-        let vertex4 =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 40).unwrap();
+        let vertex1 = vertex!([0.0, 0.0, 0.0]; data = 10).unwrap();
+        let vertex2 = vertex!([1.0, 0.0, 0.0]; data = 20).unwrap();
+        let vertex3 = vertex!([0.0, 1.0, 0.0]; data = 30).unwrap();
+        let vertex4 = vertex!([0.0, 0.0, 1.0]; data = 40).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 3> =
@@ -2831,8 +2827,7 @@ mod tests {
         // Test that TDS creation fails gracefully with insufficient vertices for dimension
         // Tested through TDS, which is the user-facing API.
 
-        let vertices =
-            vec![crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap()];
+        let vertices = vec![vertex!([0.0, 0.0, 0.0]).unwrap()];
         let result = DelaunayTriangulation::try_new(&vertices);
 
         assert!(result.is_err());
@@ -2843,12 +2838,9 @@ mod tests {
     #[test]
     fn test_vertex_uuids_2d_simplex() {
         // Test vertex_uuids with a 2D simplex (triangle)
-        let vertex1 =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 1).unwrap();
-        let vertex2 =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0], 2).unwrap();
-        let vertex3 =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.5, 1.0], 3).unwrap();
+        let vertex1 = vertex!([0.0, 0.0]; data = 1).unwrap();
+        let vertex2 = vertex!([1.0, 0.0]; data = 2).unwrap();
+        let vertex3 = vertex!([0.5, 1.0]; data = 3).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3];
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 2> =
@@ -2881,16 +2873,11 @@ mod tests {
     fn test_vertex_uuids_4d_simplex() {
         // Test vertex_uuids with a 4D simplex (4-simplex) using integer data
         let vertices = vec![
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0, 0.0], 1)
-                .unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0, 0.0], 2)
-                .unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0, 0.0], 3)
-                .unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0, 0.0], 4)
-                .unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0, 1.0], 5)
-                .unwrap(),
+            vertex!([0.0, 0.0, 0.0, 0.0]; data = 1).unwrap(),
+            vertex!([1.0, 0.0, 0.0, 0.0]; data = 2).unwrap(),
+            vertex!([0.0, 1.0, 0.0, 0.0]; data = 3).unwrap(),
+            vertex!([0.0, 0.0, 1.0, 0.0]; data = 4).unwrap(),
+            vertex!([0.0, 0.0, 0.0, 1.0]; data = 5).unwrap(),
         ];
 
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 4> =
@@ -2945,10 +2932,7 @@ mod tests {
     // Keep 1D test separate as it's less common
     #[test]
     fn simplex_1d() {
-        let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
-        ];
+        let vertices = vec![vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let (_, simplex) = dt.simplices().next().unwrap();
         assert_simplex_properties(simplex, 2, 1);
@@ -2958,8 +2942,7 @@ mod tests {
     fn simplex_single_vertex() {
         // Test that creating a 3D triangulation with insufficient vertices fails validation
         // Tested through TDS, which is the user-facing API.
-        let vertices =
-            vec![crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap()];
+        let vertices = vec![vertex!([0.0, 0.0, 0.0]).unwrap()];
         let result = DelaunayTriangulation::try_new(&vertices);
 
         assert!(result.is_err());
@@ -2972,10 +2955,10 @@ mod tests {
     #[test]
     fn simplex_neighbors_none_by_default() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let (_, simplex) = dt.simplices().next().unwrap();
@@ -2987,10 +2970,10 @@ mod tests {
     #[test]
     fn simplex_data_none_by_default() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let (_, simplex) = dt.simplices().next().unwrap();
@@ -3001,10 +2984,10 @@ mod tests {
     #[test]
     fn simplex_data_can_be_set() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), i32, 3> =
             DelaunayTriangulation::try_with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
@@ -3026,11 +3009,11 @@ mod tests {
     #[test]
     fn simplex_into_hashmap_multiple() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([1.0, 1.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
@@ -3061,9 +3044,9 @@ mod tests {
     #[test]
     fn simplex_try_into_hashmap_rejects_duplicate_uuid() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let (_, simplex_ref) = dt.simplices().next().unwrap();
@@ -3086,10 +3069,10 @@ mod tests {
         // Use a simple non-degenerate 3D tetrahedron so `DelaunayTriangulation::try_new` can construct
         // a valid simplex for debug-format testing.
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), i32, 3> =
             DelaunayTriangulation::try_with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
@@ -3119,10 +3102,10 @@ mod tests {
         // Use a non-degenerate 3D tetrahedron so `DelaunayTriangulation::try_new` can construct a
         // valid initial simplex.
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
@@ -3229,10 +3212,10 @@ mod tests {
 
         // Test 2: Serialization with Some(data) includes field
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), i32, 3> =
             DelaunayTriangulation::try_with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
@@ -3288,10 +3271,10 @@ mod tests {
 
         // Negative coordinates: fully in negative octant
         let negative_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([-1.0, -1.0, -1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([-2.0, -1.0, -1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([-1.0, -2.0, -1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([-1.0, -1.0, -2.0]).unwrap(),
+            vertex!([-1.0, -1.0, -1.0]).unwrap(),
+            vertex!([-2.0, -1.0, -1.0]).unwrap(),
+            vertex!([-1.0, -2.0, -1.0]).unwrap(),
+            vertex!([-1.0, -1.0, -2.0]).unwrap(),
         ];
         let dt_neg = DelaunayTriangulation::try_new(&negative_vertices).unwrap();
         let (_, simplex_neg) = dt_neg.tds().simplices().next().unwrap();
@@ -3300,10 +3283,10 @@ mod tests {
 
         // Large coordinates: large-magnitude coordinates
         let large_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([1e6, 1e6, 1e6]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2e6, 1e6, 1e6]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1e6, 2e6, 1e6]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1e6, 1e6, 2e6]).unwrap(),
+            vertex!([1e6, 1e6, 1e6]).unwrap(),
+            vertex!([2e6, 1e6, 1e6]).unwrap(),
+            vertex!([1e6, 2e6, 1e6]).unwrap(),
+            vertex!([1e6, 1e6, 2e6]).unwrap(),
         ];
         let dt_large = DelaunayTriangulation::try_new(&large_vertices).unwrap();
         let (_, simplex_large) = dt_large.tds().simplices().next().unwrap();
@@ -3312,10 +3295,10 @@ mod tests {
 
         // Small coordinates: scaled-down tetrahedron without degeneracy
         let small_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1e-3, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1e-3, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1e-3]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1e-3, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1e-3, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1e-3]).unwrap(),
         ];
         let dt_small = DelaunayTriangulation::try_new(&small_vertices).unwrap();
         let (_, simplex_small) = dt_small.tds().simplices().next().unwrap();
@@ -3325,9 +3308,9 @@ mod tests {
 
     #[test]
     fn simplex_circumradius_2d() {
-        let vertex1 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap();
-        let vertex2 = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap();
-        let vertex3 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap();
+        let vertex1 = vertex!([0.0, 0.0]).unwrap();
+        let vertex2 = vertex!([1.0, 0.0]).unwrap();
+        let vertex3 = vertex!([0.0, 1.0]).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -3349,12 +3332,11 @@ mod tests {
 
     #[test]
     fn simplex_contains_vertex_false() {
-        let vertex1 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap();
-        let vertex2 = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap();
-        let vertex3 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap();
-        let vertex4 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(); // 4th vertex to complete 3D simplex
-        let vertex_outside: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 2.0, 2.0]).unwrap();
+        let vertex1 = vertex!([0.0, 0.0, 0.0]).unwrap();
+        let vertex2 = vertex!([1.0, 0.0, 0.0]).unwrap();
+        let vertex3 = vertex!([0.0, 1.0, 0.0]).unwrap();
+        let vertex4 = vertex!([0.0, 0.0, 1.0]).unwrap(); // 4th vertex to complete 3D simplex
+        let vertex_outside: Vertex<(), 3> = vertex!([2.0, 2.0, 2.0]).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -3370,14 +3352,10 @@ mod tests {
     fn simplex_circumsphere_contains_vertex_determinant() {
         // Test the matrix determinant method for circumsphere containment
         // Use a simple, well-known case: unit tetrahedron
-        let vertex1 =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 1).unwrap();
-        let vertex2 =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 1).unwrap();
-        let vertex3 =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 1).unwrap();
-        let vertex4 =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 2).unwrap();
+        let vertex1 = vertex!([0.0, 0.0, 0.0]; data = 1).unwrap();
+        let vertex2 = vertex!([1.0, 0.0, 0.0]; data = 1).unwrap();
+        let vertex3 = vertex!([0.0, 1.0, 0.0]; data = 1).unwrap();
+        let vertex4 = vertex!([0.0, 0.0, 1.0]; data = 2).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 3> =
@@ -3386,8 +3364,7 @@ mod tests {
         let simplex = &dt.tds().simplex(simplex_key).unwrap();
 
         // Test vertex clearly outside circumsphere
-        let vertex_far_outside: Vertex<i32, 3> =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([10.0, 10.0, 10.0], 4).unwrap();
+        let vertex_far_outside: Vertex<i32, 3> = vertex!([10.0, 10.0, 10.0]; data = 4).unwrap();
         // Just check that the method runs without error for now
         let vertex_points: Vec<Point<3>> = simplex
             .vertices()
@@ -3398,8 +3375,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Test with origin (should be inside or on boundary)
-        let origin: Vertex<i32, 3> =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 3).unwrap();
+        let origin: Vertex<i32, 3> = vertex!([0.0, 0.0, 0.0]; data = 3).unwrap();
         let vertex_points: Vec<Point<3>> = simplex
             .vertices()
             .iter()
@@ -3412,9 +3388,9 @@ mod tests {
     #[test]
     fn simplex_circumsphere_contains_vertex_2d() {
         // Test 2D case for circumsphere containment using determinant method
-        let vertex1 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap();
-        let vertex2 = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap();
-        let vertex3 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap();
+        let vertex1 = vertex!([0.0, 0.0]).unwrap();
+        let vertex2 = vertex!([1.0, 0.0]).unwrap();
+        let vertex3 = vertex!([0.0, 1.0]).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -3422,8 +3398,7 @@ mod tests {
         let simplex = &dt.tds().simplex(simplex_key).unwrap();
 
         // Test vertex far outside circumcircle
-        let vertex_far_outside: Vertex<(), 2> =
-            crate::core::vertex::Vertex::<(), _>::try_new([10.0, 10.0]).unwrap();
+        let vertex_far_outside: Vertex<(), 2> = vertex!([10.0, 10.0]).unwrap();
         let vertex_points: Vec<Point<2>> = simplex
             .vertices()
             .iter()
@@ -3433,8 +3408,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Test with center of triangle (should be inside)
-        let center: Vertex<(), 2> =
-            crate::core::vertex::Vertex::<(), _>::try_new([0.33, 0.33]).unwrap();
+        let center: Vertex<(), 2> = vertex!([0.33, 0.33]).unwrap();
         let vertex_points: Vec<Point<2>> = simplex
             .vertices()
             .iter()
@@ -3447,10 +3421,10 @@ mod tests {
     #[test]
     fn simplex_circumradius_with_center() {
         // Test the circumradius_with_center method
-        let vertex1 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap();
-        let vertex2 = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap();
-        let vertex3 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap();
-        let vertex4 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap();
+        let vertex1 = vertex!([0.0, 0.0, 0.0]).unwrap();
+        let vertex2 = vertex!([1.0, 0.0, 0.0]).unwrap();
+        let vertex3 = vertex!([0.0, 1.0, 0.0]).unwrap();
+        let vertex4 = vertex!([0.0, 0.0, 1.0]).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -3475,10 +3449,10 @@ mod tests {
     #[test]
     fn simplex_facet_views_comprehensive() {
         // Test comprehensive facet view functionality
-        let vertex1 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap();
-        let vertex2 = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap();
-        let vertex3 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap();
-        let vertex4 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap();
+        let vertex1 = vertex!([0.0, 0.0, 0.0]).unwrap();
+        let vertex2 = vertex!([1.0, 0.0, 0.0]).unwrap();
+        let vertex3 = vertex!([0.0, 1.0, 0.0]).unwrap();
+        let vertex4 = vertex!([0.0, 0.0, 1.0]).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -3524,10 +3498,10 @@ mod tests {
     #[test]
     fn test_facet_vertex_uniqueness() {
         // Test that facet vertices are unique and don't include the opposite vertex
-        let vertex1 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap();
-        let vertex2 = crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap();
-        let vertex3 = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap();
-        let vertex4 = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap();
+        let vertex1 = vertex!([0.0, 0.0, 1.0]).unwrap();
+        let vertex2 = vertex!([0.0, 1.0, 0.0]).unwrap();
+        let vertex3 = vertex!([1.0, 0.0, 0.0]).unwrap();
+        let vertex4 = vertex!([1.0, 1.0, 1.0]).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -3573,18 +3547,12 @@ mod tests {
     #[test]
     fn simplex_high_dimensional() {
         // Test with higher dimensions (5D)
-        let vertex1 =
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap();
-        let vertex2 =
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap();
-        let vertex3 =
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap();
-        let vertex4 =
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap();
-        let vertex5 =
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap();
-        let vertex6 =
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap();
+        let vertex1 = vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap();
+        let vertex2 = vertex!([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap();
+        let vertex3 = vertex!([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap();
+        let vertex4 = vertex!([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap();
+        let vertex5 = vertex!([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap();
+        let vertex6 = vertex!([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap();
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4, vertex5, vertex6];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -3605,14 +3573,10 @@ mod tests {
     #[test]
     fn simplex_vertex_data_consistency() {
         // Test simplices with vertices that have different data types
-        let vertex1 =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 0.0], 1).unwrap();
-        let vertex2 =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0, 0.0], 2).unwrap();
-        let vertex3 =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0, 0.0], 3).unwrap();
-        let vertex4 =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0, 1.0], 4).unwrap(); // Need 4 vertices for 3D simplex
+        let vertex1 = vertex!([0.0, 0.0, 0.0]; data = 1).unwrap();
+        let vertex2 = vertex!([1.0, 0.0, 0.0]; data = 2).unwrap();
+        let vertex3 = vertex!([0.0, 1.0, 0.0]; data = 3).unwrap();
+        let vertex4 = vertex!([0.0, 0.0, 1.0]; data = 4).unwrap(); // Need 4 vertices for 3D simplex
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, u32, 3> =
@@ -3674,10 +3638,10 @@ mod tests {
 
         // Valid 3D simplex with correct vertex count (D+1 = 4)
         let vertices_3d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices_3d).unwrap();
         let (_, simplex_3d) = dt.simplices().next().unwrap();
@@ -3688,9 +3652,9 @@ mod tests {
 
         // Valid 2D simplex with correct vertex count (D+1 = 3)
         let vertices_2d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices_2d).unwrap();
         let (_, simplex_ref) = dt.simplices().next().unwrap();
@@ -3723,10 +3687,10 @@ mod tests {
 
         // Invalid UUID (nil)
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let (_, simplex_ref) = dt.simplices().next().unwrap();
@@ -3742,8 +3706,8 @@ mod tests {
 
         // Insufficient vertices (TDS construction fails)
         let insufficient_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
         ];
         let result = DelaunayTriangulation::try_new(&insufficient_vertices);
         assert!(
@@ -3753,9 +3717,9 @@ mod tests {
 
         // Invalid neighbors length (too few)
         let vertices_2d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices_2d).unwrap();
         let (_, simplex_ref) = dt.simplices().next().unwrap();
@@ -3795,10 +3759,10 @@ mod tests {
     #[test]
     fn simplex_new_rejects_insufficient_and_duplicate_vertices() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let vkeys: Vec<_> = dt.tds().vertices().map(|(k, _)| k).collect();
@@ -3825,10 +3789,10 @@ mod tests {
     #[test]
     fn simplex_is_valid_rejects_insufficient_and_duplicate_vertices() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let (_, simplex_ref) = dt.simplices().next().unwrap();
@@ -3853,9 +3817,9 @@ mod tests {
     #[test]
     fn simplex_ensure_neighbors_buffer_mut_initializes_and_reuses() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let (simplex_key, simplex_ref) = dt.simplices().next().unwrap();
@@ -3877,9 +3841,9 @@ mod tests {
     #[test]
     fn simplex_try_ensure_neighbors_buffer_mut_rejects_malformed_existing_buffer() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let (_, simplex_ref) = dt.simplices().next().unwrap();
@@ -3901,9 +3865,9 @@ mod tests {
     #[test]
     fn simplex_neighbor_views_distinguish_unassigned_boundary_and_neighbor_slots() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let (simplex_key, simplex_ref) = dt.simplices().next().unwrap();
@@ -3935,9 +3899,9 @@ mod tests {
     #[test]
     fn simplex_validation_rejects_unassigned_slot_inside_assigned_neighbors() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let (_, simplex_ref) = dt.simplices().next().unwrap();
@@ -3955,9 +3919,9 @@ mod tests {
     #[test]
     fn simplex_swap_vertex_slots_swaps_vertices_neighbors_and_offsets() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let (simplex_key, simplex_ref) = dt.simplices().next().unwrap();
@@ -3991,9 +3955,9 @@ mod tests {
     #[should_panic(expected = "neighbors index out of bounds")]
     fn simplex_swap_vertex_slots_panics_when_neighbors_shorter_than_vertices() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let (_, simplex_ref) = dt.simplices().next().unwrap();
@@ -4008,10 +3972,10 @@ mod tests {
     #[test]
     fn simplex_facet_view_helpers_reject_excessive_vertex_count() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let simplex_key = dt.tds().simplex_keys().next().unwrap();
@@ -4109,9 +4073,9 @@ mod tests {
     fn test_simplex_partial_eq_different_dimensions() {
         // Test equality for simplices of different dimensions
         let vertices_2d = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt1 = DelaunayTriangulation::try_new(&vertices_2d).unwrap();
         let (_, simplex_2d) = dt1.tds().simplices().next().unwrap();
@@ -4129,10 +4093,10 @@ mod tests {
     fn test_try_simplex_facets() {
         // Test the owner-bound simplex facet iterator.
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
@@ -4196,9 +4160,9 @@ mod tests {
     #[test]
     fn test_simplex_data_accessor() {
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<i32>()
