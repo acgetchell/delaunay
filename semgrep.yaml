@@ -1450,7 +1450,7 @@ rules:
           - pattern: $VERTEX::try_new_with_data(...)
       - metavariable-regex:
           metavariable: $VERTEX
-          regex: '^(?:delaunay::prelude::)?Vertex(?:::<.*>)?$'
+          regex: "^(?:delaunay::prelude::)?Vertex(?:::<.*>)?$"
 
   - id: delaunay.rust.no-public-raw-bench-fixture-builders
     languages:
