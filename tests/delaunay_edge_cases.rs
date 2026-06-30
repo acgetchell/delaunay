@@ -23,6 +23,7 @@ use delaunay::prelude::geometry::RobustKernel;
 use delaunay::prelude::validation::{
     DelaunayTriangulationValidationError, TriangulationEmbeddingValidationError,
 };
+use delaunay::vertex;
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use std::num::NonZeroUsize;
@@ -177,11 +178,11 @@ test_regression_config!(
     regression_2d_canonical,
     2,
     vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 2.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.8, 0.7]).unwrap(), // interior
-        delaunay::prelude::Vertex::<(), _>::try_new([-0.5, -0.4]).unwrap(), // exterior
+        vertex!([0.0, 0.0]).unwrap(),
+        vertex!([2.0, 0.0]).unwrap(),
+        vertex!([0.0, 2.0]).unwrap(),
+        vertex!([0.8, 0.7]).unwrap(),   // interior
+        vertex!([-0.5, -0.4]).unwrap(), // exterior
     ]
 );
 
@@ -201,7 +202,7 @@ test_regression_config!(
 fn debug_issue_120_empty_circumsphere_5d() {
     init_tracing();
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             18.781125710207355,
             85.19556603270544,
             -35.577425948458725,
@@ -209,7 +210,7 @@ fn debug_issue_120_empty_circumsphere_5d() {
             25.721771703577573,
         ])
         .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             -21.95447633622051,
             83.05734190480365,
             96.97214006048821,
@@ -217,7 +218,7 @@ fn debug_issue_120_empty_circumsphere_5d() {
             -21.250997394474208,
         ])
         .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             50.96615929339812,
             -12.888014856181814,
             64.35842847516192,
@@ -225,7 +226,7 @@ fn debug_issue_120_empty_circumsphere_5d() {
             -67.85330902948604,
         ])
         .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             -74.19363960080797,
             -87.39864134220277,
             -31.002590635557322,
@@ -233,7 +234,7 @@ fn debug_issue_120_empty_circumsphere_5d() {
             38.224369898650814,
         ])
         .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             -15.305719099426401,
             37.44773385928881,
             -31.57846617007415,
@@ -241,7 +242,7 @@ fn debug_issue_120_empty_circumsphere_5d() {
             32.32927241254111,
         ])
         .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             -58.19271902837987,
             -50.763430349360824,
             72.37200252994022,
@@ -249,7 +250,7 @@ fn debug_issue_120_empty_circumsphere_5d() {
             53.51398806010464,
         ])
         .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             96.64514856949884,
             69.99880120063219,
             29.117126126375382,
@@ -347,11 +348,11 @@ test_regression_config!(
     regression_3d_canonical,
     3,
     vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 2.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 2.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.4, 0.4, 0.3]).unwrap(), // interior
+        vertex!([0.0, 0.0, 0.0]).unwrap(),
+        vertex!([2.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 2.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 2.0]).unwrap(),
+        vertex!([0.4, 0.4, 0.3]).unwrap(), // interior
     ]
 );
 
@@ -360,12 +361,12 @@ test_regression_config!(
     regression_4d_canonical,
     4,
     vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 2.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 2.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 2.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.4, 0.3, 0.3, 0.3]).unwrap(), // interior
+        vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([2.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 2.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 2.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 2.0]).unwrap(),
+        vertex!([0.4, 0.3, 0.3, 0.3]).unwrap(), // interior
     ]
 );
 
@@ -382,63 +383,63 @@ test_regression_config!(
 #[test]
 fn test_regression_proptest_insertion_order_4d_euler_mismatch() {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             -65.070_532_013_377_94,
             72.223_880_592_145_24,
             -97.837_333_303_337_39,
             35.700_988_360_396_63,
         ])
         .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             27.011_682_298_030_294,
             52.054_594_213_988_53,
             -4.067_357_689_604_181,
             59.253_713_038_817_09,
         ])
         .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             64.848_601_083_080_47,
             84.907_367_805_317_42,
             -98.659_828_418_664_1,
             70.056_498_821_543_85,
         ])
         .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             -23.543_852_823_069_876,
             96.741_963_200_207_22,
             -50.539_503_136_092_634,
             -49.616_262_314_856_67,
         ])
         .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             24.886_830_567_772_98,
             -81.708_725_314_824,
             50.775_700_870_880_27,
             20.281_603_779_436_033,
         ])
         .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             78.030_479_318_165_25,
             -82.763_788_627_520_88,
             94.075_337_487_756_27,
             44.637_774_779_142_73,
         ])
         .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             -5.175_491_150_708_228,
             97.527_582_084_288_54,
             95.344_552_027_220_42,
             84.908_292_808_161_85,
         ])
         .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             71.994_788_686_588_11,
             4.833_973_465_666_131,
             -80.802_685_728_835_39,
             64.010_634_775_159_37,
         ])
         .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             23.390_079_186_814_17,
             -2.157_395_632_040_824_7,
             -6.601_766_119_999_574,
@@ -474,7 +475,7 @@ test_regression_config!(
     regression_5d_known_config,
     5,
     vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             61.994_906_139_357_86,
             66.880_064_158_234_8,
             62.542_871_273_730_91,
@@ -482,7 +483,7 @@ test_regression_config!(
             -78.369_282_526_711_23,
         ])
         .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             -31.430_765_957_270_268,
             50.418_208_939_604_746,
             88.657_219_404_750_96,
@@ -490,7 +491,7 @@ test_regression_config!(
             -81.163_199_600_681_14,
         ])
         .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             -89.902_834_998_758_96,
             93.719_989_121_636_87,
             64.524_277_928_893_98,
@@ -498,7 +499,7 @@ test_regression_config!(
             14.196_053_554_411_321,
         ])
         .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             2.625_958_385_925_883,
             48.251_155_688_054_36,
             3.491_542_746_106_750_5,
@@ -506,7 +507,7 @@ test_regression_config!(
             -27.107_939_334_194_757,
         ])
         .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             62.628_856_831_188_11,
             -18.181_728_263_486_345,
             -32.153_141_689_537_584,
@@ -514,7 +515,7 @@ test_regression_config!(
             26.369_541_091_117_114,
         ])
         .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             -41.886_149_523_644_406,
             -54.537_563_736_672_65,
             -54.555_379_092_740_964,
@@ -522,7 +523,7 @@ test_regression_config!(
             16.127_546_041_675_355,
         ])
         .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
+        vertex!([
             -77.161_459_173_963_2,
             -59.065_517_574_769_37,
             -19.652_689_679_369_03,
@@ -661,9 +662,9 @@ fn test_regression_non_manifold_nearby_seeds() {
 fn test_exact_minimum_vertices_2d() {
     // Exactly D+1 = 3 vertices for 2D
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        vertex!([0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 2> =
@@ -681,10 +682,10 @@ fn test_exact_minimum_vertices_2d() {
 fn test_exact_minimum_vertices_3d() {
     // Exactly D+1 = 4 vertices for 3D
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 3> =
@@ -702,11 +703,11 @@ fn test_exact_minimum_vertices_3d() {
 fn test_exact_minimum_vertices_4d() {
     // Exactly D+1 = 5 vertices for 4D
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 4> =
@@ -727,12 +728,12 @@ fn test_exact_minimum_vertices_4d() {
 #[test]
 fn test_multiple_interior_points_2d() {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([4.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 4.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.5, 1.5]).unwrap(), // interior
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 1.5]).unwrap(), // interior
-        delaunay::prelude::Vertex::<(), _>::try_new([2.5, 1.5]).unwrap(), // interior
+        vertex!([0.0, 0.0]).unwrap(),
+        vertex!([4.0, 0.0]).unwrap(),
+        vertex!([2.0, 4.0]).unwrap(),
+        vertex!([1.5, 1.5]).unwrap(), // interior
+        vertex!([2.0, 1.5]).unwrap(), // interior
+        vertex!([2.5, 1.5]).unwrap(), // interior
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 2> =
@@ -749,13 +750,13 @@ fn test_multiple_interior_points_2d() {
 #[test]
 fn test_multiple_interior_points_3d() {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 2.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 2.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(), // interior
-        delaunay::prelude::Vertex::<(), _>::try_new([0.6, 0.5, 0.5]).unwrap(), // interior
-        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.6, 0.5]).unwrap(), // interior
+        vertex!([0.0, 0.0, 0.0]).unwrap(),
+        vertex!([2.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 2.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 2.0]).unwrap(),
+        vertex!([0.5, 0.5, 0.5]).unwrap(), // interior
+        vertex!([0.6, 0.5, 0.5]).unwrap(), // interior
+        vertex!([0.5, 0.6, 0.5]).unwrap(), // interior
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 3> =
@@ -778,11 +779,11 @@ fn test_square_with_center_2d() {
     init_tracing();
     // Square vertices with center point
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 2.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 2.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(), // center
+        vertex!([0.0, 0.0]).unwrap(),
+        vertex!([2.0, 0.0]).unwrap(),
+        vertex!([2.0, 2.0]).unwrap(),
+        vertex!([0.0, 2.0]).unwrap(),
+        vertex!([1.0, 1.0]).unwrap(), // center
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 2> =
@@ -800,14 +801,14 @@ fn test_square_with_center_2d() {
 fn test_cube_vertices_3d() {
     // 8 corners of a unit cube
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([1.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
+        vertex!([1.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.0, 1.0, 1.0]).unwrap(),
+        vertex!([1.0, 1.0, 1.0]).unwrap(),
     ];
 
     let err = DelaunayTriangulation::<_, (), (), 3>::try_new_with_topology_guarantee(
@@ -829,10 +830,10 @@ fn test_cube_vertices_3d() {
 #[test]
 fn test_large_coordinates_2d() {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([1000.0, 1000.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([2000.0, 1000.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1500.0, 2000.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1500.0, 1500.0]).unwrap(),
+        vertex!([1000.0, 1000.0]).unwrap(),
+        vertex!([2000.0, 1000.0]).unwrap(),
+        vertex!([1500.0, 2000.0]).unwrap(),
+        vertex!([1500.0, 1500.0]).unwrap(),
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 2> =
@@ -849,11 +850,11 @@ fn test_large_coordinates_2d() {
 #[test]
 fn test_small_coordinates_3d() {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.001, 0.001, 0.001]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.002, 0.001, 0.001]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.001, 0.002, 0.001]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.001, 0.001, 0.002]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0015, 0.0015, 0.0015]).unwrap(),
+        vertex!([0.001, 0.001, 0.001]).unwrap(),
+        vertex!([0.002, 0.001, 0.001]).unwrap(),
+        vertex!([0.001, 0.002, 0.001]).unwrap(),
+        vertex!([0.001, 0.001, 0.002]).unwrap(),
+        vertex!([0.0015, 0.0015, 0.0015]).unwrap(),
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 3> =
@@ -870,10 +871,10 @@ fn test_small_coordinates_3d() {
 #[test]
 fn test_negative_coordinates_2d() {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([-1.0, -1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, -1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+        vertex!([-1.0, -1.0]).unwrap(),
+        vertex!([1.0, -1.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
+        vertex!([0.0, 0.0]).unwrap(),
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 2> =
@@ -895,10 +896,10 @@ fn test_negative_coordinates_2d() {
 fn test_robust_kernel_with_edge_case() {
     // Configuration that might benefit from robust predicates
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.866_025_403_784_438_7]).unwrap(), // ~sqrt(3)/2 - near-equilateral
-        delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
+        vertex!([0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.5, 0.866_025_403_784_438_7]).unwrap(), // ~sqrt(3)/2 - near-equilateral
+        vertex!([0.5, 0.5]).unwrap(),
     ];
 
     let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 2> =
@@ -923,10 +924,10 @@ fn test_collinear_points_2d() {
     // AdaptiveKernel uses exact orientation (no SoS), so collinear points
     // are correctly detected as degenerate.
     let collinear = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([3.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([2.0, 0.0]).unwrap(),
+        vertex!([3.0, 0.0]).unwrap(),
     ];
 
     let result: Result<DelaunayTriangulation<_, (), (), 2>, _> =
@@ -968,7 +969,7 @@ fn regression_issue_228_exact_predicate_paths_3d_fast() {
         .expect("point generation should succeed");
     let vertices: Vec<Vertex<(), 3>> = points
         .into_iter()
-        .map(|p| delaunay::prelude::Vertex::<(), _>::try_new(p.into()).unwrap())
+        .map(|p| vertex!(p.into()).unwrap())
         .collect();
 
     let dt: DelaunayTriangulation<_, (), (), 3> =
@@ -993,13 +994,13 @@ fn regression_issue_228_exact_predicate_paths_3d_fast() {
 #[test]
 fn test_5d_simplex_plus_interior() {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2, 0.2]).unwrap(), // interior
+        vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.2, 0.2, 0.2, 0.2, 0.2]).unwrap(), // interior
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 5> =

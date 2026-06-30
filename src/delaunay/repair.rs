@@ -935,6 +935,7 @@ mod tests {
     use crate::geometry::kernel::{AdaptiveKernel, RobustKernel};
     use crate::topology::traits::topological_space::GlobalTopology;
     use crate::triangulation::DelaunayTriangulation;
+    use crate::vertex;
     use std::{assert_matches, num::NonZeroUsize, sync::Once};
 
     fn init_tracing() {
@@ -986,24 +987,16 @@ mod tests {
     fn non_delaunay_quad_tds() -> Tds<(), (), 2> {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([4.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([4.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([4.0, 2.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([4.0, 2.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 2.0]).unwrap())
             .unwrap();
 
         tds.insert_simplex_with_mapping(
@@ -1027,10 +1020,7 @@ mod tests {
     #[test]
     fn test_should_run_delaunay_repair_for_skips_for_dimension_lt_2() {
         init_tracing();
-        let vertices: Vec<Vertex<(), 1>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
-        ];
+        let vertices: Vec<Vertex<(), 1>> = vec![vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()];
         let dt: DelaunayTriangulation<_, (), (), 1> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
 
@@ -1059,9 +1049,9 @@ mod tests {
     fn test_should_run_delaunay_repair_for_skips_when_policy_never() {
         init_tracing();
         let vertices: Vec<Vertex<(), 2>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -1075,9 +1065,9 @@ mod tests {
     fn test_should_run_delaunay_repair_for_respects_every_n_schedule() {
         init_tracing();
         let vertices: Vec<Vertex<(), 2>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -1094,9 +1084,9 @@ mod tests {
     fn test_non_insertion_mutation_repair_gate_ignores_insertion_cadence() {
         init_tracing();
         let vertices: Vec<Vertex<(), 2>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -1113,16 +1103,16 @@ mod tests {
     fn test_vertex_key_valid_after_explicit_heuristic_rebuild() {
         init_tracing();
         let vertices: Vec<Vertex<(), 2>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
 
         // Insert a vertex normally (no heuristic rebuild during insert).
-        let inserted = crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.25]).unwrap();
+        let inserted = vertex!([0.25, 0.25]).unwrap();
         let inserted_uuid = inserted.uuid();
 
         let (outcome, _stats) = dt.insert_with_statistics(inserted).unwrap();
@@ -1160,10 +1150,10 @@ mod tests {
     fn test_heuristic_rebuild_preserves_default_global_topology() {
         init_tracing();
         let vertices: Vec<Vertex<(), 2>> = vec![
-            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -1187,10 +1177,10 @@ mod tests {
     fn test_heuristic_rebuild_threads_non_default_global_topology() {
         init_tracing();
         let vertices: Vec<Vertex<(), 2>> = vec![
-            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -1212,10 +1202,10 @@ mod tests {
     fn test_repair_delaunay_with_flips_allows_pl_manifold() {
         init_tracing();
         let vertices: Vec<Vertex<(), 2>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 1.0]).unwrap(),
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
@@ -1237,10 +1227,10 @@ mod tests {
     fn test_repair_delaunay_with_flips_advanced_robust_fallback_succeeds() {
         init_tracing();
         let vertices: Vec<Vertex<(), 2>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -1268,10 +1258,10 @@ mod tests {
     fn test_repair_advanced_max_flips_zero_on_valid_triangulation_succeeds() {
         init_tracing();
         let vertices: Vec<Vertex<(), 2>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -1296,10 +1286,10 @@ mod tests {
     fn test_repair_advanced_max_flips_zero_forced_nonconvergent_hits_robust_fallback() {
         init_tracing();
         let vertices: Vec<Vertex<(), 2>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -1396,10 +1386,7 @@ mod tests {
     #[test]
     fn test_repair_delaunay_with_flips_returns_flip_error_for_1d() {
         init_tracing();
-        let vertices: Vec<Vertex<(), 1>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
-        ];
+        let vertices: Vec<Vertex<(), 1>> = vec![vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()];
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 1> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
 
@@ -1424,10 +1411,7 @@ mod tests {
     #[test]
     fn test_repair_delaunay_with_flips_advanced_passes_through_non_retryable_error() {
         init_tracing();
-        let vertices: Vec<Vertex<(), 1>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
-        ];
+        let vertices: Vec<Vertex<(), 1>> = vec![vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()];
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 1> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
 

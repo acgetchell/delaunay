@@ -862,6 +862,7 @@ mod tests {
     use crate::core::tds::SimplexKey;
     use crate::core::traits::DataType;
     use crate::core::util::{UuidValidationError, make_uuid, usize_to_u8};
+    use crate::core::vertex::Vertex;
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::{
         Coordinate, CoordinateValidationError, InvalidCoordinateValue,
@@ -980,12 +981,10 @@ mod tests {
 
     #[test]
     fn test_vertex_data_accessor() {
-        let v_with: Vertex<i32, 2> =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 2.0], 42).unwrap();
+        let v_with: Vertex<i32, 2> = Vertex::<_, _>::try_new_with_data([1.0, 2.0], 42).unwrap();
         assert_eq!(v_with.data(), Some(&42));
 
-        let v_without: Vertex<(), 2> =
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap();
+        let v_without: Vertex<(), 2> = Vertex::<(), _>::try_new([1.0, 2.0]).unwrap();
         assert_eq!(v_without.data(), None);
     }
 
@@ -995,8 +994,7 @@ mod tests {
 
     #[test]
     fn test_vertex_try_new_constructor_variants() {
-        let v1: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
+        let v1: Vertex<(), 3> = Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
         assert_relative_eq!(
             v1.point().coords().as_slice(),
             [1.0, 2.0, 3.0].as_slice(),
@@ -1006,8 +1004,7 @@ mod tests {
         assert!(!v1.uuid().is_nil());
         assert!(v1.data.is_none());
 
-        let v2: Vertex<i32, 2> =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0], 99).unwrap();
+        let v2: Vertex<i32, 2> = Vertex::<_, _>::try_new_with_data([0.0, 1.0], 99).unwrap();
         assert_relative_eq!(
             v2.point().coords().as_slice(),
             [0.0, 1.0].as_slice(),
@@ -1018,8 +1015,7 @@ mod tests {
         assert_eq!(v2.data.unwrap(), 99);
 
         let v3: Vertex<u32, 4> =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 2.0, 3.0, 4.0], 42u32)
-                .unwrap();
+            Vertex::<_, _>::try_new_with_data([1.0, 2.0, 3.0, 4.0], 42u32).unwrap();
         assert_relative_eq!(
             v3.point().coords().as_slice(),
             [1.0f64, 2.0f64, 3.0f64, 4.0f64].as_slice(),
@@ -1063,8 +1059,7 @@ mod tests {
     fn test_vertex_basic_operations() {
         // Test vertex copying
         let vertex: Vertex<u8, 4> =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 2.0, 3.0, 4.0], 4u8)
-                .unwrap();
+            Vertex::<_, _>::try_new_with_data([1.0, 2.0, 3.0, 4.0], 4u8).unwrap();
         let vertex_copy = vertex;
         assert_eq!(vertex, vertex_copy);
         assert_relative_eq!(
@@ -1111,8 +1106,8 @@ mod tests {
 
         assert_eq!(values.len(), 3);
 
-        values.sort_by_key(super::Vertex::uuid);
-        vertices.sort_by_key(super::Vertex::uuid);
+        values.sort_by_key(Vertex::uuid);
+        vertices.sort_by_key(Vertex::uuid);
 
         assert_eq!(values, vertices);
 
@@ -1121,8 +1116,7 @@ mod tests {
         assert!(empty_hashmap.is_empty());
 
         // Test Vertex::try_into_hashmap() with single vertex
-        let single_vertex: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
+        let single_vertex: Vertex<(), 3> = Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
         let uuid = single_vertex.uuid();
         let single_hashmap = Vertex::try_into_hashmap([single_vertex]).unwrap();
 
@@ -1192,8 +1186,7 @@ mod tests {
     #[test]
     fn test_vertex_serialization_roundtrip() {
         // Test basic serialization/deserialization roundtrip
-        let vertex: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
+        let vertex: Vertex<(), 3> = Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
         let serialized = serde_json::to_string(&vertex).unwrap();
 
         assert!(serialized.contains("point"));
@@ -1214,7 +1207,7 @@ mod tests {
 
         // Test serialization with data
         let vertex_with_data: Vertex<i32, 3> =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 2.0, 3.0], 42).unwrap();
+            Vertex::<_, _>::try_new_with_data([1.0, 2.0, 3.0], 42).unwrap();
         let serialized_with_data = serde_json::to_string(&vertex_with_data).unwrap();
         assert!(serialized_with_data.contains("\"data\":"));
         assert!(serialized_with_data.contains("42"));
@@ -1229,8 +1222,7 @@ mod tests {
         );
 
         // Test serialization with None data (should omit data field)
-        let vertex_no_data: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
+        let vertex_no_data: Vertex<(), 3> = Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
         let serialized_no_data = serde_json::to_string(&vertex_no_data).unwrap();
         assert!(!serialized_no_data.contains("\"data\":"));
 
@@ -1255,8 +1247,7 @@ mod tests {
 
         // Test with different data types
         let vertex_char: Vertex<char, 4> =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 2.0, 3.0, 4.0], 'A')
-                .unwrap();
+            Vertex::<_, _>::try_new_with_data([1.0, 2.0, 3.0, 4.0], 'A').unwrap();
         let serialized_char = serde_json::to_string(&vertex_char).unwrap();
         let deserialized_char: Vertex<char, 4> = serde_json::from_str(&serialized_char).unwrap();
         assert_eq!(deserialized_char.data, Some('A'));
@@ -1280,12 +1271,9 @@ mod tests {
     #[test]
     fn test_vertex_equality_and_hashing() {
         // Test basic equality behavior
-        let v1: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
-        let v2: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
-        let v3: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 4.0]).unwrap();
+        let v1: Vertex<(), 3> = Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
+        let v2: Vertex<(), 3> = Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
+        let v3: Vertex<(), 3> = Vertex::<(), _>::try_new([1.0, 2.0, 4.0]).unwrap();
 
         // Same coordinates should be equal
         assert_eq!(v1, v2);
@@ -1303,10 +1291,8 @@ mod tests {
         assert!(v1.eq(&v1));
 
         // Test that equality ignores UUID, incident_simplex, and data
-        let v4: Vertex<i32, 2> =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 2.0], 42).unwrap();
-        let v5: Vertex<i32, 2> =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 2.0], 99).unwrap(); // Different data
+        let v4: Vertex<i32, 2> = Vertex::<_, _>::try_new_with_data([1.0, 2.0], 42).unwrap();
+        let v5: Vertex<i32, 2> = Vertex::<_, _>::try_new_with_data([1.0, 2.0], 99).unwrap(); // Different data
 
         // Different UUIDs and data but same coordinates
         assert_ne!(v4.uuid(), v5.uuid());
@@ -1316,8 +1302,8 @@ mod tests {
         assert_eq!(v4, v5);
 
         // Test with None data
-        let v6: Vertex<(), 2> = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap();
-        let v7: Vertex<(), 2> = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap();
+        let v6: Vertex<(), 2> = Vertex::<(), _>::try_new([1.0, 2.0]).unwrap();
+        let v7: Vertex<(), 2> = Vertex::<(), _>::try_new([1.0, 2.0]).unwrap();
         assert_eq!(v6, v7);
 
         // Test hash consistency for same vertex
@@ -1371,10 +1357,8 @@ mod tests {
         ];
 
         for (coords1, coords2) in test_cases {
-            let v_a: Vertex<(), 2> =
-                crate::core::vertex::Vertex::<(), _>::try_new(coords1).unwrap();
-            let v_b: Vertex<(), 2> =
-                crate::core::vertex::Vertex::<(), _>::try_new(coords2).unwrap();
+            let v_a: Vertex<(), 2> = Vertex::<(), _>::try_new(coords1).unwrap();
+            let v_b: Vertex<(), 2> = Vertex::<(), _>::try_new(coords2).unwrap();
 
             // Verify equality
             assert_eq!(v_a, v_b);
@@ -1392,10 +1376,8 @@ mod tests {
 
     #[test]
     fn test_vertex_signed_zero_eq_hash_and_order_are_consistent() {
-        let positive_zero: Vertex<(), 2> =
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, -0.0]).unwrap();
-        let negative_zero: Vertex<(), 2> =
-            crate::core::vertex::Vertex::<(), _>::try_new([-0.0, 0.0]).unwrap();
+        let positive_zero: Vertex<(), 2> = Vertex::<(), _>::try_new([0.0, -0.0]).unwrap();
+        let negative_zero: Vertex<(), 2> = Vertex::<(), _>::try_new([-0.0, 0.0]).unwrap();
 
         assert_eq!(positive_zero, negative_zero);
         assert_eq!(
@@ -1415,9 +1397,9 @@ mod tests {
         // Test vertices in collections to verify Hash/Eq contract in practice
         let mut set: FastHashSet<Vertex<(), 2>> = FastHashSet::default();
 
-        let v1: Vertex<(), 2> = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap();
-        let v2: Vertex<(), 2> = crate::core::vertex::Vertex::<(), _>::try_new([3.0, 4.0]).unwrap();
-        let v3: Vertex<(), 2> = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap(); // Same coordinates as v1
+        let v1: Vertex<(), 2> = Vertex::<(), _>::try_new([1.0, 2.0]).unwrap();
+        let v2: Vertex<(), 2> = Vertex::<(), _>::try_new([3.0, 4.0]).unwrap();
+        let v3: Vertex<(), 2> = Vertex::<(), _>::try_new([1.0, 2.0]).unwrap(); // Same coordinates as v1
 
         // Insert vertices
         assert!(set.insert(v1)); // First insert should succeed
@@ -1432,14 +1414,14 @@ mod tests {
         assert!(set.contains(&v3)); // v3 is "found" because it equals v1
 
         // Verify we can look up by coordinates
-        let v4: Vertex<(), 2> = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap();
+        let v4: Vertex<(), 2> = Vertex::<(), _>::try_new([1.0, 2.0]).unwrap();
         assert!(set.contains(&v4)); // Should find it even with different UUID
 
         // Test vertices as FastHashMap keys
         let mut map: FastHashMap<Vertex<(), 2>, i32> = FastHashMap::default();
 
-        let v5: Vertex<(), 2> = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap();
-        let v6: Vertex<(), 2> = crate::core::vertex::Vertex::<(), _>::try_new([3.0, 4.0]).unwrap();
+        let v5: Vertex<(), 2> = Vertex::<(), _>::try_new([1.0, 2.0]).unwrap();
+        let v6: Vertex<(), 2> = Vertex::<(), _>::try_new([3.0, 4.0]).unwrap();
 
         map.insert(v5, 10);
         map.insert(v6, 20);
@@ -1450,7 +1432,7 @@ mod tests {
         assert_eq!(map.len(), 2);
 
         // Test lookup with equivalent vertex (same coordinates, different UUID)
-        let v7: Vertex<(), 2> = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap();
+        let v7: Vertex<(), 2> = Vertex::<(), _>::try_new([1.0, 2.0]).unwrap();
         assert_eq!(map.get(&v7), Some(&10)); // Should find v5's value
 
         // Test overwrite with equivalent vertex
@@ -1460,10 +1442,8 @@ mod tests {
         assert_eq!(map.get(&v5), Some(&30)); // v5 now maps to new value
 
         // Test that vertices with different data types but same coordinates work in collections
-        let v8: Vertex<u16, 2> =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 2.0], 999u16).unwrap();
-        let v9: Vertex<i32, 2> =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([3.0, 4.0], -42i32).unwrap();
+        let v8: Vertex<u16, 2> = Vertex::<_, _>::try_new_with_data([1.0, 2.0], 999u16).unwrap();
+        let v9: Vertex<i32, 2> = Vertex::<_, _>::try_new_with_data([3.0, 4.0], -42i32).unwrap();
 
         let mut map1: FastHashMap<Vertex<u16, 2>, &str> = FastHashMap::default();
         map1.insert(v8, "first");
@@ -1502,7 +1482,7 @@ mod tests {
                 #[test]
                     fn $test_name() {
                         // Test basic vertex creation
-                        let vertex: Vertex<(), $dim> = crate::core::vertex::Vertex::<(), _>::try_new([$($coord),+]).unwrap();
+                        let vertex: Vertex<(), $dim> = Vertex::<(), _>::try_new([$($coord),+]).unwrap();
                     assert_vertex_properties(&vertex, [$($coord),+]);
                         assert!(vertex.data.is_none());
                     }
@@ -1511,7 +1491,7 @@ mod tests {
                     #[test]
                     fn [<$test_name _with_data>]() {
                         // Test vertex with data
-                        let vertex: Vertex<i32, $dim> = crate::core::vertex::Vertex::<_, _>::try_new_with_data([$($coord),+], 42).unwrap();
+                        let vertex: Vertex<i32, $dim> = Vertex::<_, _>::try_new_with_data([$($coord),+], 42).unwrap();
                         assert_vertex_properties(&vertex, [$($coord),+]);
                         assert_eq!(vertex.data, Some(42));
                     }
@@ -1519,7 +1499,7 @@ mod tests {
                     #[test]
                     fn [<$test_name _serialization_roundtrip>]() {
                         // Test serialization with Some data
-                        let vertex_with_data: Vertex<i32, $dim> = crate::core::vertex::Vertex::<_, _>::try_new_with_data([$($coord),+], 99).unwrap();
+                        let vertex_with_data: Vertex<i32, $dim> = Vertex::<_, _>::try_new_with_data([$($coord),+], 99).unwrap();
                         let serialized = serde_json::to_string(&vertex_with_data).unwrap();
                         assert!(serialized.contains("\"data\":"));
                         let deserialized: Vertex<i32, $dim> = serde_json::from_str(&serialized).unwrap();
@@ -1527,7 +1507,7 @@ mod tests {
                         assert_vertex_properties(&deserialized, [$($coord),+]);
 
                         // Test serialization with None data
-                        let vertex_no_data: Vertex<(), $dim> = crate::core::vertex::Vertex::<(), _>::try_new([$($coord),+]).unwrap();
+                        let vertex_no_data: Vertex<(), $dim> = Vertex::<(), _>::try_new([$($coord),+]).unwrap();
                         let serialized = serde_json::to_string(&vertex_no_data).unwrap();
                         assert!(!serialized.contains("\"data\":"));
                         let deserialized: Vertex<(), $dim> = serde_json::from_str(&serialized).unwrap();
@@ -1537,8 +1517,8 @@ mod tests {
                     #[test]
                     fn [<$test_name _uuid_uniqueness>]() {
                         // Test UUID uniqueness for same coordinates
-                        let v1: Vertex<(), $dim> = crate::core::vertex::Vertex::<(), _>::try_new([$($coord),+]).unwrap();
-                        let v2: Vertex<(), $dim> = crate::core::vertex::Vertex::<(), _>::try_new([$($coord),+]).unwrap();
+                        let v1: Vertex<(), $dim> = Vertex::<(), _>::try_new([$($coord),+]).unwrap();
+                        let v2: Vertex<(), $dim> = Vertex::<(), _>::try_new([$($coord),+]).unwrap();
                         assert_ne!(v1.uuid(), v2.uuid());
                         assert!(!v1.uuid().is_nil());
                         assert!(!v2.uuid().is_nil());
@@ -1559,7 +1539,7 @@ mod tests {
     // Keep 1D test separate as it's less common
     #[test]
     fn vertex_1d() {
-        let vertex: Vertex<(), 1> = crate::core::vertex::Vertex::<(), _>::try_new([42.0]).unwrap();
+        let vertex: Vertex<(), 1> = Vertex::<(), _>::try_new([42.0]).unwrap();
         assert_vertex_properties(&vertex, [42.0]);
         assert!(vertex.data.is_none());
     }
@@ -1572,13 +1552,13 @@ mod tests {
     fn test_vertex_data_types_and_ordering() {
         // Test vertex with tuple data
         let vertex_tuple: Vertex<(i32, i32), 2> =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 2.0], (42, 84)).unwrap();
+            Vertex::<_, _>::try_new_with_data([1.0, 2.0], (42, 84)).unwrap();
         assert_vertex_properties(&vertex_tuple, [1.0, 2.0]);
         assert_eq!(vertex_tuple.data.unwrap(), (42, 84));
 
         // Test debug formatting
         let vertex_debug: Vertex<i32, 3> =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 2.0, 3.0], 42).unwrap();
+            Vertex::<_, _>::try_new_with_data([1.0, 2.0, 3.0], 42).unwrap();
         let debug_str = format!("{vertex_debug:?}");
 
         assert!(debug_str.contains("Vertex"));
@@ -1589,10 +1569,8 @@ mod tests {
         assert!(debug_str.contains("3.0"));
 
         // Test ordering edge cases
-        let vertex1: Vertex<(), 2> =
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap();
-        let vertex2: Vertex<(), 2> =
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap();
+        let vertex1: Vertex<(), 2> = Vertex::<(), _>::try_new([1.0, 2.0]).unwrap();
+        let vertex2: Vertex<(), 2> = Vertex::<(), _>::try_new([1.0, 2.0]).unwrap();
 
         // Test that equal points result in equal ordering
         assert!(vertex1.partial_cmp(&vertex2) != Some(Ordering::Less));
@@ -1618,8 +1596,7 @@ mod tests {
     #[test]
     fn test_vertex_coordinate_values() {
         // Test negative coordinates
-        let vertex_neg: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([-1.0, -2.0, -3.0]).unwrap();
+        let vertex_neg: Vertex<(), 3> = Vertex::<(), _>::try_new([-1.0, -2.0, -3.0]).unwrap();
         assert_relative_eq!(
             vertex_neg.point().coords().as_slice(),
             [-1.0, -2.0, -3.0].as_slice(),
@@ -1628,15 +1605,12 @@ mod tests {
         assert_eq!(vertex_neg.dim(), 3);
 
         // Test zero coordinates
-        let vertex_zero: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap();
-        let origin_vertex: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap();
+        let vertex_zero: Vertex<(), 3> = Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap();
+        let origin_vertex: Vertex<(), 3> = Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap();
         assert_eq!(vertex_zero.point(), origin_vertex.point());
 
         // Test large coordinates
-        let vertex_large: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([1e6, 2e6, 3e6]).unwrap();
+        let vertex_large: Vertex<(), 3> = Vertex::<(), _>::try_new([1e6, 2e6, 3e6]).unwrap();
         assert_relative_eq!(
             vertex_large.point().coords().as_slice(),
             [1_000_000.0, 2_000_000.0, 3_000_000.0].as_slice(),
@@ -1645,8 +1619,7 @@ mod tests {
         assert_eq!(vertex_large.dim(), 3);
 
         // Test small coordinates
-        let vertex_small: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([1e-6, 2e-6, 3e-6]).unwrap();
+        let vertex_small: Vertex<(), 3> = Vertex::<(), _>::try_new([1e-6, 2e-6, 3e-6]).unwrap();
         assert_relative_eq!(
             vertex_small.point().coords().as_slice(),
             [0.000_001, 0.000_002, 0.000_003].as_slice(),
@@ -1655,8 +1628,7 @@ mod tests {
         assert_eq!(vertex_small.dim(), 3);
 
         // Test mixed positive/negative coordinates
-        let vertex_mixed: Vertex<(), 4> =
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, -2.0, 3.0, -4.0]).unwrap();
+        let vertex_mixed: Vertex<(), 4> = Vertex::<(), _>::try_new([1.0, -2.0, 3.0, -4.0]).unwrap();
         assert_relative_eq!(
             vertex_mixed.point().coords().as_slice(),
             [1.0, -2.0, 3.0, -4.0].as_slice(),
@@ -1668,10 +1640,8 @@ mod tests {
     #[test]
     fn test_vertex_properties() {
         // Test UUID uniqueness
-        let vertex1: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
-        let vertex2: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
+        let vertex1: Vertex<(), 3> = Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
+        let vertex2: Vertex<(), 3> = Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
 
         // Same points but different UUIDs
         assert_ne!(vertex1.uuid(), vertex2.uuid());
@@ -1682,8 +1652,7 @@ mod tests {
     #[test]
     fn test_vertex_type_conversions() {
         // Test implicit conversion from owned vertex to coordinates
-        let vertex_coords: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
+        let vertex_coords: Vertex<(), 3> = Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
         let coords_owned: [f64; 3] = vertex_coords.into();
         assert_relative_eq!(
             coords_owned.as_slice(),
@@ -1692,8 +1661,7 @@ mod tests {
         );
 
         // Test implicit conversion from vertex reference to coordinates
-        let vertex_ref_coords: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([4.0, 5.0, 6.0]).unwrap();
+        let vertex_ref_coords: Vertex<(), 3> = Vertex::<(), _>::try_new([4.0, 5.0, 6.0]).unwrap();
         let coords_ref: [f64; 3] = (&vertex_ref_coords).into();
         assert_relative_eq!(
             coords_ref.as_slice(),
@@ -1709,8 +1677,7 @@ mod tests {
         );
 
         // Test implicit conversion from vertex reference to Point
-        let vertex_point: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
+        let vertex_point: Vertex<(), 3> = Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
         let point_from_vertex: Point<3> = (&vertex_point).into();
         assert_relative_eq!(
             point_from_vertex.coords().as_slice(),
@@ -1729,8 +1696,7 @@ mod tests {
         );
 
         // Test with different dimensions
-        let vertex_2d: Vertex<(), 2> =
-            crate::core::vertex::Vertex::<(), _>::try_new([10.5, -5.3]).unwrap();
+        let vertex_2d: Vertex<(), 2> = Vertex::<(), _>::try_new([10.5, -5.3]).unwrap();
         let point_2d: Point<2> = (&vertex_2d).into();
         assert_relative_eq!(
             point_2d.coords().as_slice(),
@@ -1747,25 +1713,20 @@ mod tests {
     #[test]
     fn test_vertex_validation() {
         // Test valid vertices with f64 coordinates and various dimensions
-        let valid_f64: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
+        let valid_f64: Vertex<(), 3> = Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
         assert!(valid_f64.is_valid().is_ok());
 
-        let valid_negative: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([-1.0, -2.0, -3.0]).unwrap();
+        let valid_negative: Vertex<(), 3> = Vertex::<(), _>::try_new([-1.0, -2.0, -3.0]).unwrap();
         assert!(valid_negative.is_valid().is_ok());
 
-        let valid_zero: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap();
+        let valid_zero: Vertex<(), 3> = Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap();
         assert!(valid_zero.is_valid().is_ok());
 
         // Test different dimensions
-        let valid_1d: Vertex<(), 1> =
-            crate::core::vertex::Vertex::<(), _>::try_new([42.0]).unwrap();
+        let valid_1d: Vertex<(), 1> = Vertex::<(), _>::try_new([42.0]).unwrap();
         assert!(valid_1d.is_valid().is_ok());
 
-        let valid_5d: Vertex<(), 5> =
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0, 4.0, 5.0]).unwrap();
+        let valid_5d: Vertex<(), 5> = Vertex::<(), _>::try_new([1.0, 2.0, 3.0, 4.0, 5.0]).unwrap();
         assert!(valid_5d.is_valid().is_ok());
 
         assert!(Point::<3>::try_new([1.0, f64::NAN, 3.0]).is_err());
@@ -1777,8 +1738,7 @@ mod tests {
         assert!(Point::<3>::try_new([f64::NAN, f64::INFINITY, 1.0]).is_err());
 
         // Test UUID validation
-        let valid_vertex: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
+        let valid_vertex: Vertex<(), 3> = Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
         assert!(valid_vertex.is_valid().is_ok());
         assert!(!valid_vertex.uuid().is_nil());
 
@@ -1820,10 +1780,10 @@ mod tests {
 
         // Use numeric IDs in vertices - this works perfectly and is efficient
         let vertices_with_ids: Vec<Vertex<u32, 2>> = vec![
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.5, 0.5], 0u32).unwrap(), // center
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 1.0], 1u32).unwrap(), // corner
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.5, 1.0], 2u32).unwrap(), // edge_midpoint
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.5], 3u32).unwrap(), // boundary_point
+            Vertex::<_, _>::try_new_with_data([0.5, 0.5], 0u32).unwrap(), // center
+            Vertex::<_, _>::try_new_with_data([1.0, 1.0], 1u32).unwrap(), // corner
+            Vertex::<_, _>::try_new_with_data([0.5, 1.0], 2u32).unwrap(), // edge_midpoint
+            Vertex::<_, _>::try_new_with_data([0.0, 0.5], 3u32).unwrap(), // boundary_point
         ];
 
         // Verify we can retrieve the labels
@@ -1854,9 +1814,9 @@ mod tests {
 
         // Alternative 1: Use character codes
         let vertices_with_chars: Vec<Vertex<char, 2>> = vec![
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0], 'A').unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0], 'B').unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 1.0], 'C').unwrap(),
+            Vertex::<_, _>::try_new_with_data([0.0, 0.0], 'A').unwrap(),
+            Vertex::<_, _>::try_new_with_data([1.0, 0.0], 'B').unwrap(),
+            Vertex::<_, _>::try_new_with_data([0.0, 1.0], 'C').unwrap(),
         ];
 
         for (i, v) in vertices_with_chars.iter().enumerate() {
@@ -1868,12 +1828,9 @@ mod tests {
         // Alternative 2: Use small integer codes with enum mapping
 
         let vertices_with_enums: Vec<Vertex<PointType, 2>> = vec![
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.0, 0.0], PointType::Origin)
-                .unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 0.0], PointType::Corner)
-                .unwrap(),
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([0.5, 0.5], PointType::Interior)
-                .unwrap(),
+            Vertex::<_, _>::try_new_with_data([0.0, 0.0], PointType::Origin).unwrap(),
+            Vertex::<_, _>::try_new_with_data([1.0, 0.0], PointType::Corner).unwrap(),
+            Vertex::<_, _>::try_new_with_data([0.5, 0.5], PointType::Interior).unwrap(),
         ];
 
         assert_eq!(vertices_with_enums[0].data.unwrap(), PointType::Origin);
@@ -1899,10 +1856,9 @@ mod tests {
     fn vertex_hash_with_copy_data() {
         // Test hashing with Copy data
         let vertex1: Vertex<u16, 2> =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 2.0], 999u16).unwrap();
+            Vertex::<_, _>::try_new_with_data([1.0, 2.0], 999u16).unwrap();
 
-        let vertex2: Vertex<i32, 2> =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([3.0, 4.0], 42).unwrap();
+        let vertex2: Vertex<i32, 2> = Vertex::<_, _>::try_new_with_data([3.0, 4.0], 42).unwrap();
 
         // Test that vertices with Copy data can be used as HashMap keys
         let mut map: FastHashMap<Vertex<u16, 2>, i32> = FastHashMap::default();
@@ -2118,8 +2074,7 @@ mod tests {
     fn test_serialization_deserialization_roundtrip() {
         // Test that serialization -> deserialization preserves all data
         let original_vertex: Vertex<char, 4> =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 2.0, 3.0, 4.0], 'A')
-                .unwrap();
+            Vertex::<_, _>::try_new_with_data([1.0, 2.0, 3.0, 4.0], 'A').unwrap();
 
         // Serialize
         let serialized = serde_json::to_string(&original_vertex).unwrap();
@@ -2145,7 +2100,7 @@ mod tests {
     fn test_serialization_with_some_data_includes_field() {
         // Test that when data is Some, the JSON includes the data field
         let vertex: Vertex<i32, 3> =
-            crate::core::vertex::Vertex::<_, _>::try_new_with_data([1.0, 2.0, 3.0], 42).unwrap();
+            Vertex::<_, _>::try_new_with_data([1.0, 2.0, 3.0], 42).unwrap();
         let serialized = serde_json::to_string(&vertex).unwrap();
 
         // Verify JSON contains "data" field
@@ -2168,8 +2123,7 @@ mod tests {
     #[test]
     fn test_serialization_with_none_data_omits_field() {
         // Test that when data is None, the JSON omits the data field entirely
-        let vertex: Vertex<(), 3> =
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
+        let vertex: Vertex<(), 3> = Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
         let serialized = serde_json::to_string(&vertex).unwrap();
 
         // Verify JSON does NOT contain "data" field (optimization)

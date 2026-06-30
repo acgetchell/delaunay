@@ -512,6 +512,7 @@ where
 mod tests {
     use super::*;
     use crate::triangulation::DelaunayTriangulation;
+    use crate::vertex;
     use slotmap::KeyData;
 
     // =============================================================================
@@ -556,10 +557,10 @@ mod tests {
     fn test_already_pl_manifold_is_noop() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -581,10 +582,10 @@ mod tests {
     fn test_budget_exhaustion_zero_iterations() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -607,10 +608,10 @@ mod tests {
     fn test_2d_already_pl_manifold() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -631,9 +632,9 @@ mod tests {
     fn test_stats_populated_on_success() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -660,11 +661,11 @@ mod tests {
     fn make_overshared_tds() -> Tds<(), (), 3> {
         // 5 points
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.5, 0.5, 0.5]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -825,10 +826,10 @@ mod tests {
     fn test_simplex_quality_score_finite_and_deterministic() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -867,11 +868,11 @@ mod tests {
     fn test_deterministic_repeated_runs() {
         init_tracing();
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.5, 0.5, 0.5]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();

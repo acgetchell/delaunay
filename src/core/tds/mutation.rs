@@ -13,6 +13,8 @@ use crate::core::collections::{
 };
 use crate::core::simplex::{NeighborSlot, Simplex};
 use crate::core::vertex::Vertex;
+#[cfg(test)]
+use crate::deletion::DeleteVertexError;
 use std::collections::VecDeque;
 use std::sync::{
     Arc,
@@ -2186,6 +2188,7 @@ mod tests {
     use crate::core::simplex::Simplex;
     use crate::core::tds::errors::TriangulationConstructionState;
     use crate::geometry::point::Point;
+    use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
     use uuid::Uuid;
@@ -2204,10 +2207,10 @@ mod tests {
 
     fn initial_simplex_vertices_3d() -> [Vertex<(), 3>; 4] {
         [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ]
     }
 
@@ -2220,8 +2223,8 @@ mod tests {
         let initial_vertices = initial_simplex_vertices_3d();
         let mut dt = DelaunayTriangulation::try_new(&initial_vertices).unwrap();
 
-        let vertex = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
-        let duplicate = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
+        let vertex = vertex!([1.0, 2.0, 3.0]).unwrap();
+        let duplicate = vertex!([1.0, 2.0, 3.0]).unwrap();
         dt.insert_vertex(vertex).unwrap();
 
         // Same coordinates again (distinct UUID, constructed via Vertex smart constructors)
@@ -2238,7 +2241,7 @@ mod tests {
         let initial_vertices = initial_simplex_vertices_3d();
         let mut dt = DelaunayTriangulation::try_new(&initial_vertices).unwrap();
 
-        let vertex1 = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
+        let vertex1 = vertex!([1.0, 2.0, 3.0]).unwrap();
         let uuid1 = vertex1.uuid();
         dt.insert_vertex(vertex1).unwrap();
 
@@ -2264,7 +2267,7 @@ mod tests {
         let mut dt = DelaunayTriangulation::try_new(&initial_vertices).unwrap();
         let initial_simplex_count = dt.number_of_simplices();
 
-        let new_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap();
+        let new_vertex = vertex!([0.5, 0.5, 0.5]).unwrap();
         dt.insert_vertex(new_vertex).unwrap();
 
         assert_eq!(dt.number_of_vertices(), 5);
@@ -2283,7 +2286,7 @@ mod tests {
         let initial_vertices = initial_simplex_vertices_3d();
         let mut dt = DelaunayTriangulation::try_new(&initial_vertices).unwrap();
 
-        let vertex = crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 3.0]).unwrap();
+        let vertex = vertex!([1.0, 2.0, 3.0]).unwrap();
         let uuid = vertex.uuid();
         dt.insert_vertex(vertex).unwrap();
         assert_eq!(dt.number_of_vertices(), 5);
@@ -2321,10 +2324,10 @@ mod tests {
         // Test that remove_vertex properly clears dangling neighbor references
         // Create a triangulation with multiple simplices
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.5, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.5, 1.0]).unwrap(),
+            vertex!([1.5, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
@@ -2391,9 +2394,9 @@ mod tests {
     #[test]
     fn test_delete_vertex_rejects_nonexistent_vertex_key() {
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::try_new(&vertices).unwrap();
 
@@ -2407,7 +2410,7 @@ mod tests {
 
         assert_matches!(
             err,
-            crate::DeleteVertexError::VertexNotFound { vertex_key }
+            DeleteVertexError::VertexNotFound { vertex_key }
                 if vertex_key == nonexistent_key
         );
         assert_eq!(
@@ -2425,10 +2428,10 @@ mod tests {
     #[test]
     fn test_delete_vertex_rejects_stale_vertex_key() {
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -2444,7 +2447,7 @@ mod tests {
         let err = dt.delete_vertex(vertex_key).unwrap_err();
         assert_matches!(
             err,
-            crate::DeleteVertexError::VertexNotFound { vertex_key: stale_key }
+            DeleteVertexError::VertexNotFound { vertex_key: stale_key }
                 if stale_key == vertex_key
         );
         assert_eq!(dt.number_of_vertices(), vertices_after);
@@ -2458,10 +2461,10 @@ mod tests {
         // 2D test
         {
             let vertices_2d = [
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+                vertex!([0.0, 0.0]).unwrap(),
+                vertex!([1.0, 0.0]).unwrap(),
+                vertex!([0.0, 1.0]).unwrap(),
+                vertex!([1.0, 1.0]).unwrap(),
             ];
             let mut dt_2d: DelaunayTriangulation<_, (), (), 2> =
                 DelaunayTriangulation::try_new(&vertices_2d).unwrap();
@@ -2474,11 +2477,11 @@ mod tests {
         // 3D test
         {
             let vertices_3d = [
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2]).unwrap(),
+                vertex!([0.0, 0.0, 0.0]).unwrap(),
+                vertex!([1.0, 0.0, 0.0]).unwrap(),
+                vertex!([0.0, 1.0, 0.0]).unwrap(),
+                vertex!([0.0, 0.0, 1.0]).unwrap(),
+                vertex!([0.2, 0.2, 0.2]).unwrap(),
             ];
             let mut dt_3d: DelaunayTriangulation<_, (), (), 3> =
                 DelaunayTriangulation::try_new(&vertices_3d).unwrap();
@@ -2501,12 +2504,12 @@ mod tests {
         // 4D test
         {
             let vertices_4d = [
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(),
-                crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2]).unwrap(),
+                vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
+                vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(),
+                vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(),
+                vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(),
+                vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
+                vertex!([0.2, 0.2, 0.2, 0.2]).unwrap(),
             ];
             let mut dt_4d: DelaunayTriangulation<_, (), (), 4> =
                 DelaunayTriangulation::try_new(&vertices_4d).unwrap();
@@ -2535,12 +2538,12 @@ mod tests {
         // 3. All remaining incident_simplex pointers are valid
 
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
             // Interior vertex to remove; offset from circumcenter to avoid degenerate configuration
-            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2]).unwrap(),
+            vertex!([0.2, 0.2, 0.2]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -2628,19 +2631,13 @@ mod tests {
     fn test_assign_neighbors_errors_on_missing_vertex_key() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
 
         let simplex_key = tds
@@ -2662,29 +2659,19 @@ mod tests {
         // Three triangles sharing the same edge (v_a,v_b) is non-manifold in 2D.
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v_a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v_b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v_c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v_d = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, -1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0]).unwrap())
             .unwrap();
         let v_e = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([2.0, 0.0]).unwrap())
             .unwrap();
 
         tds.insert_simplex_with_mapping(
@@ -2716,39 +2703,25 @@ mod tests {
     fn test_remove_simplices_by_keys_rolls_back_incidence_order_exactly_on_batch_failure() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let shared_vertex = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let kept_vertex_1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let kept_vertex_2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let first_removed_vertex_1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([2.0, 0.0]).unwrap())
             .unwrap();
         let first_removed_vertex_2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([2.0, 1.0]).unwrap())
             .unwrap();
         let corrupted_vertex = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([3.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([3.0, 0.0]).unwrap())
             .unwrap();
         let second_removed_vertex = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([3.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([3.0, 1.0]).unwrap())
             .unwrap();
 
         let kept = tds
@@ -2806,24 +2779,16 @@ mod tests {
         // Two triangles sharing an edge.
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let d = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
             .unwrap();
 
         let simplex1 = tds
@@ -2862,24 +2827,16 @@ mod tests {
     fn test_remove_simplices_by_keys_errors_before_mutation_on_stale_incidence() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let d = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
             .unwrap();
 
         let stale = tds
@@ -2915,24 +2872,16 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let d = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
             .unwrap();
 
         let simplex1 = tds
@@ -3005,9 +2954,7 @@ mod tests {
     fn test_remove_isolated_vertex_uses_canonical_incidence_not_stale_hint() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let vk = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
 
         // Manually set a stale incident-simplex hint. Canonical isolation is
@@ -3028,9 +2975,7 @@ mod tests {
     fn test_remove_isolated_vertex_removes_truly_isolated() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let vk = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 2.0]).unwrap())
             .unwrap();
         let uuid = tds.vertex(vk).unwrap().uuid();
 
@@ -3056,24 +3001,16 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let origin_key = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let east_key = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let north_key = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let diagonal_key = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
             .unwrap();
 
         let simplex1 = tds
@@ -3146,29 +3083,19 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v_a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v_b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v_c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v_d = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
             .unwrap();
         let v_e = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([2.0, 2.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([2.0, 2.0]).unwrap())
             .unwrap();
 
         let simplex1 = tds
@@ -3207,24 +3134,16 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v_a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v_b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v_c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v_d = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
             .unwrap();
 
         let simplex1 = tds
@@ -3257,24 +3176,16 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v_a = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v_b = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v_c = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v_d = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
             .unwrap();
 
         let simplex1 = tds
@@ -3319,10 +3230,8 @@ mod tests {
                         }
                     }
                     vertex_keys.push(
-                        tds.insert_vertex_with_mapping(
-                            crate::core::vertex::Vertex::<(), _>::try_new(coords).unwrap(),
-                        )
-                        .unwrap(),
+                        tds.insert_vertex_with_mapping(vertex!(coords).unwrap())
+                            .unwrap(),
                     );
                 }
 
@@ -3373,9 +3282,7 @@ mod tests {
     fn test_assign_incident_simplices_clears_incident_simplex_when_no_simplices() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let vkey = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
 
         // Corrupt incident_simplex and ensure it gets cleared.
@@ -3396,24 +3303,16 @@ mod tests {
     fn test_normalize_coherent_orientation_produces_coherent_result() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
             .unwrap();
 
         // Two triangles sharing edge v1-v2, with deliberately inconsistent vertex order
@@ -3447,19 +3346,13 @@ mod tests {
     fn test_remove_duplicate_simplices_removes_exact_duplicates() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
 
         // Insert the same simplex twice
@@ -3498,29 +3391,19 @@ mod tests {
     fn test_remove_duplicate_simplices_rolls_back_when_rebuild_fails() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, -1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0]).unwrap())
             .unwrap();
         let v4 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.5, -0.5]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.5, -0.5]).unwrap())
             .unwrap();
 
         // Three distinct triangles share edge v0-v1, so global neighbor
@@ -3559,11 +3442,11 @@ mod tests {
     fn test_clear_all_neighbors_and_rebuild() {
         // Use 5 vertices so there are multiple simplices with actual neighbor pointers
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.5, 0.5, 0.5]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let mut tds = dt.tds().clone();
@@ -3593,19 +3476,13 @@ mod tests {
     fn test_insert_simplex_with_mapping_registers_uuid_mapping() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
 
         let simplex = Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap();
@@ -3621,14 +3498,10 @@ mod tests {
     fn test_insert_simplex_with_mapping_rejects_missing_vertex() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         // Use a stale key that doesn't exist in the TDS.
         let stale = VertexKey::from(KeyData::from_ffi(0xDEAD));
@@ -3645,14 +3518,10 @@ mod tests {
     fn test_insert_simplex_with_mapping_trusted_vertices_rejects_missing_vertex() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let stale = VertexKey::from(KeyData::from_ffi(0xDEAD));
 
@@ -3670,19 +3539,13 @@ mod tests {
     fn test_insert_simplex_with_mapping_rejects_duplicate_uuid() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
 
         let simplex_a = Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap();
@@ -3699,19 +3562,13 @@ mod tests {
     fn test_insert_simplex_rejects_candidate_periodic_offset_count_mismatch() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
 
         let mut candidate = Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap();
@@ -3738,24 +3595,16 @@ mod tests {
     fn test_insert_simplex_propagates_existing_periodic_facet_key_error() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
             .unwrap();
 
         let existing = tds
@@ -3789,19 +3638,13 @@ mod tests {
     fn test_insert_simplex_with_mapping_rejects_duplicate_simplex_without_mutation() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
 
         tds.insert_simplex_with_mapping(
@@ -3827,29 +3670,19 @@ mod tests {
     fn test_insert_simplex_with_mapping_rejects_third_incident_facet_without_mutation() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, -1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0]).unwrap())
             .unwrap();
         let v4 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
             .unwrap();
 
         tds.insert_simplex_with_mapping(
@@ -3893,29 +3726,19 @@ mod tests {
     fn test_removed_simplices_do_not_block_future_simplex_insertions() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, -1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0]).unwrap())
             .unwrap();
         let v4 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
             .unwrap();
 
         let removed = tds
@@ -3949,11 +3772,11 @@ mod tests {
     #[test]
     fn test_remove_simplices_by_keys_batch_repairs_incidence_and_neighbors() {
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.5, 0.5, 0.5]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let mut tds = dt.tds().clone();
@@ -3992,19 +3815,13 @@ mod tests {
     fn test_assign_incident_simplices_errors_on_dangling_vertex_key() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
 
         let _ck = tds
@@ -4039,11 +3856,11 @@ mod tests {
     #[test]
     fn test_normalize_coherent_orientation_multi_simplex() {
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.5, 0.5, 0.5]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let mut tds = dt.tds().clone();
@@ -4068,19 +3885,13 @@ mod tests {
     fn test_remove_simplices_by_keys_deduplicates_request_keys() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let simplex = tds
             .insert_simplex_with_mapping(
@@ -4101,24 +3912,16 @@ mod tests {
     fn test_remove_simplices_by_keys_repairs_local_topology() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
 
         let removed_key = tds
@@ -4185,9 +3988,9 @@ mod tests {
     #[test]
     fn test_set_vertex_data_replaces_existing() {
         let vertices: [Vertex<i32, 2>; 3] = [
-            Vertex::<_, _>::try_new_with_data([0.0, 0.0], 10i32).unwrap(),
-            Vertex::<_, _>::try_new_with_data([1.0, 0.0], 20).unwrap(),
-            Vertex::<_, _>::try_new_with_data([0.0, 1.0], 30).unwrap(),
+            vertex!([0.0, 0.0]; data = 10i32).unwrap(),
+            vertex!([1.0, 0.0]; data = 20).unwrap(),
+            vertex!([0.0, 1.0]; data = 30).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<()>()
@@ -4204,9 +4007,9 @@ mod tests {
     fn test_set_vertex_data_on_no_data_vertex() {
         // Vertices without data have U = (), so set_vertex_data sets ().
         let vertices = [
-            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let mut tds = dt.tds().clone();
@@ -4229,9 +4032,9 @@ mod tests {
     #[test]
     fn test_set_simplex_data_on_empty_simplex() {
         let vertices = [
-            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<i32>()
@@ -4247,9 +4050,9 @@ mod tests {
     #[test]
     fn test_set_simplex_data_replaces_existing() {
         let vertices = [
-            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<i32>()
@@ -4274,9 +4077,9 @@ mod tests {
     #[test]
     fn test_set_vertex_data_preserves_triangulation_validity() {
         let vertices: [Vertex<i32, 2>; 3] = [
-            Vertex::<_, _>::try_new_with_data([0.0, 0.0], 1i32).unwrap(),
-            Vertex::<_, _>::try_new_with_data([1.0, 0.0], 2).unwrap(),
-            Vertex::<_, _>::try_new_with_data([0.0, 1.0], 3).unwrap(),
+            vertex!([0.0, 0.0]; data = 1i32).unwrap(),
+            vertex!([1.0, 0.0]; data = 2).unwrap(),
+            vertex!([0.0, 1.0]; data = 3).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<()>()
@@ -4301,10 +4104,10 @@ mod tests {
     #[test]
     fn test_set_simplex_data_preserves_triangulation_validity() {
         let vertices = [
-            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.5, 1.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.5, 0.5]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.5, 1.0]).unwrap(),
+            vertex!([1.5, 0.5]).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<i32>()
@@ -4330,9 +4133,9 @@ mod tests {
     #[test]
     fn test_set_vertex_data_via_delaunay_wrapper() {
         let vertices: [Vertex<i32, 2>; 3] = [
-            Vertex::<_, _>::try_new_with_data([0.0, 0.0], 10i32).unwrap(),
-            Vertex::<_, _>::try_new_with_data([1.0, 0.0], 20).unwrap(),
-            Vertex::<_, _>::try_new_with_data([0.0, 1.0], 30).unwrap(),
+            vertex!([0.0, 0.0]; data = 10i32).unwrap(),
+            vertex!([1.0, 0.0]; data = 20).unwrap(),
+            vertex!([0.0, 1.0]; data = 30).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<()>()
@@ -4353,9 +4156,9 @@ mod tests {
     #[test]
     fn test_set_vertex_data_via_delaunay_wrapper_invalid_key_returns_error() {
         let vertices: [Vertex<i32, 2>; 3] = [
-            Vertex::<_, _>::try_new_with_data([0.0, 0.0], 10i32).unwrap(),
-            Vertex::<_, _>::try_new_with_data([1.0, 0.0], 20).unwrap(),
-            Vertex::<_, _>::try_new_with_data([0.0, 1.0], 30).unwrap(),
+            vertex!([0.0, 0.0]; data = 10i32).unwrap(),
+            vertex!([1.0, 0.0]; data = 20).unwrap(),
+            vertex!([0.0, 1.0]; data = 30).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<()>()
@@ -4378,9 +4181,9 @@ mod tests {
     #[test]
     fn test_set_simplex_data_via_delaunay_wrapper() {
         let vertices = [
-            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<i32>()
@@ -4401,9 +4204,9 @@ mod tests {
     #[test]
     fn test_set_simplex_data_via_delaunay_wrapper_invalid_key_returns_error() {
         let vertices = [
-            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<i32>()
@@ -4426,16 +4229,16 @@ mod tests {
     #[test]
     fn test_set_data_via_dt_does_not_invalidate_locate_hint() {
         let vertices: [Vertex<i32, 2>; 3] = [
-            Vertex::<_, _>::try_new_with_data([0.0, 0.0], 0i32).unwrap(),
-            Vertex::<_, _>::try_new_with_data([1.0, 0.0], 0).unwrap(),
-            Vertex::<_, _>::try_new_with_data([0.0, 1.0], 0).unwrap(),
+            vertex!([0.0, 0.0]; data = 0i32).unwrap(),
+            vertex!([1.0, 0.0]; data = 0).unwrap(),
+            vertex!([0.0, 1.0]; data = 0).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<()>()
             .unwrap();
 
         // Insert a new vertex so the locate hint is populated.
-        let extra = Vertex::<_, _>::try_new_with_data([0.25, 0.25], 0i32).unwrap();
+        let extra = vertex!([0.25, 0.25]; data = 0i32).unwrap();
         dt.insert_vertex(extra).unwrap();
 
         // Data mutation should NOT clear the insertion hint.
@@ -4449,7 +4252,7 @@ mod tests {
         );
 
         // A subsequent insert should still succeed (hint not invalidated).
-        let another = Vertex::<_, _>::try_new_with_data([0.75, 0.1], 0i32).unwrap();
+        let another = vertex!([0.75, 0.1]; data = 0i32).unwrap();
         assert!(dt.insert_vertex(another).is_ok());
         assert!(dt.validate().is_ok());
     }

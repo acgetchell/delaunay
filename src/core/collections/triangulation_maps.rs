@@ -194,8 +194,7 @@ mod tests {
         let mut vertex_slots: SlotMap<VertexKey, i32> = SlotMap::default();
 
         let simplex_key = simplex_slots.insert(1);
-        let mut vertex_buffer: crate::core::collections::SimplexVertexKeyBuffer =
-            crate::core::collections::SimplexVertexKeyBuffer::new();
+        let mut vertex_buffer: SimplexVertexKeyBuffer = SimplexVertexKeyBuffer::new();
         // Simulate D+1 vertices for a 2D simplex (3 vertices)
         for _ in 0..3 {
             vertex_buffer.push(vertex_slots.insert(1));

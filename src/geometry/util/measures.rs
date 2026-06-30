@@ -838,6 +838,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vertex;
     use std::assert_matches;
 
     use crate::core::traits::facet_incidence_analysis::FacetIncidenceAnalysis;
@@ -1599,10 +1600,10 @@ mod tests {
 
         // Create a right triangle tetrahedron
         let vertices: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(), // v1
-            crate::core::vertex::Vertex::<(), _>::try_new([3.0, 0.0, 0.0]).unwrap(), // v2
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 4.0, 0.0]).unwrap(), // v3
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(), // v4
+            vertex!([0.0, 0.0, 0.0]).unwrap(), // v1
+            vertex!([3.0, 0.0, 0.0]).unwrap(), // v2
+            vertex!([0.0, 4.0, 0.0]).unwrap(), // v3
+            vertex!([0.0, 0.0, 1.0]).unwrap(), // v4
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
@@ -1647,11 +1648,11 @@ mod tests {
         // Create a triangulation with 5 vertices and 2 tetrahedra to get both boundary and internal facets
 
         let vertices: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(), // v1
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(), // v2
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(), // v3
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(), // v4
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(), // v5
+            vertex!([0.0, 0.0, 0.0]).unwrap(), // v1
+            vertex!([1.0, 0.0, 0.0]).unwrap(), // v2
+            vertex!([0.0, 1.0, 0.0]).unwrap(), // v3
+            vertex!([0.0, 0.0, 1.0]).unwrap(), // v4
+            vertex!([1.0, 1.0, 1.0]).unwrap(), // v5
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
@@ -1972,18 +1973,18 @@ mod tests {
 
         // Create first triangulation with small right triangle (area = 0.5)
         let vertices1: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(), // v1
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(), // v2
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(), // v3
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(), // v4
+            vertex!([0.0, 0.0, 0.0]).unwrap(), // v1
+            vertex!([1.0, 0.0, 0.0]).unwrap(), // v2
+            vertex!([0.0, 1.0, 0.0]).unwrap(), // v3
+            vertex!([0.0, 0.0, 1.0]).unwrap(), // v4
         ];
 
         // Create second triangulation with large right triangle (area = 24.0)
         let vertices2: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(), // v5
-            crate::core::vertex::Vertex::<(), _>::try_new([6.0, 0.0, 0.0]).unwrap(), // v6
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 8.0, 0.0]).unwrap(), // v7
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(), // v8
+            vertex!([0.0, 0.0, 0.0]).unwrap(), // v5
+            vertex!([6.0, 0.0, 0.0]).unwrap(), // v6
+            vertex!([0.0, 8.0, 0.0]).unwrap(), // v7
+            vertex!([0.0, 0.0, 1.0]).unwrap(), // v8
         ];
         let dt1: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices1).unwrap();
@@ -2062,9 +2063,9 @@ mod tests {
 
         // Create 2D triangle (3-4-5 right triangle)
         let vertices: Vec<Vertex<(), 2>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(), // v1
-            crate::core::vertex::Vertex::<(), _>::try_new([3.0, 0.0]).unwrap(), // v2
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 4.0]).unwrap(), // v3
+            vertex!([0.0, 0.0]).unwrap(), // v1
+            vertex!([3.0, 0.0]).unwrap(), // v2
+            vertex!([0.0, 4.0]).unwrap(), // v3
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 2> =
@@ -2089,11 +2090,11 @@ mod tests {
 
         // Create 4D simplex (5 vertices)
         let vertices: Vec<Vertex<(), 4>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(), // v1
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(), // v2
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(), // v3
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(), // v4
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0]).unwrap(), // v5
+            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(), // v1
+            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(), // v2
+            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(), // v3
+            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(), // v4
+            vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(), // v5
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 4> =
@@ -2126,10 +2127,10 @@ mod tests {
 
         // Create a valid triangulation
         let vertices: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(), // v1
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(), // v2
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(), // v3
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(), // v4
+            vertex!([0.0, 0.0, 0.0]).unwrap(), // v1
+            vertex!([1.0, 0.0, 0.0]).unwrap(), // v2
+            vertex!([0.0, 1.0, 0.0]).unwrap(), // v3
+            vertex!([0.0, 0.0, 1.0]).unwrap(), // v4
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
@@ -2200,10 +2201,10 @@ mod tests {
         // Test with many facets from a simple tetrahedral triangulation
         // Use a simple tetrahedron to avoid degenerate boundary facets
         let vertices: Vec<Vertex<(), 3>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 2.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 2.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([2.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 2.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 2.0]).unwrap(),
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =

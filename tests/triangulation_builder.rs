@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+use delaunay::vertex;
 use std::assert_matches;
 use std::collections::HashMap;
 use std::f64::consts::TAU;
@@ -31,9 +32,9 @@ use delaunay::prelude::validation::{TriangulationValidationError, ValidationPoli
 #[test]
 fn test_builder_euclidean_matches_new_2d() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
     ];
 
     let dt_new = DelaunayTriangulation::try_new(&vertices).expect("new() should succeed");
@@ -53,10 +54,10 @@ fn test_builder_euclidean_matches_new_2d() {
 #[test]
 fn test_builder_euclidean_3d() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices)
         .build::<()>()
@@ -70,9 +71,9 @@ fn test_builder_euclidean_3d() {
 #[test]
 fn test_builder_topology_guarantee_propagated() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices)
         .topology_guarantee(TopologyGuarantee::Pseudomanifold)
@@ -86,9 +87,9 @@ fn test_builder_topology_guarantee_propagated() {
 #[test]
 fn test_builder_validation_policy_derived_from_topology_guarantee() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
     ];
 
     let dt = DelaunayTriangulationBuilder::new(&vertices)
@@ -104,9 +105,9 @@ fn test_builder_validation_policy_derived_from_topology_guarantee() {
 #[test]
 fn test_builder_custom_construction_options() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
     ];
     let opts = ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
     let dt = DelaunayTriangulationBuilder::new(&vertices)
@@ -125,9 +126,9 @@ fn test_builder_custom_construction_options() {
 #[test]
 fn test_builder_convenience() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
     ];
     let dt = DelaunayTriangulation::builder(&vertices)
         .build::<()>()
@@ -140,10 +141,10 @@ fn test_builder_convenience() {
 #[test]
 fn test_builder_canonicalized_toroidal_convenience() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.2_f64, 0.3]).unwrap(),
-        Vertex::<(), _>::try_new([1.8, 0.1]).unwrap(), // → (0.8, 0.1)
-        Vertex::<(), _>::try_new([0.5, 0.7]).unwrap(),
-        Vertex::<(), _>::try_new([-0.4, 0.9]).unwrap(), // → (0.6, 0.9)
+        vertex!([0.2_f64, 0.3]).unwrap(),
+        vertex!([1.8, 0.1]).unwrap(), // → (0.8, 0.1)
+        vertex!([0.5, 0.7]).unwrap(),
+        vertex!([-0.4, 0.9]).unwrap(), // → (0.6, 0.9)
     ];
     let dt = DelaunayTriangulation::builder(&vertices)
         .try_canonicalized_toroidal([1.0, 1.0])
@@ -164,17 +165,17 @@ fn test_builder_canonicalized_toroidal_convenience() {
 fn test_builder_canonicalized_toroidal_canonicalizes_coordinates() {
     // Canonical (already-wrapped) coordinates
     let canonical_vertices = vec![
-        Vertex::<(), _>::try_new([0.2_f64, 0.3]).unwrap(),
-        Vertex::<(), _>::try_new([0.8, 0.1]).unwrap(),
-        Vertex::<(), _>::try_new([0.5, 0.7]).unwrap(),
-        Vertex::<(), _>::try_new([0.6, 0.9]).unwrap(),
+        vertex!([0.2_f64, 0.3]).unwrap(),
+        vertex!([0.8, 0.1]).unwrap(),
+        vertex!([0.5, 0.7]).unwrap(),
+        vertex!([0.6, 0.9]).unwrap(),
     ];
     // Out-of-domain equivalents
     let shifted_vertices = vec![
-        Vertex::<(), _>::try_new([2.2_f64, 3.3]).unwrap(), // → (0.2, 0.3)
-        Vertex::<(), _>::try_new([-0.2, 1.1]).unwrap(),    // → (0.8, 0.1)
-        Vertex::<(), _>::try_new([1.5, 0.7]).unwrap(),     // → (0.5, 0.7)
-        Vertex::<(), _>::try_new([-0.4, 2.9]).unwrap(),    // → (0.6, 0.9)
+        vertex!([2.2_f64, 3.3]).unwrap(), // → (0.2, 0.3)
+        vertex!([-0.2, 1.1]).unwrap(),    // → (0.8, 0.1)
+        vertex!([1.5, 0.7]).unwrap(),     // → (0.5, 0.7)
+        vertex!([-0.4, 2.9]).unwrap(),    // → (0.6, 0.9)
     ];
 
     let dt_canonical = DelaunayTriangulationBuilder::new(&canonical_vertices)
@@ -205,10 +206,10 @@ fn test_builder_canonicalized_toroidal_canonicalizes_coordinates() {
 #[test]
 fn test_builder_canonicalized_toroidal_validates_2d() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.2_f64, 0.3]).unwrap(),
-        Vertex::<(), _>::try_new([0.8, 0.1]).unwrap(),
-        Vertex::<(), _>::try_new([0.5, 0.7]).unwrap(),
-        Vertex::<(), _>::try_new([0.1, 0.9]).unwrap(),
+        vertex!([0.2_f64, 0.3]).unwrap(),
+        vertex!([0.8, 0.1]).unwrap(),
+        vertex!([0.5, 0.7]).unwrap(),
+        vertex!([0.1, 0.9]).unwrap(),
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices)
         .try_canonicalized_toroidal([1.0, 1.0])
@@ -226,10 +227,10 @@ fn test_builder_canonicalized_toroidal_validates_2d() {
 #[test]
 fn test_builder_canonicalized_toroidal_delaunay_property_valid_2d() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.2_f64, 0.3]).unwrap(),
-        Vertex::<(), _>::try_new([0.8, 0.1]).unwrap(),
-        Vertex::<(), _>::try_new([0.5, 0.7]).unwrap(),
-        Vertex::<(), _>::try_new([0.1, 0.9]).unwrap(),
+        vertex!([0.2_f64, 0.3]).unwrap(),
+        vertex!([0.8, 0.1]).unwrap(),
+        vertex!([0.5, 0.7]).unwrap(),
+        vertex!([0.1, 0.9]).unwrap(),
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices)
         .try_canonicalized_toroidal([1.0, 1.0])
@@ -247,10 +248,10 @@ fn test_builder_canonicalized_toroidal_delaunay_property_valid_2d() {
 #[test]
 fn test_builder_canonicalized_toroidal_2d_euler_dimension() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.2_f64, 0.3]).unwrap(),
-        Vertex::<(), _>::try_new([0.8, 0.1]).unwrap(),
-        Vertex::<(), _>::try_new([0.5, 0.7]).unwrap(),
-        Vertex::<(), _>::try_new([0.1, 0.9]).unwrap(),
+        vertex!([0.2_f64, 0.3]).unwrap(),
+        vertex!([0.8, 0.1]).unwrap(),
+        vertex!([0.5, 0.7]).unwrap(),
+        vertex!([0.1, 0.9]).unwrap(),
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices)
         .try_canonicalized_toroidal([1.0, 1.0])
@@ -269,9 +270,9 @@ fn test_builder_canonicalized_toroidal_2d_euler_dimension() {
 #[test]
 fn test_builder_canonicalized_toroidal_matches_euclidean_on_canonical_input() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.1_f64, 0.2]).unwrap(),
-        Vertex::<(), _>::try_new([0.8, 0.3]).unwrap(),
-        Vertex::<(), _>::try_new([0.4, 0.9]).unwrap(),
+        vertex!([0.1_f64, 0.2]).unwrap(),
+        vertex!([0.8, 0.3]).unwrap(),
+        vertex!([0.4, 0.9]).unwrap(),
     ];
     let dt_euclidean = DelaunayTriangulationBuilder::new(&vertices)
         .build::<()>()
@@ -300,14 +301,14 @@ fn test_builder_canonicalized_toroidal_matches_euclidean_on_canonical_input() {
 #[test]
 fn test_builder_canonicalized_toroidal_larger_point_set_2d() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.1_f64, 0.2]).unwrap(),
-        Vertex::<(), _>::try_new([0.6, 0.1]).unwrap(),
-        Vertex::<(), _>::try_new([0.9, 0.4]).unwrap(),
-        Vertex::<(), _>::try_new([0.7, 0.8]).unwrap(),
-        Vertex::<(), _>::try_new([0.3, 0.7]).unwrap(),
-        Vertex::<(), _>::try_new([0.48, 0.52]).unwrap(),
-        Vertex::<(), _>::try_new([0.15, 0.85]).unwrap(),
-        Vertex::<(), _>::try_new([0.8, 0.65]).unwrap(),
+        vertex!([0.1_f64, 0.2]).unwrap(),
+        vertex!([0.6, 0.1]).unwrap(),
+        vertex!([0.9, 0.4]).unwrap(),
+        vertex!([0.7, 0.8]).unwrap(),
+        vertex!([0.3, 0.7]).unwrap(),
+        vertex!([0.48, 0.52]).unwrap(),
+        vertex!([0.15, 0.85]).unwrap(),
+        vertex!([0.8, 0.65]).unwrap(),
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices)
         .try_canonicalized_toroidal([1.0, 1.0])
@@ -327,11 +328,11 @@ fn test_builder_canonicalized_toroidal_larger_point_set_2d() {
 #[test]
 fn test_builder_canonicalized_toroidal_robust_kernel_3d() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.2_f64, 0.3, 0.4]).unwrap(),
-        Vertex::<(), _>::try_new([0.8, 0.1, 0.2]).unwrap(),
-        Vertex::<(), _>::try_new([0.5, 0.7, 0.6]).unwrap(),
-        Vertex::<(), _>::try_new([0.1, 0.9, 0.3]).unwrap(),
-        Vertex::<(), _>::try_new([0.6, 0.4, 0.8]).unwrap(),
+        vertex!([0.2_f64, 0.3, 0.4]).unwrap(),
+        vertex!([0.8, 0.1, 0.2]).unwrap(),
+        vertex!([0.5, 0.7, 0.6]).unwrap(),
+        vertex!([0.1, 0.9, 0.3]).unwrap(),
+        vertex!([0.6, 0.4, 0.8]).unwrap(),
     ];
     let kernel = RobustKernel::new();
     let dt = DelaunayTriangulationBuilder::new(&vertices)
@@ -368,7 +369,7 @@ fn toroidal_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
                 let phase = (index_f64 + 1.0) * stride;
                 coords[axis] = 0.9_f64.mul_add(phase.fract(), 0.05);
             }
-            Vertex::<(), _>::try_new(coords).unwrap()
+            vertex!(coords).unwrap()
         })
         .collect()
 }
@@ -520,13 +521,13 @@ gen_toroidal_validation_test!(2, levels_1_to_4, true);
 )]
 fn test_builder_toroidal_3d_fails_fast_until_scalable_quotient() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.2_f64, 0.3, 0.4]).unwrap(),
-        Vertex::<(), _>::try_new([0.8, 0.1, 0.2]).unwrap(),
-        Vertex::<(), _>::try_new([0.5, 0.7, 0.6]).unwrap(),
-        Vertex::<(), _>::try_new([0.1, 0.9, 0.3]).unwrap(),
-        Vertex::<(), _>::try_new([0.6, 0.4, 0.8]).unwrap(),
-        Vertex::<(), _>::try_new([0.3, 0.5, 0.9]).unwrap(),
-        Vertex::<(), _>::try_new([0.9, 0.2, 0.6]).unwrap(),
+        vertex!([0.2_f64, 0.3, 0.4]).unwrap(),
+        vertex!([0.8, 0.1, 0.2]).unwrap(),
+        vertex!([0.5, 0.7, 0.6]).unwrap(),
+        vertex!([0.1, 0.9, 0.3]).unwrap(),
+        vertex!([0.6, 0.4, 0.8]).unwrap(),
+        vertex!([0.3, 0.5, 0.9]).unwrap(),
+        vertex!([0.9, 0.2, 0.6]).unwrap(),
     ];
     let kernel = RobustKernel::new();
     let err = DelaunayTriangulationBuilder::new(&vertices)
@@ -625,7 +626,7 @@ fn test_explicit_toroidal_heawood_torus_rejected() {
     let vertices: Vec<_> = (0..7)
         .map(|i| {
             let angle = TAU * f64::from(i) / 7.0;
-            Vertex::<(), _>::try_new([angle.cos(), angle.sin()]).unwrap()
+            vertex!([angle.cos(), angle.sin()]).unwrap()
         })
         .collect();
 
@@ -663,7 +664,7 @@ fn test_explicit_toroidal_torus_euler_mismatch_without_override() {
     let vertices: Vec<_> = (0..7)
         .map(|i| {
             let angle = TAU * f64::from(i) / 7.0;
-            Vertex::<(), _>::try_new([angle.cos(), angle.sin()]).unwrap()
+            vertex!([angle.cos(), angle.sin()]).unwrap()
         })
         .collect();
 
@@ -725,10 +726,10 @@ fn explicit_builder_parse_error<U, const D: usize>(
 #[test]
 fn test_explicit_2d_two_triangle_quad() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([1.0, 1.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
     ];
     let simplices = vec![vec![0, 1, 2], vec![0, 2, 3]];
 
@@ -771,10 +772,10 @@ fn test_explicit_2d_two_triangle_quad() {
 #[test]
 fn test_explicit_normalizes_incoherent_simplex_order() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([1.0, 1.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
     ];
     let mut simplices = vec![vec![0, 1, 2], vec![0, 2, 3]];
     simplices[1].swap(0, 1);
@@ -794,11 +795,11 @@ fn test_explicit_normalizes_incoherent_simplex_order() {
 #[test]
 fn test_explicit_3d_two_tetrahedra() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 1.0, -1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
+        vertex!([1.0, 1.0, -1.0]).unwrap(),
     ];
     // Two tetrahedra sharing face (0, 1, 2)
     let simplices = vec![vec![0, 1, 2, 3], vec![0, 1, 2, 4]];
@@ -820,11 +821,11 @@ fn test_explicit_3d_two_tetrahedra() {
 #[test]
 fn test_explicit_round_trip_3d() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
+        vertex!([1.0, 1.0, 1.0]).unwrap(),
     ];
 
     let dt_original =
@@ -878,10 +879,10 @@ fn test_explicit_round_trip_3d() {
 #[test]
 fn test_explicit_round_trip_2d() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
+        vertex!([1.0, 1.0]).unwrap(),
     ];
 
     // Build via standard Delaunay.
@@ -938,8 +939,8 @@ fn test_explicit_round_trip_2d() {
 #[test]
 fn test_explicit_error_empty_simplices() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
     ];
     let simplices: Vec<Vec<usize>> = vec![];
 
@@ -953,9 +954,9 @@ fn test_explicit_error_empty_simplices() {
 #[test]
 fn test_explicit_error_wrong_arity() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
     ];
     // 2D expects 3 vertices per simplex, but we provide 2.
     let simplices = vec![vec![0, 1]];
@@ -970,9 +971,9 @@ fn test_explicit_error_wrong_arity() {
 #[test]
 fn test_explicit_error_index_out_of_bounds() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
     ];
     let simplices = vec![vec![0, 1, 99]]; // 99 is out of bounds
 
@@ -989,9 +990,9 @@ fn test_explicit_error_index_out_of_bounds() {
 #[test]
 fn test_explicit_error_duplicate_vertex_in_simplex() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
     ];
     let simplices = vec![vec![0, 1, 1]]; // Duplicate vertex 1
 
@@ -1005,9 +1006,9 @@ fn test_explicit_error_duplicate_vertex_in_simplex() {
 #[test]
 fn test_explicit_2d_single_triangle() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
     ];
     let simplices = vec![vec![0, 1, 2]];
 
@@ -1025,10 +1026,10 @@ fn test_explicit_2d_single_triangle() {
 #[test]
 fn test_explicit_3d_single_tetrahedron() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0, 0.0]).unwrap(),
+        vertex!([1.0, 0.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0, 0.0]).unwrap(),
+        vertex!([0.0, 0.0, 1.0]).unwrap(),
     ];
     let simplices = vec![vec![0, 1, 2, 3]];
 
@@ -1054,10 +1055,10 @@ fn test_explicit_3d_single_tetrahedron() {
 #[test]
 fn test_explicit_non_delaunay_mesh() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([4.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([4.0, 2.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 2.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([4.0, 0.0]).unwrap(),
+        vertex!([4.0, 2.0]).unwrap(),
+        vertex!([1.0, 2.0]).unwrap(),
     ];
     // Diagonal AC = (0,0)-(4,2): non-Delaunay because D=(1,2) is inside
     // the circumcircle of triangle ABC.
@@ -1087,9 +1088,9 @@ fn test_explicit_non_delaunay_mesh() {
 #[test]
 fn test_explicit_topology_guarantee_propagated() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
     ];
     let simplices = vec![vec![0, 1, 2]];
 
@@ -1106,9 +1107,9 @@ fn test_explicit_topology_guarantee_propagated() {
 #[test]
 fn test_explicit_preserves_vertex_data() {
     let vertices: Vec<Vertex<i32, 2>> = vec![
-        Vertex::try_new_with_data([0.0, 0.0], 10_i32).unwrap(),
-        Vertex::try_new_with_data([1.0, 0.0], 20_i32).unwrap(),
-        Vertex::try_new_with_data([0.0, 1.0], 30_i32).unwrap(),
+        vertex!([0.0, 0.0]; data = 10_i32).unwrap(),
+        vertex!([1.0, 0.0]; data = 20_i32).unwrap(),
+        vertex!([0.0, 1.0]; data = 30_i32).unwrap(),
     ];
     let simplices = vec![vec![0, 1, 2]];
 
@@ -1134,9 +1135,9 @@ fn test_explicit_preserves_vertex_data() {
 fn test_explicit_validate_delaunay_mesh() {
     // Use a known Delaunay configuration: the standard simplex.
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.5, 0.866_025_403_784_438_6]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.5, 0.866_025_403_784_438_6]).unwrap(),
     ];
     let simplices = vec![vec![0, 1, 2]];
 
@@ -1155,10 +1156,10 @@ fn test_explicit_validate_delaunay_mesh() {
 #[test]
 fn test_explicit_unreferenced_vertices_rejected() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-        Vertex::<(), _>::try_new([5.0, 5.0]).unwrap(), // Not referenced by any simplex
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
+        vertex!([5.0, 5.0]).unwrap(), // Not referenced by any simplex
     ];
     let simplices = vec![vec![0, 1, 2]];
 
@@ -1181,7 +1182,7 @@ fn test_explicit_unreferenced_vertices_rejected() {
 /// Error variant: empty simplices returns ExplicitConstruction(EmptySimplices).
 #[test]
 fn test_explicit_error_variant_empty_simplices() {
-    let vertices = vec![Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap()];
+    let vertices = vec![vertex!([0.0_f64, 0.0]).unwrap()];
     let simplices: Vec<Vec<usize>> = vec![];
 
     let err = explicit_builder_parse_error(&vertices, &simplices);
@@ -1196,9 +1197,9 @@ fn test_explicit_error_variant_empty_simplices() {
 #[test]
 fn test_explicit_error_variant_wrong_arity() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
     ];
     let simplices = vec![vec![0, 1]]; // 2D expects 3 vertices
 
@@ -1223,11 +1224,11 @@ fn test_explicit_error_variant_non_manifold_facet() {
     // Three triangles sharing the same edge (0,1) — facet shared by 3 simplices
     // violates the 2-manifold property.
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.5, -1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
+        vertex!([1.0, 1.0]).unwrap(),
+        vertex!([0.5, -1.0]).unwrap(),
     ];
     let simplices = vec![vec![0, 1, 2], vec![0, 1, 3], vec![0, 1, 4]];
 
@@ -1257,9 +1258,9 @@ fn test_explicit_error_variant_non_manifold_facet() {
 #[test]
 fn test_explicit_error_variant_duplicate_vertex_in_simplex() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
     ];
     let simplices = vec![vec![0, 1, 1]]; // Duplicate vertex 1
 
@@ -1278,9 +1279,9 @@ fn test_explicit_error_variant_duplicate_vertex_in_simplex() {
 #[test]
 fn test_explicit_error_variant_incompatible_topology() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
     ];
     let simplices = vec![vec![0, 1, 2]];
 
@@ -1306,9 +1307,9 @@ fn test_explicit_error_variant_incompatible_topology() {
 #[test]
 fn test_explicit_error_variant_unsupported_construction_options() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
     ];
     let simplices = vec![vec![0, 1, 2]];
 
@@ -1329,15 +1330,36 @@ fn test_explicit_error_variant_unsupported_construction_options() {
         ),
         "Expected UnsupportedConstructionOptions, got: {err}"
     );
+
+    let mixed_err =
+        DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+            .unwrap()
+            .construction_options(
+                ConstructionOptions::default()
+                    .without_final_delaunay_enforcement()
+                    .with_insertion_order(InsertionOrderStrategy::Input),
+            )
+            .build::<()>()
+            .unwrap_err();
+
+    assert!(
+        matches!(
+            mixed_err,
+            DelaunayTriangulationConstructionError::ExplicitConstruction(
+                ExplicitConstructionError::UnsupportedConstructionOptions
+            )
+        ),
+        "Expected mixed non-enforcing point-insertion options to be rejected, got: {mixed_err}",
+    );
 }
 
 /// Error variant: duplicate maximal simplices are rejected during TDS insertion.
 #[test]
 fn test_explicit_error_variant_duplicate_simplices_structural_validation() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
     ];
     let simplices = vec![vec![0, 1, 2], vec![0, 1, 2]];
 
@@ -1363,9 +1385,9 @@ fn test_explicit_error_variant_duplicate_simplices_structural_validation() {
 #[test]
 fn test_explicit_error_variant_geometric_nondegeneracy() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([2.0, 0.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([2.0, 0.0]).unwrap(),
     ];
     let simplices = vec![vec![0, 1, 2]];
 
@@ -1440,9 +1462,9 @@ fn test_explicit_error_variant_orientation_normalization_summary() {
 #[test]
 fn test_explicit_error_variant_index_out_of_bounds() {
     let vertices = vec![
-        Vertex::<(), _>::try_new([0.0_f64, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-        Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
     ];
     let simplices = vec![vec![0, 1, 99]];
 

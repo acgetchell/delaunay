@@ -116,14 +116,15 @@ mod tests {
     use crate::core::tds::VertexKey;
     use crate::core::vertex::Vertex;
     use crate::geometry::kernel::AdaptiveKernel;
+    use crate::vertex;
 
     fn simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
         let mut vertices = Vec::with_capacity(D + 1);
-        vertices.push(Vertex::<(), D>::try_new([0.0; D]).unwrap());
+        vertices.push(vertex!([0.0; D]).unwrap());
         for axis in 0..D {
             let mut coords = [0.0; D];
             coords[axis] = 1.0;
-            vertices.push(Vertex::<(), D>::try_new(coords).unwrap());
+            vertices.push(vertex!(coords).unwrap());
         }
         vertices
     }
@@ -151,7 +152,7 @@ mod tests {
     fn insert_uncommitted_vertex<const D: usize>(
         transaction: &mut DelaunayRollbackTransaction<'_, AdaptiveKernel<f64>, (), (), D>,
     ) -> VertexKey {
-        let vertex = Vertex::<(), D>::try_new([0.25; D]).unwrap();
+        let vertex = vertex!([0.25; D]).unwrap();
         transaction
             .delaunay_mut()
             .tri

@@ -64,15 +64,15 @@ where
 mod tests {
     use super::*;
     use crate::core::tds::Tds;
-    use crate::core::vertex::Vertex;
     use crate::geometry::kernel::FastKernel;
+    use crate::vertex;
     use std::sync::Arc;
 
     fn insert_test_vertex<const D: usize>(
         triangulation: &mut Triangulation<FastKernel<f64>, (), (), D>,
         coordinate: f64,
     ) {
-        let vertex = Vertex::<(), D>::try_new([coordinate; D]).unwrap();
+        let vertex = vertex!([coordinate; D]).unwrap();
         triangulation
             .tds
             .insert_vertex_with_mapping(vertex)

@@ -91,6 +91,7 @@ mod tests {
     use crate::core::simplex::Simplex;
     use crate::core::tds::TriangulationConstructionState;
     use crate::geometry::kernel::AdaptiveKernel;
+    use crate::vertex;
     use std::sync::Once;
 
     fn init_tracing() {
@@ -108,24 +109,16 @@ mod tests {
     fn non_delaunay_quad_tds() -> Tds<(), (), 2> {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([4.0, 0.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([4.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([4.0, 2.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([4.0, 2.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([1.0, 2.0]).unwrap())
             .unwrap();
 
         tds.insert_simplex_with_mapping(
@@ -162,10 +155,10 @@ mod tests {
     fn serde_roundtrip_uses_custom_deserialize_impl() {
         init_tracing();
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =

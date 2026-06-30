@@ -23,7 +23,7 @@ pub(crate) struct VertexIncidenceIndex {
 /// buffer exactly. This record stores the removed simplex and the per-vertex
 /// positions needed to undo [`VertexIncidenceIndex::remove_simplex`].
 #[derive(Clone, Debug)]
-pub(in crate::core::tds) struct SimplexIncidenceRemoval {
+pub(super) struct SimplexIncidenceRemoval {
     simplex_key: SimplexKey,
     removed_vertices: SmallBuffer<RemovedVertexIncidence, MAX_PRACTICAL_DIMENSION_SIZE>,
 }
@@ -41,7 +41,7 @@ struct RemovedVertexIncidence {
 impl VertexIncidenceIndex {
     /// Creates an empty incidence index with capacity for `vertex_capacity` vertices.
     #[must_use]
-    pub(in crate::core::tds) fn with_vertex_capacity(vertex_capacity: usize) -> Self {
+    pub(super) fn with_vertex_capacity(vertex_capacity: usize) -> Self {
         Self {
             map: fast_hash_map_with_capacity(vertex_capacity),
         }
@@ -109,10 +109,7 @@ impl VertexIncidenceIndex {
     ///
     /// Returns [`TdsError::InconsistentDataStructure`] if the vertex already has
     /// an incidence entry.
-    pub(in crate::core::tds) fn insert_vertex(
-        &mut self,
-        vertex_key: VertexKey,
-    ) -> Result<(), TdsError> {
+    pub(super) fn insert_vertex(&mut self, vertex_key: VertexKey) -> Result<(), TdsError> {
         if self.map.contains_key(&vertex_key) {
             return Err(TdsError::InconsistentDataStructure {
                 message: format!(
@@ -135,10 +132,7 @@ impl VertexIncidenceIndex {
     /// Returns [`TdsError::VertexNotFound`] if the vertex has no index entry, or
     /// [`TdsError::InconsistentDataStructure`] if the vertex still has incident
     /// simplices.
-    pub(in crate::core::tds) fn remove_isolated_vertex(
-        &mut self,
-        vertex_key: VertexKey,
-    ) -> Result<(), TdsError> {
+    pub(super) fn remove_isolated_vertex(&mut self, vertex_key: VertexKey) -> Result<(), TdsError> {
         let Some(incident_simplices) = self.map.get(&vertex_key) else {
             return Err(TdsError::VertexNotFound {
                 vertex_key,
@@ -166,7 +160,7 @@ impl VertexIncidenceIndex {
     /// Returns a typed error if a vertex is missing from the index, if
     /// `vertices` contains duplicate vertex keys, or if this simplex is already
     /// recorded for any listed vertex.
-    pub(in crate::core::tds) fn insert_simplex(
+    pub(super) fn insert_simplex(
         &mut self,
         simplex_key: SimplexKey,
         vertices: &[VertexKey],
@@ -218,7 +212,7 @@ impl VertexIncidenceIndex {
     /// currently recorded for any listed vertex. If an error occurs after some
     /// vertex incidence entries have been removed, those entries are rolled back
     /// before the error is returned.
-    pub(in crate::core::tds) fn remove_simplex(
+    pub(super) fn remove_simplex(
         &mut self,
         simplex_key: SimplexKey,
         vertices: &[VertexKey],
@@ -310,10 +304,7 @@ impl VertexIncidenceIndex {
     /// restored to its state before the corresponding removal. `Tds` batch
     /// mutation uses this to keep failed removals from perturbing later
     /// adjacency queries or diagnostics.
-    pub(in crate::core::tds) fn rollback_removed_simplex(
-        &mut self,
-        removal: &SimplexIncidenceRemoval,
-    ) {
+    pub(super) fn rollback_removed_simplex(&mut self, removal: &SimplexIncidenceRemoval) {
         for removed_vertex in removal.removed_vertices.iter().rev() {
             if let Some(incident_simplices) = self.map.get_mut(&removed_vertex.vertex_key) {
                 if removed_vertex.position < incident_simplices.len() {
@@ -328,7 +319,7 @@ impl VertexIncidenceIndex {
     }
 
     #[cfg(test)]
-    pub(in crate::core::tds) fn clear_vertex_for_test(&mut self, vertex_key: VertexKey) {
+    pub(super) fn clear_vertex_for_test(&mut self, vertex_key: VertexKey) {
         if let Some(incident_simplices) = self.map.get_mut(&vertex_key) {
             incident_simplices.clear();
         }

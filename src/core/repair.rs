@@ -21,6 +21,8 @@ use crate::core::tds::{InvariantError, SimplexKey, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::validation::{TriangulationValidationError, insertion_error_to_invariant_error};
+#[cfg(test)]
+use crate::deletion::DeleteVertexError;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::quality::{QualityError, QualitySimplexVerticesError, radius_ratio};
 use std::env;
@@ -2305,7 +2307,7 @@ mod tests {
         assert!(
             matches!(
                 error,
-                crate::DeleteVertexError::InvariantViolation {
+                DeleteVertexError::InvariantViolation {
                     ref source
                 } if matches!(
                     source.as_ref(),

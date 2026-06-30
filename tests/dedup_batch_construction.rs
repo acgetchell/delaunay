@@ -14,6 +14,7 @@ use delaunay::prelude::construction::{
     ConstructionOptions, DedupPolicy, DelaunayConstructionFailure, DelaunayTriangulation,
     DelaunayTriangulationConstructionError, InsertionOrderStrategy, Vertex,
 };
+use delaunay::vertex;
 
 // =============================================================================
 // HELPERS
@@ -60,11 +61,11 @@ fn is_geometric_degeneracy_or_retry_exhausted(
 /// Build D+1 standard simplex vertices: origin + D unit vectors.
 fn simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
     let mut verts = Vec::with_capacity(D + 1);
-    verts.push(delaunay::prelude::Vertex::<(), _>::try_new([0.0; D]).unwrap());
+    verts.push(vertex!([0.0; D]).unwrap());
     for i in 0..D {
         let mut coords = [0.0; D];
         coords[i] = 1.0;
-        verts.push(delaunay::prelude::Vertex::<(), _>::try_new(coords).unwrap());
+        verts.push(vertex!(coords).unwrap());
     }
     verts
 }
@@ -79,20 +80,18 @@ fn simplex_with_interior_and_duplicates<const D: usize>() -> (Vec<Vertex<(), D>>
     let mut verts = simplex_vertices::<D>();
     // Interior point
     let interior = [0.25 / (D as f64); D];
-    verts.push(delaunay::prelude::Vertex::<(), _>::try_new(interior).unwrap());
+    verts.push(vertex!(interior).unwrap());
     let distinct = verts.len(); // D+2
 
     // Duplicates: origin + interior again
-    verts.push(delaunay::prelude::Vertex::<(), _>::try_new([0.0; D]).unwrap());
-    verts.push(delaunay::prelude::Vertex::<(), _>::try_new(interior).unwrap());
+    verts.push(vertex!([0.0; D]).unwrap());
+    verts.push(vertex!(interior).unwrap());
     (verts, distinct)
 }
 
 /// Build `count` copies of the same all-identical vertex.
 fn all_identical_vertices<const D: usize>(count: usize) -> Vec<Vertex<(), D>> {
-    (0..count)
-        .map(|_| delaunay::prelude::Vertex::<(), _>::try_new([1.0; D]).unwrap())
-        .collect()
+    (0..count).map(|_| vertex!([1.0; D]).unwrap()).collect()
 }
 
 /// Select exact preprocessing dedup so tests opt into duplicate collapse explicitly.
@@ -110,10 +109,10 @@ fn simplex_with_one_duplicate<const D: usize>() -> (Vec<Vertex<(), D>>, usize) {
     let mut verts = simplex_vertices::<D>();
     // Extra non-vertex interior point to make the triangulation interesting
     let interior = [0.5 / (D as f64); D];
-    verts.push(delaunay::prelude::Vertex::<(), _>::try_new(interior).unwrap());
+    verts.push(vertex!(interior).unwrap());
     let distinct = verts.len();
     // One duplicate of the origin
-    verts.push(delaunay::prelude::Vertex::<(), _>::try_new([0.0; D]).unwrap());
+    verts.push(vertex!([0.0; D]).unwrap());
     (verts, distinct)
 }
 
@@ -278,8 +277,8 @@ gen_dedup_batch_tests!(5);
 fn test_hilbert_dedup_quantized_collision_2d() {
     init_tracing();
     let mut vertices = simplex_vertices::<2>();
-    vertices.push(delaunay::prelude::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap());
-    vertices.push(delaunay::prelude::Vertex::<(), _>::try_new([0.5 + 1e-10, 0.5]).unwrap()); // quantizes to same simplex
+    vertices.push(vertex!([0.5, 0.5]).unwrap());
+    vertices.push(vertex!([0.5 + 1e-10, 0.5]).unwrap()); // quantizes to same simplex
     let total = vertices.len();
 
     let dt: DelaunayTriangulation<_, (), (), 2> =

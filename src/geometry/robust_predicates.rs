@@ -8,8 +8,8 @@
 #![forbid(unsafe_code)]
 
 use super::predicates::{
-    InSphere, Orientation, relative_insphere_classification, relative_insphere_determinant_sign,
-    relative_insphere_signs,
+    InSphere, Orientation, insphere_distance, relative_insphere_classification,
+    relative_insphere_determinant_sign, relative_insphere_signs, try_orientation_from_matrix,
 };
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::geometry::matrix::{MAX_STACK_MATRIX_DIM, matrix_set};
@@ -262,7 +262,7 @@ pub fn robust_insphere<const D: usize>(
     // non-degenerate cases correctly.  Only if the result is BOUNDARY
     // (truly degenerate) do we apply SoS tie-breaking.
     cold_path();
-    if let Ok(geometric_result) = super::predicates::insphere_distance(simplex_points, *test_point)
+    if let Ok(geometric_result) = insphere_distance(simplex_points, *test_point)
         && geometric_result != InSphere::BOUNDARY
     {
         return Ok(geometric_result);
@@ -439,7 +439,7 @@ pub fn robust_orientation<const D: usize>(
 
         // Route through the exact-sign orientation helper for provably correct
         // orientation classification on finite inputs.
-        Ok(super::predicates::try_orientation_from_matrix(&matrix, k)?)
+        Ok(try_orientation_from_matrix(&matrix, k)?)
     })
 }
 
@@ -481,7 +481,7 @@ fn verify_insphere_consistency<const D: usize>(
     determinant_result: InSphere,
 ) -> ConsistencyResult {
     // Use the existing distance-based insphere test for verification
-    super::predicates::insphere_distance(simplex_points, *test_point).map_or(
+    insphere_distance(simplex_points, *test_point).map_or(
         ConsistencyResult::Unverifiable,
         |distance_result| match (determinant_result, distance_result) {
             // Exact matches are always consistent

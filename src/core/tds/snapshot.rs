@@ -1221,28 +1221,29 @@ mod tests {
     use crate::core::tds::TriangulationConstructionState;
     use crate::core::vertex::Vertex;
     use crate::geometry::point::Point;
+    use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
 
     fn initial_simplex_vertices_3d() -> [Vertex<(), 3>; 4] {
         [
-            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ]
     }
 
     fn periodic_offset_tds_2d() -> (Tds<(), (), 2>, Uuid, Vec<[i8; 2]>) {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let offsets = vec![[0_i8, 0_i8], [1_i8, 0_i8], [0_i8, 1_i8]];
         let mut simplex = Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap();
@@ -1363,11 +1364,11 @@ mod tests {
     #[test]
     fn test_tds_snapshot_serialization_includes_stable_uuid_relationships() {
         let vertices = [
-            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.5, 0.5, 0.5]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let original = dt.tds().clone();
@@ -1637,11 +1638,11 @@ mod tests {
     #[test]
     fn test_tds_snapshot_serde_round_trip_multi_simplex_triangulation() {
         let vertices = [
-            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.5, 0.5, 0.5]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let original = dt.tds().clone();
@@ -1659,10 +1660,10 @@ mod tests {
     #[test]
     fn test_tds_snapshot_serde_round_trip_2d() {
         let vertices = [
-            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -1939,11 +1940,11 @@ mod tests {
     #[test]
     fn test_tds_snapshot_deserialize_rejects_duplicate_simplex_vertex_uuid_sets() {
         let vertices = [
-            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.5, 0.5, 0.5]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let original = dt.tds().clone();
@@ -1982,13 +1983,13 @@ mod tests {
     fn test_tds_snapshot_round_trips_vertex_and_simplex_payload_data() {
         let mut tds: Tds<i32, i32, 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<_, _>::try_new_with_data([0.0, 0.0], 10).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]; data = 10).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<_, _>::try_new_with_data([1.0, 0.0], 20).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]; data = 20).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::<_, _>::try_new_with_data([0.0, 1.0], 30).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]; data = 30).unwrap())
             .unwrap();
         let simplex = Simplex::try_new_with_data(vec![v0, v1, v2], Some(99)).unwrap();
 
@@ -2021,34 +2022,25 @@ mod tests {
         let mut tds: Tds<NonCopyPayload, NonCopyPayload, 2> = Tds::empty();
         let v0 = tds
             .insert_vertex_with_mapping(
-                Vertex::<_, _>::try_new_with_data(
-                    [0.0, 0.0],
-                    NonCopyPayload {
-                        label: "v0".to_owned(),
-                    },
-                )
+                vertex!([0.0, 0.0]; data = NonCopyPayload {
+                    label: "v0".to_owned(),
+                })
                 .unwrap(),
             )
             .unwrap();
         let v1 = tds
             .insert_vertex_with_mapping(
-                Vertex::<_, _>::try_new_with_data(
-                    [1.0, 0.0],
-                    NonCopyPayload {
-                        label: "v1".to_owned(),
-                    },
-                )
+                vertex!([1.0, 0.0]; data = NonCopyPayload {
+                    label: "v1".to_owned(),
+                })
                 .unwrap(),
             )
             .unwrap();
         let v2 = tds
             .insert_vertex_with_mapping(
-                Vertex::<_, _>::try_new_with_data(
-                    [0.0, 1.0],
-                    NonCopyPayload {
-                        label: "v2".to_owned(),
-                    },
-                )
+                vertex!([0.0, 1.0]; data = NonCopyPayload {
+                    label: "v2".to_owned(),
+                })
                 .unwrap(),
             )
             .unwrap();
@@ -2279,11 +2271,11 @@ mod tests {
     #[test]
     fn test_tds_snapshot_error_preserves_dangling_neighbor_uuid_reference() {
         let vertices = [
-            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.5, 0.5, 0.5]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let mut snapshot = raw_snapshot_from_tds(dt.tds());
@@ -2371,11 +2363,11 @@ mod tests {
     #[test]
     fn test_tds_snapshot_error_preserves_inconsistent_neighbor_connectivity() {
         let vertices = [
-            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.5, 0.5, 0.5]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.5, 0.5, 0.5]).unwrap(),
         ];
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
         let mut snapshot = raw_snapshot_from_tds(dt.tds());

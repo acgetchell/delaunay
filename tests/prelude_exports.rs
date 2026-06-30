@@ -1429,6 +1429,23 @@ fn construction_prelude_covers_typed_explicit_errors() {
             if matches!(source.as_ref(), InvariantError::Tds(TdsError::FacetSharingViolation { .. }))
     );
 
+    let explicit_embedding = ExplicitConstructionError::EmbeddingValidation {
+        source: Box::new(ConstructionDelaunayTriangulationValidationError::Tds(
+            Box::new(TdsError::InconsistentDataStructure {
+                message: "embedding validation failed".to_string(),
+            }),
+        )),
+    };
+    assert_matches!(
+        explicit_embedding,
+        ExplicitConstructionError::EmbeddingValidation { source }
+            if matches!(
+                source.as_ref(),
+                ConstructionDelaunayTriangulationValidationError::Tds(tds)
+                    if matches!(tds.as_ref(), TdsError::InconsistentDataStructure { .. })
+            )
+    );
+
     let explicit_tds_construction = ExplicitConstructionError::TdsAssembly {
         source: Box::new(TdsConstructionError::ValidationError(
             TdsError::FacetSharingViolation {

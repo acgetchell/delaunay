@@ -2144,12 +2144,12 @@ fn validate_ridge_link_graph(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vertex;
     use std::{assert_matches, iter};
 
     use crate::core::facet::{FacetError, FacetHandle, FacetView};
     use crate::core::simplex::Simplex;
     use crate::core::triangulation::Triangulation;
-    use crate::core::vertex::Vertex;
     use crate::geometry::kernel::FastKernel;
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
 
@@ -2174,13 +2174,13 @@ mod tests {
     fn build_single_triangle_tds(periodic_self_neighbor: bool) -> (Tds<(), (), 2>, SimplexKey) {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::try_new([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::try_new([1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::try_new([0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
 
         let mut simplex = Simplex::try_new(vec![v0, v1, v2]).unwrap();
@@ -2214,16 +2214,16 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
             .unwrap();
 
         for tri in [[v0, v1, v2], [v0, v1, v3], [v0, v2, v3], [v1, v2, v3]] {
@@ -2242,23 +2242,23 @@ mod tests {
         let mut tds: Tds<(), (), 3> = Tds::empty();
 
         let shared_edge_v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let shared_edge_v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]).unwrap())
             .unwrap();
 
         let tet1_v2 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]).unwrap())
             .unwrap();
         let tet1_v3 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]).unwrap())
             .unwrap();
         let tet2_v2 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, -1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0, 0.0]).unwrap())
             .unwrap();
         let tet2_v3 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0, -1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, -1.0]).unwrap())
             .unwrap();
 
         let touched_simplex = tds
@@ -2287,10 +2287,10 @@ mod tests {
     #[test]
     fn test_validate_facet_degree_ok_for_single_tetrahedron() {
         let vertices = vec![
-            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let tds =
@@ -2307,21 +2307,21 @@ mod tests {
 
         // Shared triangle.
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]).unwrap())
             .unwrap();
 
         // Apex points on opposite sides.
         let v3 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]).unwrap())
             .unwrap();
         let v4 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0, -1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, -1.0]).unwrap())
             .unwrap();
 
         let _ = tds
@@ -2345,23 +2345,23 @@ mod tests {
         let mut tds: Tds<(), (), 3> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]).unwrap())
             .unwrap();
 
         let v3 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]).unwrap())
             .unwrap();
         let v4 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0, 2.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 2.0]).unwrap())
             .unwrap();
         let v5 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0, 3.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 3.0]).unwrap())
             .unwrap();
 
         let _ = tds
@@ -2398,10 +2398,10 @@ mod tests {
     #[test]
     fn test_validate_closed_boundary_ok_for_single_tetrahedron() {
         let vertices = vec![
-            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let tds =
@@ -2422,10 +2422,10 @@ mod tests {
     #[test]
     fn test_validate_closed_boundary_errors_on_out_of_bounds_facet_index() {
         let vertices = vec![
-            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let tds =
@@ -2628,13 +2628,13 @@ mod tests {
         let mut tds: Tds<(), (), 1> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([2.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([2.0]).unwrap())
             .unwrap();
 
         tds.insert_simplex_with_mapping(Simplex::try_new_with_data(vec![v0, v1], None).unwrap())
@@ -2652,10 +2652,10 @@ mod tests {
         let mut tds: Tds<(), (), 1> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0]).unwrap())
             .unwrap();
 
         tds.insert_simplex_with_mapping(Simplex::try_new_with_data(vec![v0, v1], None).unwrap())
@@ -2672,13 +2672,13 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
 
         tds.insert_simplex_with_mapping(
@@ -2713,19 +2713,19 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let va = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let vb = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let vc = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
             .unwrap();
         let vd = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let center = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.5, 0.5]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.5, 0.5]).unwrap())
             .unwrap();
 
         for tri in [
@@ -2809,10 +2809,7 @@ mod tests {
 
     #[test]
     fn test_validate_closed_boundary_noop_for_d_lt_2() {
-        let vertices = vec![
-            Vertex::<(), _>::try_new([0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0]).unwrap(),
-        ];
+        let vertices = vec![vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()];
 
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 1>::build_initial_simplex(&vertices).unwrap();
@@ -2891,16 +2888,16 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([10.0, 10.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([10.0, 10.0]).unwrap())
             .unwrap();
 
         let simplex_key = tds
@@ -2944,13 +2941,13 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
 
         let simplex_key = tds
@@ -3030,10 +3027,10 @@ mod tests {
     #[test]
     fn test_validate_local_pseudomanifold_for_simplices_errors_on_missing_scope_simplex() {
         let vertices = vec![
-            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut tds =
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
@@ -3056,10 +3053,10 @@ mod tests {
     #[test]
     fn test_validate_ridge_links_ok_for_single_tetrahedron() {
         let vertices = vec![
-            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let tds =
@@ -3116,18 +3113,18 @@ mod tests {
 
         // Shared vertex.
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
 
         // First tetrahedron boundary (4 triangles on 4 vertices).
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
             .unwrap();
 
         let c012 = tds
@@ -3153,13 +3150,13 @@ mod tests {
 
         // Second tetrahedron boundary (shares only v0).
         let v4 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([10.0, 10.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([10.0, 10.0]).unwrap())
             .unwrap();
         let v5 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([11.0, 10.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([11.0, 10.0]).unwrap())
             .unwrap();
         let v6 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([10.0, 11.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([10.0, 11.0]).unwrap())
             .unwrap();
 
         let _c045 = tds
@@ -3189,10 +3186,10 @@ mod tests {
     #[test]
     fn test_validate_ridge_links_for_simplices_ok_for_single_tetrahedron_in_3d() {
         let vertices = vec![
-            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let tds =
@@ -3219,10 +3216,10 @@ mod tests {
         let mut tds: Tds<(), (), 1> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0]).unwrap())
             .unwrap();
 
         let c01 = tds
@@ -3286,14 +3283,14 @@ mod tests {
                 let i_f = f64::from(u32::try_from(i).unwrap());
                 let j_f = f64::from(u32::try_from(j).unwrap());
                 *slot = tds
-                    .insert_vertex_with_mapping(Vertex::<(), _>::try_new([i_f, j_f, 0.0]).unwrap())
+                    .insert_vertex_with_mapping(vertex!([i_f, j_f, 0.0]).unwrap())
                     .unwrap();
             }
         }
 
         // Apex of the cone (interior vertex; not on any boundary facet).
         let apex = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.5, 0.5, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.5, 0.5, 1.0]).unwrap())
             .unwrap();
 
         // Triangulate each periodic square into two triangles, then cone to the apex.
@@ -3367,16 +3364,16 @@ mod tests {
         let mut tds: Tds<(), (), 3> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]).unwrap())
             .unwrap();
 
         let simplex_key = tds
@@ -3546,21 +3543,21 @@ mod tests {
 
         // Base tetrahedron vertices (triangulated S^2 boundary)
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]).unwrap())
             .unwrap();
 
         // Apex of the cone
         let apex = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.3, 0.3, 0.3]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.3, 0.3, 0.3]).unwrap())
             .unwrap();
 
         // Each boundary triangle of the tetrahedron, coned to apex
@@ -3606,13 +3603,13 @@ mod tests {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.5, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.5, 1.0]).unwrap())
             .unwrap();
 
         let mut simplex1 = Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap();
@@ -3639,10 +3636,10 @@ mod tests {
         // Each boundary vertex has a link homeomorphic to a 2-ball.
 
         let vertices = vec![
-            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let tds =

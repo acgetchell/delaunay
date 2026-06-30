@@ -163,14 +163,15 @@ mod tests {
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::point::Point;
     use crate::triangulation::DelaunayTriangulation;
+    use crate::vertex;
     use slotmap::KeyData;
 
     fn simplex_triangulation_3d() -> Triangulation<FastKernel<f64>, (), (), 3> {
         let vertices = [
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
@@ -180,11 +181,11 @@ mod tests {
     #[test]
     fn accumulate_live_simplex_seeds_dedupes_and_ignores_stale() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 1.0]).unwrap(),
+            vertex!([0.5, 0.5]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -235,11 +236,11 @@ mod tests {
     #[test]
     fn append_live_unique_simplex_seeds_dedupes_and_ignores_stale() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 1.0]).unwrap(),
+            vertex!([0.5, 0.5]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -274,11 +275,11 @@ mod tests {
     #[test]
     fn retain_live_simplex_seeds_filters_stale_and_dedupes() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 1.0]).unwrap(),
+            vertex!([0.5, 0.5]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();

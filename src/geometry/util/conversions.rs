@@ -86,7 +86,7 @@ pub enum ValueConversionError {
 ///
 /// Returns `CoordinateConversionError::NonFiniteValue` if the value is NaN or infinite
 /// Returns `CoordinateConversionError::ConversionFailed` if the conversion fails
-pub(in crate::geometry::util) fn safe_cast_to_f64(
+pub(super) fn safe_cast_to_f64(
     value: f64,
     coordinate_index: usize,
 ) -> Result<f64, CoordinateConversionError> {
@@ -120,7 +120,7 @@ pub(in crate::geometry::util) fn safe_cast_to_f64(
 ///
 /// Returns `CoordinateConversionError::NonFiniteValue` if the value is NaN or infinite
 /// Returns `CoordinateConversionError::ConversionFailed` if the conversion fails
-pub(in crate::geometry::util) fn safe_cast_from_f64(
+pub(super) fn safe_cast_from_f64(
     value: f64,
     coordinate_index: usize,
 ) -> Result<f64, CoordinateConversionError> {

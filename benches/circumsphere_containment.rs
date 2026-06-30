@@ -15,7 +15,7 @@
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
-use delaunay::prelude::geometry::CoordinateRange;
+use delaunay::prelude::geometry::{CoordinateRange, Point};
 use delaunay::prelude::query::*;
 use std::hint::black_box;
 
@@ -371,10 +371,7 @@ fn numerical_consistency_test() {
             println!("    Test point: {:?}", test.coords());
             println!(
                 "    Simplex: {:?}",
-                simplex
-                    .iter()
-                    .map(delaunay::geometry::Point::coords)
-                    .collect::<Vec<_>>()
+                simplex.iter().map(Point::coords).collect::<Vec<_>>()
             );
         }
     }

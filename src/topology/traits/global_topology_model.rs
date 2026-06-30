@@ -580,8 +580,7 @@ mod tests {
 
         let toroidal = GlobalTopology::<2>::Toroidal {
             domain: ToroidalDomain::try_new([2.0, 3.0]).unwrap(),
-            mode:
-                crate::topology::traits::topological_space::ToroidalConstructionMode::Canonicalized,
+            mode: ToroidalConstructionMode::Canonicalized,
         }
         .model();
         assert_eq!(toroidal.kind(), TopologyKind::Toroidal);

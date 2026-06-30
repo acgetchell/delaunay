@@ -1422,23 +1422,35 @@ rules:
 
   - id: delaunay.rust.prefer-vertex-macro-for-workflow-fixtures
     languages:
-      - generic
+      - rust
     severity: WARNING
-    message: "Use vertex! for incidental vertex setup in workflow tests, examples, and benchmarks."
+    message: "Use vertex! for incidental vertex setup outside constructor-focused tests and docs."
     metadata:
       category: maintainability
       rationale: >-
-        Higher-level workflow samples should keep attention on the API under
-        test. Reserve Vertex::try_new and Vertex::try_new_with_data for
-        constructor-focused tests and docs.
+        Incidental fixtures should keep attention on the API under test and use
+        the short constructor macro. Reserve Vertex::try_new and
+        Vertex::try_new_with_data for constructor-focused tests and docs.
     paths:
       include:
-        - "/tests/pachner_roundtrip.rs"
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
         - "/benches/pachner_stress.rs"
         - "/examples/**/*.rs"
         - "/tests/semgrep/src/project_rules/workflow_vertex_macro.rs"
-    pattern-regex: >-
-      ^\s*(?!//|///|\*)[^\n]*\b(?:delaunay::prelude::)?Vertex\s*(?:::<[^;\n]+>)?\s*::\s*try_new(?:_with_data)?\s*\(
+      exclude:
+        - "/src/bench_fixtures.rs"
+        - "/src/core/vertex.rs"
+        - "/src/lib.rs"
+        - "/tests/proptest_vertex.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    patterns:
+      - pattern-either:
+          - pattern: $VERTEX::try_new(...)
+          - pattern: $VERTEX::try_new_with_data(...)
+      - metavariable-regex:
+          metavariable: $VERTEX
+          regex: "^(?:delaunay::prelude::)?Vertex(?:::<.*>)?$"
 
   - id: delaunay.rust.no-public-raw-bench-fixture-builders
     languages:

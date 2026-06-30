@@ -936,6 +936,7 @@ mod tests {
     use crate::core::tds::Tds;
     use crate::geometry::kernel::FastKernel;
     use crate::triangulation::DelaunayTriangulation;
+    use crate::vertex;
 
     use slotmap::KeyData;
     use std::assert_matches;
@@ -952,7 +953,7 @@ mod tests {
                 coords[point_idx - 1] = 1.0;
             }
             let vertex_key = tds
-                .insert_vertex_with_mapping(Vertex::<(), _>::try_new(coords).unwrap())
+                .insert_vertex_with_mapping(vertex!(coords).unwrap())
                 .unwrap();
             shared_vertex_keys.push(vertex_key);
         }
@@ -960,13 +961,13 @@ mod tests {
         let mut positive_apex = [0.2; D];
         positive_apex[D - 1] = 1.0;
         let positive_apex_key = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new(positive_apex).unwrap())
+            .insert_vertex_with_mapping(vertex!(positive_apex).unwrap())
             .unwrap();
 
         let mut negative_apex = [0.2; D];
         negative_apex[D - 1] = -1.0;
         let negative_apex_key = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new(negative_apex).unwrap())
+            .insert_vertex_with_mapping(vertex!(negative_apex).unwrap())
             .unwrap();
 
         let mut positive_simplex_vertices = shared_vertex_keys.clone();
@@ -1001,19 +1002,19 @@ mod tests {
     ) {
         let mut tds = Tds::empty();
         let left_endpoint = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let right_endpoint = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let upper_apex = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let lower_apex = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, -1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0]).unwrap())
             .unwrap();
         let extra_apex = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.5, 0.5]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.5, 0.5]).unwrap())
             .unwrap();
 
         for apex in [upper_apex, lower_apex, extra_apex] {
@@ -1114,7 +1115,7 @@ mod tests {
                     );
 
                     let vertices = vec![
-                        $(crate::core::vertex::Vertex::<(), _>::try_new($simplex_coords).unwrap()),+
+                        $(vertex!($simplex_coords).unwrap()),+
                     ];
                     let expected_vertex_count = vertices.len();
 
@@ -1184,9 +1185,9 @@ mod tests {
     #[test]
     fn test_boundary_facets_reports_corrupted_facet_map() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
@@ -1230,9 +1231,9 @@ mod tests {
     #[test]
     fn topology_edges_triangle_2d() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 2> =
@@ -1338,11 +1339,11 @@ mod tests {
     #[test]
     fn topology_edges_and_incident_edges_double_tetrahedron_3d() {
         let vertices = vec![
-            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 2.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.7, 1.5]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.7, -1.5]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([2.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 2.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.7, 1.5]).unwrap(),
+            vertex!([1.0, 0.7, -1.5]).unwrap(),
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
@@ -1410,9 +1411,9 @@ mod tests {
     #[test]
     fn topology_queries_missing_keys_are_empty_or_none() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -1455,9 +1456,9 @@ mod tests {
     #[test]
     fn topology_geometry_accessors_round_trip() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 2> =
@@ -1634,9 +1635,9 @@ mod tests {
     #[test]
     fn split_topology_indexes_include_isolated_vertex_entries() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
@@ -1645,9 +1646,7 @@ mod tests {
 
         let isolated_vertex = tri
             .tds
-            .insert_vertex_with_mapping(
-                crate::core::vertex::Vertex::<(), _>::try_new([10.0, 10.0]).unwrap(),
-            )
+            .insert_vertex_with_mapping(vertex!([10.0, 10.0]).unwrap())
             .unwrap();
         let incidence = tri.incidence().unwrap();
         let edge_index = tri.build_edge_index().unwrap();
@@ -1674,9 +1673,9 @@ mod tests {
     #[test]
     fn incidence_errors_on_stale_vertex_incidence_index() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
@@ -1697,9 +1696,9 @@ mod tests {
     #[test]
     fn simplex_neighbor_index_errors_on_missing_neighbor_simplex() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
@@ -1734,9 +1733,9 @@ mod tests {
     #[test]
     fn simplex_neighbors_filters_missing_neighbor_simplex() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
@@ -1758,9 +1757,9 @@ mod tests {
     #[test]
     fn edge_index_errors_on_missing_vertex_key() {
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
@@ -1798,11 +1797,11 @@ mod tests {
     #[test]
     fn topology_queries_on_two_tet_triangulation() {
         let vertices = [
-            Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 1.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([1.0, 1.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::try_new(&vertices).unwrap();

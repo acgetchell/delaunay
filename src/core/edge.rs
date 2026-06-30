@@ -636,7 +636,8 @@ impl<U, V, const D: usize> Eq for EdgeView<'_, U, V, D> {}
 mod tests {
     use super::*;
     use crate::core::simplex::Simplex;
-    use crate::prelude::{DelaunayTriangulationBuilder, Vertex};
+    use crate::prelude::DelaunayTriangulationBuilder;
+    use crate::vertex;
     use std::{
         collections::{BTreeSet, HashSet},
         ptr,
@@ -644,9 +645,9 @@ mod tests {
 
     fn with_triangle_tds(test: impl FnOnce(&Tds<(), (), 2>, [VertexKey; 3])) {
         let vertices = [
-            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<()>()
@@ -718,10 +719,10 @@ mod tests {
     #[test]
     fn edge_key_rejects_live_vertices_without_edge() {
         let vertices = [
-            Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
-            Vertex::<(), _>::try_new([1.0, 1.0]).unwrap(),
-            Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([1.0, 1.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<()>()
@@ -795,16 +796,16 @@ mod tests {
     fn edge_view_enumerates_incident_simplices_from_incidence_index() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
             .unwrap();
 
         let c0 = tds
@@ -833,16 +834,16 @@ mod tests {
     fn edge_key_rejects_partial_missing_reverse_vertex_incidence() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
             .unwrap();
 
         let retained_simplex = tds
@@ -869,16 +870,16 @@ mod tests {
     fn edge_view_rejects_stale_vertex_incidence() {
         let mut tds: Tds<(), (), 3> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]).unwrap())
             .unwrap();
         let v3 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]).unwrap())
             .unwrap();
         let stale_simplex = tds
             .insert_simplex_with_mapping(Simplex::try_new(vec![v0, v1, v2, v3]).unwrap())
@@ -906,13 +907,13 @@ mod tests {
     fn edge_view_rejects_missing_reverse_vertex_incidence() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let simplex_key = tds
             .insert_simplex_with_mapping(Simplex::try_new(vec![v0, v1, v2]).unwrap())
@@ -942,13 +943,13 @@ mod tests {
     fn edge_view_rejects_missing_forward_vertex_incidence() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
         let v2 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 1.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
             .unwrap();
         let simplex_key = tds
             .insert_simplex_with_mapping(Simplex::try_new(vec![v0, v1, v2]).unwrap())
@@ -978,10 +979,10 @@ mod tests {
     fn edge_view_rejects_live_endpoints_without_stored_edge() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([0.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
             .unwrap();
         let v1 = tds
-            .insert_vertex_with_mapping(Vertex::<(), _>::try_new([1.0, 0.0]).unwrap())
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
             .unwrap();
 
         let edge = EdgeKey::from_validated_endpoints(v0, v1);

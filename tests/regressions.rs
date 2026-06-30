@@ -5,8 +5,9 @@
 //! feature flags, or profile isolation.
 
 use delaunay::prelude::construction::{
-    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder,
-    InsertionOrderStrategy, RetryPolicy, TopologyGuarantee, Vertex,
+    ConstructionOptions, ConstructionStatistics, DelaunayRepairPolicy, DelaunayTriangulation,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+    ExplicitConstructionError, InsertionOrderStrategy, RetryPolicy, TopologyGuarantee, Vertex,
 };
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::diagnostics::debug_print_first_delaunay_violation;
@@ -17,6 +18,8 @@ use delaunay::prelude::ordering::{
     HilbertBitDepth, hilbert_indices_prequantized, hilbert_quantize_batch_in_range,
     hilbert_quantize_in_range,
 };
+use delaunay::vertex;
+use std::num::NonZeroUsize;
 
 /// Replays a full Hilbert ordering while keeping only the prefix that first
 /// exposed issue #307, so the regression stays fast and deterministic.
@@ -66,7 +69,7 @@ fn hilbert_ordered_prefix<const D: usize>(
     keyed
         .into_iter()
         .take(prefix_len)
-        .map(|(_, _, point, _)| delaunay::prelude::Vertex::<(), _>::try_new(point.into()).unwrap())
+        .map(|(_, _, point, _)| vertex!(point.into()).unwrap())
         .collect()
 }
 
@@ -81,6 +84,328 @@ fn coordinate_bounds<const D: usize>(points: &[Point<D>]) -> CoordinateRange<f64
         });
     CoordinateRange::try_new(min, max)
         .expect("generated regression points should span a finite non-empty range")
+}
+
+fn open_cdt_strip_vertex(
+    slice: u32,
+    index: u32,
+    vertices_per_slice: u32,
+    slice_count: u32,
+    vertical_jitter: f64,
+) -> ([f64; 2], u32) {
+    let min_spacing = 1.0_f64 / f64::from(vertices_per_slice - 1);
+    let side_jitter = min_spacing / 4.0;
+    let interior_jitter = min_spacing / (16.0 * f64::from(slice_count));
+    let spacing = 1.0_f64 / f64::from(vertices_per_slice - 1);
+    let temporal_index = f64::from(slice);
+    let temporal_span = f64::from(slice_count - 1);
+    let side_arc = if temporal_span.abs() < f64::EPSILON {
+        0.0
+    } else {
+        side_jitter * temporal_index * (temporal_span - temporal_index) / temporal_span.powi(2)
+    };
+    let x = if index == 0 || index == vertices_per_slice - 1 {
+        let boundary = f64::from(index).mul_add(spacing, side_jitter);
+        if index == 0 {
+            boundary - side_arc
+        } else {
+            boundary + side_arc
+        }
+    } else {
+        let sign = if (index + slice).is_multiple_of(2) {
+            1.0
+        } else {
+            -1.0
+        };
+        f64::from(index).mul_add(spacing, side_jitter) + sign * interior_jitter
+    };
+    let spatial_index = f64::from(index);
+    let arc = vertical_jitter * spatial_index * f64::from(vertices_per_slice - 1 - index)
+        / f64::from((vertices_per_slice - 1).pow(2));
+    let base_y = f64::from(slice);
+    let y = if slice == 0 {
+        base_y - arc
+    } else if slice + 1 == slice_count {
+        base_y + arc
+    } else {
+        let sign = if (index + slice).is_multiple_of(2) {
+            1.0
+        } else {
+            -1.0
+        };
+        (sign * arc).mul_add(0.5, base_y)
+    };
+    ([x, y], slice)
+}
+
+fn exact_open_cdt_strip_vertices(vertices_per_slice: u32, slice_count: u32) -> Vec<Vertex<u32, 2>> {
+    let total_vertices = usize::try_from(vertices_per_slice)
+        .expect("test vertices per slice fits usize")
+        .saturating_mul(usize::try_from(slice_count).expect("test slice count fits usize"));
+    let mut vertices = Vec::with_capacity(total_vertices);
+    for slice in 0..slice_count {
+        for index in 0..vertices_per_slice {
+            let ([x, y], label) =
+                open_cdt_strip_vertex(slice, index, vertices_per_slice, slice_count, 0.0);
+            vertices.push(vertex![x, y; data = label].expect("finite layered strip vertex"));
+        }
+    }
+    vertices
+}
+
+fn exact_open_cdt_strip_simplices(vertices_per_slice: u32, slice_count: u32) -> Vec<Vec<usize>> {
+    let vertices_per_slice =
+        usize::try_from(vertices_per_slice).expect("test vertices per slice fits usize");
+    let slice_count = usize::try_from(slice_count).expect("test slice count fits usize");
+    let mut simplices = Vec::with_capacity(
+        2 * vertices_per_slice
+            .saturating_sub(1)
+            .saturating_mul(slice_count.saturating_sub(1)),
+    );
+
+    for slice in 0..slice_count.saturating_sub(1) {
+        for index in 0..vertices_per_slice.saturating_sub(1) {
+            let lower_left = slice * vertices_per_slice + index;
+            let lower_right = lower_left + 1;
+            let upper_left = (slice + 1) * vertices_per_slice + index;
+            let upper_right = upper_left + 1;
+            simplices.push(vec![lower_left, lower_right, upper_right]);
+            simplices.push(vec![lower_left, upper_right, upper_left]);
+        }
+    }
+
+    simplices
+}
+
+fn sorted_vertex_signatures(vertices: &[Vertex<u32, 2>]) -> Vec<(u64, u64, u32)> {
+    let mut signatures: Vec<_> = vertices
+        .iter()
+        .map(|vertex| {
+            let coords = vertex.point().coords();
+            (
+                coords[0].to_bits(),
+                coords[1].to_bits(),
+                *vertex.data().expect("strip vertices are labeled"),
+            )
+        })
+        .collect();
+    signatures.sort_unstable();
+    signatures
+}
+
+fn sorted_triangulation_vertex_signatures(
+    dt: &DelaunayTriangulation<RobustKernel<f64>, u32, i32, 2>,
+) -> Vec<(u64, u64, u32)> {
+    let mut signatures: Vec<_> = dt
+        .vertices()
+        .map(|(_, vertex)| {
+            let coords = vertex.point().coords();
+            (
+                coords[0].to_bits(),
+                coords[1].to_bits(),
+                *vertex.data().expect("strip vertices are labeled"),
+            )
+        })
+        .collect();
+    signatures.sort_unstable();
+    signatures
+}
+
+fn assert_strip_vertices_use_exact_time_labels(vertices: &[Vertex<u32, 2>]) {
+    for vertex in vertices {
+        let coords = vertex.point().coords();
+        let label = *vertex.data().expect("strip vertices are labeled");
+        assert_eq!(
+            coords[1].to_bits(),
+            f64::from(label).to_bits(),
+            "strip vertex y coordinate should exactly encode its time label: vertex={vertex:?}",
+        );
+    }
+}
+
+fn assert_triangulation_vertices_use_exact_time_labels(
+    dt: &DelaunayTriangulation<RobustKernel<f64>, u32, i32, 2>,
+) {
+    for (_, vertex) in dt.vertices() {
+        let coords = vertex.point().coords();
+        let label = *vertex.data().expect("strip vertices are labeled");
+        assert_eq!(
+            coords[1].to_bits(),
+            f64::from(label).to_bits(),
+            "constructed strip vertex y coordinate should exactly encode its time label: vertex={vertex:?}",
+        );
+    }
+}
+
+fn assert_exact_strip_construction_result(
+    case: &str,
+    dt: &DelaunayTriangulation<RobustKernel<f64>, u32, i32, 2>,
+    stats: &ConstructionStatistics,
+    input_signatures: &[(u64, u64, u32)],
+) {
+    assert_eq!(
+        dt.number_of_vertices(),
+        input_signatures.len(),
+        "{case} construction should preserve all distinct strip vertices; stats={stats:?}",
+    );
+    assert_eq!(
+        stats.total_skipped(),
+        0,
+        "{case} construction should not skip collinear strip vertices; stats={stats:?}",
+    );
+    assert_eq!(
+        stats.used_perturbation, 0,
+        "{case} construction should not physically perturb strip vertices; stats={stats:?}",
+    );
+    assert_eq!(
+        sorted_triangulation_vertex_signatures(dt).as_slice(),
+        input_signatures,
+        "{case} construction should preserve exact strip coordinate bits and labels; stats={stats:?}",
+    );
+    assert_triangulation_vertices_use_exact_time_labels(dt);
+    dt.as_triangulation()
+        .validate()
+        .expect("exact degenerate strip should satisfy Levels 1-4");
+}
+
+#[test]
+fn regression_issue_447_exact_layered_strip_preserves_collinear_boundary_vertices() {
+    let vertices = exact_open_cdt_strip_vertices(5, 3);
+    let kernel = RobustKernel::<f64>::new();
+    let input_signatures = sorted_vertex_signatures(&vertices);
+    assert_strip_vertices_use_exact_time_labels(&vertices);
+    let exact_degenerate_options =
+        ConstructionOptions::default().without_final_delaunay_enforcement();
+    assert!(
+        !exact_degenerate_options.enforces_final_delaunay(),
+        "exact degenerate construction mode should document that Level 5 enforcement is disabled",
+    );
+
+    let (default_dt, default_stats) =
+        DelaunayTriangulation::<_, u32, i32, 2>::try_with_options_and_statistics(
+            &kernel,
+            &vertices,
+            TopologyGuarantee::DEFAULT,
+            exact_degenerate_options,
+        )
+        .expect("exact layered CDT strip point construction should succeed");
+
+    assert_exact_strip_construction_result(
+        "exact degenerate",
+        &default_dt,
+        &default_stats,
+        &input_signatures,
+    );
+
+    let input_options = ConstructionOptions::default()
+        .with_insertion_order(InsertionOrderStrategy::Input)
+        .with_retry_policy(RetryPolicy::Disabled)
+        .without_final_delaunay_enforcement();
+    let (input_dt, input_stats) =
+        DelaunayTriangulation::<_, u32, i32, 2>::try_with_options_and_statistics(
+            &kernel,
+            &vertices,
+            TopologyGuarantee::Pseudomanifold,
+            input_options,
+        )
+        .expect("input-order exact layered CDT strip construction should succeed");
+
+    assert_exact_strip_construction_result(
+        "input-order",
+        &input_dt,
+        &input_stats,
+        &input_signatures,
+    );
+
+    let no_stats_dt =
+        DelaunayTriangulation::<_, u32, i32, 2>::try_with_topology_guarantee_and_options(
+            &kernel,
+            &vertices,
+            TopologyGuarantee::Pseudomanifold,
+            ConstructionOptions::default()
+                .with_insertion_order(InsertionOrderStrategy::Input)
+                .with_retry_policy(RetryPolicy::Disabled)
+                .without_final_delaunay_enforcement(),
+        )
+        .expect("non-stat exact layered CDT strip construction should honor non-enforcing policy");
+
+    assert_eq!(
+        no_stats_dt.number_of_vertices(),
+        vertices.len(),
+        "non-stat construction should preserve all exact strip vertices",
+    );
+    assert_eq!(
+        sorted_triangulation_vertex_signatures(&no_stats_dt),
+        input_signatures,
+        "non-stat construction should preserve exact strip coordinate bits and labels",
+    );
+    assert_triangulation_vertices_use_exact_time_labels(&no_stats_dt);
+    no_stats_dt
+        .as_triangulation()
+        .validate()
+        .expect("non-stat exact strip should satisfy Levels 1-4");
+}
+
+#[test]
+fn regression_issue_447_explicit_exact_strip_default_strict_level5_fails() {
+    let vertices = exact_open_cdt_strip_vertices(5, 3);
+    let simplices = exact_open_cdt_strip_simplices(5, 3);
+
+    let err = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+        .expect("exact CDT strip explicit simplex specs should validate")
+        .build::<i32>()
+        .expect_err("strict explicit construction should reject the non-Delaunay CDT strip");
+
+    assert!(
+        matches!(
+            err,
+            DelaunayTriangulationConstructionError::ExplicitConstruction(
+                ExplicitConstructionError::DelaunayValidation { .. }
+            )
+        ),
+        "strict explicit construction should fail at Level 5 Delaunay validation, got: {err:?}",
+    );
+}
+
+#[test]
+fn regression_issue_447_explicit_exact_strip_preserves_vertices_without_level5_enforcement() {
+    let vertices = exact_open_cdt_strip_vertices(5, 3);
+    let simplices = exact_open_cdt_strip_simplices(5, 3);
+    let kernel = RobustKernel::<f64>::new();
+    let input_signatures = sorted_vertex_signatures(&vertices);
+    assert_strip_vertices_use_exact_time_labels(&vertices);
+
+    let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+        .expect("exact CDT strip explicit simplex specs should validate")
+        .construction_options(
+            ConstructionOptions::default()
+                .without_final_delaunay_enforcement()
+                .with_batch_repair_policy(DelaunayRepairPolicy::EveryN(
+                    NonZeroUsize::new(2).unwrap(),
+                )),
+        )
+        .build_with_kernel::<_, i32>(&kernel)
+        .expect("explicit exact CDT strip should import under the non-enforcing policy");
+
+    assert_eq!(
+        dt.number_of_vertices(),
+        vertices.len(),
+        "explicit construction should preserve every exact strip vertex",
+    );
+    assert_eq!(
+        dt.number_of_simplices(),
+        simplices.len(),
+        "explicit construction should preserve the supplied strip connectivity",
+    );
+    assert_eq!(
+        sorted_triangulation_vertex_signatures(&dt),
+        input_signatures,
+        "explicit construction should preserve exact strip coordinate bits and labels",
+    );
+    assert_triangulation_vertices_use_exact_time_labels(&dt);
+    dt.as_triangulation()
+        .validate()
+        .expect("explicit exact CDT strip should satisfy Levels 1-4");
 }
 
 /// Locks the equivalence between the single-pass proof-carrying batch quantizer
@@ -153,30 +478,12 @@ fn regression_hilbert_batch_quantize_matches_two_step_path() {
 #[test]
 fn regression_empty_circumsphere_2d_minimal_case() {
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([
-            48.564_246_621_452_234,
-            23.481_505_128_710_488,
-        ])
-        .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
-            -9.807_184_344_740_996,
-            -36.451_902_443_093_33,
-        ])
-        .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
-            75.784_620_110_257_45,
-            25.382_048_382_678_306,
-        ])
-        .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([
-            50.330_335_525_698_53,
-            25.294_356_716_784_847,
-        ])
-        .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([77.411_339_748_608_4, -86.531_849_594_875_54])
-            .unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([-93.661_180_847_043, 1.562_430_007_326_195_9])
-            .unwrap(),
+        vertex!([48.564_246_621_452_234, 23.481_505_128_710_488]).unwrap(),
+        vertex!([-9.807_184_344_740_996, -36.451_902_443_093_33]).unwrap(),
+        vertex!([75.784_620_110_257_45, 25.382_048_382_678_306]).unwrap(),
+        vertex!([50.330_335_525_698_53, 25.294_356_716_784_847]).unwrap(),
+        vertex!([77.411_339_748_608_4, -86.531_849_594_875_54]).unwrap(),
+        vertex!([-93.661_180_847_043, 1.562_430_007_326_195_9]).unwrap(),
     ];
 
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
@@ -206,10 +513,10 @@ fn regression_empty_circumsphere_2d_minimal_case() {
 fn regression_issue_120_minimal_failing_input_2d() {
     // From docs/archive/issue_120_investigation.md (Example Failure Case (2D)).
     let vertices = vec![
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([-54.687, 0.0]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([-85.026, 36.185]).unwrap(),
-        delaunay::prelude::Vertex::<(), _>::try_new([0.0, 38.424]).unwrap(),
+        vertex!([0.0, 0.0]).unwrap(),
+        vertex!([-54.687, 0.0]).unwrap(),
+        vertex!([-85.026, 36.185]).unwrap(),
+        vertex!([0.0, 38.424]).unwrap(),
     ];
 
     let dt: DelaunayTriangulation<_, (), (), 2> =
@@ -239,7 +546,7 @@ fn regression_periodic_neighbor_validation_uses_lifted_vertex_offsets() {
     let vertices: Vec<Vertex<(), 2>> = (0..7)
         .map(|index| {
             let index_f64 = f64::from(u32::try_from(index).expect("test index fits in u32"));
-            delaunay::prelude::Vertex::<(), _>::try_new([
+            vertex!([
                 0.9_f64.mul_add(((index_f64 + 1.0) * 0.618_033_988_749_894_8).fract(), 0.05),
                 0.9_f64.mul_add(((index_f64 + 1.0) * 0.414_213_562_373_095_03).fract(), 0.05),
             ])
@@ -283,7 +590,7 @@ fn regression_issue_306_3d_construction_succeeds() {
         .expect("point generation should succeed");
     let vertices: Vec<Vertex<(), 3>> = points
         .into_iter()
-        .map(|p| delaunay::prelude::Vertex::<(), _>::try_new(p.into()).unwrap())
+        .map(|p| vertex!(p.into()).unwrap())
         .collect();
 
     let dt: Result<DelaunayTriangulation<_, (), (), 3>, _> =
@@ -370,7 +677,7 @@ fn regression_issue_204_4d_500_local_repair_budget() {
         .expect("point generation should succeed");
     let vertices: Vec<Vertex<(), 4>> = points
         .into_iter()
-        .map(|p| delaunay::prelude::Vertex::<(), _>::try_new(p.into()).unwrap())
+        .map(|p| vertex!(p.into()).unwrap())
         .collect();
 
     let (dt, stats) =

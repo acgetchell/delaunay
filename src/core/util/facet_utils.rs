@@ -198,6 +198,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vertex;
 
     use crate::core::collections::FastHashSet;
     use crate::triangulation::DelaunayTriangulation;
@@ -207,10 +208,10 @@ mod tests {
     fn test_generate_combinations_comprehensive() {
         // Test basic functionality with 4 vertices
         let vertices: Vec<Vertex<(), 1>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([3.0]).unwrap(),
+            vertex!([0.0]).unwrap(),
+            vertex!([1.0]).unwrap(),
+            vertex!([2.0]).unwrap(),
+            vertex!([3.0]).unwrap(),
         ];
 
         // Combinations of 2 from 4 - should be C(4,2) = 6
@@ -270,20 +271,20 @@ mod tests {
 
         // Test with different size - 3 vertices, choose 2
         let small_vertices: Vec<Vertex<(), 1>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([3.0]).unwrap(),
+            vertex!([1.0]).unwrap(),
+            vertex!([2.0]).unwrap(),
+            vertex!([3.0]).unwrap(),
         ];
         let combinations_small = generate_combinations(&small_vertices, 2);
         assert_eq!(combinations_small.len(), 3, "C(3,2) should equal 3");
 
         // Test larger case - 5 vertices, choose 3 to exercise inner loops
         let large_vertices: Vec<Vertex<(), 1>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([3.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([4.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([5.0]).unwrap(),
+            vertex!([1.0]).unwrap(),
+            vertex!([2.0]).unwrap(),
+            vertex!([3.0]).unwrap(),
+            vertex!([4.0]).unwrap(),
+            vertex!([5.0]).unwrap(),
         ];
         let combinations_large = generate_combinations(&large_vertices, 3);
         assert_eq!(combinations_large.len(), 10, "C(5,3) should equal 10");
@@ -333,13 +334,13 @@ mod tests {
 
         // Create two tetrahedra that share 3 vertices (forming a shared triangular face)
         let shared_vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(), // v0
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(), // v1
-            crate::core::vertex::Vertex::<(), _>::try_new([0.5, 1.0, 0.0]).unwrap(), // v2
+            vertex!([0.0, 0.0, 0.0]).unwrap(), // v0
+            vertex!([1.0, 0.0, 0.0]).unwrap(), // v1
+            vertex!([0.5, 1.0, 0.0]).unwrap(), // v2
         ];
 
-        let vertex_a = crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, 1.0]).unwrap(); // Above the shared triangle
-        let vertex_b = crate::core::vertex::Vertex::<(), _>::try_new([0.5, 0.5, -1.0]).unwrap(); // Below the shared triangle
+        let vertex_a = vertex!([0.5, 0.5, 1.0]).unwrap(); // Above the shared triangle
+        let vertex_b = vertex!([0.5, 0.5, -1.0]).unwrap(); // Below the shared triangle
 
         // Tetrahedron 1: shared triangle + vertex_a
         let mut vertices1 = shared_vertices.clone();
@@ -425,12 +426,12 @@ mod tests {
 
         // Create two 2D triangles that share an edge (2 vertices)
         let shared_edge = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(), // v0
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(), // v1
+            vertex!([0.0, 0.0]).unwrap(), // v0
+            vertex!([1.0, 0.0]).unwrap(), // v1
         ];
 
-        let vertex_c = crate::core::vertex::Vertex::<(), _>::try_new([0.5, 1.0]).unwrap(); // Above the shared edge
-        let vertex_d = crate::core::vertex::Vertex::<(), _>::try_new([0.5, -1.0]).unwrap(); // Below the shared edge
+        let vertex_c = vertex!([0.5, 1.0]).unwrap(); // Above the shared edge
+        let vertex_d = vertex!([0.5, -1.0]).unwrap(); // Below the shared edge
 
         // Triangle 1: shared edge + vertex_c
         let mut vertices1 = shared_edge.clone();
@@ -480,9 +481,9 @@ mod tests {
         // In 1D, simplices are edges and facets are vertices (0D)
         // Two edges sharing a vertex have adjacent facets
 
-        let shared_vertex = crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap();
-        let vertex_left = crate::core::vertex::Vertex::<(), _>::try_new([-1.0]).unwrap();
-        let vertex_right = crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap();
+        let shared_vertex = vertex!([0.0]).unwrap();
+        let vertex_left = vertex!([-1.0]).unwrap();
+        let vertex_right = vertex!([1.0]).unwrap();
 
         // Edge 1: shared_vertex to vertex_left
         let vertices1 = vec![shared_vertex, vertex_left];
@@ -535,10 +536,10 @@ mod tests {
 
         // Test with minimal triangulation (single tetrahedron)
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -575,10 +576,10 @@ mod tests {
 
         // Create a moderately complex case to test performance
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 2.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 1.0, 2.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([2.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 2.0, 0.0]).unwrap(),
+            vertex!([1.0, 1.0, 2.0]).unwrap(),
         ];
 
         let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -614,17 +615,17 @@ mod tests {
 
         // Create vertices with different coordinates to ensure different UUIDs
         let vertices1 = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let vertices2 = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([10.0, 10.0, 10.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([11.0, 10.0, 10.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([10.0, 11.0, 10.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([10.0, 10.0, 11.0]).unwrap(),
+            vertex!([10.0, 10.0, 10.0]).unwrap(),
+            vertex!([11.0, 10.0, 10.0]).unwrap(),
+            vertex!([10.0, 11.0, 10.0]).unwrap(),
+            vertex!([10.0, 10.0, 11.0]).unwrap(),
         ];
 
         let dt1 = DelaunayTriangulation::try_new(&vertices1).unwrap();
@@ -653,10 +654,10 @@ mod tests {
 
         // Create identical geometry in separate TDS instances
         let vertices = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).unwrap(),
+            vertex!([0.0, 0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
         let dt1 = DelaunayTriangulation::try_new(&vertices).unwrap();
@@ -706,16 +707,14 @@ mod tests {
 
         // Create two 4D simplices (5-vertices each) that share a 3D facet (4 vertices)
         let shared_tetrahedron = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0]).unwrap(), // v0
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0]).unwrap(), // v1
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0]).unwrap(), // v2
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0]).unwrap(), // v3
+            vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(), // v0
+            vertex!([1.0, 0.0, 0.0, 0.0]).unwrap(), // v1
+            vertex!([0.0, 1.0, 0.0, 0.0]).unwrap(), // v2
+            vertex!([0.0, 0.0, 1.0, 0.0]).unwrap(), // v3
         ];
 
-        let vertex_e =
-            crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.25, 0.25, 1.0]).unwrap(); // Above in 4th dimension
-        let vertex_f =
-            crate::core::vertex::Vertex::<(), _>::try_new([0.25, 0.25, 0.25, -1.0]).unwrap(); // Below in 4th dimension
+        let vertex_e = vertex!([0.25, 0.25, 0.25, 1.0]).unwrap(); // Above in 4th dimension
+        let vertex_f = vertex!([0.25, 0.25, 0.25, -1.0]).unwrap(); // Below in 4th dimension
 
         // 4D Simplex 1: shared tetrahedron + vertex_e
         let mut vertices1 = shared_tetrahedron.clone();
@@ -768,17 +767,15 @@ mod tests {
 
         // Create two 5D simplices (6-vertices each) that share a 4D facet (5 vertices)
         let shared_4d_simplex = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(), // v0
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(), // v1
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(), // v2
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(), // v3
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(), // v4
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(), // v0
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]).unwrap(), // v1
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]).unwrap(), // v2
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]).unwrap(), // v3
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(), // v4
         ];
 
-        let vertex_g =
-            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2, 1.0]).unwrap(); // Above in 5th dimension
-        let vertex_h =
-            crate::core::vertex::Vertex::<(), _>::try_new([0.2, 0.2, 0.2, 0.2, -1.0]).unwrap(); // Below in 5th dimension
+        let vertex_g = vertex!([0.2, 0.2, 0.2, 0.2, 1.0]).unwrap(); // Above in 5th dimension
+        let vertex_h = vertex!([0.2, 0.2, 0.2, 0.2, -1.0]).unwrap(); // Below in 5th dimension
 
         // 5D Simplex 1: shared 4D simplex + vertex_g
         let mut vertices1 = shared_4d_simplex.clone();

@@ -320,13 +320,14 @@ pub(crate) fn coords_within_epsilon<const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vertex;
 
     use crate::geometry::point::Point;
     use crate::try_vertices_from_points;
     use approx::assert_relative_eq;
 
     fn vertex(coords: [f64; 2]) -> Vertex<(), 2> {
-        Vertex::try_new(coords).expect("finite vertex coordinates")
+        vertex!(coords).expect("finite vertex coordinates")
     }
 
     #[test]
@@ -560,9 +561,9 @@ mod tests {
     #[test]
     fn test_filter_vertices_excluding_empty_reference() {
         let vertices: Vec<Vertex<(), 1>> = vec![
-            crate::core::vertex::Vertex::<(), _>::try_new([0.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([1.0]).unwrap(),
-            crate::core::vertex::Vertex::<(), _>::try_new([2.0]).unwrap(),
+            vertex!([0.0]).unwrap(),
+            vertex!([1.0]).unwrap(),
+            vertex!([2.0]).unwrap(),
         ];
         let reference: Vec<Vertex<(), 1>> = vec![];
         let filtered = filter_vertices_excluding(&vertices, &reference);
