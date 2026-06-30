@@ -1422,7 +1422,7 @@ rules:
 
   - id: delaunay.rust.prefer-vertex-macro-for-workflow-fixtures
     languages:
-      - generic
+      - rust
     severity: WARNING
     message: "Use vertex! for incidental vertex setup outside constructor-focused tests and docs."
     metadata:
@@ -1445,9 +1445,12 @@ rules:
         - "/tests/proptest_vertex.rs"
         - "/tests/semgrep/src/project_rules/rust_style.rs"
     patterns:
-      - pattern-regex: >-
-          ^\s*[^\n]*\b(?:delaunay::prelude::)?Vertex\s*(?:::<[^;\n]+>)?\s*::\s*try_new(?:_with_data)?\s*\(
-      - pattern-not-regex: '^[ \t]*(//|///|/\*|\*|")'
+      - pattern-either:
+          - pattern: $VERTEX::try_new(...)
+          - pattern: $VERTEX::try_new_with_data(...)
+      - metavariable-regex:
+          metavariable: $VERTEX
+          regex: '^(?:delaunay::prelude::)?Vertex(?:::<.*>)?$'
 
   - id: delaunay.rust.no-public-raw-bench-fixture-builders
     languages:

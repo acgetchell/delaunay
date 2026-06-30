@@ -3982,7 +3982,6 @@ where
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
         let batch_repair_policy = final_delaunay.batch_repair_policy();
-        let run_final_repair = final_delaunay.enforces_final_delaunay();
         let use_global_repair_fallback = final_delaunay.use_global_repair_fallback();
 
         if vertices.len() < D + 1 {
@@ -4088,8 +4087,7 @@ where
         let finalize_result = dt.finalize_bulk_construction(
             original_validation_policy,
             original_repair_policy,
-            run_final_repair,
-            batch_repair_policy,
+            final_delaunay,
             &pending_repair_seeds,
             &soft_fail_seeds,
             Some(&mut stats.telemetry),
@@ -4120,7 +4118,6 @@ where
         final_delaunay: FinalDelaunayEnforcement,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
         let batch_repair_policy = final_delaunay.batch_repair_policy();
-        let run_final_repair = final_delaunay.enforces_final_delaunay();
         let use_global_repair_fallback = final_delaunay.use_global_repair_fallback();
 
         if vertices.len() < D + 1 {
@@ -4184,8 +4181,7 @@ where
         dt.finalize_bulk_construction(
             original_validation_policy,
             original_repair_policy,
-            run_final_repair,
-            batch_repair_policy,
+            final_delaunay,
             &pending_repair_seeds,
             &soft_fail_seeds,
             None,
@@ -4847,23 +4843,30 @@ where
 
     /// Restores runtime policies and performs the final repair/orientation
     /// checks that were deferred during batch insertion.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "bulk finalization restores policies, repair state, and optional statistics telemetry"
-    )]
+    ///
+    /// Batch construction temporarily disables per-insertion repair and may
+    /// override the global-repair fallback while it accumulates local repair
+    /// seeds. Finalization restores both caller-visible insertion policies so
+    /// options such as [`ConstructionOptions::without_final_delaunay_enforcement`]
+    /// and the crate-internal global-fallback toggle do not leak into later
+    /// incremental edits on the returned triangulation.
     pub(crate) fn finalize_bulk_construction(
         &mut self,
         original_validation_policy: ValidationPolicy,
         original_repair_policy: DelaunayRepairPolicy,
-        run_final_repair: bool,
-        batch_repair_policy: DelaunayRepairPolicy,
+        final_delaunay: FinalDelaunayEnforcement,
         pending_repair_seeds: &[SimplexKey],
         soft_fail_seeds: &[SimplexKey],
         mut construction_telemetry: Option<&mut ConstructionTelemetry>,
     ) -> Result<(), DelaunayTriangulationConstructionError> {
+        let run_final_repair = final_delaunay.enforces_final_delaunay();
+        let batch_repair_policy = final_delaunay.batch_repair_policy();
+        let restored_use_global_repair_fallback = final_delaunay.use_global_repair_fallback();
+
         // Restore policies after batch construction.
         self.tri.validation_policy = original_validation_policy;
         self.insertion_state.delaunay_repair_policy = original_repair_policy;
+        self.insertion_state.use_global_repair_fallback = restored_use_global_repair_fallback;
 
         let has_simplices = self.tri.tds.number_of_simplices() > 0;
         let mut completion_seed_simplices = SimplexKeyBuffer::new();
@@ -6138,8 +6141,10 @@ mod tests {
             .finalize_bulk_construction(
                 ValidationPolicy::OnSuspicion,
                 DelaunayRepairPolicy::Never,
-                false,
-                DelaunayRepairPolicy::Never,
+                FinalDelaunayEnforcement::Strict {
+                    batch_repair_policy: DelaunayRepairPolicy::Never,
+                    use_global_repair_fallback: true,
+                },
                 &[],
                 &[],
                 None,
@@ -6151,6 +6156,85 @@ mod tests {
             DelaunayTriangulationConstructionError::Triangulation(
                 DelaunayConstructionFailure::FinalTopologyValidation { .. }
             )
+        );
+    }
+
+    #[test]
+    fn test_finalize_bulk_construction_restores_global_repair_fallback_policy() {
+        init_tracing();
+        let vertices: Vec<Vertex<(), 2>> = vec![
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([2.0, 0.0]).unwrap(),
+            vertex!([0.0, 2.0]).unwrap(),
+        ];
+        let mut dt = DelaunayTriangulation::try_new_with_topology_guarantee(
+            &vertices,
+            TopologyGuarantee::Pseudomanifold,
+        )
+        .unwrap();
+
+        dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
+        dt.insertion_state.use_global_repair_fallback = true;
+        dt.finalize_bulk_construction(
+            dt.tri.validation_policy,
+            DelaunayRepairPolicy::EveryInsertion,
+            FinalDelaunayEnforcement::Strict {
+                batch_repair_policy: DelaunayRepairPolicy::Never,
+                use_global_repair_fallback: false,
+            },
+            &[],
+            &[],
+            None,
+        )
+        .expect("valid triangulation should finalize");
+
+        assert_eq!(
+            dt.insertion_state.delaunay_repair_policy,
+            DelaunayRepairPolicy::EveryInsertion,
+            "bulk finalization should restore the caller's repair policy"
+        );
+        assert!(
+            !dt.insertion_state.use_global_repair_fallback,
+            "bulk finalization should restore the caller's fallback policy"
+        );
+    }
+
+    #[test]
+    fn test_seeded_construction_preserves_disabled_global_repair_fallback_policy() {
+        init_tracing();
+        let vertices: Vec<Vertex<(), 2>> = vec![
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([2.0, 0.0]).unwrap(),
+            vertex!([0.0, 2.0]).unwrap(),
+        ];
+        let kernel = RobustKernel::<f64>::new();
+        let options = ConstructionOptions::default().without_global_repair_fallback();
+
+        let stats_dt =
+            DelaunayTriangulation::<RobustKernel<f64>, (), (), 2>::try_with_options_and_statistics(
+                &kernel,
+                &vertices,
+                TopologyGuarantee::Pseudomanifold,
+                options,
+            )
+            .expect("stats construction should succeed")
+            .0;
+        assert!(
+            !stats_dt.insertion_state.use_global_repair_fallback,
+            "stats construction should preserve the disabled fallback policy"
+        );
+
+        let no_stats_dt = DelaunayTriangulation::<RobustKernel<f64>, (), (), 2>::
+            try_with_topology_guarantee_and_options(
+                &kernel,
+                &vertices,
+                TopologyGuarantee::Pseudomanifold,
+                options,
+            )
+            .expect("non-stats construction should succeed");
+        assert!(
+            !no_stats_dt.insertion_state.use_global_repair_fallback,
+            "non-stats construction should preserve the disabled fallback policy"
         );
     }
 
