@@ -14,7 +14,7 @@ predicates fast across 2D-5D.
 | `circumsphere_containment.rs` | Compare circumsphere predicate methods | 2D-5D fixed, 3D random, edge cases | ~5 min | Predicate tuning, summaries |
 | `cold_path_predicates.rs` | Track hot/cold predicate paths | 2D-5D hot queries, near-boundary cases | ~2-5 min | Predicate optimization work |
 | `pachner_stress.rs` | Unified Pachner move API stress | Accepted 4D k=1/k=2/k=3 forward/inverse moves | <1 min | Monte-Carlo move workflow tuning |
-| `pl_manifold_repair.rs` | Over-shared facet repair plus orphan cleanup | 3D synthetic repair fixtures | <1 min | PL-manifold repair tuning |
+| `pl_manifold_repair.rs` | Over-shared facet and targeted topology repair | 2D/3D synthetic repair fixtures | <1 min | PL-manifold repair tuning |
 | `profiling_suite.rs` | Large-scale construction, memory, query, validation profiling | 2D/3D 10k, 4D 3k, 5D 1k | ~2-3 hr | Manual/monthly |
 | `delete_vertex.rs` | Vertex deletion and rollback cost | 2D-5D fixed cases | ~1-5 min | Vertex deletion |
 | `edge_key_queries.rs` | Public `EdgeKey` construction microbenchmarks | 2D-5D fixed live-edge cases | <1 min | Query API tuning |
@@ -330,9 +330,17 @@ where each cluster has one codimension-1 facet shared by three tetrahedra. The
 repair removes the deliberately skinny third tetrahedron and then removes its
 unique apex as an orphan vertex.
 
+It also measures the targeted `repair_pl_manifold_topology` stages added for
+boundary-ridge multiplicity, ridge-link, and vertex-link repair. Those cases use
+validated 2D/3D fixtures so fixture construction and contract checks stay
+outside Criterion's measured closures. Vertex-link cases use a smaller maximum
+cluster count because each torus-link cluster consumes more of the default
+targeted repair budget.
+
 The harness requires `--features bench` because normal public constructors must
-reject over-shared facets. `TopologyGuarantee::Pseudomanifold` is not a bypass
-for this fixture: pseudomanifold topology still requires facet degree 1 or 2.
+reject over-shared facets and targeted non-PL-manifold topology. `TopologyGuarantee::Pseudomanifold`
+is not a bypass for these fixtures: pseudomanifold topology still requires
+facet degree 1 or 2.
 
 ## Topology Guarantee Construction
 

@@ -418,6 +418,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         prog="archive-changelog",
         description="Archive completed minor series from CHANGELOG.md.",
+        suggest_on_error=True,
+        color=False,
     )
     parser.add_argument(
         "path",

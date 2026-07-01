@@ -1288,6 +1288,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         prog="postprocess-changelog",
         description="Apply markdown hygiene to a git-cliff generated CHANGELOG.md.",
+        suggest_on_error=True,
+        color=False,
     )
     parser.add_argument(
         "path",

@@ -2879,6 +2879,19 @@ class TestTimeoutHandling:
         assert args.verbose
         assert args.command == "generate-summary"
 
+    def test_parser_suggests_close_subcommand_name(self, capsys) -> None:
+        """Python 3.14 argparse suggestions should help recover from CLI typos."""
+        parser = create_argument_parser()
+
+        with pytest.raises(SystemExit) as exc_info:
+            parser.parse_args(["generate-summry"])
+
+        captured = capsys.readouterr()
+        assert exc_info.value.code == 2
+        assert captured.out == ""
+        assert "maybe you meant 'generate-summary'?" in captured.err
+        assert "\x1b[" not in captured.err
+
     def test_parser_accepts_ref_baseline_fetch(self) -> None:
         """Test that baseline fetching accepts git refs instead of only tags."""
         parser = create_argument_parser()

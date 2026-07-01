@@ -8,11 +8,12 @@ across different platforms with proper mocking.
 
 import platform
 import subprocess
+import sys
 from unittest.mock import mock_open, patch
 
 import pytest
 
-from hardware_utils import HardwareComparator, HardwareInfo
+from hardware_utils import HardwareComparator, HardwareInfo, main
 
 
 @pytest.fixture
@@ -583,6 +584,19 @@ Other content here...
 
 class TestHardwareUtilsIntegration:
     """Integration tests for hardware_utils functionality."""
+
+    def test_main_suggests_close_command_name(self, capsys, monkeypatch) -> None:
+        """Python 3.14 argparse suggestions should help recover from command typos."""
+        monkeypatch.setattr(sys, "argv", ["hardware_utils.py", "inf"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        captured = capsys.readouterr()
+        assert exc_info.value.code == 2
+        assert captured.out == ""
+        assert "maybe you meant 'info'?" in captured.err
+        assert "\x1b[" not in captured.err
 
     def test_real_hardware_info_structure(self) -> None:
         """Test that real hardware info returns expected structure."""

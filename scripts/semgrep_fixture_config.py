@@ -62,7 +62,7 @@ def write_fixture_config(fixture_path: Path, source_config_path: Path, output_co
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, suggest_on_error=True, color=False)
     parser.add_argument("fixture", type=Path)
     parser.add_argument("source_config", type=Path)
     parser.add_argument("output_config", type=Path)

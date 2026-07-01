@@ -21,6 +21,12 @@ class ExecutableNotFoundError(Exception):
     """Raised when a required executable is not found in PATH."""
 
 
+type ExceptionFamily = tuple[type[BaseException], ...]
+
+
+_GIT_DISCOVERY_ERRORS: ExceptionFamily = (ExecutableNotFoundError, subprocess.CalledProcessError)
+
+
 def get_safe_executable(command: str) -> str:
     """
     Get the full path to an executable, validating it exists.
@@ -210,7 +216,7 @@ def check_git_repo() -> bool:
     try:
         run_git_command(["rev-parse", "--git-dir"])
         return True
-    except (ExecutableNotFoundError, subprocess.CalledProcessError):
+    except _GIT_DISCOVERY_ERRORS:
         return False
 
 
@@ -224,7 +230,7 @@ def check_git_history() -> bool:
     try:
         run_git_command(["log", "--oneline", "-n", "1"])
         return True
-    except (ExecutableNotFoundError, subprocess.CalledProcessError):
+    except _GIT_DISCOVERY_ERRORS:
         return False
 
 

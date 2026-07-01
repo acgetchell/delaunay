@@ -4,14 +4,20 @@ Shared pytest fixtures and utilities for test modules.
 Provides common testing utilities that can be reused across multiple test files.
 """
 
+from __future__ import annotations
+
 import os
 import subprocess
 import sys
-from collections.abc import Callable, Iterator
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import contextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+    from contextlib import AbstractContextManager
 
 # Ensure `scripts/` is on sys.path for test imports
 # This must be done before importing any local modules

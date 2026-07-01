@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """Tests for per-fixture Semgrep config generation."""
 
-from pathlib import Path
+from __future__ import annotations
 
-import pytest
+from typing import TYPE_CHECKING
 
 from semgrep_fixture_config import annotated_rule_ids, main, write_fixture_config
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import pytest
 
 
 def test_annotated_rule_ids_preserves_unique_project_rule_order() -> None:

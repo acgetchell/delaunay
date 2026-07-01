@@ -57,7 +57,7 @@ class BaselineArtifactMetadata:
     runner_arch: str = "unknown"
 
     @classmethod
-    def from_environment(cls) -> "BaselineArtifactMetadata":
+    def from_environment(cls) -> BaselineArtifactMetadata:
         """Create artifact metadata from GitHub Actions-compatible environment variables."""
         return cls(
             commit_sha=os.getenv("GITHUB_SHA", os.getenv("SAFE_COMMIT_SHA", "unknown")),
@@ -77,6 +77,7 @@ if TYPE_CHECKING:
     )
     from hardware_utils import HardwareComparator, HardwareInfo
     from subprocess_utils import (
+        ExceptionFamily,
         ExecutableNotFoundError,
         ProjectRootNotFoundError,
         find_project_root,
@@ -98,6 +99,7 @@ else:
         )
         from hardware_utils import HardwareComparator, HardwareInfo
         from subprocess_utils import (
+            ExceptionFamily,
             ExecutableNotFoundError,
             ProjectRootNotFoundError,
             find_project_root,
@@ -118,6 +120,7 @@ else:
         )
         from scripts.hardware_utils import HardwareComparator, HardwareInfo
         from scripts.subprocess_utils import (
+            ExceptionFamily,
             ExecutableNotFoundError,
             ProjectRootNotFoundError,
             find_project_root,
@@ -128,7 +131,7 @@ else:
             run_safe_command,
         )
 
-_RECOVERABLE_CLI_ERRORS: tuple[type[BaseException], ...] = (
+_RECOVERABLE_CLI_ERRORS: ExceptionFamily = (
     ExecutableNotFoundError,
     ProjectRootNotFoundError,
     OSError,
@@ -138,6 +141,13 @@ _RECOVERABLE_CLI_ERRORS: tuple[type[BaseException], ...] = (
     KeyError,
     subprocess.SubprocessError,
 )
+_CI_PERFORMANCE_METRIC_PARSE_ERRORS: ExceptionFamily = (KeyError, ValueError)
+_CI_PERFORMANCE_SIDECAR_LOAD_ERRORS: ExceptionFamily = (OSError, json.JSONDecodeError)
+_CRITERION_ESTIMATE_PARSE_ERRORS: ExceptionFamily = (KeyError, TypeError, ValueError)
+_NUMERICAL_ACCURACY_PARSE_ERRORS: ExceptionFamily = (IndexError, TypeError, ValueError)
+_CARGO_MANIFEST_LOAD_ERRORS: ExceptionFamily = (OSError, tomllib.TOMLDecodeError)
+_LOCAL_RUSTC_VERSION_ERRORS: ExceptionFamily = (ExecutableNotFoundError, OSError, subprocess.SubprocessError)
+_BENCHMARK_TIMEOUT_PARSE_ERRORS: ExceptionFamily = (ValueError, TypeError)
 
 # Trusted benchmark commands use this Cargo profile so local, CI, and release
 # numbers are generated with the same ThinLTO/codegen-units settings.
@@ -297,7 +307,7 @@ def _parse_ci_performance_metrics(stdout: str) -> dict[str, dict[str, int]]:
         try:
             vertices = int(fields["vertices"])
             simplices = int(fields["simplices"])
-        except (KeyError, ValueError):
+        except _CI_PERFORMANCE_METRIC_PARSE_ERRORS:
             logger.debug("Skipping malformed ci_performance_suite metric line: %s", line)
             continue
         if vertices <= 0 or simplices <= 0:
@@ -452,7 +462,7 @@ def _load_ci_performance_run_metadata(criterion_dir: Path) -> dict[str, str]:
         return {}
     try:
         data = json.loads(metadata_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except _CI_PERFORMANCE_SIDECAR_LOAD_ERRORS:
         return {}
     if not isinstance(data, dict):
         return {}
@@ -511,7 +521,7 @@ def _parse_criterion_estimate(data: object) -> CriterionEstimate | None:
         mean_ns = _criterion_float(mean_data["point_estimate"])
         low_ns = _criterion_float(confidence_interval.get("lower_bound", mean_ns))
         high_ns = _criterion_float(confidence_interval.get("upper_bound", mean_ns))
-    except (KeyError, TypeError, ValueError):
+    except _CRITERION_ESTIMATE_PARSE_ERRORS:
         return None
 
     if not is_valid_criterion_estimate(mean_ns, low_ns, high_ns):
@@ -524,7 +534,7 @@ def _load_criterion_estimate(estimates_path: Path) -> CriterionEstimate | None:
     try:
         with estimates_path.open("r", encoding="utf-8") as f:
             data = json.load(f)
-    except (OSError, json.JSONDecodeError):
+    except _CI_PERFORMANCE_SIDECAR_LOAD_ERRORS:
         return None
     return _parse_criterion_estimate(data)
 
@@ -863,7 +873,7 @@ class PerformanceSummaryGenerator:
         try:
             with cargo_toml.open("rb") as f:
                 manifest = tomllib.load(f)
-        except (OSError, tomllib.TOMLDecodeError):
+        except _CARGO_MANIFEST_LOAD_ERRORS:
             return None
 
         package = manifest.get("package")
@@ -1027,7 +1037,7 @@ class PerformanceSummaryGenerator:
 
             return accuracy_data or None
 
-        except (IndexError, TypeError, ValueError):
+        except _NUMERICAL_ACCURACY_PARSE_ERRORS:
             return None
 
     def _get_numerical_accuracy_analysis(self) -> list[str]:
@@ -2559,7 +2569,7 @@ def _local_rustc_version(project_root: Path) -> str:
     """Return the local rustc version used to key same-machine benchmark caches."""
     try:
         result = run_safe_command("rustc", ["-V"], cwd=project_root, check=False, timeout=30)
-    except (ExecutableNotFoundError, OSError, subprocess.SubprocessError):
+    except _LOCAL_RUSTC_VERSION_ERRORS:
         return "unknown-rustc"
     if result.returncode == 0 and result.stdout.strip():
         return result.stdout.strip()
@@ -4004,7 +4014,7 @@ def get_default_bench_timeout() -> int:
     """
     try:
         timeout = int(os.getenv("BENCHMARK_TIMEOUT", "1800"))
-    except (ValueError, TypeError):
+    except _BENCHMARK_TIMEOUT_PARSE_ERRORS:
         return 1800
     return timeout if timeout > 0 else 1800
 
@@ -4105,7 +4115,7 @@ def _parse_baseline_metadata(baseline_content: str) -> dict[str, str]:
     return metadata
 
 
-def _sorted_benchmark_list(results: Mapping[str, "BenchmarkData"]) -> list["BenchmarkData"]:
+def _sorted_benchmark_list(results: Mapping[str, BenchmarkData]) -> list[BenchmarkData]:
     """Return benchmarks sorted by (dimension, point count) for stable output."""
     return sorted(results.values(), key=lambda b: (int(b.dimension.rstrip("D")), b.points is None, b.points or 0))
 
@@ -4366,7 +4376,7 @@ def _add_remote_arg(parser: argparse.ArgumentParser, *, help_text: str) -> None:
     parser.add_argument("--remote", type=str, default="origin", help=help_text)
 
 
-def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+def _add_benchmark_subcommands(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """Add benchmark-running subcommands."""
     gen_parser = subparsers.add_parser("generate-baseline", help="Generate performance baseline")
     _add_dev_arg(gen_parser)
@@ -4467,7 +4477,7 @@ def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.
     _add_project_root_arg(cmp_ref_parser)
 
 
-def _add_local_baseline_subcommands(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+def _add_local_baseline_subcommands(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """Add subcommands that operate on existing baseline artifacts/files."""
     bb_parser = subparsers.add_parser("compare-baselines", help="Compare two baseline files (no benchmarks)")
     bb_parser.add_argument("--old", dest="old_baseline", type=Path, required=True, help="Path to the older baseline file")
@@ -4507,7 +4517,7 @@ def _add_local_baseline_subcommands(subparsers: "argparse._SubParsersAction[argp
     _add_project_root_arg(tags_parser)
 
 
-def _add_workflow_helper_subcommands(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+def _add_workflow_helper_subcommands(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """Add subcommands used by GitHub Actions workflows."""
     subparsers.add_parser("determine-ref", help="Determine git ref name for baseline generation")
 
@@ -4522,7 +4532,7 @@ def _add_workflow_helper_subcommands(subparsers: "argparse._SubParsersAction[arg
     artifact_parser.add_argument("--ref", dest="ref_name", type=str, help="Git ref name to sanitize")
 
 
-def _add_regression_subcommands(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+def _add_regression_subcommands(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """Add regression-testing helper subcommands."""
     prepare_parser = subparsers.add_parser("prepare-baseline", help="Prepare baseline for regression testing")
     prepare_parser.add_argument("--baseline-dir", type=Path, default=Path("baseline-artifact"), help="Baseline artifact directory")
@@ -4558,7 +4568,7 @@ def _add_regression_subcommands(subparsers: "argparse._SubParsersAction[argparse
     subparsers.add_parser("regression-summary", help="Generate regression testing summary")
 
 
-def _add_performance_summary_subcommands(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+def _add_performance_summary_subcommands(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """Add performance summary generation subcommands."""
     perf_summary_parser = subparsers.add_parser("generate-summary", help="Generate performance summary markdown")
     perf_summary_parser.add_argument("--output", type=Path, help="Output file path (defaults to benches/PERFORMANCE_RESULTS.md)")
@@ -4581,7 +4591,11 @@ def _add_performance_summary_subcommands(subparsers: "argparse._SubParsersAction
 
 def create_argument_parser() -> argparse.ArgumentParser:
     """Create and configure the argument parser."""
-    parser = argparse.ArgumentParser(description="Benchmark utilities for baseline generation and comparison")
+    parser = argparse.ArgumentParser(
+        description="Benchmark utilities for baseline generation and comparison",
+        suggest_on_error=True,
+        color=False,
+    )
     parser.add_argument(
         "--verbose",
         "-v",

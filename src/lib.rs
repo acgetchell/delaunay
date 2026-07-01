@@ -809,7 +809,7 @@ pub use crate::core::algorithms::incremental_insertion::{
     fill_cavity, repair_neighbor_pointers, repair_neighbor_pointers_local, wire_cavity_neighbors,
 };
 pub use crate::core::algorithms::pl_manifold_repair::{
-    PlManifoldRepairError, PlManifoldRepairStats,
+    PlManifoldRepairError, PlManifoldRepairStage, PlManifoldRepairStats,
 };
 pub use crate::core::construction::{
     FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
@@ -1197,13 +1197,14 @@ pub mod prelude {
         DelaunayVerificationError, DelaunayVerificationErrorKind, DuplicateDetectionMetrics,
         FinalDelaunayValidationContext, FinalTopologyValidationContext, InitialSimplexStrategy,
         InsertionOrderStrategy, InsertionResult, PeriodicDomainPeriodError, PlManifoldRepairError,
-        PlManifoldRepairStats, RepairDecision, RepairSkipReason, RetryPolicy, TopologicalOperation,
-        TopologyGuarantee, Triangulation, TriangulationConstructionError,
-        TriangulationEmbeddingIntersectionDetail, TriangulationEmbeddingSimplexDetail,
-        TriangulationEmbeddingSimplexPairDetail, TriangulationEmbeddingValidationError,
-        TriangulationEmbeddingValidationErrorKind, TriangulationEmbeddingValidationReport,
-        TriangulationValidationError, TriangulationValidationReport, ValidationConfigurationError,
-        ValidationPolicy, try_vertices_from_points,
+        PlManifoldRepairStage, PlManifoldRepairStats, RepairDecision, RepairSkipReason,
+        RetryPolicy, TopologicalOperation, TopologyGuarantee, Triangulation,
+        TriangulationConstructionError, TriangulationEmbeddingIntersectionDetail,
+        TriangulationEmbeddingSimplexDetail, TriangulationEmbeddingSimplexPairDetail,
+        TriangulationEmbeddingValidationError, TriangulationEmbeddingValidationErrorKind,
+        TriangulationEmbeddingValidationReport, TriangulationValidationError,
+        TriangulationValidationReport, ValidationConfigurationError, ValidationPolicy,
+        try_vertices_from_points,
     };
 
     // Re-export utility items, but avoid exporting the util module names themselves.
@@ -1608,11 +1609,12 @@ pub mod prelude {
     ///
     /// Self-contained: a single `use delaunay::prelude::delaunayize::*`
     /// import brings in [`DelaunayTriangulationBuilder`], [`DelaunayTriangulation`],
-    /// PL-manifold repair types, and all delaunayize-specific types.
+    /// PL-manifold repair types such as [`PlManifoldRepairStage`], and all
+    /// delaunayize-specific types.
     pub mod delaunayize {
         pub use crate::delaunayize::*;
         pub use crate::{DelaunayTriangulation, DelaunayTriangulationBuilder};
-        pub use crate::{PlManifoldRepairError, PlManifoldRepairStats};
+        pub use crate::{PlManifoldRepairError, PlManifoldRepairStage, PlManifoldRepairStats};
     }
 
     /// Delaunay-level validation APIs, reports, and construction diagnostics.
@@ -2051,8 +2053,8 @@ mod tests {
         is_normal,
         prelude::delaunayize::{
             DelaunayTriangulationConstructionError, DelaunayizeConfig, DelaunayizeError,
-            DelaunayizeOutcome, PlManifoldRepairError, PlManifoldRepairStats,
-            SimplexDataRestoreError, SimplexValidationError,
+            DelaunayizeOutcome, PlManifoldRepairError, PlManifoldRepairStage,
+            PlManifoldRepairStats, SimplexDataRestoreError, SimplexValidationError,
         },
         prelude::repair::{
             DelaunayCheckPolicy, DelaunayRepairError, DelaunayRepairOutcome, DelaunayRepairPolicy,
@@ -2089,6 +2091,7 @@ mod tests {
         assert!(is_normal::<DelaunayRepairError>());
         assert!(is_normal::<DelaunayRepairStats>());
         assert!(is_normal::<PlManifoldRepairError>());
+        assert!(is_normal::<PlManifoldRepairStage>());
         assert!(is_normal::<PlManifoldRepairStats<(), (), 3>>());
         assert!(is_normal::<SimplexDataRestoreError>());
         assert!(is_normal::<SimplexValidationError>());
