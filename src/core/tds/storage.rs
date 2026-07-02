@@ -350,6 +350,70 @@ use std::{
 };
 use uuid::Uuid;
 
+/// Opaque runtime identity for one live topology owner.
+///
+/// `TopologyOwnerId` is a proof token, not durable serialized identity. It is
+/// minted from a live [`Tds`]. Cloning a `TopologyOwnerId` preserves the same
+/// proof token, while cloning or deserializing the owning `Tds` mints a fresh
+/// token so detached proposals from one storage owner cannot be mistaken for
+/// proposals from another owner.
+///
+/// # Examples
+///
+/// ```
+/// use delaunay::prelude::tds::Tds;
+///
+/// let tds: Tds<(), (), 2> = Tds::empty();
+/// let cloned = tds.clone();
+///
+/// assert_ne!(tds.topology_owner_id(), cloned.topology_owner_id());
+/// ```
+#[derive(Clone, Debug)]
+#[must_use]
+pub struct TopologyOwnerId {
+    identity: Arc<Uuid>,
+}
+
+impl TopologyOwnerId {
+    /// Creates an owner token from the live runtime identity stored in a [`Tds`].
+    pub(crate) fn from_identity(identity: &Arc<Uuid>) -> Self {
+        Self {
+            identity: Arc::clone(identity),
+        }
+    }
+}
+
+impl PartialEq for TopologyOwnerId {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.identity, &other.identity)
+    }
+}
+
+impl Eq for TopologyOwnerId {}
+
+/// Trait for values that own a canonical topology storage identity.
+///
+/// Pachner proposals and other detached topology artifacts use this trait to
+/// reject cross-owner reuse before interpreting runtime-local keys.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::tds::{Tds, TopologyOwner};
+///
+/// let tds: Tds<(), (), 2> = Tds::empty();
+///
+/// assert_eq!(tds.topology_owner_id(), tds.topology_owner_id());
+/// assert_eq!(tds.topology_generation(), tds.generation());
+/// ```
+pub trait TopologyOwner {
+    /// Returns the runtime identity token for the canonical topology owner.
+    fn topology_owner_id(&self) -> TopologyOwnerId;
+
+    /// Returns the current structural generation for the canonical topology owner.
+    fn topology_generation(&self) -> u64;
+}
+
 #[derive(Debug)]
 /// The `Tds` struct represents a triangulation data structure with vertices
 /// and simplices, where the vertices and simplices are identified by UUIDs.
@@ -1552,6 +1616,26 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         self.generation.load(Ordering::Relaxed)
     }
 
+    /// Returns the opaque runtime identity token for this topology owner.
+    ///
+    /// Cloning a [`Tds`] creates a fresh owner identity, while internal rollback
+    /// snapshots preserve the identity of the owner they protect.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::tds::Tds;
+    ///
+    /// let tds: Tds<(), (), 3> = Tds::empty();
+    /// let owner = tds.topology_owner_id();
+    ///
+    /// assert_eq!(owner, tds.topology_owner_id());
+    /// ```
+    #[inline]
+    pub fn topology_owner_id(&self) -> TopologyOwnerId {
+        TopologyOwnerId::from_identity(&self.identity)
+    }
+
     /// Returns the runtime identity used by cache owners to reject handles from another TDS.
     #[inline]
     pub(crate) const fn identity(&self) -> &Arc<Uuid> {
@@ -1569,6 +1653,18 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 }
 
 impl<U, V, const D: usize> Tds<U, V, D> {}
+
+impl<U, V, const D: usize> TopologyOwner for Tds<U, V, D> {
+    #[inline]
+    fn topology_owner_id(&self) -> TopologyOwnerId {
+        Self::topology_owner_id(self)
+    }
+
+    #[inline]
+    fn topology_generation(&self) -> u64 {
+        self.generation()
+    }
+}
 
 impl<U, V, const D: usize> Tds<U, V, D> {
     /// Returns a validated borrowed view of a simplex's vertex keys.

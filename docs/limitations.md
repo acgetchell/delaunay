@@ -173,6 +173,10 @@ These are not currently implemented:
 - Constrained Delaunay triangulations.
 - Voronoi diagram extraction.
 - Built-in visualization.
+- Multi-threaded construction, proposal coordination, or concurrent topology
+  mutation APIs. Runtime owner/generation provenance exists for caches and
+  detached Pachner proposals, but parallel execution still requires a dedicated
+  synchronization and transaction design.
 - Massively parallel, GPU, or out-of-core construction.
 - Full spherical or hyperbolic triangulation semantics.
 

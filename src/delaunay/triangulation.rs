@@ -7,6 +7,7 @@
 
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::operations::DelaunayInsertionState;
+use crate::core::tds::{TopologyOwner, TopologyOwnerId};
 use crate::core::triangulation::Triangulation;
 
 /// Delaunay triangulation with incremental insertion support.
@@ -80,4 +81,16 @@ pub struct DelaunayTriangulation<K, U, V, const D: usize> {
     /// cache can survive transactional rollbacks even if they leave behind stale
     /// keys from an insertion that did not commit.
     pub(crate) spatial_index: Option<HashGridIndex<D>>,
+}
+
+impl<K, U, V, const D: usize> TopologyOwner for DelaunayTriangulation<K, U, V, D> {
+    #[inline]
+    fn topology_owner_id(&self) -> TopologyOwnerId {
+        self.tri.topology_owner_id()
+    }
+
+    #[inline]
+    fn topology_generation(&self) -> u64 {
+        self.tri.topology_generation()
+    }
 }

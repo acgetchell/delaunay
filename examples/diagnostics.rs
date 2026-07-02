@@ -142,7 +142,10 @@ fn build_non_delaunay_triangulation_2d()
                 };
                 let facet = FacetHandle::try_new(dt.tds(), simplex_key, facet_index)?;
                 let mut trial = dt.clone();
-                if trial.attempt_pachner(PachnerMove::K2 { facet }).is_ok()
+                let Ok(proposal) = trial.propose_pachner(PachnerMove::K2 { facet }) else {
+                    continue;
+                };
+                if proposal.attempt_on(&mut trial).is_ok()
                     && trial.as_triangulation().validate().is_ok()
                     && matches!(
                         trial.is_valid_delaunay(),

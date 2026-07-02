@@ -171,6 +171,11 @@ for topology guarantee and validation policy details.
 The local edit API is exposed through the `PachnerMoves` trait in
 `prelude::pachner`:
 
+The canonical public workflow is fluent and staged: parse a raw
+`PachnerMove` into a provenanced `PachnerProposal`, then dry-run or attempt the
+proposal through the proposal object. This keeps mutation explicit while
+preserving owner/generation evidence between stages.
+
 ```rust
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
@@ -204,26 +209,34 @@ fn main() -> Result<(), ExampleError> {
     let Some((simplex_key, _)) = dt.simplices().next() else {
         return Ok(());
     };
-    let info = dt.attempt_pachner(PachnerMove::K1Insert {
-        simplex_key,
-        vertex: vertex![0.25, 0.25, 0.25]?,
-    })?;
+    let info = dt
+        .propose_pachner(PachnerMove::K1Insert {
+            simplex_key,
+            vertex: vertex![0.25, 0.25, 0.25]?,
+        })?
+        .attempt_on(&mut dt)?;
 
     // k=1 inverse: Remove a vertex (collapses its star)
     let vertex_key = info.inserted_face_vertices[0];
-    dt.attempt_pachner(PachnerMove::K1Remove { vertex_key })?;
+    dt.propose_pachner(PachnerMove::K1Remove { vertex_key })?
+        .attempt_on(&mut dt)?;
 
     // k=2 move: Flip a facet (2 simplices ↔ D simplices)
     let facet = /* FacetHandle */;
-    let info = dt.attempt_pachner(PachnerMove::K2 { facet })?;
+    let info = dt
+        .propose_pachner(PachnerMove::K2 { facet })?
+        .attempt_on(&mut dt)?;
 
     // k=2 inverse: Flip from an edge star (D simplices ↔ 2 simplices)
     let edge = EdgeKey::try_new(info.inserted_face_vertices[0], info.inserted_face_vertices[1])?;
-    dt.attempt_pachner(PachnerMove::K2Inverse { edge })?;
+    dt.propose_pachner(PachnerMove::K2Inverse { edge })?
+        .attempt_on(&mut dt)?;
 
     // k=3 move: Flip a ridge (3 simplices ↔ D-1 simplices, requires D ≥ 3)
     let ridge = /* RidgeHandle */;
-    let info = dt.attempt_pachner(PachnerMove::K3 { ridge })?;
+    let info = dt
+        .propose_pachner(PachnerMove::K3 { ridge })?
+        .attempt_on(&mut dt)?;
 
     // k=3 inverse: Flip from a triangle star (D-1 simplices ↔ 3 simplices)
     let triangle = TriangleHandle::try_new(
@@ -231,7 +244,8 @@ fn main() -> Result<(), ExampleError> {
         info.inserted_face_vertices[1],
         info.inserted_face_vertices[2],
     )?;
-    dt.attempt_pachner(PachnerMove::K3Inverse { triangle })?;
+    dt.propose_pachner(PachnerMove::K3Inverse { triangle })?
+        .attempt_on(&mut dt)?;
     Ok(())
 }
 ```
@@ -277,10 +291,46 @@ fn main() -> Result<(), ExampleError> {
 ### Key Characteristics
 
 - **Explicit control**: You specify exactly which flip to perform
+- **Provenanced proposals**: Raw `PachnerMove` values are parsed into
+  `PachnerProposal` values before dry-run or mutation
 - **No automatic property preservation**: The Delaunay property is **not** maintained automatically
 - **Reversible**: Each forward move has a corresponding inverse
 - **Geometric validation**: Flips check for degeneracy and manifold preservation
 - **Flexible**: Can be used to build custom repair or optimization algorithms
+
+### Proposal Provenance
+
+`PachnerMove` is a raw detached request. It can be stored, randomized, or queued,
+but it is not proof that its handles are still live or that they came from the
+target triangulation. `propose_pachner(...)` is the raw-to-provenanced
+boundary: it validates the local move preconditions, then stamps the resulting
+`PachnerProposal` with the current topology owner and structural generation
+while carrying the proven feasibility report inward.
+
+Two runtime-only TDS primitives provide that provenance:
+
+- `TopologyOwnerId` is an opaque identity for one live topology owner. Ordinary
+  clones and deserialization get fresh identities, while internal rollback
+  snapshots preserve identity so failure-atomic mutation paths can restore the
+  same owner.
+- The topology generation increments on structural mutation. It is an
+  invalidation stamp for caches, proposals, and detached topology artifacts; it
+  is not serialized.
+
+`PachnerProposal::can_attempt_on(...)` and `PachnerProposal::attempt_on(...)`
+are the dry-run and mutation paths. They reject proposals from another owner
+with `FlipError::WrongTopologyOwner` and proposals from an older generation with
+`FlipError::StaleTopologyProposal` before interpreting runtime-local keys.
+`can_attempt_on(...)` returns the feasibility proof stored in the proposal after
+that provenance check; `attempt_on(...)` still revalidates through the selected
+primitive mutation path before changing topology.
+
+This design supports future concurrent proposal workflows: worker threads can
+compute or filter candidate moves against an immutable snapshot, then a
+coordinator can attempt selected proposals against the canonical owner and treat
+losing stale proposals as typed, expected failures. It does not by itself make
+topology mutation concurrent; shared mutable access still needs an explicit
+synchronization or transaction design.
 
 ### Important Caveats
 
@@ -338,7 +388,8 @@ fn main() -> Result<(), ExampleError> {
 
     // 3. Make custom topology edits (Pachner Move API)
     let facet = /* ... */;
-    dt.attempt_pachner(PachnerMove::K2 { facet })?;
+    dt.propose_pachner(PachnerMove::K2 { facet })?
+        .attempt_on(&mut dt)?;
 
     // 4. Verify Delaunay property if needed
     if let Err(e) = dt.is_valid_delaunay() {

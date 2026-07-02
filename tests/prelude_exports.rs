@@ -123,10 +123,12 @@ use delaunay::prelude::pachner::{
     BistellarFlipKind as PachnerBistellarFlipKind, EdgeKey as PachnerEdgeKey,
     EdgeKeyError as PachnerEdgeKeyError, FacetError as PachnerFacetError,
     FacetHandle as PachnerFacetHandle, FlipDirection as PachnerFlipDirection,
-    FlipError as PachnerFlipError, PachnerMove, PachnerMoveResult, PachnerMoves,
-    RidgeHandle as PachnerRidgeHandle, SimplexKey as PachnerSimplexKey,
-    TriangleHandle as PachnerTriangleHandle, TriangleHandleError as PachnerTriangleHandleError,
-    Vertex as PachnerVertex, VertexKey as PachnerVertexKey, vertex as pachner_vertex,
+    FlipError as PachnerFlipError, PachnerMove, PachnerMoveFeasibility, PachnerMoveResult,
+    PachnerMoves, PachnerProposal, RidgeHandle as PachnerRidgeHandle,
+    SimplexKey as PachnerSimplexKey, TopologyOwner as PachnerTopologyOwner,
+    TopologyOwnerId as PachnerTopologyOwnerId, TriangleHandle as PachnerTriangleHandle,
+    TriangleHandleError as PachnerTriangleHandleError, Vertex as PachnerVertex,
+    VertexKey as PachnerVertexKey, vertex as pachner_vertex,
 };
 use delaunay::prelude::query::{
     AllFacetsIter as QueryAllFacetsIter, BoundaryFacetsIter as QueryBoundaryFacetsIter, ConvexHull,
@@ -154,7 +156,7 @@ use delaunay::prelude::tds::{
     EdgeKeyError, EdgeView, FacetError, FacetHandle, FacetIncidenceView as TdsFacetIncidenceView,
     FacetView, InvariantError, NeighborSlot, OneSidedFacetsIter as TdsOneSidedFacetsIter,
     SimplexFacetsIter as TdsSimplexFacetsIter, SimplexKey, Tds, TdsConstructionError, TdsError,
-    VertexKey,
+    TopologyOwner as TdsTopologyOwner, TopologyOwnerId as TdsTopologyOwnerId, VertexKey,
 };
 use delaunay::prelude::topology::spaces::{
     GlobalTopology, GlobalTopologyModelError, LiftedLinkEdge, LiftedVertexId, TopologyKind,
@@ -308,6 +310,8 @@ enum PreludeExportTestError {
     #[error(transparent)]
     Edge(#[from] EdgeKeyError),
     #[error(transparent)]
+    PachnerFlip(#[from] PachnerFlipError),
+    #[error(transparent)]
     RidgeCandidate(#[from] RidgeCandidateError),
     #[error(transparent)]
     ToroidalDomain(#[from] ToroidalDomainError),
@@ -335,8 +339,14 @@ const fn assert_root_pachner_moves(_: &impl DirectPachnerMoves<3, VertexData = (
 /// Proves unified Pachner dispatch inherits the kernel-free explicit flip contract.
 const fn assert_pachner_moves_without_kernel<T: PachnerMoves<2, VertexData = ()>>() {}
 
-/// Proves unified Pachner dispatch is available through unsized flip trait objects.
-const fn assert_pachner_moves_for_unsized_flip_trait_objects<
+/// Proves the focused Pachner prelude exposes topology-owner provenance.
+const fn assert_pachner_topology_owner(_: &impl PachnerTopologyOwner) {}
+
+/// Proves the focused TDS prelude exposes topology-owner provenance.
+const fn assert_tds_topology_owner(_: &impl TdsTopologyOwner) {}
+
+/// Proves unified Pachner dispatch remains object-safe with owner provenance.
+const fn assert_pachner_moves_for_unsized_trait_objects<
     T: PachnerMoves<2, VertexData = ()> + ?Sized,
 >() {
 }
@@ -344,11 +354,15 @@ const fn assert_pachner_moves_for_unsized_flip_trait_objects<
 const fn assert_pachner_prelude_type_exports(dt: &impl PachnerMoves<3, VertexData = ()>) {
     assert_pachner_moves(dt);
     assert_root_pachner_moves(dt);
+    assert_pachner_topology_owner(dt);
     let _pachner_kind_size = size_of::<PachnerBistellarFlipKind>();
     let _pachner_direction_size = size_of::<PachnerFlipDirection>();
     let _pachner_error_size = size_of::<PachnerFlipError>();
     let _pachner_move_size = size_of::<PachnerMove<(), 3>>();
+    let _pachner_proposal_size = size_of::<PachnerProposal<(), 3>>();
+    let _pachner_move_feasibility_size = size_of::<PachnerMoveFeasibility<3>>();
     let _pachner_result_size = size_of::<PachnerMoveResult<3>>();
+    let _pachner_owner_size = size_of::<PachnerTopologyOwnerId>();
     let _pachner_edge_size = size_of::<PachnerEdgeKey>();
     let _pachner_edge_error_size = size_of::<PachnerEdgeKeyError>();
     let _pachner_facet_error_size = size_of::<PachnerFacetError>();
@@ -375,6 +389,11 @@ fn assert_pachner_prelude_exports(
         pachner_move,
         PachnerMove::K1Insert { simplex_key: key, .. } if key == simplex_key
     );
+    let proposal = dt.propose_pachner(pachner_move)?;
+    assert_eq!(proposal.owner_id(), &dt.topology_owner_id());
+    let feasibility = proposal.can_attempt_on(dt)?;
+    assert_eq!(feasibility.kind, PachnerBistellarFlipKind::k1(3));
+    assert!(feasibility.inserted_face_vertices.is_none());
     Ok(())
 }
 
@@ -835,7 +854,7 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
 fn flip_exports_cover_orientation_check_stage() {
     assert_bistellar_flips_without_kernel::<GenericTriangulation<NonKernelMarker, (), (), 2>>();
     assert_pachner_moves_without_kernel::<GenericTriangulation<NonKernelMarker, (), (), 2>>();
-    assert_pachner_moves_for_unsized_flip_trait_objects::<dyn BistellarFlips<2, VertexData = ()>>();
+    assert_pachner_moves_for_unsized_trait_objects::<dyn PachnerMoves<2, VertexData = ()>>();
     assert_matches!(
         DirectFlipOrientationCheckStage::BeforeMutation,
         DirectFlipOrientationCheckStage::BeforeMutation
@@ -1041,8 +1060,12 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
         .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
     assert_eq!(hull_facet_view_count, boundary_facet_count);
     dt.validate().unwrap();
+    assert_tds_topology_owner(dt.tds());
     assert_bistellar_flips(&dt);
     assert_pachner_prelude_exports(&dt, simplex_key)?;
+    assert_send_sync_unpin::<PachnerProposal<(), 3>>();
+    assert_send_sync_unpin::<PachnerTopologyOwnerId>();
+    assert_send_sync_unpin::<TdsTopologyOwnerId>();
 
     assert_insertion_prelude_empty_tds_exports()?;
     assert_send_sync_unpin::<TdsMutationError>();

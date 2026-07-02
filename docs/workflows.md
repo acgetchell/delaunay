@@ -502,16 +502,20 @@ fn main() -> Result<(), FlipExampleError> {
     let Some((simplex_key, _)) = dt.simplices().next() else {
         return Ok(());
     };
-    let info = dt.attempt_pachner(PachnerMove::K1Insert {
-        simplex_key,
-        vertex: vertex![0.1, 0.1, 0.1]?,
-    })?;
+    let info = dt
+        .propose_pachner(PachnerMove::K1Insert {
+            simplex_key,
+            vertex: vertex![0.1, 0.1, 0.1]?,
+        })?
+        .attempt_on(&mut dt)?;
     let inserted_vertex = info.inserted_face_vertices[0];
 
     // k=1 inverse: remove the inserted vertex (collapse its star).
-    let removed = dt.attempt_pachner(PachnerMove::K1Remove {
-        vertex_key: inserted_vertex,
-    })?;
+    let removed = dt
+        .propose_pachner(PachnerMove::K1Remove {
+            vertex_key: inserted_vertex,
+        })?
+        .attempt_on(&mut dt)?;
     assert!(!removed.removed_simplices.is_empty());
 
     // Validate the stack (Levels 1–3) after topological edits.

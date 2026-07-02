@@ -12,7 +12,9 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::tds::{SimplexKey, Tds, TdsMutationError, VertexKey};
+use crate::core::tds::{
+    SimplexKey, Tds, TdsMutationError, TopologyOwner, TopologyOwnerId, VertexKey,
+};
 use crate::core::validation::{TopologyGuarantee, ValidationPolicy};
 use crate::geometry::kernel::Kernel;
 use crate::topology::traits::topological_space::GlobalTopology;
@@ -44,6 +46,18 @@ pub struct Triangulation<K, U, V, const D: usize> {
     pub(crate) global_topology: GlobalTopology<D>,
     pub(crate) validation_policy: ValidationPolicy,
     pub(crate) topology_guarantee: TopologyGuarantee,
+}
+
+impl<K, U, V, const D: usize> TopologyOwner for Triangulation<K, U, V, D> {
+    #[inline]
+    fn topology_owner_id(&self) -> TopologyOwnerId {
+        self.tds.topology_owner_id()
+    }
+
+    #[inline]
+    fn topology_generation(&self) -> u64 {
+        self.tds.generation()
+    }
 }
 
 // =============================================================================
