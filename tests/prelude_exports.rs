@@ -64,7 +64,8 @@ use delaunay::prelude::construction::{
 };
 use delaunay::prelude::delaunayize::{
     DelaunayTriangulationBuilder as DelaunayizeDelaunayTriangulationBuilder, DelaunayizeConfig,
-    DelaunayizeError, DelaunayizeOutcome, SimplexDataRestoreError, delaunayize_by_flips,
+    DelaunayizeError, DelaunayizeOutcome, PlManifoldRepairError, PlManifoldRepairStage,
+    PlManifoldRepairStats, SimplexDataRestoreError, delaunayize_by_flips,
 };
 use delaunay::prelude::deletion::{
     DeleteVertexError as FocusedDeleteVertexError, VertexKey as DeletionVertexKey,
@@ -202,7 +203,8 @@ use delaunay::prelude::{
     GlobalTopology as RootGlobalTopology, GlobalTopologyModelError as RootGlobalTopologyModelError,
     IncidenceView as RootIncidenceView,
     InitialSimplexUnexpectedInsertionStage as RootInitialSimplexUnexpectedInsertionStage,
-    PeriodicDomainPeriodError as RootPeriodicDomainPeriodError, SecureHashMap, SecureHashSet,
+    PeriodicDomainPeriodError as RootPeriodicDomainPeriodError,
+    PlManifoldRepairStage as RootPreludePlManifoldRepairStage, SecureHashMap, SecureHashSet,
     SimplexNeighborIndex as RootSimplexNeighborIndex, TopologyError as RootTopologyError,
     TopologyGuarantee as RootTopologyGuarantee, TopologyKind as RootTopologyKind,
     ToroidalConstructionMode as RootToroidalConstructionMode, ToroidalDomain as RootToroidalDomain,
@@ -241,6 +243,7 @@ use delaunay::{
     MESH_EXPORT_SCHEMA as RootMeshExportSchema, MeshExport as RootMeshExport,
     MeshExportError as RootMeshExportError,
     MeshExportValidationError as RootMeshExportValidationError,
+    PlManifoldRepairStage as RootPlManifoldRepairStage,
     ValidatedMeshExport as RootValidatedMeshExport,
     ValidatedVisualizationData as RootValidatedVisualizationData,
     VisualizationTopologyGuarantee as RootVisualizationTopologyGuarantee,
@@ -373,6 +376,19 @@ fn assert_pachner_prelude_exports(
         PachnerMove::K1Insert { simplex_key: key, .. } if key == simplex_key
     );
     Ok(())
+}
+
+fn assert_delaunayize_prelude_repair_exports() {
+    let _typed_repair_stats: PlManifoldRepairStats<(), (), 3> = PlManifoldRepairStats::default();
+    let repair_stage = PlManifoldRepairStage::RidgeLink;
+    assert_eq!(repair_stage, PlManifoldRepairStage::RidgeLink);
+    let repair_error = PlManifoldRepairError::TargetedPostconditionValidation {
+        source: Box::new(ManifoldError::ManifoldFacetMultiplicity {
+            facet_key: 0x1234,
+            simplex_count: 3,
+        }),
+    };
+    assert!(repair_error.to_string().contains("postcondition"));
 }
 
 const fn assert_send_sync_unpin<T: Send + Sync + Unpin>() {}
@@ -751,6 +767,10 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
 
     assert_eq!(dt.topology_guarantee(), RootTopologyGuarantee::PLManifold);
     assert_eq!(dt.validation_policy(), RootValidationPolicy::ExplicitOnly);
+    assert_eq!(
+        RootPreludePlManifoldRepairStage::RidgeLink,
+        RootPlManifoldRepairStage::RidgeLink
+    );
     assert_matches!(
         RootInitialSimplexUnexpectedInsertionStage::NonManifoldTopology {
             facet_hash: 0x00C0_FFEE,
@@ -1989,6 +2009,7 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
     assert!(!outcome.used_fallback_rebuild);
     let _typed_outcome: DelaunayizeOutcome<(), (), 3> = outcome;
     let _typed_error: Option<DelaunayizeError> = None;
+    assert_delaunayize_prelude_repair_exports();
     assert_send_sync_unpin::<SimplexDataRestoreError>();
     Ok(())
 }

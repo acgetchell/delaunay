@@ -424,6 +424,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         prog="tag-release",
         description="Create an annotated git tag from a CHANGELOG.md section.",
+        suggest_on_error=True,
+        color=False,
     )
     parser.add_argument("version", help="Tag version (e.g. v1.2.3)")
     parser.add_argument("--force", action="store_true", help="Recreate tag if it already exists")

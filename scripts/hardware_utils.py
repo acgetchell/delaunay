@@ -21,17 +21,32 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from subprocess_utils import run_safe_command
+    from subprocess_utils import ExceptionFamily, run_safe_command
 else:
     try:
         # When executed as a script from scripts/
-        from subprocess_utils import run_safe_command
+        from subprocess_utils import ExceptionFamily, run_safe_command
     except ModuleNotFoundError:
         # When imported as a module (e.g., scripts.hardware_utils)
-        from scripts.subprocess_utils import run_safe_command
+        from scripts.subprocess_utils import ExceptionFamily, run_safe_command
 
 # Configure a module-level logger
 logger = logging.getLogger(__name__)
+
+_LINUX_CPUINFO_COMMAND_ERRORS: ExceptionFamily = (subprocess.CalledProcessError, IndexError)
+_LINUX_PROC_CPUINFO_READ_ERRORS: ExceptionFamily = (FileNotFoundError, PermissionError)
+_LINUX_PROC_CPU_CORE_ERRORS: ExceptionFamily = (FileNotFoundError, PermissionError, ValueError)
+_LINUX_LSCPU_CPU_CORE_ERRORS: ExceptionFamily = (subprocess.CalledProcessError, ValueError, IndexError)
+_LINUX_CPU_CORE_DISCOVERY_ERRORS: ExceptionFamily = (
+    OSError,
+    RuntimeError,
+    subprocess.SubprocessError,
+    TypeError,
+    ValueError,
+    IndexError,
+)
+_LINUX_MEMINFO_ERRORS: ExceptionFamily = (FileNotFoundError, PermissionError, ValueError)
+_MEMORY_VALUE_PARSE_ERRORS: ExceptionFamily = (ValueError, AttributeError)
 
 
 class HardwareInfo:
@@ -104,7 +119,7 @@ class HardwareInfo:
                 for line in lscpu_output.split("\n"):
                     if "Model name:" in line or "Model:" in line:
                         return line.split(":", 1)[1].strip()
-            except (subprocess.CalledProcessError, IndexError):
+            except _LINUX_CPUINFO_COMMAND_ERRORS:
                 pass
 
         # Fallback to /proc/cpuinfo
@@ -113,7 +128,7 @@ class HardwareInfo:
                 for line in f:
                     if line.startswith(("model name", "Processor")):
                         return line.split(":", 1)[1].strip()
-        except (FileNotFoundError, PermissionError):
+        except _LINUX_PROC_CPUINFO_READ_ERRORS:
             pass
 
         return "Unknown"
@@ -134,7 +149,7 @@ class HardwareInfo:
                         physical_id = core_id = None
             if physical_cores:
                 return str(len(physical_cores))
-        except (FileNotFoundError, PermissionError, ValueError):
+        except _LINUX_PROC_CPU_CORE_ERRORS:
             return "Unknown"
 
         return "Unknown"
@@ -154,7 +169,7 @@ class HardwareInfo:
 
             if cores_per_socket is not None and sockets is not None:
                 return str(cores_per_socket * sockets)
-        except (subprocess.CalledProcessError, ValueError, IndexError):
+        except _LINUX_LSCPU_CPU_CORE_ERRORS:
             return "Unknown"
 
         return "Unknown"
@@ -169,7 +184,7 @@ class HardwareInfo:
         if shutil.which("lscpu"):
             try:
                 cpu_cores = self._get_linux_cpu_cores_from_lscpu()
-            except (OSError, RuntimeError, subprocess.SubprocessError, TypeError, ValueError, IndexError):
+            except _LINUX_CPU_CORE_DISCOVERY_ERRORS:
                 logger.debug("Failed to parse Linux CPU cores from lscpu", exc_info=True)
             else:
                 if cpu_cores != "Unknown":
@@ -199,7 +214,7 @@ class HardwareInfo:
             with open("/proc/cpuinfo", encoding="utf-8") as f:
                 processor_count = sum(1 for line in f if line.startswith("processor"))
                 return str(processor_count)
-        except (FileNotFoundError, PermissionError):
+        except _LINUX_PROC_CPUINFO_READ_ERRORS:
             pass
 
         return "Unknown"
@@ -319,7 +334,7 @@ class HardwareInfo:
                                 memory_gb = mem_kb / (1024 * 1024)
                                 memory = f"{memory_gb:.1f} GB"
                                 break
-                except (FileNotFoundError, PermissionError, ValueError):
+                except _LINUX_MEMINFO_ERRORS:
                     pass
 
             elif self.os_type == "Windows":
@@ -647,14 +662,18 @@ class HardwareComparator:
             match = re.search(r"([0-9]+(?:\.[0-9]+)?)", memory_clean)
             if match:
                 return float(match.group(1))
-        except (ValueError, AttributeError):
+        except _MEMORY_VALUE_PARSE_ERRORS:
             pass
         return None
 
 
 def main() -> None:
     """Command-line interface for hardware utilities."""
-    parser = argparse.ArgumentParser(description="Cross-platform hardware information detection and comparison")
+    parser = argparse.ArgumentParser(
+        description="Cross-platform hardware information detection and comparison",
+        suggest_on_error=True,
+        color=False,
+    )
     parser.add_argument("command", choices=["info", "kv", "compare"], help="Command to run")
     parser.add_argument("--baseline-file", help="Path to baseline file (required for 'compare' command)")
     parser.add_argument("--json", action="store_true", help="Output in JSON format")

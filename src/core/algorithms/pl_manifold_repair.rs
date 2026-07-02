@@ -1,10 +1,10 @@
 //! Bounded deterministic PL-manifold topology repair.
 //!
-//! This module implements a `pub(crate)` repair algorithm that attempts to bring
-//! a triangulation closer to satisfying the
+//! This module implements repair algorithms that attempt to bring a
+//! triangulation closer to satisfying the
 //! [`TopologyGuarantee::PLManifold`](crate::prelude::validation::TopologyGuarantee::PLManifold)
-//! invariant by removing simplices that cause codimension-1 facet over-sharing
-//! (facets incident to more than 2 simplices).
+//! invariant by removing simplices that cause facet over-sharing, non-closed
+//! boundary ridges, non-manifold ridge links, or non-manifold vertex links.
 //!
 //! # Algorithm
 //!
@@ -14,7 +14,18 @@
 //!    identify facets with degree > 2, deterministically select the worst-quality
 //!    simplex per over-shared facet for removal, remove the batch, and rebuild
 //!    neighbors/incidence.
-//! 3. **Termination**: the loop terminates on success (all facets have degree
+//! 3. **Targeted topology repair**: validate boundary-ridge multiplicity,
+//!    ridge-link manifoldness, and vertex-link manifoldness, then remove the
+//!    worst-quality simplex in the local violating star until each targeted
+//!    condition passes or the repair budget is exhausted.
+//! 4. **Termination**: the loop terminates on success (all targeted PL-manifold
+//!    checks pass), budget exhaustion (`max_iterations` or
+//!    `max_simplices_removed`), or no-progress (a violation has no removable
+//!    local candidate).
+//!
+//! The narrower `repair_facet_oversharing` entrypoint remains available for
+//! callers that only want codimension-1 facet-degree repair:
+//! the loop terminates on success (all facets have degree
 //!    ≤ 2), budget exhaustion (`max_iterations` or `max_simplices_removed`), or
 //!    no-progress (zero simplices removed in a pass).
 //!
@@ -26,14 +37,24 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::collections::{SimplexKeySet, SmallBuffer, fast_hash_set_with_capacity};
-use crate::core::facet::FacetHandle;
+use std::cmp::Ordering;
+use std::fmt::{self, Display, Formatter};
+
+use crate::core::collections::{
+    SimplexKeyBuffer, SimplexKeySet, VertexKeyBuffer, fast_hash_set_with_capacity,
+};
+use crate::core::facet::{FacetHandle, facet_key_from_vertices};
 use crate::core::simplex::Simplex;
 use crate::core::tds::{SimplexKey, Tds, TdsError, VertexKey};
-use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::geometry::util::norms::hypot;
-use crate::topology::manifold::ValidatedFacetDegreeMap;
+use crate::topology::manifold::{
+    BoundaryFacetClassification, ManifoldError, ValidatedFacetDegreeMap, classify_boundary_facet,
+    validate_closed_boundary_from_validated_facet_map, validate_ridge_links,
+    validate_vertex_links_from_validated_facet_map,
+};
+use crate::topology::ridge::{build_ridge_star_map, simplex_star_simplices};
+use crate::topology::traits::topological_space::GlobalTopology;
 use num_traits::NumCast;
 use slotmap::Key;
 use thiserror::Error;
@@ -67,6 +88,66 @@ impl Default for PlManifoldRepairConfig {
     }
 }
 
+/// Targeted PL-manifold repair stage that produced a topology-repair diagnostic.
+///
+/// The stages match the validation layers repaired after codimension-1 facet
+/// degree repair: boundary-ridge multiplicity, ridge-link manifoldness, and
+/// vertex-link manifoldness.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::delaunayize::PlManifoldRepairStage;
+///
+/// let stage = PlManifoldRepairStage::RidgeLink;
+/// assert_eq!(format!("{stage:?}"), "RidgeLink");
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PlManifoldRepairStage {
+    /// Repair of boundary ridges with invalid boundary-facet multiplicity.
+    BoundaryRidgeMultiplicity,
+    /// Repair of non-manifold codimension-2 ridge links.
+    RidgeLink,
+    /// Repair of non-manifold vertex links.
+    VertexLink,
+}
+
+impl Display for PlManifoldRepairStage {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let label = match self {
+            Self::BoundaryRidgeMultiplicity => "boundary-ridge multiplicity",
+            Self::RidgeLink => "ridge-link",
+            Self::VertexLink => "vertex-link",
+        };
+        f.write_str(label)
+    }
+}
+
+/// Returns whether a manifold validation error belongs to a targeted repair stage.
+///
+/// Benchmark fixtures use this as the shared source of truth for the
+/// stage-to-error contract exercised by targeted PL-manifold repair.
+#[cfg(any(test, feature = "bench"))]
+pub(crate) const fn manifold_error_matches_repair_stage(
+    source: &ManifoldError,
+    stage: PlManifoldRepairStage,
+) -> bool {
+    matches!(
+        (stage, source),
+        (
+            PlManifoldRepairStage::BoundaryRidgeMultiplicity,
+            ManifoldError::BoundaryRidgeMultiplicity { .. }
+        ) | (
+            PlManifoldRepairStage::RidgeLink,
+            ManifoldError::RidgeLinkNotManifold { .. }
+        ) | (
+            PlManifoldRepairStage::VertexLink,
+            ManifoldError::VertexLinkNotManifold { .. }
+        )
+    )
+}
+
 // =============================================================================
 // STATISTICS
 // =============================================================================
@@ -98,7 +179,13 @@ pub struct PlManifoldRepairStats<U, V, const D: usize> {
     /// Vertices that became isolated after simplex removal and were removed from
     /// the TDS. Identifiable by [`Vertex::uuid()`].
     pub removed_vertices: Vec<Vertex<U, D>>,
-    /// Whether the facet-degree invariant was satisfied at termination.
+    /// Whether the requested PL-manifold repair target was satisfied at termination.
+    ///
+    /// For facet-over-sharing repair, this means the codimension-1 facet-degree
+    /// invariant holds. For the full
+    /// [`delaunayize_by_flips`](crate::delaunayize::delaunayize_by_flips)
+    /// topology stage, this means all targeted boundary-ridge, ridge-link, and
+    /// vertex-link checks passed.
     pub succeeded: bool,
 }
 
@@ -181,6 +268,64 @@ pub enum PlManifoldRepairError {
         /// Total simplices removed before progress stalled.
         simplices_removed: usize,
     },
+
+    /// A targeted topology stage exhausted the shared repair budget before its
+    /// manifold invariant was satisfied.
+    #[error(
+        "PL-manifold {stage} repair budget exhausted: {iterations} iterations, {simplices_removed} simplices removed (max_iterations={max_iterations}, max_simplices_removed={max_simplices_removed}); remaining violation: {source}"
+    )]
+    TargetedBudgetExhausted {
+        /// Targeted repair stage that could not finish within budget.
+        stage: PlManifoldRepairStage,
+        /// The validation error that was still present.
+        #[source]
+        source: Box<ManifoldError>,
+        /// Iterations executed across all topology repair stages.
+        iterations: usize,
+        /// Simplices removed across all topology repair stages.
+        simplices_removed: usize,
+        /// Configured iteration limit.
+        max_iterations: usize,
+        /// Configured simplex-removal limit.
+        max_simplices_removed: usize,
+    },
+
+    /// A targeted topology stage found a violation but could not identify or
+    /// remove a local candidate simplex.
+    #[error(
+        "PL-manifold {stage} repair made no progress after {iterations} iterations ({simplices_removed} simplices removed); remaining violation: {source}"
+    )]
+    TargetedNoProgress {
+        /// Targeted repair stage that stalled.
+        stage: PlManifoldRepairStage,
+        /// The validation error that could not be repaired.
+        #[source]
+        source: Box<ManifoldError>,
+        /// Iterations executed across all topology repair stages.
+        iterations: usize,
+        /// Simplices removed across all topology repair stages.
+        simplices_removed: usize,
+    },
+
+    /// A stage validator reported an error outside the violation shape owned
+    /// by the current targeted repair stage.
+    #[error("PL-manifold validation failed during {stage} repair: {source}")]
+    TargetedValidation {
+        /// Targeted repair stage being evaluated.
+        stage: PlManifoldRepairStage,
+        /// The typed manifold validation error.
+        #[source]
+        source: Box<ManifoldError>,
+    },
+
+    /// Final targeted topology validation reported a manifold error outside
+    /// the set handled by targeted repair stages.
+    #[error("PL-manifold targeted repair postcondition validation failed: {source}")]
+    TargetedPostconditionValidation {
+        /// Typed manifold validation error reported by the final roll-up.
+        #[source]
+        source: Box<ManifoldError>,
+    },
 }
 
 // =============================================================================
@@ -205,8 +350,8 @@ pub fn repair_facet_oversharing<U, V, const D: usize>(
     config: &PlManifoldRepairConfig,
 ) -> Result<PlManifoldRepairStats<U, V, D>, PlManifoldRepairError>
 where
-    U: DataType,
-    V: DataType,
+    U: Clone,
+    V: Clone,
 {
     let mut stats = PlManifoldRepairStats::default();
 
@@ -263,7 +408,7 @@ where
 
         // Check simplex-removal budget.
         let batch_size = removal_candidates.len();
-        if stats.simplices_removed + batch_size > config.max_simplices_removed {
+        if stats.simplices_removed.saturating_add(batch_size) > config.max_simplices_removed {
             prepare_error_return_topology(tds);
             return Err(PlManifoldRepairError::BudgetExhausted {
                 iterations: stats.iterations,
@@ -319,6 +464,460 @@ where
     })
 }
 
+/// Attempts full targeted PL-manifold repair after codimension-1 facet repair.
+///
+/// This orchestrator first delegates to [`repair_facet_oversharing`], then
+/// runs dedicated bounded stages for boundary-ridge multiplicity, ridge-link
+/// manifoldness, and vertex-link manifoldness. Each targeted stage removes the
+/// worst-quality simplex from the local star responsible for the first
+/// reported violation.
+///
+/// # Errors
+///
+/// Returns [`PlManifoldRepairError`] if the codimension-1 repair fails, a
+/// targeted repair stage exhausts the shared budget, a targeted violation has no
+/// removable local candidate, a stage validator reports a manifold error outside
+/// the stage currently being repaired, or final targeted validation reports an
+/// unrepaired manifold error outside the targeted stage set.
+pub(crate) fn repair_pl_manifold_topology<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
+    global_topology: GlobalTopology<D>,
+    config: &PlManifoldRepairConfig,
+) -> Result<PlManifoldRepairStats<U, V, D>, PlManifoldRepairError>
+where
+    U: Clone,
+    V: Clone,
+{
+    let mut stats = repair_facet_oversharing(tds, config)?;
+    stats.succeeded = false;
+
+    loop {
+        let iterations_before_cycle = stats.iterations;
+        let removed_before_cycle = stats.simplices_removed;
+
+        for stage in TARGETED_REPAIR_STAGES {
+            repair_targeted_topology_stage(tds, global_topology, config, &mut stats, stage)?;
+        }
+
+        match validate_targeted_topology(tds, global_topology) {
+            Ok(()) => {
+                stats.succeeded = true;
+                rebuild_success_topology(tds)?;
+                return Ok(stats);
+            }
+            Err(source) => {
+                let violation = match TargetedTopologyViolation::try_from(source) {
+                    Ok(violation) => violation,
+                    Err(source) => {
+                        prepare_error_return_topology(tds);
+                        return Err(PlManifoldRepairError::TargetedPostconditionValidation {
+                            source: Box::new(source),
+                        });
+                    }
+                };
+                let stage = violation.stage();
+
+                let no_progress = stats.iterations == iterations_before_cycle
+                    && stats.simplices_removed == removed_before_cycle;
+                if no_progress {
+                    prepare_error_return_topology(tds);
+                    return Err(PlManifoldRepairError::TargetedNoProgress {
+                        stage,
+                        source: Box::new(violation.source().clone()),
+                        iterations: stats.iterations,
+                        simplices_removed: stats.simplices_removed,
+                    });
+                }
+
+                if stats.iterations >= config.max_iterations {
+                    prepare_error_return_topology(tds);
+                    return Err(PlManifoldRepairError::TargetedBudgetExhausted {
+                        stage,
+                        source: Box::new(violation.source().clone()),
+                        iterations: stats.iterations,
+                        simplices_removed: stats.simplices_removed,
+                        max_iterations: config.max_iterations,
+                        max_simplices_removed: config.max_simplices_removed,
+                    });
+                }
+            }
+        }
+    }
+}
+
+const TARGETED_REPAIR_STAGES: [PlManifoldRepairStage; 3] = [
+    PlManifoldRepairStage::BoundaryRidgeMultiplicity,
+    PlManifoldRepairStage::RidgeLink,
+    PlManifoldRepairStage::VertexLink,
+];
+
+/// Repairable targeted topology violation with its stage and candidate key parsed.
+#[derive(Clone, Debug, PartialEq)]
+enum TargetedTopologyViolation {
+    /// Boundary ridge whose incident boundary-facet multiplicity is invalid.
+    BoundaryRidgeMultiplicity {
+        /// Offending ridge key.
+        ridge_key: u64,
+        /// Original typed validation source.
+        source: ManifoldError,
+    },
+    /// Ridge whose link is not manifold.
+    RidgeLink {
+        /// Offending ridge key.
+        ridge_key: u64,
+        /// Original typed validation source.
+        source: ManifoldError,
+    },
+    /// Vertex whose link is not manifold.
+    VertexLink {
+        /// Offending vertex key.
+        vertex_key: VertexKey,
+        /// Original typed validation source.
+        source: ManifoldError,
+    },
+}
+
+impl TargetedTopologyViolation {
+    /// Returns the repair stage that owns this parsed violation.
+    const fn stage(&self) -> PlManifoldRepairStage {
+        match self {
+            Self::BoundaryRidgeMultiplicity { .. } => {
+                PlManifoldRepairStage::BoundaryRidgeMultiplicity
+            }
+            Self::RidgeLink { .. } => PlManifoldRepairStage::RidgeLink,
+            Self::VertexLink { .. } => PlManifoldRepairStage::VertexLink,
+        }
+    }
+
+    /// Returns the original typed validation source.
+    const fn source(&self) -> &ManifoldError {
+        match self {
+            Self::BoundaryRidgeMultiplicity { source, .. }
+            | Self::RidgeLink { source, .. }
+            | Self::VertexLink { source, .. } => source,
+        }
+    }
+
+    /// Returns the original typed validation source.
+    fn into_source(self) -> ManifoldError {
+        match self {
+            Self::BoundaryRidgeMultiplicity { source, .. }
+            | Self::RidgeLink { source, .. }
+            | Self::VertexLink { source, .. } => source,
+        }
+    }
+}
+
+impl TryFrom<ManifoldError> for TargetedTopologyViolation {
+    type Error = ManifoldError;
+
+    fn try_from(source: ManifoldError) -> Result<Self, Self::Error> {
+        match source {
+            source @ ManifoldError::BoundaryRidgeMultiplicity { ridge_key, .. } => {
+                Ok(Self::BoundaryRidgeMultiplicity { ridge_key, source })
+            }
+            source @ ManifoldError::RidgeLinkNotManifold { ridge_key, .. } => {
+                Ok(Self::RidgeLink { ridge_key, source })
+            }
+            source @ ManifoldError::VertexLinkNotManifold { vertex_key, .. } => {
+                Ok(Self::VertexLink { vertex_key, source })
+            }
+            source => Err(source),
+        }
+    }
+}
+
+/// Runs one targeted topology repair stage until that stage's validator passes.
+fn repair_targeted_topology_stage<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
+    global_topology: GlobalTopology<D>,
+    config: &PlManifoldRepairConfig,
+    stats: &mut PlManifoldRepairStats<U, V, D>,
+    stage: PlManifoldRepairStage,
+) -> Result<(), PlManifoldRepairError>
+where
+    U: Clone,
+    V: Clone,
+{
+    loop {
+        let Some(violation) = targeted_stage_violation(tds, global_topology, stage)? else {
+            return Ok(());
+        };
+
+        if stats.iterations >= config.max_iterations
+            || stats.simplices_removed.saturating_add(1) > config.max_simplices_removed
+        {
+            prepare_error_return_topology(tds);
+            return Err(PlManifoldRepairError::TargetedBudgetExhausted {
+                stage,
+                source: Box::new(violation.source().clone()),
+                iterations: stats.iterations,
+                simplices_removed: stats.simplices_removed,
+                max_iterations: config.max_iterations,
+                max_simplices_removed: config.max_simplices_removed,
+            });
+        }
+
+        let candidates = candidate_simplices_for_violation(tds, global_topology, &violation)?;
+        let Some(simplex_key) = pick_worst_simplex_key(tds, candidates.as_slice()) else {
+            prepare_error_return_topology(tds);
+            return Err(PlManifoldRepairError::TargetedNoProgress {
+                stage,
+                source: Box::new(violation.source().clone()),
+                iterations: stats.iterations,
+                simplices_removed: stats.simplices_removed,
+            });
+        };
+
+        let removed = remove_targeted_simplex(tds, stats, simplex_key)?;
+        if removed == 0 {
+            prepare_error_return_topology(tds);
+            return Err(PlManifoldRepairError::TargetedNoProgress {
+                stage,
+                source: Box::new(violation.into_source()),
+                iterations: stats.iterations,
+                simplices_removed: stats.simplices_removed,
+            });
+        }
+        stats.iterations = stats.iterations.saturating_add(1);
+    }
+}
+
+/// Returns the first violation owned by a targeted repair stage.
+fn targeted_stage_violation<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    global_topology: GlobalTopology<D>,
+    stage: PlManifoldRepairStage,
+) -> Result<Option<TargetedTopologyViolation>, PlManifoldRepairError> {
+    let result = match stage {
+        PlManifoldRepairStage::BoundaryRidgeMultiplicity => {
+            validate_boundary_ridge_multiplicity(tds, global_topology)
+        }
+        PlManifoldRepairStage::RidgeLink => validate_ridge_links(tds),
+        PlManifoldRepairStage::VertexLink => {
+            validate_vertex_link_manifoldness(tds, global_topology)
+        }
+    };
+
+    match result {
+        Ok(()) => Ok(None),
+        Err(source) => match TargetedTopologyViolation::try_from(source) {
+            Ok(violation) if violation.stage() == stage => Ok(Some(violation)),
+            Ok(violation) => Err(PlManifoldRepairError::TargetedValidation {
+                stage,
+                source: Box::new(violation.into_source()),
+            }),
+            Err(source) => Err(PlManifoldRepairError::TargetedValidation {
+                stage,
+                source: Box::new(source),
+            }),
+        },
+    }
+}
+
+/// Validates all targeted PL-manifold conditions in pipeline order.
+fn validate_targeted_topology<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    global_topology: GlobalTopology<D>,
+) -> Result<(), ManifoldError> {
+    validate_boundary_ridge_multiplicity(tds, global_topology)?;
+    validate_ridge_links(tds)?;
+    validate_vertex_link_manifoldness(tds, global_topology)
+}
+
+/// Validates the boundary-ridge multiplicity stage against a fresh facet map.
+fn validate_boundary_ridge_multiplicity<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    global_topology: GlobalTopology<D>,
+) -> Result<(), ManifoldError> {
+    let facet_to_simplices = tds.build_facet_to_simplices_map()?;
+    let facet_to_simplices = ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices)?;
+    validate_closed_boundary_from_validated_facet_map(tds, facet_to_simplices, global_topology)
+}
+
+/// Validates vertex-link manifoldness against a fresh facet map.
+fn validate_vertex_link_manifoldness<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    global_topology: GlobalTopology<D>,
+) -> Result<(), ManifoldError> {
+    let facet_to_simplices = tds.build_facet_to_simplices_map()?;
+    let facet_to_simplices = ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices)?;
+    validate_vertex_links_from_validated_facet_map(tds, facet_to_simplices, global_topology)
+}
+
+/// Returns the local simplex candidates responsible for a targeted violation.
+fn candidate_simplices_for_violation<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    global_topology: GlobalTopology<D>,
+    violation: &TargetedTopologyViolation,
+) -> Result<SimplexKeyBuffer, PlManifoldRepairError> {
+    let stage = violation.stage();
+    let candidates = match violation {
+        TargetedTopologyViolation::BoundaryRidgeMultiplicity { ridge_key, .. } => {
+            boundary_ridge_candidate_simplices(tds, global_topology, *ridge_key)
+        }
+        TargetedTopologyViolation::RidgeLink { ridge_key, .. } => {
+            ridge_link_candidate_simplices(tds, *ridge_key)
+        }
+        TargetedTopologyViolation::VertexLink { vertex_key, .. } => {
+            vertex_link_candidate_simplices(tds, *vertex_key)
+        }
+    }
+    .map_err(|source| PlManifoldRepairError::TargetedValidation {
+        stage,
+        source: Box::new(source),
+    })?;
+    Ok(candidates)
+}
+
+/// Finds simplices incident to boundary facets containing the offending boundary ridge.
+fn boundary_ridge_candidate_simplices<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    global_topology: GlobalTopology<D>,
+    ridge_key: u64,
+) -> Result<SimplexKeyBuffer, ManifoldError> {
+    let facet_index = tds.build_facet_to_simplices_index()?;
+    let mut candidates = SimplexKeyBuffer::new();
+    let mut seen: SimplexKeySet = fast_hash_set_with_capacity(4);
+    let mut facet_vertices = VertexKeyBuffer::with_capacity(D);
+    let mut ridge_vertices = VertexKeyBuffer::with_capacity(D.saturating_sub(1));
+
+    for incidence in facet_index.iter() {
+        let BoundaryFacetClassification::Boundary(handle) =
+            classify_boundary_facet(incidence, global_topology)?
+        else {
+            continue;
+        };
+        simplex_facet_vertices(tds, handle, &mut facet_vertices)?;
+        if !facet_contains_ridge_key(&facet_vertices, ridge_key, &mut ridge_vertices) {
+            continue;
+        }
+        push_unique_candidate(&mut candidates, &mut seen, handle.simplex_key());
+    }
+
+    sort_simplex_candidates_by_uuid(tds, &mut candidates);
+    Ok(candidates)
+}
+
+/// Finds simplices in the offending ridge's star.
+fn ridge_link_candidate_simplices<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    ridge_key: u64,
+) -> Result<SimplexKeyBuffer, ManifoldError> {
+    let ridge_to_star = build_ridge_star_map(tds)?;
+    let mut candidates = SimplexKeyBuffer::new();
+    if let Some(star) = ridge_to_star.get(&ridge_key) {
+        candidates.extend(star.star_simplices.iter().copied());
+    }
+    sort_simplex_candidates_by_uuid(tds, &mut candidates);
+    Ok(candidates)
+}
+
+/// Finds simplices in the offending vertex's star.
+fn vertex_link_candidate_simplices<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    vertex_key: VertexKey,
+) -> Result<SimplexKeyBuffer, ManifoldError> {
+    let star_simplices = simplex_star_simplices(tds, &[vertex_key])?;
+    let mut candidates = SimplexKeyBuffer::with_capacity(star_simplices.len());
+    candidates.extend(star_simplices.iter().copied());
+    sort_simplex_candidates_by_uuid(tds, &mut candidates);
+    Ok(candidates)
+}
+
+/// Extracts one facet's vertices from its owning simplex.
+fn simplex_facet_vertices<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    handle: FacetHandle,
+    facet_vertices: &mut VertexKeyBuffer,
+) -> Result<(), ManifoldError> {
+    let simplex_key = handle.simplex_key();
+    let facet_index: usize = handle.facet_index().into();
+    let simplex_vertices = tds.simplex_vertices(simplex_key)?;
+    if facet_index >= simplex_vertices.len() {
+        return Err(TdsError::IndexOutOfBounds {
+            index: facet_index,
+            bound: simplex_vertices.len(),
+            context: format!("targeted repair facet index for simplex {simplex_key:?}"),
+        }
+        .into());
+    }
+
+    facet_vertices.clear();
+    for (index, &vertex_key) in simplex_vertices.iter().enumerate() {
+        if index != facet_index {
+            facet_vertices.push(vertex_key);
+        }
+    }
+
+    Ok(())
+}
+
+/// Checks whether a boundary facet contains the reported boundary ridge key.
+fn facet_contains_ridge_key(
+    facet_vertices: &[VertexKey],
+    target_ridge_key: u64,
+    ridge_vertices: &mut VertexKeyBuffer,
+) -> bool {
+    for omit in 0..facet_vertices.len() {
+        ridge_vertices.clear();
+        for (index, &vertex_key) in facet_vertices.iter().enumerate() {
+            if index != omit {
+                ridge_vertices.push(vertex_key);
+            }
+        }
+        if facet_key_from_vertices(ridge_vertices.as_slice()) == target_ridge_key {
+            return true;
+        }
+    }
+    false
+}
+
+/// Appends a simplex candidate once while preserving first-seen order.
+fn push_unique_candidate(
+    candidates: &mut SimplexKeyBuffer,
+    seen: &mut SimplexKeySet,
+    simplex_key: SimplexKey,
+) {
+    if seen.insert(simplex_key) {
+        candidates.push(simplex_key);
+    }
+}
+
+/// Sorts local simplex candidates by stable simplex UUID for deterministic ties.
+fn sort_simplex_candidates_by_uuid<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    candidates: &mut SimplexKeyBuffer,
+) {
+    candidates.sort_unstable_by_key(|simplex_key| tds.simplex(*simplex_key).map(Simplex::uuid));
+}
+
+/// Removes one targeted repair candidate and updates aggregate repair stats.
+fn remove_targeted_simplex<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
+    stats: &mut PlManifoldRepairStats<U, V, D>,
+    simplex_key: SimplexKey,
+) -> Result<usize, PlManifoldRepairError>
+where
+    U: Clone,
+    V: Clone,
+{
+    if let Some(simplex) = tds.simplex(simplex_key) {
+        stats.removed_simplices.push(simplex.clone());
+    }
+    let removed = tds
+        .remove_simplices_by_keys(&[simplex_key])
+        .map_err(|e| PlManifoldRepairError::Tds(e.into_inner()))?;
+    if removed == 0 {
+        return Ok(0);
+    }
+    stats.simplices_removed += removed;
+    remove_orphaned_vertices(tds, stats)?;
+    tds.assign_incident_simplices()
+        .map_err(|e| PlManifoldRepairError::Tds(e.into()))?;
+    Ok(removed)
+}
+
 /// Rebuilds topology metadata before a successful PL-manifold repair result is observed.
 ///
 /// Successful repair has restored the facet-degree invariant, so neighbor and
@@ -360,27 +959,41 @@ fn prepare_error_return_topology<U, V, const D: usize>(tds: &mut Tds<U, V, D>) {
     }
 }
 
-/// Deterministic quality score for a simplex: lower = better quality.
+/// Candidate metadata used to order simplex removals deterministically.
+struct SimplexRemovalCandidate {
+    simplex_key: SimplexKey,
+    score: f64,
+    vertex_keys: Vec<u64>,
+    uuid: Uuid,
+}
+
+/// Deterministic deletion quality score for a simplex: lower = better quality.
 ///
-/// Uses an edge-length aspect-ratio metric (max/min edge) that operates
-/// directly on the `Tds` without requiring a full `Triangulation` or
-/// circumsphere computation.
-fn simplex_quality_score<U, V, const D: usize>(tds: &Tds<U, V, D>, simplex_key: SimplexKey) -> f64
-where
-    U: DataType,
-    V: DataType,
-{
+/// Uses the edge-length aspect-ratio conditioning heuristic described in
+/// `REFERENCES.md`'s mesh quality and simplex-shape references, especially
+/// Shewchuk's "What Is a Good Linear Element?". The score operates directly on
+/// the `Tds` without requiring a full `Triangulation` or circumsphere
+/// computation. Invalid handles, missing vertices, empty edge sets,
+/// zero-length edges, and non-finite geometry are ranked as [`f64::MAX`] so
+/// they sort as the worst deletion candidates.
+fn simplex_quality_score<U, V, const D: usize>(tds: &Tds<U, V, D>, simplex_key: SimplexKey) -> f64 {
     let Ok(vertices) = tds.simplex_vertices(simplex_key) else {
         return f64::MAX;
     };
 
-    let mut edge_lengths: SmallBuffer<f64, 16> = SmallBuffer::new();
-    for i in 0..vertices.len() {
-        for j in (i + 1)..vertices.len() {
-            let Some(vi) = tds.vertex(vertices[i]) else {
-                return f64::MAX;
-            };
-            let Some(vj) = tds.vertex(vertices[j]) else {
+    let mut edge_count = 0_usize;
+    let mut mean = 0.0;
+    let mut sum_squared_deviations = 0.0;
+    let mut min_edge = f64::INFINITY;
+    let mut max_edge = f64::NEG_INFINITY;
+    let mut edge_count_scalar = 0.0;
+
+    for (i, &vi_key) in vertices.iter().enumerate() {
+        let Some(vi) = tds.vertex(vi_key) else {
+            return f64::MAX;
+        };
+        for &vj_key in vertices.iter().skip(i + 1) {
+            let Some(vj) = tds.vertex(vj_key) else {
                 return f64::MAX;
             };
 
@@ -389,29 +1002,37 @@ where
                 *d = vi.point().coords()[idx] - vj.point().coords()[idx];
             }
             let len = hypot(&diff);
-            edge_lengths.push(len);
+            if !len.is_finite() {
+                return f64::MAX;
+            }
+            edge_count += 1;
+            let Some(current_edge_count): Option<f64> = NumCast::from(edge_count) else {
+                return f64::MAX;
+            };
+            let delta = len - mean;
+            mean += delta / current_edge_count;
+            sum_squared_deviations += delta * (len - mean);
+            edge_count_scalar = current_edge_count;
+            min_edge = min_edge.min(len);
+            max_edge = max_edge.max(len);
         }
     }
 
-    if edge_lengths.is_empty() {
+    if edge_count == 0 {
         return f64::MAX;
     }
 
-    let Some(n): Option<f64> = NumCast::from(edge_lengths.len()) else {
+    let variance = sum_squared_deviations / edge_count_scalar;
+    if !variance.is_finite() {
         return f64::MAX;
-    };
-    let mean = edge_lengths.iter().sum::<f64>() / n;
-    let variance = edge_lengths.iter().map(|l| (l - mean).powi(2)).sum::<f64>() / n;
-    let min_edge = edge_lengths.iter().copied().fold(f64::INFINITY, f64::min);
-    let max_edge = edge_lengths
-        .iter()
-        .copied()
-        .fold(f64::NEG_INFINITY, f64::max);
-    if min_edge <= 0.0 {
+    }
+    let variance = variance.max(0.0);
+    if !min_edge.is_finite() || !max_edge.is_finite() || min_edge <= 0.0 {
         return f64::MAX;
     }
     // Primary: aspect ratio; secondary: edge-length variance as tiebreaker.
-    (max_edge / min_edge) + variance * 1e-12
+    let score = (max_edge / min_edge) + variance * 1e-12;
+    if score.is_finite() { score } else { f64::MAX }
 }
 
 /// Among the simplices incident to an over-shared facet, deterministically select
@@ -422,52 +1043,61 @@ where
 fn pick_worst_simplex<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     handles: &[FacetHandle],
-) -> Option<SimplexKey>
-where
-    U: DataType,
-    V: DataType,
-{
-    struct Candidate {
-        simplex_key: SimplexKey,
-        score: f64,
-        vertex_keys: Vec<u64>,
-        uuid: Uuid,
-    }
+) -> Option<SimplexKey> {
+    pick_worst_candidate(tds, handles.iter().map(FacetHandle::simplex_key))
+}
 
-    let mut candidates: Vec<Candidate> = Vec::with_capacity(handles.len());
+/// Selects the worst-quality simplex from a direct simplex-key candidate set.
+fn pick_worst_simplex_key<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    simplex_keys: &[SimplexKey],
+) -> Option<SimplexKey> {
+    pick_worst_candidate(tds, simplex_keys.iter().copied())
+}
 
-    for handle in handles {
-        let simplex_key = handle.simplex_key();
-        let Some(simplex) = tds.simplex(simplex_key) else {
-            continue;
-        };
+/// Builds deterministic removal-order metadata for one live simplex.
+fn simplex_removal_candidate<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    simplex_key: SimplexKey,
+) -> Option<SimplexRemovalCandidate> {
+    let simplex = tds.simplex(simplex_key)?;
+    let score = simplex_quality_score(tds, simplex_key);
+    let mut vertex_keys: Vec<u64> = simplex
+        .vertices()
+        .iter()
+        .map(|vk| vk.data().as_ffi())
+        .collect();
+    vertex_keys.sort_unstable();
 
-        let score = simplex_quality_score(tds, simplex_key);
+    Some(SimplexRemovalCandidate {
+        simplex_key,
+        score,
+        vertex_keys,
+        uuid: simplex.uuid(),
+    })
+}
 
-        let mut vertex_keys: Vec<u64> = simplex
-            .vertices()
-            .iter()
-            .map(|vk| vk.data().as_ffi())
-            .collect();
-        vertex_keys.sort_unstable();
+/// Applies the shared removal ordering and returns the highest-priority candidate.
+fn pick_worst_candidate<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    simplex_keys: impl IntoIterator<Item = SimplexKey>,
+) -> Option<SimplexKey> {
+    simplex_keys
+        .into_iter()
+        .filter_map(|simplex_key| simplex_removal_candidate(tds, simplex_key))
+        .max_by(compare_removal_candidates)
+        .map(|candidate| candidate.simplex_key)
+}
 
-        candidates.push(Candidate {
-            simplex_key,
-            score,
-            vertex_keys,
-            uuid: simplex.uuid(),
-        });
-    }
-
-    // Worst quality first, then vertex keys, then UUID.
-    candidates.sort_by(|a, b| {
-        b.score
-            .total_cmp(&a.score)
-            .then_with(|| a.vertex_keys.cmp(&b.vertex_keys))
-            .then_with(|| a.uuid.cmp(&b.uuid))
-    });
-
-    candidates.first().map(|c| c.simplex_key)
+/// Orders candidates by removal priority: worse quality, then stable identity.
+fn compare_removal_candidates(
+    a: &SimplexRemovalCandidate,
+    b: &SimplexRemovalCandidate,
+) -> Ordering {
+    a.score
+        .total_cmp(&b.score)
+        .then_with(|| b.vertex_keys.cmp(&a.vertex_keys))
+        .then_with(|| b.uuid.cmp(&a.uuid))
 }
 
 /// Remove vertices with no incident simplex from the TDS, collecting them into
@@ -479,8 +1109,7 @@ fn remove_orphaned_vertices<U, V, const D: usize>(
     stats: &mut PlManifoldRepairStats<U, V, D>,
 ) -> Result<(), PlManifoldRepairError>
 where
-    U: DataType,
-    V: DataType,
+    U: Clone,
 {
     let mut orphaned: Vec<(VertexKey, Uuid)> = tds
         .vertices()
@@ -495,7 +1124,7 @@ where
 
     for (vk, _) in orphaned {
         if let Some(vertex) = tds.vertex(vk) {
-            stats.removed_vertices.push(*vertex);
+            stats.removed_vertices.push(vertex.clone());
         }
         tds.remove_isolated_vertex(vk)
             .map_err(|e| PlManifoldRepairError::Tds(e.into_inner()))?;
@@ -707,6 +1336,131 @@ mod tests {
         tds
     }
 
+    /// Build two tetrahedra sharing an edge but no facet, so that edge has four
+    /// incident boundary facets.
+    fn make_boundary_ridge_multiplicity_tds() -> Tds<(), (), 3> {
+        let mut tds: Tds<(), (), 3> = Tds::empty();
+
+        let shared_v0 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]).unwrap())
+            .unwrap();
+        let shared_v1 = tds
+            .insert_vertex_with_mapping(vertex!([2.0, 0.0, 0.0]).unwrap())
+            .unwrap();
+        let tet1_v2 = tds
+            .insert_vertex_with_mapping(vertex!([0.1, 1.0, 0.2]).unwrap())
+            .unwrap();
+        let tet1_v3 = tds
+            .insert_vertex_with_mapping(vertex!([0.2, 0.3, 1.3]).unwrap())
+            .unwrap();
+        let tet2_v2 = tds
+            .insert_vertex_with_mapping(vertex!([0.4, -1.1, 0.7]).unwrap())
+            .unwrap();
+        let tet2_v3 = tds
+            .insert_vertex_with_mapping(vertex!([0.6, 0.2, -1.4]).unwrap())
+            .unwrap();
+
+        for tet in [
+            [shared_v0, shared_v1, tet1_v2, tet1_v3],
+            [shared_v0, shared_v1, tet2_v2, tet2_v3],
+        ] {
+            tds.insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![tet[0], tet[1], tet[2], tet[3]], None).unwrap(),
+            )
+            .unwrap();
+        }
+
+        tds
+    }
+
+    /// Build two closed 2D sphere complexes sharing one vertex, yielding a
+    /// disconnected ridge link at that shared vertex.
+    fn make_disconnected_ridge_link_tds() -> Tds<(), (), 2> {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+
+        let v0 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
+            .unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0]).unwrap())
+            .unwrap();
+        let v4 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 10.0]).unwrap())
+            .unwrap();
+        let v5 = tds
+            .insert_vertex_with_mapping(vertex!([11.0, 10.0]).unwrap())
+            .unwrap();
+        let v6 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 11.0]).unwrap())
+            .unwrap();
+
+        for tri in [
+            [v0, v1, v2],
+            [v0, v1, v3],
+            [v0, v2, v3],
+            [v1, v2, v3],
+            [v0, v4, v5],
+            [v0, v4, v6],
+            [v0, v5, v6],
+            [v4, v5, v6],
+        ] {
+            tds.insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![tri[0], tri[1], tri[2]], None).unwrap(),
+            )
+            .unwrap();
+        }
+
+        tds
+    }
+
+    /// Build a cone over a small triangulated torus, whose apex has a torus
+    /// vertex link rather than a sphere or ball.
+    fn make_cone_on_torus_tds() -> Tds<(), (), 3> {
+        const N: usize = 3;
+        const M: usize = 3;
+
+        let mut tds: Tds<(), (), 3> = Tds::empty();
+        let mut grid: [[VertexKey; M]; N] = [[VertexKey::from(KeyData::from_ffi(0)); M]; N];
+        for (i, row) in grid.iter_mut().enumerate() {
+            for (j, vertex_key) in row.iter_mut().enumerate() {
+                let i_f: f64 = u32::try_from(i).unwrap().into();
+                let j_f: f64 = u32::try_from(j).unwrap().into();
+                *vertex_key = tds
+                    .insert_vertex_with_mapping(vertex!([i_f, j_f, 0.0]).unwrap())
+                    .unwrap();
+            }
+        }
+        let apex = tds
+            .insert_vertex_with_mapping(vertex!([0.5, 0.5, 1.0]).unwrap())
+            .unwrap();
+
+        for i in 0..N {
+            for j in 0..M {
+                let i1 = (i + 1) % N;
+                let j1 = (j + 1) % M;
+                let v00 = grid[i][j];
+                let v10 = grid[i1][j];
+                let v01 = grid[i][j1];
+                let v11 = grid[i1][j1];
+                for tri in [[v00, v10, v01], [v10, v11, v01]] {
+                    tds.insert_simplex_with_mapping(
+                        Simplex::try_new_with_data(vec![tri[0], tri[1], tri[2], apex], None)
+                            .unwrap(),
+                    )
+                    .unwrap();
+                }
+            }
+        }
+
+        tds
+    }
+
     /// Set every vertex incident pointer to a dangling key so repair must rebuild them.
     fn poison_incident_simplices(tds: &mut Tds<(), (), 3>) {
         let dangling = SimplexKey::from(KeyData::from_ffi(u64::MAX));
@@ -732,6 +1486,323 @@ mod tests {
                 "incident simplex {simplex_key:?} should contain vertex {vertex_key:?}"
             );
         }
+    }
+
+    #[test]
+    fn targeted_topology_violation_parses_stage_and_preserves_source() {
+        let vertex_key = VertexKey::from(KeyData::from_ffi(0xCAFE));
+        let cases = [
+            (
+                ManifoldError::BoundaryRidgeMultiplicity {
+                    ridge_key: 0x100,
+                    boundary_facet_count: 1,
+                },
+                PlManifoldRepairStage::BoundaryRidgeMultiplicity,
+            ),
+            (
+                ManifoldError::RidgeLinkNotManifold {
+                    ridge_key: 0x200,
+                    link_vertex_count: 3,
+                    link_edge_count: 1,
+                    max_degree: 1,
+                    degree_one_vertices: 2,
+                    connected: false,
+                },
+                PlManifoldRepairStage::RidgeLink,
+            ),
+            (
+                ManifoldError::VertexLinkNotManifold {
+                    vertex_key,
+                    link_vertex_count: 4,
+                    link_simplex_count: 2,
+                    boundary_facet_count: 3,
+                    max_degree: 1,
+                    connected: false,
+                    interior_vertex: true,
+                },
+                PlManifoldRepairStage::VertexLink,
+            ),
+        ];
+
+        for (source, expected_stage) in cases {
+            let violation = TargetedTopologyViolation::try_from(source.clone()).unwrap();
+
+            assert_eq!(violation.stage(), expected_stage);
+            assert!(manifold_error_matches_repair_stage(&source, expected_stage));
+            for mismatched_stage in [
+                PlManifoldRepairStage::BoundaryRidgeMultiplicity,
+                PlManifoldRepairStage::RidgeLink,
+                PlManifoldRepairStage::VertexLink,
+            ] {
+                if mismatched_stage != expected_stage {
+                    assert!(!manifold_error_matches_repair_stage(
+                        &source,
+                        mismatched_stage
+                    ));
+                }
+            }
+            assert_eq!(violation.source(), &source);
+            assert_eq!(violation.into_source(), source);
+        }
+
+        let non_targeted = ManifoldError::ManifoldFacetMultiplicity {
+            facet_key: 0x300,
+            simplex_count: 3,
+        };
+        assert_eq!(
+            TargetedTopologyViolation::try_from(non_targeted.clone()).unwrap_err(),
+            non_targeted
+        );
+        assert!(!manifold_error_matches_repair_stage(
+            &non_targeted,
+            PlManifoldRepairStage::BoundaryRidgeMultiplicity
+        ));
+    }
+
+    #[test]
+    fn remove_targeted_simplex_reports_zero_for_missing_key_without_mutating_stats() {
+        let mut tds: Tds<(), (), 3> = Tds::empty();
+        let mut stats = PlManifoldRepairStats::default();
+        let missing_simplex_key = SimplexKey::from(KeyData::from_ffi(u64::MAX));
+
+        let removed = remove_targeted_simplex(&mut tds, &mut stats, missing_simplex_key).unwrap();
+
+        assert_eq!(removed, 0);
+        assert_eq!(stats.simplices_removed, 0);
+        assert!(stats.removed_simplices.is_empty());
+        assert!(stats.removed_vertices.is_empty());
+    }
+
+    /// Assert that a targeted violation fails before removal when simplex budget is zero.
+    fn assert_targeted_simplex_budget_exhausted<const D: usize>(
+        mut tds: Tds<(), (), D>,
+        expected_stage: PlManifoldRepairStage,
+    ) {
+        let config = PlManifoldRepairConfig {
+            max_iterations: 64,
+            max_simplices_removed: 0,
+        };
+
+        let result = repair_pl_manifold_topology(&mut tds, GlobalTopology::Euclidean, &config);
+
+        let Err(PlManifoldRepairError::TargetedBudgetExhausted {
+            stage,
+            source,
+            iterations,
+            simplices_removed,
+            max_iterations,
+            max_simplices_removed,
+        }) = result
+        else {
+            panic!("expected TargetedBudgetExhausted for {expected_stage:?}, got {result:?}");
+        };
+        assert_eq!(stage, expected_stage);
+        assert_eq!(iterations, 0);
+        assert_eq!(simplices_removed, 0);
+        assert_eq!(max_iterations, 64);
+        assert_eq!(max_simplices_removed, 0);
+        match stage {
+            PlManifoldRepairStage::BoundaryRidgeMultiplicity => {
+                assert!(matches!(
+                    *source,
+                    ManifoldError::BoundaryRidgeMultiplicity { .. }
+                ));
+            }
+            PlManifoldRepairStage::RidgeLink => {
+                assert!(matches!(
+                    *source,
+                    ManifoldError::RidgeLinkNotManifold { .. }
+                ));
+            }
+            PlManifoldRepairStage::VertexLink => {
+                assert!(matches!(
+                    *source,
+                    ManifoldError::VertexLinkNotManifold { .. }
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn targeted_postcondition_validation_preserves_typed_source() {
+        let source = ManifoldError::ManifoldFacetMultiplicity {
+            facet_key: 0x1234,
+            simplex_count: 3,
+        };
+        let err = PlManifoldRepairError::TargetedPostconditionValidation {
+            source: Box::new(source.clone()),
+        };
+        let message = err.to_string();
+
+        let PlManifoldRepairError::TargetedPostconditionValidation { source: err_source } = err
+        else {
+            panic!("expected TargetedPostconditionValidation");
+        };
+        assert_eq!(*err_source, source);
+        assert!(message.contains("postcondition validation failed"));
+    }
+
+    #[test]
+    fn targeted_stage_display_uses_user_facing_labels() {
+        assert_eq!(
+            PlManifoldRepairStage::BoundaryRidgeMultiplicity.to_string(),
+            "boundary-ridge multiplicity"
+        );
+        assert_eq!(PlManifoldRepairStage::RidgeLink.to_string(), "ridge-link");
+        assert_eq!(PlManifoldRepairStage::VertexLink.to_string(), "vertex-link");
+
+        let err = PlManifoldRepairError::TargetedNoProgress {
+            stage: PlManifoldRepairStage::BoundaryRidgeMultiplicity,
+            source: Box::new(ManifoldError::BoundaryRidgeMultiplicity {
+                ridge_key: 0x1234,
+                boundary_facet_count: 1,
+            }),
+            iterations: 2,
+            simplices_removed: 1,
+        };
+        assert!(
+            err.to_string()
+                .contains("boundary-ridge multiplicity repair")
+        );
+    }
+
+    #[test]
+    fn test_repair_pl_manifold_topology_repairs_boundary_ridge_multiplicity() {
+        init_tracing();
+        let mut tds = make_boundary_ridge_multiplicity_tds();
+        assert!(matches!(
+            validate_boundary_ridge_multiplicity(&tds, GlobalTopology::Euclidean),
+            Err(ManifoldError::BoundaryRidgeMultiplicity { .. })
+        ));
+
+        let stats = repair_pl_manifold_topology(
+            &mut tds,
+            GlobalTopology::Euclidean,
+            &PlManifoldRepairConfig::default(),
+        )
+        .unwrap();
+
+        assert!(stats.succeeded);
+        assert!(stats.simplices_removed > 0);
+        validate_targeted_topology(&tds, GlobalTopology::Euclidean).unwrap();
+    }
+
+    #[test]
+    fn test_repair_pl_manifold_topology_repairs_ridge_link() {
+        init_tracing();
+        let mut tds = make_disconnected_ridge_link_tds();
+        assert!(matches!(
+            validate_ridge_links(&tds),
+            Err(ManifoldError::RidgeLinkNotManifold { .. })
+        ));
+
+        let stats = repair_pl_manifold_topology(
+            &mut tds,
+            GlobalTopology::Euclidean,
+            &PlManifoldRepairConfig::default(),
+        )
+        .unwrap();
+
+        assert!(stats.succeeded);
+        assert!(stats.simplices_removed > 0);
+        validate_targeted_topology(&tds, GlobalTopology::Euclidean).unwrap();
+    }
+
+    #[test]
+    fn test_repair_pl_manifold_topology_repairs_vertex_link() {
+        init_tracing();
+        let mut tds = make_cone_on_torus_tds();
+        assert!(matches!(
+            validate_vertex_link_manifoldness(&tds, GlobalTopology::Euclidean),
+            Err(ManifoldError::VertexLinkNotManifold { .. })
+        ));
+
+        let stats = repair_pl_manifold_topology(
+            &mut tds,
+            GlobalTopology::Euclidean,
+            &PlManifoldRepairConfig::default(),
+        )
+        .unwrap();
+
+        assert!(stats.succeeded);
+        assert!(stats.simplices_removed > 0);
+        validate_targeted_topology(&tds, GlobalTopology::Euclidean).unwrap();
+    }
+
+    #[test]
+    fn test_repair_pl_manifold_topology_targeted_simplex_budget_exhausted_by_stage() {
+        init_tracing();
+        assert_targeted_simplex_budget_exhausted(
+            make_boundary_ridge_multiplicity_tds(),
+            PlManifoldRepairStage::BoundaryRidgeMultiplicity,
+        );
+        assert_targeted_simplex_budget_exhausted(
+            make_disconnected_ridge_link_tds(),
+            PlManifoldRepairStage::RidgeLink,
+        );
+        assert_targeted_simplex_budget_exhausted(
+            make_cone_on_torus_tds(),
+            PlManifoldRepairStage::VertexLink,
+        );
+    }
+
+    #[test]
+    fn test_repair_pl_manifold_topology_targeted_iteration_budget_exhausted() {
+        init_tracing();
+        let mut tds = make_boundary_ridge_multiplicity_tds();
+        let config = PlManifoldRepairConfig {
+            max_iterations: 0,
+            max_simplices_removed: 10_000,
+        };
+
+        let result = repair_pl_manifold_topology(&mut tds, GlobalTopology::Euclidean, &config);
+
+        let Err(PlManifoldRepairError::TargetedBudgetExhausted {
+            stage,
+            iterations,
+            simplices_removed,
+            max_iterations,
+            max_simplices_removed,
+            ..
+        }) = result
+        else {
+            panic!("expected TargetedBudgetExhausted from iteration limit, got {result:?}");
+        };
+        assert_eq!(stage, PlManifoldRepairStage::BoundaryRidgeMultiplicity);
+        assert_eq!(iterations, 0);
+        assert_eq!(simplices_removed, 0);
+        assert_eq!(max_iterations, 0);
+        assert_eq!(max_simplices_removed, 10_000);
+    }
+
+    #[test]
+    fn test_repair_pl_manifold_topology_targeted_error_rebuilds_incident_simplices() {
+        init_tracing();
+        let mut tds = make_cone_on_torus_tds();
+        poison_incident_simplices(&mut tds);
+        let config = PlManifoldRepairConfig {
+            max_iterations: 1,
+            max_simplices_removed: 10_000,
+        };
+
+        let result = repair_pl_manifold_topology(&mut tds, GlobalTopology::Euclidean, &config);
+
+        let Err(PlManifoldRepairError::TargetedBudgetExhausted {
+            stage,
+            simplices_removed,
+            ..
+        }) = result
+        else {
+            panic!(
+                "expected TargetedBudgetExhausted after partial targeted repair, got {result:?}"
+            );
+        };
+        assert_eq!(stage, PlManifoldRepairStage::VertexLink);
+        assert!(
+            simplices_removed > 0,
+            "test should exercise an error return after targeted simplex removal"
+        );
+        assert_incident_simplices_are_coherent(&tds);
     }
 
     /// Create a TDS with over-shared facets and verify that repair removes
@@ -842,6 +1913,29 @@ mod tests {
         assert!(score1.is_finite(), "Score should be finite, got {score1}");
         assert!(score1 > 0.0, "Score should be positive, got {score1}");
         approx::assert_relative_eq!(score1, score2, epsilon = 0.0);
+        let invalid_score =
+            simplex_quality_score(tds, SimplexKey::from(KeyData::from_ffi(u64::MAX)));
+        assert_eq!(invalid_score.to_bits(), f64::MAX.to_bits());
+    }
+
+    #[test]
+    fn simplex_quality_score_ranks_degenerate_geometry_as_worst() {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let vertex_keys: Vec<_> = [
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+        ]
+        .iter()
+        .map(|vertex| tds.insert_vertex_with_mapping(*vertex).unwrap())
+        .collect();
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::try_new(vertex_keys).unwrap())
+            .unwrap();
+
+        let score = simplex_quality_score(&tds, simplex_key);
+
+        assert_eq!(score.to_bits(), f64::MAX.to_bits());
     }
 
     // =============================================================================

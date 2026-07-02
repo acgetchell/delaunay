@@ -378,6 +378,18 @@ def test_main_rejects_non_positive_timeout(capsys: pytest.CaptureFixture[str]) -
     assert "expected a positive integer" in captured.err
 
 
+def test_main_suggests_close_mode_name(capsys: pytest.CaptureFixture[str]) -> None:
+    """Python 3.14 argparse suggestions should help recover from mode typos."""
+    with pytest.raises(SystemExit) as exc_info:
+        main(["summry"])
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 2
+    assert captured.out == ""
+    assert "maybe you meant 'summary'?" in captured.err
+    assert "\x1b[" not in captured.err
+
+
 def test_main_returns_success_when_no_notebooks_are_found(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     """Notebook validation should be a clean no-op before notebooks are added."""
     monkeypatch.chdir(tmp_path)

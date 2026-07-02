@@ -11,7 +11,7 @@ Both repositories now share the same core Rust and Python support-tooling loop:
 - `rust-toolchain.toml`, `rustfmt.toml`, `.taplo.toml`, `clippy.toml`, and
   `ty.toml` pin local tool behavior.
 - `pyproject.toml` owns Ruff, Ty, pytest, uv packaging, and uv-managed
-  development dependencies. The Python support-tooling baseline is Python 3.13
+  development dependencies. The Python support-tooling baseline is Python 3.14
   through `.python-version`, `requires-python`, and setup-python consumers in
   CI/Codacy; Ruff and Ty infer their analysis target from `requires-python`.
 - `pyproject.toml`, `dprint.json`, `.yamllint`, and `typos.toml` define local
@@ -26,13 +26,16 @@ Both repositories now share the same core Rust and Python support-tooling loop:
 - Codacy Markdownlint's MD013 line-length threshold is managed in Codacy's
   Code Patterns UI at 160 columns when that tool is enabled. Local Markdown,
   Python, YAML, and review thresholds are likewise normalized to 160 columns.
+  Codacy excludes `uv.lock` because uv-generated artifact URLs and hashes are
+  tool-managed metadata that can legitimately exceed that handwritten-source
+  threshold; lockfile consistency remains owned by uv.
   Codacy Markdownlint excludes `docs/RELEASING.md` because that release
   checklist intentionally uses stable absolute step numbers across fenced
   command blocks; local rumdl disables MD029 for the same reason.
 - Codacy Python engines are scoped to production scripts and exclude
   `scripts/tests/**`, so Ruff/Bandit feedback stays focused on shipped helper
   code and Bandit does not flag intentional test assertions.
-- The Codacy SARIF splitter uses the same Python 3.13 setup as local tooling
+- The Codacy SARIF splitter uses the same Python 3.14 setup as local tooling
   before filtering uploads, and parses raw SARIF JSON into a typed boundary
   model before applying repository-owned rule filtering.
 - `justfile` is the local entry point for formatting, linting, tests,
@@ -50,15 +53,15 @@ The useful updates ported in this pass are:
   docs, and agent guidance all use the same baseline so the `la-stack` 0.4.3
   dependency update in #424 has no MSRV conflict.
 - The local `cargo-nextest` pin and CI workflow environment variables now use
-  0.9.137, matching both sibling repositories. `cargo-llvm-cov` stays on 0.8.7,
+  0.9.138, matching the current reviewed release. `cargo-llvm-cov` stays on 0.8.7,
   which is still shared across the repositories.
 - CI command-runner, Markdown, and spelling tool pins now track the newer
-  sibling-repository versions used by `causal-triangulations` and `la-stack`:
-  `just` 1.53.0, `rumdl` 0.2.20, and `typos-cli` 1.47.2. The `rumdl` bump keeps
+  current reviewed versions:
+  `just` 1.55.1, `rumdl` 0.2.26, and `typos-cli` 1.48.0. The `rumdl` bump keeps
   Delaunay on the sibling repository's current Markdown linter release after
   local `just check` exposed the older 0.2.10 pin as stale.
 - uv-managed Python support-tool pins now use exact reviewed versions for the
-  shared dev tools: `ruff` 0.15.17, `semgrep` 1.167.0, and `ty` 0.0.49.
+  shared dev tools: `ruff` 0.15.20, `semgrep` 1.168.0, and `ty` 0.0.55.
   Semgrep is intentionally ahead of the older sibling baseline so its transitive
   dependency graph stays on the current reviewed toolchain baseline. Delaunay
   previously used lower-bound specifiers for those tools, which allowed local
@@ -80,7 +83,7 @@ The useful updates ported in this pass are:
   the CI job. The GitHub selected-actions allowlist includes
   `taiki-e/cache-cargo-install-action@*`, so the cached Cargo-tool installer is
   permitted by repository policy.
-- `.github/workflows/audit.yml` now installs `cargo-audit` 0.22.1 through the
+- `.github/workflows/audit.yml` now installs `cargo-audit` 0.22.2 through the
   same cached Cargo-tool installer, and `.github/workflows/zizmor.yml` imports
   the dedicated GitHub Actions security scan from `la-stack`.
 - `semgrep.yaml` now carries the low-noise hardening rules already proven useful
@@ -214,14 +217,14 @@ The useful updates ported in this pass are:
   UI exposes a separate duplicate-code metric, treat it the same way.
 - CI and local setup pins should track the same supported tool versions when
   practical. The current workflow pins align coverage and test tooling on
-  `cargo-llvm-cov` 0.8.7 and `cargo-nextest` 0.9.137. CI, Codecov, and local
+  `cargo-llvm-cov` 0.8.7 and `cargo-nextest` 0.9.138. CI, Codecov, and local
   setup install the same `cargo-nextest` pin with the sibling repositories'
   `taiki-e/cache-cargo-install-action`/`cargo install --locked` pattern before
   nextest-backed recipes run. Pinned Rust CLI tools are installed through Cargo
   rather than Homebrew so local setup cannot drift from CI pins. The CI build
   matrix runs `just ci` on Linux, macOS, and Windows after syncing the locked uv
   dev group and installing the pinned Cargo tools. All uv-backed workflows use
-  uv 0.11.23 to match the local Python tooling bootstrap.
+  uv 0.11.26 to match the local Python tooling bootstrap.
 - `.codecov.yml` now ratchets Delaunay's coverage policy above the older
   causal-triangulations baseline without copying la-stack's near-total
   threshold. Project coverage targets the current 90% line with only 1%

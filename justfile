@@ -12,13 +12,13 @@ path_separator := if os_family() == "windows" { ";" } else { ":" }
 export PATH := cargo_home + "/bin" + path_separator + env_var("PATH")
 
 cargo_llvm_cov_version := "0.8.7"
-dprint_version := "0.54.0"
-just_version := "1.53.0"
-nextest_version := "0.9.137"
-rumdl_version := "0.2.20"
+dprint_version := "0.55.1"
+just_version := "1.55.1"
+nextest_version := "0.9.138"
+rumdl_version := "0.2.26"
 taplo_version := "0.10.0"
-typos_version := "1.47.2"
-zizmor_version := "1.25.2"
+typos_version := "1.48.0"
+zizmor_version := "1.26.1"
 
 # Common cargo-llvm-cov arguments for all coverage runs.
 # Excludes benches/examples from reports while allowing integration tests to

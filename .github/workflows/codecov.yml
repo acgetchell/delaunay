@@ -22,8 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CARGO_LLVM_COV_VERSION: "0.8.7"
-      JUST_VERSION: "1.53.0"
-      NEXTEST_VERSION: "0.9.137"
+      JUST_VERSION: "1.55.1"
+      NEXTEST_VERSION: "0.9.138"
     steps:
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -32,7 +32,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           cache: true
           cache-bin: false

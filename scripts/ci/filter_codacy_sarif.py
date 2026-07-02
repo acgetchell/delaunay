@@ -207,7 +207,7 @@ def write_github_env(out_dir: Path, uploadable_count: int, env_file: Path | None
 
 def parse_args(argv: list[str]) -> CliArgs:
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, suggest_on_error=True, color=False)
     parser.add_argument("source", type=Path, help="Codacy SARIF file to filter and split")
     parser.add_argument("out_dir", type=Path, help="Directory for split SARIF files")
     parser.add_argument(

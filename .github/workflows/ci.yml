@@ -22,14 +22,14 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  CARGO_NEXTEST_VERSION: "0.9.137"
-  DPRINT_VERSION: "0.54.0"
-  JUST_VERSION: "1.53.0"
-  RUMDL_VERSION: "0.2.20"
+  CARGO_NEXTEST_VERSION: "0.9.138"
+  DPRINT_VERSION: "0.55.1"
+  JUST_VERSION: "1.55.1"
+  RUMDL_VERSION: "0.2.26"
   TAPLO_VERSION: "0.10.0"
-  TYPOS_VERSION: "1.47.2"
-  UV_VERSION: "0.11.23"
-  ZIZMOR_VERSION: "1.25.2"
+  TYPOS_VERSION: "1.48.0"
+  UV_VERSION: "0.11.26"
+  ZIZMOR_VERSION: "1.26.1"
 
 jobs:
   build:
@@ -62,7 +62,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           target: ${{ matrix.target }}
           cache: true # Built-in caching
@@ -70,7 +70,7 @@ jobs:
       # toolchain, components, etc. are specified in rust-toolchain.toml
 
       - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version-file: ".python-version"
 

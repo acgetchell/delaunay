@@ -669,7 +669,7 @@ def selected_notebooks(paths: list[Path], repo_root: Path) -> list[Path]:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, suggest_on_error=True, color=False)
     parser.add_argument("mode", choices=["summary", "lint", "execute"], help="notebook check mode")
     parser.add_argument("notebooks", nargs="*", type=Path, help="notebooks to check; defaults to notebooks/**/*.ipynb")
     parser.add_argument("--allow-outputs", action="store_true", help="do not fail lint when code cells contain outputs or execution counts")

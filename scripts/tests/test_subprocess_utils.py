@@ -233,6 +233,17 @@ class TestErrorHandling:
         with pytest.raises(ExecutableNotFoundError):
             get_git_remote_url()
 
+    def test_git_discovery_checks_handle_failed_git_commands(self, monkeypatch) -> None:
+        """Git discovery helpers return False for nonzero git probes."""
+
+        def mock_run_git_command(_args) -> None:
+            raise subprocess.CalledProcessError(128, "git")
+
+        monkeypatch.setattr("subprocess_utils.run_git_command", mock_run_git_command)
+
+        assert check_git_repo() is False
+        assert check_git_history() is False
+
 
 class TestSecurityFeatures:
     """Test security-related features of the utilities."""

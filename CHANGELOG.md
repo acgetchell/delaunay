@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Validate toroidal domains at parse boundaries [#437](https://github.com/acgetchell/delaunay/pull/437) [#450](https://github.com/acgetchell/delaunay/pull/450)
 - Add vertex construction macro [#469](https://github.com/acgetchell/delaunay/pull/469)
+- Add embedded triangulation validation layer [#449](https://github.com/acgetchell/delaunay/pull/449) [#481](https://github.com/acgetchell/delaunay/pull/481)
 - Box nested FlipError payloads [#406](https://github.com/acgetchell/delaunay/pull/406) [#435](https://github.com/acgetchell/delaunay/pull/435)
 - Adopt la-stack 0.4.3 API [#424](https://github.com/acgetchell/delaunay/pull/424) [#438](https://github.com/acgetchell/delaunay/pull/438)
 - Require refined generator and ordering parameters [#439](https://github.com/acgetchell/delaunay/pull/439)
@@ -28,6 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Merged Pull Requests
 
+- Preserve positive orientation after vertex removal [#487](https://github.com/acgetchell/delaunay/pull/487)
+- Preserve exact 2D layered strip vertices [#486](https://github.com/acgetchell/delaunay/pull/486)
+- Bump actions/checkout from 6.0.3 to 7.0.0 [#485](https://github.com/acgetchell/delaunay/pull/485)
+- Bump zizmorcore/zizmor-action from 0.5.6 to 0.5.7 [#484](https://github.com/acgetchell/delaunay/pull/484)
+- Add embedded triangulation validation layer [#449](https://github.com/acgetchell/delaunay/pull/449) [#481](https://github.com/acgetchell/delaunay/pull/481)
+- Make topology mutations failure-atomic [#480](https://github.com/acgetchell/delaunay/pull/480)
+- Add validated mesh export schema [#479](https://github.com/acgetchell/delaunay/pull/479)
 - Add 2D edge-to-facet incidence queries [#478](https://github.com/acgetchell/delaunay/pull/478)
 - Split Pachner moves from vertex lifecycle edits [#477](https://github.com/acgetchell/delaunay/pull/477)
 - Make topology views and boundaries owner-aware [#476](https://github.com/acgetchell/delaunay/pull/476)
@@ -99,6 +107,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   - Add edge-key construction benchmarks and document the simplex-local incidence
     query vocabulary.
+- Add validated mesh export schema [#479](https://github.com/acgetchell/delaunay/pull/479)
+  [`60e99d1`](https://github.com/acgetchell/delaunay/commit/60e99d1007f55a327a70b9e38b55c7223a822f01)
+
+  - Add stable UUID-based visualization and mesh export DTOs with validated wrappers, typed topology schema values, and structured export/validation errors.
+  - Expose `to_visualization_data` and `to_mesh_export` through crate-root and focused export prelude APIs, with DelaunayResult-compatible error conversions.
+  - Document the mesh export JSON contract, validation boundary, and downstream attribute extension model.
+  - Add reusable notebook hygiene tooling and flatten `just ci` into orthogonal validation buckets with one release-profile Rust nextest pass.
+- [**breaking**] Add embedded triangulation validation layer [#449](https://github.com/acgetchell/delaunay/pull/449)
+  [#481](https://github.com/acgetchell/delaunay/pull/481) [`7906525`](https://github.com/acgetchell/delaunay/commit/7906525ba0511796fd14fdbc46335bd4c851302c)
+
+  Add a Level 4 "embedding" validation layer that certifies a triangulation
+  is a faithful geometric embedding independently of the Delaunay predicate:
+  maximal simplices are nondegenerate and meet only in shared faces within
+  the active affine chart. This renumbers the Delaunay empty-circumsphere
+  property to Level 5.
+
+  - Add a public geometry::embedding module (backed by internal
+    core::embedding) with the embedding checks and their typed errors.
+
+  - Add Triangulation::is_valid_embedding, validate_embedding, and
+    embedding_report for the new Level 4 layer.
+
+  - Move Delaunay property validation to delaunay::property_validation
+    (renamed from core::util::delaunay_validation) and expose the Level 5
+    check as DelaunayTriangulation::is_valid_delaunay.
+
+  - Refresh the validation guide, invariants, API-design, and prelude docs
+    for the five-level stack.
 
 ### Changed
 
@@ -260,6 +296,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Replace benchmark setup unwrap helpers with postfix abort adapters that keep the original Result error text.
   - Keep Option setup failures explicit with caller-provided context.
   - Report abort messages without bench-logging so setup failures are visible in every benchmark build.
+- Make topology mutations failure-atomic [#480](https://github.com/acgetchell/delaunay/pull/480)
+  [`8ef6a95`](https://github.com/acgetchell/delaunay/commit/8ef6a95c8dd6adfaa351f81dd54e16fb8746e64f)
+
+  - Add scoped rollback guards for TDS, generic triangulation, and Delaunay mutation windows.
+  - Use the guards across insertion, deletion, local facet repair, and flip-repair retry paths.
+  - Restore insertion state and spatial-index caches according to the Delaunay rollback policy.
+  - Document rollback ownership rules for future mutation paths.
+
+#### Fixed: Make Delaunay mutation rollback state-aware
+
+- Share owner-bound TDS rollback guards across TDS, Triangulation, and Delaunay wrappers.
+- Restore insertion bookkeeping with rollback and restore or invalidate spatial indexes according to the mutation policy.
+- Avoid rollback snapshots when local facet repair has no issues or post-insertion repair/check cadence cannot run.
+- Preserve exact 2D layered strip vertices [#486](https://github.com/acgetchell/delaunay/pull/486)
+  [`2b45995`](https://github.com/acgetchell/delaunay/commit/2b45995fc7470ca326ee6c20a47ea6641a29c63c)
+
+  - Add a non-enforcing construction option that returns valid Levels 1-4 triangulations without automatic Level 5 Delaunay repair.
+  - Split exact 2D hull-edge insertions before symbolic perturbation can route them through interior insertion.
+  - Allow explicit simplex imports to opt out of Level 5 validation while keeping strict Delaunay validation as the default.
+
+#### Fixed: Preserve exact layered CDT strip vertices
+
+- Preserve collinear 2D boundary vertices by splitting localized boundary-edge facets while keeping exact coordinates and labels intact.
+- Allow exact degenerate batch construction to return after Levels 1-4 validation when final Level 5 Delaunay enforcement is disabled.
+- Carry explicit simplex validation evidence into construction and reject point-insertion-only options before assembling explicit meshes.
+- Enforce short vertex fixture construction across non-constructor tests, examples, and benchmarks.
+
+#### Fixed: Preserve batch finalization policies
+
+- Restore seeded construction finalization from the final Delaunay policy so
+  returned triangulations keep the intended repair and global-fallback behavior.
+
+- Keep the workflow vertex-macro guardrail Rust-AST aware so it only flags real
+  Vertex constructor calls.
+
+#### Changed: Cover qualified Vertex constructor guard
+
+- Add a workflow vertex-macro fixture for the qualified
+  delaunay::prelude::Vertex constructor path.
+- Keep the Semgrep rule YAML formatted for the repository config checks.
+- Preserve positive orientation after vertex removal [#487](https://github.com/acgetchell/delaunay/pull/487)
+  [`d6e9eea`](https://github.com/acgetchell/delaunay/commit/d6e9eea778361aebace37dd451d6189bece9020d)
+
+  - Canonicalize coherent orientation per simplex-neighbor component so disconnected repair states do not keep a negative geometric sign.
+  - Surface post-repair orientation failures through the existing typed invariant errors.
+  - Avoid redundant full-TDS canonicalization passes on the successful normalization path.
 
 ### Maintenance
 
@@ -466,6 +548,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency-version: 1.3.1
   dependency-type: indirect
   dependency-group: uv
+  ...
+
+- Bump actions/checkout from 6.0.3 to 7.0.0 [#485](https://github.com/acgetchell/delaunay/pull/485)
+  [`9a73c9d`](https://github.com/acgetchell/delaunay/commit/9a73c9dd5092e18b8d910d63b9f19110ecdeffe7)
+
+  Bumps [actions/checkout](https://github.com/actions/checkout) from 6.0.3 to 7.0.0.
+
+  - [Release notes](https://github.com/actions/checkout/releases)
+  - [Changelog](https://github.com/actions/checkout/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/actions/checkout/compare/df4cb1c069e1874edd31b4311f1884172cec0e10...9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0)
+
+---
+
+  updated-dependencies:
+
+- dependency-name: actions/checkout
+  dependency-version: 7.0.0
+  dependency-type: direct:production
+  update-type: version-update:semver-major
+  ...
+
+- Bump zizmorcore/zizmor-action from 0.5.6 to 0.5.7 [#484](https://github.com/acgetchell/delaunay/pull/484)
+  [`f1109b6`](https://github.com/acgetchell/delaunay/commit/f1109b6c2e2aab5c54280058eb8bd1d80c830b2b)
+
+  Bumps [zizmorcore/zizmor-action](https://github.com/zizmorcore/zizmor-action) from 0.5.6 to 0.5.7.
+
+  - [Release notes](https://github.com/zizmorcore/zizmor-action/releases)
+  - [Commits](https://github.com/zizmorcore/zizmor-action/compare/5f14fd08f7cf1cb1609c1e344975f152c7ee938d...192e21d79ab29983730a13d1382995c2307fbcaa)
+
+---
+
+  updated-dependencies:
+
+- dependency-name: zizmorcore/zizmor-action
+  dependency-version: 0.5.7
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
   ...
 
 ### Performance
