@@ -26,6 +26,9 @@ Both repositories now share the same core Rust and Python support-tooling loop:
 - Codacy Markdownlint's MD013 line-length threshold is managed in Codacy's
   Code Patterns UI at 160 columns when that tool is enabled. Local Markdown,
   Python, YAML, and review thresholds are likewise normalized to 160 columns.
+  Codacy excludes `uv.lock` because uv-generated artifact URLs and hashes are
+  tool-managed metadata that can legitimately exceed that handwritten-source
+  threshold; lockfile consistency remains owned by uv.
   Codacy Markdownlint excludes `docs/RELEASING.md` because that release
   checklist intentionally uses stable absolute step numbers across fenced
   command blocks; local rumdl disables MD029 for the same reason.

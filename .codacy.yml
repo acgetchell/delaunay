@@ -74,6 +74,9 @@ exclude_paths:
   - "target/**"
   - "node_modules/**"
   - ".git/**"
+  # uv-generated artifact URLs and hashes can exceed the handwritten-source
+  # line-length budget; lockfile consistency is checked by uv instead.
+  - "uv.lock"
   - "docs/archive/**"
   - "scripts/tests/**"
   # Semgrep fixtures intentionally contain bad examples for rule tests.

@@ -4,7 +4,10 @@
 
 use std::{hint::black_box, time::Duration};
 
-use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{
+    BatchSize, BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
+    measurement::WallTime,
+};
 use delaunay::bench_fixtures::pl_manifold::{
     TargetedTopologyRepairFixture, repair_overshared_facet_orphan_cleanup_3d,
     repair_targeted_pl_manifold_topology, validated_boundary_ridge_multiplicity_repair_3d,
@@ -34,15 +37,15 @@ fn bench_overshared_facets_orphan_cleanup(c: &mut Criterion) {
     for cluster_count in CLUSTER_COUNTS {
         let fixture = validated_overshared_facet_orphan_cleanup_3d(cluster_count).or_abort();
         group.throughput(Throughput::Elements(
-            u64::try_from(fixture.cluster_count).or_abort(),
+            u64::try_from(fixture.cluster_count()).or_abort(),
         ));
 
         group.bench_with_input(
-            BenchmarkId::from_parameter(format!("{}_clusters", fixture.cluster_count)),
+            BenchmarkId::from_parameter(format!("{}_clusters", fixture.cluster_count())),
             &fixture,
             |b, fixture| {
                 b.iter_batched(
-                    || fixture.tds.clone(),
+                    || fixture.tds().clone(),
                     |mut tds| {
                         let stats = repair_overshared_facet_orphan_cleanup_3d(&mut tds).or_abort();
                         let _ = black_box(stats);
@@ -66,19 +69,15 @@ fn bench_targeted_topology_repair(c: &mut Criterion) {
     for cluster_count in TARGETED_CLUSTER_COUNTS {
         let boundary_fixture =
             validated_boundary_ridge_multiplicity_repair_3d(cluster_count).or_abort();
-        bench_targeted_fixture(
-            &mut group,
-            "boundary_ridge_multiplicity_3d",
-            &boundary_fixture,
-        );
+        bench_targeted_fixture(&mut group, &boundary_fixture);
 
         let ridge_fixture = validated_ridge_link_repair_2d(cluster_count).or_abort();
-        bench_targeted_fixture(&mut group, "ridge_link_2d", &ridge_fixture);
+        bench_targeted_fixture(&mut group, &ridge_fixture);
     }
 
     for cluster_count in VERTEX_LINK_CLUSTER_COUNTS {
         let vertex_fixture = validated_vertex_link_repair_3d(cluster_count).or_abort();
-        bench_targeted_fixture(&mut group, "vertex_link_3d", &vertex_fixture);
+        bench_targeted_fixture(&mut group, &vertex_fixture);
     }
 
     group.finish();
@@ -86,20 +85,22 @@ fn bench_targeted_topology_repair(c: &mut Criterion) {
 
 /// Registers one targeted topology repair fixture with Criterion.
 fn bench_targeted_fixture<const D: usize>(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    stage_name: &str,
+    group: &mut BenchmarkGroup<'_, WallTime>,
     fixture: &TargetedTopologyRepairFixture<D>,
 ) {
     group.throughput(Throughput::Elements(
-        u64::try_from(fixture.cluster_count).or_abort(),
+        u64::try_from(fixture.cluster_count()).or_abort(),
     ));
 
     group.bench_with_input(
-        BenchmarkId::new(stage_name, format!("{}_clusters", fixture.cluster_count)),
+        BenchmarkId::new(
+            fixture.stage().to_string(),
+            format!("{}d_{}_clusters", D, fixture.cluster_count()),
+        ),
         fixture,
         |b, fixture| {
             b.iter_batched(
-                || fixture.tds.clone(),
+                || fixture.tds().clone(),
                 |mut tds| {
                     let stats = repair_targeted_pl_manifold_topology(&mut tds).or_abort();
                     let _ = black_box(stats);

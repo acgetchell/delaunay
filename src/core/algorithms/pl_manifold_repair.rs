@@ -41,7 +41,7 @@ use std::cmp::Ordering;
 use std::fmt::{self, Display, Formatter};
 
 use crate::core::collections::{
-    SimplexKeyBuffer, SimplexKeySet, SmallBuffer, VertexKeyBuffer, fast_hash_set_with_capacity,
+    SimplexKeyBuffer, SimplexKeySet, VertexKeyBuffer, fast_hash_set_with_capacity,
 };
 use crate::core::facet::{FacetHandle, facet_key_from_vertices};
 use crate::core::simplex::Simplex;
@@ -122,6 +122,30 @@ impl Display for PlManifoldRepairStage {
         };
         f.write_str(label)
     }
+}
+
+/// Returns whether a manifold validation error belongs to a targeted repair stage.
+///
+/// Benchmark fixtures use this as the shared source of truth for the
+/// stage-to-error contract exercised by targeted PL-manifold repair.
+#[cfg(any(test, feature = "bench"))]
+pub(crate) const fn manifold_error_matches_repair_stage(
+    source: &ManifoldError,
+    stage: PlManifoldRepairStage,
+) -> bool {
+    matches!(
+        (stage, source),
+        (
+            PlManifoldRepairStage::BoundaryRidgeMultiplicity,
+            ManifoldError::BoundaryRidgeMultiplicity { .. }
+        ) | (
+            PlManifoldRepairStage::RidgeLink,
+            ManifoldError::RidgeLinkNotManifold { .. }
+        ) | (
+            PlManifoldRepairStage::VertexLink,
+            ManifoldError::VertexLinkNotManifold { .. }
+        )
+    )
 }
 
 // =============================================================================
@@ -943,23 +967,33 @@ struct SimplexRemovalCandidate {
     uuid: Uuid,
 }
 
-/// Deterministic quality score for a simplex: lower = better quality.
+/// Deterministic deletion quality score for a simplex: lower = better quality.
 ///
-/// Uses an edge-length aspect-ratio metric (max/min edge) that operates
-/// directly on the `Tds` without requiring a full `Triangulation` or
-/// circumsphere computation.
+/// Uses the edge-length aspect-ratio conditioning heuristic described in
+/// `REFERENCES.md`'s mesh quality and simplex-shape references, especially
+/// Shewchuk's "What Is a Good Linear Element?". The score operates directly on
+/// the `Tds` without requiring a full `Triangulation` or circumsphere
+/// computation. Invalid handles, missing vertices, empty edge sets,
+/// zero-length edges, and non-finite geometry are ranked as [`f64::MAX`] so
+/// they sort as the worst deletion candidates.
 fn simplex_quality_score<U, V, const D: usize>(tds: &Tds<U, V, D>, simplex_key: SimplexKey) -> f64 {
     let Ok(vertices) = tds.simplex_vertices(simplex_key) else {
         return f64::MAX;
     };
 
-    let mut edge_lengths: SmallBuffer<f64, 16> = SmallBuffer::new();
-    for i in 0..vertices.len() {
-        for j in (i + 1)..vertices.len() {
-            let Some(vi) = tds.vertex(vertices[i]) else {
-                return f64::MAX;
-            };
-            let Some(vj) = tds.vertex(vertices[j]) else {
+    let mut edge_count = 0_usize;
+    let mut mean = 0.0;
+    let mut sum_squared_deviations = 0.0;
+    let mut min_edge = f64::INFINITY;
+    let mut max_edge = f64::NEG_INFINITY;
+    let mut edge_count_scalar = 0.0;
+
+    for (i, &vi_key) in vertices.iter().enumerate() {
+        let Some(vi) = tds.vertex(vi_key) else {
+            return f64::MAX;
+        };
+        for &vj_key in vertices.iter().skip(i + 1) {
+            let Some(vj) = tds.vertex(vj_key) else {
                 return f64::MAX;
             };
 
@@ -968,29 +1002,37 @@ fn simplex_quality_score<U, V, const D: usize>(tds: &Tds<U, V, D>, simplex_key: 
                 *d = vi.point().coords()[idx] - vj.point().coords()[idx];
             }
             let len = hypot(&diff);
-            edge_lengths.push(len);
+            if !len.is_finite() {
+                return f64::MAX;
+            }
+            edge_count += 1;
+            let Some(current_edge_count): Option<f64> = NumCast::from(edge_count) else {
+                return f64::MAX;
+            };
+            let delta = len - mean;
+            mean += delta / current_edge_count;
+            sum_squared_deviations += delta * (len - mean);
+            edge_count_scalar = current_edge_count;
+            min_edge = min_edge.min(len);
+            max_edge = max_edge.max(len);
         }
     }
 
-    if edge_lengths.is_empty() {
+    if edge_count == 0 {
         return f64::MAX;
     }
 
-    let Some(n): Option<f64> = NumCast::from(edge_lengths.len()) else {
+    let variance = sum_squared_deviations / edge_count_scalar;
+    if !variance.is_finite() {
         return f64::MAX;
-    };
-    let mean = edge_lengths.iter().sum::<f64>() / n;
-    let variance = edge_lengths.iter().map(|l| (l - mean).powi(2)).sum::<f64>() / n;
-    let min_edge = edge_lengths.iter().copied().fold(f64::INFINITY, f64::min);
-    let max_edge = edge_lengths
-        .iter()
-        .copied()
-        .fold(f64::NEG_INFINITY, f64::max);
-    if min_edge <= 0.0 {
+    }
+    let variance = variance.max(0.0);
+    if !min_edge.is_finite() || !max_edge.is_finite() || min_edge <= 0.0 {
         return f64::MAX;
     }
     // Primary: aspect ratio; secondary: edge-length variance as tiebreaker.
-    (max_edge / min_edge) + variance * 1e-12
+    let score = (max_edge / min_edge) + variance * 1e-12;
+    if score.is_finite() { score } else { f64::MAX }
 }
 
 /// Among the simplices incident to an over-shared facet, deterministically select
@@ -1446,6 +1488,91 @@ mod tests {
         }
     }
 
+    #[test]
+    fn targeted_topology_violation_parses_stage_and_preserves_source() {
+        let vertex_key = VertexKey::from(KeyData::from_ffi(0xCAFE));
+        let cases = [
+            (
+                ManifoldError::BoundaryRidgeMultiplicity {
+                    ridge_key: 0x100,
+                    boundary_facet_count: 1,
+                },
+                PlManifoldRepairStage::BoundaryRidgeMultiplicity,
+            ),
+            (
+                ManifoldError::RidgeLinkNotManifold {
+                    ridge_key: 0x200,
+                    link_vertex_count: 3,
+                    link_edge_count: 1,
+                    max_degree: 1,
+                    degree_one_vertices: 2,
+                    connected: false,
+                },
+                PlManifoldRepairStage::RidgeLink,
+            ),
+            (
+                ManifoldError::VertexLinkNotManifold {
+                    vertex_key,
+                    link_vertex_count: 4,
+                    link_simplex_count: 2,
+                    boundary_facet_count: 3,
+                    max_degree: 1,
+                    connected: false,
+                    interior_vertex: true,
+                },
+                PlManifoldRepairStage::VertexLink,
+            ),
+        ];
+
+        for (source, expected_stage) in cases {
+            let violation = TargetedTopologyViolation::try_from(source.clone()).unwrap();
+
+            assert_eq!(violation.stage(), expected_stage);
+            assert!(manifold_error_matches_repair_stage(&source, expected_stage));
+            for mismatched_stage in [
+                PlManifoldRepairStage::BoundaryRidgeMultiplicity,
+                PlManifoldRepairStage::RidgeLink,
+                PlManifoldRepairStage::VertexLink,
+            ] {
+                if mismatched_stage != expected_stage {
+                    assert!(!manifold_error_matches_repair_stage(
+                        &source,
+                        mismatched_stage
+                    ));
+                }
+            }
+            assert_eq!(violation.source(), &source);
+            assert_eq!(violation.into_source(), source);
+        }
+
+        let non_targeted = ManifoldError::ManifoldFacetMultiplicity {
+            facet_key: 0x300,
+            simplex_count: 3,
+        };
+        assert_eq!(
+            TargetedTopologyViolation::try_from(non_targeted.clone()).unwrap_err(),
+            non_targeted
+        );
+        assert!(!manifold_error_matches_repair_stage(
+            &non_targeted,
+            PlManifoldRepairStage::BoundaryRidgeMultiplicity
+        ));
+    }
+
+    #[test]
+    fn remove_targeted_simplex_reports_zero_for_missing_key_without_mutating_stats() {
+        let mut tds: Tds<(), (), 3> = Tds::empty();
+        let mut stats = PlManifoldRepairStats::default();
+        let missing_simplex_key = SimplexKey::from(KeyData::from_ffi(u64::MAX));
+
+        let removed = remove_targeted_simplex(&mut tds, &mut stats, missing_simplex_key).unwrap();
+
+        assert_eq!(removed, 0);
+        assert_eq!(stats.simplices_removed, 0);
+        assert!(stats.removed_simplices.is_empty());
+        assert!(stats.removed_vertices.is_empty());
+    }
+
     /// Assert that a targeted violation fails before removal when simplex budget is zero.
     fn assert_targeted_simplex_budget_exhausted<const D: usize>(
         mut tds: Tds<(), (), D>,
@@ -1786,6 +1913,29 @@ mod tests {
         assert!(score1.is_finite(), "Score should be finite, got {score1}");
         assert!(score1 > 0.0, "Score should be positive, got {score1}");
         approx::assert_relative_eq!(score1, score2, epsilon = 0.0);
+        let invalid_score =
+            simplex_quality_score(tds, SimplexKey::from(KeyData::from_ffi(u64::MAX)));
+        assert_eq!(invalid_score.to_bits(), f64::MAX.to_bits());
+    }
+
+    #[test]
+    fn simplex_quality_score_ranks_degenerate_geometry_as_worst() {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let vertex_keys: Vec<_> = [
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+        ]
+        .iter()
+        .map(|vertex| tds.insert_vertex_with_mapping(*vertex).unwrap())
+        .collect();
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::try_new(vertex_keys).unwrap())
+            .unwrap();
+
+        let score = simplex_quality_score(&tds, simplex_key);
+
+        assert_eq!(score.to_bits(), f64::MAX.to_bits());
     }
 
     // =============================================================================

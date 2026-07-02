@@ -11,7 +11,8 @@
 pub mod pl_manifold {
     use crate::core::algorithms::pl_manifold_repair::{
         PlManifoldRepairConfig, PlManifoldRepairError, PlManifoldRepairStage,
-        PlManifoldRepairStats, repair_facet_oversharing, repair_pl_manifold_topology,
+        PlManifoldRepairStats, manifold_error_matches_repair_stage, repair_facet_oversharing,
+        repair_pl_manifold_topology,
     };
     use crate::core::collections::SimplexVertexKeyBuffer;
     use crate::core::simplex::{Simplex, SimplexValidationError};
@@ -31,9 +32,23 @@ pub mod pl_manifold {
     #[must_use]
     pub struct OversharedFacetOrphanCleanupFixture3d {
         /// Structurally coherent TDS with one over-shared facet per cluster.
-        pub tds: Tds<(), (), 3>,
+        tds: Tds<(), (), 3>,
         /// Number of independent over-shared clusters in the fixture.
-        pub cluster_count: usize,
+        cluster_count: usize,
+    }
+
+    impl OversharedFacetOrphanCleanupFixture3d {
+        /// Returns the structurally coherent benchmark TDS.
+        #[must_use]
+        pub const fn tds(&self) -> &Tds<(), (), 3> {
+            &self.tds
+        }
+
+        /// Returns the number of independent over-shared clusters.
+        #[must_use]
+        pub const fn cluster_count(&self) -> usize {
+            self.cluster_count
+        }
     }
 
     /// Fixture for benchmarking targeted PL-manifold repair stages.
@@ -41,11 +56,31 @@ pub mod pl_manifold {
     #[must_use]
     pub struct TargetedTopologyRepairFixture<const D: usize> {
         /// Structurally coherent TDS with targeted PL-manifold violations.
-        pub tds: Tds<(), (), D>,
+        tds: Tds<(), (), D>,
         /// Number of independent targeted-violation clusters in the fixture.
-        pub cluster_count: usize,
+        cluster_count: usize,
         /// Targeted repair stage exercised by this fixture.
-        pub stage: PlManifoldRepairStage,
+        stage: PlManifoldRepairStage,
+    }
+
+    impl<const D: usize> TargetedTopologyRepairFixture<D> {
+        /// Returns the structurally coherent benchmark TDS.
+        #[must_use]
+        pub const fn tds(&self) -> &Tds<(), (), D> {
+            &self.tds
+        }
+
+        /// Returns the number of independent targeted-violation clusters.
+        #[must_use]
+        pub const fn cluster_count(&self) -> usize {
+            self.cluster_count
+        }
+
+        /// Returns the targeted repair stage validated for this fixture.
+        #[must_use]
+        pub const fn stage(&self) -> PlManifoldRepairStage {
+            self.stage
+        }
     }
 
     /// Errors returned while building PL-manifold repair benchmark fixtures.
@@ -432,7 +467,7 @@ pub mod pl_manifold {
                 stage,
                 cluster_count,
             }),
-            Err(source) if manifold_error_matches_stage(&source, stage) => Ok(()),
+            Err(source) if manifold_error_matches_repair_stage(&source, stage) => Ok(()),
             Err(source) => {
                 Err(PlManifoldRepairFixtureError::UnexpectedTargetedViolation { stage, source })
             }
@@ -476,26 +511,6 @@ pub mod pl_manifold {
             tds,
             facet_to_simplices,
             GlobalTopology::Euclidean,
-        )
-    }
-
-    /// Checks whether a topology error belongs to the targeted repair stage.
-    const fn manifold_error_matches_stage(
-        source: &ManifoldError,
-        stage: PlManifoldRepairStage,
-    ) -> bool {
-        matches!(
-            (stage, source),
-            (
-                PlManifoldRepairStage::BoundaryRidgeMultiplicity,
-                ManifoldError::BoundaryRidgeMultiplicity { .. }
-            ) | (
-                PlManifoldRepairStage::RidgeLink,
-                ManifoldError::RidgeLinkNotManifold { .. }
-            ) | (
-                PlManifoldRepairStage::VertexLink,
-                ManifoldError::VertexLinkNotManifold { .. }
-            )
         )
     }
 
@@ -703,7 +718,7 @@ pub mod pl_manifold {
             let fixture = validated_overshared_facet_orphan_cleanup_3d(3)
                 .expect("fixture should repair deterministically");
 
-            assert_eq!(fixture.cluster_count, 3);
+            assert_eq!(fixture.cluster_count(), 3);
         }
 
         #[test]
@@ -716,11 +731,11 @@ pub mod pl_manifold {
                 .expect("vertex-link fixture should repair deterministically");
 
             assert_eq!(
-                boundary.stage,
+                boundary.stage(),
                 PlManifoldRepairStage::BoundaryRidgeMultiplicity
             );
-            assert_eq!(ridge.stage, PlManifoldRepairStage::RidgeLink);
-            assert_eq!(vertex.stage, PlManifoldRepairStage::VertexLink);
+            assert_eq!(ridge.stage(), PlManifoldRepairStage::RidgeLink);
+            assert_eq!(vertex.stage(), PlManifoldRepairStage::VertexLink);
         }
     }
 }
