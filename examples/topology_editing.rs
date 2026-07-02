@@ -32,13 +32,21 @@ use delaunay::prelude::geometry::{
 };
 use delaunay::prelude::insertion::InsertionError;
 use delaunay::prelude::pachner::{
-    EdgeKey, EdgeKeyError, FacetError, FacetHandle, FlipError, PachnerMove, PachnerMoves,
-    RidgeHandle, VertexKey,
+    EdgeKey, EdgeKeyError, FacetError, FacetHandle, FlipError, PachnerMove, PachnerMoveResult,
+    PachnerMoves, RidgeHandle, VertexKey,
 };
 use delaunay::prelude::tds::TdsError;
 use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 
 type ExampleResult<T = ()> = Result<T, TopologyEditingExampleError>;
+
+/// Parses and commits one Pachner request on the same topology owner.
+fn attempt_pachner_move<const D: usize>(
+    dt: &mut impl PachnerMoves<D, VertexData = ()>,
+    pachner_move: PachnerMove<(), D>,
+) -> Result<PachnerMoveResult<D>, FlipError> {
+    dt.propose_pachner(pachner_move)?.attempt_on(dt)
+}
 
 #[derive(Debug, thiserror::Error)]
 enum TopologyEditingExampleError {
@@ -201,10 +209,12 @@ fn pachner_2d_k1() -> ExampleResult {
         circumcenter_coords[0], circumcenter_coords[1]
     );
 
-    let flip_info = dt.attempt_pachner(PachnerMove::K1Insert {
-        simplex_key,
-        vertex: vertex!(circumcenter_coords)?,
-    })?;
+    let flip_info = dt
+        .propose_pachner(PachnerMove::K1Insert {
+            simplex_key,
+            vertex: vertex!(circumcenter_coords)?,
+        })?
+        .attempt_on(&mut dt)?;
 
     println!("After k=1 forward:");
     print_stats_2d(&dt);
@@ -219,9 +229,11 @@ fn pachner_2d_k1() -> ExampleResult {
     // Apply inverse k=1 flip (remove vertex)
     println!("\nApplying k=1 inverse (remove vertex):");
     let vertex_to_remove = flip_info.inserted_face_vertices[0];
-    let inverse_info = dt.attempt_pachner(PachnerMove::K1Remove {
-        vertex_key: vertex_to_remove,
-    })?;
+    let inverse_info = dt
+        .propose_pachner(PachnerMove::K1Remove {
+            vertex_key: vertex_to_remove,
+        })?
+        .attempt_on(&mut dt)?;
     assert!(!inverse_info.removed_simplices.is_empty());
 
     println!("After k=1 inverse:");
@@ -263,7 +275,9 @@ fn pachner_2d_k2() -> ExampleResult {
     })?;
 
     println!("\nApplying k=2 flip (flipping diagonal edge):");
-    let flip_info = dt.attempt_pachner(PachnerMove::K2 { facet })?;
+    let flip_info = dt
+        .propose_pachner(PachnerMove::K2 { facet })?
+        .attempt_on(&mut dt)?;
 
     println!("After k=2 forward:");
     print_stats_2d(&dt);
@@ -408,10 +422,12 @@ fn pachner_3d_k1() -> ExampleResult {
         "\nApplying k=1 flip (split tetrahedron at circumcenter [{:.2}, {:.2}, {:.2}]):",
         circumcenter_coords[0], circumcenter_coords[1], circumcenter_coords[2]
     );
-    let flip_info = dt.attempt_pachner(PachnerMove::K1Insert {
-        simplex_key,
-        vertex: vertex!(circumcenter_coords)?,
-    })?;
+    let flip_info = dt
+        .propose_pachner(PachnerMove::K1Insert {
+            simplex_key,
+            vertex: vertex!(circumcenter_coords)?,
+        })?
+        .attempt_on(&mut dt)?;
 
     println!("After k=1 forward:");
     print_stats_3d(&dt);
@@ -423,9 +439,11 @@ fn pachner_3d_k1() -> ExampleResult {
     // Apply inverse
     println!("\nApplying k=1 inverse:");
     let vertex_to_remove = flip_info.inserted_face_vertices[0];
-    let inverse_info = dt.attempt_pachner(PachnerMove::K1Remove {
-        vertex_key: vertex_to_remove,
-    })?;
+    let inverse_info = dt
+        .propose_pachner(PachnerMove::K1Remove {
+            vertex_key: vertex_to_remove,
+        })?
+        .attempt_on(&mut dt)?;
     assert!(!inverse_info.removed_simplices.is_empty());
 
     println!("After k=1 inverse:");
@@ -459,7 +477,7 @@ fn pachner_3d_k2() -> ExampleResult {
 
     // Find an interior facet to flip
     if let Some(facet) = find_interior_facet(&dt)? {
-        match dt.attempt_pachner(PachnerMove::K2 { facet }) {
+        match attempt_pachner_move(&mut dt, PachnerMove::K2 { facet }) {
             Ok(flip_info) => {
                 println!("\nApplied k=2 flip:");
                 print_stats_3d(&dt);
@@ -474,7 +492,7 @@ fn pachner_3d_k2() -> ExampleResult {
                     flip_info.inserted_face_vertices[1],
                 )?;
 
-                match dt.attempt_pachner(PachnerMove::K2Inverse { edge }) {
+                match attempt_pachner_move(&mut dt, PachnerMove::K2Inverse { edge }) {
                     Ok(_) => {
                         println!("After k=2 inverse:");
                         print_stats_3d(&dt);
@@ -531,7 +549,7 @@ fn pachner_3d_k3() -> ExampleResult {
 
     // Try to find and flip a ridge
     if let Some(ridge) = find_flippable_ridge_3d(&dt)? {
-        match dt.attempt_pachner(PachnerMove::K3 { ridge }) {
+        match attempt_pachner_move(&mut dt, PachnerMove::K3 { ridge }) {
             Ok(flip_info) => {
                 println!("\n✓ k=3 flip succeeded:");
                 print_stats_3d(&dt);

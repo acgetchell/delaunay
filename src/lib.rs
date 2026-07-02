@@ -614,7 +614,7 @@ mod core {
         pub(crate) use rollback::{
             TdsOwnerRollbackTransaction, TdsRollbackOwner, TdsRollbackTransaction,
         };
-        pub use storage::Tds;
+        pub use storage::{Tds, TopologyOwner, TopologyOwnerId};
     }
     /// Generic triangulation combining kernel + Tds.
     pub mod triangulation;
@@ -1421,9 +1421,9 @@ pub mod prelude {
 
     /// Unified Pachner move workflow for Monte-Carlo-style local edits.
     ///
-    /// This focused prelude exports the unified request/result/dispatch API,
-    /// the handles and handle-construction errors needed to construct moves,
-    /// result metadata needed to inspect moves, and [`vertex!`](crate::vertex)
+    /// This focused prelude exports the unified request/proposal/result/dispatch
+    /// API, the handles and handle-construction errors needed to construct
+    /// moves, result metadata needed to inspect moves, and [`vertex!`](crate::vertex)
     /// for k=1 insertion vertices. Low-level flip primitives stay under
     /// [`crate::flips`] for expert/debug workflows.
     ///
@@ -1451,10 +1451,12 @@ pub mod prelude {
     ///     return Ok(());
     /// };
     ///
-    /// let result = dt.attempt_pachner(PachnerMove::K1Insert {
-    ///     simplex_key,
-    ///     vertex: vertex![0.2, 0.2, 0.2]?,
-    /// })?;
+    /// let result = dt
+    ///     .propose_pachner(PachnerMove::K1Insert {
+    ///         simplex_key,
+    ///         vertex: vertex![0.2, 0.2, 0.2]?,
+    ///     })?
+    ///     .attempt_on(&mut dt)?;
     /// assert_eq!(result.kind, BistellarFlipKind::k1(3));
     /// assert_eq!(result.direction, FlipDirection::Forward);
     /// assert_eq!(result.inserted_face_vertices.len(), 1);
@@ -1501,10 +1503,11 @@ pub mod prelude {
             TriangleHandleError,
         };
         pub use crate::pachner::{
-            PachnerMove, PachnerMoveFeasibility, PachnerMoveResult, PachnerMoves,
+            PachnerMove, PachnerMoveFeasibility, PachnerMoveResult, PachnerMoves, PachnerProposal,
         };
         pub use crate::tds::{
-            EdgeKey, EdgeKeyError, FacetError, FacetHandle, SimplexKey, Vertex, VertexKey,
+            EdgeKey, EdgeKeyError, FacetError, FacetHandle, SimplexKey, TopologyOwner,
+            TopologyOwnerId, Vertex, VertexKey,
         };
         pub use crate::vertex;
     }
@@ -1687,6 +1690,9 @@ pub mod prelude {
     }
 
     /// Focused exports for low-level topology data structures.
+    ///
+    /// This prelude also exposes [`TopologyOwner`] and [`TopologyOwnerId`] for
+    /// proposal and borrowed-view workflows that need runtime topology identity.
     ///
     /// # Examples
     ///

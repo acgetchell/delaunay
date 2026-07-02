@@ -177,9 +177,10 @@ fn flip_then_repair_2d() -> Result<(), DelaunayizeRepairExampleError> {
     let mut violating_facet = None;
     for facet in facets {
         let mut trial = dt.clone();
-        if trial.attempt_pachner(PachnerMove::K2 { facet }).is_ok()
-            && trial.is_valid_delaunay().is_err()
-        {
+        let Ok(proposal) = trial.propose_pachner(PachnerMove::K2 { facet }) else {
+            continue;
+        };
+        if proposal.attempt_on(&mut trial).is_ok() && trial.is_valid_delaunay().is_err() {
             violating_facet = Some(facet);
             break;
         }
@@ -190,7 +191,9 @@ fn flip_then_repair_2d() -> Result<(), DelaunayizeRepairExampleError> {
         return Ok(());
     };
 
-    let selected_flip = dt.attempt_pachner(PachnerMove::K2 { facet })?;
+    let selected_flip = dt
+        .propose_pachner(PachnerMove::K2 { facet })?
+        .attempt_on(&mut dt)?;
     assert!(!selected_flip.new_simplices.is_empty());
     match dt.is_valid_delaunay() {
         Ok(()) => {

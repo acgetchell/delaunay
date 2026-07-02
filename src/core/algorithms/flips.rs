@@ -45,7 +45,7 @@ use crate::core::operations::TopologicalOperation;
 use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
 use crate::core::tds::{
     EntityKind, NeighborValidationError, SimplexKey, Tds, TdsMutationError, TdsRollbackTransaction,
-    VertexKey,
+    TopologyOwnerId, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
@@ -3105,6 +3105,14 @@ pub enum FlipContextError {
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FlipFailureKind {
+    /// [`PachnerProposal`](crate::pachner::PachnerProposal) belongs to a
+    /// different topology owner.
+    #[error("wrong topology owner")]
+    WrongTopologyOwner,
+    /// [`PachnerProposal`](crate::pachner::PachnerProposal) was minted before
+    /// the current topology generation.
+    #[error("stale topology proposal")]
+    StaleTopologyProposal,
     /// Flips are not supported for this dimension.
     #[error("unsupported dimension")]
     UnsupportedDimension,
@@ -3894,6 +3902,26 @@ pub enum FlipVertexAdjacencyError {
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum FlipError {
+    /// A [`PachnerProposal`](crate::pachner::PachnerProposal) was minted from a
+    /// different owner.
+    #[error("Topology proposal owner mismatch: expected {expected:?}, found {found:?}")]
+    WrongTopologyOwner {
+        /// Owner identity of the triangulation receiving the proposal.
+        expected: TopologyOwnerId,
+        /// Owner identity stored in the detached proposal.
+        found: TopologyOwnerId,
+    },
+    /// A [`PachnerProposal`](crate::pachner::PachnerProposal) was minted from an
+    /// older structural generation.
+    #[error(
+        "Topology proposal generation {proposal_generation} is stale for current generation {current_generation}"
+    )]
+    StaleTopologyProposal {
+        /// Structural generation stored in the detached proposal.
+        proposal_generation: u64,
+        /// Current structural generation of the target triangulation.
+        current_generation: u64,
+    },
     /// Flips are not supported for this dimension.
     #[error("Bistellar flip not supported for D={dimension}")]
     UnsupportedDimension {
@@ -4182,6 +4210,8 @@ impl From<FlipMutationError> for FlipError {
 impl From<&FlipError> for FlipFailureKind {
     fn from(source: &FlipError) -> Self {
         match source {
+            FlipError::WrongTopologyOwner { .. } => Self::WrongTopologyOwner,
+            FlipError::StaleTopologyProposal { .. } => Self::StaleTopologyProposal,
             FlipError::UnsupportedDimension { .. } => Self::UnsupportedDimension,
             FlipError::BoundaryFacet { .. } => Self::BoundaryFacet,
             FlipError::MissingSimplex { .. } => Self::MissingSimplex,

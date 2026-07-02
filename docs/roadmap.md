@@ -31,7 +31,9 @@ Key takeaways from v0.7.8:
 ### v0.8.0 paper-facing API and topology push
 
 v0.8.0 is the next feature-bearing release and is expected to carry the larger
-work intentionally deferred from v0.7.8 cleanup:
+work intentionally deferred from v0.7.8 cleanup. It will require Rust 1.97.0;
+the final release gate is an explicit audit of the 1.97.0 toolchain surface
+before shipping.
 
 - **Pachner/Edit API shape (#252/#253/#350/#337):** unify the Pachner move API,
   expand public flip benchmark coverage, add Monte-Carlo stress benchmarks, and
@@ -51,8 +53,11 @@ work intentionally deferred from v0.7.8 cleanup:
   `SphericalSpace::canonicalize_point()`.
 - **Iterator cleanup (#353):** prefer iterator-based collection-building paths
   where that improves clarity and allocation behavior.
-- **Rust test cleanup (#329):** adopt stable `assert_matches!` in tests now
-  that the MSRV supports it.
+- **Rust 1.97.0 release gate (#329/#496):** raise the v0.8.0 MSRV to Rust
+  1.97.0, finish the baseline `assert_matches!` cleanup, audit the new
+  integer/`NonZero` bit helpers against Hilbert bit-depth/index invariants,
+  review `RepeatN::default` and Cargo 1.97 tooling changes for useful adoption,
+  and re-benchmark predicate `cold_path` decisions under the 1.97.0 compiler.
 
 ### v0.9.0 and later horizon
 

@@ -14,6 +14,7 @@ Agents must follow these rules when modifying or adding Rust code.
 - [Numeric Conversions](#numeric-conversions)
 - [Borrowing and Ownership](#borrowing-and-ownership)
 - [Error Handling](#error-handling)
+- [Fluent Workflow APIs](#fluent-workflow-apis)
 - [Constructor Naming](#constructor-naming)
 - [Panic Policy](#panic-policy)
 - [Error Types](#error-types)
@@ -335,6 +336,43 @@ builder
     .with_seed(seed)
     .build()?;
 ```
+
+---
+
+## Fluent Workflow APIs
+
+Fluent APIs are a reviewed design preference for public workflows, not a
+repository-wide requirement. Prefer staged method chains when the operation
+naturally proceeds through configuration, proposal, transaction, dry-run,
+commit, execution, or report phases.
+
+Good fluent APIs make the valid sequence obvious and keep fallibility visible:
+
+```rust
+let result = owner
+    .propose_change(raw_request)?
+    .attempt_on(&mut owner)?;
+```
+
+Use fluent stages when they preserve useful evidence, such as a builder that
+stores validated options, a proposal that carries owner/generation provenance,
+or a transaction guard that owns rollback state. Coordinate this with
+parse-don't-validate design: once raw input has been parsed into a
+proof-bearing value, later stages should consume or borrow that value rather
+than reaccepting the raw input.
+
+Keep mutation explicit at the terminal method. Prefer names such as `build`,
+`attempt_on`, `apply_to`, `commit`, `execute`, or `finish` when that method is
+the point where side effects happen. Public samples should not hide mutation in
+closures such as `and_then`, `map`, `inspect`, or `for_each` when a named stage
+would be clearer.
+
+Do not force fluent style onto accessors, iterators, simple queries, passive
+reports, primitive/expert APIs, standard trait implementations, or one-step
+operations with no meaningful intermediate state. Keep non-fluent functions
+when they provide real orthogonality, such as trait dispatch hooks or low-level
+primitive operations; remove or hide them when they only duplicate the fluent
+workflow and broaden public surface without adding capability.
 
 ---
 

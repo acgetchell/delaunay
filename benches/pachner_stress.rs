@@ -14,8 +14,8 @@ use criterion::{
 };
 use delaunay::prelude::construction::{Vertex, vertex};
 use delaunay::prelude::pachner::{
-    EdgeKey, FacetHandle, PachnerMove, PachnerMoves, RidgeHandle, SimplexKey, TriangleHandle,
-    VertexKey,
+    EdgeKey, FacetHandle, PachnerMove, PachnerMoveResult, PachnerMoves, RidgeHandle, SimplexKey,
+    TriangleHandle, VertexKey,
 };
 
 /// Shared benchmark setup error helpers.
@@ -118,12 +118,13 @@ fn k1_remove_fixture(
 ) -> (FlipTriangulation<4>, VertexKey) {
     let mut dt = base_dt.clone();
     let vertex_uuid = vertex.uuid();
-    let inserted = dt
-        .attempt_pachner(PachnerMove::K1Insert {
+    let inserted = attempt_pachner_move(
+        &mut dt,
+        PachnerMove::K1Insert {
             simplex_key,
             vertex,
-        })
-        .or_abort();
+        },
+    );
     let vertex_key = dt
         .tds()
         .vertex_key_from_uuid(&vertex_uuid)
@@ -140,7 +141,7 @@ fn k2_inverse_fixture(
     facet: FacetHandle,
 ) -> (FlipTriangulation<4>, EdgeKey) {
     let mut dt = base_dt.clone();
-    let info = dt.attempt_pachner(PachnerMove::K2 { facet }).or_abort();
+    let info = attempt_pachner_move(&mut dt, PachnerMove::K2 { facet });
     let edge = inserted_edge(&dt, &info.inserted_face_vertices);
 
     (dt, edge)
@@ -152,10 +153,21 @@ fn k3_inverse_fixture(
     ridge: RidgeHandle,
 ) -> (FlipTriangulation<4>, TriangleHandle) {
     let mut dt = base_dt.clone();
-    let info = dt.attempt_pachner(PachnerMove::K3 { ridge }).or_abort();
+    let info = attempt_pachner_move(&mut dt, PachnerMove::K3 { ridge });
     let triangle = inserted_triangle(&info.inserted_face_vertices);
 
     (dt, triangle)
+}
+
+/// Parses and commits one Pachner request on the same topology owner.
+fn attempt_pachner_move(
+    dt: &mut FlipTriangulation<4>,
+    pachner_move: PachnerMove<(), 4>,
+) -> PachnerMoveResult<4> {
+    dt.propose_pachner(pachner_move)
+        .or_abort()
+        .attempt_on(dt)
+        .or_abort()
 }
 
 /// Converts a reported inserted face into an inverse k=2 edge handle.
@@ -185,7 +197,7 @@ fn clone_batch(base_dt: &FlipTriangulation<4>) -> Vec<FlipTriangulation<4>> {
     vec![base_dt.clone(); MOVES_PER_SAMPLE]
 }
 
-/// Registers one stress case that repeats the same detached Pachner proposal.
+/// Registers one stress case that repeats the same raw Pachner request.
 fn bench_pachner_move(
     group: &mut BenchmarkGroup<'_, WallTime>,
     name: &'static str,
@@ -197,7 +209,7 @@ fn bench_pachner_move(
             || clone_batch(base_dt),
             |mut triangulations| {
                 for dt in &mut triangulations {
-                    let result = dt.attempt_pachner(pachner_move).or_abort();
+                    let result = attempt_pachner_move(dt, pachner_move);
                     black_box(&result);
                 }
                 black_box(triangulations);

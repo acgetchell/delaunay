@@ -2,7 +2,7 @@
 
 //! Public API roundtrip tests for Pachner/bistellar flips.
 
-use delaunay::flips::FlipMutationError;
+use delaunay::flips::{BistellarFlips, FlipFailureKind, FlipFeasibility, FlipMutationError};
 use delaunay::{TdsConstructionFailure, vertex};
 use std::assert_matches;
 
@@ -13,10 +13,9 @@ use delaunay::prelude::construction::{
 use delaunay::prelude::geometry::RobustKernel;
 use delaunay::prelude::pachner::{
     BistellarFlipKind, EdgeKey, EdgeKeyError, FacetHandle, FlipDirection, FlipError, PachnerMove,
-    PachnerMoveFeasibility, PachnerMoveResult, PachnerMoves, SimplexKey, VertexKey,
+    PachnerMoveFeasibility, PachnerMoveResult, PachnerMoves, PachnerProposal, RidgeHandle,
+    SimplexKey, TopologyOwner, TriangleHandle, VertexKey,
 };
-#[cfg(feature = "slow-tests")]
-use delaunay::prelude::pachner::{RidgeHandle, TriangleHandle};
 use uuid::Uuid;
 
 type Dt4 = DelaunayTriangulation<RobustKernel<f64>, (), (), 4>;
@@ -53,6 +52,13 @@ const STABLE_POINTS_4D: &[[f64; 4]] = &[
 struct TopologySnapshot {
     vertex_uuids: Vec<Uuid>,
     simplex_vertex_uuids: Vec<Vec<Uuid>>,
+}
+
+fn attempt_pachner_move<const D: usize>(
+    dt: &mut Dt<D>,
+    pachner_move: PachnerMove<(), D>,
+) -> Result<PachnerMoveResult<D>, FlipError> {
+    dt.propose_pachner(pachner_move)?.attempt_on(dt)
 }
 
 fn topology_and_delaunay_valid<const D: usize>(
@@ -115,6 +121,52 @@ fn stale_k1_remove_request_fails_without_mutating_topology() {
 }
 
 #[test]
+fn pachner_proposal_rejects_different_topology_owner_without_mutating() {
+    let dt = build_minimal_simplex_dt::<2>();
+    let simplex_key = first_simplex_generic(&dt);
+    let vertex: Vertex<(), 2> = vertex!(simplex_centroid_generic(&dt, simplex_key))
+        .expect("simplex centroid should be valid");
+    let proposal = dt
+        .propose_pachner(PachnerMove::K1Insert {
+            simplex_key,
+            vertex,
+        })
+        .expect("source proposal should be valid");
+
+    let mut target = build_minimal_simplex_dt::<2>();
+    let before = snapshot_topology_2d(&target);
+    let expected_owner = target.topology_owner_id();
+    let found_owner = proposal.owner_id().clone();
+    let feasibility = proposal
+        .can_attempt_on(&target)
+        .expect_err("independent triangulation should reject proposal from original owner");
+    assert_matches!(
+        &feasibility,
+        FlipError::WrongTopologyOwner { expected, found }
+            if expected == &expected_owner && found == &found_owner
+    );
+    assert_eq!(
+        FlipFailureKind::from(&feasibility),
+        FlipFailureKind::WrongTopologyOwner
+    );
+    assert_eq!(snapshot_topology_2d(&target), before);
+
+    let attempted = proposal
+        .attempt_on(&mut target)
+        .expect_err("independent triangulation should not mutate from original proposal");
+    assert_matches!(
+        &attempted,
+        FlipError::WrongTopologyOwner { expected, found }
+            if expected == &expected_owner && found == &found_owner
+    );
+    assert_eq!(
+        FlipFailureKind::from(&attempted),
+        FlipFailureKind::WrongTopologyOwner
+    );
+    assert_eq!(snapshot_topology_2d(&target), before);
+}
+
+#[test]
 #[cfg(feature = "slow-tests")]
 fn stale_k2_request_fails_without_mutating_topology() {
     let base = build_stable_dt_4d();
@@ -150,12 +202,14 @@ fn stale_pachner_error_propagates_through_delaunay_result() {
     let vertex: Vertex<(), 4> =
         vertex!(vertex_coords).expect("centroid of a stable simplex should be a valid vertex");
     let vertex_uuid = vertex.uuid();
-    let inserted = dt
-        .attempt_pachner(PachnerMove::K1Insert {
+    let inserted = attempt_pachner_move(
+        &mut dt,
+        PachnerMove::K1Insert {
             simplex_key: stale_simplex,
             vertex,
-        })
-        .expect("initial k=1 insert should make the simplex key stale");
+        },
+    )
+    .expect("initial k=1 insert should make the simplex key stale");
     let inserted_vertex = dt
         .tds()
         .vertex_key_from_uuid(&vertex_uuid)
@@ -203,8 +257,7 @@ fn edge_to_facet_query_tracks_2d_k2_mutation_freshness() {
             .is_some()
     );
 
-    let info = dt
-        .attempt_pachner(PachnerMove::K2 { facet })
+    let info = attempt_pachner_move(&mut dt, PachnerMove::K2 { facet })
         .expect("2D k=2 flip should succeed on selected fixture facet");
     assert_eq!(info.inserted_face_vertices.len(), 2);
 
@@ -243,8 +296,11 @@ fn pachner_feasibility_agrees_with_successful_2d_k2_attempt() {
     let facet = flippable_k2_facet_2d(&dt);
     let pachner_move = PachnerMove::K2 { facet };
 
-    let feasibility = dt
-        .can_attempt_pachner(&pachner_move)
+    let proposal = dt
+        .propose_pachner(pachner_move)
+        .expect("2D k=2 proposal parsing should accept selected fixture facet");
+    let feasibility = proposal
+        .can_attempt_on(&dt)
         .expect("2D k=2 feasibility should accept selected fixture facet");
     assert_pachner_feasibility_contract(
         &feasibility,
@@ -253,8 +309,8 @@ fn pachner_feasibility_agrees_with_successful_2d_k2_attempt() {
     );
 
     let mut trial = dt;
-    let result = trial
-        .attempt_pachner(pachner_move)
+    let result = proposal
+        .attempt_on(&mut trial)
         .expect("2D k=2 attempt should agree with feasibility");
     assert_eq!(feasibility.kind, result.kind);
     assert_eq!(feasibility.direction, result.direction);
@@ -270,6 +326,26 @@ fn pachner_feasibility_agrees_with_successful_2d_k2_attempt() {
 }
 
 #[test]
+fn pachner_feasibility_rejects_unsupported_2d_k2_inverse_without_mutating() {
+    let mut dt = build_flippable_dt_2d();
+    let facet = flippable_k2_facet_2d(&dt);
+    let forward = attempt_pachner_move(&mut dt, PachnerMove::K2 { facet })
+        .expect("2D k=2 attempt should create an inverse edge candidate");
+    let edge = inserted_edge_2d(&dt, &forward.inserted_face_vertices);
+    let pachner_move = PachnerMove::K2Inverse { edge };
+    let before = snapshot_topology_2d(&dt);
+
+    assert_matches!(
+        dt.can_flip_k2_inverse_from_edge(edge),
+        Err(FlipError::UnsupportedDimension { dimension: 2 })
+    );
+    assert_eq!(snapshot_topology_2d(&dt), before);
+    assert_pachner_rejection_preserves_topology(dt, pachner_move, |err| {
+        assert_matches!(err, FlipError::UnsupportedDimension { dimension: 2 });
+    });
+}
+
+#[test]
 fn pachner_feasibility_rejects_boundary_facet_like_attempt_2d() {
     let dt = build_single_triangle_dt_2d();
     let (simplex_key, _) = dt
@@ -280,11 +356,11 @@ fn pachner_feasibility_rejects_boundary_facet_like_attempt_2d() {
         .expect("single-triangle boundary facet should be a live handle");
     let pachner_move = PachnerMove::K2 { facet };
 
-    let feasibility = dt.can_attempt_pachner(&pachner_move);
+    let feasibility = dt.propose_pachner(pachner_move);
     assert_matches!(feasibility, Err(FlipError::BoundaryFacet { .. }));
 
-    let mut trial = dt;
-    let attempted = trial.attempt_pachner(pachner_move);
+    let trial = dt;
+    let attempted = trial.propose_pachner(pachner_move);
     assert_matches!(attempted, Err(FlipError::BoundaryFacet { .. }));
     assert_topology_and_delaunay_valid(&trial, "failed boundary feasibility agreement");
 }
@@ -293,20 +369,19 @@ fn pachner_feasibility_rejects_boundary_facet_like_attempt_2d() {
 fn pachner_feasibility_rejects_stale_facet_like_attempt_2d() {
     let mut dt = build_flippable_dt_2d();
     let facet = flippable_k2_facet_2d(&dt);
-    let first_flip = dt
-        .attempt_pachner(PachnerMove::K2 { facet })
+    let first_flip = attempt_pachner_move(&mut dt, PachnerMove::K2 { facet })
         .expect("first k=2 attempt should stale the original facet");
     assert!(!first_flip.new_simplices.is_empty());
     let stale_move = PachnerMove::K2 { facet };
 
-    let feasibility = dt.can_attempt_pachner(&stale_move);
+    let feasibility = dt.propose_pachner(stale_move);
     assert_matches!(
         feasibility,
         Err(FlipError::MissingSimplex { simplex_key }) if simplex_key == facet.simplex_key()
     );
 
     let before_failed_attempt = snapshot_topology_2d(&dt);
-    let attempted = dt.attempt_pachner(stale_move);
+    let attempted = dt.propose_pachner(stale_move);
     assert_matches!(
         attempted,
         Err(FlipError::MissingSimplex { simplex_key }) if simplex_key == facet.simplex_key()
@@ -326,8 +401,11 @@ fn pachner_feasibility_agrees_with_toroidal_2d_k1_insert() {
         vertex,
     };
 
-    let feasibility = dt
-        .can_attempt_pachner(&pachner_move)
+    let proposal = dt
+        .propose_pachner(pachner_move)
+        .expect("toroidal k=1 proposal parsing should accept a simplex centroid");
+    let feasibility = proposal
+        .can_attempt_on(&dt)
         .expect("toroidal k=1 feasibility should accept a simplex centroid");
     assert_pachner_feasibility_contract(
         &feasibility,
@@ -337,8 +415,8 @@ fn pachner_feasibility_agrees_with_toroidal_2d_k1_insert() {
     assert!(feasibility.inserted_face_vertices.is_none());
 
     let mut trial = dt;
-    let result = trial
-        .attempt_pachner(pachner_move)
+    let result = proposal
+        .attempt_on(&mut trial)
         .expect("toroidal k=1 attempt should agree with feasibility");
     let inserted_vertex = trial
         .tds()
@@ -347,6 +425,10 @@ fn pachner_feasibility_agrees_with_toroidal_2d_k1_insert() {
     assert_eq!(result.kind, feasibility.kind);
     assert_eq!(result.direction, feasibility.direction);
     assert_eq!(result.removed_simplices, feasibility.removed_simplices);
+    assert_eq!(
+        result.removed_face_vertices,
+        feasibility.removed_face_vertices
+    );
     assert_eq!(result.inserted_face_vertices.as_slice(), &[inserted_vertex]);
     trial
         .as_triangulation()
@@ -370,12 +452,96 @@ fn pachner_feasibility_rejects_duplicate_k1_insert_uuid_without_mutating() {
         vertex: duplicate_vertex,
     };
 
-    assert_duplicate_vertex_uuid_error(dt.can_attempt_pachner(&pachner_move), duplicate_uuid);
+    assert_duplicate_vertex_uuid_error(dt.propose_pachner(pachner_move), duplicate_uuid);
 
-    let mut trial = dt;
+    let trial = dt;
     let before_failed_attempt = snapshot_topology_2d(&trial);
-    assert_duplicate_vertex_uuid_error(trial.attempt_pachner(pachner_move), duplicate_uuid);
+    assert_duplicate_vertex_uuid_error(trial.propose_pachner(pachner_move), duplicate_uuid);
     assert_eq!(snapshot_topology_2d(&trial), before_failed_attempt);
+}
+
+#[test]
+fn pachner_feasibility_rejects_invalid_3d_inverse_k2_without_mutating() {
+    let dt = build_minimal_simplex_dt::<3>();
+    let simplex = dt
+        .simplices()
+        .next()
+        .map(|(_, simplex)| simplex)
+        .expect("minimal 3D fixture should contain one simplex");
+    let [a, b, ..] = simplex.vertices() else {
+        panic!("3D simplex should contain at least two vertices");
+    };
+    let edge = EdgeKey::try_new(dt.tds(), *a, *b).expect("simplex vertices should form an edge");
+    let pachner_move = PachnerMove::K2Inverse { edge };
+
+    assert_pachner_rejection_preserves_topology(dt, pachner_move, |err| {
+        assert_matches!(
+            err,
+            FlipError::InvalidEdgeMultiplicity {
+                found: 1,
+                expected: 3
+            }
+        );
+    });
+}
+
+#[test]
+fn pachner_feasibility_rejects_invalid_3d_k3_without_mutating() {
+    let dt = build_minimal_simplex_dt::<3>();
+    let simplex_key = first_simplex_generic(&dt);
+    let ridge = RidgeHandle::try_new(dt.tds(), simplex_key, 0, 1)
+        .expect("minimal 3D fixture should expose a ridge handle");
+    let pachner_move = PachnerMove::K3 { ridge };
+
+    assert_pachner_rejection_preserves_topology(dt, pachner_move, |err| {
+        assert_matches!(err, FlipError::InvalidRidgeMultiplicity { found: 1 });
+    });
+}
+
+#[test]
+fn pachner_feasibility_rejects_invalid_4d_k3_inverse_without_mutating() {
+    let dt = build_minimal_simplex_dt::<4>();
+    let simplex = dt
+        .simplices()
+        .next()
+        .map(|(_, simplex)| simplex)
+        .expect("minimal 4D fixture should contain one simplex");
+    let [a, b, c, ..] = simplex.vertices() else {
+        panic!("4D simplex should contain at least three vertices");
+    };
+    let triangle =
+        TriangleHandle::try_new(*a, *b, *c).expect("simplex vertices should form a triangle");
+    let pachner_move = PachnerMove::K3Inverse { triangle };
+
+    assert_pachner_rejection_preserves_topology(dt, pachner_move, |err| {
+        assert_matches!(
+            err,
+            FlipError::InvalidTriangleMultiplicity {
+                found: 1,
+                expected: 3
+            }
+        );
+    });
+}
+
+#[test]
+fn pachner_feasibility_rejects_unsupported_3d_k3_inverse_without_mutating() {
+    let dt = build_minimal_simplex_dt::<3>();
+    let simplex = dt
+        .simplices()
+        .next()
+        .map(|(_, simplex)| simplex)
+        .expect("minimal 3D fixture should contain one simplex");
+    let [a, b, c, ..] = simplex.vertices() else {
+        panic!("3D simplex should contain at least three vertices");
+    };
+    let triangle =
+        TriangleHandle::try_new(*a, *b, *c).expect("simplex vertices should form a triangle");
+    let pachner_move = PachnerMove::K3Inverse { triangle };
+
+    assert_pachner_rejection_preserves_topology(dt, pachner_move, |err| {
+        assert_matches!(err, FlipError::UnsupportedDimension { dimension: 3 });
+    });
 }
 
 #[test]
@@ -394,10 +560,13 @@ fn try_stale_k1_insert(
 ) -> DelaunayResult<()> {
     let vertex: Vertex<(), 4> = vertex!(vertex_coords)?;
     let vertex_uuid = vertex.uuid();
-    let inserted = dt.attempt_pachner(PachnerMove::K1Insert {
-        simplex_key: stale_simplex,
-        vertex,
-    })?;
+    let inserted = attempt_pachner_move(
+        dt,
+        PachnerMove::K1Insert {
+            simplex_key: stale_simplex,
+            vertex,
+        },
+    )?;
     let inserted_vertex = dt
         .tds()
         .vertex_key_from_uuid(&vertex_uuid)
@@ -525,7 +694,7 @@ fn flippable_k2_facet_2d(dt: &Dt2) -> FacetHandle {
             )
             .expect("interior 2D facet index should be valid");
             let mut trial = dt.clone();
-            if trial.attempt_pachner(PachnerMove::K2 { facet }).is_ok()
+            if attempt_pachner_move(&mut trial, PachnerMove::K2 { facet }).is_ok()
                 && topology_and_delaunay_valid(&trial)
             {
                 return facet;
@@ -537,6 +706,29 @@ fn flippable_k2_facet_2d(dt: &Dt2) -> FacetHandle {
 
 /// Captures 2D topology by stable UUIDs so failed attempts can prove non-mutation.
 fn snapshot_topology_2d(dt: &Dt2) -> TopologySnapshot {
+    snapshot_topology_generic(dt)
+}
+
+/// Verifies the primitive flip feasibility and unified Pachner report agree.
+fn assert_flip_and_pachner_feasibility_match<const D: usize>(
+    primitive: &FlipFeasibility<D>,
+    pachner: &PachnerMoveFeasibility<D>,
+) {
+    assert_eq!(primitive.kind, pachner.kind);
+    assert_eq!(primitive.direction, pachner.direction);
+    assert_eq!(primitive.removed_simplices, pachner.removed_simplices);
+    assert_eq!(
+        primitive.removed_face_vertices,
+        pachner.removed_face_vertices
+    );
+    assert_eq!(
+        primitive.inserted_face_vertices,
+        pachner.inserted_face_vertices
+    );
+}
+
+/// Captures topology by stable UUIDs for any deterministic test fixture.
+fn snapshot_topology_generic<const D: usize>(dt: &Dt<D>) -> TopologySnapshot {
     let tds = dt.tds();
     let mut vertex_uuids = tds
         .vertices()
@@ -566,6 +758,27 @@ fn snapshot_topology_2d(dt: &Dt2) -> TopologySnapshot {
         vertex_uuids,
         simplex_vertex_uuids,
     }
+}
+
+/// Verifies an invalid raw Pachner request reports the same error without mutation.
+fn assert_pachner_rejection_preserves_topology<const D: usize>(
+    dt: Dt<D>,
+    pachner_move: PachnerMove<(), D>,
+    assert_error: impl Fn(&FlipError),
+) {
+    let before = snapshot_topology_generic(&dt);
+    let feasibility = dt
+        .propose_pachner(pachner_move)
+        .expect_err("Pachner proposal parsing should reject invalid request");
+    assert_error(&feasibility);
+    assert_eq!(snapshot_topology_generic(&dt), before);
+
+    let trial = dt;
+    let attempted = trial
+        .propose_pachner(pachner_move)
+        .expect_err("Pachner proposal parsing should reject invalid request");
+    assert_error(&attempted);
+    assert_eq!(snapshot_topology_generic(&trial), before);
 }
 
 /// Verifies the generic Pachner feasibility arities implied by the reported move kind.
@@ -612,8 +825,11 @@ fn assert_public_k1_insert_feasibility_smoke<const D: usize>() {
         vertex,
     };
 
-    let feasibility = dt
-        .can_attempt_pachner(&pachner_move)
+    let proposal = dt
+        .propose_pachner(pachner_move)
+        .unwrap_or_else(|err| panic!("{D}D public k=1 proposal should succeed: {err:?}"));
+    let feasibility = proposal
+        .can_attempt_on(&dt)
         .unwrap_or_else(|err| panic!("{D}D public k=1 feasibility should succeed: {err:?}"));
     assert_pachner_feasibility_contract(
         &feasibility,
@@ -623,8 +839,8 @@ fn assert_public_k1_insert_feasibility_smoke<const D: usize>() {
     assert!(feasibility.inserted_face_vertices.is_none());
 
     let mut trial = dt;
-    let result = trial
-        .attempt_pachner(pachner_move)
+    let result = proposal
+        .attempt_on(&mut trial)
         .unwrap_or_else(|err| panic!("{D}D public k=1 mutation should succeed: {err:?}"));
     let inserted_vertex = trial
         .tds()
@@ -638,14 +854,35 @@ fn assert_public_k1_insert_feasibility_smoke<const D: usize>() {
         result.removed_face_vertices
     );
     assert_eq!(result.inserted_face_vertices.as_slice(), &[inserted_vertex]);
-    trial
-        .as_triangulation()
-        .validate()
-        .unwrap_or_else(|err| panic!("{D}D k=1 mutation should preserve topology: {err}"));
-    trial
-        .as_triangulation()
-        .is_valid_embedding()
-        .unwrap_or_else(|err| panic!("{D}D k=1 mutation should preserve embedding: {err}"));
+
+    let remove_move = PachnerMove::K1Remove {
+        vertex_key: inserted_vertex,
+    };
+    let primitive_remove_feasibility = trial
+        .can_flip_k1_remove(inserted_vertex)
+        .unwrap_or_else(|err| panic!("{D}D public k=1 remove feasibility should succeed: {err:?}"));
+    let remove_proposal = trial.propose_pachner(remove_move).unwrap_or_else(|err| {
+        panic!("{D}D public Pachner k=1 remove proposal should succeed: {err:?}")
+    });
+    let remove_feasibility = remove_proposal
+        .can_attempt_on(&trial)
+        .unwrap_or_else(|err| panic!("{D}D public Pachner k=1 remove should succeed: {err:?}"));
+    assert_flip_and_pachner_feasibility_match(&primitive_remove_feasibility, &remove_feasibility);
+    assert_pachner_feasibility_contract(
+        &remove_feasibility,
+        BistellarFlipKind::k1(D).inverse(),
+        FlipDirection::Inverse,
+    );
+
+    let removed = remove_proposal
+        .attempt_on(&mut trial)
+        .unwrap_or_else(|err| panic!("{D}D public k=1 remove mutation should succeed: {err:?}"));
+    assert_pachner_result_contract(
+        &removed,
+        BistellarFlipKind::k1(D).inverse(),
+        FlipDirection::Inverse,
+    );
+    assert_topology_and_delaunay_valid(&trial, &format!("{D}D k=1 mutation"));
 }
 
 /// Returns any live simplex key from a generic D-dimensional fixture.
@@ -710,21 +947,52 @@ fn inserted_edge_2d(dt: &Dt2, vertices: &[VertexKey]) -> EdgeKey {
     EdgeKey::try_new(dt.tds(), *a, *b).expect("reported inserted vertices should form a live edge")
 }
 
-/// Checks that a rejected detached move leaves the live topology byte-for-byte equivalent.
+/// Checks that a rejected detached proposal leaves the live topology byte-for-byte equivalent.
 fn assert_failed_attempt_preserves_topology(
     dt: &mut Dt4,
-    pachner_move: PachnerMove<(), 4>,
-    assert_error: impl FnOnce(&FlipError),
+    proposal: PachnerProposal<(), 4>,
+    assert_error: impl Fn(&FlipError),
 ) {
     let before = snapshot_topology(dt);
-    let err = dt
-        .attempt_pachner(pachner_move)
-        .expect_err("stale Pachner move should fail");
+    let proposal_generation = proposal.topology_generation();
+    let current_generation = dt.tds().generation();
+
+    let feasibility_err = proposal
+        .can_attempt_on(dt)
+        .expect_err("stale Pachner proposal feasibility should fail");
+    assert_error(&feasibility_err);
+    assert_stale_proposal_generation(&feasibility_err, proposal_generation, current_generation);
+    assert_eq!(snapshot_topology(dt), before);
+
+    let err = proposal
+        .attempt_on(dt)
+        .expect_err("stale Pachner proposal should fail");
     assert_error(&err);
+    assert_stale_proposal_generation(&err, proposal_generation, current_generation);
     dt.tds()
         .is_valid()
         .expect("failed Pachner attempt should preserve TDS validity");
     assert_eq!(snapshot_topology(dt), before);
+}
+
+/// Verifies stale proposal diagnostics report both the parsed and current generations.
+fn assert_stale_proposal_generation(
+    err: &FlipError,
+    proposal_generation: u64,
+    current_generation: u64,
+) {
+    assert_matches!(
+        err,
+        FlipError::StaleTopologyProposal {
+            proposal_generation: reported_proposal_generation,
+            current_generation: reported_current_generation,
+        } if *reported_proposal_generation == proposal_generation
+            && *reported_current_generation == current_generation
+    );
+    assert_eq!(
+        FlipFailureKind::from(err),
+        FlipFailureKind::StaleTopologyProposal
+    );
 }
 
 /// Verifies the extra k=1 insert contract: the inserted face is exactly the new vertex.
@@ -753,33 +1021,28 @@ fn assert_stale_k1_insert_preserves_topology(mut dt: Dt4) {
     let vertex_coords = simplex_centroid(&dt, stale_simplex);
     let vertex: Vertex<(), 4> = vertex!(vertex_coords).unwrap();
     let vertex_uuid = vertex.uuid();
-    let inserted = dt
-        .attempt_pachner(PachnerMove::K1Insert {
+    let stale_proposal = dt
+        .propose_pachner(PachnerMove::K1Insert {
             simplex_key: stale_simplex,
             vertex,
         })
-        .expect("initial k=1 insert should make the simplex key stale");
+        .expect("initial k=1 insert proposal should be valid");
+    let inserted = stale_proposal
+        .clone()
+        .attempt_on(&mut dt)
+        .expect("initial k=1 insert should make the proposal stale");
     let inserted_vertex = dt
         .tds()
         .vertex_key_from_uuid(&vertex_uuid)
         .expect("initial k=1 insert should create the requested vertex");
     assert_k1_insert_result(&inserted, inserted_vertex);
-    let stale_attempt_vertex: Vertex<(), 4> = vertex!(vertex_coords).unwrap();
-
-    assert_failed_attempt_preserves_topology(
-        &mut dt,
-        PachnerMove::K1Insert {
-            simplex_key: stale_simplex,
-            vertex: stale_attempt_vertex,
-        },
-        |err| {
-            assert_matches!(
-                err,
-                FlipError::MissingSimplex { simplex_key } if *simplex_key == stale_simplex,
-                "unexpected stale k=1 insert error: {err:?}"
-            );
-        },
-    );
+    assert_failed_attempt_preserves_topology(&mut dt, stale_proposal, |err| {
+        assert_matches!(
+            err,
+            FlipError::StaleTopologyProposal { .. },
+            "unexpected stale k=1 insert error: {err:?}"
+        );
+    });
 }
 
 /// Makes a k=1 remove proposal stale, then proves retrying it is failure-atomic.
@@ -787,50 +1050,56 @@ fn assert_stale_k1_remove_preserves_topology(mut dt: Dt4) {
     let simplex_key = first_simplex(&dt);
     let vertex: Vertex<(), 4> = vertex!(simplex_centroid(&dt, simplex_key)).unwrap();
     let vertex_uuid = vertex.uuid();
-    let inserted = dt
-        .attempt_pachner(PachnerMove::K1Insert {
+    let insert_proposal = dt
+        .propose_pachner(PachnerMove::K1Insert {
             simplex_key,
             vertex,
         })
+        .expect("k=1 insert proposal should be valid");
+    let inserted = insert_proposal
+        .attempt_on(&mut dt)
         .expect("k=1 insert should create a removable vertex");
     let vertex_key = dt
         .tds()
         .vertex_key_from_uuid(&vertex_uuid)
         .expect("inserted k=1 vertex should be present");
     assert_k1_insert_result(&inserted, vertex_key);
-    let removed = dt
-        .attempt_pachner(PachnerMove::K1Remove { vertex_key })
-        .expect("k=1 remove should make the vertex key stale");
+    let stale_proposal = dt
+        .propose_pachner(PachnerMove::K1Remove { vertex_key })
+        .expect("k=1 remove proposal should be valid");
+    let removed = stale_proposal
+        .clone()
+        .attempt_on(&mut dt)
+        .expect("k=1 remove should make the proposal stale");
     assert!(!removed.removed_simplices.is_empty());
 
-    assert_failed_attempt_preserves_topology(
-        &mut dt,
-        PachnerMove::K1Remove { vertex_key },
-        |err| {
-            assert_matches!(
-                err,
-                FlipError::MissingVertex { vertex_key: missing } if *missing == vertex_key,
-                "unexpected stale k=1 remove error: {err:?}"
-            );
-        },
-    );
+    assert_failed_attempt_preserves_topology(&mut dt, stale_proposal, |err| {
+        assert_matches!(
+            err,
+            FlipError::StaleTopologyProposal { .. },
+            "unexpected stale k=1 remove error: {err:?}"
+        );
+    });
 }
 
 /// Makes a k=2 facet proposal stale, then proves retrying it is failure-atomic.
 #[cfg(feature = "slow-tests")]
 fn assert_stale_k2_preserves_topology(mut dt: Dt4) {
     let facet = flippable_k2_facet(&dt);
-    let flipped = dt
-        .attempt_pachner(PachnerMove::K2 { facet })
-        .expect("k=2 flip should make its source facet stale");
+    let stale_proposal = dt
+        .propose_pachner(PachnerMove::K2 { facet })
+        .expect("k=2 proposal should be valid");
+    let flipped = stale_proposal
+        .clone()
+        .attempt_on(&mut dt)
+        .expect("k=2 flip should make its proposal stale");
     assert_eq!(flipped.inserted_face_vertices.len(), 2);
     assert!(!flipped.new_simplices.is_empty());
-    let stale_simplex = facet.simplex_key();
 
-    assert_failed_attempt_preserves_topology(&mut dt, PachnerMove::K2 { facet }, |err| {
+    assert_failed_attempt_preserves_topology(&mut dt, stale_proposal, |err| {
         assert_matches!(
             err,
-            FlipError::MissingSimplex { simplex_key } if *simplex_key == stale_simplex,
+            FlipError::StaleTopologyProposal { .. },
             "unexpected stale k=2 error: {err:?}"
         );
     });
@@ -840,22 +1109,22 @@ fn assert_stale_k2_preserves_topology(mut dt: Dt4) {
 #[cfg(feature = "slow-tests")]
 fn assert_stale_k2_inverse_preserves_topology(mut dt: Dt4) {
     let facet = flippable_k2_facet(&dt);
-    let info = dt
-        .attempt_pachner(PachnerMove::K2 { facet })
+    let info = attempt_pachner_move(&mut dt, PachnerMove::K2 { facet })
         .expect("k=2 flip should create an inverse edge");
     let edge = inserted_edge(&dt, &info.inserted_face_vertices);
-    let inverse = dt
-        .attempt_pachner(PachnerMove::K2Inverse { edge })
-        .expect("k=2 inverse should make its edge stale");
+    let stale_proposal = dt
+        .propose_pachner(PachnerMove::K2Inverse { edge })
+        .expect("k=2 inverse proposal should be valid");
+    let inverse = stale_proposal
+        .clone()
+        .attempt_on(&mut dt)
+        .expect("k=2 inverse should make its proposal stale");
     assert!(!inverse.removed_simplices.is_empty());
 
-    assert_failed_attempt_preserves_topology(&mut dt, PachnerMove::K2Inverse { edge }, |err| {
+    assert_failed_attempt_preserves_topology(&mut dt, stale_proposal, |err| {
         assert_matches!(
             err,
-            FlipError::InvalidEdgeMultiplicity {
-                found: 0,
-                expected: 4
-            },
+            FlipError::StaleTopologyProposal { .. },
             "unexpected stale inverse k=2 error: {err:?}"
         );
     });
@@ -865,17 +1134,20 @@ fn assert_stale_k2_inverse_preserves_topology(mut dt: Dt4) {
 #[cfg(feature = "slow-tests")]
 fn assert_stale_k3_preserves_topology(mut dt: Dt4) {
     let ridge = flippable_k3_ridge(&dt);
-    let flipped = dt
-        .attempt_pachner(PachnerMove::K3 { ridge })
-        .expect("k=3 flip should make its source ridge stale");
+    let stale_proposal = dt
+        .propose_pachner(PachnerMove::K3 { ridge })
+        .expect("k=3 proposal should be valid");
+    let flipped = stale_proposal
+        .clone()
+        .attempt_on(&mut dt)
+        .expect("k=3 flip should make its proposal stale");
     assert_eq!(flipped.inserted_face_vertices.len(), 3);
     assert!(!flipped.new_simplices.is_empty());
-    let stale_simplex = ridge.simplex_key();
 
-    assert_failed_attempt_preserves_topology(&mut dt, PachnerMove::K3 { ridge }, |err| {
+    assert_failed_attempt_preserves_topology(&mut dt, stale_proposal, |err| {
         assert_matches!(
             err,
-            FlipError::MissingSimplex { simplex_key } if *simplex_key == stale_simplex,
+            FlipError::StaleTopologyProposal { .. },
             "unexpected stale k=3 error: {err:?}"
         );
     });
@@ -885,22 +1157,22 @@ fn assert_stale_k3_preserves_topology(mut dt: Dt4) {
 #[cfg(feature = "slow-tests")]
 fn assert_stale_k3_inverse_preserves_topology(mut dt: Dt4) {
     let ridge = flippable_k3_ridge(&dt);
-    let info = dt
-        .attempt_pachner(PachnerMove::K3 { ridge })
+    let info = attempt_pachner_move(&mut dt, PachnerMove::K3 { ridge })
         .expect("k=3 flip should create an inverse triangle");
     let triangle = inserted_triangle(&info.inserted_face_vertices);
-    let inverse = dt
-        .attempt_pachner(PachnerMove::K3Inverse { triangle })
-        .expect("k=3 inverse should make its triangle stale");
+    let stale_proposal = dt
+        .propose_pachner(PachnerMove::K3Inverse { triangle })
+        .expect("k=3 inverse proposal should be valid");
+    let inverse = stale_proposal
+        .clone()
+        .attempt_on(&mut dt)
+        .expect("k=3 inverse should make its proposal stale");
     assert!(!inverse.removed_simplices.is_empty());
 
-    assert_failed_attempt_preserves_topology(&mut dt, PachnerMove::K3Inverse { triangle }, |err| {
+    assert_failed_attempt_preserves_topology(&mut dt, stale_proposal, |err| {
         assert_matches!(
             err,
-            FlipError::InvalidTriangleMultiplicity {
-                found: 0,
-                expected: 3
-            },
+            FlipError::StaleTopologyProposal { .. },
             "unexpected stale inverse k=3 error: {err:?}"
         );
     });
@@ -908,35 +1180,7 @@ fn assert_stale_k3_inverse_preserves_topology(mut dt: Dt4) {
 
 /// Captures topology by stable UUIDs so slotmap key reuse cannot hide mutations.
 fn snapshot_topology(dt: &Dt4) -> TopologySnapshot {
-    let tds = dt.tds();
-    let mut vertex_uuids = tds
-        .vertices()
-        .map(|(_, vertex)| vertex.uuid())
-        .collect::<Vec<_>>();
-    vertex_uuids.sort();
-
-    let mut simplex_vertex_uuids = tds
-        .simplices()
-        .map(|(_, simplex)| {
-            let mut uuids = simplex
-                .vertices()
-                .iter()
-                .map(|&vkey| {
-                    tds.vertex(vkey)
-                        .expect("simplex vertex key should exist")
-                        .uuid()
-                })
-                .collect::<Vec<_>>();
-            uuids.sort();
-            uuids
-        })
-        .collect::<Vec<_>>();
-    simplex_vertex_uuids.sort();
-
-    TopologySnapshot {
-        vertex_uuids,
-        simplex_vertex_uuids,
-    }
+    snapshot_topology_generic(dt)
 }
 
 /// Returns a simplex from the stable fixture for tests that only need any live simplex.
@@ -976,23 +1220,27 @@ fn roundtrip_k1(dt: &mut Dt4) {
     let simplex_key = first_simplex(dt);
     let new_vertex: Vertex<(), 4> = vertex!(simplex_centroid(dt, simplex_key)).unwrap();
     let new_uuid = new_vertex.uuid();
-    let inserted = dt
-        .attempt_pachner(PachnerMove::K1Insert {
+    let inserted = attempt_pachner_move(
+        dt,
+        PachnerMove::K1Insert {
             simplex_key,
             vertex: new_vertex,
-        })
-        .expect("k=1 insert should succeed on stable 4D fixture");
+        },
+    )
+    .expect("k=1 insert should succeed on stable 4D fixture");
     assert_eq!(inserted.inserted_face_vertices.len(), 1);
 
     let inserted_key = dt
         .tds()
         .vertex_key_from_uuid(&new_uuid)
         .expect("inserted k=1 vertex should be present");
-    let removed = dt
-        .attempt_pachner(PachnerMove::K1Remove {
+    let removed = attempt_pachner_move(
+        dt,
+        PachnerMove::K1Remove {
             vertex_key: inserted_key,
-        })
-        .expect("k=1 remove should invert insert");
+        },
+    )
+    .expect("k=1 remove should invert insert");
     assert_pachner_result_contract(
         &removed,
         BistellarFlipKind::k1(4).inverse(),
@@ -1018,13 +1266,11 @@ fn flippable_k2_facet(dt: &Dt4) -> FacetHandle {
             )
             .expect("interior facet index should be valid");
             let mut trial = dt.clone();
-            let Ok(info) = trial.attempt_pachner(PachnerMove::K2 { facet }) else {
+            let Ok(info) = attempt_pachner_move(&mut trial, PachnerMove::K2 { facet }) else {
                 continue;
             };
             let edge = inserted_edge(&trial, &info.inserted_face_vertices);
-            if trial
-                .attempt_pachner(PachnerMove::K2Inverse { edge })
-                .is_ok()
+            if attempt_pachner_move(&mut trial, PachnerMove::K2Inverse { edge }).is_ok()
                 && topology_and_delaunay_valid(&trial)
             {
                 return facet;
@@ -1037,13 +1283,11 @@ fn flippable_k2_facet(dt: &Dt4) -> FacetHandle {
 /// Applies a k=2 forward/inverse pair and checks both move reports.
 #[cfg(feature = "slow-tests")]
 fn roundtrip_k2(dt: &mut Dt4, facet: FacetHandle) {
-    let info: PachnerMoveResult<4> = dt
-        .attempt_pachner(PachnerMove::K2 { facet })
+    let info: PachnerMoveResult<4> = attempt_pachner_move(dt, PachnerMove::K2 { facet })
         .expect("k=2 flip should succeed on selected stable 4D facet");
     assert_pachner_result_contract(&info, BistellarFlipKind::k2(4), FlipDirection::Forward);
     let edge = inserted_edge(dt, &info.inserted_face_vertices);
-    let inverse = dt
-        .attempt_pachner(PachnerMove::K2Inverse { edge })
+    let inverse = attempt_pachner_move(dt, PachnerMove::K2Inverse { edge })
         .expect("k=2 inverse should succeed after k=2 flip");
     assert_pachner_result_contract(
         &inverse,
@@ -1078,13 +1322,11 @@ fn flippable_k3_ridge(dt: &Dt4) -> RidgeHandle {
                 )
                 .expect("ridge indices should be valid");
                 let mut trial = dt.clone();
-                let Ok(info) = trial.attempt_pachner(PachnerMove::K3 { ridge }) else {
+                let Ok(info) = attempt_pachner_move(&mut trial, PachnerMove::K3 { ridge }) else {
                     continue;
                 };
                 let triangle = inserted_triangle(&info.inserted_face_vertices);
-                if trial
-                    .attempt_pachner(PachnerMove::K3Inverse { triangle })
-                    .is_ok()
+                if attempt_pachner_move(&mut trial, PachnerMove::K3Inverse { triangle }).is_ok()
                     && topology_and_delaunay_valid(&trial)
                 {
                     return ridge;
@@ -1098,15 +1340,16 @@ fn flippable_k3_ridge(dt: &Dt4) -> RidgeHandle {
 /// Applies a k=3 forward/inverse pair and checks both move reports.
 #[cfg(feature = "slow-tests")]
 fn roundtrip_k3(dt: &mut Dt4, ridge: RidgeHandle) {
-    let info: PachnerMoveResult<4> = dt
-        .attempt_pachner(PachnerMove::K3 { ridge })
+    let info: PachnerMoveResult<4> = attempt_pachner_move(dt, PachnerMove::K3 { ridge })
         .expect("k=3 flip should succeed on selected stable 4D ridge");
     assert_pachner_result_contract(&info, BistellarFlipKind::k3(4), FlipDirection::Forward);
-    let inverse = dt
-        .attempt_pachner(PachnerMove::K3Inverse {
+    let inverse = attempt_pachner_move(
+        dt,
+        PachnerMove::K3Inverse {
             triangle: inserted_triangle(&info.inserted_face_vertices),
-        })
-        .expect("k=3 inverse should succeed after k=3 flip");
+        },
+    )
+    .expect("k=3 inverse should succeed after k=3 flip");
     assert_pachner_result_contract(
         &inverse,
         BistellarFlipKind::k3(4).inverse(),
