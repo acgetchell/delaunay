@@ -82,6 +82,8 @@ use serde::{
     de::{self, IgnoredAny, MapAccess, Visitor},
     ser::SerializeStruct,
 };
+#[cfg(test)]
+use std::iter::once;
 use std::{
     cmp,
     fmt::{self, Debug},
@@ -3029,12 +3031,9 @@ mod tests {
 
         let uuid1 = simplex1.uuid();
         let uuid2 = simplex2.uuid();
-        let hashmap = Simplex::try_into_hashmap(
-            std::iter::once(simplex1)
-                .chain(std::iter::once(simplex2))
-                .chain(simplices_iter),
-        )
-        .unwrap();
+        let hashmap =
+            Simplex::try_into_hashmap(once(simplex1).chain(once(simplex2)).chain(simplices_iter))
+                .unwrap();
 
         assert!(hashmap.len() >= 2);
         assert!(hashmap.contains_key(&uuid1));

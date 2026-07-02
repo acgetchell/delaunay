@@ -17,8 +17,8 @@
 use crate::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer, SmallBuffer};
 use crate::core::vertex::Vertex;
 use crate::flips::{
-    BistellarFlipKind, BistellarFlips, FlipDirection, FlipError, FlipInfo, RidgeHandle,
-    TriangleHandle,
+    BistellarFlipKind, BistellarFlips, FlipDirection, FlipError, FlipFeasibility, FlipInfo,
+    RidgeHandle, TriangleHandle,
 };
 use crate::tds::{EdgeKey, FacetHandle, SimplexKey, VertexKey};
 
@@ -208,6 +208,75 @@ impl<const D: usize> From<PachnerMoveResult<D>> for FlipInfo<D> {
     }
 }
 
+/// Result returned by [`PachnerMoves::can_attempt_pachner`].
+///
+/// This report describes the local move that passed immutable feasibility
+/// validation. It intentionally omits post-mutation simplex keys because those
+/// keys are allocated only by [`PachnerMoves::attempt_pachner`]. For forward
+/// k=1 insertion, [`inserted_face_vertices`](Self::inserted_face_vertices) is
+/// `None` because the inserted vertex key is likewise allocated by the
+/// mutating operation.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::construction::{
+///     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee,
+/// };
+/// use delaunay::prelude::pachner::{
+///     BistellarFlipKind, FlipDirection, PachnerMove, PachnerMoves, vertex,
+/// };
+///
+/// # fn main() -> DelaunayResult<()> {
+/// let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
+/// let dt = DelaunayTriangulationBuilder::new(&vertices)
+///     .topology_guarantee(TopologyGuarantee::PLManifold)
+///     .build::<()>()?;
+/// let Some((simplex_key, _)) = dt.simplices().next() else {
+///     return Ok(());
+/// };
+///
+/// let feasibility = dt.can_attempt_pachner(&PachnerMove::K1Insert {
+///     simplex_key,
+///     vertex: vertex![0.25, 0.25]?,
+/// })?;
+/// assert_eq!(feasibility.kind, BistellarFlipKind::k1(2));
+/// assert_eq!(feasibility.direction, FlipDirection::Forward);
+/// assert!(feasibility.inserted_face_vertices.is_none());
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[must_use]
+#[non_exhaustive]
+pub struct PachnerMoveFeasibility<const D: usize> {
+    /// Flip kind (k, d).
+    pub kind: BistellarFlipKind,
+    /// Flip direction.
+    pub direction: FlipDirection,
+    /// Simplex keys the corresponding mutating move would remove.
+    pub removed_simplices: SimplexKeyBuffer,
+    /// Vertices of the removed face shared by removed simplices.
+    pub removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+    /// Vertices of the inserted complementary face when all are already live.
+    ///
+    /// This is `None` for forward k=1 insertion because the inserted vertex key
+    /// is allocated only by the mutating operation.
+    pub inserted_face_vertices: Option<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
+}
+
+impl<const D: usize> From<FlipFeasibility<D>> for PachnerMoveFeasibility<D> {
+    fn from(feasibility: FlipFeasibility<D>) -> Self {
+        Self {
+            kind: feasibility.kind,
+            direction: feasibility.direction,
+            removed_simplices: feasibility.removed_simplices,
+            removed_face_vertices: feasibility.removed_face_vertices,
+            inserted_face_vertices: feasibility.inserted_face_vertices,
+        }
+    }
+}
+
 /// Unified Pachner move dispatch for Monte-Carlo-style workflows.
 ///
 /// This extension trait is implemented for every type that implements
@@ -272,6 +341,64 @@ pub trait PachnerMoves<const D: usize> {
         &mut self,
         pachner_move: PachnerMove<Self::VertexData, D>,
     ) -> Result<PachnerMoveResult<D>, FlipError>;
+
+    /// Validate a unified Pachner move request without mutating topology.
+    ///
+    /// The dry-run path parses the same detached move request as
+    /// [`Self::attempt_pachner`] and checks the deterministic pre-mutation
+    /// conditions used by the selected primitive flip. On an unchanged,
+    /// structurally valid triangulation, `Ok` means the corresponding mutating
+    /// move should not fail for stale handles, invalid local topology,
+    /// duplicate replacement simplices/faces, exact replacement degeneracy, or
+    /// periodic replacement-frame inconsistency. It does not allocate
+    /// post-mutation simplex keys, invalidate caches, or clone the full
+    /// triangulation. This makes it suitable for scanning many local proposals
+    /// before choosing one to commit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FlipError`] from the selected flip primitive when the requested
+    /// local configuration is stale, non-admissible, geometrically degenerate,
+    /// or would violate deterministic local topology checks.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee,
+    /// };
+    /// use delaunay::prelude::pachner::{
+    ///     BistellarFlipKind, FlipDirection, PachnerMove, PachnerMoves, vertex,
+    /// };
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = vec![
+    ///     vertex![0.0, 0.0, 0.0]?,
+    ///     vertex![1.0, 0.0, 0.0]?,
+    ///     vertex![0.0, 1.0, 0.0]?,
+    ///     vertex![0.0, 0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .topology_guarantee(TopologyGuarantee::PLManifold)
+    ///     .build::<()>()?;
+    /// let Some((simplex_key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// let feasibility = dt.can_attempt_pachner(&PachnerMove::K1Insert {
+    ///     simplex_key,
+    ///     vertex: vertex![0.2, 0.2, 0.2]?,
+    /// })?;
+    /// assert_eq!(feasibility.kind, BistellarFlipKind::k1(3));
+    /// assert_eq!(feasibility.direction, FlipDirection::Forward);
+    /// assert!(feasibility.inserted_face_vertices.is_none());
+    /// # Ok(())
+    /// # }
+    /// ```
+    fn can_attempt_pachner(
+        &self,
+        pachner_move: &PachnerMove<Self::VertexData, D>,
+    ) -> Result<PachnerMoveFeasibility<D>, FlipError>;
 }
 
 impl<const D: usize, T> PachnerMoves<D> for T
@@ -297,6 +424,27 @@ where
             PachnerMove::K3Inverse { triangle } => self.flip_k3_inverse_from_triangle(triangle)?,
         };
         Ok(info.into())
+    }
+
+    #[inline]
+    fn can_attempt_pachner(
+        &self,
+        pachner_move: &PachnerMove<Self::VertexData, D>,
+    ) -> Result<PachnerMoveFeasibility<D>, FlipError> {
+        let feasibility = match pachner_move {
+            PachnerMove::K1Insert {
+                simplex_key,
+                vertex,
+            } => self.can_flip_k1_insert(*simplex_key, vertex)?,
+            PachnerMove::K1Remove { vertex_key } => self.can_flip_k1_remove(*vertex_key)?,
+            PachnerMove::K2 { facet } => self.can_flip_k2(*facet)?,
+            PachnerMove::K2Inverse { edge } => self.can_flip_k2_inverse_from_edge(*edge)?,
+            PachnerMove::K3 { ridge } => self.can_flip_k3(*ridge)?,
+            PachnerMove::K3Inverse { triangle } => {
+                self.can_flip_k3_inverse_from_triangle(*triangle)?
+            }
+        };
+        Ok(feasibility.into())
     }
 }
 

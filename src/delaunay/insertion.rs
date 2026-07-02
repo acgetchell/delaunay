@@ -37,6 +37,8 @@ use crate::triangulation::DelaunayTriangulation;
 #[cfg(test)]
 use crate::validation::DelaunayTriangulationCandidate;
 use std::env;
+#[cfg(test)]
+use std::iter::once;
 
 fn ridge_link_repair_validation_error(err: ManifoldError) -> InsertionError {
     match TriangulationValidationError::try_from(err) {
@@ -1065,7 +1067,7 @@ mod tests {
 
         let local_run = DelaunayRepairRun {
             stats: stats.clone(),
-            touched_simplices: std::iter::once(nonincident).collect(),
+            touched_simplices: once(nonincident).collect(),
             used_full_reseed: true,
         };
         assert!(
@@ -1075,7 +1077,7 @@ mod tests {
 
         let invalid_scope_run = DelaunayRepairRun {
             stats,
-            touched_simplices: std::iter::once(incident_to_invalid_ridge).collect(),
+            touched_simplices: once(incident_to_invalid_ridge).collect(),
             used_full_reseed: true,
         };
         assert!(

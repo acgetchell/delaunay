@@ -123,8 +123,8 @@ use delaunay::prelude::pachner::{
     BistellarFlipKind as PachnerBistellarFlipKind, EdgeKey as PachnerEdgeKey,
     EdgeKeyError as PachnerEdgeKeyError, FacetError as PachnerFacetError,
     FacetHandle as PachnerFacetHandle, FlipDirection as PachnerFlipDirection,
-    FlipError as PachnerFlipError, PachnerMove, PachnerMoveResult, PachnerMoves,
-    RidgeHandle as PachnerRidgeHandle, SimplexKey as PachnerSimplexKey,
+    FlipError as PachnerFlipError, PachnerMove, PachnerMoveFeasibility, PachnerMoveResult,
+    PachnerMoves, RidgeHandle as PachnerRidgeHandle, SimplexKey as PachnerSimplexKey,
     TriangleHandle as PachnerTriangleHandle, TriangleHandleError as PachnerTriangleHandleError,
     Vertex as PachnerVertex, VertexKey as PachnerVertexKey, vertex as pachner_vertex,
 };
@@ -308,6 +308,8 @@ enum PreludeExportTestError {
     #[error(transparent)]
     Edge(#[from] EdgeKeyError),
     #[error(transparent)]
+    PachnerFlip(#[from] PachnerFlipError),
+    #[error(transparent)]
     RidgeCandidate(#[from] RidgeCandidateError),
     #[error(transparent)]
     ToroidalDomain(#[from] ToroidalDomainError),
@@ -348,6 +350,7 @@ const fn assert_pachner_prelude_type_exports(dt: &impl PachnerMoves<3, VertexDat
     let _pachner_direction_size = size_of::<PachnerFlipDirection>();
     let _pachner_error_size = size_of::<PachnerFlipError>();
     let _pachner_move_size = size_of::<PachnerMove<(), 3>>();
+    let _pachner_move_feasibility_size = size_of::<PachnerMoveFeasibility<3>>();
     let _pachner_result_size = size_of::<PachnerMoveResult<3>>();
     let _pachner_edge_size = size_of::<PachnerEdgeKey>();
     let _pachner_edge_error_size = size_of::<PachnerEdgeKeyError>();
@@ -375,6 +378,9 @@ fn assert_pachner_prelude_exports(
         pachner_move,
         PachnerMove::K1Insert { simplex_key: key, .. } if key == simplex_key
     );
+    let feasibility = dt.can_attempt_pachner(&pachner_move)?;
+    assert_eq!(feasibility.kind, PachnerBistellarFlipKind::k1(3));
+    assert!(feasibility.inserted_face_vertices.is_none());
     Ok(())
 }
 

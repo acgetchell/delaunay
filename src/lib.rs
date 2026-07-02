@@ -1500,7 +1500,9 @@ pub mod prelude {
             BistellarFlipKind, FlipDirection, FlipError, RidgeHandle, TriangleHandle,
             TriangleHandleError,
         };
-        pub use crate::pachner::{PachnerMove, PachnerMoveResult, PachnerMoves};
+        pub use crate::pachner::{
+            PachnerMove, PachnerMoveFeasibility, PachnerMoveResult, PachnerMoves,
+        };
         pub use crate::tds::{
             EdgeKey, EdgeKeyError, FacetError, FacetHandle, SimplexKey, Vertex, VertexKey,
         };

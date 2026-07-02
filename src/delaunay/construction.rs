@@ -110,6 +110,7 @@ use rand::seq::SliceRandom;
 use std::{
     env,
     hash::{Hash, Hasher},
+    iter::once,
     num::NonZeroUsize,
     time::{Duration, Instant},
 };
@@ -2385,11 +2386,7 @@ fn dedup_vertices_epsilon_quantized<U, const D: usize>(
         let coords = v.point().coords();
         let Some(base_key) = quantize_coords(coords, inv_cell) else {
             return dedup_vertices_epsilon_n2(
-                unique
-                    .into_iter()
-                    .chain(std::iter::once(v))
-                    .chain(iter)
-                    .collect(),
+                unique.into_iter().chain(once(v)).chain(iter).collect(),
                 epsilon,
             );
         };

@@ -70,11 +70,14 @@ use std::collections::VecDeque;
 use std::env;
 use std::fmt;
 use std::hash::{Hash, Hasher};
+use std::iter::once;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
 type VertexKeyList = SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>;
 type RemovedSimplexVertexSnapshot = SmallBuffer<VertexKeyList, MAX_PRACTICAL_DIMENSION_SIZE>;
+type ReplacementSimplexVertices = SmallBuffer<VertexKeyList, MAX_PRACTICAL_DIMENSION_SIZE>;
+type ExternalFacetBuffer = SmallBuffer<FacetHandle, 64>;
 type ReplacementPeriodicOffsets<const D: usize> =
     SmallBuffer<Option<PeriodicOffsetBuffer<D>>, MAX_PRACTICAL_DIMENSION_SIZE>;
 
@@ -429,31 +432,24 @@ where
     )
 }
 
-/// Shared implementation for failure-atomic bistellar mutation.
+/// Builds and validates the replacement side of a bistellar flip without mutating storage.
 ///
-/// The original TDS is mutated only after the trial TDS has been fully rewired
-/// and locally validated. Passing `trial_workspace` lets hot repair paths reuse
-/// rollback storage; leaving it `None` keeps the standalone API's independent
-/// trial allocation behavior.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Flip mutation needs explicit move, cavity, policy, validation inputs, and optional scratch storage"
-)]
+/// This shared preparation step is the source of truth for both immutable
+/// feasibility checks and the mutating executor's deterministic pre-commit
+/// checks.
 #[expect(
     clippy::too_many_lines,
-    reason = "Keep flip construction, validation, and wiring together for clarity"
+    reason = "Keep exact feasibility checks aligned with the mutating flip preflight"
 )]
-fn apply_bistellar_flip_with_k_inner<U, V, const D: usize>(
-    tds: &mut Tds<U, V, D>,
+fn prepare_bistellar_flip<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
     k_move: usize,
     removed_face_vertices: &[VertexKey],
     inserted_face_vertices: &[VertexKey],
     removed_simplices: &SimplexKeyBuffer,
     direction: FlipDirection,
     orientation_policy: ReplacementOrientationPolicy,
-    validation_scope: FlipValidationScope,
-    trial_workspace: Option<&mut Tds<U, V, D>>,
-) -> Result<AppliedFlip<D>, FlipError>
+) -> Result<PreparedFlip<D>, FlipError>
 where
     U: DataType,
     V: DataType,
@@ -534,10 +530,8 @@ where
         });
     }
 
-    let mut new_simplex_vertices: SmallBuffer<
-        SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-        MAX_PRACTICAL_DIMENSION_SIZE,
-    > = SmallBuffer::with_capacity(removed_face_vertices.len());
+    let mut new_simplex_vertices =
+        ReplacementSimplexVertices::with_capacity(removed_face_vertices.len());
 
     for &omit in removed_face_vertices {
         let mut vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
@@ -641,6 +635,65 @@ where
     // `None`, which would strip the most useful context from predecessor-flip
     // traces (see #204 investigation).
     let removed_simplex_vertices = snapshot_removed_simplex_vertices(tds, removed_simplices)?;
+    let inserted_face_vertex_list: VertexKeyList = inserted_face_vertices.iter().copied().collect();
+
+    Ok(PreparedFlip {
+        kind: BistellarFlipKind { k: k_move, d: D },
+        direction,
+        removed_simplices: removed_simplices.iter().copied().collect(),
+        removed_face_vertices: removed_face_vertices.iter().copied().collect(),
+        inserted_face_vertices: inserted_face_vertex_list,
+        new_simplex_vertices,
+        new_simplex_offsets,
+        external_facets,
+        removed_simplex_vertices,
+    })
+}
+
+/// Shared implementation for failure-atomic bistellar mutation.
+///
+/// The original TDS is mutated only after the trial TDS has been fully rewired
+/// and locally validated. Passing `trial_workspace` lets hot repair paths reuse
+/// rollback storage; leaving it `None` keeps the standalone API's independent
+/// trial allocation behavior.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Flip mutation needs explicit move, cavity, policy, validation inputs, and optional scratch storage"
+)]
+fn apply_bistellar_flip_with_k_inner<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
+    k_move: usize,
+    removed_face_vertices: &[VertexKey],
+    inserted_face_vertices: &[VertexKey],
+    removed_simplices: &SimplexKeyBuffer,
+    direction: FlipDirection,
+    orientation_policy: ReplacementOrientationPolicy,
+    validation_scope: FlipValidationScope,
+    trial_workspace: Option<&mut Tds<U, V, D>>,
+) -> Result<AppliedFlip<D>, FlipError>
+where
+    U: DataType,
+    V: DataType,
+{
+    let PreparedFlip {
+        kind,
+        direction,
+        removed_simplices,
+        removed_face_vertices,
+        inserted_face_vertices,
+        new_simplex_vertices,
+        new_simplex_offsets,
+        external_facets,
+        removed_simplex_vertices,
+    } = prepare_bistellar_flip(
+        tds,
+        k_move,
+        removed_face_vertices,
+        inserted_face_vertices,
+        removed_simplices,
+        direction,
+        orientation_policy,
+    )?;
 
     let apply_to_trial = |trial: &mut Tds<U, V, D>| -> Result<SimplexKeyBuffer, FlipError> {
         let mut new_simplices = SimplexKeyBuffer::new();
@@ -664,12 +717,12 @@ where
             trial,
             &new_simplices,
             external_facets.iter().copied(),
-            Some(removed_simplices),
+            Some(&removed_simplices),
         )
         .map_err(FlipNeighborWiringError::from)?;
 
         trial
-            .remove_simplices_by_keys(removed_simplices)
+            .remove_simplices_by_keys(&removed_simplices)
             .map_err(|source| FlipError::from(FlipMutationError::SimplexRemoval { source }))?;
 
         let validation_result = match validation_scope {
@@ -678,7 +731,7 @@ where
                 trial,
                 &new_simplices,
                 &external_facets,
-                removed_simplices,
+                &removed_simplices,
             ),
         };
         validation_result.map_err(|source| {
@@ -722,12 +775,12 @@ where
 
     Ok(AppliedFlip {
         info: FlipInfo {
-            kind: BistellarFlipKind { k: k_move, d: D },
+            kind,
             direction,
-            removed_simplices: removed_simplices.iter().copied().collect(),
+            removed_simplices,
             new_simplices,
-            removed_face_vertices: removed_face_vertices.iter().copied().collect(),
-            inserted_face_vertices: inserted_face_vertices.iter().copied().collect(),
+            removed_face_vertices,
+            inserted_face_vertices,
         },
         removed_simplex_vertices,
     })
@@ -2324,6 +2377,59 @@ where
         FlipValidationScope::FullTds,
     )?
     .info)
+}
+
+/// Validate a generic k-move without mutating the TDS.
+///
+/// # Errors
+///
+/// Returns a [`FlipError`] if the flip would fail during deterministic
+/// pre-mutation validation.
+pub(crate) fn validate_bistellar_flip<U, V, const D: usize, const K_MOVE: usize>(
+    tds: &Tds<U, V, D>,
+    context: &FlipContext<D, K_MOVE>,
+) -> Result<FlipFeasibility<D>, FlipError>
+where
+    U: DataType,
+    V: DataType,
+{
+    Ok(prepare_bistellar_flip(
+        tds,
+        K_MOVE,
+        &context.removed_face_vertices,
+        &context.inserted_face_vertices,
+        &context.removed_simplices,
+        context.direction,
+        ReplacementOrientationPolicy::AllowSigned,
+    )?
+    .into_feasibility())
+}
+
+/// Validate a runtime-k move without mutating the TDS.
+///
+/// # Errors
+///
+/// Returns a [`FlipError`] if the flip would fail during deterministic
+/// pre-mutation validation.
+pub(crate) fn validate_bistellar_flip_dynamic<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    k_move: usize,
+    context: &FlipContextDyn<D>,
+) -> Result<FlipFeasibility<D>, FlipError>
+where
+    U: DataType,
+    V: DataType,
+{
+    Ok(prepare_bistellar_flip(
+        tds,
+        k_move,
+        &context.removed_face_vertices,
+        &context.inserted_face_vertices,
+        &context.removed_simplices,
+        context.direction,
+        ReplacementOrientationPolicy::AllowSigned,
+    )?
+    .into_feasibility())
 }
 
 /// Apply a k=2 Delaunay-repair move with positive replacement geometry.
@@ -4181,10 +4287,100 @@ pub struct FlipInfo<const D: usize> {
     pub inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
 }
 
-#[derive(Debug, Clone)]
+/// Metadata returned by immutable bistellar flip feasibility checks.
+///
+/// A feasibility report describes the local move that passed deterministic
+/// pre-mutation validation. It intentionally omits `new_simplices`, because
+/// those runtime keys are allocated only by the mutating flip executor.
+/// For forward k=1 insertion, [`inserted_face_vertices`](Self::inserted_face_vertices)
+/// is `None` for the same reason: the inserted vertex key does not exist until
+/// the mutation commits. Other move kinds report the already-live inserted face.
+/// Feasibility checks build only local replacement buffers and do not clone the
+/// full triangulation.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::flips::{BistellarFlipKind, BistellarFlips, FlipDirection};
+/// use delaunay::prelude::construction::{
+///     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee,
+/// };
+///
+/// # fn main() -> DelaunayResult<()> {
+/// let vertices = vec![
+///     delaunay::vertex![0.0, 0.0]?,
+///     delaunay::vertex![1.0, 0.0]?,
+///     delaunay::vertex![0.0, 1.0]?,
+/// ];
+/// let dt = DelaunayTriangulationBuilder::new(&vertices)
+///     .topology_guarantee(TopologyGuarantee::PLManifold)
+///     .build::<()>()?;
+/// let Some((simplex_key, _)) = dt.simplices().next() else {
+///     return Ok(());
+/// };
+///
+/// let vertex = delaunay::vertex![0.25, 0.25]?;
+/// let feasibility = dt.can_flip_k1_insert(simplex_key, &vertex)?;
+/// assert_eq!(feasibility.kind, BistellarFlipKind::k1(2));
+/// assert_eq!(feasibility.direction, FlipDirection::Forward);
+/// assert!(feasibility.inserted_face_vertices.is_none());
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use]
+#[non_exhaustive]
+pub struct FlipFeasibility<const D: usize> {
+    /// Flip kind (k, d).
+    pub kind: BistellarFlipKind,
+    /// Flip direction.
+    pub direction: FlipDirection,
+    /// Simplices that the corresponding mutating flip would remove.
+    pub removed_simplices: SimplexKeyBuffer,
+    /// The removed-face simplex shared by the removed simplices.
+    pub removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+    /// The inserted complementary face when all of its vertices already exist.
+    ///
+    /// This is `None` for forward k=1 insertion because the inserted vertex key
+    /// is allocated by the mutating executor.
+    pub inserted_face_vertices: Option<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
+}
+
+#[derive(Debug)]
 struct AppliedFlip<const D: usize> {
     info: FlipInfo<D>,
     removed_simplex_vertices: RemovedSimplexVertexSnapshot,
+}
+
+/// Fully validated local flip preflight shared by dry-run and mutating paths.
+///
+/// Keeping this state in one helper type makes [`FlipFeasibility`] report the
+/// same deterministic pre-mutation decision that the executor uses before it
+/// performs its failure-atomic trial mutation.
+#[derive(Debug)]
+struct PreparedFlip<const D: usize> {
+    kind: BistellarFlipKind,
+    direction: FlipDirection,
+    removed_simplices: SimplexKeyBuffer,
+    removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+    inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+    new_simplex_vertices: ReplacementSimplexVertices,
+    new_simplex_offsets: ReplacementPeriodicOffsets<D>,
+    external_facets: ExternalFacetBuffer,
+    removed_simplex_vertices: RemovedSimplexVertexSnapshot,
+}
+
+impl<const D: usize> PreparedFlip<D> {
+    /// Convert a prepared immutable preflight into the public dry-run report.
+    fn into_feasibility(self) -> FlipFeasibility<D> {
+        FlipFeasibility {
+            kind: self.kind,
+            direction: self.direction,
+            removed_simplices: self.removed_simplices,
+            removed_face_vertices: self.removed_face_vertices,
+            inserted_face_vertices: Some(self.inserted_face_vertices),
+        }
+    }
 }
 
 /// Const-generic flip context for a k-move (forward or inverse).
@@ -5557,7 +5753,7 @@ where
         SmallBuffer::with_capacity(1);
     inserted_face_vertices.push(inserted_vertex);
 
-    let removed_simplices: SimplexKeyBuffer = std::iter::once(simplex_key).collect();
+    let removed_simplices: SimplexKeyBuffer = once(simplex_key).collect();
 
     Ok(FlipContext {
         removed_face_vertices,
@@ -5993,6 +6189,23 @@ where
     apply_bistellar_flip::<U, V, D, 2>(tds, context)
 }
 
+/// Validate a k=2 bistellar flip without mutating the TDS.
+///
+/// # Errors
+///
+/// Returns a [`FlipError`] if the flip would fail during deterministic
+/// pre-mutation validation.
+pub(crate) fn validate_bistellar_flip_k2<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    context: &FlipContext<D, 2>,
+) -> Result<FlipFeasibility<D>, FlipError>
+where
+    U: DataType,
+    V: DataType,
+{
+    validate_bistellar_flip::<U, V, D, 2>(tds, context)
+}
+
 /// Build flip context for a k=3 (ridge) flip.
 ///
 /// # Errors
@@ -6361,6 +6574,89 @@ where
     apply_bistellar_flip::<U, V, D, 3>(tds, context)
 }
 
+/// Validate a k=3 bistellar flip without mutating the TDS.
+///
+/// # Errors
+///
+/// Returns a [`FlipError`] if the flip would fail during deterministic
+/// pre-mutation validation.
+pub(crate) fn validate_bistellar_flip_k3<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    context: &FlipContext<D, 3>,
+) -> Result<FlipFeasibility<D>, FlipError>
+where
+    U: DataType,
+    V: DataType,
+{
+    validate_bistellar_flip::<U, V, D, 3>(tds, context)
+}
+
+/// Validate a forward k=1 move (simplex split) without mutating the TDS.
+///
+/// # Errors
+///
+/// Returns a [`FlipError`] if the simplex is missing, the vertex UUID is already
+/// present, or the replacement simplices would be degenerate.
+pub(crate) fn validate_bistellar_flip_k1_insert<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    simplex_key: SimplexKey,
+    vertex: &Vertex<U, D>,
+) -> Result<FlipFeasibility<D>, FlipError>
+where
+    U: DataType,
+    V: DataType,
+{
+    if D < 1 {
+        return Err(FlipError::UnsupportedDimension { dimension: D });
+    }
+
+    let vertex_uuid = vertex.uuid();
+    if tds.vertex_key_from_uuid(&vertex_uuid).is_some() {
+        return Err(FlipError::from(FlipMutationError::VertexInsertion {
+            source: TdsConstructionFailure::DuplicateUuid {
+                entity: EntityKind::Vertex,
+                uuid: vertex_uuid,
+            },
+        }));
+    }
+
+    let simplex = tds
+        .simplex(simplex_key)
+        .ok_or(FlipError::MissingSimplex { simplex_key })?;
+    let removed_face_vertices: VertexKeyList = simplex.vertices().iter().copied().collect();
+
+    for &omit in &removed_face_vertices {
+        let mut points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(D + 1);
+        points.push(*vertex.point());
+        for &vkey in &removed_face_vertices {
+            if vkey != omit {
+                points.push(vertex_point(tds, vkey)?);
+            }
+        }
+
+        match robust_orientation(&points) {
+            Ok(Orientation::POSITIVE | Orientation::NEGATIVE) => {}
+            Ok(Orientation::DEGENERATE) => return Err(FlipError::DegenerateSimplex),
+            Err(error) => {
+                return Err(FlipPredicateError::coordinate_conversion(
+                    FlipPredicateOperation::ReplacementSimplexOrientation,
+                    error,
+                )
+                .into());
+            }
+        }
+    }
+
+    Ok(FlipFeasibility {
+        kind: BistellarFlipKind::k1(D),
+        direction: FlipDirection::Forward,
+        removed_simplices: once(simplex_key).collect(),
+        removed_face_vertices,
+        inserted_face_vertices: None,
+    })
+}
+
 /// Apply a forward k=1 move (simplex split) by inserting a new vertex.
 ///
 /// # Errors
@@ -6428,6 +6724,28 @@ where
     let _ = tds.remove_vertex(vertex_key);
 
     Ok(info)
+}
+
+/// Validate an inverse k=1 move (vertex collapse) without mutating the TDS.
+///
+/// # Errors
+///
+/// Returns a [`FlipError`] if the vertex star is invalid or the replacement
+/// simplex would be degenerate.
+pub(crate) fn validate_bistellar_flip_k1_inverse<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    vertex_key: VertexKey,
+) -> Result<FlipFeasibility<D>, FlipError>
+where
+    U: DataType,
+    V: DataType,
+{
+    if D < 1 {
+        return Err(FlipError::UnsupportedDimension { dimension: D });
+    }
+
+    let context = build_k1_inverse_context(tds, vertex_key)?;
+    validate_bistellar_flip_dynamic(tds, D + 1, &context)
 }
 
 /// Repair Delaunay violations using a k=2 flip queue.
@@ -10650,13 +10968,13 @@ mod tests {
                         .insert_simplex_with_mapping(Simplex::try_new_with_data(vertices.clone(), None).unwrap())
                         .unwrap();
 
-                    let removed_simplices: SimplexKeyBuffer = std::iter::once(simplex_key).collect();
+                    let removed_simplices: SimplexKeyBuffer = once(simplex_key).collect();
                     let snapshot = snapshot_removed_simplex_vertices(&tds, &removed_simplices).unwrap();
                     assert_eq!(snapshot.len(), 1);
                     assert_eq!(snapshot[0].iter().copied().collect::<Vec<_>>(), vertices);
 
                     let missing_simplex = SimplexKey::from(KeyData::from_ffi(999_999 + $dim));
-                    let missing_simplices: SimplexKeyBuffer = std::iter::once(missing_simplex).collect();
+                    let missing_simplices: SimplexKeyBuffer = once(missing_simplex).collect();
                     let err = snapshot_removed_simplex_vertices(&tds, &missing_simplices).unwrap_err();
                     assert_matches!(
                         err,
@@ -10680,8 +10998,8 @@ mod tests {
                         info: FlipInfo {
                             kind: BistellarFlipKind::k2($dim),
                             direction: FlipDirection::Forward,
-                            removed_simplices: std::iter::once(removed_simplex).collect(),
-                            new_simplices: std::iter::once(new_simplex).collect(),
+                            removed_simplices: once(removed_simplex).collect(),
+                            new_simplices: once(new_simplex).collect(),
                             removed_face_vertices: [v3, v1].into_iter().collect(),
                             inserted_face_vertices: [v4, v2].into_iter().collect(),
                         },
@@ -10834,8 +11152,8 @@ mod tests {
                 info: FlipInfo {
                     kind: BistellarFlipKind::k2(3),
                     direction: FlipDirection::Forward,
-                    removed_simplices: std::iter::once(self.upper_tetrahedron).collect(),
-                    new_simplices: std::iter::once(self.lower_neighbor).collect(),
+                    removed_simplices: once(self.upper_tetrahedron).collect(),
+                    new_simplices: once(self.lower_neighbor).collect(),
                     removed_face_vertices: [
                         self.origin_vertex,
                         self.x_axis_vertex,
@@ -12009,7 +12327,7 @@ mod tests {
         let first_inserted_sample = InsertedSimplexSkipSample {
             location: RepairSkipLocation::Facet(facet),
             removed_face: [v0, v1].into_iter().collect(),
-            inserted_face: std::iter::once(v2).collect(),
+            inserted_face: once(v2).collect(),
         };
         diagnostics.record_inserted_simplex_skip(first_inserted_sample.clone());
         assert_eq!(diagnostics.inserted_simplex_skips, 1);
@@ -12020,7 +12338,7 @@ mod tests {
 
         diagnostics.record_inserted_simplex_skip(InsertedSimplexSkipSample {
             location: RepairSkipLocation::Edge(edge),
-            removed_face: std::iter::once(v1).collect(),
+            removed_face: once(v1).collect(),
             inserted_face: [v0, v2].into_iter().collect(),
         });
         assert_eq!(diagnostics.inserted_simplex_skips, 2);
@@ -12073,7 +12391,7 @@ mod tests {
         let triangle = TriangleHandle::try_new(v0, v1, v2).unwrap();
 
         let removed_face: VertexKeyList = [v0, v1].into_iter().collect();
-        let inserted_face: VertexKeyList = std::iter::once(v2).collect();
+        let inserted_face: VertexKeyList = once(v2).collect();
         let inserted_sample = InsertedSimplexSkipSample {
             location: RepairSkipLocation::Facet(facet),
             removed_face: removed_face.clone(),
@@ -13068,6 +13386,17 @@ mod tests {
 
         let facet = FacetHandle::from_validated(c1, 2); // facet opposite vertex index 2 (edge AB)
         let context = build_k2_flip_context(&tds, facet).unwrap();
+        let feasibility = validate_bistellar_flip_k2(&tds, &context).unwrap();
+        assert_eq!(feasibility.kind, BistellarFlipKind::k2(2));
+        assert_eq!(feasibility.direction, FlipDirection::Forward);
+        assert_eq!(feasibility.removed_simplices.len(), 2);
+        assert_eq!(
+            feasibility
+                .inserted_face_vertices
+                .as_ref()
+                .map(SmallBuffer::len),
+            Some(2)
+        );
         let info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
 
         assert_eq!(info.removed_simplices.len(), 2);
@@ -13119,6 +13448,8 @@ mod tests {
 
         let facet = FacetHandle::from_validated(c1, 2); // facet opposite vertex index 2 (edge AB)
         let context = build_k2_flip_context(&tds, facet).unwrap();
+        let feasibility = validate_bistellar_flip_k2(&tds, &context);
+        assert_matches!(feasibility, Err(FlipError::DuplicateSimplex));
         let result = apply_bistellar_flip_k2(&mut tds, &context);
 
         assert_matches!(result, Err(FlipError::DuplicateSimplex));
@@ -13184,6 +13515,11 @@ mod tests {
         let facet = FacetHandle::from_validated(simplex_a, 0);
         let ctx = build_k2_flip_context(&tds, facet).unwrap();
 
+        let feasibility = validate_bistellar_flip_k2(&tds, &ctx);
+        assert_matches!(
+            feasibility,
+            Err(FlipError::InsertedSimplexAlreadyExists { .. })
+        );
         let result = apply_bistellar_flip_k2(&mut tds, &ctx);
 
         assert_matches!(result, Err(FlipError::InsertedSimplexAlreadyExists { .. }));
@@ -13232,6 +13568,8 @@ mod tests {
 
         let facet = FacetHandle::from_validated(c1, 2); // facet opposite vertex index 2 (edge AB)
         let context = build_k2_flip_context(&tds, facet).unwrap();
+        let feasibility = validate_bistellar_flip_k2(&tds, &context);
+        assert_matches!(feasibility, Err(FlipError::NonManifoldFacet));
         let result = apply_bistellar_flip_k2(&mut tds, &context);
 
         assert_matches!(result, Err(FlipError::NonManifoldFacet));
@@ -16247,8 +16585,7 @@ mod tests {
             periodic_inverse_k2_fixture::<4>();
         let topology_model = toroidal_model::<4>();
         let frame_simplex = removed_simplex_frame(&removed_simplices).unwrap();
-        let truncated_removed_simplices: SimplexKeyBuffer =
-            std::iter::once(frame_simplex).collect();
+        let truncated_removed_simplices: SimplexKeyBuffer = once(frame_simplex).collect();
         let lift_result = vertex_point_lifted_into_simplex(
             &tds,
             &topology_model,

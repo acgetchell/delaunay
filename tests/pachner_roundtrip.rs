@@ -2,7 +2,8 @@
 
 //! Public API roundtrip tests for Pachner/bistellar flips.
 
-use delaunay::vertex;
+use delaunay::flips::FlipMutationError;
+use delaunay::{TdsConstructionFailure, vertex};
 use std::assert_matches;
 
 use delaunay::prelude::construction::{
@@ -12,7 +13,7 @@ use delaunay::prelude::construction::{
 use delaunay::prelude::geometry::RobustKernel;
 use delaunay::prelude::pachner::{
     BistellarFlipKind, EdgeKey, EdgeKeyError, FacetHandle, FlipDirection, FlipError, PachnerMove,
-    PachnerMoveResult, PachnerMoves, SimplexKey, VertexKey,
+    PachnerMoveFeasibility, PachnerMoveResult, PachnerMoves, SimplexKey, VertexKey,
 };
 #[cfg(feature = "slow-tests")]
 use delaunay::prelude::pachner::{RidgeHandle, TriangleHandle};
@@ -20,6 +21,7 @@ use uuid::Uuid;
 
 type Dt4 = DelaunayTriangulation<RobustKernel<f64>, (), (), 4>;
 type Dt2 = DelaunayTriangulation<RobustKernel<f64>, (), (), 2>;
+type Dt<const D: usize> = DelaunayTriangulation<RobustKernel<f64>, (), (), D>;
 
 const FLIPPABLE_POINTS_2D: &[[f64; 2]] = &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
 
@@ -235,6 +237,155 @@ fn edge_to_facet_query_tracks_2d_k2_mutation_freshness() {
     assert_topology_and_delaunay_valid(&dt, "2D k=2 mutation-freshness fixture");
 }
 
+#[test]
+fn pachner_feasibility_agrees_with_successful_2d_k2_attempt() {
+    let dt = build_flippable_dt_2d();
+    let facet = flippable_k2_facet_2d(&dt);
+    let pachner_move = PachnerMove::K2 { facet };
+
+    let feasibility = dt
+        .can_attempt_pachner(&pachner_move)
+        .expect("2D k=2 feasibility should accept selected fixture facet");
+    assert_pachner_feasibility_contract(
+        &feasibility,
+        BistellarFlipKind::k2(2),
+        FlipDirection::Forward,
+    );
+
+    let mut trial = dt;
+    let result = trial
+        .attempt_pachner(pachner_move)
+        .expect("2D k=2 attempt should agree with feasibility");
+    assert_eq!(feasibility.kind, result.kind);
+    assert_eq!(feasibility.direction, result.direction);
+    assert_eq!(feasibility.removed_simplices, result.removed_simplices);
+    assert_eq!(
+        feasibility.removed_face_vertices,
+        result.removed_face_vertices
+    );
+    assert_eq!(
+        feasibility.inserted_face_vertices.as_ref(),
+        Some(&result.inserted_face_vertices)
+    );
+}
+
+#[test]
+fn pachner_feasibility_rejects_boundary_facet_like_attempt_2d() {
+    let dt = build_single_triangle_dt_2d();
+    let (simplex_key, _) = dt
+        .simplices()
+        .next()
+        .expect("single-triangle fixture should contain one simplex");
+    let facet = FacetHandle::try_new(dt.tds(), simplex_key, 0)
+        .expect("single-triangle boundary facet should be a live handle");
+    let pachner_move = PachnerMove::K2 { facet };
+
+    let feasibility = dt.can_attempt_pachner(&pachner_move);
+    assert_matches!(feasibility, Err(FlipError::BoundaryFacet { .. }));
+
+    let mut trial = dt;
+    let attempted = trial.attempt_pachner(pachner_move);
+    assert_matches!(attempted, Err(FlipError::BoundaryFacet { .. }));
+    assert_topology_and_delaunay_valid(&trial, "failed boundary feasibility agreement");
+}
+
+#[test]
+fn pachner_feasibility_rejects_stale_facet_like_attempt_2d() {
+    let mut dt = build_flippable_dt_2d();
+    let facet = flippable_k2_facet_2d(&dt);
+    let first_flip = dt
+        .attempt_pachner(PachnerMove::K2 { facet })
+        .expect("first k=2 attempt should stale the original facet");
+    assert!(!first_flip.new_simplices.is_empty());
+    let stale_move = PachnerMove::K2 { facet };
+
+    let feasibility = dt.can_attempt_pachner(&stale_move);
+    assert_matches!(
+        feasibility,
+        Err(FlipError::MissingSimplex { simplex_key }) if simplex_key == facet.simplex_key()
+    );
+
+    let before_failed_attempt = snapshot_topology_2d(&dt);
+    let attempted = dt.attempt_pachner(stale_move);
+    assert_matches!(
+        attempted,
+        Err(FlipError::MissingSimplex { simplex_key }) if simplex_key == facet.simplex_key()
+    );
+    assert_eq!(snapshot_topology_2d(&dt), before_failed_attempt);
+}
+
+#[test]
+fn pachner_feasibility_agrees_with_toroidal_2d_k1_insert() {
+    let dt = build_canonicalized_toroidal_dt_2d();
+    let simplex_key = first_simplex_generic(&dt);
+    let vertex: Vertex<(), 2> = vertex!(simplex_centroid_generic(&dt, simplex_key))
+        .expect("toroidal simplex centroid should be a finite vertex");
+    let vertex_uuid = vertex.uuid();
+    let pachner_move = PachnerMove::K1Insert {
+        simplex_key,
+        vertex,
+    };
+
+    let feasibility = dt
+        .can_attempt_pachner(&pachner_move)
+        .expect("toroidal k=1 feasibility should accept a simplex centroid");
+    assert_pachner_feasibility_contract(
+        &feasibility,
+        BistellarFlipKind::k1(2),
+        FlipDirection::Forward,
+    );
+    assert!(feasibility.inserted_face_vertices.is_none());
+
+    let mut trial = dt;
+    let result = trial
+        .attempt_pachner(pachner_move)
+        .expect("toroidal k=1 attempt should agree with feasibility");
+    let inserted_vertex = trial
+        .tds()
+        .vertex_key_from_uuid(&vertex_uuid)
+        .expect("successful k=1 attempt should allocate the inserted vertex key");
+    assert_eq!(result.kind, feasibility.kind);
+    assert_eq!(result.direction, feasibility.direction);
+    assert_eq!(result.removed_simplices, feasibility.removed_simplices);
+    assert_eq!(result.inserted_face_vertices.as_slice(), &[inserted_vertex]);
+    trial
+        .as_triangulation()
+        .validate()
+        .expect("toroidal k=1 attempt should preserve topology validity");
+}
+
+#[test]
+fn pachner_feasibility_rejects_duplicate_k1_insert_uuid_without_mutating() {
+    let dt = build_single_triangle_dt_2d();
+    let simplex_key = first_simplex_generic(&dt);
+    let duplicate_vertex = dt
+        .tds()
+        .vertices()
+        .next()
+        .map(|(_, vertex)| *vertex)
+        .expect("single-triangle fixture should contain a live vertex");
+    let duplicate_uuid = duplicate_vertex.uuid();
+    let pachner_move = PachnerMove::K1Insert {
+        simplex_key,
+        vertex: duplicate_vertex,
+    };
+
+    assert_duplicate_vertex_uuid_error(dt.can_attempt_pachner(&pachner_move), duplicate_uuid);
+
+    let mut trial = dt;
+    let before_failed_attempt = snapshot_topology_2d(&trial);
+    assert_duplicate_vertex_uuid_error(trial.attempt_pachner(pachner_move), duplicate_uuid);
+    assert_eq!(snapshot_topology_2d(&trial), before_failed_attempt);
+}
+
+#[test]
+fn pachner_feasibility_public_k1_insert_smoke_2d_to_5d() {
+    assert_public_k1_insert_feasibility_smoke::<2>();
+    assert_public_k1_insert_feasibility_smoke::<3>();
+    assert_public_k1_insert_feasibility_smoke::<4>();
+    assert_public_k1_insert_feasibility_smoke::<5>();
+}
+
 /// Attempts a stale k=1 insert through the public `DelaunayResult` alias.
 fn try_stale_k1_insert(
     dt: &mut Dt4,
@@ -284,6 +435,33 @@ fn build_dt_4d(points: &[[f64; 4]], fixture_name: &str) -> Dt4 {
     .unwrap_or_else(|err| panic!("{fixture_name} 4D fixture should build: {err}"))
 }
 
+/// Builds a minimal Euclidean D-simplex fixture for dimension smoke tests.
+fn build_minimal_simplex_dt<const D: usize>() -> Dt<D> {
+    let vertices = minimal_simplex_vertices::<D>();
+    let options =
+        ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
+
+    DelaunayTriangulation::try_with_topology_guarantee_and_options(
+        &RobustKernel::new(),
+        &vertices,
+        TopologyGuarantee::PLManifold,
+        options,
+    )
+    .unwrap_or_else(|err| panic!("{D}D minimal simplex fixture should build: {err}"))
+}
+
+/// Returns the origin plus coordinate unit vectors as a nondegenerate D-simplex.
+fn minimal_simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
+    let mut vertices = Vec::with_capacity(D + 1);
+    vertices.push(vertex!([0.0; D]).expect("origin vertex should be finite"));
+    for axis in 0..D {
+        let mut coords = [0.0; D];
+        coords[axis] = 1.0;
+        vertices.push(vertex!(coords).expect("unit simplex vertex should be finite"));
+    }
+    vertices
+}
+
 /// Builds a deterministic 2D fixture with at least one public k=2 move.
 fn build_flippable_dt_2d() -> Dt2 {
     let vertices = FLIPPABLE_POINTS_2D
@@ -298,6 +476,36 @@ fn build_flippable_dt_2d() -> Dt2 {
         .expect("stable 2D fixture should build");
     assert_topology_and_delaunay_valid(&dt, "stable 2D fixture before local edits");
     dt
+}
+
+/// Builds a single-triangle 2D fixture for boundary-facet rejection checks.
+fn build_single_triangle_dt_2d() -> Dt2 {
+    let vertices = vec![
+        vertex!([0.0, 0.0]).expect("single-triangle fixture coordinate"),
+        vertex!([1.0, 0.0]).expect("single-triangle fixture coordinate"),
+        vertex!([0.0, 1.0]).expect("single-triangle fixture coordinate"),
+    ];
+
+    DelaunayTriangulationBuilder::new(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build_with_kernel::<_, ()>(&RobustKernel::new())
+        .expect("single-triangle fixture should build")
+}
+
+/// Builds a canonicalized 2D toroidal fixture with live periodic topology metadata.
+fn build_canonicalized_toroidal_dt_2d() -> Dt2 {
+    let vertices = vec![
+        vertex!([0.2, 0.3]).expect("toroidal fixture coordinate"),
+        vertex!([1.8, 0.1]).expect("toroidal fixture coordinate"),
+        vertex!([0.5, 0.7]).expect("toroidal fixture coordinate"),
+        vertex!([-0.4, 0.9]).expect("toroidal fixture coordinate"),
+    ];
+
+    DelaunayTriangulationBuilder::new(&vertices)
+        .try_canonicalized_toroidal([1.0, 1.0])
+        .expect("canonicalized toroidal domain should parse")
+        .build_with_kernel::<_, ()>(&RobustKernel::new())
+        .expect("canonicalized toroidal fixture should build")
 }
 
 /// Searches the 2D fixture for an edge facet whose public k=2 move succeeds.
@@ -325,6 +533,150 @@ fn flippable_k2_facet_2d(dt: &Dt2) -> FacetHandle {
         }
     }
     panic!("stable 2D fixture should contain a public k=2 candidate");
+}
+
+/// Captures 2D topology by stable UUIDs so failed attempts can prove non-mutation.
+fn snapshot_topology_2d(dt: &Dt2) -> TopologySnapshot {
+    let tds = dt.tds();
+    let mut vertex_uuids = tds
+        .vertices()
+        .map(|(_, vertex)| vertex.uuid())
+        .collect::<Vec<_>>();
+    vertex_uuids.sort();
+
+    let mut simplex_vertex_uuids = tds
+        .simplices()
+        .map(|(_, simplex)| {
+            let mut uuids = simplex
+                .vertices()
+                .iter()
+                .map(|vertex_key| {
+                    tds.vertex(*vertex_key)
+                        .expect("simplex should reference live vertices")
+                        .uuid()
+                })
+                .collect::<Vec<_>>();
+            uuids.sort();
+            uuids
+        })
+        .collect::<Vec<_>>();
+    simplex_vertex_uuids.sort();
+
+    TopologySnapshot {
+        vertex_uuids,
+        simplex_vertex_uuids,
+    }
+}
+
+/// Verifies the generic Pachner feasibility arities implied by the reported move kind.
+fn assert_pachner_feasibility_contract<const D: usize>(
+    feasibility: &PachnerMoveFeasibility<D>,
+    kind: BistellarFlipKind,
+    direction: FlipDirection,
+) {
+    assert_eq!(feasibility.kind, kind);
+    assert_eq!(feasibility.direction, direction);
+    assert_eq!(feasibility.removed_simplices.len(), kind.k());
+    assert_eq!(feasibility.removed_face_vertices.len(), D + 2 - kind.k());
+    if let Some(inserted_face_vertices) = &feasibility.inserted_face_vertices {
+        assert_eq!(inserted_face_vertices.len(), kind.k());
+    }
+}
+
+/// Verifies duplicate inserted-vertex UUIDs surface through the typed flip error.
+fn assert_duplicate_vertex_uuid_error<T>(result: Result<T, FlipError>, duplicate_uuid: Uuid) {
+    match result {
+        Err(FlipError::TdsMutation { reason })
+            if matches!(
+                reason.as_ref(),
+                FlipMutationError::VertexInsertion {
+                    source: TdsConstructionFailure::DuplicateUuid { uuid, .. },
+                } if *uuid == duplicate_uuid
+            ) => {}
+        Err(err) => {
+            panic!("expected duplicate vertex UUID error for {duplicate_uuid}, got {err:?}")
+        }
+        Ok(_) => panic!("expected duplicate vertex UUID error for {duplicate_uuid}"),
+    }
+}
+
+/// Exercises public `PachnerMove::K1Insert` feasibility and mutation in one dimension.
+fn assert_public_k1_insert_feasibility_smoke<const D: usize>() {
+    let dt = build_minimal_simplex_dt::<D>();
+    let simplex_key = first_simplex_generic(&dt);
+    let vertex: Vertex<(), D> = vertex!(simplex_centroid_generic(&dt, simplex_key))
+        .unwrap_or_else(|err| panic!("{D}D simplex centroid should be finite: {err}"));
+    let vertex_uuid = vertex.uuid();
+    let pachner_move = PachnerMove::K1Insert {
+        simplex_key,
+        vertex,
+    };
+
+    let feasibility = dt
+        .can_attempt_pachner(&pachner_move)
+        .unwrap_or_else(|err| panic!("{D}D public k=1 feasibility should succeed: {err:?}"));
+    assert_pachner_feasibility_contract(
+        &feasibility,
+        BistellarFlipKind::k1(D),
+        FlipDirection::Forward,
+    );
+    assert!(feasibility.inserted_face_vertices.is_none());
+
+    let mut trial = dt;
+    let result = trial
+        .attempt_pachner(pachner_move)
+        .unwrap_or_else(|err| panic!("{D}D public k=1 mutation should succeed: {err:?}"));
+    let inserted_vertex = trial
+        .tds()
+        .vertex_key_from_uuid(&vertex_uuid)
+        .expect("successful k=1 mutation should allocate the requested vertex");
+    assert_eq!(feasibility.kind, result.kind);
+    assert_eq!(feasibility.direction, result.direction);
+    assert_eq!(feasibility.removed_simplices, result.removed_simplices);
+    assert_eq!(
+        feasibility.removed_face_vertices,
+        result.removed_face_vertices
+    );
+    assert_eq!(result.inserted_face_vertices.as_slice(), &[inserted_vertex]);
+    trial
+        .as_triangulation()
+        .validate()
+        .unwrap_or_else(|err| panic!("{D}D k=1 mutation should preserve topology: {err}"));
+    trial
+        .as_triangulation()
+        .is_valid_embedding()
+        .unwrap_or_else(|err| panic!("{D}D k=1 mutation should preserve embedding: {err}"));
+}
+
+/// Returns any live simplex key from a generic D-dimensional fixture.
+fn first_simplex_generic<const D: usize>(dt: &Dt<D>) -> SimplexKey {
+    dt.simplices()
+        .next()
+        .map(|(simplex_key, _)| simplex_key)
+        .expect("fixture should contain simplices")
+}
+
+/// Computes a simplex centroid for generic dimension smoke tests.
+fn simplex_centroid_generic<const D: usize>(dt: &Dt<D>, simplex_key: SimplexKey) -> [f64; D] {
+    let simplex = dt
+        .tds()
+        .simplex(simplex_key)
+        .expect("simplex key should exist");
+    let mut coords = [0.0; D];
+    for &vkey in simplex.vertices() {
+        let vertex = dt.tds().vertex(vkey).expect("vertex key should exist");
+        for (coord, value) in coords.iter_mut().zip(vertex.point().coords()) {
+            *coord += *value;
+        }
+    }
+
+    let vertex_count = u32::try_from(simplex.vertices().len())
+        .map(f64::from)
+        .expect("simplex vertex count should fit in u32");
+    for coord in &mut coords {
+        *coord /= vertex_count;
+    }
+    coords
 }
 
 /// Converts a 2D facet handle into the edge key represented by that facet.
