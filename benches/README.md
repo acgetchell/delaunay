@@ -8,7 +8,7 @@ predicates fast across 2D-5D.
 
 | Benchmark | Purpose | Scale | Typical Runtime | Used By |
 |-----------|---------|-------|-----------------|---------|
-| `allocation_hot_paths.rs` | Allocation contracts for public hot paths | Calibrated 2D-5D canary fixtures | ~1-2 min | Manual allocation checks |
+| `allocation_hot_paths.rs` | Construction/query/barycenter allocation contracts | Calibrated 2D-5D canary fixtures | ~1-2 min | Manual allocation checks |
 | `ci_performance_suite.rs` | Public workflow regression contract | Calibrated 2D-5D canaries | ~5-10 min | CI, baselines, `just perf-no-regressions` |
 | `circumsphere_containment.rs` | Compare circumsphere predicate methods | 2D-5D fixed, 3D random, edge cases | ~5 min | Predicate tuning, summaries |
 | `cold_path_predicates.rs` | Track hot/cold predicate paths | 2D-5D hot queries, near-boundary cases | ~2-5 min | Predicate optimization work |

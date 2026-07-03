@@ -166,6 +166,18 @@ for topology guarantee and validation policy details.
   `dt.try_set_validation_policy(...)` or `dt.set_validation_policy(...)`) governs automatic topology and
   changed-scope embedding guards for subsequent construction/modification operations
 
+### Simplex Barycenters For Local Editing
+
+`DelaunayTriangulation::simplex_barycenter(simplex_key)` computes a topology-aware interior point for
+a live `D`-simplex. In Euclidean triangulations it returns the arithmetic average of the simplex
+vertices. In periodic image-point triangulations it lifts vertices through their stored periodic
+offsets before averaging, then canonicalizes the result back into the topology domain.
+
+Use the returned point when a workflow needs a deterministic local-editing coordinate, especially for
+k=1 Pachner insert proposals. The method revalidates the detached `SimplexKey` against the live
+triangulation and returns `SimplexBarycenterError` for stale keys, malformed simplex arity, missing
+vertices, offset mismatches, topology lift/canonicalization failures, and invalid averaged points.
+
 ## Pachner Move API Reference
 
 The local edit API is exposed through the `PachnerMoves` trait in

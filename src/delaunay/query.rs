@@ -1838,6 +1838,7 @@ mod tests {
     use crate::core::tds::TdsError;
     use crate::core::validation::TriangulationValidationError;
     use crate::geometry::kernel::FastKernel;
+    use crate::geometry::traits::coordinate::InvalidCoordinateValue;
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
     use crate::vertex;
     use approx::assert_relative_eq;
@@ -1993,6 +1994,41 @@ mod tests {
     }
 
     #[test]
+    fn simplex_barycenter_reports_point_validation_failure_after_overflowed_average() {
+        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::with_empty_kernel(FastKernel::new());
+        let a = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([f64::MAX, 0.0]).unwrap())
+            .unwrap();
+        let b = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([f64::MAX, 0.25]).unwrap())
+            .unwrap();
+        let c = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([f64::MAX, 0.75]).unwrap())
+            .unwrap();
+        let simplex = Simplex::try_new_with_data(vec![a, b, c], None).unwrap();
+        let simplex_key = dt.tri.tds.insert_simplex_with_mapping(simplex).unwrap();
+
+        assert_matches!(
+            dt.simplex_barycenter(simplex_key),
+            Err(SimplexBarycenterError::PointValidation {
+                simplex_key: key,
+                source: CoordinateValidationError::InvalidCoordinate {
+                    coordinate_index: 0,
+                    coordinate_value: InvalidCoordinateValue::PositiveInfinity,
+                    dimension: 2,
+                },
+            }) if key == simplex_key
+        );
+    }
+
+    #[test]
     fn simplex_barycenter_rejects_stale_simplex_key() {
         let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
         let stale = SimplexKey::from(KeyData::from_ffi(0xCAFE));
@@ -2074,6 +2110,96 @@ mod tests {
                 offset_count: 2,
                 vertex_count: 3,
             }) if key == simplex_key
+        );
+    }
+
+    #[test]
+    fn simplex_barycenter_reports_canonicalization_failure_after_overflowed_average() {
+        let topology = GlobalTopology::try_toroidal(
+            [1.0_f64, 1.0_f64],
+            ToroidalConstructionMode::PeriodicImagePoint,
+        )
+        .expect("unit toroidal domain is valid");
+        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::with_empty_kernel_and_topology_context(
+                FastKernel::new(),
+                TopologyGuarantee::Pseudomanifold,
+                topology,
+            );
+        let a = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([f64::MAX, 0.0]).unwrap())
+            .unwrap();
+        let b = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([f64::MAX, 0.25]).unwrap())
+            .unwrap();
+        let c = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([f64::MAX, 0.75]).unwrap())
+            .unwrap();
+        let simplex = Simplex::try_new_with_data(vec![a, b, c], None).unwrap();
+        let simplex_key = dt.tri.tds.insert_simplex_with_mapping(simplex).unwrap();
+
+        assert_matches!(
+            dt.simplex_barycenter(simplex_key),
+            Err(SimplexBarycenterError::BarycenterCanonicalization {
+                simplex_key: key,
+                source: GlobalTopologyModelError::NonFiniteCoordinate { axis: 0, value },
+            }) if key == simplex_key
+                && value.is_infinite()
+                && value.is_sign_positive()
+        );
+    }
+
+    #[test]
+    fn simplex_barycenter_reports_periodic_vertex_lift_failure() {
+        let topology = GlobalTopology::try_toroidal(
+            [f64::MAX, 1.0_f64],
+            ToroidalConstructionMode::PeriodicImagePoint,
+        )
+        .expect("huge finite toroidal domain is valid");
+        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::with_empty_kernel_and_topology_context(
+                FastKernel::new(),
+                TopologyGuarantee::Pseudomanifold,
+                topology,
+            );
+        let overflowing_vertex_key = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([f64::MAX, 0.25]).unwrap())
+            .unwrap();
+        let b = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.25]).unwrap())
+            .unwrap();
+        let c = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.75]).unwrap())
+            .unwrap();
+        let mut simplex = Simplex::try_new_with_data(vec![overflowing_vertex_key, b, c], None)
+            .expect("distinct vertex keys form a simplex fixture");
+        simplex
+            .set_periodic_vertex_offsets(vec![[1_i8, 0_i8], [0_i8, 0_i8], [0_i8, 0_i8]])
+            .expect("offset arity matches simplex vertices");
+        let simplex_key = dt.tri.tds.insert_simplex_with_mapping(simplex).unwrap();
+
+        assert_matches!(
+            dt.simplex_barycenter(simplex_key),
+            Err(SimplexBarycenterError::VertexLift {
+                simplex_key: key,
+                vertex_key,
+                source: GlobalTopologyModelError::NonFiniteCoordinate { axis: 0, value },
+            }) if key == simplex_key
+                && vertex_key == overflowing_vertex_key
+                && value.is_infinite()
+                && value.is_sign_positive()
         );
     }
 

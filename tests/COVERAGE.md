@@ -39,19 +39,22 @@ Codecov and Codacy, and archives the full `coverage/` directory.
 
 ## Coverage Surface
 
-Both local and CI coverage use:
+Use the `just` recipes rather than invoking `cargo-llvm-cov` directly:
 
 ```bash
-cargo llvm-cov --workspace --lib --tests
+just coverage
+just coverage-ci
 ```
 
-The common arguments also ignore `benches/` and `examples/` source paths in
-reports. Integration tests still run and exercise library code, but coverage
-metrics focus on the library implementation rather than benchmark, example, or
-test harness source.
+Both recipes share the same coverage target selector (`--workspace --lib
+--tests`) and ignore `benches/` and `examples/` source paths in reports.
+Integration tests still run and exercise library code, but coverage metrics
+focus on the library implementation rather than benchmark, example, or test
+harness source.
 
+`just coverage` runs the local HTML report directly through `cargo llvm-cov`.
 `just coverage-ci` runs through `cargo llvm-cov nextest` with the nextest
-`coverage` profile. That single instrumented pass produces both
+`coverage` profile. That single instrumented CI pass produces both
 `coverage/cobertura.xml` and Codecov test-analytics JUnit XML. Property tests
 remain part of the CI coverage run; their case budget is controlled by
 `proptest.toml`, and longer deterministic coverage belongs behind the

@@ -89,6 +89,8 @@ meshing, or production-scale dynamic remeshing.
 - [x] PL-manifold validation by default, with pseudomanifold checks available as an explicit opt-out.
 - [x] Safe Rust: `#![forbid(unsafe_code)]`.
 - [x] Serialization/deserialization through [JSON].
+- [x] Topology-aware simplex barycenters for local-editing workflows, including periodic image-point
+  lifting and canonicalization.
 - [x] Vertex/simplex payloads plus secondary maps for caller-owned algorithm state.
 
 See [CHANGELOG.md](CHANGELOG.md) for release history and [`docs/roadmap.md`](docs/roadmap.md) for

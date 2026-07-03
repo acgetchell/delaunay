@@ -49,16 +49,9 @@ store-failure-output = true
 # Coverage runs execute LLVM-instrumented binaries in parallel, so exact
 # predicate regressions need more headroom than the normal CI profile while
 # still failing genuine hangs.
-failure-output = "immediate-final"
-success-output = "never"
-fail-fast = false
+inherits = "ci"
 retries = 0
 slow-timeout = { period = "300s", terminate-after = 1 }
-
-[profile.coverage.junit]
-path = "test-results/junit.xml"
-store-success-output = false
-store-failure-output = true
 
 [profile.slow]
 # Slow correctness and regression tests are intentionally outside the default

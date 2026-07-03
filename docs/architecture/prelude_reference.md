@@ -20,7 +20,7 @@ they exercise.
 | Low-level TDS simplices, facets, keys, and validation reports | `use delaunay::prelude::tds::*` |
 | Points, simplex embeddings, coordinate ranges, kernels, predicates, and geometric measures | `use delaunay::prelude::geometry::*` |
 | Random points or triangulations for examples, tests, and benchmarks | `use delaunay::prelude::generators::*` |
-| Read-only traversal, adjacency, convex hulls, and comparison helpers | `use delaunay::prelude::query::*` |
+| Read-only traversal, adjacency, simplex barycenters, convex hulls, and comparison helpers | `use delaunay::prelude::query::*` |
 | Topological spaces, topology traits, and lifted toroidal IDs | `use delaunay::prelude::topology::spaces::*` |
 | Topology validation, Euler characteristic helpers, and ridge queries | `use delaunay::prelude::topology::validation::*` |
 
