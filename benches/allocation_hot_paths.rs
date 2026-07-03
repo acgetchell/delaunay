@@ -52,10 +52,6 @@ mod allocation_contracts {
     type BenchTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
     type BenchTds<const D: usize> = Tds<(), (), D>;
 
-    fn finite_point<const D: usize>(coords: [f64; D]) -> Point<D> {
-        Point::try_new(coords).unwrap_or_else(|_| std::process::abort())
-    }
-
     #[derive(Debug, Error)]
     enum AllocationBenchError {
         #[error("{dimension}D fixture did not contain a simplex")]
@@ -179,27 +175,6 @@ mod allocation_contracts {
         Ok(facet_vertices)
     }
 
-    fn simplex_barycenter<const D: usize>(
-        dt: &BenchTriangulation<D>,
-        simplex_key: SimplexKey,
-    ) -> Result<Point<D>, AllocationBenchError> {
-        let points = simplex_points(dt, simplex_key)?;
-        let mut coords = [0.0_f64; D];
-        for point in &points {
-            for (coord, vertex_coord) in coords.iter_mut().zip(point.coords()) {
-                *coord += *vertex_coord;
-            }
-        }
-
-        let vertex_count = u32::try_from(points.len()).or_abort();
-        let inv_vertex_count = 1.0 / f64::from(vertex_count);
-        for coord in &mut coords {
-            *coord *= inv_vertex_count;
-        }
-
-        Ok(finite_point(coords))
-    }
-
     fn prepare_fixture<const D: usize>(count: usize, seed: u64) -> DimensionFixture<D> {
         let vertices = canary_vertices::<D>(count, seed);
         let attempts = retry_attempts(6);
@@ -214,7 +189,7 @@ mod allocation_contracts {
         let simplex_key = representative_simplex_key(&dt).or_abort();
         let removal_keys = dt.tds().simplex_keys().take(32).collect();
         let facet_vertices = first_facet_vertices(&dt, simplex_key).or_abort();
-        let query = simplex_barycenter(&dt, simplex_key).or_abort();
+        let query = dt.simplex_barycenter(simplex_key).or_abort();
         let simplex_count = dt.tds().simplices().count();
         let vertex_count = dt.tds().vertices().count();
 
@@ -362,6 +337,31 @@ mod allocation_contracts {
         );
     }
 
+    fn bench_simplex_barycenter<const D: usize>(
+        group: &mut BenchmarkGroup<'_, WallTime>,
+        fixture: &DimensionFixture<D>,
+    ) {
+        let simplex_key = fixture.simplex_key;
+
+        group.bench_function(
+            BenchmarkId::new(
+                format!("zero_alloc/simplex_barycenter_{D}d"),
+                fixture.vertex_count,
+            ),
+            |b| {
+                b.iter(|| {
+                    let (barycenter, info) = measure_with_result(|| {
+                        black_box(fixture.dt.simplex_barycenter(simplex_key))
+                    });
+                    let barycenter = barycenter.or_abort();
+                    assert_eq!(barycenter.coords(), fixture.query.coords());
+                    assert_zero_allocations(&info, "DelaunayTriangulation::simplex_barycenter");
+                    black_box(barycenter);
+                });
+            },
+        );
+    }
+
     fn bench_simplex_vertex_uuid_iter<const D: usize>(
         group: &mut BenchmarkGroup<'_, WallTime>,
         fixture: &DimensionFixture<D>,
@@ -493,6 +493,7 @@ mod allocation_contracts {
 
         bench_public_iterators(group, &fixture);
         bench_tds_simplex_vertices(group, &fixture);
+        bench_simplex_barycenter(group, &fixture);
         bench_simplex_vertex_uuid_iter(group, &fixture);
         bench_facet_key_from_vertices(group, &fixture);
         bench_tds_remove_simplices_by_keys(group, &fixture);

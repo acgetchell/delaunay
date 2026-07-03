@@ -98,7 +98,7 @@ use crate::io::visualization::{VisualizationDataValidationError, VisualizationEx
 use crate::locality::{
     accumulate_live_simplex_seeds, clear_simplex_seed_set, retain_live_simplex_seeds,
 };
-use crate::query::SimplexDataFillError;
+use crate::query::{SimplexBarycenterError, SimplexDataFillError};
 use crate::repair::DelaunayRepairPolicy;
 use crate::topology::traits::{
     GlobalTopology, GlobalTopologyModelError, TopologyKind, ToroidalConstructionMode,
@@ -214,12 +214,13 @@ pub(crate) mod test_hooks {
 ///
 /// This convenience error covers the fallible path most examples use:
 /// converting caller coordinates into vertices, constructing a
-/// [`DelaunayTriangulation`], editing it through the Delaunay insertion/deletion
-/// API or explicit flip/Pachner APIs, updating auxiliary vertex/simplex data
-/// through checked keys, validating its Delaunay invariants, exporting mesh
-/// data, and validating the export schema. More specialized workflows such as
-/// convex hull extraction, repair, and delaunayize continue to expose their
-/// narrower error types directly.
+/// [`DelaunayTriangulation`], computing simplex barycenters for local editing,
+/// editing it through the Delaunay insertion/deletion API or explicit
+/// flip/Pachner APIs, updating auxiliary vertex/simplex data through checked
+/// keys, validating its Delaunay invariants, exporting mesh data, and
+/// validating the export schema. More specialized workflows such as convex hull
+/// extraction, repair, and delaunayize continue to expose their narrower error
+/// types directly.
 /// Each variant keeps the concrete typed source error behind a box so the
 /// umbrella result stays small without erasing matchable failure details.
 ///
@@ -228,8 +229,9 @@ pub(crate) mod test_hooks {
 /// Use [`DelaunayResult`] for examples, binaries, and quick workflows whose
 /// fallible operations stay inside coordinate conversion, construction,
 /// random-triangulation builder setup, checked auxiliary-data mutation,
-/// post-construction simplex-data filling, insertion/deletion, explicit flip
-/// editing, validation, mesh export, and export-schema validation:
+/// simplex barycenter queries, post-construction simplex-data filling,
+/// insertion/deletion, explicit flip editing, validation, mesh export, and
+/// export-schema validation:
 ///
 /// ```rust
 /// use delaunay::prelude::construction::{
@@ -307,6 +309,14 @@ pub enum DelaunayError {
         /// Underlying simplex-data fill failure.
         #[source]
         source: Box<SimplexDataFillError>,
+    },
+
+    /// Simplex barycenter computation failed.
+    #[error("{source}")]
+    SimplexBarycenter {
+        /// Underlying simplex barycenter failure.
+        #[source]
+        source: Box<SimplexBarycenterError>,
     },
 
     /// Validation policy configuration failed.
@@ -412,6 +422,14 @@ impl From<SimplexDataFillError> for DelaunayError {
     }
 }
 
+impl From<SimplexBarycenterError> for DelaunayError {
+    fn from(source: SimplexBarycenterError) -> Self {
+        Self::SimplexBarycenter {
+            source: Box::new(source),
+        }
+    }
+}
+
 impl From<ValidationConfigurationError> for DelaunayError {
     fn from(source: ValidationConfigurationError) -> Self {
         Self::ValidationConfiguration {
@@ -457,8 +475,9 @@ impl From<ToroidalDomainError> for DelaunayError {
 /// This is equivalent to `Result<T, DelaunayError>` with [`DelaunayError`] as
 /// the error type, and is intended for caller-facing examples and applications
 /// that use the standard construction, checked auxiliary-data mutation,
-/// post-construction simplex-data filling, insertion/deletion, explicit flip
-/// editing, validation, mesh export, and export-schema validation APIs.
+/// simplex barycenter queries, post-construction simplex-data filling,
+/// insertion/deletion, explicit flip editing, validation, mesh export, and
+/// export-schema validation APIs.
 pub type DelaunayResult<T> = Result<T, DelaunayError>;
 
 /// Errors that can occur during Delaunay triangulation construction.
