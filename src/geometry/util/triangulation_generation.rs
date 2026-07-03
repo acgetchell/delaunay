@@ -1377,6 +1377,78 @@ mod tests {
         NonZeroUsize::new(value).expect("test point count must be non-zero")
     }
 
+    #[test]
+    fn test_random_point_count_conversions_preserve_validated_nonzero_count() {
+        let count = RandomPointCount::<3>::try_new(nonzero(4)).unwrap();
+        assert_eq!(count.as_nonzero(), nonzero(4));
+
+        let parsed = RandomPointCount::<3>::try_from(nonzero(5)).unwrap();
+        let raw: NonZeroUsize = parsed.into();
+        assert_eq!(raw, nonzero(5));
+
+        let err = RandomPointCount::<3>::try_from(nonzero(3)).unwrap_err();
+        assert_eq!(
+            err,
+            RandomPointCountError::InsufficientPoints {
+                actual: 3,
+                expected: 4,
+                dimension: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn test_random_triangulation_builder_error_coordinate_range_maps_to_construction_error() {
+        let Err(err) = RandomTriangulationBuilder::<2>::try_new(nonzero(10), (1.0, 0.0)) else {
+            panic!("expected invalid bounds to fail");
+        };
+        let err = DelaunayTriangulationConstructionError::from(err);
+
+        let DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::RandomPointGeneration { source },
+        ) = err
+        else {
+            panic!("expected coordinate-range builder error to map to random-point generation");
+        };
+        assert_eq!(
+            source,
+            RandomPointGenerationError::InvalidCoordinateRange {
+                source: CoordinateRangeError::NonIncreasing {
+                    ordering: CoordinateRangeOrdering::Decreasing,
+                    min: 1.0,
+                    max: 0.0,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn test_random_triangulation_builder_type_state_selectors_build_typed_storage() {
+        let mut triangulation: DelaunayTriangulation<_, u32, usize, 2> =
+            RandomTriangulationBuilder::try_new(nonzero(12), (-2.0, 2.0))
+                .unwrap()
+                .seed(44)
+                .vertex_data_type::<u32>()
+                .simplex_data_type::<usize>()
+                .build()
+                .unwrap();
+
+        assert!(triangulation.number_of_simplices() > 0);
+        assert!(
+            triangulation
+                .tds()
+                .vertices()
+                .all(|(_, vertex)| vertex.data().is_none())
+        );
+
+        triangulation.fill_simplex_data(|_, simplex| simplex.number_of_vertices());
+
+        for (_, simplex) in triangulation.simplices() {
+            assert_eq!(simplex.data(), Some(&3));
+        }
+        assert!(triangulation.validate().is_ok());
+    }
+
     // =============================================================================
     // RANDOM TRIANGULATION GENERATION TESTS
     // =============================================================================

@@ -647,10 +647,24 @@ rules:
       exclude:
         - "/docs/archive/**"
     patterns:
-      - pattern-inside: |
-          impl<$K, $U, $V, const $D: usize> DelaunayTriangulation<$K, $U, $V, $D> {
-              ...
-          }
+      - pattern-either:
+          - pattern-inside: |
+              impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
+                  ...
+              }
+          - pattern-inside: |
+              impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
+              where
+                  K: Kernel<D, Scalar = f64>,
+                  U: DataType,
+                  V: DataType,
+              {
+                  ...
+              }
+          - pattern-inside: |
+              impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
+                  ...
+              }
       - pattern-either:
           - pattern: pub fn try_new(...) -> $RET { ... }
           - pattern: pub fn try_new_with_construction_statistics(...) -> $RET { ... }

@@ -1782,6 +1782,52 @@ mod tests {
     }
 
     #[test]
+    fn test_try_fill_simplex_data_from_updates_all_live_simplices() {
+        let vertices: Vec<Vertex<(), 2>> = vec![
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([0.25, 0.25]).unwrap(),
+        ];
+        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+            .simplex_data_type::<usize>()
+            .build()
+            .unwrap();
+        assert!(dt.number_of_simplices() > 1);
+        let simplex_identity_before: HashSet<_> = dt
+            .simplices()
+            .map(|(simplex_key, simplex)| (simplex_key, simplex.uuid()))
+            .collect();
+        let vertex_identity_before: HashSet<_> = dt
+            .vertices()
+            .map(|(vertex_key, vertex)| (vertex_key, vertex.uuid()))
+            .collect();
+
+        let mut data = SimplexSecondaryMap::new();
+        for (simplex_key, simplex) in dt.simplices() {
+            data.insert(simplex_key, simplex.number_of_vertices());
+        }
+
+        dt.try_fill_simplex_data_from(&data).unwrap();
+
+        let simplex_identity_after: HashSet<_> = dt
+            .simplices()
+            .map(|(simplex_key, simplex)| (simplex_key, simplex.uuid()))
+            .collect();
+        let vertex_identity_after: HashSet<_> = dt
+            .vertices()
+            .map(|(vertex_key, vertex)| (vertex_key, vertex.uuid()))
+            .collect();
+
+        assert_eq!(simplex_identity_after, simplex_identity_before);
+        assert_eq!(vertex_identity_after, vertex_identity_before);
+        for (_, simplex) in dt.simplices() {
+            assert_eq!(simplex.data(), Some(&3));
+        }
+        assert!(dt.validate().is_ok());
+    }
+
+    #[test]
     fn test_fill_simplex_data_preserves_topology_identity() {
         let vertices: Vec<Vertex<(), 2>> = vec![
             vertex!([0.0, 0.0]).unwrap(),

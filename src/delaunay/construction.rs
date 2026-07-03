@@ -2220,6 +2220,44 @@ pub(crate) const fn default_duplicate_tolerance() -> f64 {
     1e-10_f64
 }
 
+/// Shared numeric parameters derived from a deduplication policy.
+///
+/// Keeping the hash-grid cell size and epsilon tolerance together prevents the
+/// preprocessing path from drifting on the observable zero-epsilon contract:
+/// [`DedupPolicy::Epsilon`] with zero tolerance still uses a positive grid size
+/// internally while comparing vertices with exactly zero epsilon.
+struct DedupGridParameters {
+    /// Positive cell size used to construct the spatial hash grid.
+    grid_cell_size: f64,
+    /// Epsilon passed to the epsilon-deduplication comparison.
+    epsilon: f64,
+}
+
+/// Derives hash-grid sizing and epsilon deduplication tolerance together.
+///
+/// Exact and disabled deduplication do not use epsilon comparison, but they
+/// still receive the default positive tolerance so their hash-grid setup stays
+/// parse-don't-validate-safe.
+fn dedup_grid_parameters(dedup_policy: DedupPolicy, default_tolerance: f64) -> DedupGridParameters {
+    match dedup_policy {
+        DedupPolicy::Epsilon { tolerance } => {
+            let epsilon = tolerance.get();
+            DedupGridParameters {
+                grid_cell_size: if epsilon > 0.0 {
+                    epsilon
+                } else {
+                    default_tolerance
+                },
+                epsilon,
+            }
+        }
+        DedupPolicy::Exact | DedupPolicy::Off => DedupGridParameters {
+            grid_cell_size: default_tolerance,
+            epsilon: default_tolerance,
+        },
+    }
+}
+
 /// Builds a hash-grid index after construction has validated its tolerance.
 ///
 /// This preserves the parse-don't-validate boundary between public
@@ -5069,14 +5107,9 @@ where
         initial_simplex: InitialSimplexStrategy,
     ) -> PreprocessVerticesResult<U, D> {
         let default_tolerance = default_duplicate_tolerance();
-
-        let grid_cell_size_value = match dedup_policy {
-            DedupPolicy::Epsilon { tolerance } if tolerance.get() > 0.0 => tolerance.get(),
-            DedupPolicy::Epsilon { .. } | DedupPolicy::Exact | DedupPolicy::Off => {
-                default_tolerance
-            }
-        };
-        let mut grid = hash_grid_from_validated_cell_size::<D, usize>(grid_cell_size_value)?;
+        let dedup_parameters = dedup_grid_parameters(dedup_policy, default_tolerance);
+        let mut grid =
+            hash_grid_from_validated_cell_size::<D, usize>(dedup_parameters.grid_cell_size)?;
 
         // Deduplicate first to reduce work for ordering strategies.
         let mut owned_vertices: Option<Vec<Vertex<U, D>>> = match dedup_policy {
@@ -5089,8 +5122,8 @@ where
                     Some(dedup_vertices_exact_sorted(vertices))
                 }
             }
-            DedupPolicy::Epsilon { tolerance } => {
-                let epsilon = tolerance.get();
+            DedupPolicy::Epsilon { .. } => {
+                let epsilon = dedup_parameters.epsilon;
                 let vertices = vertices.to_vec();
                 if hash_grid_usable_for_vertices(&grid, &vertices) {
                     Some(dedup_vertices_epsilon_hash_grid(

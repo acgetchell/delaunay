@@ -617,6 +617,9 @@ fn find_roundtrip_k2_facet_3d(dt: &Dt3) -> ExampleResult<Option<FacetHandle>> {
                 continue;
             };
             let facet = FacetHandle::try_new(dt.tds(), simplex_key, facet_idx)?;
+            if dt.propose_pachner(PachnerMove::K2 { facet }).is_err() {
+                continue;
+            }
             let mut trial = dt.clone();
             let Ok(proposal) = trial.propose_pachner(PachnerMove::K2 { facet }) else {
                 continue;

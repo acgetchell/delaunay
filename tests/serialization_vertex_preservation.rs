@@ -56,7 +56,7 @@ fn test_vertex_preservation_with_duplicates_3d() {
     let dt = DelaunayTriangulation::builder(&vertices)
         .topology_guarantee(TopologyGuarantee::PLManifold)
         .build()
-        .expect("Tds construction succeeded");
+        .expect("DelaunayTriangulation::builder(...).build() failed");
     let tds = dt.tds();
 
     let tds_vertex_count = tds.vertices().count();

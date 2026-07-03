@@ -77,8 +77,8 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 ///   Returns `Ok(())` if metrics match within tolerance, `Err(TestCaseError)` otherwise.
 ///
 /// # Returns
-/// * `Ok(())` - At least one simplex was successfully matched and compared
-/// * `Err(TestCaseError)` - A metric comparison failed
+/// * `Ok(())` - Every simplex was successfully matched and compared
+/// * `Err(TestCaseError)` - A simplex match was missing or a metric comparison failed
 ///
 /// # Purpose
 /// This function centralizes the UUID-based simplex matching logic used across multiple
@@ -89,10 +89,9 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 /// 3. Find matching simplex in transformed triangulation
 /// 4. Compare quality metrics between matched simplices
 ///
-/// Degenerate Delaunay inputs can have more than one valid simplex set, so an
-/// independently constructed transformed triangulation may choose a different
-/// valid tessellation. Unmatched simplices are skipped; cases with no comparable
-/// simplices are rejected rather than treated as metric failures.
+/// Degenerate Delaunay inputs can have more than one valid simplex set, but
+/// these invariance properties require a full one-to-one simplex match before
+/// comparing metrics. A missing match is treated as a property failure.
 fn compare_transformed_simplices<const D: usize, F>(
     dt_orig: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
     dt_transformed: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
@@ -106,7 +105,15 @@ where
 {
     let tds_orig = dt_orig.tds();
     let tds_transformed = dt_transformed.tds();
+    let orig_simplex_count = tds_orig.simplex_keys().count();
+    let transformed_simplex_count = tds_transformed.simplex_keys().count();
+    prop_assert_eq!(
+        orig_simplex_count,
+        transformed_simplex_count,
+        "transformed triangulation must have the same simplex count for a one-to-one match"
+    );
     let mut matched_simplices = 0usize;
+    let mut matched_transformed = Vec::with_capacity(transformed_simplex_count);
 
     // Iterate through all simplices in original triangulation
     for orig_key in tds_orig.simplex_keys() {
@@ -127,6 +134,7 @@ where
             "all original simplex UUIDs should map to transformed UUIDs"
         );
 
+        let mut matched_key = None;
         for trans_key in tds_transformed.simplex_keys() {
             prop_assert!(
                 tds_transformed.simplex(trans_key).is_some(),
@@ -140,16 +148,36 @@ where
                         .iter()
                         .all(|u| trans_simplex_uuids.contains(u))
                 {
-                    // Found matching simplex - compare quality metrics
-                    compare_fn(orig_key, trans_key)?;
-                    matched_simplices += 1;
-                    break; // Found the match, no need to check other simplices
+                    matched_key = Some(trans_key);
+                    break;
                 }
             }
         }
+
+        prop_assert!(
+            matched_key.is_some(),
+            "missing transformed simplex matching original simplex {orig_key:?}"
+        );
+        let trans_key = matched_key.expect("matched key was checked above");
+        prop_assert!(
+            !matched_transformed.contains(&trans_key),
+            "transformed simplex {trans_key:?} matched more than one original simplex"
+        );
+        matched_transformed.push(trans_key);
+        compare_fn(orig_key, trans_key)?;
+        matched_simplices += 1;
     }
 
-    prop_assume!(matched_simplices >= 1);
+    prop_assert_eq!(
+        matched_simplices,
+        orig_simplex_count,
+        "every original simplex should have a transformed counterpart"
+    );
+    prop_assert_eq!(
+        matched_simplices,
+        transformed_simplex_count,
+        "every transformed simplex should be matched exactly once"
+    );
 
     Ok(())
 }

@@ -633,10 +633,55 @@ pub struct DelaunayTriangulationBuilder<'v, U, const D: usize, V = ()> {
     _simplex_data: PhantomData<V>,
 }
 
+/// Topology mode requested by the public builder chain.
+///
+/// This stores only proof-carrying topology values, so fallible parsing stays at
+/// raw-input setters and the build terminals never need to revalidate periods.
+#[derive(Clone, Copy)]
 enum BuilderTopology<const D: usize> {
+    /// Ordinary Euclidean batch construction.
     Euclidean,
+    /// Canonicalize input coordinates into a toroidal fundamental domain, then
+    /// use Euclidean batch construction.
     Canonicalized(ToroidalDomain<D>),
+    /// Construct a toroidal quotient through periodic image points.
     PeriodicImagePoint(ToroidalDomain<D>),
+}
+
+/// Non-periodic topology mode accepted by batch-construction backends.
+///
+/// The public statistics and non-statistics builder terminals share this type so
+/// both paths apply the same topology rejection and canonicalization preamble
+/// before choosing the terminal-specific construction backend.
+#[derive(Clone, Copy)]
+enum BatchBuilderTopology<const D: usize> {
+    /// Use the original vertex slice as-is.
+    Euclidean,
+    /// Canonicalize vertices before Euclidean batch construction.
+    Canonicalized(ToroidalDomain<D>),
+}
+
+/// Prepared vertex storage for non-periodic batch construction paths.
+///
+/// Euclidean construction borrows the caller's slice, while canonicalized
+/// toroidal construction owns a transformed vertex buffer. This lets public
+/// builder terminals pass one stable slice shape to their backend without
+/// duplicating canonicalization behavior.
+enum PreparedBatchVertices<'a, U, const D: usize> {
+    /// Original caller-provided vertices.
+    Borrowed(&'a [Vertex<U, D>]),
+    /// Canonicalized vertices with UUIDs and payloads preserved.
+    Owned(Vec<Vertex<U, D>>),
+}
+
+impl<U, const D: usize> PreparedBatchVertices<'_, U, D> {
+    /// Returns the vertices to pass to a batch-construction backend.
+    fn as_slice(&self) -> &[Vertex<U, D>] {
+        match self {
+            Self::Borrowed(vertices) => vertices,
+            Self::Owned(vertices) => vertices,
+        }
+    }
 }
 
 // =============================================================================
@@ -1333,6 +1378,35 @@ where
         Ok(out)
     }
 
+    /// Prepares Euclidean and canonicalized-toroidal vertices for batch construction.
+    ///
+    /// This centralizes topology metadata rejection, topology-model validation,
+    /// and canonicalization so the statistics and non-statistics build terminals
+    /// cannot drift apart.
+    fn prepare_batch_vertices(
+        topology: BatchBuilderTopology<D>,
+        global_topology: GlobalTopology<D>,
+        vertices: &[Vertex<U, D>],
+    ) -> Result<PreparedBatchVertices<'_, U, D>, DelaunayTriangulationConstructionError> {
+        match topology {
+            BatchBuilderTopology::Euclidean => {
+                Self::reject_euclidean_non_euclidean_topology(global_topology)?;
+                Ok(PreparedBatchVertices::Borrowed(vertices))
+            }
+            BatchBuilderTopology::Canonicalized(domain) => {
+                Self::reject_canonicalized_non_euclidean_topology(global_topology)?;
+                let topology = GlobalTopology::Toroidal {
+                    domain,
+                    mode: ToroidalConstructionMode::Canonicalized,
+                };
+                let topology_model = topology.model();
+                Self::validate_topology_model(&topology_model)?;
+                let canonical = Self::canonicalize_vertices(vertices, &topology_model)?;
+                Ok(PreparedBatchVertices::Owned(canonical))
+            }
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Build methods
     // -------------------------------------------------------------------------
@@ -1522,38 +1596,9 @@ where
             );
         }
 
-        match self.topology {
-            BuilderTopology::Euclidean => {
-                Self::reject_euclidean_non_euclidean_topology(self.global_topology_or_default())?;
-                // Euclidean path: delegate directly.
-                let dt = DelaunayTriangulation::build_with_kernel_options(
-                    kernel,
-                    self.vertices,
-                    self.topology_guarantee,
-                    self.construction_options,
-                )?;
-                Ok(dt)
-            }
-            BuilderTopology::Canonicalized(domain) => {
-                Self::reject_canonicalized_non_euclidean_topology(
-                    self.global_topology_or_default(),
-                )?;
-                let topology = GlobalTopology::Toroidal {
-                    domain,
-                    mode: ToroidalConstructionMode::Canonicalized,
-                };
-                let topology_model = topology.model();
-                Self::validate_topology_model(&topology_model)?;
-                // Canonicalized toroidal construction: canonicalize then delegate.
-                let canonical = Self::canonicalize_vertices(self.vertices, &topology_model)?;
-                let dt = DelaunayTriangulation::build_with_kernel_options(
-                    kernel,
-                    &canonical,
-                    self.topology_guarantee,
-                    self.construction_options,
-                )?;
-                Ok(dt)
-            }
+        let batch_topology = match self.topology {
+            BuilderTopology::Euclidean => BatchBuilderTopology::Euclidean,
+            BuilderTopology::Canonicalized(domain) => BatchBuilderTopology::Canonicalized(domain),
             BuilderTopology::PeriodicImagePoint(domain) => {
                 let topology = Self::periodic_image_global_topology(domain);
                 Self::reject_periodic_conflicting_global_topology(
@@ -1605,9 +1650,22 @@ where
                         source: e,
                     }
                 })?;
-                Ok(dt)
+                return Ok(dt);
             }
-        }
+        };
+
+        let prepared = Self::prepare_batch_vertices(
+            batch_topology,
+            self.global_topology_or_default(),
+            self.vertices,
+        )?;
+        let dt = DelaunayTriangulation::build_with_kernel_options(
+            kernel,
+            prepared.as_slice(),
+            self.topology_guarantee,
+            self.construction_options,
+        )?;
+        Ok(dt)
     }
 
     /// Builds the triangulation with a caller-supplied kernel and returns statistics.
@@ -1687,41 +1745,31 @@ where
             let vertices = self.vertices;
             let topology_guarantee = self.topology_guarantee;
             let construction_options = self.construction_options;
+            let batch_topology = match self.topology {
+                BuilderTopology::Euclidean => BatchBuilderTopology::Euclidean,
+                BuilderTopology::Canonicalized(domain) => {
+                    BatchBuilderTopology::Canonicalized(domain)
+                }
+                BuilderTopology::PeriodicImagePoint(_) => {
+                    return Self::record_construction_total_timing(
+                        self.build_with_kernel(kernel)
+                            .map(Self::with_minimal_success_statistics)
+                            .map_err(Self::with_default_error_statistics),
+                        construction_started,
+                    );
+                }
+            };
 
-            if let BuilderTopology::Canonicalized(domain) = self.topology {
-                let topology_result = || {
-                    Self::reject_canonicalized_non_euclidean_topology(global_topology)
-                        .map_err(Self::with_default_error_statistics)?;
-                    let topology = GlobalTopology::Toroidal {
-                        domain,
-                        mode: ToroidalConstructionMode::Canonicalized,
-                    };
-                    let topology_model = topology.model();
-                    Self::validate_topology_model(&topology_model)
-                        .map_err(Self::with_default_error_statistics)?;
-                    let canonical = Self::canonicalize_vertices(vertices, &topology_model)
-                        .map_err(Self::with_default_error_statistics)?;
+            Self::prepare_batch_vertices(batch_topology, global_topology, vertices)
+                .map_err(Self::with_default_error_statistics)
+                .and_then(|prepared| {
                     DelaunayTriangulation::build_with_kernel_options_and_statistics(
                         kernel,
-                        &canonical,
+                        prepared.as_slice(),
                         topology_guarantee,
                         construction_options,
                     )
-                };
-                topology_result()
-            } else {
-                let euclidean_result = || {
-                    Self::reject_euclidean_non_euclidean_topology(global_topology)
-                        .map_err(Self::with_default_error_statistics)?;
-                    DelaunayTriangulation::build_with_kernel_options_and_statistics(
-                        kernel,
-                        vertices,
-                        topology_guarantee,
-                        construction_options,
-                    )
-                };
-                euclidean_result()
-            }
+                })
         };
 
         Self::record_construction_total_timing(result, construction_started)
@@ -3334,6 +3382,39 @@ mod tests {
                 }
             ))
         );
+    }
+
+    #[test]
+    fn test_builder_statistics_rejects_non_euclidean_global_topology_with_default_stats() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+        ];
+        let err = DelaunayTriangulationBuilder::new(&vertices)
+            .global_topology(GlobalTopology::Spherical)
+            .build_with_statistics()
+            .unwrap_err();
+
+        assert_matches!(
+            err.error,
+            DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::EuclideanUnsupportedGlobalTopology {
+                    topology: TopologyKind::Spherical,
+                }
+            )
+        );
+        assert_eq!(err.statistics.inserted, 0);
+        assert_eq!(err.statistics.skipped_duplicate, 0);
+        assert_eq!(err.statistics.skipped_degeneracy, 0);
+        assert_eq!(err.statistics.total_attempts, 0);
+        assert!(err.statistics.attempts_histogram.is_empty());
+        assert!(err.statistics.slow_insertions.is_empty());
+        assert!(err.statistics.skip_samples.is_empty());
+        assert_eq!(err.statistics.telemetry.insertion_wall_time_calls, 0);
+        assert_eq!(err.statistics.telemetry.construction_preprocessing_nanos, 0);
+        assert_eq!(err.statistics.telemetry.construction_insert_loop_nanos, 0);
+        assert_eq!(err.statistics.telemetry.construction_finalize_nanos, 0);
     }
 
     #[test]
