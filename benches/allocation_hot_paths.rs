@@ -19,6 +19,7 @@ mod bench_utils;
 #[cfg(feature = "count-allocations")]
 mod allocation_contracts {
     use allocation_counter::AllocationInfo;
+    use approx::assert_relative_eq;
     use criterion::{BatchSize, BenchmarkGroup, BenchmarkId, Criterion, measurement::WallTime};
     use delaunay::prelude::algorithms::{LocateResult, locate_with_stats};
     use delaunay::prelude::construction::{
@@ -354,7 +355,11 @@ mod allocation_contracts {
                         black_box(fixture.dt.simplex_barycenter(simplex_key))
                     });
                     let barycenter = barycenter.or_abort();
-                    assert_eq!(barycenter.coords(), fixture.query.coords());
+                    assert_relative_eq!(
+                        barycenter.coords().as_slice(),
+                        fixture.query.coords().as_slice(),
+                        epsilon = f64::EPSILON
+                    );
                     assert_zero_allocations(&info, "DelaunayTriangulation::simplex_barycenter");
                     black_box(barycenter);
                 });

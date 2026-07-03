@@ -59,42 +59,16 @@ jobs:
       - name: Verify cargo-nextest
         run: cargo nextest --version
 
-      - name: Run tests with nextest (for JUnit XML)
-        run: |
-          # Note: We run tests twice in this workflow (nextest + cargo-llvm-cov).
-          # This is intentional and necessary because:
-          # 1. nextest: Fast parallel execution → high-quality JUnit XML for test analytics
-          # 2. cargo-llvm-cov: LLVM-instrumented execution → accurate code coverage metrics
-          # Trade-off: ~1-2 extra minutes of CI time for significantly better data quality.
-
-          echo "::group::Running tests with nextest"
-          # Generate JUnit XML for Codecov Test Analytics
-          # JUnit path is configured in .config/nextest.toml [profile.ci.junit]
-          # Avoid --all-features: it enables slow-tests and count-allocations which
-          # are special-purpose features not suitable for general test runs.
-          cargo nextest run --release --profile ci
-          echo "::endgroup::"
-
-          # Verify JUnit XML was generated at the expected location
-          # Nextest outputs to target/nextest/<profile>/<path-from-config>
-          if [ ! -f target/nextest/ci/test-results/junit.xml ]; then
-            echo "::error::target/nextest/ci/test-results/junit.xml not found"
-            exit 2
-          else
-            echo "::notice::Test results generated: $(wc -l < target/nextest/ci/test-results/junit.xml) lines"
-          fi
-        env:
-          RUST_BACKTRACE: 1
-
-      - name: Run coverage
+      - name: Run coverage and test results
         run: |
           # Create coverage directory with proper permissions
           mkdir -p coverage
           chmod 755 coverage
 
           echo "::group::Running coverage"
-          # Use just coverage-ci for single source of truth
-          # Configuration is maintained in justfile to avoid duplication
+          # Use just coverage-ci for single source of truth. The recipe runs
+          # cargo-llvm-cov through nextest so one instrumented test pass
+          # produces both Cobertura coverage and nextest JUnit XML.
           just coverage-ci
           echo "::endgroup::"
 
@@ -155,6 +129,16 @@ jobs:
             fi
           fi
           echo "::endgroup::"
+
+          echo "::group::Test result verification"
+          # Nextest outputs to target/nextest/<profile>/<path-from-config>.
+          if [ ! -f target/nextest/coverage/test-results/junit.xml ]; then
+            echo "::error::target/nextest/coverage/test-results/junit.xml not found"
+            exit 2
+          else
+            echo "::notice::Test results generated: $(wc -l < target/nextest/coverage/test-results/junit.xml) lines"
+          fi
+          echo "::endgroup::"
         env:
           RUST_BACKTRACE: 1
           DELAUNAY_PROPTEST_COVERAGE_LOGS: 1
@@ -171,10 +155,10 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Upload test results to Codecov
-        if: ${{ success() && hashFiles('target/nextest/ci/test-results/junit.xml') != '' }}
+        if: ${{ success() && hashFiles('target/nextest/coverage/test-results/junit.xml') != '' }}
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
-          files: target/nextest/ci/test-results/junit.xml
+          files: target/nextest/coverage/test-results/junit.xml
           flags: unittests
           name: test-results
           report_type: test_results
@@ -203,4 +187,4 @@ jobs:
         if: always()
         with:
           name: test-results
-          path: target/nextest/ci/test-results/
+          path: target/nextest/coverage/test-results/

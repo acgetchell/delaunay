@@ -50,9 +50,12 @@ reports. Integration tests still run and exercise library code, but coverage
 metrics focus on the library implementation rather than benchmark, example, or
 test harness source.
 
-`just coverage-ci` passes `-- --skip prop_` to keep CI behavior aligned with the
-previous coverage path: property tests are skipped for coverage uploads, while
-regular library and integration tests still contribute coverage.
+`just coverage-ci` runs through `cargo llvm-cov nextest` with the nextest
+`coverage` profile. That single instrumented pass produces both
+`coverage/cobertura.xml` and Codecov test-analytics JUnit XML. Property tests
+remain part of the CI coverage run; their case budget is controlled by
+`proptest.toml`, and longer deterministic coverage belongs behind the
+`slow-tests` feature rather than being hidden from coverage.
 
 Doc-test coverage remains intentionally disabled because `cargo-llvm-cov` marks
 that path as unstable.

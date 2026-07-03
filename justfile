@@ -297,7 +297,7 @@ coverage: _ensure-cargo-llvm-cov
 # Coverage analysis for CI (XML output for codecov/codacy)
 coverage-ci: _ensure-cargo-llvm-cov
     mkdir -p coverage
-    cargo llvm-cov {{ _coverage_base_args }} --cobertura --output-path coverage/cobertura.xml -- --skip prop_
+    cargo llvm-cov nextest {{ _coverage_base_args }} --cobertura --output-path coverage/cobertura.xml -P coverage
 
 debug-large-scale-2d n="36000" repair_every="1": _ensure-nextest
     DELAUNAY_BULK_PROGRESS_EVERY=2000 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_2D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug debug_large_scale_2d -- --exact --nocapture

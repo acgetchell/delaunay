@@ -408,10 +408,6 @@
 //! - **Explicit verification**: Use `dt.validate()` for cumulative verification (Levels 1–5), or
 //!   `dt.is_valid_delaunay()` for Level 5 only.
 
-#![expect(
-    clippy::multiple_crate_versions,
-    reason = "transitive dependency versions are controlled by upstream crates"
-)]
 // Forbid unsafe code throughout the entire crate
 #![forbid(unsafe_code)]
 
