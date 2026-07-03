@@ -47,7 +47,7 @@ fn main() -> Result<(), ExampleError> {
         vertex![1.0, 0.0]?,
         vertex![0.0, 1.0]?,
     ];
-    let triangulation = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
     let export = triangulation.to_mesh_export()?;
     let json = serde_json::to_string_pretty(&export)?;
     let decoded: MeshExport<2> = serde_json::from_str(&json)?;

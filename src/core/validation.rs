@@ -182,7 +182,7 @@ pub(crate) fn insertion_error_to_invariant_error(
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
 /// let dt: DelaunayTriangulation<_, (), (), 3> =
-///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+///     DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// let result: Result<(), InvariantError> = dt.as_triangulation().validate();
 /// assert!(result.is_ok());
@@ -570,7 +570,7 @@ impl Default for ValidationPolicy {
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
 /// let mut dt: DelaunayTriangulation<_, (), (), 3> =
-///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+///     DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
 ///
 /// // Optional: relax topology checks for speed (weaker guarantees).
@@ -1210,7 +1210,7 @@ where
     ///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 4> =
-    ///     DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices_4d).build()?;
     ///
     /// // Level 3: topology validation (manifold-with-boundary + Euler characteristic)
     /// assert!(dt.as_triangulation().is_valid_topology().is_ok());
@@ -1245,7 +1245,7 @@ where
     ///     vertex![1.0, 0.0]?,
     ///     vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// assert!(dt.as_triangulation().topology_diagnostic().is_none());
     /// # Ok(())
@@ -1284,7 +1284,7 @@ where
     ///     vertex![1.0, 0.0]?,
     ///     vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// assert!(dt.as_triangulation().topology_report().is_ok());
     /// # Ok(())
@@ -1384,7 +1384,7 @@ where
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// assert!(dt.as_triangulation().validate_at_completion().is_ok());
     /// # Ok(())
     /// # }
@@ -1465,7 +1465,7 @@ where
     ///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 4> =
-    ///     DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices_4d).build()?;
     ///
     /// // Levels 1–3: elements + TDS structure + topology
     /// assert!(dt.as_triangulation().validate().is_ok());
@@ -1515,7 +1515,7 @@ where
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// assert!(dt.as_triangulation().validation_report().is_ok());
     /// # Ok(())
@@ -2975,7 +2975,7 @@ mod tests {
             test_vertex([0.5, 0.5, 0.5]),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         assert!(dt.as_triangulation().validation_report().is_ok());
     }
 
@@ -3023,7 +3023,7 @@ mod tests {
                     let expected_vertices = vertices.len();
                     assert_eq!(expected_vertices, $dim + 1);
 
-                    let dt = DelaunayTriangulation::try_new(&vertices)
+                    let dt = DelaunayTriangulation::builder(&vertices).build()
                         .expect("simplex construction should succeed");
                     let tri = dt.as_triangulation();
 
@@ -3308,7 +3308,7 @@ mod tests {
             test_vertex([0.0, 1.0, 0.0]),
             test_vertex([0.0, 0.0, 1.0]),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let tri = dt.as_triangulation();
 
         assert!(tri.tds.validate().is_ok());
@@ -3804,7 +3804,7 @@ mod tests {
             test_vertex([0.0, 0.0, 1.0]),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let tri = dt.as_triangulation();
         let suspicion = SuspicionFlags {
             repair_loop_entered: true,

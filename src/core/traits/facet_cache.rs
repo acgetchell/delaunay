@@ -315,7 +315,9 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        DelaunayTriangulation::try_new(&vertices).expect("Failed to create test triangulation")
+        DelaunayTriangulation::builder(&vertices)
+            .build()
+            .expect("Failed to create test triangulation")
     }
 
     #[test]

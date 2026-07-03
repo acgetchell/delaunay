@@ -119,7 +119,7 @@ pub enum DelaunayValidationError {
 ///     delaunay::vertex![1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// let report = delaunay_violation_report(dt.tds(), None)?;
 /// assert!(report.is_valid());
@@ -448,7 +448,7 @@ pub fn is_delaunay_property_only<U, V, const D: usize>(
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
 ///
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// let tds = dt.tds();
 ///
 /// // Find all violating simplices (should be empty for valid Delaunay triangulation)
@@ -559,7 +559,7 @@ pub fn find_delaunay_violations<U, V, const D: usize>(
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// let report = delaunay_violation_report(dt.tds(), None)?;
 /// assert!(report.violating_simplices.is_empty());
@@ -830,7 +830,7 @@ mod tests {
             test_vertex([0.0, 0.0, 1.0]),
         ];
 
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let tds = &dt.as_triangulation().tds;
 
         // Basic Delaunay helpers should report no violations.
@@ -1055,7 +1055,7 @@ mod tests {
             test_vertex([0.0, 1.0, 0.0]),
             test_vertex([0.0, 0.0, 1.0]),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         let report = delaunay_violation_report(dt.tds(), None).unwrap();
 

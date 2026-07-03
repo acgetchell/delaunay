@@ -118,7 +118,7 @@ fn main() -> DelaunayResult<()> {
         vertex![0.0, 0.0, 1.0]?,
     ];
 
-    let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     assert_eq!(dt.dim(), 3);
     assert_eq!(dt.number_of_vertices(), 4);

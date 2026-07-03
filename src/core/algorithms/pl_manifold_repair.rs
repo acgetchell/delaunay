@@ -1192,7 +1192,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let mut tds = dt.tds().clone();
 
         let config = PlManifoldRepairConfig::default();
@@ -1217,7 +1217,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let mut tds = dt.tds().clone();
 
         // Zero iterations — should succeed because already PL-manifold.
@@ -1243,7 +1243,7 @@ mod tests {
             vertex!([1.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let mut tds = dt.tds().clone();
 
         let config = PlManifoldRepairConfig::default();
@@ -1266,7 +1266,7 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let mut tds = dt.tds().clone();
 
         let stats = repair_facet_oversharing(&mut tds, &PlManifoldRepairConfig::default()).unwrap();
@@ -1297,7 +1297,7 @@ mod tests {
             vertex!([0.5, 0.5, 0.5]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let mut tds = dt.tds().clone();
         assert!(
             tds.number_of_simplices() > 1,
@@ -1903,7 +1903,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let tds = dt.tds();
         let simplex_key = tds.simplex_keys().next().unwrap();
 
@@ -1969,7 +1969,7 @@ mod tests {
             vertex!([0.5, 0.5, 0.5]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         let config = PlManifoldRepairConfig::default();
 

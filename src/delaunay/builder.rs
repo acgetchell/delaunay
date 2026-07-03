@@ -1,4 +1,5 @@
-//! Fluent builder for [`DelaunayTriangulation`] with optional toroidal topology.
+//! Fluent builder for [`DelaunayTriangulation`] with optional toroidal topology
+//! and typed simplex storage.
 //!
 //! [`DelaunayTriangulationBuilder`] unifies the existing family of `DelaunayTriangulation`
 //! constructors under a single, composable API and adds first-class support for
@@ -12,6 +13,8 @@
 //! | Custom `ConstructionOptions` or `TopologyGuarantee` | [`DelaunayTriangulationBuilder`] |
 //! | Periodic toroidal quotient (χ = 0) | [`DelaunayTriangulationBuilder`] with [`.try_toroidal()`](DelaunayTriangulationBuilder::try_toroidal) |
 //! | Canonicalized toroidal points | [`DelaunayTriangulationBuilder`] with [`.try_canonicalized_toroidal()`](DelaunayTriangulationBuilder::try_canonicalized_toroidal) |
+//! | Euler/topology metadata expectation only | [`DelaunayTriangulationBuilder`] with [`.global_topology(...)`](DelaunayTriangulationBuilder::global_topology) |
+//! | Persisted simplex payloads | [`DelaunayTriangulationBuilder`] with [`.simplex_data_type::<V>()`](DelaunayTriangulationBuilder::simplex_data_type), then [`DelaunayTriangulation::fill_simplex_data`] |
 //! | Custom kernel (`RobustKernel`, etc.) | [`DelaunayTriangulationBuilder::build_with_kernel`] |
 //!
 //! # Canonicalized vs periodic toroidal construction
@@ -47,7 +50,7 @@
 //! ];
 //!
 //! let dt = DelaunayTriangulationBuilder::new(&vertices)
-//!     .build::<()>()?;
+//!     .build()?;
 //!
 //! assert_eq!(dt.number_of_vertices(), 3);
 //! # Ok(())
@@ -71,7 +74,7 @@
 //! let dt = DelaunayTriangulationBuilder::new(&vertices)
 //!     .try_canonicalized_toroidal([1.0, 1.0])
 //!     ?
-//!     .build::<()>()?;
+//!     .build()?;
 //!
 //! assert_eq!(dt.number_of_vertices(), 4);
 //! # Ok(())
@@ -102,7 +105,7 @@
 //! let dt = DelaunayTriangulationBuilder::new(&vertices)
 //!     .try_toroidal([1.0, 1.0])
 //!     ?
-//!     .build_with_kernel::<_, ()>(&kernel)?;
+//!     .build_with_kernel(&kernel)?;
 //!
 //! assert_eq!(dt.number_of_vertices(), 7);
 //! // Every vertex has a valid incident simplex (no boundary).
@@ -114,8 +117,9 @@
 #![forbid(unsafe_code)]
 
 use crate::construction::{
-    ConstructionOptions, DelaunayConstructionFailure, DelaunayTriangulationConstructionError,
-    InitialSimplexStrategy, RetryPolicy,
+    ConstructionOptions, ConstructionStatistics, DelaunayConstructionFailure,
+    DelaunayTriangulationConstructionError, DelaunayTriangulationConstructionErrorWithStatistics,
+    InitialSimplexStrategy, RetryPolicy, duration_nanos_saturating,
 };
 use crate::core::algorithms::incremental_insertion::InsertionError;
 use crate::core::collections::{
@@ -152,7 +156,9 @@ use num_traits::ToPrimitive;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
+use std::marker::PhantomData;
 use std::num::NonZeroUsize;
+use std::time::Instant;
 use thiserror::Error;
 const TWO_POW_52_I64: i64 = 4_503_599_627_370_496; // 2^52
 const TWO_POW_52_F64: f64 = 4_503_599_627_370_496.0; // 2^52
@@ -391,10 +397,12 @@ pub enum ExplicitConstructionError {
         expected: usize,
     },
     /// A simplex contains duplicate vertex indices.
-    #[error("Simplex {simplex_index}: contains duplicate vertex indices")]
+    #[error("Simplex {simplex_index}: contains duplicate vertex index {vertex_index}")]
     DuplicateVertexInSimplex {
         /// The index of the simplex in the input slice.
         simplex_index: usize,
+        /// The duplicated vertex index.
+        vertex_index: usize,
     },
     /// No simplices were provided.
     #[error("No simplices provided for explicit construction")]
@@ -549,6 +557,7 @@ fn validate_explicit_simplex_specs<const D: usize>(
                 if vi == vj {
                     return Err(ExplicitConstructionError::DuplicateVertexInSimplex {
                         simplex_index: simplex_idx,
+                        vertex_index: vi,
                     });
                 }
             }
@@ -569,10 +578,13 @@ fn validate_explicit_simplex_specs<const D: usize>(
 /// - `'v` — Lifetime of the borrowed vertex slice.
 /// - `U` — Vertex data type (inferred from the vertex slice).
 /// - `D` — Spatial dimension (inferred from the vertex slice).
+/// - `V` — Simplex data type selected before construction; defaults to `()`.
 ///
-/// The simplex data type `V` and kernel `K` are deferred to the
-/// [`build`](Self::build) / [`build_with_kernel`](Self::build_with_kernel)
-/// call, keeping the builder type signature concise.
+/// The simplex data type `V` defaults to `()` and can be inferred from the
+/// caller's expected return type. The builder never computes or validates
+/// payload values; attach persisted simplex data afterward with follow-on
+/// methods on [`DelaunayTriangulation`], keeping construction focused on the
+/// Levels 1–5 Delaunay validity boundary.
 ///
 /// # Examples
 ///
@@ -592,13 +604,13 @@ fn validate_explicit_simplex_specs<const D: usize>(
 /// let dt = DelaunayTriangulationBuilder::new(&vertices)
 ///     .topology_guarantee(TopologyGuarantee::Pseudomanifold)
 ///     .construction_options(ConstructionOptions::default())
-///     .build::<()>()?;
+///     .build()?;
 ///
 /// assert_eq!(dt.number_of_vertices(), 4);
 /// # Ok(())
 /// # }
 /// ```
-pub struct DelaunayTriangulationBuilder<'v, U, const D: usize> {
+pub struct DelaunayTriangulationBuilder<'v, U, const D: usize, V = ()> {
     vertices: &'v [Vertex<U, D>],
     /// Topology mode for construction.
     ///
@@ -618,6 +630,7 @@ pub struct DelaunayTriangulationBuilder<'v, U, const D: usize> {
     /// Euclidean paths default to [`GlobalTopology::Euclidean`], while periodic
     /// image-point construction derives closed toroidal metadata from its domain.
     requested_global_topology: Option<GlobalTopology<D>>,
+    _simplex_data: PhantomData<V>,
 }
 
 enum BuilderTopology<const D: usize> {
@@ -629,18 +642,26 @@ enum BuilderTopology<const D: usize> {
 // =============================================================================
 // BUILDER IMPL — f64 coordinate storage, any vertex data U
 //
-// U is inferred from the vertex slice.
+// U is inferred from the vertex slice. V defaults to () and can be inferred
+// from the expected DelaunayTriangulation return type when callers need typed
+// persisted simplex payloads.
 //
 //   let vertices = vec![Vertex::<(), _>::try_new([0.0, 0.0])?, ...];
-//   let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>();
+//   let dt = DelaunayTriangulationBuilder::new(&vertices).build();
 //
 //   let typed: [Vertex<i32, 2>; 3] = [Vertex::<_, _>::try_new_with_data([0.0, 0.0], 1)?, ...];
-//   let dt = DelaunayTriangulationBuilder::new(&typed).build::<()>();
+//   let dt = DelaunayTriangulationBuilder::new(&typed).build();
 //
 // =============================================================================
 
 impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// Creates a builder for `f64` vertices with any user data type `U`.
+    ///
+    /// This is intentionally infallible: it creates an inert construction
+    /// request and does not parse the point set into a triangulation. The
+    /// fallible invariant boundary is [`build`](Self::build) or
+    /// [`build_with_kernel`](Self::build_with_kernel), which validates the
+    /// constructed triangulation before returning it.
     ///
     /// `U` is inferred from the vertex slice — no explicit type annotations needed
     /// for either `U = ()` (the common case) or typed vertex data.
@@ -655,7 +676,7 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// # fn main() -> DelaunayResult<()> {
     /// // No vertex data (U = () inferred)
     /// let vertices = vec![delaunay::vertex![0.0, 0.0]?, delaunay::vertex![1.0, 0.0]?, delaunay::vertex![0.0, 1.0]?];
-    /// let _dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let _dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// // Typed vertex data (U = i32 inferred)
     /// let typed: [Vertex<i32, 2>; 3] = [
@@ -663,7 +684,7 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     ///     delaunay::vertex![1.0, 0.0; data = 2]?,
     ///     delaunay::vertex![0.0, 1.0; data = 3]?,
     /// ];
-    /// let _dt = DelaunayTriangulationBuilder::new(&typed).build::<()>()?;
+    /// let _dt = DelaunayTriangulationBuilder::new(&typed).build()?;
     /// # Ok(())
     /// # }
     /// ```
@@ -676,6 +697,7 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
             construction_options: ConstructionOptions::default(),
             explicit_simplices: None,
             requested_global_topology: None,
+            _simplex_data: PhantomData,
         }
     }
 
@@ -716,7 +738,7 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     ///
     /// let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
     ///     .map_err(DelaunayTriangulationConstructionError::from)?
-    ///     .build::<()>()?;
+    ///     .build()?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 4);
     /// assert_eq!(dt.number_of_simplices(), 2);
@@ -781,7 +803,7 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     ///
     /// let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices_generic(&vertices, &simplices)
     ///     .map_err(DelaunayTriangulationConstructionError::from)?
-    ///     .build::<()>()?;
+    ///     .build()?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 3);
     /// assert_eq!(dt.number_of_simplices(), 1);
@@ -797,6 +819,62 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
         let mut builder = Self::new(vertices);
         builder.explicit_simplices = Some(explicit_simplices);
         Ok(builder)
+    }
+}
+
+impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
+    /// Selects the simplex payload type before topology storage is allocated.
+    ///
+    /// This method does not compute or validate payload values. It only chooses
+    /// the persisted simplex storage type so later calls such as
+    /// [`DelaunayTriangulation::fill_simplex_data`] can assign values without
+    /// rebuilding topology or remapping simplex keys.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayResult, DelaunayTriangulationBuilder,
+    /// };
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = vec![
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    ///
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .simplex_data_type::<usize>()
+    ///     .build()?;
+    /// dt.fill_simplex_data(|_, simplex| simplex.number_of_vertices());
+    ///
+    /// for (_, simplex) in dt.simplices() {
+    ///     assert_eq!(simplex.data(), Some(&3));
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub const fn simplex_data_type<W>(self) -> DelaunayTriangulationBuilder<'v, U, D, W> {
+        let Self {
+            vertices,
+            topology,
+            topology_guarantee,
+            construction_options,
+            explicit_simplices,
+            requested_global_topology,
+            _simplex_data: _,
+        } = self;
+        DelaunayTriangulationBuilder {
+            vertices,
+            topology,
+            topology_guarantee,
+            construction_options,
+            explicit_simplices,
+            requested_global_topology,
+            _simplex_data: PhantomData,
+        }
     }
 
     /// Enables periodic toroidal topology via the image-point method.
@@ -834,7 +912,7 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .try_toroidal([1.0, 1.0])
     ///     ?
-    ///     .build_with_kernel::<_, ()>(&kernel)?;
+    ///     .build_with_kernel(&kernel)?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 7);
     /// assert!(dt.tds().is_valid().is_ok());
@@ -879,7 +957,7 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// let kernel = RobustKernel::new();
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .toroidal(domain)
-    ///     .build_with_kernel::<_, ()>(&kernel)?;
+    ///     .build_with_kernel(&kernel)?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 7);
     /// # Ok(())
@@ -921,7 +999,7 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .try_canonicalized_toroidal([1.0, 1.0])
     ///     ?
-    ///     .build::<()>()?;
+    ///     .build()?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 4);
     /// # Ok(())
@@ -963,7 +1041,7 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// let domain = ToroidalDomain::<2>::unit();
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .canonicalized_toroidal(domain)
-    ///     .build::<()>()?;
+    ///     .build()?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 4);
     /// # Ok(())
@@ -998,7 +1076,7 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::Pseudomanifold)
-    ///     .build::<()>()?;
+    ///     .build()?;
     ///
     /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
     /// # Ok(())
@@ -1057,7 +1135,7 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// let result = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
     ///     .map_err(DelaunayTriangulationConstructionError::from)?
     ///     .global_topology(topology)
-    ///     .build::<()>();
+    ///     .build();
     ///
     /// assert!(result.is_err());
     /// # Ok(())
@@ -1098,7 +1176,7 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .construction_options(opts)
-    ///     .build::<()>()?;
+    ///     .build()?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 3);
     /// # Ok(())
@@ -1111,9 +1189,10 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     }
 }
 
-impl<U, const D: usize> DelaunayTriangulationBuilder<'_, U, D>
+impl<U, V, const D: usize> DelaunayTriangulationBuilder<'_, U, D, V>
 where
     U: DataType,
+    V: DataType,
 {
     // -------------------------------------------------------------------------
     // Internal helpers
@@ -1290,23 +1369,89 @@ where
     /// ];
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
-    ///     .build::<()>()?;
+    ///     .build()?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 4);
     /// assert!(dt.validate().is_ok());
     /// # Ok(())
     /// # }
     /// ```
-    pub fn build<V>(
+    pub fn build(
         self,
     ) -> Result<
         DelaunayTriangulation<AdaptiveKernel<f64>, U, V, D>,
         DelaunayTriangulationConstructionError,
-    >
-    where
-        V: DataType,
-    {
+    > {
         self.build_with_kernel(&AdaptiveKernel::new())
+    }
+
+    /// Builds the triangulation and returns aggregate construction statistics.
+    ///
+    /// This is the fluent builder terminal for callers that want the configured
+    /// workflow and skipped-input observability in one chain. Euclidean and
+    /// canonicalized-toroidal construction return statistics from the same
+    /// batch backend used by [`Self::build_with_kernel`]. Explicit
+    /// connectivity and true periodic quotient construction bypass the batch
+    /// insertion statistics collector; on those successful paths the returned
+    /// statistics record the final vertex count in
+    /// [`ConstructionStatistics::inserted`] and total construction timing in
+    /// [`crate::diagnostics::ConstructionTelemetry::construction_total_nanos`],
+    /// while per-insertion telemetry stays at its default values.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DelaunayTriangulationConstructionErrorWithStatistics`] if
+    /// construction fails. The error carries partial statistics when the selected
+    /// construction path collects them; otherwise it carries default counters
+    /// plus total construction timing when that timing was observed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionErrorWithStatistics,
+    /// };
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] DelaunayTriangulationConstructionErrorWithStatistics),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = vec![
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
+    /// ];
+    ///
+    /// let (dt, stats) = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .build_with_statistics()?;
+    ///
+    /// assert_eq!(dt.number_of_vertices(), stats.inserted);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[expect(
+        clippy::result_large_err,
+        reason = "Public API intentionally returns by-value construction statistics"
+    )]
+    #[expect(
+        clippy::type_complexity,
+        reason = "Public API returns the constructed triangulation together with construction statistics"
+    )]
+    pub fn build_with_statistics(
+        self,
+    ) -> Result<
+        (
+            DelaunayTriangulation<AdaptiveKernel<f64>, U, V, D>,
+            ConstructionStatistics,
+        ),
+        DelaunayTriangulationConstructionErrorWithStatistics,
+    > {
+        self.build_with_kernel_and_statistics(&AdaptiveKernel::new())
     }
 
     /// Builds the triangulation using a caller-supplied kernel.
@@ -1346,19 +1491,18 @@ where
     ///
     /// let kernel = RobustKernel::new();
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
-    ///     .build_with_kernel::<_, ()>(&kernel)?;
+    ///     .build_with_kernel(&kernel)?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 4);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn build_with_kernel<K, V>(
+    pub fn build_with_kernel<K>(
         self,
         kernel: &K,
     ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
         K: Kernel<D, Scalar = f64>,
-        V: DataType,
     {
         // Explicit-simplices path: bypass Delaunay insertion entirely.
         if let Some(simplices) = self.explicit_simplices {
@@ -1382,7 +1526,7 @@ where
             BuilderTopology::Euclidean => {
                 Self::reject_euclidean_non_euclidean_topology(self.global_topology_or_default())?;
                 // Euclidean path: delegate directly.
-                let dt = DelaunayTriangulation::try_with_topology_guarantee_and_options(
+                let dt = DelaunayTriangulation::build_with_kernel_options(
                     kernel,
                     self.vertices,
                     self.topology_guarantee,
@@ -1402,7 +1546,7 @@ where
                 Self::validate_topology_model(&topology_model)?;
                 // Canonicalized toroidal construction: canonicalize then delegate.
                 let canonical = Self::canonicalize_vertices(self.vertices, &topology_model)?;
-                let dt = DelaunayTriangulation::try_with_topology_guarantee_and_options(
+                let dt = DelaunayTriangulation::build_with_kernel_options(
                     kernel,
                     &canonical,
                     self.topology_guarantee,
@@ -1466,6 +1610,174 @@ where
         }
     }
 
+    /// Builds the triangulation with a caller-supplied kernel and returns statistics.
+    ///
+    /// This is the statistics-returning counterpart of
+    /// [`build_with_kernel`](Self::build_with_kernel). Euclidean and
+    /// canonicalized-toroidal construction return batch insertion statistics.
+    /// Explicit connectivity and true periodic quotient construction bypass the
+    /// batch insertion statistics collector; on those successful paths the
+    /// returned statistics record the final vertex count in
+    /// [`ConstructionStatistics::inserted`] and total construction timing in
+    /// [`crate::diagnostics::ConstructionTelemetry::construction_total_nanos`],
+    /// while per-insertion telemetry stays at its default values.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DelaunayTriangulationConstructionErrorWithStatistics`] if
+    /// construction fails. The error carries partial statistics when the selected
+    /// construction path collects them; otherwise it carries default counters
+    /// plus total construction timing when that timing was observed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionErrorWithStatistics,
+    /// };
+    /// use delaunay::prelude::geometry::RobustKernel;
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Source(#[from] DelaunayTriangulationConstructionErrorWithStatistics),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = vec![
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
+    /// ];
+    /// let kernel = RobustKernel::new();
+    ///
+    /// let (dt, stats) = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .build_with_kernel_and_statistics(&kernel)?;
+    ///
+    /// assert_eq!(dt.number_of_vertices(), stats.inserted);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[expect(
+        clippy::result_large_err,
+        reason = "Public API intentionally returns by-value construction statistics"
+    )]
+    pub fn build_with_kernel_and_statistics<K>(
+        self,
+        kernel: &K,
+    ) -> Result<
+        (DelaunayTriangulation<K, U, V, D>, ConstructionStatistics),
+        DelaunayTriangulationConstructionErrorWithStatistics,
+    >
+    where
+        K: Kernel<D, Scalar = f64>,
+    {
+        let construction_started = Instant::now();
+
+        let result = if self.explicit_simplices.is_some()
+            || matches!(&self.topology, BuilderTopology::PeriodicImagePoint(_))
+        {
+            self.build_with_kernel(kernel)
+                .map(Self::with_minimal_success_statistics)
+                .map_err(Self::with_default_error_statistics)
+        } else {
+            let global_topology = self.global_topology_or_default();
+            let vertices = self.vertices;
+            let topology_guarantee = self.topology_guarantee;
+            let construction_options = self.construction_options;
+
+            if let BuilderTopology::Canonicalized(domain) = self.topology {
+                let topology_result = || {
+                    Self::reject_canonicalized_non_euclidean_topology(global_topology)
+                        .map_err(Self::with_default_error_statistics)?;
+                    let topology = GlobalTopology::Toroidal {
+                        domain,
+                        mode: ToroidalConstructionMode::Canonicalized,
+                    };
+                    let topology_model = topology.model();
+                    Self::validate_topology_model(&topology_model)
+                        .map_err(Self::with_default_error_statistics)?;
+                    let canonical = Self::canonicalize_vertices(vertices, &topology_model)
+                        .map_err(Self::with_default_error_statistics)?;
+                    DelaunayTriangulation::build_with_kernel_options_and_statistics(
+                        kernel,
+                        &canonical,
+                        topology_guarantee,
+                        construction_options,
+                    )
+                };
+                topology_result()
+            } else {
+                let euclidean_result = || {
+                    Self::reject_euclidean_non_euclidean_topology(global_topology)
+                        .map_err(Self::with_default_error_statistics)?;
+                    DelaunayTriangulation::build_with_kernel_options_and_statistics(
+                        kernel,
+                        vertices,
+                        topology_guarantee,
+                        construction_options,
+                    )
+                };
+                euclidean_result()
+            }
+        };
+
+        Self::record_construction_total_timing(result, construction_started)
+    }
+
+    #[expect(
+        clippy::result_large_err,
+        reason = "Internal helper preserves the public by-value construction-statistics error"
+    )]
+    fn record_construction_total_timing<K>(
+        result: Result<
+            (DelaunayTriangulation<K, U, V, D>, ConstructionStatistics),
+            DelaunayTriangulationConstructionErrorWithStatistics,
+        >,
+        construction_started: Instant,
+    ) -> Result<
+        (DelaunayTriangulation<K, U, V, D>, ConstructionStatistics),
+        DelaunayTriangulationConstructionErrorWithStatistics,
+    > {
+        let elapsed_nanos = duration_nanos_saturating(construction_started.elapsed());
+        match result {
+            Ok((dt, mut statistics)) => {
+                statistics
+                    .telemetry
+                    .record_construction_total_timing(elapsed_nanos);
+                Ok((dt, statistics))
+            }
+            Err(mut error) => {
+                error
+                    .statistics
+                    .telemetry
+                    .record_construction_total_timing(elapsed_nanos);
+                Err(error)
+            }
+        }
+    }
+
+    fn with_minimal_success_statistics<K>(
+        dt: DelaunayTriangulation<K, U, V, D>,
+    ) -> (DelaunayTriangulation<K, U, V, D>, ConstructionStatistics) {
+        let statistics = ConstructionStatistics {
+            inserted: dt.number_of_vertices(),
+            ..ConstructionStatistics::default()
+        };
+        (dt, statistics)
+    }
+
+    fn with_default_error_statistics(
+        error: DelaunayTriangulationConstructionError,
+    ) -> DelaunayTriangulationConstructionErrorWithStatistics {
+        DelaunayTriangulationConstructionErrorWithStatistics {
+            error,
+            statistics: ConstructionStatistics::default(),
+        }
+    }
+
     /// Checks whether explicit-simplex construction can honor the requested options.
     ///
     /// Explicit connectivity bypasses insertion ordering, deduplication, and
@@ -1508,7 +1820,7 @@ where
     /// 11. Validate geometric nondegeneracy (reject zero-volume simplices).
     /// 12. Validate the Euclidean Level 5 Delaunay property unless final
     ///     enforcement was disabled in [`ConstructionOptions`].
-    fn build_explicit<K, V>(
+    fn build_explicit<K>(
         kernel: &K,
         vertices: &[Vertex<U, D>],
         simplices: ValidatedExplicitSimplices<'_>,
@@ -1518,7 +1830,6 @@ where
     ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
         K: Kernel<D, Scalar = f64>,
-        V: DataType,
     {
         Self::reject_explicit_non_euclidean_topology(global_topology)?;
 
@@ -1667,12 +1978,11 @@ where
     /// this API boundary. Explicit non-Euclidean topology is rejected earlier in
     /// `build_explicit` until quotient embedding validation exists for explicit
     /// connectivity.
-    fn enforce_explicit_delaunay_property<K, V>(
+    fn enforce_explicit_delaunay_property<K>(
         candidate: &DelaunayTriangulationCandidate<K, U, V, D>,
     ) -> Result<DelaunayTriangulationValidationProof, DelaunayTriangulationConstructionError>
     where
         K: Kernel<D, Scalar = f64>,
-        V: DataType,
     {
         candidate.validate_delaunay_property().map_err(|source| {
             ExplicitConstructionError::DelaunayValidation {
@@ -1827,7 +2137,7 @@ where
         clippy::too_many_lines,
         reason = "Image-point periodic DT algorithm is inherently multi-step; splitting would harm readability"
     )]
-    fn build_periodic<K, V, M>(
+    fn build_periodic<K, M>(
         kernel: &K,
         canonical_vertices: &[Vertex<U, D>],
         topology_model: &M,
@@ -1836,7 +2146,6 @@ where
     ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
         K: Kernel<D, Scalar = f64>,
-        V: DataType,
         M: GlobalTopologyModel<D>,
     {
         // Keep `build_periodic` self-protecting even if future call paths bypass outer validation.
@@ -1997,7 +2306,7 @@ where
                 }),
         };
         let full_dt: DelaunayTriangulation<K, U, V, D> =
-            match DelaunayTriangulation::try_with_topology_guarantee_and_options(
+            match DelaunayTriangulation::build_with_kernel_options(
                 kernel,
                 &expanded,
                 TopologyGuarantee::Pseudomanifold,
@@ -2984,7 +3293,7 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build::<()>()
+            .build()
             .unwrap();
         assert_eq!(dt.number_of_vertices(), 3);
         assert_eq!(dt.dim(), 2);
@@ -3000,7 +3309,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build::<()>()
+            .build()
             .unwrap();
         assert_eq!(dt.number_of_vertices(), 4);
         assert!(dt.validate().is_ok());
@@ -3015,7 +3324,7 @@ mod tests {
         ];
         let result = DelaunayTriangulationBuilder::new(&vertices)
             .global_topology(GlobalTopology::Spherical)
-            .build::<()>();
+            .build();
 
         assert_matches!(
             result,
@@ -3036,7 +3345,7 @@ mod tests {
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .topology_guarantee(TopologyGuarantee::Pseudomanifold)
-            .build::<()>()
+            .build()
             .unwrap();
         assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
     }
@@ -3052,7 +3361,7 @@ mod tests {
             ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .construction_options(opts)
-            .build::<()>()
+            .build()
             .unwrap();
         assert_eq!(dt.number_of_vertices(), 3);
     }
@@ -3074,7 +3383,7 @@ mod tests {
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .try_canonicalized_toroidal([1.0, 1.0])
             .unwrap()
-            .build::<()>()
+            .build()
             .unwrap();
 
         // Every vertex coordinate must lie within [0, 1) × [0, 1)
@@ -3097,7 +3406,7 @@ mod tests {
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .try_canonicalized_toroidal([1.0, 1.0])
             .unwrap()
-            .build::<()>()
+            .build()
             .unwrap();
 
         for (_, v) in dt.vertices() {
@@ -3118,7 +3427,7 @@ mod tests {
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .try_canonicalized_toroidal([1.0, 1.0])
             .unwrap()
-            .build::<()>()
+            .build()
             .unwrap();
         assert_eq!(dt.number_of_vertices(), 4);
         assert_eq!(dt.dim(), 2);
@@ -3137,7 +3446,7 @@ mod tests {
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .try_canonicalized_toroidal([1.0, 1.0])
             .unwrap()
-            .build::<()>()
+            .build()
             .unwrap();
         assert_eq!(dt.number_of_vertices(), 4);
         assert_eq!(dt.dim(), 2);
@@ -3160,7 +3469,7 @@ mod tests {
             .try_canonicalized_toroidal([1.0, 1.0])
             .unwrap()
             .global_topology(topology)
-            .build::<()>();
+            .build();
 
         assert_matches!(
             result,
@@ -3217,7 +3526,7 @@ mod tests {
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .try_toroidal([1.0, 1.0])
             .unwrap()
-            .build_with_kernel::<_, ()>(&kernel)
+            .build_with_kernel(&kernel)
             .unwrap();
         assert_eq!(dt.number_of_vertices(), n);
         assert!(dt.tds().is_valid().is_ok());
@@ -3236,7 +3545,7 @@ mod tests {
         let result = DelaunayTriangulationBuilder::new(&vertices)
             .try_toroidal([1.0, 1.0, 1.0, 1.0])
             .unwrap()
-            .build::<()>();
+            .build();
 
         assert_matches!(
             result,
@@ -3257,7 +3566,7 @@ mod tests {
             .global_topology(GlobalTopology::Spherical)
             .try_toroidal([1.0, 1.0])
             .unwrap()
-            .build::<()>();
+            .build();
 
         assert_matches!(
             result,
@@ -3280,7 +3589,7 @@ mod tests {
             .try_toroidal([1.0, 1.0])
             .unwrap()
             .global_topology(GlobalTopology::Euclidean)
-            .build::<()>();
+            .build();
 
         assert_matches!(
             result,
@@ -3306,7 +3615,7 @@ mod tests {
             .try_toroidal([1.0, 1.0])
             .unwrap()
             .global_topology(requested_topology)
-            .build::<()>();
+            .build();
 
         assert_matches!(
             result,
@@ -3333,7 +3642,7 @@ mod tests {
             .try_toroidal([1.0, 1.0])
             .unwrap()
             .global_topology(requested_topology)
-            .build::<()>();
+            .build();
 
         assert_matches!(
             result,
@@ -3360,7 +3669,7 @@ mod tests {
             .try_toroidal([1.0, 1.0])
             .unwrap()
             .global_topology(topology)
-            .build::<()>()
+            .build()
             .unwrap();
 
         assert_eq!(dt.global_topology(), topology);
@@ -3375,12 +3684,12 @@ mod tests {
             vertex!([0.4, 0.9]).unwrap(),
         ];
         let dt_euclidean = DelaunayTriangulationBuilder::new(&vertices)
-            .build::<()>()
+            .build()
             .unwrap();
         let dt_toroidal = DelaunayTriangulationBuilder::new(&vertices)
             .try_canonicalized_toroidal([1.0, 1.0])
             .unwrap()
-            .build::<()>()
+            .build()
             .unwrap();
         assert_eq!(
             dt_euclidean.number_of_vertices(),
@@ -3408,7 +3717,7 @@ mod tests {
         let dt = DelaunayTriangulationBuilder::new(&vertices)
             .try_canonicalized_toroidal([1.0, 1.0])
             .unwrap()
-            .build::<()>()
+            .build()
             .unwrap();
 
         assert_eq!(dt.number_of_vertices(), 3);
@@ -3436,7 +3745,7 @@ mod tests {
         ];
         let kernel = RobustKernel::<f64>::new();
         let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build_with_kernel::<_, ()>(&kernel)
+            .build_with_kernel(&kernel)
             .unwrap();
         assert_eq!(dt.number_of_vertices(), 4);
         assert!(dt.validate().is_ok());
@@ -3638,7 +3947,7 @@ mod tests {
             vertex!([0.7_f64, 0.9_f64]).unwrap(),
             vertex!([0.5_f64, 0.4_f64]).unwrap(),
         ];
-        let result = DelaunayTriangulationBuilder::<(), 2>::build_periodic::<_, (), _>(
+        let result = DelaunayTriangulationBuilder::<(), 2>::build_periodic::<_, _>(
             &kernel,
             &canonical_vertices,
             &MissingPeriodicDomainModel,

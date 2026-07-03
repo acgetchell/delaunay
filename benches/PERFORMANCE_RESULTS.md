@@ -57,7 +57,7 @@ boundary traversal, and explicit bistellar flip roundtrips.
 
 #### Construction
 
-Public API: `DelaunayTriangulation::try_new_with_options`
+Public API: `DelaunayTriangulation::builder(...).construction_options(...).build()`
 
 | Benchmark ID | Dimension | Input | Variant | Mean | 95% CI |
 |--------------|-----------|-------|---------|------|--------|

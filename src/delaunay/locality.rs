@@ -188,7 +188,7 @@ mod tests {
             vertex!([0.5, 0.5]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let all_simplices: Vec<SimplexKey> =
             dt.simplices().map(|(simplex_key, _)| simplex_key).collect();
         assert!(
@@ -243,7 +243,7 @@ mod tests {
             vertex!([0.5, 0.5]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let all_simplices: Vec<SimplexKey> =
             dt.simplices().map(|(simplex_key, _)| simplex_key).collect();
         assert!(
@@ -282,7 +282,7 @@ mod tests {
             vertex!([0.5, 0.5]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let all_simplices: Vec<SimplexKey> =
             dt.simplices().map(|(simplex_key, _)| simplex_key).collect();
         assert!(

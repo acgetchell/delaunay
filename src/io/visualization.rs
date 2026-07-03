@@ -236,7 +236,7 @@ impl<'de> Deserialize<'de> for VisualizationTopologyGuarantee {
 ///     vertex![1.0, 0.0]?,
 ///     vertex![0.0, 1.0]?,
 /// ];
-/// let triangulation = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// let export = triangulation.to_visualization_data()?;
 /// let json = serde_json::to_string(&export)?;
@@ -321,7 +321,7 @@ impl<const D: usize, VertexAttributes, SimplexAttributes, AdjacencyAttributes, G
     ///     vertex![1.0, 0.0]?,
     ///     vertex![0.0, 1.0]?,
     /// ];
-    /// let triangulation = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let export = triangulation.to_mesh_export()?;
     ///
     /// export.validate()?;
@@ -928,7 +928,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     vertex![0.0, 1.0, 0.0]?,
     ///     vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let triangulation = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// let export = triangulation.to_visualization_data()?;
     ///
@@ -1032,7 +1032,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     vertex![0.0, 1.0, 0.0]?,
     ///     vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let triangulation = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// let export = triangulation.to_mesh_export()?;
     ///

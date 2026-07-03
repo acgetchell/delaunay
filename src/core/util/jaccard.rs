@@ -218,7 +218,7 @@ where
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// let tds = dt.tds();
 ///
 /// let coord_set = extract_vertex_coordinate_set(tds);
@@ -284,7 +284,7 @@ const fn canonical_edge(u: u128, v: u128) -> (u128, u128) {
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// let tds = dt.tds();
 ///
 /// let edge_set = extract_edge_set(tds)?;
@@ -367,7 +367,7 @@ where
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// let tds = dt.tds();
 ///
 /// let facet_set = extract_facet_identifier_set(tds)?;
@@ -447,7 +447,7 @@ where
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
 /// let dt: DelaunayTriangulation<_, (), (), 3> =
-///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+///     DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())?;
 ///
 /// let facet_set = extract_hull_facet_set(&hull, dt.as_triangulation())?;
@@ -710,7 +710,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let tds = &dt.as_triangulation().tds;
 
         // Sub-test: Vertex coordinate extraction
@@ -738,7 +738,7 @@ mod tests {
         assert_eq!(facet_set.len(), 4, "Tetrahedron should have 4 facets");
 
         // Sub-test: Hull facet extraction
-        let dt_hull = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt_hull = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let tri = dt_hull.as_triangulation();
         let hull = ConvexHull::try_from_triangulation(tri).unwrap();
         let hull_facet_set = extract_hull_facet_set(&hull, tri).unwrap();
@@ -753,7 +753,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let mut dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         let simplex_key = dt.as_triangulation().tds.simplex_keys().next().unwrap();
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
@@ -778,7 +778,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let mut dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         let simplex_key = dt.as_triangulation().tds.simplex_keys().next().unwrap();
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
@@ -817,7 +817,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let tri = dt.as_triangulation();
         let hull = ConvexHull::try_from_triangulation(tri).unwrap();
 

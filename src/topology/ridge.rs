@@ -97,7 +97,7 @@ pub enum RidgeCandidateError {
 ///     delaunay::vertex![1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// // In 2D, a ridge is a vertex because it has arity D - 1.
 /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.tds().vertex_keys().take(1))?;
@@ -150,7 +150,7 @@ impl<const D: usize> RidgeCandidate<D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// let ridge = RidgeCandidate::<3>::try_from_vertices(dt.tds().vertex_keys().take(2))?;
     /// assert_eq!(ridge.as_slice().len(), 2);
@@ -212,7 +212,7 @@ impl<const D: usize> RidgeCandidate<D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// let ridge = RidgeCandidate::<3>::try_from_vertices(dt.tds().vertex_keys().take(2))?;
     /// assert_eq!(ridge.as_slice().len(), 2);
@@ -250,7 +250,7 @@ impl<const D: usize> RidgeCandidate<D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// let ridge = RidgeCandidate::<3>::try_from_vertices(dt.tds().vertex_keys().take(2))?;
     /// assert_eq!(ridge.iter().count(), ridge.as_slice().len());
@@ -295,7 +295,7 @@ impl<const D: usize> RidgeCandidate<D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.tds().vertex_keys().take(1))?;
     /// let query = ridge.query(dt.tds())?;
@@ -346,7 +346,7 @@ impl<const D: usize> RidgeCandidate<D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.tds().vertex_keys().take(1))?;
     /// let view = ridge.view(dt.tds())?;
@@ -413,7 +413,7 @@ impl<'tds, U, V, const D: usize> RidgeQuery<'tds, U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.tds().vertex_keys().take(1))?;
     /// let query = RidgeQuery::try_new(dt.tds(), ridge)?;
@@ -506,7 +506,7 @@ impl<'tds, U, V, const D: usize> RidgeQuery<'tds, U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.tds().vertex_keys().take(1))?;
     /// let query = ridge.query(dt.tds())?;
@@ -599,7 +599,7 @@ impl<'tds, U, V, const D: usize> RidgeView<'tds, U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.tds().vertex_keys().take(1))?;
     /// let view = RidgeView::try_new(dt.tds(), ridge)?;
@@ -696,7 +696,7 @@ impl<'tds, U, V, const D: usize> RidgeView<'tds, U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.tds().vertex_keys().take(1))?;
     /// let view = ridge.view(dt.tds())?;
@@ -777,7 +777,7 @@ impl<U, V, const D: usize> Eq for RidgeView<'_, U, V, D> {}
 ///     delaunay::vertex![1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.tds().vertex_keys().take(1))?;
 /// let view = ridge.view(dt.tds())?;
@@ -1049,7 +1049,7 @@ pub(crate) fn simplex_star_simplices<U, V, const D: usize>(
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// // In 3D, a ridge is an edge because it has arity D - 1.
 /// let ridge = RidgeCandidate::<3>::try_from_vertices(dt.tds().vertex_keys().take(2))?;

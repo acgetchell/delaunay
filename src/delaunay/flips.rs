@@ -63,7 +63,7 @@ use crate::triangulation::DelaunayTriangulation;
 /// ];
 /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
 ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-///     .build::<()>()?;
+///     .build()?;
 /// let Some((simplex_key, _)) = dt.simplices().next() else {
 ///     return Ok(());
 /// };
@@ -108,7 +108,7 @@ pub trait BistellarFlips<const D: usize> {
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build::<()>()?;
+    ///     .build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -156,7 +156,7 @@ pub trait BistellarFlips<const D: usize> {
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build::<()>()?;
+    ///     .build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -206,7 +206,7 @@ pub trait BistellarFlips<const D: usize> {
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build::<()>()?;
+    ///     .build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -248,7 +248,7 @@ pub trait BistellarFlips<const D: usize> {
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build::<()>()?;
+    ///     .build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -295,7 +295,7 @@ pub trait BistellarFlips<const D: usize> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     ///     delaunay::vertex![0.5, 0.5, 0.3]?,
     /// ];
-    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// // Find an interior facet and attempt a k=2 flip
     /// // Note: k=2 flips require specific geometric conditions
@@ -346,7 +346,7 @@ pub trait BistellarFlips<const D: usize> {
     ///     &simplices,
     /// )
     /// .map_err(DelaunayTriangulationConstructionError::from)?
-    /// .build::<()>()?;
+    /// .build()?;
     ///
     /// let mut accepted = None;
     /// 'simplices: for (simplex_key, simplex) in dt.simplices() {
@@ -404,7 +404,7 @@ pub trait BistellarFlips<const D: usize> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     ///     delaunay::vertex![1.0, 1.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// // k=3 flips require specific ridge configurations in 3D and above
     /// // This is an illustrative example; actual ridge selection depends on topology
@@ -441,7 +441,7 @@ pub trait BistellarFlips<const D: usize> {
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build::<()>()?;
+    ///     .build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -491,7 +491,7 @@ pub trait BistellarFlips<const D: usize> {
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build::<()>()?;
+    ///     .build()?;
     /// let Some((_, simplex)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -550,7 +550,7 @@ pub trait BistellarFlips<const D: usize> {
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build::<()>()?;
+    ///     .build()?;
     /// let Some((_, simplex)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -794,11 +794,9 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new_with_topology_guarantee(
-                &vertices,
-                TopologyGuarantee::PLManifold,
-            )
+        let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::builder(&vertices)
+            .topology_guarantee(TopologyGuarantee::PLManifold)
+            .build()
             .unwrap();
         let mut tri = dt.as_triangulation().clone();
         let simplex_key = tri.simplices().next().unwrap().0;
@@ -824,7 +822,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         let simplex_key = dt.simplices().next().unwrap().0;
         dt.insertion_state.last_inserted_simplex = Some(simplex_key);
@@ -850,11 +848,9 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new_with_topology_guarantee(
-                &vertices,
-                TopologyGuarantee::PLManifold,
-            )
+        let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::builder(&vertices)
+            .topology_guarantee(TopologyGuarantee::PLManifold)
+            .build()
             .unwrap();
         let tri = dt.as_triangulation().clone();
         let simplex_key = tri.simplices().next().unwrap().0;

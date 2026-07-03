@@ -249,9 +249,9 @@ mod tests {
                     let verts_a = standard_vertices::<$dim>();
                     let verts_b = standard_vertices_with_extra::<$dim>();
                     let dt_a: DelaunayTriangulation<_, (), (), $dim> =
-                        DelaunayTriangulation::try_new(&verts_a).unwrap();
+                        DelaunayTriangulation::builder(&verts_a).build().unwrap();
                     let dt_b: DelaunayTriangulation<_, (), (), $dim> =
-                        DelaunayTriangulation::try_new(&verts_b).unwrap();
+                        DelaunayTriangulation::builder(&verts_b).build().unwrap();
 
                     assert_ne!(dt_a.tds(), dt_b.tds());
                 }
@@ -260,7 +260,7 @@ mod tests {
                 fn [<test_tds_partial_eq_rejects_dangling_simplex_vertex_key_ $dim d>]() {
                     let verts = standard_vertices::<$dim>();
                     let dt: DelaunayTriangulation<_, (), (), $dim> =
-                        DelaunayTriangulation::try_new(&verts).unwrap();
+                        DelaunayTriangulation::builder(&verts).build().unwrap();
                     let valid = dt.tds().clone();
                     let mut corrupted = dt.tds().clone();
                     let dangling_vertex = VertexKey::from(KeyData::from_ffi(9999));
@@ -273,7 +273,7 @@ mod tests {
                 fn [<test_tds_partial_eq_rejects_misaligned_periodic_offsets_ $dim d>]() {
                     let verts = standard_vertices::<$dim>();
                     let dt: DelaunayTriangulation<_, (), (), $dim> =
-                        DelaunayTriangulation::try_new(&verts).unwrap();
+                        DelaunayTriangulation::builder(&verts).build().unwrap();
                     let valid = dt.tds().clone();
                     let mut corrupted = dt.tds().clone();
                     corrupted.set_first_simplex_periodic_offsets_storage_only_for_test(Some(
@@ -287,7 +287,7 @@ mod tests {
                 fn [<test_tds_partial_eq_rejects_missing_vertex_incidence_ $dim d>]() {
                     let verts = standard_vertices::<$dim>();
                     let dt: DelaunayTriangulation<_, (), (), $dim> =
-                        DelaunayTriangulation::try_new(&verts).unwrap();
+                        DelaunayTriangulation::builder(&verts).build().unwrap();
                     let valid = dt.tds().clone();
                     let mut corrupted = dt.tds().clone();
                     let vertex_key = corrupted.vertices().next().map(|(key, _)| key).unwrap();
@@ -317,9 +317,9 @@ mod tests {
             vertex!([0.0, 2.0]).unwrap(),
         ];
         let dt_a: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&verts_a).unwrap();
+            DelaunayTriangulation::builder(&verts_a).build().unwrap();
         let dt_b: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&verts_b).unwrap();
+            DelaunayTriangulation::builder(&verts_b).build().unwrap();
         assert_ne!(dt_a.tds(), dt_b.tds());
     }
 }

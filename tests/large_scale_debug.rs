@@ -52,7 +52,7 @@
 //! # Box half-width (default: 100) [used when distribution=box]
 //! DELAUNAY_LARGE_DEBUG_BOX_HALF_WIDTH=100 \
 //! # Construction mode:
-//! # - "new" (default): build via DelaunayTriangulation::try_new() which applies Hilbert ordering
+//! # - "new" (default): build via DelaunayTriangulation::builder(...).build() which applies Hilbert ordering
 //! # - "incremental": manual insert loop (debug/profiling)
 //! DELAUNAY_LARGE_DEBUG_CONSTRUCTION_MODE=new \
 //! # Initial simplex strategy for batch construction: "max-volume" (default), "balanced", or "first"
@@ -103,8 +103,8 @@ use delaunay::geometry::kernel::{ExactPredicates, Kernel, RobustKernel};
 use delaunay::geometry::util::safe_usize_to_scalar;
 use delaunay::prelude::construction::{
     ConstructionOptions, ConstructionStatistics, DelaunayRepairPolicy, DelaunayTriangulation,
-    DelaunayTriangulationConstructionErrorWithStatistics, InitialSimplexStrategy,
-    TopologyGuarantee, Vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionErrorWithStatistics,
+    InitialSimplexStrategy, TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::diagnostics::ConstructionTelemetry;
 use delaunay::prelude::generators::{
@@ -415,7 +415,7 @@ enum PointDistribution {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConstructionMode {
-    /// Build via `DelaunayTriangulation::try_new()` (batch construction + Hilbert ordering).
+    /// Build via `DelaunayTriangulation::builder(...).build()` (batch construction + Hilbert ordering).
     New,
     /// Insert vertices one by one (manual incremental construction).
     Incremental,
@@ -1332,7 +1332,7 @@ where
 
     let mut dt: DelaunayTriangulation<_, (), (), D> = match mode {
         ConstructionMode::New => {
-            // `DelaunayTriangulation::try_new()` applies Hilbert ordering during batch construction.
+            // `DelaunayTriangulation::builder(...).build()` applies Hilbert ordering during batch construction.
             // Use the statistics-returning variant so we can report aggregate insertion telemetry.
             let kernel = RobustKernel::<f64>::new();
             println!("Starting batch construction (new)...");
@@ -1340,12 +1340,11 @@ where
             let options = ConstructionOptions::default()
                 .with_initial_simplex_strategy(initial_simplex_strategy)
                 .with_batch_repair_policy(repair_policy);
-            match DelaunayTriangulation::try_with_options_and_statistics(
-                &kernel,
-                &vertices,
-                topology_guarantee,
-                options,
-            ) {
+            match DelaunayTriangulationBuilder::new(&vertices)
+                .topology_guarantee(topology_guarantee)
+                .construction_options(options)
+                .build_with_kernel_and_statistics(&kernel)
+            {
                 Ok((dt, stats)) => {
                     let summary: InsertionSummary<D> = stats.into();
                     print_insertion_summary(&summary, t_insert.elapsed(), true);
@@ -1777,11 +1776,9 @@ fn regression_issue_228_3d_1000_flip_repair_convergence() {
     // Use the default kernel (AdaptiveKernel — exact+SoS predicates) to match the
     // actual regression scenario.  PLManifold enables full orientation validation
     // now that #258 is fixed.
-    let dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
         .expect("construction must not fail (#228 regression)");
 
     assert!(
@@ -1818,13 +1815,10 @@ fn regression_issue_230_4d_100_orientation() {
         .collect();
 
     let kernel = RobustKernel::<f64>::new();
-    let (dt, stats) =
-        DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::try_with_options_and_statistics(
-            &kernel,
-            &vertices,
-            TopologyGuarantee::PLManifoldStrict,
-            ConstructionOptions::default(),
-        )
+    let (dt, stats) = DelaunayTriangulationBuilder::new(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifoldStrict)
+        .construction_options(ConstructionOptions::default())
+        .build_with_kernel_and_statistics(&kernel)
         .expect("construction must not fail (#230 regression)");
 
     println!(

@@ -12,8 +12,9 @@ use delaunay::flips::{
     TriangleHandleError,
 };
 use delaunay::prelude::construction::{
-    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError,
-    InsertionOrderStrategy, TopologyGuarantee, Vertex, vertex,
+    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder,
+    DelaunayTriangulationConstructionError, InsertionOrderStrategy, TopologyGuarantee, Vertex,
+    vertex,
 };
 use delaunay::prelude::geometry::{CoordinateConversionError, Point, RobustKernel, simplex_volume};
 use delaunay::prelude::query::{JaccardComputationError, format_jaccard_report};
@@ -490,16 +491,14 @@ pub fn build_flip_dt<const D: usize>(
     let options =
         ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
 
-    DelaunayTriangulation::try_with_topology_guarantee_and_options(
-        &RobustKernel::new(),
-        &vertices,
-        TopologyGuarantee::PLManifold,
-        options,
-    )
-    .map_err(|source| FlipWorkflowError::Construction {
-        dimension: D,
-        source: Box::new(source),
-    })
+    DelaunayTriangulationBuilder::new(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .construction_options(options)
+        .build_with_kernel(&RobustKernel::new())
+        .map_err(|source| FlipWorkflowError::Construction {
+            dimension: D,
+            source: Box::new(source),
+        })
 }
 
 /// Captures vertex identity and simplex incidence for exact roundtrip checks.

@@ -53,11 +53,10 @@ fn test_vertex_preservation_with_duplicates_3d() {
     );
 
     // Construct triangulation - duplicates should be skipped
-    let dt = DelaunayTriangulation::<_, (), (), 3>::try_new_with_topology_guarantee(
-        &vertices,
-        TopologyGuarantee::PLManifold,
-    )
-    .expect("Tds construction succeeded");
+    let dt = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
+        .expect("Tds construction succeeded");
     let tds = dt.tds();
 
     let tds_vertex_count = tds.vertices().count();
@@ -113,11 +112,10 @@ fn test_vertex_preservation_without_duplicates_3d() {
     ];
     let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
 
-    let dt = DelaunayTriangulation::<_, (), (), 3>::try_new_with_topology_guarantee(
-        &vertices,
-        TopologyGuarantee::PLManifold,
-    )
-    .expect("Tds construction failed");
+    let dt = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
+        .expect("Tds construction failed");
     let tds = dt.tds();
     let tds_vertex_count = tds.vertices().count();
     diag_debug!(
@@ -184,7 +182,9 @@ fn test_vertex_preservation_many_duplicates_3d() {
 
     // Use Input ordering to avoid Hilbert dedup collapsing duplicates before the initial simplex
     let opts = ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
-    let dt = DelaunayTriangulation::<_, (), (), 3>::try_new_with_options(&vertices, opts)
+    let dt = DelaunayTriangulation::builder(&vertices)
+        .construction_options(opts)
+        .build()
         .expect("Tds construction succeeded");
     let tds = dt.tds();
     let tds_vertex_count = tds.vertices().count();

@@ -61,7 +61,7 @@ use crate::core::triangulation::Triangulation;
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// assert_eq!(dt.number_of_simplices(), 1);
 /// # Ok(())

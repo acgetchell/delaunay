@@ -9,8 +9,8 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
+use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
 use delaunay::prelude::query::*;
-use delaunay::prelude::topology::validation::*;
 use delaunay::try_vertices_from_points;
 use proptest::prelude::*;
 use std::collections::HashSet;
@@ -42,10 +42,7 @@ macro_rules! test_simplex_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
                         for (_simplex_key, simplex) in dt.simplices() {
                             let vertex_keys = simplex.vertices();
                             let unique_vertices: HashSet<_> = vertex_keys.iter().collect();
@@ -63,10 +60,7 @@ macro_rules! test_simplex_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
                         for (_simplex_key, simplex) in dt.simplices() {
                             prop_assert_eq!(simplex.vertices().len(), $expected_vertices);
                         }
@@ -82,10 +76,7 @@ macro_rules! test_simplex_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
                         for (_simplex_key, simplex) in dt.simplices() {
                             if let Some(neighbors) = simplex.neighbors() {
                                 prop_assert!(neighbors.len() <= $max_neighbors);
@@ -103,10 +94,7 @@ macro_rules! test_simplex_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
                         let mut seen_uuids = HashSet::new();
                         for (_simplex_key, simplex) in dt.simplices() {
                             prop_assert!(seen_uuids.insert(simplex.uuid()));
@@ -123,10 +111,7 @@ macro_rules! test_simplex_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
                         if dt.tds().validate().is_ok() {
                             for (_simplex_key, simplex) in dt.simplices() {
                                 prop_assert_eq!(simplex.vertices().len(), $expected_vertices);

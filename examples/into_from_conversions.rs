@@ -19,9 +19,8 @@
 //!
 //! Run this example with: `cargo run --example into_from_conversions`
 
-use delaunay::prelude::construction::vertex;
-use delaunay::prelude::geometry::CoordinateConversionError;
-use delaunay::prelude::query::*;
+use delaunay::prelude::construction::{Vertex, vertex};
+use delaunay::prelude::geometry::{Coordinate, CoordinateConversionError, Point};
 
 /// Demonstrates Into/From trait conversions from vertices and points to coordinate arrays.
 ///

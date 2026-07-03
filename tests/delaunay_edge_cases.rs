@@ -10,8 +10,8 @@
 
 use delaunay::construction::DelaunayConstructionRetryFailure;
 use delaunay::prelude::construction::{
-    DelaunayConstructionFailure, DelaunayTriangulation, DelaunayTriangulationConstructionError,
-    TopologyGuarantee, Vertex,
+    DelaunayConstructionFailure, DelaunayTriangulation, DelaunayTriangulationBuilder,
+    DelaunayTriangulationConstructionError, TopologyGuarantee, Vertex,
 };
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::diagnostics::debug_print_first_delaunay_violation;
@@ -154,10 +154,7 @@ macro_rules! test_regression_config {
                 let vertices = $vertices;
 
                 let dt: DelaunayTriangulation<_, (), (), $dim> =
-                    DelaunayTriangulation::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    )
+                    DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build()
                         .unwrap_or_else(|err| {
                             panic!(
                                 "{}D regression configuration failed to construct: {err}",
@@ -260,11 +257,9 @@ fn debug_issue_120_empty_circumsphere_5d() {
         .unwrap(),
     ];
 
-    let mut dt: DelaunayTriangulation<_, (), (), 5> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )
+    let mut dt: DelaunayTriangulation<_, (), (), 5> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
         .unwrap_or_else(|err| panic!("5D debug configuration failed to construct: {err}"));
     match dt.repair_delaunay_with_flips() {
         Ok(stats) => {
@@ -306,10 +301,10 @@ fn debug_issue_120_empty_circumsphere_5d() {
     for attempt in 0..20 {
         let mut shuffled = vertices.clone();
         shuffled.shuffle(&mut rng);
-        if let Ok(dt_alt) = DelaunayTriangulation::<_, (), (), 5>::try_new_with_topology_guarantee(
-            &shuffled,
-            TopologyGuarantee::PLManifold,
-        ) {
+        if let Ok(dt_alt) = DelaunayTriangulation::builder(&shuffled)
+            .topology_guarantee(TopologyGuarantee::PLManifold)
+            .build()
+        {
             if dt_alt.is_valid_delaunay().is_ok() {
                 test_debug_info!(
                     "[Issue #120 debug] found valid triangulation after shuffle attempt {}",
@@ -448,11 +443,9 @@ fn test_regression_proptest_insertion_order_4d_euler_mismatch() {
         .unwrap(),
     ];
 
-    let dt: DelaunayTriangulation<_, (), (), 4> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )
+    let dt: DelaunayTriangulation<_, (), (), 4> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
         .unwrap_or_else(|err| panic!("4D regression configuration failed to construct: {err}"));
 
     assert!(
@@ -667,11 +660,9 @@ fn test_exact_minimum_vertices_2d() {
         vertex!([0.0, 1.0]).unwrap(),
     ];
 
-    let dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )
+    let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 3);
@@ -688,11 +679,9 @@ fn test_exact_minimum_vertices_3d() {
         vertex!([0.0, 0.0, 1.0]).unwrap(),
     ];
 
-    let dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 4);
@@ -710,11 +699,9 @@ fn test_exact_minimum_vertices_4d() {
         vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
     ];
 
-    let dt: DelaunayTriangulation<_, (), (), 4> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )
+    let dt: DelaunayTriangulation<_, (), (), 4> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 5);
@@ -736,11 +723,9 @@ fn test_multiple_interior_points_2d() {
         vertex!([2.5, 1.5]).unwrap(), // interior
     ];
 
-    let dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )
+    let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 6);
@@ -759,11 +744,9 @@ fn test_multiple_interior_points_3d() {
         vertex!([0.5, 0.6, 0.5]).unwrap(), // interior
     ];
 
-    let dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 7);
@@ -786,11 +769,9 @@ fn test_square_with_center_2d() {
         vertex!([1.0, 1.0]).unwrap(), // center
     ];
 
-    let dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )
+    let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 5);
@@ -811,11 +792,10 @@ fn test_cube_vertices_3d() {
         vertex!([1.0, 1.0, 1.0]).unwrap(),
     ];
 
-    let err = DelaunayTriangulation::<_, (), (), 3>::try_new_with_topology_guarantee(
-        &vertices,
-        TopologyGuarantee::PLManifold,
-    )
-    .expect_err("exact cube corners should fail before storing a zero-volume simplex");
+    let err = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
+        .expect_err("exact cube corners should fail before storing a zero-volume simplex");
 
     assert!(
         construction_error_is_degenerate_simplex(&err),
@@ -836,11 +816,9 @@ fn test_large_coordinates_2d() {
         vertex!([1500.0, 1500.0]).unwrap(),
     ];
 
-    let dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )
+    let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 4);
@@ -857,11 +835,9 @@ fn test_small_coordinates_3d() {
         vertex!([0.0015, 0.0015, 0.0015]).unwrap(),
     ];
 
-    let dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 5);
@@ -877,11 +853,9 @@ fn test_negative_coordinates_2d() {
         vertex!([0.0, 0.0]).unwrap(),
     ];
 
-    let dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )
+    let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 4);
@@ -903,12 +877,10 @@ fn test_robust_kernel_with_edge_case() {
     ];
 
     let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 2> =
-        DelaunayTriangulation::try_with_topology_guarantee(
-            &RobustKernel::new(),
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )
-        .unwrap();
+        DelaunayTriangulationBuilder::new(&vertices)
+            .topology_guarantee(TopologyGuarantee::PLManifold)
+            .build_with_kernel(&RobustKernel::new())
+            .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 4);
     assert!(dt.number_of_simplices() > 0);
@@ -931,10 +903,9 @@ fn test_collinear_points_2d() {
     ];
 
     let result: Result<DelaunayTriangulation<_, (), (), 2>, _> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &collinear,
-            TopologyGuarantee::PLManifold,
-        );
+        DelaunayTriangulation::builder(&collinear)
+            .topology_guarantee(TopologyGuarantee::PLManifold)
+            .build();
 
     // Verify it fails with GeometricDegeneracy due to collinear simplex.
     // The default retry policy may wrap the final typed degeneracy once all
@@ -972,11 +943,9 @@ fn regression_issue_228_exact_predicate_paths_3d_fast() {
         .map(|p| vertex!(p.into()).unwrap())
         .collect();
 
-    let dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::Pseudomanifold,
-        )
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::Pseudomanifold)
+        .build()
         .expect("3D 16-point construction must not fail (#228 fast regression)");
 
     assert!(
@@ -1003,11 +972,9 @@ fn test_5d_simplex_plus_interior() {
         vertex!([0.2, 0.2, 0.2, 0.2, 0.2]).unwrap(), // interior
     ];
 
-    let dt: DelaunayTriangulation<_, (), (), 5> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )
+    let dt: DelaunayTriangulation<_, (), (), 5> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 7);

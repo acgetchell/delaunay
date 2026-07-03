@@ -48,7 +48,7 @@ fn sample_export() -> Result<MeshExport<2>, MeshExportTestError> {
         vertex![0.0, 2.0]?,
         vertex![0.25, 0.25]?,
     ];
-    let triangulation = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     Ok(triangulation.to_mesh_export()?)
 }
@@ -60,7 +60,7 @@ fn sample_delaunay_result_export() -> DelaunayResult<MeshExport<2>> {
         vertex![0.0, 2.0]?,
         vertex![0.25, 0.25]?,
     ];
-    let triangulation = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     Ok(triangulation.to_mesh_export()?)
 }
@@ -82,7 +82,7 @@ fn sample_vertices_for_dimension<const D: usize>() -> Result<Vec<Vertex<(), D>>,
 /// Exports one dimension-sweep fixture through the public builder path.
 fn sample_export_for_dimension<const D: usize>() -> Result<MeshExport<D>, MeshExportTestError> {
     let vertices = sample_vertices_for_dimension::<D>()?;
-    let triangulation = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
     Ok(triangulation.to_mesh_export()?)
 }
 
@@ -810,7 +810,7 @@ fn mesh_export_ids_match_triangulation_uuids() -> Result<(), MeshExportTestError
         vertex![0.0, 1.0, 0.0]?,
         vertex![0.0, 0.0, 1.0]?,
     ];
-    let triangulation = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
     let export = triangulation.to_mesh_export()?;
 
     let exported_vertices: HashMap<_, _> = export

@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Tests for per-fixture Semgrep config generation."""
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 
 from semgrep_fixture_config import annotated_rule_ids, main, write_fixture_config

@@ -294,7 +294,7 @@ impl<U, const D: usize> Vertex<U, D> {
     ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0])?,
     ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 1.0])?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((_, vertex)) = dt.vertices().next() else {
     ///     return Ok(());
     /// };

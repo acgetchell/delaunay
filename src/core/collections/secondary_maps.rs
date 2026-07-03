@@ -48,7 +48,7 @@ use slotmap::SparseSecondaryMap;
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
 /// let dt: DelaunayTriangulation<_, _, _, 3> =
-///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+///     DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// let tds = dt.tds();
 ///
 /// use delaunay::prelude::collections::SimplexSecondaryMap;
@@ -99,7 +99,7 @@ pub type SimplexSecondaryMap<V> = SparseSecondaryMap<SimplexKey, V>;
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
 /// let dt: DelaunayTriangulation<_, _, _, 3> =
-///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+///     DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// let tds = dt.tds();
 ///
 /// use delaunay::prelude::collections::VertexSecondaryMap;

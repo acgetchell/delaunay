@@ -296,7 +296,10 @@ fn construct_triangulation<const D: usize>(
     vertices: &[Vertex<(), D>],
     seed: u64,
 ) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
-    DelaunayTriangulation::try_new_with_options(vertices, construction_options(seed)).or_abort()
+    DelaunayTriangulation::builder(vertices)
+        .construction_options(construction_options(seed))
+        .build()
+        .or_abort()
 }
 
 /// Converts generated point fixtures into benchmark vertices without attaching data.
@@ -835,7 +838,7 @@ fn bench_memory_usage<const D: usize>(
 
                     let alloc_info = measure(|| {
                         let dt = DelaunayTriangulationBuilder::new(&vertices)
-                            .build::<()>()
+                            .build()
                             .or_abort();
                         black_box(dt);
                     });
@@ -924,7 +927,7 @@ fn benchmark_query_latency(c: &mut Criterion) {
                 // Setup: Create triangulation and query points
                 let points = gen_points::<3>(count, PointDistribution::Random, DEFAULT_SEED);
                 let vertices = benchmark_vertices_from_generated_points(&points);
-                let Ok(dt) = DelaunayTriangulationBuilder::new(&vertices).build::<()>() else {
+                let Ok(dt) = DelaunayTriangulationBuilder::new(&vertices).build() else {
                     // Construction hit a geometric degeneracy; skip this benchmark entry
                     b.iter(|| {});
                     return;
@@ -1030,7 +1033,7 @@ macro_rules! benchmark_validation_components_dimension {
                         builder
                     };
 
-                    match builder.build::<()>() {
+                    match builder.build() {
                         Ok(dt) => Some(dt),
                         Err(err) => {
                             last_error = Some(format!("{err}"));
@@ -1142,9 +1145,7 @@ fn bench_bottlenecks(c: &mut Criterion) {
                         let points =
                             gen_points::<3>(count, PointDistribution::Random, DEFAULT_SEED);
                         let vertices = benchmark_vertices_from_generated_points(&points);
-                        DelaunayTriangulationBuilder::new(&vertices)
-                            .build::<()>()
-                            .ok()
+                        DelaunayTriangulationBuilder::new(&vertices).build().ok()
                     },
                     |dt| {
                         if let Some(dt) = dt {
@@ -1174,9 +1175,7 @@ fn bench_bottlenecks(c: &mut Criterion) {
                         let points =
                             gen_points::<3>(count, PointDistribution::Random, DEFAULT_SEED);
                         let vertices = benchmark_vertices_from_generated_points(&points);
-                        DelaunayTriangulationBuilder::new(&vertices)
-                            .build::<()>()
-                            .ok()
+                        DelaunayTriangulationBuilder::new(&vertices).build().ok()
                     },
                     |dt| {
                         if let Some(dt) = dt {

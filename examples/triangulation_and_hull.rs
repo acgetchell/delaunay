@@ -15,7 +15,8 @@ use std::num::NonZeroUsize;
 use std::time::Instant;
 
 use delaunay::prelude::construction::{
-    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError, RetryPolicy,
+    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder,
+    DelaunayTriangulationConstructionError, RetryPolicy,
 };
 use delaunay::prelude::generators::{
     RandomPointGenerationError, generate_random_points_in_range_seeded,
@@ -88,8 +89,9 @@ fn run_case<const D: usize>(
 
     println!("{label} Delaunay triangulation ({point_count} seeded points)");
     let start = Instant::now();
-    let dt: WorkflowTriangulation<D> =
-        DelaunayTriangulation::try_new_with_options(&vertices, options)?;
+    let dt: WorkflowTriangulation<D> = DelaunayTriangulationBuilder::new(&vertices)
+        .construction_options(options)
+        .build()?;
     println!("  construction: {:?}", start.elapsed());
     println!("  vertices:  {}", dt.number_of_vertices());
     println!("  simplices: {}", dt.number_of_simplices());

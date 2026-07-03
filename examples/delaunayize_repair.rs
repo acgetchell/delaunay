@@ -20,7 +20,9 @@
 //! cargo run --example delaunayize_repair
 //! ```
 
-use delaunay::prelude::construction::{DelaunayTriangulationConstructionError, vertex};
+use delaunay::prelude::construction::{
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+};
 use delaunay::prelude::delaunayize::*;
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::pachner::{FacetError, FacetHandle, FlipError, PachnerMove, PachnerMoves};
@@ -84,7 +86,8 @@ fn already_delaunay_3d() -> Result<(), DelaunayizeRepairExampleError> {
         vertex![0.0, 0.0, 1.0]?,
         vertex![0.5, 0.5, 0.5]?,
     ];
-    let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::try_new(&vertices)?;
+    let mut dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     println!(
         "  Built 3D triangulation: {} vertices, {} simplices",
@@ -116,7 +119,8 @@ fn already_delaunay_4d() -> Result<(), DelaunayizeRepairExampleError> {
         vertex![0.0, 0.0, 1.0, 0.0]?,
         vertex![0.0, 0.0, 0.0, 1.0]?,
     ];
-    let mut dt: DelaunayTriangulation<_, (), (), 4> = DelaunayTriangulation::try_new(&vertices)?;
+    let mut dt: DelaunayTriangulation<_, (), (), 4> =
+        DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     println!(
         "  Built 4D triangulation: {} vertices, {} simplices",
@@ -152,7 +156,8 @@ fn flip_then_repair_2d() -> Result<(), DelaunayizeRepairExampleError> {
         vertex![1.0, 1.0]?,
         vertex![3.0, 1.0]?,
     ];
-    let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::try_new(&vertices)?;
+    let mut dt: DelaunayTriangulation<_, (), (), 2> =
+        DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     println!(
         "  Initial: {} vertices, {} simplices",
@@ -232,7 +237,8 @@ fn custom_config_2d() -> Result<(), DelaunayizeRepairExampleError> {
         vertex![1.0, 1.0]?,
         vertex![0.5, 0.5]?,
     ];
-    let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::try_new(&vertices)?;
+    let mut dt: DelaunayTriangulation<_, (), (), 2> =
+        DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     let config = DelaunayizeConfig {
         topology_max_iterations: 10,

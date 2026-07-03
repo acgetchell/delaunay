@@ -152,7 +152,7 @@ where
     ///     delaunay::vertex![0.0, 1.0]?,
     ///     interior,
     /// ];
-    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// // Find the key of a known interior vertex.
     /// let Some((vertex_key, _)) = dt.vertices().find(|(_, v)| v.uuid() == interior_uuid) else {
@@ -192,7 +192,7 @@ where
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((vertex_key, _)) = dt.vertices().next() else {
     ///     return Ok(());
     /// };
@@ -472,7 +472,7 @@ mod tests {
         let vertices = simplex_vertices::<D>();
 
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
         let simplex_key = dt.simplices().next().unwrap().0;
@@ -494,7 +494,7 @@ mod tests {
         let vertices = simplex_vertices::<D>();
 
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
         let mut inserted_vertices = Vec::new();
@@ -559,7 +559,7 @@ mod tests {
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
         let original_vertex_count = dt.number_of_vertices();
         let original_simplex_count = dt.number_of_simplices();
@@ -597,7 +597,7 @@ mod tests {
             vertex![0.0, 1.0].unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         let vertex_key = dt.insert_vertex(vertex![0.25, 0.25].unwrap()).unwrap();
         let hint_simplex = dt.simplices().next().map(|(key, _)| key);
@@ -639,7 +639,7 @@ mod tests {
             vertex![0.0, 1.0].unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let vertex_key = dt.insert_vertex(vertex![0.25, 0.25].unwrap()).unwrap();
 
         dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
@@ -683,7 +683,7 @@ mod tests {
         ];
         let deleted_uuid = vertices[7].uuid();
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
         dt.set_delaunay_repair_policy(DelaunayRepairPolicy::EveryInsertion);
         dt.as_triangulation().validate().unwrap();
@@ -718,7 +718,7 @@ mod tests {
         ];
         let deleted_uuid = vertices[4].uuid();
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         dt.is_valid_delaunay().unwrap();
         dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
         dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);

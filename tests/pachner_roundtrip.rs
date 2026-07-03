@@ -595,13 +595,11 @@ fn build_dt_4d(points: &[[f64; 4]], fixture_name: &str) -> Dt4 {
     let options =
         ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
 
-    DelaunayTriangulation::try_with_topology_guarantee_and_options(
-        &RobustKernel::new(),
-        &vertices,
-        TopologyGuarantee::PLManifold,
-        options,
-    )
-    .unwrap_or_else(|err| panic!("{fixture_name} 4D fixture should build: {err}"))
+    DelaunayTriangulationBuilder::new(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .construction_options(options)
+        .build_with_kernel(&RobustKernel::new())
+        .unwrap_or_else(|err| panic!("{fixture_name} 4D fixture should build: {err}"))
 }
 
 /// Builds a minimal Euclidean D-simplex fixture for dimension smoke tests.
@@ -610,13 +608,11 @@ fn build_minimal_simplex_dt<const D: usize>() -> Dt<D> {
     let options =
         ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
 
-    DelaunayTriangulation::try_with_topology_guarantee_and_options(
-        &RobustKernel::new(),
-        &vertices,
-        TopologyGuarantee::PLManifold,
-        options,
-    )
-    .unwrap_or_else(|err| panic!("{D}D minimal simplex fixture should build: {err}"))
+    DelaunayTriangulationBuilder::new(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .construction_options(options)
+        .build_with_kernel(&RobustKernel::new())
+        .unwrap_or_else(|err| panic!("{D}D minimal simplex fixture should build: {err}"))
 }
 
 /// Returns the origin plus coordinate unit vectors as a nondegenerate D-simplex.
@@ -641,7 +637,7 @@ fn build_flippable_dt_2d() -> Dt2 {
 
     let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .expect("explicit 2D fixture connectivity should parse")
-        .build_with_kernel::<_, ()>(&RobustKernel::new())
+        .build_with_kernel(&RobustKernel::new())
         .expect("stable 2D fixture should build");
     assert_topology_and_delaunay_valid(&dt, "stable 2D fixture before local edits");
     dt
@@ -657,7 +653,7 @@ fn build_single_triangle_dt_2d() -> Dt2 {
 
     DelaunayTriangulationBuilder::new(&vertices)
         .topology_guarantee(TopologyGuarantee::PLManifold)
-        .build_with_kernel::<_, ()>(&RobustKernel::new())
+        .build_with_kernel(&RobustKernel::new())
         .expect("single-triangle fixture should build")
 }
 
@@ -673,7 +669,7 @@ fn build_canonicalized_toroidal_dt_2d() -> Dt2 {
     DelaunayTriangulationBuilder::new(&vertices)
         .try_canonicalized_toroidal([1.0, 1.0])
         .expect("canonicalized toroidal domain should parse")
-        .build_with_kernel::<_, ()>(&RobustKernel::new())
+        .build_with_kernel(&RobustKernel::new())
         .expect("canonicalized toroidal fixture should build")
 }
 

@@ -90,11 +90,6 @@ path = "benches/allocation_hot_paths.rs"
 harness = false
 
 [[bench]]
-name = "boundary_uuid_iter"
-path = "benches/boundary_uuid_iter.rs"
-harness = false
-
-[[bench]]
 name = "ci_performance_suite"
 path = "benches/ci_performance_suite.rs"
 harness = false
@@ -107,6 +102,11 @@ harness = false
 [[bench]]
 name = "cold_path_predicates"
 path = "benches/cold_path_predicates.rs"
+harness = false
+
+[[bench]]
+name = "delaunay_repair"
+path = "benches/delaunay_repair.rs"
 harness = false
 
 [[bench]]
@@ -131,8 +131,8 @@ path = "benches/delete_vertex.rs"
 harness = false
 
 [[bench]]
-name = "edge_key_queries"
-path = "benches/edge_key_queries.rs"
+name = "locate"
+path = "benches/locate.rs"
 harness = false
 
 [[bench]]

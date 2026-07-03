@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Inspect, lint, and optionally execute Jupyter notebooks."""
 
-from __future__ import annotations
-
 import argparse
 import ast
 import json

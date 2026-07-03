@@ -150,7 +150,7 @@
 //!     vertex![0.0, 1.0, 0.0]?,
 //!     vertex![0.0, 0.0, 1.0]?,
 //! ];
-//! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+//! let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 //!
 //! // Level 2: structural only (fast)
 //! assert!(dt.tds().is_valid().is_ok());
@@ -218,7 +218,7 @@
 //! ];
 //!
 //! // Create Delaunay triangulation
-//! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+//! let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 //!
 //! // Query triangulation properties
 //! assert_eq!(dt.number_of_vertices(), 4);
@@ -264,7 +264,7 @@
 //!     delaunay::vertex![0.0, 0.0, 1.0]?,
 //! ];
 //!
-//! let mut dt = DelaunayTriangulationBuilder::new(&initial_vertices).build::<()>()?;
+//! let mut dt = DelaunayTriangulationBuilder::new(&initial_vertices).build()?;
 //!
 //! // Add a new vertex
 //! let new_vertex = vertex![0.2, 0.2, 0.2]?;
@@ -312,7 +312,7 @@
 //!     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,  // Unit vector along fourth dimension
 //! ];
 //!
-//! let dt_4d = DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
+//! let dt_4d = DelaunayTriangulationBuilder::new(&vertices_4d).build()?;
 //! assert_eq!(dt_4d.dim(), 4);
 //! assert_eq!(dt_4d.number_of_vertices(), 5);
 //! assert_eq!(dt_4d.number_of_simplices(), 1);
@@ -487,7 +487,7 @@ pub trait TopologyOwner {
 /// ];
 ///
 /// // Create a new triangulation
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// // Check the number of simplices and vertices
 /// assert_eq!(dt.number_of_simplices(), 1);
@@ -888,7 +888,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// for (simplex_key, simplex) in dt.simplices() {
     ///     println!("Simplex {:?} has {} vertices", simplex_key, simplex.number_of_vertices());
@@ -943,7 +943,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// for (_, simplex) in dt.simplices() {
     ///     println!("Simplex has {} vertices", simplex.number_of_vertices());
@@ -990,7 +990,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.5, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// for (vertex_key, vertex) in dt.vertices() {
     ///     println!("Vertex {:?} at {:?}", vertex_key, vertex.point());
@@ -1031,7 +1031,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let keys: Vec<_> = dt.tds().vertex_keys().collect();
     /// assert_eq!(keys.len(), 3);
     /// # Ok(())
@@ -1070,7 +1070,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let keys: Vec<_> = dt.tds().simplex_keys().collect();
     /// assert_eq!(keys.len(), 1);
     /// # Ok(())
@@ -1116,7 +1116,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let tds = dt.tds();
     /// let Some(simplex_key) = tds.simplex_keys().next() else {
     ///     return Ok(());
@@ -1163,7 +1163,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let tds = dt.tds();
     /// let Some(simplex_key) = tds.simplex_keys().next() else {
     ///     return Ok(());
@@ -1251,7 +1251,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// ];
     ///
     /// let vertices = delaunay::try_vertices_from_points(&points)?;
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// assert_eq!(dt.number_of_vertices(), 4);
     /// # Ok(())
     /// # }
@@ -1348,7 +1348,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     Point::try_from([0.5, 1.0])?,
     /// ];
     /// let vertices_2d = delaunay::try_vertices_from_points(&points_2d)?;
-    /// let dt_2d = DelaunayTriangulationBuilder::new(&vertices_2d).build::<()>()?;
+    /// let dt_2d = DelaunayTriangulationBuilder::new(&vertices_2d).build()?;
     /// assert_eq!(dt_2d.dim(), 2);
     ///
     /// // 4D triangulation with 5 vertices (minimum for 4D simplex)
@@ -1360,7 +1360,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     Point::try_from([0.0, 0.0, 0.0, 1.0])?,
     /// ];
     /// let vertices_4d = delaunay::try_vertices_from_points(&points_4d)?;
-    /// let dt_4d = DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
+    /// let dt_4d = DelaunayTriangulationBuilder::new(&vertices_4d).build()?;
     /// assert_eq!(dt_4d.dim(), 4);
     /// # Ok(())
     /// # }
@@ -1442,7 +1442,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// ];
     ///
     /// let vertices = delaunay::try_vertices_from_points(&points)?;
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// assert_eq!(dt.number_of_simplices(), 1); // Simplices are automatically created via triangulation
     /// # Ok(())
     /// # }
@@ -1473,7 +1473,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// ];
     ///
     /// let vertices = delaunay::try_vertices_from_points(&points)?;
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// assert_eq!(dt.number_of_simplices(), 1); // One tetrahedron for 4 points in 3D
     /// # Ok(())
     /// # }
@@ -1531,7 +1531,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// assert!(dt.tds().is_connected());
     ///
     /// let empty = dt.tds().number_of_simplices() == 0 || dt.tds().is_connected();
@@ -1723,7 +1723,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let tds = dt.tds();
     /// let Some(simplex_key) = tds.simplex_keys().next() else {
     ///     return Ok(());
@@ -1801,7 +1801,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let tds = dt.tds();
     ///
     /// // Get the first simplex and its UUID
@@ -1878,7 +1878,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let tds = dt.tds();
     ///
     /// // Get the first vertex and its UUID
@@ -1955,7 +1955,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let tds = dt.tds();
     ///
     /// // Get the first simplex key and expected UUID
@@ -1997,7 +1997,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let tds = dt.tds();
     ///
     /// // Get the first simplex's UUID
@@ -2064,7 +2064,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let tds = dt.tds();
     ///
     /// // Get the first vertex key and expected UUID
@@ -2106,7 +2106,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let tds = dt.tds();
     ///
     /// // Get the first vertex's UUID
@@ -2192,7 +2192,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let tds = dt.tds();
     /// let Some(vertex_key) = tds.vertex_keys().next() else {
     ///     return Ok(());
@@ -2256,7 +2256,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let tds = dt.tds();
     /// let Some(simplex_key) = tds.simplex_keys().next() else {
     ///     return Ok(());
@@ -2304,7 +2304,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let tds = dt.tds();
     /// let Some(vertex_key) = tds.vertex_keys().next() else {
     ///     return Ok(());

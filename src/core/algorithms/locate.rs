@@ -776,7 +776,7 @@ pub(crate) struct LocateTrace {
 ///     delaunay::vertex![0.0, 0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// let kernel = FastKernel::<f64>::new();
 ///
 /// // Point inside the 4-simplex
@@ -822,7 +822,7 @@ pub(crate) struct LocateTrace {
 ///     delaunay::vertex![0.0, 0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// let kernel = RobustKernel::<f64>::default();
 ///
 /// // Get a simplex to use as hint (spatially close to query point)
@@ -885,7 +885,7 @@ where
 ///     delaunay::vertex![0.0, 1.0]?,
 /// ];
 /// let dt: DelaunayTriangulation<_, (), (), 2> =
-///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+///     DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// let kernel = FastKernel::<f64>::new();
 ///
 /// let query_point = Point::try_from([0.3, 0.3])?;
@@ -1256,7 +1256,7 @@ const fn conflict_simplex_points_error(
 ///     delaunay::vertex![0.0, 0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// let kernel = FastKernel::<f64>::new();
 /// // Point inside the 4-simplex
@@ -1675,7 +1675,7 @@ where
 ///     delaunay::vertex![0.0, 0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// let kernel = FastKernel::<f64>::new();
 /// let query_point = Point::try_from([0.2, 0.2, 0.2, 0.2])?;
@@ -2175,7 +2175,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let tds = dt.tds();
         let simplex_key = tds.simplex_keys().next().unwrap();
         let simplex = tds.simplex(simplex_key).unwrap();
@@ -2348,7 +2348,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Get the single simplex
@@ -2426,7 +2426,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Point inside the triangle
@@ -2449,7 +2449,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Point inside the tetrahedron
@@ -2471,7 +2471,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Point far outside the triangle
@@ -2489,7 +2489,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Point far outside the tetrahedron
@@ -2507,7 +2507,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Get a valid simplex as hint
@@ -2525,7 +2525,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let kernel = RobustKernel::<f64>::default();
 
         let point = Point::try_new([0.3, 0.3]).expect("finite point coordinates");
@@ -2545,7 +2545,7 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let kernel = FastKernel::<f64>::new();
 
         let simplex_key = dt.tds().simplex_keys().next().unwrap();
@@ -2583,7 +2583,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let kernel = FastKernel::<f64>::new();
 
         let simplex_key = dt.tds().simplex_keys().next().unwrap();
@@ -2604,7 +2604,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let kernel = FastKernel::<f64>::new();
 
         let simplex_key = dt.tds().simplex_keys().next().unwrap();
@@ -2634,7 +2634,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let kernel = RobustKernel::<f64>::default();
 
         // Point very close to an edge but still inside
@@ -2654,7 +2654,7 @@ mod tests {
             let vertices: Vec<_> = vec![
                 $(vertex!($coords).unwrap()),+
             ];
-            let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
             let kernel = FastKernel::<f64>::new();
 
             let point = Point::try_new($inside_point).expect("finite point coordinates");
@@ -2718,7 +2718,7 @@ mod tests {
             let vertices: Vec<_> = vec![
                 $(vertex!($coords).unwrap()),+
             ];
-            let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
             let kernel = FastKernel::<f64>::new();
 
             let start_simplex = dt.tds().simplex_keys().next().unwrap();
@@ -2788,7 +2788,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let kernel = FastKernel::<f64>::new();
 
         let start_simplex = dt.tds().simplex_keys().next().unwrap();
@@ -2812,7 +2812,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Create invalid simplex key
@@ -2835,7 +2835,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let kernel = RobustKernel::<f64>::default();
 
         let start_simplex = dt.tds().simplex_keys().next().unwrap();
@@ -2857,7 +2857,7 @@ mod tests {
             let vertices: Vec<_> = vec![
                 $(vertex!($coords).unwrap()),+
             ];
-            let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
 
             let start_simplex = dt.tds().simplex_keys().next().unwrap();
             let mut conflict_simplices = SimplexKeyBuffer::new();
@@ -2931,7 +2931,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         let conflict_simplices = SimplexKeyBuffer::new(); // Empty
 
@@ -2951,7 +2951,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let kernel = FastKernel::<f64>::new();
         let point = Point::try_new([0.25, 0.25]).expect("finite point coordinates");
 
@@ -2973,7 +2973,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let kernel = FastKernel::<f64>::new();
         let expected_simplex = dt.tds().simplex_keys().next().unwrap();
 
@@ -3108,7 +3108,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let kernel = FastKernel::<f64>::new();
         let point = Point::try_new([0.2, 0.2]).expect("finite point coordinates");
         let hint = dt.tds().simplex_keys().next().unwrap();
@@ -3140,7 +3140,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         let invalid = SimplexKey::from(KeyData::from_ffi(424_242));
         let mut conflict_simplices = SimplexKeyBuffer::new();
@@ -3480,7 +3480,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let kernel = FastKernel::<f64>::new();
         let point = Point::try_new([0.25_f64, 0.25_f64]).expect("finite point coordinates");
 
@@ -3506,7 +3506,7 @@ mod tests {
             let vertices: Vec<_> = vec![
                 $(vertex!($coords).unwrap()),+
             ];
-            let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
             let kernel = FastKernel::<f64>::new();
 
             let start_simplex = dt.tds().simplex_keys().next().unwrap();
@@ -3596,7 +3596,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let kernel = FastKernel::<f64>::new();
 
         // Point inside the circumcircle — the single simplex should be in conflict.
@@ -3620,7 +3620,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let kernel = FastKernel::<f64>::new();
 
         let start_simplex = dt.tds().simplex_keys().next().unwrap();
@@ -3658,7 +3658,7 @@ mod tests {
             vertex!([4.0, 3.0]).unwrap(),
             vertex!([0.0, 3.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let kernel = FastKernel::<f64>::new();
 
         let start_simplex = dt.tds().simplex_keys().next().unwrap();

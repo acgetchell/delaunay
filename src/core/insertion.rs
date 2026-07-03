@@ -4413,7 +4413,7 @@ mod tests {
                 .map(|c| vertex!([c[0] * scale, c[1] * scale, c[2] * scale]).unwrap())
                 .collect();
             let dt: DelaunayTriangulation<_, (), (), 3> =
-                DelaunayTriangulation::try_new(&vertices).unwrap();
+                DelaunayTriangulation::builder(&vertices).build().unwrap();
             (dt.number_of_vertices(), dt.number_of_simplices())
         }
 

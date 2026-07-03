@@ -435,11 +435,22 @@ being parsed:
 
 Current migration targets for API-normalization work:
 
-- Public `DelaunayTriangulation::try_new*` methods are the default fallible
-  constructors for default-kernel triangulations, and public
-  `DelaunayTriangulation::try_with_*` methods are the fallible custom-kernel
-  constructors. Infallible empty constructors remain `empty` and
-  `with_empty_*` because they accept no user geometry or topology.
+- Public Delaunay construction examples should teach
+  `DelaunayTriangulationBuilder::new(&vertices).build()?` and its fluent
+  option setters/terminal variants as the canonical default-kernel workflow,
+  with `DelaunayTriangulation::builder(&vertices)` acceptable only as a terse
+  builder alias in tests and benchmarks. Do not add local helpers whose whole
+  purpose is hiding `DelaunayTriangulation::builder(...).build()` or the
+  equivalent `DelaunayTriangulationBuilder::new(...).build()` chain; such
+  helpers mask API friction instead of testing the canonical fluent workflow.
+  The legacy `DelaunayTriangulation::try_new*` and `try_with_*` wrappers are not
+  public API and should not exist, even as hidden compatibility shims. Use the builder
+  terminals (`build`, `build_with_statistics`, `build_with_kernel`, and
+  `build_with_kernel_and_statistics`) at call sites so options, topology
+  expectations, statistics, and kernels remain visible in domain order.
+  Shared implementation hooks should stay crate-private, named as builder
+  backends, and unreachable from downstream callers. Infallible empty constructors
+  remain `empty` and `with_empty_*` because they accept no user geometry or topology.
 - `DelaunayTriangulationBuilder::try_from_vertices_and_simplices*` validates
   explicit simplex specs before storing them in a private proof-bearing wrapper.
   Full TDS/topology/Delaunay validation still happens at `build`, where the

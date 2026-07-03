@@ -12,8 +12,6 @@ Usage:
 Ported from the la-stack project's tag_release.py.
 """
 
-from __future__ import annotations
-
 import argparse
 import logging
 import re

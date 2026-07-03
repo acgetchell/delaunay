@@ -376,23 +376,66 @@ pub fn triangulation_fallible_constructor_names_bad(
     );
 }
 
+pub fn legacy_delaunay_batch_constructors_bad(
+    vertices: &[Vertex<(), 3>],
+    options: ConstructionOptions,
+) {
+    // ruleid: delaunay.rust.no-legacy-delaunay-try-new-constructors
+    let _dt = DelaunayTriangulation::try_new(vertices);
+    // ruleid: delaunay.rust.no-legacy-delaunay-try-new-constructors
+    let _dt = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::try_new_with_options(
+        vertices,
+        options,
+    );
+    let _dt =
+        // ruleid: delaunay.rust.no-legacy-delaunay-try-new-constructors
+        DelaunayTriangulation::try_new_with_options_and_construction_statistics(vertices, options);
+    let _dt =
+        // ruleid: delaunay.rust.no-legacy-delaunay-try-new-constructors
+        DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::try_with_kernel(
+            &AdaptiveKernel::new(),
+            vertices,
+        );
+}
+
+impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
+    #[doc(hidden)]
+    // ruleid: delaunay.rust.no-legacy-delaunay-try-new-constructor-definitions
+    pub fn try_new(
+        _vertices: &[Vertex<U, D>],
+    ) -> Result<Self, DelaunayTriangulationConstructionError> {
+        todo!()
+    }
+
+    // ruleid: delaunay.rust.no-legacy-delaunay-try-new-constructor-definitions
+    pub(crate) fn try_with_kernel(
+        _kernel: &K,
+        _vertices: &[Vertex<U, D>],
+    ) -> Result<Self, DelaunayTriangulationConstructionError> {
+        todo!()
+    }
+}
+
 pub fn triangulation_fallible_constructor_names_ok(
     vertices: &[Vertex<(), 3>],
     options: ConstructionOptions,
 ) {
     // ok: delaunay.rust.no-infallible-fallible-triangulation-constructors
-    let _dt = DelaunayTriangulation::try_new(vertices);
+    let _dt = DelaunayTriangulation::builder(vertices).build();
     // ok: delaunay.rust.no-infallible-fallible-triangulation-constructors
-    let _dt = DelaunayTriangulation::<_, (), (), 3>::try_new_with_options(vertices, options);
+    let _dt = DelaunayTriangulation::builder(vertices)
+        .construction_options(options)
+        .build();
     // ok: delaunay.rust.no-infallible-fallible-triangulation-constructors
-    let _dt = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::try_with_kernel(
-        &AdaptiveKernel::new(),
-        vertices,
-    );
+    let _dt = DelaunayTriangulationBuilder::new(vertices).build_with_kernel(&AdaptiveKernel::new());
     // ok: delaunay.rust.no-infallible-fallible-triangulation-constructors
     let _dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
     // ok: delaunay.rust.no-infallible-fallible-triangulation-constructors
     let _builder = DelaunayTriangulationBuilder::new(vertices);
+    // ok: delaunay.rust.no-legacy-delaunay-try-new-constructors
+    let _dt = DelaunayTriangulationBuilder::new(vertices)
+        .construction_options(options)
+        .build();
 }
 
 pub fn convex_hull_fallible_constructor_names_bad<TriangulationType>(

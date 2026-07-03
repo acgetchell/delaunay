@@ -142,7 +142,7 @@ fn main() -> DelaunayResult<()> {
         vertex![0.0, 0.0, 1.0]?,
     ];
 
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     // Default PL-manifold mode: caller-owned full validation checkpoints.
     assert_eq!(dt.validation_policy(), ValidationPolicy::ExplicitOnly);
@@ -198,7 +198,7 @@ fn main() -> DelaunayResult<()> {
         vertex![0.0, 0.0, 1.0]?,
     ];
 
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
 
     // Optional: relax topology checks for speed (weaker guarantees).
@@ -358,7 +358,7 @@ fn main() -> DelaunayResult<()> {
         vertex![0.0, 1.0, 0.0]?,
         vertex![0.0, 0.0, 1.0]?,
     ];
-    let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     // Quick structural check (Level 2)
     assert!(dt.tds().is_valid().is_ok());
@@ -445,7 +445,7 @@ fn main() -> DelaunayResult<()> {
         vertex![0.0, 0.0, 1.0]?,
         vertex![0.25, 0.25, 0.25]?, // Interior point
     ];
-    let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     // Thorough topology validation (includes Levels 1–2 TDS checks)
     match dt.as_triangulation().validate() {
@@ -521,7 +521,7 @@ fn main() -> DelaunayResult<()> {
         vertex![0.0, 1.0, 0.0]?,
         vertex![0.0, 0.0, 1.0]?,
     ];
-    let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     // Faithful embedding validation (Levels 1-4)
     match dt.as_triangulation().validate_embedding() {
@@ -597,7 +597,7 @@ fn main() -> DelaunayResult<()> {
         vertex![0.0, 1.0, 0.0]?,
         vertex![0.0, 0.0, 1.0]?,
     ];
-    let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     // Delaunay property validation (Level 5)
     match dt.is_valid_delaunay() {

@@ -1058,7 +1058,7 @@ where
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// let simplex_keys: Vec<_> = dt.simplices().map(|(ck, _)| ck).collect();
     /// let issues = dt
@@ -1341,7 +1341,7 @@ where
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 2> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// // Empty issues map => nothing to remove.
     /// let mut tri = dt.as_triangulation().clone();
@@ -1611,7 +1611,7 @@ mod tests {
                         v
                     };
 
-                    let mut dt = DelaunayTriangulation::try_new(&vertices)
+                    let mut dt = DelaunayTriangulation::builder(&vertices).build()
                         .expect("Failed to create triangulation");
 
                     // Find and remove the interior vertex
@@ -1905,7 +1905,7 @@ mod tests {
             vertex![1.0, 1.0].unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let tri = dt.as_triangulation();
 
         let simplex_keys: Vec<_> = tri.simplices().map(|(ck, _)| ck).collect();
@@ -2002,7 +2002,7 @@ mod tests {
             vertex![0.5, 0.5].unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let vertex_key = dt
             .vertices()
             .find(|(_, vertex)| {
@@ -2036,7 +2036,7 @@ mod tests {
             vertex![0.0, 0.0, 1.0].unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let mut tri = dt.as_triangulation().clone();
         let missing_vertex = VertexKey::from(KeyData::from_ffi(0xBAD));
         let vertex_count = tri.tds.number_of_vertices();
@@ -2062,7 +2062,7 @@ mod tests {
             vertex![0.0, 0.0, 1.0].unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let mut tri = dt.as_triangulation().clone();
         let isolated_vertex = tri
             .tds
@@ -2268,7 +2268,7 @@ mod tests {
             vertex![0.5, 0.5].unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         let initial_simplices = dt.number_of_simplices();
         let vertex_key = dt
@@ -2296,7 +2296,7 @@ mod tests {
             vertex![0.0, 1.0].unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         let initial_vertices = dt.number_of_vertices();
         let initial_simplices = dt.number_of_simplices();
@@ -2359,7 +2359,7 @@ mod tests {
             vertex![1.0, 1.0].unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let mut tri = dt.as_triangulation().clone();
 
         // Add a duplicate simplex with the same vertices as an existing simplex.

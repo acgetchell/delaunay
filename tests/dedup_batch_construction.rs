@@ -138,7 +138,9 @@ macro_rules! gen_dedup_batch_tests {
 
                 let opts = exact_dedup_options();
                 let dt: DelaunayTriangulation<_, (), (), $dim> =
-                    DelaunayTriangulation::try_new_with_options(&vertices, opts)
+                    DelaunayTriangulation::builder(&vertices)
+                    .construction_options(opts)
+                    .build()
                     .expect(concat!(
                         stringify!($dim), "D construction with duplicates should succeed"
                     ));
@@ -166,7 +168,7 @@ macro_rules! gen_dedup_batch_tests {
                 let vertices = all_identical_vertices::<$dim>($dim + 2);
 
                 let result: Result<DelaunayTriangulation<_, (), (), $dim>, _> =
-                    DelaunayTriangulation::try_new(&vertices);
+                    DelaunayTriangulation::builder(&vertices).build();
 
                 assert!(
                     result
@@ -184,7 +186,9 @@ macro_rules! gen_dedup_batch_tests {
                 let vertices = all_identical_vertices::<$dim>($dim + 2);
 
                 let result: Result<DelaunayTriangulation<_, (), (), $dim>, _> =
-                    DelaunayTriangulation::try_new_with_options(&vertices, exact_dedup_options());
+                    DelaunayTriangulation::builder(&vertices)
+                        .construction_options(exact_dedup_options())
+                        .build();
 
                 assert!(
                     matches!(
@@ -208,7 +212,9 @@ macro_rules! gen_dedup_batch_tests {
                     .with_dedup_policy(DedupPolicy::Exact);
 
                 let dt: DelaunayTriangulation<_, (), (), $dim> =
-                    DelaunayTriangulation::try_new_with_options(&vertices, opts)
+                    DelaunayTriangulation::builder(&vertices)
+                        .construction_options(opts)
+                        .build()
                         .expect(concat!(
                             stringify!($dim),
                             "D: DedupPolicy::Exact + Input should succeed"
@@ -243,7 +249,9 @@ macro_rules! gen_dedup_batch_tests {
                 assert_eq!(vertices.len(), distinct_count * 5);
 
                 let dt: DelaunayTriangulation<_, (), (), $dim> =
-                    DelaunayTriangulation::try_new_with_options(&vertices, exact_dedup_options())
+                    DelaunayTriangulation::builder(&vertices)
+                        .construction_options(exact_dedup_options())
+                        .build()
                         .expect(concat!(
                             stringify!($dim),
                             "D: many-duplicate construction should succeed"
@@ -281,9 +289,10 @@ fn test_hilbert_dedup_quantized_collision_2d() {
     vertices.push(vertex!([0.5 + 1e-10, 0.5]).unwrap()); // quantizes to same simplex
     let total = vertices.len();
 
-    let dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::try_new_with_options(&vertices, exact_dedup_options())
-            .expect("2D construction with quantized-collision should succeed");
+    let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::builder(&vertices)
+        .construction_options(exact_dedup_options())
+        .build()
+        .expect("2D construction with quantized-collision should succeed");
 
     // Hilbert dedup should collapse the near-coincident pair.
     assert_eq!(

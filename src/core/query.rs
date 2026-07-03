@@ -50,7 +50,7 @@ use std::marker::PhantomData;
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// let boundary_count = dt
 ///     .as_triangulation()
@@ -124,7 +124,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let tri = dt.as_triangulation();
     ///
     /// // Iterate over simplices
@@ -163,7 +163,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let tri = dt.as_triangulation();
     ///
     /// // Iterate over vertices
@@ -201,7 +201,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// assert_eq!(dt.as_triangulation().number_of_vertices(), 4);
     /// # Ok(())
     /// # }
@@ -234,7 +234,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// assert_eq!(dt.as_triangulation().number_of_simplices(), 1); // Single tetrahedron
     /// # Ok(())
     /// # }
@@ -272,7 +272,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// assert_eq!(dt.as_triangulation().dim(), 3);
     /// # Ok(())
     /// # }
@@ -319,7 +319,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// // Iterate over all facets
     /// let facet_count = dt
@@ -369,7 +369,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// let boundary_count = dt
     ///     .as_triangulation()
@@ -440,7 +440,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let tri = dt.as_triangulation();
     ///
     /// let edges: std::collections::HashSet<_> = tri.edges().collect();
@@ -476,7 +476,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 2> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let tri = dt.as_triangulation();
     ///
     /// assert_eq!(tri.number_of_edges(), 3);
@@ -584,7 +584,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let adjacency = dt.as_triangulation().adjacency()?;
     ///
     /// assert_eq!(adjacency.number_of_edges(), 6);
@@ -816,7 +816,7 @@ impl<K, U, V> Triangulation<K, U, V, 2> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let tri = dt.as_triangulation();
     /// let Some((_simplex_key, simplex)) = tri.simplices().next() else {
     ///     return Ok(());
@@ -874,7 +874,7 @@ impl<K, U, V> Triangulation<K, U, V, 2> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let tri = dt.as_triangulation();
     /// let Some((_simplex_key, simplex)) = tri.simplices().next() else {
     ///     return Ok(());
@@ -1237,7 +1237,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let tri = dt.as_triangulation();
 
         assert_eq!(tri.number_of_simplices(), 1);
@@ -1347,7 +1347,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let tri = dt.as_triangulation();
 
         assert_eq!(tri.number_of_simplices(), 2);
@@ -1416,7 +1416,7 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let tri = dt.as_triangulation();
         let incidence = tri.incidence().unwrap();
         let edge_index = tri.build_edge_index().unwrap();
@@ -1462,7 +1462,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let tri = dt.as_triangulation();
 
         let vertex_key = tri
@@ -1804,7 +1804,7 @@ mod tests {
             vertex!([1.0, 1.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let tri = dt.as_triangulation();
 
         let edge_count = tri.number_of_edges();

@@ -105,7 +105,7 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// // High-level API returns `QueryError` if the underlying TDS is corrupted.
     /// let high_level_count = dt
@@ -184,7 +184,7 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// // Get one-sided facets using the TDS incidence API.
     /// let Some(first_facet) = dt.tds().one_sided_facets()?.next().transpose()? else {
@@ -249,7 +249,7 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// // Build the facet index once for multiple queries
     /// let facet_to_simplices = dt.tds().build_facet_to_simplices_index()?;
@@ -313,7 +313,7 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// // A single Euclidean tetrahedron has 4 one-sided facets.
     /// assert_eq!(dt.tds().number_of_one_sided_facets()?, 4);
@@ -404,7 +404,7 @@ mod tests {
                 Point::try_new([0.5, 1.0]).expect("finite point coordinates"),
             ];
             let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-            let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
 
             assert_eq!(
                 dt.number_of_simplices(),
@@ -446,7 +446,7 @@ mod tests {
                 Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
             ];
             let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-            let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
 
             assert_eq!(
                 dt.number_of_simplices(),
@@ -489,7 +489,7 @@ mod tests {
                 Point::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
             ];
             let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-            let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
 
             assert_eq!(
                 dt.number_of_simplices(),
@@ -560,7 +560,7 @@ mod tests {
                 Point::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
             ];
             let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-            let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
 
             assert_eq!(
                 dt.number_of_simplices(),
@@ -619,7 +619,7 @@ mod tests {
                 Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
             ];
             let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-            let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
 
             // Test one_sided_facets() normal path.
             let one_sided_count = dt
@@ -652,7 +652,7 @@ mod tests {
                 Point::try_new([0.5, 0.5, 0.5]).expect("finite point coordinates"), // Interior point
             ];
             let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-            let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+            let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
 
             // After robust cleanup and facet-sharing filtering, we may end up with a single simplex
             assert!(
@@ -744,7 +744,7 @@ mod tests {
             Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Build facet index
         let facet_to_simplices = dt
@@ -798,7 +798,7 @@ mod tests {
             Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let facet = dt.boundary_facets().unwrap().next().unwrap().unwrap();
         let facet_key = facet.key();
 
@@ -842,9 +842,9 @@ mod tests {
         ];
         let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let foreign_dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let foreign_facet = foreign_dt
             .boundary_facets()
             .unwrap()
@@ -870,9 +870,9 @@ mod tests {
         ];
         let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let foreign_dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let facet = dt.boundary_facets().unwrap().next().unwrap().unwrap();
         let foreign_index = foreign_dt.tds().build_facet_to_simplices_index().unwrap();
 
@@ -922,7 +922,7 @@ mod tests {
         ];
         let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let (simplex_key, _) = dt.tri.tds.simplices().next().unwrap();
         let first_vertex = dt.tri.tds.simplex(simplex_key).unwrap().vertices()[0];
 
@@ -956,7 +956,7 @@ mod tests {
             Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         let vertices = try_vertices_from_points(&points).expect("finite point coordinates");
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Test both methods return consistent results
         let one_sided_facets_count = dt

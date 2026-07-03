@@ -249,11 +249,9 @@ fn check_k1_roundtrip<const D: usize>(
     edge_lengths: [f64; D],
 ) -> Result<(), TestCaseError> {
     let vertices = axis_aligned_simplex_vertices::<D>(origin, edge_lengths);
-    let simplex =
-        DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), D>::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )
+    let simplex = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
         .map_err(|err| {
             TestCaseError::fail(format!(
                 "{D}D axis-aligned simplex construction failed: {err:?}"

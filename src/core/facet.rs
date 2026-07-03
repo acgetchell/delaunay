@@ -65,7 +65,7 @@
 //! ];
 //!
 //! // Create a 3D triangulation
-//! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+//! let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 //! let Some((simplex_key, _)) = dt.simplices().next() else {
 //!     return Ok(());
 //! };
@@ -343,7 +343,7 @@ pub enum FacetError {
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// let Some((simplex_key, _)) = dt.simplices().next() else {
 ///     return Ok(());
 /// };
@@ -393,7 +393,7 @@ impl FacetHandle {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -462,7 +462,7 @@ impl FacetHandle {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -499,7 +499,7 @@ impl FacetHandle {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -546,7 +546,7 @@ impl FacetHandle {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -704,7 +704,7 @@ impl<'tds, U, V, const D: usize> FacetView<'tds, U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -769,7 +769,7 @@ impl<'tds, U, V, const D: usize> FacetView<'tds, U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
@@ -873,7 +873,7 @@ impl<'tds, U, V, const D: usize> FacetView<'tds, U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// if let Some((simplex_key, _)) = dt.simplices().next() {
     ///     let facet = FacetView::try_new(dt.tds(), simplex_key, 0)?;
@@ -919,7 +919,7 @@ impl<'tds, U, V, const D: usize> FacetView<'tds, U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -966,7 +966,7 @@ impl<'tds, U, V, const D: usize> FacetView<'tds, U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -1016,7 +1016,7 @@ impl<'tds, U, V, const D: usize> FacetView<'tds, U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -1509,7 +1509,7 @@ impl<U, V, const D: usize> Eq for FacetView<'_, U, V, D> {}
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// let Some((simplex_key, _)) = dt.simplices().next() else {
 ///     return Ok(());
 /// };
@@ -1631,7 +1631,7 @@ impl<U, V, const D: usize> FusedIterator for SimplexFacetsIter<'_, U, V, D> {}
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// let count = dt.tds().facets()
 ///     .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
@@ -1714,7 +1714,7 @@ impl<'tds, U, V, const D: usize> AllFacetsIter<'tds, U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// let mut iter = dt.tds().facets();
     /// assert!(iter.next().transpose()?.is_some());
@@ -1771,7 +1771,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -1823,7 +1823,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let facet_count = dt
     ///     .tds()
     ///     .facets()
@@ -1919,7 +1919,7 @@ impl<'tds, U, V, const D: usize> Iterator for AllFacetsIter<'tds, U, V, D> {
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// let count = dt.boundary_facets()?
 ///     .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
 /// assert_eq!(count, 4);
@@ -1969,7 +1969,7 @@ impl<'tds, U, V, const D: usize> BoundaryFacetsIter<'tds, U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let mut iter = dt.boundary_facets()?;
     /// assert!(iter.next().transpose()?.is_some());
     /// # Ok(())
@@ -2041,7 +2041,7 @@ impl<U, V, const D: usize> FusedIterator for BoundaryFacetsIter<'_, U, V, D> {}
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// let one_sided_count = dt
 ///     .tds()
@@ -2231,6 +2231,7 @@ pub fn facet_key_from_vertices(vertices: &[VertexKey]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::builder::DelaunayTriangulationBuilder;
     use crate::construction::{
         ConstructionOptions, InitialSimplexStrategy, InsertionOrderStrategy,
     };
@@ -2296,7 +2297,7 @@ mod tests {
     fn test_facet_error_handling() {
         // Create a 1D triangulation (2 vertices forming an edge)
         let vertices = vec![vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Test invalid facet index (should be 0 or 1 for 1D, facet_index >= 2 is invalid)
@@ -2315,7 +2316,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet view for facet 0 (excludes vertex 0)
@@ -2332,7 +2333,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         let handle = FacetHandle::try_new(dt.tds(), simplex_key, 1).unwrap();
@@ -2362,7 +2363,9 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.5, 1.0]).unwrap(),
         ];
-        let dt_2d = DelaunayTriangulation::try_new(&vertices_2d).unwrap();
+        let dt_2d = DelaunayTriangulation::builder(&vertices_2d)
+            .build()
+            .unwrap();
         let simplex_key_2d = dt_2d.simplices().next().unwrap().0;
         let result_2d = FacetView::try_new(dt_2d.tds(), simplex_key_2d, 0);
 
@@ -2373,7 +2376,9 @@ mod tests {
 
         // Test 1D case: Create an edge (1D simplex with 2 vertices)
         let vertices_1d = vec![vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()];
-        let dt_1d = DelaunayTriangulation::try_new(&vertices_1d).unwrap();
+        let dt_1d = DelaunayTriangulation::builder(&vertices_1d)
+            .build()
+            .unwrap();
         let simplex_key_1d = dt_1d.simplices().next().unwrap().0;
         let result_1d = FacetView::try_new(dt_1d.tds(), simplex_key_1d, 0);
 
@@ -2392,7 +2397,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Test invalid facet index (3D simplex has vertices 0-3, facet index 4 is invalid)
@@ -2408,7 +2413,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet view for facet 0 (excludes vertex 0)
@@ -2429,7 +2434,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet views with same facet index (should be equal)
@@ -2450,7 +2455,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         let facet = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
@@ -2480,7 +2485,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         let facet = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
@@ -2509,13 +2514,11 @@ mod tests {
             .with_insertion_order(InsertionOrderStrategy::Input)
             .with_initial_simplex_strategy(InitialSimplexStrategy::First);
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 3> =
-            DelaunayTriangulation::try_with_topology_guarantee_and_options(
-                &AdaptiveKernel::new(),
-                &vertices,
-                TopologyGuarantee::DEFAULT,
-                options,
-            )
-            .unwrap();
+            DelaunayTriangulationBuilder::new(&vertices)
+                .topology_guarantee(TopologyGuarantee::DEFAULT)
+                .construction_options(options)
+                .build()
+                .unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet view for facet 0 (excludes vertex 0)
@@ -2559,7 +2562,7 @@ mod tests {
                 fn $test_name() {
                     // Test basic facet view creation
                     let vertices = $vertices;
-                    let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+                    let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
                     let simplex_key = dt.simplices().next().unwrap().0;
 
                     // Create facet view for facet 0 (excludes vertex 0)
@@ -2575,7 +2578,7 @@ mod tests {
                     fn [<$test_name _key_consistency>]() {
                         // Test FacetKey computation consistency
                         let vertices = $vertices;
-                        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+                        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
                         let simplex_key = dt.simplices().next().unwrap().0;
 
                         // Create same facet twice
@@ -2595,7 +2598,7 @@ mod tests {
                     fn [<$test_name _equality>]() {
                         // Test facet equality comparison
                         let vertices = $vertices;
-                        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+                        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
                         let simplex_key = dt.simplices().next().unwrap().0;
 
                         let facet1 = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
@@ -2610,7 +2613,7 @@ mod tests {
                     fn [<$test_name _all_facets>]() {
                         // Test iterating through all facets of a simplex
                         let vertices = $vertices;
-                        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+                        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
                         let simplex_key = dt.simplices().next().unwrap().0;
 
                         // D+1 dimensional simplex should have D+1 facets (one opposite each vertex)
@@ -2668,7 +2671,10 @@ mod tests {
         let options = ConstructionOptions::default()
             .with_insertion_order(InsertionOrderStrategy::Input)
             .with_initial_simplex_strategy(InitialSimplexStrategy::First);
-        let dt = DelaunayTriangulation::try_new_with_options(&vertices, options).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices)
+            .construction_options(options)
+            .build()
+            .unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet view for facet 0 (excludes vertex 0)
@@ -3036,7 +3042,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet views for different facets
@@ -3063,7 +3069,7 @@ mod tests {
     fn facet_vertices_empty_simplex() {
         // Test edge case of minimal simplex (1D edge with 2 vertices)
         let vertices = vec![vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet with vertex 0 as opposite - should have only vertex 1 in facet
@@ -3084,7 +3090,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet view for facet 2 (excludes vertex 2)
@@ -3104,7 +3110,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         let facet1 = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
@@ -3131,7 +3137,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create two facet views that reference the same facet
@@ -3204,7 +3210,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Test valid facet creation
@@ -3226,7 +3232,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         let facet_view = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
@@ -3258,7 +3264,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         let facet_view = FacetView::try_new(dt.tds(), simplex_key, 1).unwrap();
@@ -3283,7 +3289,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         let facet_view = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
@@ -3302,7 +3308,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         let facet_views = dt.tds().try_simplex_facets(simplex_key).unwrap();
@@ -3331,7 +3337,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         let facet_view1 = FacetView::try_new(dt.tds(), simplex_key, 0).unwrap();
@@ -3354,7 +3360,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
 
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
         let facet_view = FacetView::try_new(dt.tds(), simplex_key, 1).unwrap();

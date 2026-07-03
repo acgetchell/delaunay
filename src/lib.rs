@@ -111,7 +111,7 @@
 //!     vertex![0.0, 1.0, 0.0]?,
 //!     vertex![0.0, 0.0, 1.0]?,
 //! ];
-//! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+//! let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 //!
 //! // Levels 1–2: elements + structural (TDS)
 //! assert!(dt.tds().validate().is_ok());
@@ -146,7 +146,7 @@
 //!     vertex![0.0, 1.0, 0.0]?,
 //!     vertex![0.0, 0.0, 1.0]?,
 //! ];
-//! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+//! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 //!
 //! assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
 //! assert_eq!(dt.validation_policy(), ValidationPolicy::ExplicitOnly);
@@ -174,7 +174,7 @@
 //!     vertex![1.0, 0.0]?,
 //!     vertex![0.0, 1.0]?,
 //! ];
-//! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+//! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 //!
 //! let before_vertices = dt.number_of_vertices();
 //! let before_simplices = dt.number_of_simplices();
@@ -307,7 +307,7 @@
 //!     vertex![0.0, 1.0, 0.0]?,
 //!     vertex![0.0, 0.0, 1.0]?,
 //! ];
-//! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+//! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 //!
 //! // Caller-owned validation mode: keep mandatory topology checks, but run full
 //! // Level 3 validation only through explicit validation calls.
@@ -357,7 +357,7 @@
 //!     vertex![0.0, 1.0, 0.0]?,
 //!     vertex![0.0, 0.0, 1.0]?,
 //! ];
-//! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+//! let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 //!
 //! // For `TopologyGuarantee::PLManifold`, full certification includes a completion-time
 //! // vertex-link validation pass.
@@ -378,7 +378,7 @@
 //!     vertex![0.0, 1.0, 0.0]?,
 //!     vertex![0.0, 0.0, 1.0]?,
 //! ];
-//! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+//! let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 //!
 //! // `validate()` returns the first violation; `validation_report()` is intended for
 //! // debugging/telemetry where you want the full set of violated invariants.
@@ -836,6 +836,7 @@ pub use crate::delaunay_property_validation::{
     DelaunayValidationError, DelaunayViolationDetail, DelaunayViolationReport,
     delaunay_violation_report, find_delaunay_violations,
 };
+pub use crate::delaunay_query::SimplexDataFillError;
 pub use crate::deletion::DeleteVertexError;
 pub use crate::io::visualization::{
     AdjacencyRecord, MESH_EXPORT_SCHEMA, MESH_EXPORT_SCHEMA_VERSION, MeshAdjacencyRecord,
@@ -944,7 +945,7 @@ pub fn try_vertices_from_points<const D: usize>(
 ///     vertex![0.0, 1.0, 0.0]?,
 ///     vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// let result = validation::validate_triangulation_euler(dt.tds(), dt.global_topology())?;
 /// assert_eq!(result.chi, 1);  // Tetrahedron has χ = 1
@@ -1124,10 +1125,12 @@ pub mod algorithms {
     };
 }
 
-/// Public read-only traversal, adjacency, convex-hull, and set-comparison APIs.
+/// Public traversal, adjacency, convex-hull, set-comparison, and query support APIs.
 ///
 /// This module is intended for callers who need to inspect a triangulation or
 /// compare derived topology without importing construction and repair surfaces.
+/// It also re-exports query-adjacent support types such as
+/// [`SimplexDataFillError`] for follow-on simplex payload assignment.
 ///
 /// # Examples
 ///
@@ -1146,6 +1149,7 @@ pub mod algorithms {
 /// # }
 /// ```
 pub mod query {
+    pub use crate::SimplexDataFillError;
     pub use crate::assert_jaccard_gte;
     pub use crate::core::query::QueryError;
     pub use crate::core::traits::data_type::{
@@ -1181,7 +1185,7 @@ pub mod prelude {
     // Re-export the public low-level facades.
     pub use crate::query::{
         DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType,
-        FacetIncidenceAnalysis, QueryError,
+        FacetIncidenceAnalysis, QueryError, SimplexDataFillError,
     };
     pub use crate::tds::*;
     pub use crate::vertex;
@@ -1308,7 +1312,7 @@ pub mod prelude {
     ///     vertex![0.0, 1.0]?,
     /// ];
     /// let triangulation = DelaunayTriangulationBuilder::new(&vertices)
-    ///     .build::<()>()?;
+    ///     .build()?;
     ///
     /// assert_eq!(triangulation.number_of_vertices(), 3);
     /// # Ok(())
@@ -1446,7 +1450,7 @@ pub mod prelude {
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build::<()>()?;
+    ///     .build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -1484,7 +1488,7 @@ pub mod prelude {
     ///     vertex![0.0, 1.0, 0.0]?,
     ///     vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -1837,7 +1841,7 @@ pub mod prelude {
     ///     vertex![1.0, 0.0]?,
     ///     vertex![0.0, 1.0]?,
     /// ];
-    /// let triangulation = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let export = triangulation.to_mesh_export()?;
     ///
     /// assert_eq!(export.metadata.schema, MESH_EXPORT_SCHEMA);
@@ -1906,7 +1910,8 @@ pub mod prelude {
         pub use crate::query::{
             AllFacetsIter, BoundaryFacetsIter, DataCopy, DataDebug, DataDeserialize, DataIdentity,
             DataSerde, DataSerialize, DataType, FacetIncidenceAnalysis, FacetView,
-            OneSidedFacetsIter, QueryError, Simplex, SimplexFacetsIter, Vertex,
+            OneSidedFacetsIter, QueryError, Simplex, SimplexDataFillError, SimplexFacetsIter,
+            Vertex,
         };
 
         // Read-only predicates (useful in benchmarks / lightweight geometry checks)
@@ -1958,8 +1963,10 @@ pub mod prelude {
             InvalidCoordinateValue,
         };
         pub use crate::geometry::util::{
-            InvalidPositiveScalar, RandomPointGenerationError, RandomTriangulationBuilder,
-            generate_grid_points, generate_poisson_points_in_range, generate_random_points_in_ball,
+            InvalidPositiveScalar, RandomPointCount, RandomPointCountError,
+            RandomPointGenerationError, RandomTriangulationBuilder,
+            RandomTriangulationBuilderError, generate_grid_points,
+            generate_poisson_points_in_range, generate_random_points_in_ball,
             generate_random_points_in_ball_seeded, generate_random_points_in_range,
             generate_random_points_in_range_seeded, generate_random_points_periodic,
             generate_random_triangulation_in_range,
@@ -2185,7 +2192,9 @@ mod tests {
             vertex![0.0, 1.0].unwrap(),
         ];
         let dt: RepairDelaunayTriangulation<_, (), (), 2> =
-            RepairDelaunayTriangulation::try_new(&vertices).unwrap();
+            RepairDelaunayTriangulation::builder(&vertices)
+                .build()
+                .unwrap();
         let kernel = AdaptiveKernel::<f64>::new();
 
         assert!(verify_delaunay_for_triangulation(dt.as_triangulation()).is_ok());
@@ -2228,7 +2237,7 @@ mod tests {
             vertex![0.0, 1.0].unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Get a simplex to test quality functions
         let (simplex_key, _) = dt.simplices().next().unwrap();
@@ -2306,7 +2315,7 @@ mod tests {
             vertex![0.0, 0.0, 1.0].unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         assert_eq!(dt.number_of_vertices(), 4);
         assert_eq!(dt.number_of_simplices(), 1);
 
@@ -2332,7 +2341,7 @@ mod tests {
             vertex![0.0, 1.0].unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Test locate function with kernel
         let kernel = FastKernel::<f64>::new();
@@ -2390,7 +2399,7 @@ mod tests {
             vertex![0.0, 0.0, 1.0].unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // ConvexHull type should be accessible
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();

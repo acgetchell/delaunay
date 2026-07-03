@@ -117,13 +117,13 @@ support through D ≤ 6, but the public exact repair contract is tied to exact
 insphere support and the currently tested triangulation envelope, so
 `ExactPredicates` stops at D ≤ 5.
 
-`DelaunayTriangulationBuilder::new(&vertices).build::<()>()` and
+`DelaunayTriangulationBuilder::new(&vertices).build()` and
 `DelaunayTriangulation::empty()` use `AdaptiveKernel`. To opt into a different
 kernel, use the explicit-kernel constructors:
 
 ```rust
 use delaunay::prelude::geometry::RobustKernel;
-use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::construction::{DelaunayTriangulation, DelaunayTriangulationBuilder, vertex};
 
 let kernel = RobustKernel::<f64>::new();
 
@@ -135,7 +135,8 @@ let vertices = vec![
 ];
 
 let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
-    DelaunayTriangulation::try_with_kernel(&kernel, &vertices)?;
+    DelaunayTriangulationBuilder::new(&vertices)
+        .build_with_kernel(&kernel)?;
 
 assert!(dt.is_valid_delaunay().is_ok());
 ```
@@ -268,8 +269,9 @@ the triangulation interior.
 ### Layer 1: Hilbert-sort preprocessing dedup (batch construction)
 
 When vertices are inserted via batch construction
-(`DelaunayTriangulationBuilder::new(&vertices).build::<()>()`,
-`DelaunayTriangulation::try_with_kernel()`, etc.) using the default
+(`DelaunayTriangulationBuilder::new(&vertices).build()`,
+`DelaunayTriangulationBuilder::new(&vertices).build_with_kernel(&kernel)`,
+etc.) using the default
 `InsertionOrderStrategy::Hilbert`, the
 Hilbert ordering pass quantizes each coordinate to a fixed-width integer grid before
 computing the space-filling curve index. After sorting, vertices that map to the same
@@ -369,7 +371,7 @@ and per-insertion checks handle any remaining cases.
 
 ## Practical recommendations
 
-- Start with the default `AdaptiveKernel` (`DelaunayTriangulationBuilder::new(&vertices).build::<()>()` /
+- Start with the default `AdaptiveKernel` (`DelaunayTriangulationBuilder::new(&vertices).build()` /
   `DelaunayTriangulation::empty()`).
   This handles near-degenerate configurations correctly out of the box.
 - If you need explicit `BOUNDARY`/`DEGENERATE` signals (e.g. to detect and handle cospherical

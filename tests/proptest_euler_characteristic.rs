@@ -73,10 +73,10 @@ macro_rules! test_euler_properties {
                     )
                 ) {
                     // Attempt to build triangulation
-                    if let Ok(dt) = DelaunayTriangulation::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                    {
                         // Validate Euler characteristic
                         let result =
                             validation::validate_triangulation_euler(dt.tds(), dt.global_topology())?;
@@ -106,10 +106,10 @@ macro_rules! test_euler_properties {
                         $min_vertices..$max_vertices
                     )
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                    {
                         let counts = euler::count_simplices(dt.tds())?;
 
                         // Basic sanity checks
@@ -146,10 +146,10 @@ macro_rules! test_euler_properties {
                         $min_vertices..$max_vertices
                     )
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                    {
                         let result =
                             validation::validate_triangulation_euler(dt.tds(), dt.global_topology())?;
 

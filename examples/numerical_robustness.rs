@@ -8,7 +8,8 @@
 //! default adaptive construction path on a small point set.
 
 use delaunay::prelude::construction::{
-    DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
+    DelaunayTriangulation, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+    vertex,
 };
 use delaunay::prelude::geometry::{
     AdaptiveKernel, CircumcenterError, CoordinateConversionError, CoordinateValidationError,
@@ -107,7 +108,7 @@ fn build_with_adaptive_kernel() -> Result<(), NumericalRobustnessExampleError> {
     ];
 
     let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> =
-        DelaunayTriangulation::try_new(&vertices)?;
+        DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     dt.validate()?;
     println!(

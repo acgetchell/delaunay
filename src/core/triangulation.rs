@@ -161,7 +161,7 @@ where
     ///     delaunay::vertex![1.0, 0.0; data = 20]?,
     ///     delaunay::vertex![0.0, 1.0; data = 30]?,
     /// ];
-    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let key = dt.vertices().next().ok_or(ExampleError::MissingVertex)?.0;
     /// let prev = dt.set_vertex_data(key, Some(99))?;
     /// assert!(prev.is_some());
@@ -221,7 +221,7 @@ where
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<i32>()?;
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).simplex_data_type::<i32>().build()?;
     /// let key = dt.simplices().next().ok_or(ExampleError::MissingSimplex)?.0;
     /// let prev = dt.set_simplex_data(key, Some(42))?;
     /// assert_eq!(prev, None);

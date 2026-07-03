@@ -568,17 +568,19 @@ rules:
     languages:
       - generic
     severity: WARNING
-    message: "Use try_new*/try_with_* for fallible triangulation construction and ConvexHull::try_from_triangulation for fallible hull snapshots."
+    message: "Use the fluent Delaunay builder for fallible triangulation construction and ConvexHull::try_from_triangulation for fallible hull snapshots."
     metadata:
       category: correctness
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/459"
       rationale: >-
         Batch Delaunay construction and hull snapshot construction parse raw
         invariant-bearing topology and geometry. Public names must expose that
-        fallibility with `try_new*`, `try_with_*`, or `try_from_*`. Empty
+        fallibility with the fluent builder terminal or `try_from_*`. Empty
         triangulation constructors remain infallible because they accept no
-        caller geometry or topology, and builder `new` remains infallible
-        because validation is explicitly deferred to `build`.
+        caller geometry or topology, builder `new` remains infallible because
+        validation is explicitly deferred to `build`, and builder implementation
+        hooks stay crate-private with backend names instead of public constructor
+        spelling.
     paths:
       include:
         - "/src/**/*.rs"
@@ -593,6 +595,81 @@ rules:
       - pattern-regex: >-
           \bDelaunayTriangulation\b\s*(?:::\s*<[^;\n]+>\s*)?::\s*(?:new|new_with_(?:construction_statistics|options(?:_and_construction_statistics)?|topology_guarantee)|with_(?:kernel|topology_guarantee(?:_and_options)?|options_and_statistics))\s*\(
       - pattern-regex: '\bConvexHull\b\s*(?:::\s*<[^;\n]+>\s*)?::\s*from_triangulation\s*\('
+
+  - id: delaunay.rust.no-legacy-delaunay-try-new-constructors
+    languages:
+      - generic
+    severity: WARNING
+    message: >-
+      Use DelaunayTriangulationBuilder::new(...).build() or
+      DelaunayTriangulation::builder(...).build(), not legacy
+      DelaunayTriangulation::try_new* or try_with_* wrappers.
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/459"
+      rationale: >-
+        The fluent builder is the canonical Delaunay construction API. Keeping
+        `DelaunayTriangulation::try_new*` or `try_with_*` call sites or compatibility shims
+        recreates a parallel constructor family and hides the option/statistics/
+        topology/kernel stages that should remain visible in domain order.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/examples/**/*.rs"
+        - "/docs/**/*.md"
+        - "/README.md"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+      exclude:
+        - "/docs/archive/**"
+    pattern-regex: >-
+      \b(?:[A-Za-z_][A-Za-z0-9_]*DelaunayTriangulation|DelaunayTriangulation)\b\s*(?:::\s*<[^;\n]+>\s*)?::\s*try_(?:new(?:_with_(?:construction_statistics|options(?:_and_construction_statistics)?|topology_guarantee))?|with_(?:kernel|topology_guarantee(?:_and_options)?|options_and_statistics))\s*\(
+
+  - id: delaunay.rust.no-legacy-delaunay-try-new-constructor-definitions
+    languages:
+      - rust
+    severity: WARNING
+    message: >-
+      Do not define legacy DelaunayTriangulation::try_new* or try_with_* wrappers;
+      keep Delaunay construction on the fluent builder terminals.
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/459"
+      rationale: >-
+        Hidden compatibility shims recreate the same parallel constructor family
+        as public call sites. Builder backends should be crate-private and named
+        by their implementation role, not by legacy public constructor spelling.
+    paths:
+      include:
+        - "/src/delaunay/**/*.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+      exclude:
+        - "/docs/archive/**"
+    patterns:
+      - pattern-inside: |
+          impl<$K, $U, $V, const $D: usize> DelaunayTriangulation<$K, $U, $V, $D> {
+              ...
+          }
+      - pattern-either:
+          - pattern: pub fn try_new(...) -> $RET { ... }
+          - pattern: pub fn try_new_with_construction_statistics(...) -> $RET { ... }
+          - pattern: pub fn try_new_with_options(...) -> $RET { ... }
+          - pattern: pub fn try_new_with_options_and_construction_statistics(...) -> $RET { ... }
+          - pattern: pub fn try_new_with_topology_guarantee(...) -> $RET { ... }
+          - pattern: pub fn try_with_kernel(...) -> $RET { ... }
+          - pattern: pub fn try_with_topology_guarantee(...) -> $RET { ... }
+          - pattern: pub fn try_with_topology_guarantee_and_options(...) -> $RET { ... }
+          - pattern: pub fn try_with_options_and_statistics(...) -> $RET { ... }
+          - pattern: pub(crate) fn try_new(...) -> $RET { ... }
+          - pattern: pub(crate) fn try_new_with_construction_statistics(...) -> $RET { ... }
+          - pattern: pub(crate) fn try_new_with_options(...) -> $RET { ... }
+          - pattern: pub(crate) fn try_new_with_options_and_construction_statistics(...) -> $RET { ... }
+          - pattern: pub(crate) fn try_new_with_topology_guarantee(...) -> $RET { ... }
+          - pattern: pub(crate) fn try_with_kernel(...) -> $RET { ... }
+          - pattern: pub(crate) fn try_with_topology_guarantee(...) -> $RET { ... }
+          - pattern: pub(crate) fn try_with_topology_guarantee_and_options(...) -> $RET { ... }
+          - pattern: pub(crate) fn try_with_options_and_statistics(...) -> $RET { ... }
 
   - id: delaunay.rust.no-infallible-fallible-constructor-definitions
     languages:

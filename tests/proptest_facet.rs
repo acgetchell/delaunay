@@ -8,9 +8,9 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
+use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
 use delaunay::prelude::query::*;
 use delaunay::prelude::tds::facet_key_from_vertices;
-use delaunay::prelude::topology::validation::*;
 use delaunay::try_vertices_from_points;
 use proptest::prelude::*;
 use std::collections::HashMap;
@@ -42,10 +42,7 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
                         let tds = dt.tds();
                         for simplex_key in tds.simplex_keys() {
                             // Each simplex has D+1 facets (one opposite each vertex)
@@ -74,10 +71,7 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
                         let tds = dt.tds();
                         for simplex_key in tds.simplex_keys() {
                             prop_assert!(
@@ -111,10 +105,7 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
                         let tds = dt.tds();
                         // Check that each facet is valid
                         for simplex_key in tds.simplex_keys() {
@@ -140,10 +131,7 @@ macro_rules! test_facet_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
                         let tds = dt.tds();
                         for simplex_key in tds.simplex_keys() {
                             let mut facet_count = 0;
@@ -187,10 +175,7 @@ macro_rules! test_facet_multiplicity {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
                         let tds = dt.tds();
                         // Ensure we're checking a valid triangulation to avoid degenerate edge cases
                         prop_assume!(tds.is_valid().is_ok());

@@ -41,16 +41,19 @@ use delaunay::prelude::algorithms::LocateResult;
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::collections::SimplexKeyBuffer;
 use delaunay::prelude::collections::{
-    SecureHashMap as ScopedSecureHashMap, SecureHashSet as ScopedSecureHashSet, Uuid,
+    SecureHashMap as ScopedSecureHashMap, SecureHashSet as ScopedSecureHashSet,
+    SimplexSecondaryMap as ScopedSimplexSecondaryMap, Uuid,
 };
 use delaunay::prelude::construction::{
     CavityFillingError, CavityRepairStage, ConstructionOptions, ConstructionSkipSample,
-    ConstructionSlowInsertionSample, CoordinateRangeError as ConstructionCoordinateRangeError,
+    ConstructionSlowInsertionSample, ConstructionStatistics,
+    CoordinateRangeError as ConstructionCoordinateRangeError,
     CoordinateRangeOrdering as ConstructionCoordinateRangeOrdering,
     CoordinateValidationError as ConstructionCoordinateValidationError, DedupPolicy,
     DedupTolerance, DeduplicationError, DelaunayConstructionFailure,
     DelaunayConstructionRetryFailure, DelaunayError, DelaunayRepairPolicy, DelaunayResult,
     DelaunayTriangulation, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+    DelaunayTriangulationConstructionErrorWithStatistics,
     DelaunayTriangulationValidationError as ConstructionDelaunayTriangulationValidationError,
     DelaunayVerificationError as ConstructionDelaunayVerificationError, DeleteVertexError,
     ExplicitConstructionError, FinalDelaunayValidationContext, FinalTopologyValidationContext,
@@ -89,10 +92,10 @@ use delaunay::prelude::export::{
     VisualizationTopologyKind as ExportPreludeVisualizationTopologyKind,
 };
 use delaunay::prelude::generators::{
-    CoordinateRange, CoordinateRangeError, InvalidPositiveScalar,
-    RandomPointGenerationError as GeneratorRandomPointGenerationError, RandomTriangulationBuilder,
-    generate_grid_points, generate_random_points_in_range_seeded,
-    try_generate_random_points_seeded,
+    CoordinateRange, CoordinateRangeError, InvalidPositiveScalar, RandomPointCount,
+    RandomPointCountError, RandomPointGenerationError as GeneratorRandomPointGenerationError,
+    RandomTriangulationBuilder, RandomTriangulationBuilderError, generate_grid_points,
+    generate_random_points_in_range_seeded, try_generate_random_points_seeded,
 };
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::geometry::AdaptiveKernel;
@@ -137,8 +140,9 @@ use delaunay::prelude::query::{
     FacetIncidenceAnalysis as QueryFacetIncidenceAnalysis,
     FacetIncidenceView as QueryFacetIncidenceView, IncidenceView as QueryIncidenceView,
     OneSidedFacetsIter as QueryOneSidedFacetsIter, QueryError,
-    SimplexFacetsIter as QuerySimplexFacetsIter, SimplexNeighborIndex as QuerySimplexNeighborIndex,
-    TopologyIndexBuildError, TriangulationAdjacency as QueryTriangulationAdjacency,
+    SimplexDataFillError as QuerySimplexDataFillError, SimplexFacetsIter as QuerySimplexFacetsIter,
+    SimplexNeighborIndex as QuerySimplexNeighborIndex, TopologyIndexBuildError,
+    TriangulationAdjacency as QueryTriangulationAdjacency,
 };
 use delaunay::prelude::repair::{
     DelaunayCheckPolicy, DelaunayRepairDiagnostics, DelaunayRepairError,
@@ -195,9 +199,11 @@ use delaunay::prelude::validation::{
     find_delaunay_violations as focused_find_delaunay_violations,
 };
 use delaunay::prelude::{
+    ConstructionStatistics as RootPreludeConstructionStatistics,
     CoordinateRange as RootCoordinateRange, DelaunayError as RootDelaunayError,
     DelaunayResult as RootDelaunayResult, DelaunayTriangulation as RootDelaunayTriangulation,
     DelaunayTriangulationBuilder as RootDelaunayTriangulationBuilder,
+    DelaunayTriangulationConstructionErrorWithStatistics as RootPreludeConstructionErrorWithStatistics,
     DelaunayViolationDetail as RootDelaunayViolationDetail,
     DelaunayViolationReport as RootDelaunayViolationReport, EdgeIndex as RootEdgeIndex,
     FacetIncidenceView as RootFacetIncidenceView, FlipFailureKind as RootFlipFailureKind,
@@ -207,6 +213,7 @@ use delaunay::prelude::{
     InitialSimplexUnexpectedInsertionStage as RootInitialSimplexUnexpectedInsertionStage,
     PeriodicDomainPeriodError as RootPeriodicDomainPeriodError,
     PlManifoldRepairStage as RootPreludePlManifoldRepairStage, SecureHashMap, SecureHashSet,
+    SimplexDataFillError as RootPreludeSimplexDataFillError,
     SimplexNeighborIndex as RootSimplexNeighborIndex, TopologyError as RootTopologyError,
     TopologyGuarantee as RootTopologyGuarantee, TopologyKind as RootTopologyKind,
     ToroidalConstructionMode as RootToroidalConstructionMode, ToroidalDomain as RootToroidalDomain,
@@ -221,6 +228,7 @@ use delaunay::query::{
     AllFacetsIter as QueryFacadeAllFacetsIter, BoundaryFacetsIter as QueryFacadeBoundaryFacetsIter,
     EdgeIndex as QueryFacadeEdgeIndex, FacetHandle as QueryFacadeFacetHandle,
     IncidenceView as QueryFacadeIncidenceView, OneSidedFacetsIter as QueryFacadeOneSidedFacetsIter,
+    SimplexDataFillError as QueryFacadeSimplexDataFillError,
     SimplexFacetsIter as QueryFacadeSimplexFacetsIter,
     SimplexNeighborIndex as QueryFacadeSimplexNeighborIndex,
     TriangulationAdjacency as QueryFacadeTriangulationAdjacency,
@@ -246,6 +254,7 @@ use delaunay::{
     MeshExportError as RootMeshExportError,
     MeshExportValidationError as RootMeshExportValidationError,
     PlManifoldRepairStage as RootPlManifoldRepairStage,
+    SimplexDataFillError as RootSimplexDataFillError,
     ValidatedMeshExport as RootValidatedMeshExport,
     ValidatedVisualizationData as RootValidatedVisualizationData,
     VisualizationTopologyGuarantee as RootVisualizationTopologyGuarantee,
@@ -282,7 +291,13 @@ enum PreludeExportTestError {
     #[error(transparent)]
     RandomPointGeneration(#[from] RandomPointGenerationError),
     #[error(transparent)]
+    RandomPointCount(#[from] RandomPointCountError),
+    #[error(transparent)]
+    RandomTriangulationBuilder(#[from] RandomTriangulationBuilderError),
+    #[error(transparent)]
     Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    ConstructionWithStatistics(#[from] Box<DelaunayTriangulationConstructionErrorWithStatistics>),
     #[error(transparent)]
     DelaunayValidation(#[from] DelaunayValidationError),
     #[error(transparent)]
@@ -317,6 +332,12 @@ enum PreludeExportTestError {
     ToroidalDomain(#[from] ToroidalDomainError),
     #[error(transparent)]
     GenericTriangulationConstruction(#[from] GenericTriangulationConstructionError),
+}
+
+impl From<DelaunayTriangulationConstructionErrorWithStatistics> for PreludeExportTestError {
+    fn from(source: DelaunayTriangulationConstructionErrorWithStatistics) -> Self {
+        Self::ConstructionWithStatistics(Box::new(source))
+    }
 }
 
 /// Proves the direct flips module keeps the expert trait bound available.
@@ -484,7 +505,7 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
 
     let no_vertices: [Vertex<(), 2>; 0] = [];
     let construction = DelaunayTriangulationBuilder::new(&no_vertices)
-        .build::<()>()
+        .build()
         .expect_err("empty Delaunay construction should fail");
     assert_matches!(
         DelaunayError::from(construction),
@@ -527,6 +548,78 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
         DelaunayError::from(tds_mutation.clone()),
         DelaunayError::TdsMutation { source: err } if err.as_ref() == &tds_mutation
     );
+}
+
+#[test]
+fn construction_prelude_exports_builder_statistics_terminal() -> Result<(), PreludeExportTestError>
+{
+    let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
+
+    let (dt, focused_stats): (DelaunayTriangulation<_, (), (), 2>, ConstructionStatistics) =
+        DelaunayTriangulationBuilder::new(&vertices).build_with_statistics()?;
+    let root_prelude_stats: RootPreludeConstructionStatistics = focused_stats;
+    assert_eq!(dt.number_of_vertices(), root_prelude_stats.inserted);
+    assert!(root_prelude_stats.telemetry.has_data());
+
+    let no_vertices: [Vertex<(), 2>; 0] = [];
+    let focused_error: DelaunayTriangulationConstructionErrorWithStatistics =
+        match DelaunayTriangulationBuilder::new(&no_vertices).build_with_statistics() {
+            Ok(_) => panic!("empty construction should fail"),
+            Err(error) => error,
+        };
+    let root_prelude_error: RootPreludeConstructionErrorWithStatistics = focused_error;
+    assert_matches!(
+        root_prelude_error.error,
+        DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::InsufficientVertices { dimension: 2, .. }
+        )
+    );
+
+    Ok(())
+}
+
+#[test]
+fn query_preludes_export_simplex_data_fill_error() -> Result<(), PreludeExportTestError> {
+    let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+        .simplex_data_type::<usize>()
+        .build()?;
+    let data: ScopedSimplexSecondaryMap<usize> = ScopedSimplexSecondaryMap::new();
+
+    let err = dt
+        .try_fill_simplex_data_from(&data)
+        .expect_err("empty secondary map should miss the live simplex");
+    let query_error: QuerySimplexDataFillError = err.clone();
+    let query_facade_error: QueryFacadeSimplexDataFillError = err.clone();
+    let root_prelude_error: RootPreludeSimplexDataFillError = err.clone();
+    let root_error: RootSimplexDataFillError = err.clone();
+
+    assert_matches!(
+        query_error,
+        QuerySimplexDataFillError::MissingSimplexData { .. }
+    );
+    assert_matches!(
+        query_facade_error,
+        QueryFacadeSimplexDataFillError::MissingSimplexData { .. }
+    );
+    assert_matches!(
+        root_prelude_error,
+        RootPreludeSimplexDataFillError::MissingSimplexData { .. }
+    );
+    assert_matches!(
+        root_error,
+        RootSimplexDataFillError::MissingSimplexData { .. }
+    );
+    assert_matches!(
+        DelaunayError::from(err),
+        DelaunayError::SimplexDataFill { source }
+            if matches!(
+                source.as_ref(),
+                RootSimplexDataFillError::MissingSimplexData { .. }
+            )
+    );
+
+    Ok(())
 }
 
 #[test]
@@ -782,7 +875,7 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
         .with_insertion_order(ConstructionModuleInsertionOrderStrategy::Input);
     let builder: BuilderModuleBuilder<'_, (), 3> =
         RootDelaunayTriangulationBuilder::new(&vertices).construction_options(options);
-    let mut dt: RootDelaunayTriangulation<_, (), (), 3> = builder.build::<()>()?;
+    let mut dt: RootDelaunayTriangulation<_, (), (), 3> = builder.build()?;
 
     assert_eq!(dt.topology_guarantee(), RootTopologyGuarantee::PLManifold);
     assert_eq!(dt.validation_policy(), RootValidationPolicy::ExplicitOnly);
@@ -1028,7 +1121,9 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
         options.batch_repair_policy(),
         DelaunayRepairPolicy::EveryInsertion
     );
-    let dt = DelaunayTriangulation::try_new_with_options(&vertices, options)?;
+    let dt = DelaunayTriangulation::builder(&vertices)
+        .construction_options(options)
+        .build()?;
 
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
     assert_export_prelude_exports(&dt)?;
@@ -1073,6 +1168,7 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     assert_send_sync_unpin::<ConstructionSkipSample>();
     assert_send_sync_unpin::<ConstructionSlowInsertionSample>();
     assert_send_sync_unpin::<DelaunayError>();
+    assert_send_sync_unpin::<RootSimplexDataFillError>();
     assert_send_sync_unpin::<CoordinateConversionError>();
     assert_send_sync_unpin::<DegenerateSimplexReason>();
     assert_send_sync_unpin::<LaError>();
@@ -1120,7 +1216,7 @@ fn query_preludes_cover_borrowed_adjacency_view() -> Result<(), PreludeExportTes
         vertex![0.0, 1.0, 0.0]?,
         vertex![0.0, 0.0, 1.0]?,
     ];
-    let dt = DelaunayTriangulation::try_new(&vertices)?;
+    let dt = DelaunayTriangulation::builder(&vertices).build()?;
 
     let query_adjacency: QueryTriangulationAdjacency<'_> = dt.adjacency()?;
     let generic_adjacency: GenericTriangulationAdjacency<'_> = dt.as_triangulation().adjacency()?;
@@ -1383,10 +1479,20 @@ fn generator_prelude_covers_validated_coordinate_ranges() -> Result<(), PreludeE
     let range_points: Vec<Point<2>> =
         generate_random_points_in_range_seeded(3, generated_range, 42)?;
     let grid_points: Vec<Point<2>> = generate_grid_points(NonZeroUsize::MIN, 1.0, [0.0, 0.0])?;
-    let builder = RandomTriangulationBuilder::try_new(NonZeroUsize::MIN, (-1.0_f64, 1.0))?
+    let Some(three) = NonZeroUsize::new(3) else {
+        return Ok(());
+    };
+    let point_count = RandomPointCount::<2>::try_new(three)?;
+    assert_eq!(point_count.get(), 3);
+    let builder = RandomTriangulationBuilder::<2>::try_new(three, (-1.0_f64, 1.0))?
         .seed(7)
         .insertion_order(InsertionOrderStrategy::Input);
     let _ = builder;
+    let invalid_builder =
+        RandomTriangulationBuilder::<2>::try_new(NonZeroUsize::MIN, (-1.0_f64, 1.0));
+    let Err(RandomTriangulationBuilderError::PointCount { .. }) = invalid_builder else {
+        panic!("expected RandomTriangulationBuilderError::PointCount");
+    };
 
     let root_range = RootCoordinateRange::try_new(-1.0_f64, 1.0)?;
     assert_relative_eq!(root_range.bounds().0, -1.0, epsilon = f64::EPSILON);
@@ -1654,7 +1760,7 @@ fn degenerate_prelude_vertices<const D: usize>()
 fn assert_single_simplex_ridge_star<const D: usize>(
     vertices: &[Vertex<(), D>],
 ) -> Result<(), PreludeExportTestError> {
-    let dt = DelaunayTriangulation::try_new(vertices)?;
+    let dt = DelaunayTriangulation::builder(vertices).build()?;
     let ridge = RidgeCandidate::<D>::try_from_vertices(dt.tds().vertex_keys().take(D - 1))?;
     let star = ridge_star_simplices(dt.tds(), &ridge)?;
     let ridge_query: RidgeQuery<'_, (), (), D> = ridge.query(dt.tds())?;
@@ -1686,7 +1792,7 @@ fn assert_single_simplex_ridge_star<const D: usize>(
 
 fn assert_cospherical_ridge_star<const D: usize>() -> Result<(), PreludeExportTestError> {
     let vertices = cospherical_prelude_vertices::<D>()?;
-    let dt = DelaunayTriangulation::try_new(&vertices)?;
+    let dt = DelaunayTriangulation::builder(&vertices).build()?;
     let ridge = RidgeCandidate::<D>::try_from_vertices(dt.tds().vertex_keys().take(D - 1))?;
     let star = ridge_star_simplices(dt.tds(), &ridge)?;
 
@@ -1719,13 +1825,13 @@ fn assert_topology_prelude_dimension<const D: usize>() -> Result<(), PreludeExpo
     let near_boundary_vertices = simplex_prelude_vertices::<D>(f64::EPSILON, 1.0)?;
     assert_single_simplex_ridge_star(&near_boundary_vertices)?;
 
-    let dt = DelaunayTriangulation::try_new(&simplex_vertices)?;
+    let dt = DelaunayTriangulation::builder(&simplex_vertices).build()?;
     let keys = dt.tds().vertex_keys().collect::<Vec<_>>();
     assert_ridge_candidate_reject_adversarial_keys::<D>(&keys);
 
     assert_cospherical_ridge_star::<D>()?;
     assert_matches!(
-        DelaunayTriangulation::try_new(&degenerate_prelude_vertices::<D>()?),
+        DelaunayTriangulation::builder(&degenerate_prelude_vertices::<D>()?).build(),
         Err(DelaunayTriangulationConstructionError::Triangulation(
             DelaunayConstructionFailure::GeometricDegeneracy { .. }
         ))
@@ -1940,7 +2046,7 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
         vertex![0.0, 1.0, 0.0]?,
         vertex![0.0, 0.0, 1.0]?,
     ];
-    let mut dt = DelaunayizeDelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let mut dt = DelaunayizeDelaunayTriangulationBuilder::new(&vertices).build()?;
 
     let repair_stats = DelaunayRepairStats::default();
     let repair_outcome = DelaunayRepairOutcome {

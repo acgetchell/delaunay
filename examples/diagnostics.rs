@@ -12,7 +12,8 @@
 use delaunay::prelude::DelaunayValidationError;
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::construction::{
-    DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
+    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder,
+    DelaunayTriangulationConstructionError, vertex,
 };
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::diagnostics::{
@@ -21,9 +22,7 @@ use delaunay::prelude::diagnostics::{
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateConversionError};
 #[cfg(feature = "diagnostics")]
-use delaunay::prelude::pachner::{FacetError, FacetHandle, PachnerMove, PachnerMoves};
-#[cfg(feature = "diagnostics")]
-use delaunay::prelude::validation::DelaunayTriangulationValidationError;
+use delaunay::prelude::tds::InvariantError;
 #[cfg(feature = "diagnostics")]
 #[derive(Debug, thiserror::Error)]
 enum DiagnosticsExampleError {
@@ -34,9 +33,7 @@ enum DiagnosticsExampleError {
     #[error(transparent)]
     CoordinateConversion(#[from] CoordinateConversionError),
     #[error(transparent)]
-    Facet(#[from] FacetError),
-    #[error("expected at least one public k=2 flip to produce a Delaunay violation")]
-    NoDelaunayViolatingFlip,
+    Invariant(#[from] InvariantError),
 }
 
 #[cfg(feature = "diagnostics")]
@@ -77,7 +74,8 @@ fn report_valid_triangulation() -> Result<(), DiagnosticsExampleError> {
         vertex![0.0, 1.0, 0.0]?,
         vertex![0.0, 0.0, 1.0]?,
     ];
-    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::try_new(&vertices)?;
+    let dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     let report = delaunay_violation_report(dt.tds(), None)?;
 
@@ -90,13 +88,13 @@ fn report_valid_triangulation() -> Result<(), DiagnosticsExampleError> {
     Ok(())
 }
 
-/// Applies a public topology edit that breaks Delaunayness, then reports the violation.
+/// Imports valid explicit connectivity that is not Delaunay, then reports the violation.
 #[cfg(feature = "diagnostics")]
 fn report_non_delaunay_triangulation() -> Result<(), DiagnosticsExampleError> {
     let dt = build_non_delaunay_triangulation_2d()?;
     let report = delaunay_violation_report(dt.tds(), None)?;
 
-    println!("Non-Delaunay 2D triangulation after an explicit k=2 flip:");
+    println!("Explicit non-Delaunay 2D triangulation:");
     println!("  vertices: {}", report.number_of_vertices);
     println!("  simplices: {}", report.number_of_simplices);
     println!(
@@ -115,48 +113,23 @@ fn report_non_delaunay_triangulation() -> Result<(), DiagnosticsExampleError> {
     Ok(())
 }
 
-/// Builds a valid 2D triangulation and returns a clone after a k=2 flip creates a violation.
+/// Builds a valid Levels 1-4 triangulation whose prescribed diagonal violates Delaunayness.
 #[cfg(feature = "diagnostics")]
 fn build_non_delaunay_triangulation_2d()
 -> Result<DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2>, DiagnosticsExampleError> {
     let vertices = vec![
         vertex![0.0, 0.0]?,
         vertex![4.0, 0.0]?,
-        vertex![4.0, 4.0]?,
-        vertex![0.0, 4.0]?,
-        vertex![2.0, 2.0]?,
-        vertex![1.0, 1.0]?,
-        vertex![3.0, 1.0]?,
+        vertex![4.0, 2.0]?,
+        vertex![1.0, 2.0]?,
     ];
-    let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::try_new(&vertices)?;
+    let simplices = vec![vec![0, 1, 2], vec![0, 2, 3]];
+    let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+        .map_err(DelaunayTriangulationConstructionError::from)?
+        .construction_options(ConstructionOptions::default().without_final_delaunay_enforcement())
+        .build()?;
 
-    for (simplex_key, simplex) in dt.simplices() {
-        if let Some(neighbors) = simplex.neighbors() {
-            for (facet_index, neighbor) in neighbors.enumerate() {
-                if neighbor.is_none() {
-                    continue;
-                }
-
-                let Ok(facet_index) = u8::try_from(facet_index) else {
-                    continue;
-                };
-                let facet = FacetHandle::try_new(dt.tds(), simplex_key, facet_index)?;
-                let mut trial = dt.clone();
-                let Ok(proposal) = trial.propose_pachner(PachnerMove::K2 { facet }) else {
-                    continue;
-                };
-                if proposal.attempt_on(&mut trial).is_ok()
-                    && trial.as_triangulation().validate().is_ok()
-                    && matches!(
-                        trial.is_valid_delaunay(),
-                        Err(DelaunayTriangulationValidationError::VerificationFailed { .. })
-                    )
-                {
-                    return Ok(trial);
-                }
-            }
-        }
-    }
-
-    Err(DiagnosticsExampleError::NoDelaunayViolatingFlip)
+    dt.as_triangulation().validate()?;
+    assert!(dt.is_valid_delaunay().is_err());
+    Ok(dt)
 }

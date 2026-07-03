@@ -36,7 +36,9 @@
 
 use ::uuid::Uuid;
 use delaunay::geometry::quality::QualityError;
-use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
+use delaunay::prelude::construction::{
+    DelaunayTriangulation, DelaunayTriangulationBuilder, TopologyGuarantee,
+};
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::tds::SimplexKey;
 use delaunay::try_vertices_from_points;
@@ -358,11 +360,10 @@ macro_rules! test_quality_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
-                        &AdaptiveKernel::default(),
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulationBuilder::new(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                    {
                         let tds = dt.tds();
                         let tri = dt.as_triangulation();
                         for simplex_key in tds.simplex_keys() {
@@ -389,11 +390,10 @@ macro_rules! test_quality_properties {
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates")),
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
-                        &AdaptiveKernel::default(),
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulationBuilder::new(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                    {
                         // Translate all vertices
                         let translated_vertices: Vec<_> = vertices
                             .iter()
@@ -410,11 +410,10 @@ macro_rules! test_quality_properties {
                         let translated_vertices = try_vertices_from_points(&translated_vertices)
                             .expect("finite point coordinates");
 
-                        if let Ok(dt_translated) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
-                            &AdaptiveKernel::default(),
-                            &translated_vertices,
-                            TopologyGuarantee::PLManifold,
-                        ) {
+                        if let Ok(dt_translated) = DelaunayTriangulationBuilder::new(&translated_vertices)
+                            .topology_guarantee(TopologyGuarantee::PLManifold)
+                            .build()
+                        {
                             // Build mapping from original UUIDs to translated UUIDs
                             let uuid_map: HashMap<_, _> = vertices.iter()
                                 .zip(translated_vertices.iter())
@@ -464,11 +463,10 @@ macro_rules! test_quality_properties {
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates")),
                     translation in prop::array::[<uniform $dim>](finite_coordinate())
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
-                        &AdaptiveKernel::default(),
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulationBuilder::new(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                    {
                         // Translate all vertices
                         let translated_vertices: Vec<_> = vertices
                             .iter()
@@ -485,11 +483,10 @@ macro_rules! test_quality_properties {
                         let translated_vertices = try_vertices_from_points(&translated_vertices)
                             .expect("finite point coordinates");
 
-                        if let Ok(dt_translated) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
-                            &AdaptiveKernel::default(),
-                            &translated_vertices,
-                            TopologyGuarantee::PLManifold,
-                        ) {
+                        if let Ok(dt_translated) = DelaunayTriangulationBuilder::new(&translated_vertices)
+                            .topology_guarantee(TopologyGuarantee::PLManifold)
+                            .build()
+                        {
                             // Build UUID mapping
                             let uuid_map: HashMap<_, _> = vertices.iter()
                                 .zip(translated_vertices.iter())
@@ -539,11 +536,10 @@ macro_rules! test_quality_properties {
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates")),
                     scale in 0.1f64..10.0f64
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
-                        &AdaptiveKernel::default(),
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulationBuilder::new(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                    {
                         // Scale all vertices uniformly
                         let scaled_vertices: Vec<_> = vertices
                             .iter()
@@ -560,11 +556,10 @@ macro_rules! test_quality_properties {
                         let scaled_vertices = try_vertices_from_points(&scaled_vertices)
                             .expect("finite point coordinates");
 
-                        if let Ok(dt_scaled) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
-                            &AdaptiveKernel::default(),
-                            &scaled_vertices,
-                            TopologyGuarantee::PLManifold,
-                        ) {
+                        if let Ok(dt_scaled) = DelaunayTriangulationBuilder::new(&scaled_vertices)
+                            .topology_guarantee(TopologyGuarantee::PLManifold)
+                            .build()
+                        {
                             // Build UUID mapping
                             let uuid_map: HashMap<_, _> = vertices.iter()
                                 .zip(scaled_vertices.iter())
@@ -613,11 +608,10 @@ macro_rules! test_quality_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), $dim>::try_with_topology_guarantee(
-                        &AdaptiveKernel::default(),
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulationBuilder::new(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                    {
                         let tds = dt.tds();
                         let tri = dt.as_triangulation();
                         for simplex_key in tds.simplex_keys() {
@@ -695,10 +689,10 @@ macro_rules! test_facet_topology_invariant {
                     )
                 ) {
                     // Build triangulation
-                    if let Ok(dt) = DelaunayTriangulation::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                    {
                         let tri = dt.as_triangulation();
 
                         // Get all simplex keys
@@ -725,10 +719,10 @@ macro_rules! test_facet_topology_invariant {
                     )
                 ) {
                     // Build triangulation
-                    if let Ok(dt) = DelaunayTriangulation::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                    {
                         let mut tri = dt.as_triangulation().clone();
 
                         // Get all simplex keys
@@ -761,10 +755,10 @@ macro_rules! test_facet_topology_invariant {
                     )
                 ) {
                     // Build triangulation
-                    if let Ok(dt) = DelaunayTriangulation::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                    {
                         let tri = dt.as_triangulation();
 
                         // Empty simplex list should always return None
@@ -821,10 +815,10 @@ macro_rules! gen_high_dim_facet_topology_smoke {
                     let mut stats = stats.borrow_mut();
                     stats.generated += 1;
 
-                    let dt = match DelaunayTriangulation::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    let dt = match DelaunayTriangulation::builder(&vertices)
+                        .topology_guarantee(TopologyGuarantee::PLManifold)
+                        .build()
+                    {
                         Ok(dt) => dt,
                         Err(err) => {
                             stats.rejected_construction_failed += 1;

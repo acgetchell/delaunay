@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Validate toroidal domains at parse boundaries [#437](https://github.com/acgetchell/delaunay/pull/437) [#450](https://github.com/acgetchell/delaunay/pull/450)
 - Add vertex construction macro [#469](https://github.com/acgetchell/delaunay/pull/469)
 - Add embedded triangulation validation layer [#449](https://github.com/acgetchell/delaunay/pull/449) [#481](https://github.com/acgetchell/delaunay/pull/481)
+- Add Pachner feasibility checks [#489](https://github.com/acgetchell/delaunay/pull/489)
 - Box nested FlipError payloads [#406](https://github.com/acgetchell/delaunay/pull/406) [#435](https://github.com/acgetchell/delaunay/pull/435)
 - Adopt la-stack 0.4.3 API [#424](https://github.com/acgetchell/delaunay/pull/424) [#438](https://github.com/acgetchell/delaunay/pull/438)
 - Require refined generator and ordering parameters [#439](https://github.com/acgetchell/delaunay/pull/439)
@@ -29,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Merged Pull Requests
 
+- Add Pachner feasibility checks [#489](https://github.com/acgetchell/delaunay/pull/489)
+- Make targeted PL repair failure-atomic [#488](https://github.com/acgetchell/delaunay/pull/488)
 - Preserve positive orientation after vertex removal [#487](https://github.com/acgetchell/delaunay/pull/487)
 - Preserve exact 2D layered strip vertices [#486](https://github.com/acgetchell/delaunay/pull/486)
 - Bump actions/checkout from 6.0.3 to 7.0.0 [#485](https://github.com/acgetchell/delaunay/pull/485)
@@ -135,6 +138,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   - Refresh the validation guide, invariants, API-design, and prelude docs
     for the five-level stack.
+- [**breaking**] Add Pachner feasibility checks [#489](https://github.com/acgetchell/delaunay/pull/489)
+  [`be6728c`](https://github.com/acgetchell/delaunay/commit/be6728c4a84c988226a7bf4973ef1d382ff7e63b)
+
+  - Add immutable flip and Pachner feasibility reports for dry-run workflows.
+  - Route Pachner feasibility through the shared bistellar preflight used by mutating flips.
+  - Export Pachner feasibility from the focused Pachner prelude.
 
 ### Changed
 
@@ -342,6 +351,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Canonicalize coherent orientation per simplex-neighbor component so disconnected repair states do not keep a negative geometric sign.
   - Surface post-repair orientation failures through the existing typed invariant errors.
   - Avoid redundant full-TDS canonicalization passes on the successful normalization path.
+- Make targeted PL repair failure-atomic [#488](https://github.com/acgetchell/delaunay/pull/488)
+  [`abd466f`](https://github.com/acgetchell/delaunay/commit/abd466f38da370b58610e7b34cb91aca800abb65)
+
+  - Extend PL-manifold repair from facet over-sharing to bounded boundary-ridge, ridge-link, and vertex-link repair stages with typed diagnostics.
+  - Run delaunayize through the Delaunay rollback transaction so failed topology repair, failed Delaunay repair, fallback snapshot failures, and rebuild
+    failures restore the pre-call triangulation.
+
+  - Expose PlManifoldRepairStage through the crate root and delaunayize prelude, and add benchmark fixtures for targeted topology repair.
+  - Align local and CI tooling on Python 3.14, uv 0.11.26, and the reviewed Rust/Python tool pins.
 
 ### Maintenance
 

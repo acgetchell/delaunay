@@ -9,15 +9,15 @@ predicates fast across 2D-5D.
 | Benchmark | Purpose | Scale | Typical Runtime | Used By |
 |-----------|---------|-------|-----------------|---------|
 | `allocation_hot_paths.rs` | Allocation contracts for public hot paths | Calibrated 2D-5D canary fixtures | ~1-2 min | Manual allocation checks |
-| `boundary_uuid_iter.rs` | Focused boundary-facet and UUID iterator microbenchmarks | 3D small fixed schedules | <1 min | Manual micro-optimization checks |
 | `ci_performance_suite.rs` | Public workflow regression contract | Calibrated 2D-5D canaries | ~5-10 min | CI, baselines, `just perf-no-regressions` |
 | `circumsphere_containment.rs` | Compare circumsphere predicate methods | 2D-5D fixed, 3D random, edge cases | ~5 min | Predicate tuning, summaries |
 | `cold_path_predicates.rs` | Track hot/cold predicate paths | 2D-5D hot queries, near-boundary cases | ~2-5 min | Predicate optimization work |
+| `delaunay_repair.rs` | Flip-based Delaunay repair on prepared Levels 1-4 fixtures | 2D-5D repair-convergent fixtures | ~2-5 min | Repair tuning |
 | `pachner_stress.rs` | Unified Pachner move API stress | Accepted 4D k=1/k=2/k=3 forward/inverse moves | <1 min | Monte-Carlo move workflow tuning |
 | `pl_manifold_repair.rs` | Over-shared facet and targeted topology repair | 2D/3D synthetic repair fixtures | <1 min | PL-manifold repair tuning |
 | `profiling_suite.rs` | Large-scale construction, memory, query, validation profiling | 2D/3D 10k, 4D 3k, 5D 1k | ~2-3 hr | Manual/monthly |
 | `delete_vertex.rs` | Vertex deletion and rollback cost | 2D-5D fixed cases | ~1-5 min | Vertex deletion |
-| `edge_key_queries.rs` | Public `EdgeKey` construction microbenchmarks | 2D-5D fixed live-edge cases | <1 min | Query API tuning |
+| `locate.rs` | Point-location facet-walk latency (no-hint vs exact-hint) | 2D-5D fixed cases | ~1-3 min | Locate/walk tuning |
 | `tds_clone.rs` | `Tds::clone()` snapshot cost | Deterministic 2D-5D triangulations | ~1-3 min | Rollback design baselines |
 | `topology_guarantee_construction.rs` | Cost of topology guarantee modes | 2D-5D construction cases | ~5-15 min | Manual topology policy work |
 
@@ -39,14 +39,14 @@ predicates fast across 2D-5D.
 | Durable latest-version benchmark baseline | GitHub Release asset `delaunay-vX.Y.Z-criterion-baseline.tar.gz` |
 | Smoke-test benchmark harnesses | `just bench-smoke` |
 | Allocation hot-path contracts | `cargo bench --profile perf --bench allocation_hot_paths --features count-allocations -- --noplot` |
-| Boundary/UUID microbenchmarks | `cargo bench --profile perf --bench boundary_uuid_iter -- --noplot` |
 | Predicate comparison | `cargo bench --profile perf --bench circumsphere_containment -- --noplot` |
 | Predicate cold-path work | `cargo bench --profile perf --bench cold_path_predicates -- --noplot` |
+| Flip-based Delaunay repair | `cargo bench --profile perf --bench delaunay_repair -- --noplot` |
 | Unified Pachner move stress | `cargo bench --profile perf --bench pachner_stress -- --noplot` |
 | PL-manifold repair path | `cargo bench --profile perf --features bench --bench pl_manifold_repair -- --noplot` |
 | Large-scale scaling suite | `cargo bench --profile perf --bench profiling_suite -- --noplot` |
 | Vertex deletion mutation baseline | `cargo bench --profile perf --bench delete_vertex -- --noplot` |
-| Edge-key query construction | `cargo bench --profile perf --bench edge_key_queries -- --noplot` |
+| Point-location facet walk | `cargo bench --profile perf --bench locate -- --noplot` |
 | One-dimension acceptance/profiling run | `just debug-large-scale-{2,3,4,5}d [n] [repair_every]` |
 | Deep profiling | `cargo bench --profile perf --bench profiling_suite --features count-allocations` |
 
@@ -141,13 +141,13 @@ cargo bench --profile perf --bench ci_performance_suite
 
 `ci_performance_suite.rs` is the stable public workflow contract. It covers:
 
-- construction via `DelaunayTriangulation::try_new_with_options`
+- construction via `DelaunayTriangulation::builder(...).construction_options(...).build()`
 - adversarial construction
 - convex hull extraction
 - boundary facet traversal
 - validation Levels 1-4
 - incremental vertex insertion into prepared triangulations
-- explicit 4D bistellar flip roundtrips
+- explicit 2D-5D bistellar flip roundtrips
 
 The current calibrated fixture sizes are:
 
