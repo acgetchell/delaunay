@@ -140,6 +140,7 @@ use delaunay::prelude::query::{
     FacetIncidenceAnalysis as QueryFacetIncidenceAnalysis,
     FacetIncidenceView as QueryFacetIncidenceView, IncidenceView as QueryIncidenceView,
     OneSidedFacetsIter as QueryOneSidedFacetsIter, QueryError,
+    SimplexBarycenterError as QuerySimplexBarycenterError,
     SimplexDataFillError as QuerySimplexDataFillError, SimplexFacetsIter as QuerySimplexFacetsIter,
     SimplexNeighborIndex as QuerySimplexNeighborIndex, TopologyIndexBuildError,
     TriangulationAdjacency as QueryTriangulationAdjacency,
@@ -213,6 +214,7 @@ use delaunay::prelude::{
     InitialSimplexUnexpectedInsertionStage as RootInitialSimplexUnexpectedInsertionStage,
     PeriodicDomainPeriodError as RootPeriodicDomainPeriodError,
     PlManifoldRepairStage as RootPreludePlManifoldRepairStage, SecureHashMap, SecureHashSet,
+    SimplexBarycenterError as RootPreludeSimplexBarycenterError,
     SimplexDataFillError as RootPreludeSimplexDataFillError,
     SimplexNeighborIndex as RootSimplexNeighborIndex, TopologyError as RootTopologyError,
     TopologyGuarantee as RootTopologyGuarantee, TopologyKind as RootTopologyKind,
@@ -228,6 +230,7 @@ use delaunay::query::{
     AllFacetsIter as QueryFacadeAllFacetsIter, BoundaryFacetsIter as QueryFacadeBoundaryFacetsIter,
     EdgeIndex as QueryFacadeEdgeIndex, FacetHandle as QueryFacadeFacetHandle,
     IncidenceView as QueryFacadeIncidenceView, OneSidedFacetsIter as QueryFacadeOneSidedFacetsIter,
+    SimplexBarycenterError as QueryFacadeSimplexBarycenterError,
     SimplexDataFillError as QueryFacadeSimplexDataFillError,
     SimplexFacetsIter as QueryFacadeSimplexFacetsIter,
     SimplexNeighborIndex as QueryFacadeSimplexNeighborIndex,
@@ -254,6 +257,7 @@ use delaunay::{
     MeshExportError as RootMeshExportError,
     MeshExportValidationError as RootMeshExportValidationError,
     PlManifoldRepairStage as RootPlManifoldRepairStage,
+    SimplexBarycenterError as RootSimplexBarycenterError,
     SimplexDataFillError as RootSimplexDataFillError,
     ValidatedMeshExport as RootValidatedMeshExport,
     ValidatedVisualizationData as RootValidatedVisualizationData,
@@ -620,6 +624,46 @@ fn query_preludes_export_simplex_data_fill_error() -> Result<(), PreludeExportTe
     );
 
     Ok(())
+}
+
+#[test]
+fn query_preludes_export_simplex_barycenter_error() {
+    let stale = SimplexKey::from(KeyData::from_ffi(0xCAFE));
+    let err = RootSimplexBarycenterError::MissingSimplex { simplex_key: stale };
+    let query_error: QuerySimplexBarycenterError = err.clone();
+    let query_facade_error: QueryFacadeSimplexBarycenterError = err.clone();
+    let root_prelude_error: RootPreludeSimplexBarycenterError = err.clone();
+    let root_error: RootSimplexBarycenterError = err.clone();
+
+    assert_matches!(
+        query_error,
+        QuerySimplexBarycenterError::MissingSimplex { simplex_key }
+            if simplex_key == stale
+    );
+    assert_matches!(
+        query_facade_error,
+        QueryFacadeSimplexBarycenterError::MissingSimplex { simplex_key }
+            if simplex_key == stale
+    );
+    assert_matches!(
+        root_prelude_error,
+        RootPreludeSimplexBarycenterError::MissingSimplex { simplex_key }
+            if simplex_key == stale
+    );
+    assert_matches!(
+        root_error,
+        RootSimplexBarycenterError::MissingSimplex { simplex_key }
+            if simplex_key == stale
+    );
+    assert_matches!(
+        DelaunayError::from(err),
+        DelaunayError::SimplexBarycenter { source }
+            if matches!(
+                source.as_ref(),
+                RootSimplexBarycenterError::MissingSimplex { simplex_key }
+                    if *simplex_key == stale
+            )
+    );
 }
 
 #[test]
@@ -1168,6 +1212,7 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     assert_send_sync_unpin::<ConstructionSkipSample>();
     assert_send_sync_unpin::<ConstructionSlowInsertionSample>();
     assert_send_sync_unpin::<DelaunayError>();
+    assert_send_sync_unpin::<RootSimplexBarycenterError>();
     assert_send_sync_unpin::<RootSimplexDataFillError>();
     assert_send_sync_unpin::<CoordinateConversionError>();
     assert_send_sync_unpin::<DegenerateSimplexReason>();

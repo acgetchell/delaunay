@@ -53,7 +53,7 @@
 //! | Build/validate/repair generic triangulations | `use delaunay::prelude::triangulation::*` |
 //! | Low-level incremental insertion building blocks | `use delaunay::prelude::insertion::*` |
 //! | Post-construction vertex deletion errors and keys | `use delaunay::prelude::deletion::*` |
-//! | Read-only queries, traversal, convex hull | `use delaunay::prelude::query::*` |
+//! | Read-only queries, traversal, simplex barycenters, convex hull | `use delaunay::prelude::query::*` |
 //! | Point location and conflict-region algorithms | `use delaunay::prelude::algorithms::*` |
 //! | Geometry helpers, simplex embeddings, coordinate ranges, predicates, points | `use delaunay::prelude::geometry::*` |
 //! | Random points / triangulations for examples and tests | `use delaunay::prelude::generators::*` |
@@ -408,10 +408,6 @@
 //! - **Explicit verification**: Use `dt.validate()` for cumulative verification (Levels 1–5), or
 //!   `dt.is_valid_delaunay()` for Level 5 only.
 
-#![expect(
-    clippy::multiple_crate_versions,
-    reason = "transitive dependency versions are controlled by upstream crates"
-)]
 // Forbid unsafe code throughout the entire crate
 #![forbid(unsafe_code)]
 
@@ -836,7 +832,7 @@ pub use crate::delaunay_property_validation::{
     DelaunayValidationError, DelaunayViolationDetail, DelaunayViolationReport,
     delaunay_violation_report, find_delaunay_violations,
 };
-pub use crate::delaunay_query::SimplexDataFillError;
+pub use crate::delaunay_query::{SimplexBarycenterError, SimplexDataFillError};
 pub use crate::deletion::DeleteVertexError;
 pub use crate::io::visualization::{
     AdjacencyRecord, MESH_EXPORT_SCHEMA, MESH_EXPORT_SCHEMA_VERSION, MeshAdjacencyRecord,
@@ -1125,12 +1121,14 @@ pub mod algorithms {
     };
 }
 
-/// Public traversal, adjacency, convex-hull, set-comparison, and query support APIs.
+/// Public traversal, adjacency, barycenter, convex-hull, set-comparison, and query support APIs.
 ///
 /// This module is intended for callers who need to inspect a triangulation or
-/// compare derived topology without importing construction and repair surfaces.
-/// It also re-exports query-adjacent support types such as
-/// [`SimplexDataFillError`] for follow-on simplex payload assignment.
+/// compare derived topology without importing construction and repair surfaces,
+/// or compute topology-aware local-editing points. It also re-exports
+/// query-adjacent support types such as [`SimplexBarycenterError`] for
+/// [`DelaunayTriangulation::simplex_barycenter`] and [`SimplexDataFillError`] for
+/// follow-on simplex payload assignment.
 ///
 /// # Examples
 ///
@@ -1149,7 +1147,6 @@ pub mod algorithms {
 /// # }
 /// ```
 pub mod query {
-    pub use crate::SimplexDataFillError;
     pub use crate::assert_jaccard_gte;
     pub use crate::core::query::QueryError;
     pub use crate::core::traits::data_type::{
@@ -1177,6 +1174,7 @@ pub mod query {
         TriangulationAdjacency, Vertex, VertexKey,
     };
     pub use crate::{DelaunayTriangulation, Triangulation};
+    pub use crate::{SimplexBarycenterError, SimplexDataFillError};
 }
 
 /// A prelude module that re-exports commonly used types and macros.
@@ -1185,7 +1183,7 @@ pub mod prelude {
     // Re-export the public low-level facades.
     pub use crate::query::{
         DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType,
-        FacetIncidenceAnalysis, QueryError, SimplexDataFillError,
+        FacetIncidenceAnalysis, QueryError, SimplexBarycenterError, SimplexDataFillError,
     };
     pub use crate::tds::*;
     pub use crate::vertex;
@@ -1861,7 +1859,7 @@ pub mod prelude {
     }
 
     /// Convenience re-exports for common **read-only** workflows (topology traversal, adjacency,
-    /// convex-hull extraction, and common input types).
+    /// simplex barycenters, convex-hull extraction, and common input types).
     ///
     /// This is useful if you want a smaller import surface than `delaunay::prelude::*`,
     /// while still having access to the key public APIs typically used in docs/tests/examples/benches.
@@ -1874,6 +1872,8 @@ pub mod prelude {
     ///   [`DelaunayTriangulation::adjacency`] / [`TriangulationAdjacency`]
     /// - Zero-allocation geometry accessors: [`DelaunayTriangulation::vertex_coords`],
     ///   [`DelaunayTriangulation::simplex_vertices`]
+    /// - Local-editing coordinates: [`DelaunayTriangulation::simplex_barycenter`] and
+    ///   [`SimplexBarycenterError`]
     /// - Convex hull extraction: [`ConvexHull::try_from_triangulation`]
     ///
     /// # Examples
@@ -1910,8 +1910,8 @@ pub mod prelude {
         pub use crate::query::{
             AllFacetsIter, BoundaryFacetsIter, DataCopy, DataDebug, DataDeserialize, DataIdentity,
             DataSerde, DataSerialize, DataType, FacetIncidenceAnalysis, FacetView,
-            OneSidedFacetsIter, QueryError, Simplex, SimplexDataFillError, SimplexFacetsIter,
-            Vertex,
+            OneSidedFacetsIter, QueryError, Simplex, SimplexBarycenterError, SimplexDataFillError,
+            SimplexFacetsIter, Vertex,
         };
 
         // Read-only predicates (useful in benchmarks / lightweight geometry checks)

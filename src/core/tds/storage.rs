@@ -2441,7 +2441,7 @@ mod test_support {
         ///
         /// Tests use this to model malformed simplex vertex storage while keeping
         /// the corruption explicit and local to TDS test fixtures.
-        pub(in crate::core) fn push_first_simplex_vertex_key_storage_only_for_test(
+        pub(crate) fn push_first_simplex_vertex_key_storage_only_for_test(
             &mut self,
             vertex_key: VertexKey,
         ) {
@@ -2450,11 +2450,24 @@ mod test_support {
             }
         }
 
+        /// Removes a vertex from storage while deliberately preserving simplex references.
+        ///
+        /// Tests use this to model stale simplex-to-vertex references that normal
+        /// TDS mutation APIs must never create, then assert read-only callers fail
+        /// with typed errors instead of panicking or silently accepting corruption.
+        pub(crate) fn remove_vertex_storage_only_for_test(&mut self, vertex_key: VertexKey) {
+            if let Some(vertex) = self.vertices.remove(vertex_key) {
+                let vertex_uuid = vertex.uuid();
+                self.uuid_to_vertex_key
+                    .retain(|uuid, mapped_key| *uuid != vertex_uuid && *mapped_key != vertex_key);
+            }
+        }
+
         /// Replaces periodic offsets on the first stored simplex without validation.
         ///
         /// Tests use this to model offset/storage mismatches that normal simplex
         /// constructors and setters must reject.
-        pub(in crate::core) fn set_first_simplex_periodic_offsets_storage_only_for_test(
+        pub(crate) fn set_first_simplex_periodic_offsets_storage_only_for_test(
             &mut self,
             offsets: Option<PeriodicOffsetBuffer<D>>,
         ) {

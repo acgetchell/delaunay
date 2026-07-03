@@ -57,7 +57,7 @@ The useful updates ported in this pass are:
   which is still shared across the repositories.
 - CI command-runner, Markdown, and spelling tool pins now track the newer
   current reviewed versions:
-  `just` 1.55.1, `rumdl` 0.2.26, and `typos-cli` 1.48.0. The `rumdl` bump keeps
+  `just` 1.55.1, `rumdl` 0.2.28, and `typos-cli` 1.48.0. The `rumdl` bump keeps
   Delaunay on the sibling repository's current Markdown linter release after
   local `just check` exposed the older 0.2.10 pin as stale.
 - uv-managed Python support-tool pins now use exact reviewed versions for the

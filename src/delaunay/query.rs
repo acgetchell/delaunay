@@ -21,8 +21,14 @@ use crate::core::traits::data_type::DataCopy;
 use crate::core::triangulation::Triangulation;
 use crate::core::validation::{TopologyGuarantee, ValidationConfigurationError, ValidationPolicy};
 use crate::core::vertex::Vertex;
+use crate::geometry::point::Point;
+use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateValidationError};
+use crate::geometry::util::safe_usize_to_scalar;
 use crate::repair::{DelaunayCheckPolicy, DelaunayRepairPolicy};
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
+use crate::topology::traits::{
+    GlobalTopologyModelError, global_topology_model::GlobalTopologyModel,
+};
 use crate::triangulation::DelaunayTriangulation;
 use crate::validation::DelaunayTriangulationValidationError;
 use thiserror::Error;
@@ -54,6 +60,96 @@ pub enum SimplexDataFillError {
         /// Underlying TDS mutation failure.
         #[source]
         source: Box<TdsMutationError>,
+    },
+}
+
+/// Error returned when computing a simplex barycenter.
+///
+/// The error preserves whether the failure came from stale topology keys,
+/// malformed periodic-offset storage, topology-model lifting/wrapping, or the
+/// final point validation boundary.
+#[derive(Clone, Debug, Error, PartialEq)]
+#[non_exhaustive]
+pub enum SimplexBarycenterError {
+    /// The requested simplex key is not live in this triangulation.
+    #[error("simplex {simplex_key:?} is not live in this triangulation")]
+    MissingSimplex {
+        /// Missing or stale simplex key supplied by the caller.
+        simplex_key: SimplexKey,
+    },
+    /// A live simplex does not have the expected `D + 1` vertices.
+    #[error("simplex {simplex_key:?} has {actual} vertices, expected {expected}")]
+    InvalidSimplexArity {
+        /// Simplex with an unexpected vertex count.
+        simplex_key: SimplexKey,
+        /// Expected vertex count (`D + 1`).
+        expected: usize,
+        /// Actual vertex count.
+        actual: usize,
+    },
+    /// A simplex references a vertex key that is not live in this triangulation.
+    #[error("simplex {simplex_key:?} references missing vertex {vertex_key:?}")]
+    MissingVertex {
+        /// Simplex whose vertex reference was stale.
+        simplex_key: SimplexKey,
+        /// Missing vertex key.
+        vertex_key: VertexKey,
+    },
+    /// Stored periodic offsets are not aligned with simplex vertices.
+    #[error(
+        "simplex {simplex_key:?} has {offset_count} periodic offsets for {vertex_count} vertices"
+    )]
+    PeriodicOffsetCountMismatch {
+        /// Simplex with malformed periodic-offset storage.
+        simplex_key: SimplexKey,
+        /// Stored periodic-offset count.
+        offset_count: usize,
+        /// Stored simplex vertex count.
+        vertex_count: usize,
+    },
+    /// The barycenter divisor could not be represented exactly as the coordinate scalar.
+    #[error(
+        "failed to convert barycenter divisor {vertex_count} for simplex {simplex_key:?}: {source}"
+    )]
+    DivisorConversion {
+        /// Simplex whose barycenter divisor failed conversion.
+        simplex_key: SimplexKey,
+        /// Number of vertices used as the divisor.
+        vertex_count: usize,
+        /// Underlying coordinate conversion failure.
+        #[source]
+        source: CoordinateConversionError,
+    },
+    /// Topology-model lifting failed for a simplex vertex.
+    #[error(
+        "failed to lift vertex {vertex_key:?} while computing simplex {simplex_key:?} barycenter: {source}"
+    )]
+    VertexLift {
+        /// Simplex whose barycenter was being computed.
+        simplex_key: SimplexKey,
+        /// Vertex whose coordinate lift failed.
+        vertex_key: VertexKey,
+        /// Underlying topology-model failure.
+        #[source]
+        source: GlobalTopologyModelError,
+    },
+    /// Topology-model canonicalization failed for the averaged point.
+    #[error("failed to canonicalize barycenter for simplex {simplex_key:?}: {source}")]
+    BarycenterCanonicalization {
+        /// Simplex whose barycenter could not be wrapped/canonicalized.
+        simplex_key: SimplexKey,
+        /// Underlying topology-model failure.
+        #[source]
+        source: GlobalTopologyModelError,
+    },
+    /// The computed barycenter was rejected by [`Point`] validation.
+    #[error("computed barycenter for simplex {simplex_key:?} is not a valid point: {source}")]
+    PointValidation {
+        /// Simplex whose barycenter failed point validation.
+        simplex_key: SimplexKey,
+        /// Underlying point-coordinate validation failure.
+        #[source]
+        source: CoordinateValidationError,
     },
 }
 
@@ -210,6 +306,150 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// ```
     pub fn simplices(&self) -> impl Iterator<Item = (SimplexKey, &Simplex<V, D>)> {
         self.tri.tds.simplices()
+    }
+
+    /// Computes a topology-aware barycenter of a live simplex.
+    ///
+    /// For ordinary Euclidean simplices, this is the arithmetic average of the
+    /// simplex vertex coordinates. For periodic image-point triangulations, the
+    /// method first lifts each vertex into the simplex-local covering-space
+    /// frame using the simplex's stored periodic offsets, averages those lifted
+    /// coordinates, and then canonicalizes the result back into the topology's
+    /// coordinate domain. For a valid nondegenerate simplex, the lifted
+    /// barycenter lies in the simplex-local interior; the returned [`Point`] is
+    /// the canonical coordinate representative to use with
+    /// [`PachnerMove::K1Insert`](crate::pachner::PachnerMove::K1Insert).
+    ///
+    /// # Errors
+    ///
+    /// Returns:
+    ///
+    /// - [`SimplexBarycenterError::MissingSimplex`] when `simplex_key` is stale.
+    /// - [`SimplexBarycenterError::InvalidSimplexArity`] when the live simplex
+    ///   does not contain exactly `D + 1` vertices.
+    /// - [`SimplexBarycenterError::MissingVertex`] when the simplex references a
+    ///   stale vertex key.
+    /// - [`SimplexBarycenterError::PeriodicOffsetCountMismatch`] when stored
+    ///   periodic offsets are not aligned with simplex vertices.
+    /// - [`SimplexBarycenterError::DivisorConversion`] when the vertex count
+    ///   cannot be converted to the coordinate scalar.
+    /// - [`SimplexBarycenterError::VertexLift`] or
+    ///   [`SimplexBarycenterError::BarycenterCanonicalization`] when topology
+    ///   model lifting or wrapping fails.
+    /// - [`SimplexBarycenterError::PointValidation`] when the averaged
+    ///   coordinates fail [`Point`] validation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee,
+    /// };
+    /// use delaunay::prelude::pachner::{PachnerMove, PachnerMoves};
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = vec![
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
+    /// ];
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .topology_guarantee(TopologyGuarantee::PLManifold)
+    ///     .build()?;
+    /// let Some((simplex_key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// let barycenter = dt.simplex_barycenter(simplex_key)?;
+    /// let result = dt
+    ///     .propose_pachner(PachnerMove::K1Insert {
+    ///         simplex_key,
+    ///         vertex: delaunay::vertex!(*barycenter.coords())?,
+    ///     })?
+    ///     .attempt_on(&mut dt)?;
+    /// assert_eq!(result.inserted_face_vertices.len(), 1);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn simplex_barycenter(
+        &self,
+        simplex_key: SimplexKey,
+    ) -> Result<Point<D>, SimplexBarycenterError> {
+        let simplex = self
+            .tri
+            .tds
+            .simplex(simplex_key)
+            .ok_or(SimplexBarycenterError::MissingSimplex { simplex_key })?;
+
+        let vertex_count = simplex.number_of_vertices();
+        let expected = D + 1;
+        if vertex_count != expected {
+            return Err(SimplexBarycenterError::InvalidSimplexArity {
+                simplex_key,
+                expected,
+                actual: vertex_count,
+            });
+        }
+
+        let model = self.global_topology().model();
+        let periodic_offsets = if model.supports_periodic_orientation_offsets() {
+            simplex.periodic_vertex_offsets()
+        } else {
+            None
+        };
+        if let Some(offsets) = periodic_offsets
+            && offsets.len() != vertex_count
+        {
+            return Err(SimplexBarycenterError::PeriodicOffsetCountMismatch {
+                simplex_key,
+                offset_count: offsets.len(),
+                vertex_count,
+            });
+        }
+
+        let divisor = safe_usize_to_scalar(vertex_count).map_err(|source| {
+            SimplexBarycenterError::DivisorConversion {
+                simplex_key,
+                vertex_count,
+                source,
+            }
+        })?;
+        let mut barycenter = [0.0_f64; D];
+        for (vertex_index, &vertex_key) in simplex.vertices().iter().enumerate() {
+            let vertex =
+                self.tri
+                    .tds
+                    .vertex(vertex_key)
+                    .ok_or(SimplexBarycenterError::MissingVertex {
+                        simplex_key,
+                        vertex_key,
+                    })?;
+            let periodic_offset = periodic_offsets.map(|offsets| offsets[vertex_index]);
+            let lifted = model
+                .lift_for_orientation(*vertex.point().coords(), periodic_offset)
+                .map_err(|source| SimplexBarycenterError::VertexLift {
+                    simplex_key,
+                    vertex_key,
+                    source,
+                })?;
+            for axis in 0..D {
+                barycenter[axis] += lifted[axis] / divisor;
+            }
+        }
+
+        model
+            .canonicalize_point_in_place(&mut barycenter)
+            .map_err(
+                |source| SimplexBarycenterError::BarycenterCanonicalization {
+                    simplex_key,
+                    source,
+                },
+            )?;
+        Point::try_new(barycenter).map_err(|source| SimplexBarycenterError::PointValidation {
+            simplex_key,
+            source,
+        })
     }
 
     /// Returns an iterator over all vertices in the triangulation.
@@ -1598,7 +1838,10 @@ mod tests {
     use crate::core::tds::TdsError;
     use crate::core::validation::TriangulationValidationError;
     use crate::geometry::kernel::FastKernel;
+    use crate::geometry::traits::coordinate::InvalidCoordinateValue;
+    use crate::topology::traits::topological_space::ToroidalConstructionMode;
     use crate::vertex;
+    use approx::assert_relative_eq;
     use slotmap::KeyData;
     use std::{assert_matches, collections::HashSet, num::NonZeroUsize, sync::Once};
 
@@ -1616,6 +1859,348 @@ mod tests {
                 .with_test_writer()
                 .try_init();
         });
+    }
+
+    /// Builds the standard D-simplex fixture: origin plus one unit vector per axis.
+    fn standard_simplex_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
+        let mut vertices = Vec::with_capacity(D + 1);
+        vertices.push(vertex!([0.0; D]).expect("origin coordinates are finite"));
+        for axis in 0..D {
+            let mut coords = [0.0; D];
+            coords[axis] = 1.0;
+            vertices.push(vertex!(coords).expect("unit-vector coordinates are finite"));
+        }
+        vertices
+    }
+
+    /// Asserts that the simplex barycenter of the standard fixture is `1 / (D + 1)`.
+    fn assert_standard_simplex_barycenter<const D: usize>() {
+        let vertices = standard_simplex_vertices::<D>();
+        let dt: DelaunayTriangulation<_, (), (), D> = DelaunayTriangulationBuilder::new(&vertices)
+            .build()
+            .expect("standard simplex build should succeed");
+        let (simplex_key, _) = dt
+            .simplices()
+            .next()
+            .expect("standard simplex fixture should contain one simplex");
+
+        let barycenter = dt
+            .simplex_barycenter(simplex_key)
+            .expect("standard simplex barycenter should be computable");
+        let divisor = safe_usize_to_scalar(D + 1).expect("small dimension fits in f64");
+        for &coordinate in barycenter.coords() {
+            assert_relative_eq!(coordinate, 1.0 / divisor, epsilon = 1e-15);
+        }
+    }
+
+    /// Builds a periodic image-point simplex whose lifted barycenter must wrap into the unit cell.
+    fn periodic_image_point_barycenter_fixture() -> (
+        DelaunayTriangulation<FastKernel<f64>, (), (), 2>,
+        SimplexKey,
+    ) {
+        let topology = GlobalTopology::try_toroidal(
+            [1.0_f64, 1.0_f64],
+            ToroidalConstructionMode::PeriodicImagePoint,
+        )
+        .expect("unit toroidal domain is valid");
+        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::with_empty_kernel_and_topology_context(
+                FastKernel::new(),
+                TopologyGuarantee::Pseudomanifold,
+                topology,
+            );
+        let a = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.9, 0.1]).unwrap())
+            .unwrap();
+        let b = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.8, 0.1]).unwrap())
+            .unwrap();
+        let c = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.9, 0.9]).unwrap())
+            .unwrap();
+        let mut simplex = Simplex::try_new_with_data(vec![a, b, c], None).unwrap();
+        simplex
+            .set_periodic_vertex_offsets(vec![[0_i8, 0_i8], [1_i8, 0_i8], [0_i8, 0_i8]])
+            .unwrap();
+        let simplex_key = dt.tri.tds.insert_simplex_with_mapping(simplex).unwrap();
+        (dt, simplex_key)
+    }
+
+    macro_rules! gen_simplex_barycenter_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<simplex_barycenter_matches_standard_simplex_centroid_ $dim d>]() {
+                    assert_standard_simplex_barycenter::<$dim>();
+                }
+            }
+        };
+    }
+
+    gen_simplex_barycenter_tests!(2);
+    gen_simplex_barycenter_tests!(3);
+    gen_simplex_barycenter_tests!(4);
+    gen_simplex_barycenter_tests!(5);
+
+    #[test]
+    fn simplex_barycenter_wraps_periodic_lifted_average() {
+        let (dt, simplex_key) = periodic_image_point_barycenter_fixture();
+
+        let barycenter = dt
+            .simplex_barycenter(simplex_key)
+            .expect("periodic simplex barycenter should be computable");
+
+        assert_relative_eq!(barycenter.coords()[0], 0.2, epsilon = 1e-15);
+        assert_relative_eq!(barycenter.coords()[1], 11.0 / 30.0, epsilon = 1e-15);
+    }
+
+    #[test]
+    fn simplex_barycenter_avoids_overflowing_intermediate_sum() {
+        let huge = f64::MAX / 2.0;
+        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::with_empty_kernel(FastKernel::new());
+        let a = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([huge, huge]).unwrap())
+            .unwrap();
+        let b = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([huge, huge]).unwrap())
+            .unwrap();
+        let c = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([huge, huge]).unwrap())
+            .unwrap();
+        let simplex = Simplex::try_new_with_data(vec![a, b, c], None).unwrap();
+        let simplex_key = dt.tri.tds.insert_simplex_with_mapping(simplex).unwrap();
+
+        let barycenter = dt
+            .simplex_barycenter(simplex_key)
+            .expect("finite simplex barycenter should remain finite");
+
+        for &coordinate in barycenter.coords() {
+            assert!(coordinate.is_finite());
+            assert_relative_eq!(coordinate, huge, max_relative = 1e-15);
+        }
+    }
+
+    #[test]
+    fn simplex_barycenter_reports_point_validation_failure_after_overflowed_average() {
+        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::with_empty_kernel(FastKernel::new());
+        let a = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([f64::MAX, 0.0]).unwrap())
+            .unwrap();
+        let b = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([f64::MAX, 0.25]).unwrap())
+            .unwrap();
+        let c = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([f64::MAX, 0.75]).unwrap())
+            .unwrap();
+        let simplex = Simplex::try_new_with_data(vec![a, b, c], None).unwrap();
+        let simplex_key = dt.tri.tds.insert_simplex_with_mapping(simplex).unwrap();
+
+        assert_matches!(
+            dt.simplex_barycenter(simplex_key),
+            Err(SimplexBarycenterError::PointValidation {
+                simplex_key: key,
+                source: CoordinateValidationError::InvalidCoordinate {
+                    coordinate_index: 0,
+                    coordinate_value: InvalidCoordinateValue::PositiveInfinity,
+                    dimension: 2,
+                },
+            }) if key == simplex_key
+        );
+    }
+
+    #[test]
+    fn simplex_barycenter_rejects_stale_simplex_key() {
+        let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
+        let stale = SimplexKey::from(KeyData::from_ffi(0xCAFE));
+
+        assert_matches!(
+            dt.simplex_barycenter(stale),
+            Err(SimplexBarycenterError::MissingSimplex { simplex_key }) if simplex_key == stale
+        );
+    }
+
+    #[test]
+    fn simplex_barycenter_rejects_malformed_simplex_arity() {
+        let vertices = standard_simplex_vertices::<2>();
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulationBuilder::new(&vertices)
+                .build()
+                .expect("standard simplex build should succeed");
+        let (simplex_key, _) = dt
+            .simplices()
+            .next()
+            .expect("standard simplex fixture should contain one simplex");
+        let extra_vertex_key = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([2.0, 2.0]).unwrap())
+            .expect("extra finite vertex should insert into test storage");
+        dt.tri
+            .tds
+            .push_first_simplex_vertex_key_storage_only_for_test(extra_vertex_key);
+
+        assert_matches!(
+            dt.simplex_barycenter(simplex_key),
+            Err(SimplexBarycenterError::InvalidSimplexArity {
+                simplex_key: key,
+                expected: 3,
+                actual: 4,
+            }) if key == simplex_key
+        );
+    }
+
+    #[test]
+    fn simplex_barycenter_rejects_missing_referenced_vertex() {
+        let vertices = standard_simplex_vertices::<2>();
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulationBuilder::new(&vertices)
+                .build()
+                .expect("standard simplex build should succeed");
+        let (simplex_key, simplex) = dt
+            .simplices()
+            .next()
+            .expect("standard simplex fixture should contain one simplex");
+        let removed_vertex_key = simplex.vertices()[0];
+        dt.tri
+            .tds
+            .remove_vertex_storage_only_for_test(removed_vertex_key);
+
+        assert_matches!(
+            dt.simplex_barycenter(simplex_key),
+            Err(SimplexBarycenterError::MissingVertex {
+                simplex_key: key,
+                vertex_key,
+            }) if key == simplex_key && vertex_key == removed_vertex_key
+        );
+    }
+
+    #[test]
+    fn simplex_barycenter_rejects_periodic_offset_count_mismatch() {
+        let (mut dt, simplex_key) = periodic_image_point_barycenter_fixture();
+        dt.tri
+            .tds
+            .set_first_simplex_periodic_offsets_storage_only_for_test(Some(
+                vec![[0_i8, 0_i8], [1_i8, 0_i8]].into(),
+            ));
+
+        assert_matches!(
+            dt.simplex_barycenter(simplex_key),
+            Err(SimplexBarycenterError::PeriodicOffsetCountMismatch {
+                simplex_key: key,
+                offset_count: 2,
+                vertex_count: 3,
+            }) if key == simplex_key
+        );
+    }
+
+    #[test]
+    fn simplex_barycenter_reports_canonicalization_failure_after_overflowed_average() {
+        let topology = GlobalTopology::try_toroidal(
+            [1.0_f64, 1.0_f64],
+            ToroidalConstructionMode::PeriodicImagePoint,
+        )
+        .expect("unit toroidal domain is valid");
+        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::with_empty_kernel_and_topology_context(
+                FastKernel::new(),
+                TopologyGuarantee::Pseudomanifold,
+                topology,
+            );
+        let a = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([f64::MAX, 0.0]).unwrap())
+            .unwrap();
+        let b = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([f64::MAX, 0.25]).unwrap())
+            .unwrap();
+        let c = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([f64::MAX, 0.75]).unwrap())
+            .unwrap();
+        let simplex = Simplex::try_new_with_data(vec![a, b, c], None).unwrap();
+        let simplex_key = dt.tri.tds.insert_simplex_with_mapping(simplex).unwrap();
+
+        assert_matches!(
+            dt.simplex_barycenter(simplex_key),
+            Err(SimplexBarycenterError::BarycenterCanonicalization {
+                simplex_key: key,
+                source: GlobalTopologyModelError::NonFiniteCoordinate { axis: 0, value },
+            }) if key == simplex_key
+                && value.is_infinite()
+                && value.is_sign_positive()
+        );
+    }
+
+    #[test]
+    fn simplex_barycenter_reports_periodic_vertex_lift_failure() {
+        let topology = GlobalTopology::try_toroidal(
+            [f64::MAX, 1.0_f64],
+            ToroidalConstructionMode::PeriodicImagePoint,
+        )
+        .expect("huge finite toroidal domain is valid");
+        let mut dt: DelaunayTriangulation<FastKernel<f64>, (), (), 2> =
+            DelaunayTriangulation::with_empty_kernel_and_topology_context(
+                FastKernel::new(),
+                TopologyGuarantee::Pseudomanifold,
+                topology,
+            );
+        let overflowing_vertex_key = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([f64::MAX, 0.25]).unwrap())
+            .unwrap();
+        let b = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.25]).unwrap())
+            .unwrap();
+        let c = dt
+            .tri
+            .tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.75]).unwrap())
+            .unwrap();
+        let mut simplex = Simplex::try_new_with_data(vec![overflowing_vertex_key, b, c], None)
+            .expect("distinct vertex keys form a simplex fixture");
+        simplex
+            .set_periodic_vertex_offsets(vec![[1_i8, 0_i8], [0_i8, 0_i8], [0_i8, 0_i8]])
+            .expect("offset arity matches simplex vertices");
+        let simplex_key = dt.tri.tds.insert_simplex_with_mapping(simplex).unwrap();
+
+        assert_matches!(
+            dt.simplex_barycenter(simplex_key),
+            Err(SimplexBarycenterError::VertexLift {
+                simplex_key: key,
+                vertex_key,
+                source: GlobalTopologyModelError::NonFiniteCoordinate { axis: 0, value },
+            }) if key == simplex_key
+                && vertex_key == overflowing_vertex_key
+                && value.is_infinite()
+                && value.is_sign_positive()
+        );
     }
 
     #[test]
@@ -1950,6 +2535,27 @@ mod tests {
                 if matches!(
                     source.as_ref(),
                     SimplexDataFillError::MissingSimplexData { .. }
+            )
+        );
+    }
+
+    #[test]
+    fn test_delaunay_result_accepts_simplex_barycenter_errors() {
+        fn attempt_stale_barycenter(simplex_key: SimplexKey) -> DelaunayResult<()> {
+            let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
+            dt.simplex_barycenter(simplex_key)?;
+            Ok(())
+        }
+
+        let stale = SimplexKey::from(KeyData::from_ffi(0xBEEF));
+        let err = attempt_stale_barycenter(stale).unwrap_err();
+        assert_matches!(
+            err,
+            DelaunayError::SimplexBarycenter { source }
+                if matches!(
+                    source.as_ref(),
+                    SimplexBarycenterError::MissingSimplex { simplex_key }
+                        if *simplex_key == stale
                 )
         );
     }

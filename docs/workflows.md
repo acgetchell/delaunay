@@ -200,6 +200,40 @@ fn main() -> DelaunayResult<()> {
 }
 ```
 
+## Pachner Move API: simplex barycenter insert point
+
+For a k=1 insert into an existing simplex, use `simplex_barycenter` to derive a
+topology-aware interior point from the live triangulation. In Euclidean
+triangulations this is the arithmetic average of the simplex vertices; in
+periodic image-point triangulations the method lifts through stored periodic
+offsets before averaging and canonicalizing back into the domain.
+
+```rust
+use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder, vertex};
+use delaunay::prelude::pachner::{PachnerMove, PachnerMoves};
+
+fn main() -> DelaunayResult<()> {
+    let vertices = vec![
+        vertex![0.0, 0.0, 0.0]?,
+        vertex![1.0, 0.0, 0.0]?,
+        vertex![0.0, 1.0, 0.0]?,
+        vertex![0.0, 0.0, 1.0]?,
+    ];
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    let Some((simplex_key, _)) = dt.simplices().next() else {
+        return Ok(());
+    };
+
+    let barycenter = dt.simplex_barycenter(simplex_key)?;
+    dt.propose_pachner(PachnerMove::K1Insert {
+        simplex_key,
+        vertex: vertex!(*barycenter.coords())?,
+    })?
+    .attempt_on(&mut dt)?;
+    Ok(())
+}
+```
+
 ### Advanced repair with heuristic rebuild
 
 If you want a stronger "try harder" path, call
