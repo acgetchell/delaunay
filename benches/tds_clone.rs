@@ -64,7 +64,8 @@ fn generate_vertices<const D: usize>(requested_vertices: usize, seed: u64) -> Ve
 fn build_clone_source<const D: usize>(requested_vertices: usize, seed_base: u64) -> CloneSource<D> {
     let seed = seed_for_case::<D>(requested_vertices, seed_base);
     let vertices = generate_vertices::<D>(requested_vertices, seed);
-    let triangulation: BenchTriangulation<D> = DelaunayTriangulation::try_new(&vertices).or_abort();
+    let triangulation: BenchTriangulation<D> =
+        DelaunayTriangulation::builder(&vertices).build().or_abort();
     let tds = triangulation.tds().clone();
 
     CloneSource {

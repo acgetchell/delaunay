@@ -63,7 +63,7 @@ use std::{
 ///     delaunay::vertex![1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.tds().vertex_keys().take(1))?;
 /// let view = ridge.view(dt.tds())?;
@@ -157,7 +157,7 @@ impl LiftedVertexId {
 ///     delaunay::vertex![1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.tds().vertex_keys().take(1))?;
 /// let view = ridge.view(dt.tds())?;

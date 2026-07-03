@@ -28,7 +28,7 @@ fn main() -> DelaunayResult<()> {
         vertex![0.0, 0.0, 1.0]?,
     ];
 
-    let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     // Optional verification (see docs/validation.md for when to use each):
     assert!(dt.as_triangulation().validate_embedding().is_ok()); // Levels 1-4 (faithful embedding)
@@ -132,7 +132,7 @@ fn main() -> Result<(), RepairExampleError> {
         vertex![0.0, 0.0, 1.0]?,
     ];
 
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     let _stats = dt.repair_delaunay_with_flips()?;
     Ok(())
@@ -185,7 +185,7 @@ fn main() -> DelaunayResult<()> {
         vertex![0.0, 0.0, 1.0]?,
     ];
 
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     match dt.repair_delaunay_with_flips() {
         Ok(_stats) => {}
@@ -242,7 +242,7 @@ fn main() -> Result<(), RepairExampleError> {
         vertex![0.0, 0.0, 1.0]?,
     ];
 
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     let outcome = dt
         .repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())?;
@@ -277,7 +277,7 @@ fn main() -> DelaunayResult<()> {
     let mut dt = DelaunayTriangulationBuilder::new(&vertices)
         .try_canonicalized_toroidal([1.0, 1.0])
         ? // input coordinate canonicalization
-        .build::<()>()?;
+        .build()?;
 
     // Subsequent insertions are standard Euclidean insertions; canonicalize
     // additional points at the call site if they come from the same domain.
@@ -318,7 +318,7 @@ fn main() -> DelaunayResult<()> {
         vertex![1.0, 0.0; data = 20]?,
         vertex![0.0, 1.0; data = 30]?,
     ];
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<i32>()?;
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).simplex_data_type::<i32>().build()?;
 
     // Read vertex data
     for (_key, vertex) in dt.vertices() {
@@ -433,7 +433,7 @@ fn main() -> Result<(), DeletionExampleError> {
         vertex![0.2, 0.2, 0.2]?,
     ];
 
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     let Some((vertex_key, _)) = dt.vertices().next() else {
         return Ok(());
     };
@@ -496,7 +496,7 @@ fn main() -> Result<(), FlipExampleError> {
         vertex![0.0, 1.0, 0.0]?,
         vertex![0.0, 0.0, 1.0]?,
     ];
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     // k=1: split a simplex by inserting a vertex.
     let Some((simplex_key, _)) = dt.simplices().next() else {

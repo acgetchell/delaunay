@@ -464,7 +464,7 @@ impl TriangulationEmbeddingValidationReport {
     ///     vertex![1.0, 0.0]?,
     ///     vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// std::assert_matches!(
     ///     dt.as_triangulation().embedding_report(),
@@ -892,7 +892,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///     vertex![1.0, 0.0]?,
     ///     vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// assert!(dt.as_triangulation().is_valid_embedding().is_ok());
     /// # Ok(())
@@ -931,7 +931,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///     vertex![1.0, 0.0]?,
     ///     vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// std::assert_matches!(dt.as_triangulation().embedding_diagnostic(), Ok(None));
     /// # Ok(())
@@ -970,7 +970,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///     vertex![1.0, 0.0]?,
     ///     vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// std::assert_matches!(
     ///     dt.as_triangulation().embedding_report(),
@@ -1063,7 +1063,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///     vertex![1.0, 0.0]?,
     ///     vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// assert!(dt.as_triangulation().validate_embedding().is_ok());
     /// # Ok(())
@@ -1994,7 +1994,7 @@ mod tests {
             test_vertex([0.25, 0.25, 0.25]),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build::<()>()
+            .build()
             .unwrap();
 
         assert!(dt.as_triangulation().validate_embedding().is_ok());

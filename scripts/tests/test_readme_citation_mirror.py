@@ -1,7 +1,5 @@
 """Tests for README and CITATION.cff documentation coupling."""
 
-from __future__ import annotations
-
 import re
 from pathlib import Path
 

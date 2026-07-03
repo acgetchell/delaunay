@@ -132,7 +132,7 @@ mod tests {
     fn test_triangulation<const D: usize>() -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>
     {
         let vertices = simplex_vertices::<D>();
-        DelaunayTriangulation::try_new(&vertices).unwrap()
+        DelaunayTriangulation::builder(&vertices).build().unwrap()
     }
 
     fn seed_spatial_index<const D: usize>(

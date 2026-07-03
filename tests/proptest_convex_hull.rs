@@ -10,8 +10,8 @@
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
 use delaunay::assert_jaccard_gte;
+use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
 use delaunay::prelude::query::*;
-use delaunay::prelude::topology::validation::*;
 use delaunay::try_vertices_from_points;
 use proptest::prelude::*;
 
@@ -55,10 +55,7 @@ macro_rules! test_minimal_simplex_hull {
                     let vertices =
                         try_vertices_from_points(&points).expect("finite point coordinates");
 
-                    let dt_result = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    );
+                    let dt_result = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build();
                     prop_assert!(
                         dt_result.is_ok(),
                         "{}D minimal simplex triangulation should construct: {:?}",
@@ -104,10 +101,7 @@ macro_rules! test_convex_hull_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    let dt_result = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    );
+                    let dt_result = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build();
                     prop_assume!(dt_result.is_ok());
                     let dt = dt_result.expect("assumed valid random triangulation");
 
@@ -150,10 +144,7 @@ macro_rules! test_convex_hull_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    let dt_result = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    );
+                    let dt_result = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build();
                     prop_assume!(dt_result.is_ok());
                     let dt = dt_result.expect("assumed valid random triangulation");
                     let hull_result = ConvexHull::try_from_triangulation(dt.as_triangulation());
@@ -204,10 +195,7 @@ macro_rules! test_convex_hull_properties {
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates")),
                     new_point in prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates"))
                 ) {
-                    let dt_result = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
-                        &initial_vertices,
-                        TopologyGuarantee::PLManifold,
-                    );
+                    let dt_result = DelaunayTriangulation::builder(&initial_vertices).topology_guarantee(TopologyGuarantee::PLManifold).build();
                     prop_assume!(dt_result.is_ok());
                     let mut dt = dt_result.expect("assumed valid random triangulation");
 
@@ -269,10 +257,7 @@ macro_rules! test_convex_hull_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    let dt_result = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    );
+                    let dt_result = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build();
                     prop_assume!(dt_result.is_ok());
                     let dt = dt_result.expect("assumed valid random triangulation");
                     let hull_result = ConvexHull::try_from_triangulation(dt.as_triangulation());
@@ -314,10 +299,7 @@ macro_rules! test_convex_hull_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    let dt_result = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    );
+                    let dt_result = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build();
                     prop_assume!(dt_result.is_ok());
                     let dt = dt_result.expect("assumed valid random triangulation");
                     let hull1_result = ConvexHull::try_from_triangulation(dt.as_triangulation());

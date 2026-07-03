@@ -10,8 +10,9 @@
 
 use approx::relative_eq;
 use delaunay::prelude::Tds;
+use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
+use delaunay::prelude::geometry::AdaptiveKernel;
 use delaunay::prelude::query::*;
-use delaunay::prelude::topology::validation::*;
 use delaunay::try_vertices_from_points;
 use proptest::prelude::*;
 
@@ -61,10 +62,7 @@ macro_rules! test_serialization_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
                         // Serialize to JSON
                         let json = serde_json::to_string(&dt).expect("Serialization failed");
 
@@ -106,10 +104,7 @@ macro_rules! test_serialization_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
                         if dt.tds().validate().is_ok() {
                             // Serialize and deserialize via try_from_tds
                             let json = serde_json::to_string(&dt).expect("Serialization failed");
@@ -139,10 +134,7 @@ macro_rules! test_serialization_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
                         // Filter: Skip minimal/degenerate configurations
                         // Need more than minimal simplex (D+1) to have meaningful serialization test
                         prop_assume!(dt.number_of_vertices() > $dim + 1);
@@ -200,10 +192,7 @@ macro_rules! test_serialization_properties {
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
                         // Count original neighbor relationships
                         let mut original_neighbor_count = 0;
                         for (_key, simplex) in dt.simplices() {

@@ -79,7 +79,7 @@ fn main() -> DelaunayResult<()> {
         vertex![0.0, 1.0, 0.0]?,
         vertex![0.0, 0.0, 1.0]?,
     ];
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     // Incremental insertion (maintains Delaunay property)
     let new_vertex = vertex![0.5, 0.5, 0.5]?;
@@ -116,7 +116,7 @@ fn main() -> DelaunayResult<()> {
         .try_canonicalized_toroidal([1.0, 1.0])
         ? // Wrap input coordinates before Euclidean construction.
         .topology_guarantee(TopologyGuarantee::PLManifoldStrict)
-        .build::<()>()?;
+        .build()?;
 
     dt.set_validation_policy(ValidationPolicy::Always);
 
@@ -203,7 +203,7 @@ fn main() -> Result<(), ExampleError> {
         vertex![0.0, 1.0, 0.0]?,
         vertex![0.0, 0.0, 1.0]?,
     ];
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     // k=1 move: Insert a vertex into a simplex (splits simplex into D+1 simplices)
     let Some((simplex_key, _)) = dt.simplices().next() else {
@@ -381,7 +381,7 @@ fn main() -> Result<(), ExampleError> {
         vertex![0.0, 1.0, 0.0]?,
         vertex![0.0, 0.0, 1.0]?,
     ];
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     // 2. Add vertices using Builder API (maintains Delaunay)
     dt.insert_vertex(vertex![0.5, 0.5, 0.5]?)?;
@@ -597,7 +597,7 @@ fn main() -> Result<(), ExampleError> {
         vertex![0.0, 1.0, 0.0]?,
         vertex![0.0, 0.0, 1.0]?,
     ];
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
     assert!(outcome.topology_repair.succeeded);

@@ -198,6 +198,10 @@ fn clone_batch(base_dt: &FlipTriangulation<4>) -> Vec<FlipTriangulation<4>> {
 }
 
 /// Registers one stress case that repeats the same raw Pachner request.
+///
+/// `bench_pachner_move` measures `attempt_pachner_move`, so each sample now
+/// includes `propose_pachner` feasibility work and `attempt_on` revalidation
+/// before mutation, not only the raw flip mutation cost.
 fn bench_pachner_move(
     group: &mut BenchmarkGroup<'_, WallTime>,
     name: &'static str,

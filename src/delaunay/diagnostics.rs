@@ -69,6 +69,8 @@ pub struct ConstructionTelemetry {
     /// Maximum wall-clock nanoseconds spent in one transactional insertion call.
     pub insertion_wall_time_nanos_max: u64,
 
+    /// Wall-clock nanoseconds spent in the public construction entry point.
+    pub construction_total_nanos: u64,
     /// Wall-clock nanoseconds spent preprocessing vertices before topology construction.
     pub construction_preprocessing_nanos: u64,
     /// Wall-clock nanoseconds spent in the bulk insertion loop, including batch local repair.
@@ -237,6 +239,7 @@ impl ConstructionTelemetry {
     pub const fn has_data(&self) -> bool {
         self.insertion_wall_time_calls > 0
             || self.insertion_wall_time_nanos > 0
+            || self.construction_total_nanos > 0
             || self.construction_preprocessing_nanos > 0
             || self.construction_insert_loop_nanos > 0
             || self.construction_finalize_nanos > 0
@@ -274,6 +277,11 @@ impl ConstructionTelemetry {
         self.insertion_wall_time_nanos =
             self.insertion_wall_time_nanos.saturating_add(elapsed_nanos);
         self.insertion_wall_time_nanos_max = self.insertion_wall_time_nanos_max.max(elapsed_nanos);
+    }
+
+    /// Records the wall-clock duration of the public construction entry point.
+    pub(crate) const fn record_construction_total_timing(&mut self, elapsed_nanos: u64) {
+        self.construction_total_nanos = self.construction_total_nanos.saturating_add(elapsed_nanos);
     }
 
     /// Records the wall-clock duration of construction preprocessing.
@@ -662,6 +670,9 @@ impl ConstructionTelemetry {
 
     /// Keeps construction-phase merge accounting isolated so aggregate merges stay readable.
     const fn merge_construction_phase_timings_from(&mut self, other: &Self) {
+        self.construction_total_nanos = self
+            .construction_total_nanos
+            .saturating_add(other.construction_total_nanos);
         self.construction_preprocessing_nanos = self
             .construction_preprocessing_nanos
             .saturating_add(other.construction_preprocessing_nanos);
@@ -872,6 +883,7 @@ mod tests {
             postcondition_nanos: 500_000,
         });
         summary.record_repair_seed_accumulation(500_000, 7);
+        summary.record_construction_total_timing(5_000);
         summary.record_construction_preprocessing_timing(10_000);
         summary.record_construction_insert_loop_timing(20_000);
         summary.record_construction_finalize_timing(30_000);
@@ -884,6 +896,7 @@ mod tests {
         assert_eq!(summary.insertion_wall_time_calls, 1);
         assert_eq!(summary.insertion_wall_time_nanos, 1_000_000);
         assert_eq!(summary.insertion_wall_time_nanos_max, 1_000_000);
+        assert_eq!(summary.construction_total_nanos, 5_000);
         assert_eq!(summary.construction_preprocessing_nanos, 10_000);
         assert_eq!(summary.construction_insert_loop_nanos, 20_000);
         assert_eq!(summary.construction_finalize_nanos, 30_000);
@@ -1021,12 +1034,14 @@ mod tests {
             ridge_nanos: 50,
             postcondition_nanos: 30,
         });
+        right.record_construction_total_timing(200);
         right.record_construction_insert_loop_timing(300);
         right.record_construction_final_delaunay_validation_timing(400);
 
         left.merge_from(&right);
 
         assert!(left.has_data());
+        assert_eq!(left.construction_total_nanos, 200);
         assert_eq!(left.construction_insert_loop_nanos, 400);
         assert_eq!(left.construction_final_delaunay_validation_nanos, 600);
         assert_eq!(left.local_repair_calls, 2);

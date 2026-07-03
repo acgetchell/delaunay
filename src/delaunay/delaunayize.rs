@@ -40,7 +40,7 @@
 //!     delaunay::vertex![0.0, 1.0, 0.0]?,
 //!     delaunay::vertex![0.0, 0.0, 1.0]?,
 //! ];
-//! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+//! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 //!
 //! let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
 //! assert!(outcome.topology_repair.succeeded);
@@ -63,6 +63,7 @@ pub use crate::flips::{
 pub use crate::tds::SimplexValidationError;
 pub use crate::{PlManifoldRepairError, PlManifoldRepairStage, PlManifoldRepairStats};
 
+use crate::builder::DelaunayTriangulationBuilder;
 use crate::core::algorithms::pl_manifold_repair::{
     PlManifoldRepairConfig, repair_pl_manifold_topology,
 };
@@ -209,7 +210,7 @@ impl Default for DelaunayizeConfig {
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
 /// assert!(outcome.topology_repair.succeeded);
@@ -676,7 +677,9 @@ where
     U: DataType,
     V: DataType,
 {
-    let mut rebuilt = DelaunayTriangulation::try_with_kernel(kernel, snapshot.vertices())?;
+    let mut rebuilt = DelaunayTriangulationBuilder::new(snapshot.vertices())
+        .simplex_data_type::<V>()
+        .build_with_kernel(kernel)?;
     restore_simplex_data(&mut rebuilt, snapshot.simplex_data())?;
     Ok(rebuilt)
 }
@@ -923,7 +926,7 @@ where
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
 /// assert!(outcome.topology_repair.succeeded);
@@ -1173,7 +1176,7 @@ mod tests {
     /// Creates a Delaunay wrapper whose TDS has a boundary-ridge violation.
     fn boundary_ridge_multiplicity_dt() -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> {
         let vertices = unit_simplex_vertices::<3>();
-        let mut dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         *dt.tds_mut() = make_boundary_ridge_multiplicity_tds();
         dt
     }
@@ -1181,7 +1184,7 @@ mod tests {
     /// Creates a Delaunay wrapper whose TDS has a vertex-link violation.
     fn cone_on_torus_dt() -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> {
         let vertices = unit_simplex_vertices::<3>();
-        let mut dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         *dt.tds_mut() = make_cone_on_torus_tds();
         dt
     }
@@ -1206,7 +1209,7 @@ mod tests {
         init_tracing();
         let vertices = unit_simplex_vertices::<D>();
         let mut dt: DelaunayTriangulation<_, (), (), D> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         insert_duplicate_simplex_copies(&mut dt, 2);
 
@@ -1234,7 +1237,7 @@ mod tests {
         init_tracing();
         let vertices = unit_simplex_vertices::<2>();
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         insert_duplicate_simplex_copies(&mut dt, 3);
 
         let before_simplex_count = dt.number_of_simplices();
@@ -1358,7 +1361,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap();
         assert!(outcome.topology_repair.succeeded);
@@ -1376,7 +1379,7 @@ mod tests {
             vertex!([1.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap();
         assert!(outcome.topology_repair.succeeded);
@@ -1398,7 +1401,7 @@ mod tests {
             vertex!([0.5, 0.5, 0.5]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap();
         assert!(outcome.topology_repair.succeeded);
@@ -1501,7 +1504,7 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let before_simplex_count = dt.number_of_simplices();
         let before_simplex_uuids = sorted_simplex_uuids(&dt);
         let snapshot_error = SimplexValidationError::VertexKeyNotFound {
@@ -1726,7 +1729,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Fallback should not be triggered on a valid triangulation.
         let config = DelaunayizeConfig {
@@ -1765,7 +1768,7 @@ mod tests {
         init_tracing();
         let vertices = unit_simplex_vertices::<2>();
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         insert_duplicate_simplex_copies(&mut dt, 3);
 
         let outcome = delaunayize_by_flips(
@@ -1794,7 +1797,7 @@ mod tests {
         init_tracing();
         let vertices = [vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()];
         let mut dt: DelaunayTriangulation<_, (), (), 1> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         let outcome = delaunayize_by_flips(
             &mut dt,
@@ -1825,7 +1828,7 @@ mod tests {
             vertex!([1.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         let _guard = ForceDelaunayRepairFailureGuard::enable();
         let outcome = delaunayize_by_flips(
@@ -1875,7 +1878,8 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build::<i32>()
+            .simplex_data_type::<i32>()
+            .build()
             .unwrap();
         let original_simplex_key = dt.simplices().next().unwrap().0;
         dt.set_simplex_data(original_simplex_key, Some(42)).unwrap();
@@ -1914,7 +1918,10 @@ mod tests {
         let snapshot = snapshot_rebuild_state(&tds).unwrap();
         let kernel = AdaptiveKernel::new();
         let mut rebuilt: DelaunayTriangulation<_, (), i32, 2> =
-            DelaunayTriangulation::try_with_kernel(&kernel, snapshot.vertices()).unwrap();
+            DelaunayTriangulationBuilder::new(snapshot.vertices())
+                .simplex_data_type::<i32>()
+                .build_with_kernel(&kernel)
+                .unwrap();
 
         restore_simplex_data(&mut rebuilt, snapshot.simplex_data()).unwrap();
 
@@ -1941,11 +1948,11 @@ mod tests {
         let config = DelaunayizeConfig::default();
 
         let mut dt1: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let outcome1 = delaunayize_by_flips(&mut dt1, config).unwrap();
 
         let mut dt2: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let outcome2 = delaunayize_by_flips(&mut dt2, config).unwrap();
 
         assert_eq!(

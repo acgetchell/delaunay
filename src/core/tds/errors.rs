@@ -178,7 +178,7 @@ pub enum GeometricError {
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// assert_eq!(dt.number_of_vertices(), 4);
 /// assert!(dt.is_valid_delaunay().is_ok());
 /// # Ok(())

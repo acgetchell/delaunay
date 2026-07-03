@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Filter and split Codacy SARIF before GitHub Code Scanning upload."""
 
-from __future__ import annotations
-
 import argparse
 import copy
 import json

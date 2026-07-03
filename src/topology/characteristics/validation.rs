@@ -42,7 +42,7 @@ use crate::topology::{
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// let result = validation::validate_triangulation_euler(dt.tds(), dt.global_topology())?;
 /// assert_eq!(result.chi, 1);
@@ -138,7 +138,7 @@ impl TopologyCheckResult {
 ///     delaunay::vertex![1.0, 0.0]?,
 ///     delaunay::vertex![0.5, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// let result = validation::validate_triangulation_euler(dt.tds(), dt.global_topology())?;
 /// assert_eq!(result.chi, 1);

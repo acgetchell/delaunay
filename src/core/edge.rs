@@ -112,7 +112,7 @@ pub enum EdgeKeyError {
 ///     delaunay::vertex![1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// let Some((_simplex_key, simplex)) = dt.simplices().next() else {
 ///     return Ok(());
 /// };
@@ -165,7 +165,7 @@ impl EdgeKey {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((_simplex_key, simplex)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -317,7 +317,7 @@ impl EdgeKey {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((_simplex_key, simplex)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -360,7 +360,7 @@ impl EdgeKey {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((_simplex_key, simplex)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -403,7 +403,7 @@ impl EdgeKey {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((_simplex_key, simplex)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -457,7 +457,7 @@ impl EdgeKey {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((_simplex_key, simplex)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -520,7 +520,7 @@ impl<'tds, U, V, const D: usize> EdgeView<'tds, U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((_simplex_key, simplex)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -650,7 +650,7 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build::<()>()
+            .build()
             .unwrap();
         let simplex = dt.simplices().next().unwrap().1;
         let vertices = simplex.vertices();
@@ -725,7 +725,7 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build::<()>()
+            .build()
             .unwrap();
         let keys: Vec<VertexKey> = dt.tds().vertex_keys().collect();
         let missing_edge = keys.iter().enumerate().find_map(|(i, &a)| {

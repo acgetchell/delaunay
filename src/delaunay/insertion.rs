@@ -208,7 +208,7 @@ where
     ///     vertex![0.0, 0.0, 1.0, 0.0]?,
     ///     vertex![0.0, 0.0, 0.0, 1.0]?,
     /// ];
-    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// assert_eq!(dt.number_of_vertices(), 5);
     ///
     /// // Insert additional interior vertex
@@ -707,7 +707,7 @@ mod tests {
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         assert_eq!(dt.number_of_vertices(), 3);
         assert_eq!(dt.number_of_simplices(), 1);
@@ -732,7 +732,7 @@ mod tests {
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Insert 3 interior points sequentially
         dt.insert_vertex(vertex![0.3, 0.3].unwrap()).unwrap();
@@ -759,7 +759,7 @@ mod tests {
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Insert 3 interior points sequentially (well inside the tetrahedron)
         dt.insert_vertex(vertex![0.1, 0.1, 0.1].unwrap()).unwrap();
@@ -784,7 +784,7 @@ mod tests {
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
 
         // Initially no last_inserted_simplex
@@ -827,7 +827,7 @@ mod tests {
             vertex![0.0, 1.0].unwrap(),
         ];
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         let _guard = ForceRepairNonconvergentGuard::enable();
         let result = dt.insert_vertex(vertex![0.5, 0.5].unwrap());
@@ -863,7 +863,7 @@ mod tests {
             vertex![0.0, 1.0].unwrap(),
         ];
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         dt.set_delaunay_repair_policy(DelaunayRepairPolicy::EveryN(NonZeroUsize::new(3).unwrap()));
         dt.set_delaunay_check_policy(DelaunayCheckPolicy::EndOnly);
@@ -891,7 +891,7 @@ mod tests {
             vertex![0.0, 1.0].unwrap(),
         ];
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let vertex_count_before = dt.number_of_vertices();
         let simplex_count_before = dt.number_of_simplices();
         let hint_before = dt.simplices().next().map(|(key, _)| key);
@@ -1021,7 +1021,7 @@ mod tests {
             vertex![0.5, 0.5].unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let all_simplices: Vec<SimplexKey> =
             dt.simplices().map(|(simplex_key, _)| simplex_key).collect();
 

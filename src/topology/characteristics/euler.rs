@@ -25,7 +25,7 @@
 //!     delaunay::vertex![0.0, 1.0, 0.0]?,
 //!     delaunay::vertex![0.0, 0.0, 1.0]?,
 //! ];
-//! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+//! let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 //!
 //! let counts = euler::count_simplices(dt.tds())?;
 //! let chi = euler::euler_characteristic(&counts);
@@ -224,7 +224,7 @@ pub enum TopologyClassification {
 ///     delaunay::vertex![1.0, 0.0]?,
 ///     delaunay::vertex![0.5, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// let counts = euler::count_simplices(dt.tds())?;
 /// assert_eq!(counts.count(0), 3);  // 3 vertices
@@ -477,7 +477,7 @@ fn insert_simplices_of_size(
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// let boundary_counts = euler::count_boundary_simplices(dt.tds(), dt.global_topology())?;
 /// let boundary_chi = euler::euler_characteristic(&boundary_counts);
@@ -768,7 +768,7 @@ pub(crate) fn triangulated_surface_boundary_component_count(
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// let classification = classify_triangulation(dt.tds(), dt.global_topology())?;
 /// assert_eq!(classification, TopologyClassification::SingleSimplex(3));

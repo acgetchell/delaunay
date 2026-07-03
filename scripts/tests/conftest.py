@@ -4,8 +4,6 @@ Shared pytest fixtures and utilities for test modules.
 Provides common testing utilities that can be reused across multiple test files.
 """
 
-from __future__ import annotations
-
 import os
 import subprocess
 import sys

@@ -1,20 +1,23 @@
-//! Read-only Delaunay triangulation query, traversal, and accessor methods.
+//! Delaunay triangulation query, traversal, accessor, and payload-fill methods.
 //!
 //! This module owns the high-level forwarding surface for inspecting a
 //! `DelaunayTriangulation`: counts, iterator access, TDS views, topology
-//! metadata accessors, and adjacency traversal helpers. It also keeps the small
-//! cache invalidation helpers next to the accessors they protect.
+//! metadata accessors, adjacency traversal helpers, and checked follow-on
+//! payload assignment. It also keeps the small cache invalidation helpers next
+//! to the accessors they protect.
 
 #![forbid(unsafe_code)]
 
 use crate::core::adjacency::{
     EdgeIndex, IncidenceView, SimplexNeighborIndex, TopologyIndexBuildError, TriangulationAdjacency,
 };
+use crate::core::collections::SimplexSecondaryMap;
 use crate::core::edge::{EdgeKey, EdgeKeyError};
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter, FacetHandle};
 use crate::core::query::QueryError;
 use crate::core::simplex::Simplex;
 use crate::core::tds::{InvariantError, SimplexKey, Tds, TdsError, TdsMutationError, VertexKey};
+use crate::core::traits::data_type::DataCopy;
 use crate::core::triangulation::Triangulation;
 use crate::core::validation::{TopologyGuarantee, ValidationConfigurationError, ValidationPolicy};
 use crate::core::vertex::Vertex;
@@ -22,6 +25,37 @@ use crate::repair::{DelaunayCheckPolicy, DelaunayRepairPolicy};
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
 use crate::triangulation::DelaunayTriangulation;
 use crate::validation::DelaunayTriangulationValidationError;
+use thiserror::Error;
+
+/// Error returned when filling simplex payloads from a secondary map.
+///
+/// The error is reported before any payload mutation when the supplied map is
+/// incomplete or names a simplex key outside the receiving triangulation.
+#[derive(Clone, Debug, Error, PartialEq)]
+#[non_exhaustive]
+pub enum SimplexDataFillError {
+    /// A live simplex did not have a corresponding secondary-map entry.
+    #[error("secondary simplex data is missing live simplex key {simplex_key:?}")]
+    MissingSimplexData {
+        /// Live simplex key with no supplied data.
+        simplex_key: SimplexKey,
+    },
+    /// The secondary map contains a key that is not live in this triangulation.
+    #[error("secondary simplex data contains stale simplex key {simplex_key:?}")]
+    StaleSimplexData {
+        /// Stale or foreign simplex key supplied by the secondary map.
+        simplex_key: SimplexKey,
+    },
+    /// The final payload write failed after preflight.
+    #[error("failed to set simplex data for {simplex_key:?}: {source}")]
+    TdsMutation {
+        /// Simplex key whose payload write failed.
+        simplex_key: SimplexKey,
+        /// Underlying TDS mutation failure.
+        #[source]
+        source: Box<TdsMutationError>,
+    },
+}
 
 // =============================================================================
 // QUERY, ACCESSORS, AND CONFIGURATION (Minimal Bounds)
@@ -56,7 +90,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     delaunay::vertex![0.2, 0.2, 0.2, 0.2]?,
     /// ];
     ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// assert_eq!(dt.number_of_vertices(), 6);
     /// # Ok(())
     /// # }
@@ -89,7 +123,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
     /// ];
     ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// // One 4-simplex in 4D
     /// assert_eq!(dt.number_of_simplices(), 1);
     /// # Ok(())
@@ -125,7 +159,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
     /// ];
     ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// assert_eq!(dt.dim(), 4);
     /// # Ok(())
     /// # }
@@ -166,7 +200,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// for (simplex_key, simplex) in dt.simplices() {
     ///     println!("Simplex {:?} has {} vertices", simplex_key, simplex.number_of_vertices());
@@ -209,7 +243,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// for (vertex_key, vertex) in dt.vertices() {
     ///     println!("Vertex {:?} at {:?}", vertex_key, vertex.point());
@@ -258,7 +292,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     delaunay::vertex![1.0, 0.0; data = 20]?,
     ///     delaunay::vertex![0.0, 1.0; data = 30]?,
     /// ];
-    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((key, _)) = dt.vertices().next() else {
     ///     return Ok(());
     /// };
@@ -317,7 +351,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<i32>()?;
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).simplex_data_type::<i32>().build()?;
     /// let Some((key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -339,6 +373,130 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
         data: Option<V>,
     ) -> Result<Option<V>, TdsMutationError> {
         self.tri.tds.set_simplex_data(key, data)
+    }
+
+    /// Fills every existing simplex with data computed from a borrowed simplex view.
+    ///
+    /// This is the ergonomic follow-on step for triangulations whose simplex
+    /// payload type was selected at construction time. It does not change
+    /// geometry, topology, runtime keys, UUIDs, or validation generation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayResult, DelaunayTriangulation, DelaunayTriangulationBuilder,
+    /// };
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = vec![
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    ///
+    /// let mut dt: DelaunayTriangulation<_, _, usize, 2> =
+    ///     DelaunayTriangulationBuilder::new(&vertices)
+    ///         .simplex_data_type::<usize>()
+    ///         .build()?;
+    /// dt.fill_simplex_data(|_, simplex| simplex.number_of_vertices());
+    ///
+    /// for (_, simplex) in dt.simplices() {
+    ///     assert_eq!(simplex.data(), Some(&3));
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn fill_simplex_data<F>(&mut self, data_for: F)
+    where
+        F: FnMut(SimplexKey, &Simplex<V, D>) -> V,
+    {
+        self.tri.tds.fill_simplex_data(data_for);
+    }
+
+    /// Fills every existing simplex from a complete secondary map.
+    ///
+    /// The method preflights the entire map before mutating canonical simplex
+    /// storage. It returns [`SimplexDataFillError::StaleSimplexData`] if the
+    /// map contains a key that does not belong to this triangulation, and
+    /// [`SimplexDataFillError::MissingSimplexData`] if any live simplex has no
+    /// entry. On either preflight error, no simplex payload is changed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SimplexDataFillError`] when the secondary map is stale,
+    /// incomplete, or when the final TDS payload write fails.
+    ///
+    /// Because values are copied out of a borrowed secondary map, this method
+    /// requires [`DataCopy`]. Use [`Self::fill_simplex_data`] when payloads can
+    /// be computed by value for each simplex.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::collections::SimplexSecondaryMap;
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayResult, DelaunayTriangulation, DelaunayTriangulationBuilder,
+    /// };
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = vec![
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    ///
+    /// let mut dt: DelaunayTriangulation<_, _, usize, 2> =
+    ///     DelaunayTriangulationBuilder::new(&vertices)
+    ///         .simplex_data_type::<usize>()
+    ///         .build()?;
+    /// let mut data = SimplexSecondaryMap::new();
+    /// for (simplex_key, simplex) in dt.simplices() {
+    ///     data.insert(simplex_key, simplex.number_of_vertices());
+    /// }
+    ///
+    /// dt.try_fill_simplex_data_from(&data)?;
+    /// for (_, simplex) in dt.simplices() {
+    ///     assert_eq!(simplex.data(), Some(&3));
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn try_fill_simplex_data_from(
+        &mut self,
+        data: &SimplexSecondaryMap<V>,
+    ) -> Result<(), SimplexDataFillError>
+    where
+        V: DataCopy,
+    {
+        for (simplex_key, _) in data {
+            if !self.tri.tds.contains_simplex(simplex_key) {
+                return Err(SimplexDataFillError::StaleSimplexData { simplex_key });
+            }
+        }
+
+        let assignments = self
+            .tri
+            .tds
+            .simplex_keys()
+            .map(|simplex_key| {
+                data.get(simplex_key)
+                    .copied()
+                    .map(|simplex_data| (simplex_key, simplex_data))
+                    .ok_or(SimplexDataFillError::MissingSimplexData { simplex_key })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        for (simplex_key, simplex_data) in assignments {
+            self.tri
+                .tds
+                .set_simplex_data(simplex_key, Some(simplex_data))
+                .map_err(|source| SimplexDataFillError::TdsMutation {
+                    simplex_key,
+                    source: Box::new(source),
+                })?;
+        }
+        Ok(())
     }
 
     /// Returns a reference to the underlying triangulation data structure.
@@ -371,7 +529,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
     /// ];
     ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let tds = dt.tds();
     /// assert_eq!(tds.number_of_vertices(), 5);
     /// # Ok(())
@@ -445,7 +603,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())?;
     /// assert_eq!(hull.number_of_facets(), 4);
     /// # Ok(())
@@ -490,7 +648,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// let boundary_count = dt
     ///     .boundary_facets()?
@@ -542,7 +700,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// assert_eq!(dt.validation_policy(), ValidationPolicy::ExplicitOnly);
     /// # Ok(())
@@ -665,7 +823,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![delaunay::vertex![0.0, 0.0]?, delaunay::vertex![1.0, 0.0]?, delaunay::vertex![0.0, 1.0]?];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// assert_eq!(dt.delaunay_repair_policy(), DelaunayRepairPolicy::EveryInsertion);
     /// # Ok(())
@@ -699,7 +857,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![delaunay::vertex![0.0, 0.0]?, delaunay::vertex![1.0, 0.0]?, delaunay::vertex![0.0, 1.0]?];
-    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
     /// assert_eq!(dt.delaunay_repair_policy(), DelaunayRepairPolicy::Never);
@@ -730,7 +888,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![delaunay::vertex![0.0, 0.0]?, delaunay::vertex![1.0, 0.0]?, delaunay::vertex![0.0, 1.0]?];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// assert_eq!(dt.delaunay_check_policy(), DelaunayCheckPolicy::EndOnly);
     /// # Ok(())
@@ -765,7 +923,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![delaunay::vertex![0.0, 0.0]?, delaunay::vertex![1.0, 0.0]?, delaunay::vertex![0.0, 1.0]?];
-    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some(every_two) = NonZeroUsize::new(2) else {
     ///     return Ok(());
     /// };
@@ -808,7 +966,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![delaunay::vertex![0.0, 0.0]?, delaunay::vertex![1.0, 0.0]?, delaunay::vertex![0.0, 1.0]?];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
     /// # Ok(())
     /// # }
@@ -837,7 +995,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![delaunay::vertex![0.0, 0.0]?, delaunay::vertex![1.0, 0.0]?, delaunay::vertex![0.0, 1.0]?];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// assert!(dt.global_topology().is_euclidean());
     /// # Ok(())
     /// # }
@@ -866,7 +1024,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![delaunay::vertex![0.0, 0.0]?, delaunay::vertex![1.0, 0.0]?, delaunay::vertex![0.0, 1.0]?];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// assert_eq!(dt.topology_kind(), TopologyKind::Euclidean);
     /// # Ok(())
     /// # }
@@ -909,7 +1067,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// dt.try_set_global_topology(GlobalTopology::Euclidean)?;
     /// assert!(dt.global_topology().is_euclidean());
     /// # Ok(())
@@ -990,7 +1148,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// let facet_count = dt
     ///     .facets()
@@ -1041,7 +1199,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let adjacency = dt.adjacency()?;
     ///
     /// assert_eq!(adjacency.number_of_edges(), 6);
@@ -1121,7 +1279,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let edges: std::collections::HashSet<_> = dt.edges().collect();
     /// assert_eq!(edges.len(), 6);
     /// # Ok(())
@@ -1159,7 +1317,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((v0, _)) = dt.vertices().next() else {
     ///     return Ok(());
     /// };
@@ -1203,7 +1361,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -1249,7 +1407,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
@@ -1289,7 +1447,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// // Find the key for a known vertex by matching coordinates.
     /// let Some(v_key) = dt
@@ -1357,7 +1515,7 @@ impl<K, U, V> DelaunayTriangulation<K, U, V, 2> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((_simplex_key, simplex)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -1413,7 +1571,7 @@ impl<K, U, V> DelaunayTriangulation<K, U, V, 2> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let Some((_simplex_key, simplex)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -1434,14 +1592,19 @@ impl<K, U, V> DelaunayTriangulation<K, U, V, 2> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::builder::DelaunayTriangulationBuilder;
+    use crate::construction::{DelaunayError, DelaunayResult};
     use crate::core::operations::DelaunayInsertionState;
     use crate::core::tds::TdsError;
     use crate::core::validation::TriangulationValidationError;
-    use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
+    use crate::geometry::kernel::FastKernel;
     use crate::vertex;
+    use slotmap::KeyData;
     use std::{assert_matches, collections::HashSet, num::NonZeroUsize, sync::Once};
 
     struct Payload;
+    #[derive(Copy, Clone)]
+    struct CopyOnly;
 
     fn init_tracing() {
         static INIT: Once = Once::new();
@@ -1465,14 +1628,16 @@ mod tests {
         ];
 
         let dt_new: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         assert_eq!(dt_new.topology_guarantee(), TopologyGuarantee::PLManifold);
 
         let dt_empty: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
         assert_eq!(dt_empty.topology_guarantee(), TopologyGuarantee::PLManifold);
 
         let dt_with_kernel: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
+            DelaunayTriangulationBuilder::new(&vertices)
+                .build()
+                .unwrap();
 
         assert_eq!(
             dt_with_kernel.topology_guarantee(),
@@ -1509,7 +1674,7 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         let err = dt
             .try_set_global_topology(GlobalTopology::Spherical)
@@ -1550,7 +1715,7 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let (simplex_key, _) = dt.tri.tds.simplices().next().unwrap();
         let first_vertex = dt.tri.tds.simplex(simplex_key).unwrap().vertices()[0];
 
@@ -1588,6 +1753,208 @@ mod tests {
     }
 
     #[test]
+    fn test_fill_simplex_data_accepts_non_datatype_payloads() {
+        let mut dt: DelaunayTriangulation<FastKernel<f64>, Payload, Payload, 2> =
+            DelaunayTriangulation {
+                tri: Triangulation::new_empty(FastKernel::new()),
+                insertion_state: DelaunayInsertionState::new(),
+                spatial_index: None,
+            };
+
+        dt.fill_simplex_data(|_, _| Payload);
+
+        assert_eq!(dt.number_of_simplices(), 0);
+    }
+
+    #[test]
+    fn test_try_fill_simplex_data_from_only_requires_copy_payloads() {
+        let mut dt: DelaunayTriangulation<FastKernel<f64>, Payload, CopyOnly, 2> =
+            DelaunayTriangulation {
+                tri: Triangulation::new_empty(FastKernel::new()),
+                insertion_state: DelaunayInsertionState::new(),
+                spatial_index: None,
+            };
+        let data = SimplexSecondaryMap::new();
+
+        dt.try_fill_simplex_data_from(&data).unwrap();
+
+        assert_eq!(dt.number_of_simplices(), 0);
+    }
+
+    #[test]
+    fn test_try_fill_simplex_data_from_updates_all_live_simplices() {
+        let vertices: Vec<Vertex<(), 2>> = vec![
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([0.25, 0.25]).unwrap(),
+        ];
+        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+            .simplex_data_type::<usize>()
+            .build()
+            .unwrap();
+        assert!(dt.number_of_simplices() > 1);
+        let simplex_identity_before: HashSet<_> = dt
+            .simplices()
+            .map(|(simplex_key, simplex)| (simplex_key, simplex.uuid()))
+            .collect();
+        let vertex_identity_before: HashSet<_> = dt
+            .vertices()
+            .map(|(vertex_key, vertex)| (vertex_key, vertex.uuid()))
+            .collect();
+
+        let mut data = SimplexSecondaryMap::new();
+        for (simplex_key, simplex) in dt.simplices() {
+            data.insert(simplex_key, simplex.number_of_vertices());
+        }
+
+        dt.try_fill_simplex_data_from(&data).unwrap();
+
+        let simplex_identity_after: HashSet<_> = dt
+            .simplices()
+            .map(|(simplex_key, simplex)| (simplex_key, simplex.uuid()))
+            .collect();
+        let vertex_identity_after: HashSet<_> = dt
+            .vertices()
+            .map(|(vertex_key, vertex)| (vertex_key, vertex.uuid()))
+            .collect();
+
+        assert_eq!(simplex_identity_after, simplex_identity_before);
+        assert_eq!(vertex_identity_after, vertex_identity_before);
+        for (_, simplex) in dt.simplices() {
+            assert_eq!(simplex.data(), Some(&3));
+        }
+        assert!(dt.validate().is_ok());
+    }
+
+    #[test]
+    fn test_fill_simplex_data_preserves_topology_identity() {
+        let vertices: Vec<Vertex<(), 2>> = vec![
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+        ];
+        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+            .simplex_data_type::<usize>()
+            .build()
+            .unwrap();
+        let simplex_identity_before: HashSet<_> = dt
+            .simplices()
+            .map(|(simplex_key, simplex)| (simplex_key, simplex.uuid()))
+            .collect();
+        let vertex_identity_before: HashSet<_> = dt
+            .vertices()
+            .map(|(vertex_key, vertex)| (vertex_key, vertex.uuid()))
+            .collect();
+
+        dt.fill_simplex_data(|_, simplex| simplex.number_of_vertices());
+
+        let simplex_identity_after: HashSet<_> = dt
+            .simplices()
+            .map(|(simplex_key, simplex)| (simplex_key, simplex.uuid()))
+            .collect();
+        let vertex_identity_after: HashSet<_> = dt
+            .vertices()
+            .map(|(vertex_key, vertex)| (vertex_key, vertex.uuid()))
+            .collect();
+
+        assert_eq!(simplex_identity_after, simplex_identity_before);
+        assert_eq!(vertex_identity_after, vertex_identity_before);
+        for (_, simplex) in dt.simplices() {
+            assert_eq!(simplex.data(), Some(&3));
+        }
+        assert!(dt.validate().is_ok());
+    }
+
+    #[test]
+    fn test_try_fill_simplex_data_from_missing_entry_has_no_side_effects() {
+        let vertices: Vec<Vertex<(), 2>> = vec![
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([0.25, 0.25]).unwrap(),
+        ];
+        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+            .simplex_data_type::<usize>()
+            .build()
+            .unwrap();
+        assert!(dt.number_of_simplices() > 1);
+        dt.fill_simplex_data(|_, _| 7);
+
+        let mut data = SimplexSecondaryMap::new();
+        let Some((first_simplex_key, _)) = dt.simplices().next() else {
+            panic!("fixture should contain at least one simplex");
+        };
+        data.insert(first_simplex_key, 3);
+
+        let err = dt.try_fill_simplex_data_from(&data).unwrap_err();
+        assert_matches!(err, SimplexDataFillError::MissingSimplexData { .. });
+        for (_, simplex) in dt.simplices() {
+            assert_eq!(simplex.data(), Some(&7));
+        }
+        assert!(dt.validate().is_ok());
+    }
+
+    #[test]
+    fn test_try_fill_simplex_data_from_stale_entry_has_no_side_effects() {
+        let vertices: Vec<Vertex<(), 2>> = vec![
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([0.25, 0.25]).unwrap(),
+        ];
+        let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+            .simplex_data_type::<usize>()
+            .build()
+            .unwrap();
+        dt.fill_simplex_data(|_, _| 7);
+
+        let mut data = SimplexSecondaryMap::new();
+        for (simplex_key, simplex) in dt.simplices() {
+            data.insert(simplex_key, simplex.number_of_vertices());
+        }
+        let stale = SimplexKey::from(KeyData::from_ffi(0xFEED));
+        data.insert(stale, 99);
+
+        let err = dt.try_fill_simplex_data_from(&data).unwrap_err();
+        assert_matches!(
+            err,
+            SimplexDataFillError::StaleSimplexData { simplex_key } if simplex_key == stale
+        );
+        for (_, simplex) in dt.simplices() {
+            assert_eq!(simplex.data(), Some(&7));
+        }
+        assert!(dt.validate().is_ok());
+    }
+
+    #[test]
+    fn test_delaunay_result_accepts_simplex_data_fill_errors() {
+        fn attempt_fill_from_incomplete_map() -> DelaunayResult<()> {
+            let vertices: Vec<Vertex<(), 2>> = vec![
+                vertex!([0.0, 0.0])?,
+                vertex!([1.0, 0.0])?,
+                vertex!([0.0, 1.0])?,
+            ];
+            let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+                .simplex_data_type::<usize>()
+                .build()?;
+            let data = SimplexSecondaryMap::new();
+            dt.try_fill_simplex_data_from(&data)?;
+            Ok(())
+        }
+
+        let err = attempt_fill_from_incomplete_map().unwrap_err();
+        assert_matches!(
+            err,
+            DelaunayError::SimplexDataFill { source }
+                if matches!(
+                    source.as_ref(),
+                    SimplexDataFillError::MissingSimplexData { .. }
+                )
+        );
+    }
+
+    #[test]
     fn test_validation_policy_defaults_to_topology_guarantee_policy() {
         init_tracing();
         // empty() -> Triangulation::new_empty() -> TopologyGuarantee::DEFAULT policy.
@@ -1602,12 +1969,14 @@ mod tests {
 
         // new() -> with_kernel() -> explicit validation_policy initialization
         let dt_new: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         assert_eq!(dt_new.validation_policy(), ValidationPolicy::ExplicitOnly);
 
         // with_kernel() constructor path should also use the default policy
         let dt_with_kernel: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
+            DelaunayTriangulationBuilder::new(&vertices)
+                .build()
+                .unwrap();
         assert_eq!(
             dt_with_kernel.validation_policy(),
             ValidationPolicy::ExplicitOnly
@@ -1635,7 +2004,7 @@ mod tests {
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Getter reflects the underlying Triangulation policy.
         assert_eq!(dt.validation_policy(), ValidationPolicy::ExplicitOnly);
@@ -1687,7 +2056,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         assert_eq!(dt.number_of_vertices(), 4);
     }
@@ -1703,7 +2072,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Minimal 3D simplex has exactly 1 tetrahedron
         assert_eq!(dt.number_of_simplices(), 1);
@@ -1719,7 +2088,7 @@ mod tests {
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         assert_eq!(dt.number_of_simplices(), 1);
 
@@ -1737,7 +2106,9 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt_2d: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices_2d).unwrap();
+            DelaunayTriangulation::builder(&vertices_2d)
+                .build()
+                .unwrap();
         assert_eq!(dt_2d.dim(), 2);
 
         let vertices_3d = vec![
@@ -1747,7 +2118,9 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_3d: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices_3d).unwrap();
+            DelaunayTriangulation::builder(&vertices_3d)
+                .build()
+                .unwrap();
         assert_eq!(dt_3d.dim(), 3);
 
         let vertices_4d = vec![
@@ -1758,7 +2131,9 @@ mod tests {
             vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_4d: DelaunayTriangulation<_, (), (), 4> =
-            DelaunayTriangulation::try_new(&vertices_4d).unwrap();
+            DelaunayTriangulation::builder(&vertices_4d)
+                .build()
+                .unwrap();
         assert_eq!(dt_4d.dim(), 4);
     }
 
@@ -1772,7 +2147,9 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt_2d: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices_2d).unwrap();
+            DelaunayTriangulation::builder(&vertices_2d)
+                .build()
+                .unwrap();
         assert_eq!(dt_2d.number_of_vertices(), 3);
         assert_eq!(dt_2d.number_of_simplices(), 1);
 
@@ -1784,7 +2161,9 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt_3d: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices_3d).unwrap();
+            DelaunayTriangulation::builder(&vertices_3d)
+                .build()
+                .unwrap();
         assert_eq!(dt_3d.number_of_vertices(), 4);
         assert_eq!(dt_3d.number_of_simplices(), 1);
     }
@@ -1798,7 +2177,7 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Access TDS via immutable reference
         let tds = dt.tds();
@@ -1820,7 +2199,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         assert_eq!(dt.number_of_vertices(), 4);
 
@@ -1843,7 +2222,7 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Before insertion
         assert_eq!(dt.tds().number_of_vertices(), 3);
@@ -1867,7 +2246,7 @@ mod tests {
             vertex!([0.0, 0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 4> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Verify TDS is valid through accessor
         assert!(dt.tds().is_valid().is_ok());
@@ -1893,7 +2272,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let tri = dt.as_triangulation();
 
         let edges_dt: HashSet<_> = dt.edges().collect();

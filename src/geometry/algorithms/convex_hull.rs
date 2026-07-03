@@ -36,7 +36,7 @@
 //!     delaunay::vertex![0.0, 0.0, 1.0]?,
 //! ];
 //! let dt: DelaunayTriangulation<_, (), (), 3> =
-//!     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+//!     DelaunayTriangulationBuilder::new(&vertices).build()?;
 //! let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())?;
 //! let outside = Point::try_from([2.0, 2.0, 2.0])?;
 //! assert!(hull.is_point_outside(&outside, dt.as_triangulation())?);
@@ -326,7 +326,7 @@ pub enum ConvexHullConstructionError {
 /// #     vertex![1.0, 0.0, 0.0]?,
 /// #     vertex![0.0, 1.0, 0.0]?,
 /// #     vertex![0.0, 0.0, 1.0]?,
-/// # ]).build::<()>()?;
+/// # ]).build()?;
 /// let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())?;
 /// assert!(hull.is_valid_for_triangulation(dt.as_triangulation())); // Valid initially
 ///
@@ -370,7 +370,7 @@ pub enum ConvexHullConstructionError {
 ///     vertex![1.0, 0.0, 0.0]?,
 ///     vertex![0.0, 1.0, 0.0]?,
 ///     vertex![0.0, 0.0, 1.0]?,
-/// ]).build::<()>()?;
+/// ]).build()?;
 ///
 /// // Create initial hull (note: immutable binding)
 /// let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())?;
@@ -490,7 +490,7 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let hull =
     ///     ConvexHull::try_from_triangulation(dt.as_triangulation())?;
     ///
@@ -541,7 +541,7 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let hull =
     ///     ConvexHull::try_from_triangulation(dt.as_triangulation())?;
     ///
@@ -593,7 +593,7 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let hull =
     ///     ConvexHull::try_from_triangulation(dt.as_triangulation())?;
     ///
@@ -654,7 +654,7 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())?;
     ///
     /// for facet in hull.try_facets(dt.as_triangulation())? {
@@ -715,7 +715,7 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let hull =
     ///     ConvexHull::try_from_triangulation(dt.as_triangulation())?;
     /// assert!(!hull.is_empty());
@@ -758,7 +758,7 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let dt_2d: DelaunayTriangulation<_, (), (), 2> =
-    ///     DelaunayTriangulationBuilder::new(&vertices_2d).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices_2d).build()?;
     /// let hull_2d =
     ///     ConvexHull::try_from_triangulation(dt_2d.as_triangulation())?;
     /// assert_eq!(hull_2d.dimension(), 2);
@@ -770,7 +770,7 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt_3d: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulationBuilder::new(&vertices_3d).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices_3d).build()?;
     /// let hull_3d =
     ///     ConvexHull::try_from_triangulation(dt_3d.as_triangulation())?;
     /// assert_eq!(hull_3d.dimension(), 3);
@@ -826,7 +826,7 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     ///     delaunay::vertex![1.0, 0.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
-    /// ]).build::<()>()?;
+    /// ]).build()?;
     ///
     /// // Create hull and verify it's valid
     /// let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())?;
@@ -1035,7 +1035,7 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let hull =
     ///     ConvexHull::try_from_triangulation(dt.as_triangulation())?;
     ///
@@ -1111,7 +1111,7 @@ where
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt_3d: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulationBuilder::new(&vertices_3d).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices_3d).build()?;
     /// let hull_3d: ConvexHull<(), (), 3> =
     ///     ConvexHull::try_from_triangulation(dt_3d.as_triangulation())?;
     /// assert_eq!(hull_3d.number_of_facets(), 4); // Tetrahedron has 4 faces
@@ -1125,7 +1125,7 @@ where
     ///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
     /// ];
     /// let dt_4d: DelaunayTriangulation<_, (), (), 4> =
-    ///     DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices_4d).build()?;
     /// let hull_4d =
     ///     ConvexHull::try_from_triangulation(dt_4d.as_triangulation())?;
     /// assert_eq!(hull_4d.number_of_facets(), 5); // 4-simplex has 5 facets
@@ -1278,7 +1278,7 @@ where
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let hull =
     ///     ConvexHull::try_from_triangulation(dt.as_triangulation())?;
     ///
@@ -1672,7 +1672,7 @@ where
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let hull =
     ///     ConvexHull::try_from_triangulation(dt.as_triangulation())?;
     ///
@@ -1766,7 +1766,7 @@ where
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let hull =
     ///     ConvexHull::try_from_triangulation(dt.as_triangulation())?;
     ///
@@ -1901,7 +1901,7 @@ where
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let hull =
     ///     ConvexHull::try_from_triangulation(dt.as_triangulation())?;
     ///
@@ -1967,7 +1967,7 @@ where
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let hull =
     ///     ConvexHull::try_from_triangulation(dt.as_triangulation())?;
     ///
@@ -2089,6 +2089,7 @@ pub type ConvexHull4D<U, V> = ConvexHull<U, V, 4>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::builder::DelaunayTriangulationBuilder;
     use crate::construction::{
         DelaunayConstructionFailure, DelaunayTriangulationConstructionError,
     };
@@ -2127,12 +2128,14 @@ mod tests {
 
     /// Helper function to create a `DelaunayTriangulation` from vertices.
     ///
-    /// This uses `DelaunayTriangulation::try_with_kernel` and returns the owned
+    /// This uses `DelaunayTriangulationBuilder::build_with_kernel` and returns the owned
     /// triangulation directly.
     fn create_triangulation<const D: usize>(
         vertices: &[Vertex<(), D>],
     ) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
-        DelaunayTriangulation::try_with_kernel(&AdaptiveKernel::new(), vertices).unwrap()
+        DelaunayTriangulationBuilder::new(vertices)
+            .build_with_kernel(&AdaptiveKernel::new())
+            .unwrap()
     }
 
     /// Helper function to extract vertices from a facet handle.
@@ -3198,11 +3201,10 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]; data = 3i32).unwrap(),
             vertex!([0.0, 0.0, 1.0]; data = 4i32).unwrap(),
         ];
-        let dt_int = DelaunayTriangulation::<AdaptiveKernel<f64>, i32, (), 3>::try_with_kernel(
-            &AdaptiveKernel::new(),
-            &vertices_int,
-        )
-        .unwrap();
+        let dt_int: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 3> =
+            DelaunayTriangulationBuilder::new(&vertices_int)
+                .build_with_kernel(&AdaptiveKernel::new())
+                .unwrap();
         let hull_int = ConvexHull::try_from_triangulation(dt_int.as_triangulation()).unwrap();
         assert!(
             hull_int.validate(dt_int.as_triangulation()).is_ok(),
@@ -3216,11 +3218,10 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]; data = 'C').unwrap(),
             vertex!([0.0, 0.0, 1.0]; data = 'D').unwrap(),
         ];
-        let dt_char = DelaunayTriangulation::<AdaptiveKernel<f64>, char, (), 3>::try_with_kernel(
-            &AdaptiveKernel::new(),
-            &vertices_char,
-        )
-        .unwrap();
+        let dt_char: DelaunayTriangulation<AdaptiveKernel<f64>, char, (), 3> =
+            DelaunayTriangulationBuilder::new(&vertices_char)
+                .build_with_kernel(&AdaptiveKernel::new())
+                .unwrap();
         let hull_char = ConvexHull::try_from_triangulation(dt_char.as_triangulation()).unwrap();
         assert!(
             hull_char.validate(dt_char.as_triangulation()).is_ok(),
@@ -3268,7 +3269,7 @@ mod tests {
 
         for (vertices, desc) in extreme_vertices {
             let dt_result: Result<DelaunayTriangulation<_, (), (), 3>, _> =
-                DelaunayTriangulation::try_new(&vertices);
+                DelaunayTriangulation::builder(&vertices).build();
 
             match dt_result {
                 Ok(dt) => {
@@ -3289,7 +3290,7 @@ mod tests {
                     // quantization resolution, leaving fewer than D+1 vertices.
                     test_debug!(
                         "  \x1b[33mWarning:\x1b[0m skipping {desc} extreme coordinate hull validation \
-                         due to geometric degeneracy or insufficient vertices in DelaunayTriangulation::try_new",
+                         due to geometric degeneracy or insufficient vertices in DelaunayTriangulationBuilder::build",
                     );
                 }
                 Err(other) => {
@@ -3550,11 +3551,10 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]; data = 3i32).unwrap(),
             vertex!([0.0, 0.0, 1.0]; data = 4i32).unwrap(),
         ];
-        let dt_int = DelaunayTriangulation::<AdaptiveKernel<f64>, i32, (), 3>::try_with_kernel(
-            &AdaptiveKernel::new(),
-            &vertices_int,
-        )
-        .unwrap();
+        let dt_int: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 3> =
+            DelaunayTriangulationBuilder::new(&vertices_int)
+                .build_with_kernel(&AdaptiveKernel::new())
+                .unwrap();
         let hull_int = ConvexHull::try_from_triangulation(dt_int.as_triangulation()).unwrap();
 
         assert_eq!(hull_int.number_of_facets(), 4);
@@ -3568,11 +3568,10 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]; data = 'C').unwrap(),
             vertex!([0.0, 0.0, 1.0]; data = 'D').unwrap(),
         ];
-        let dt_char = DelaunayTriangulation::<AdaptiveKernel<f64>, char, (), 3>::try_with_kernel(
-            &AdaptiveKernel::new(),
-            &vertices_char,
-        )
-        .unwrap();
+        let dt_char: DelaunayTriangulation<AdaptiveKernel<f64>, char, (), 3> =
+            DelaunayTriangulationBuilder::new(&vertices_char)
+                .build_with_kernel(&AdaptiveKernel::new())
+                .unwrap();
         let hull_char = ConvexHull::try_from_triangulation(dt_char.as_triangulation()).unwrap();
 
         assert_eq!(hull_char.number_of_facets(), 4);
@@ -3586,12 +3585,10 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]; data = Some(3)).unwrap(),
             vertex!([0.0, 0.0, 1.0]; data = Some(4)).unwrap(),
         ];
-        let dt_with_data =
-            DelaunayTriangulation::<AdaptiveKernel<f64>, Option<i32>, (), 3>::try_with_kernel(
-                &AdaptiveKernel::new(),
-                &vertices_with_data,
-            )
-            .unwrap();
+        let dt_with_data: DelaunayTriangulation<AdaptiveKernel<f64>, Option<i32>, (), 3> =
+            DelaunayTriangulationBuilder::new(&vertices_with_data)
+                .build_with_kernel(&AdaptiveKernel::new())
+                .unwrap();
         let hull_with_data =
             ConvexHull::try_from_triangulation(dt_with_data.as_triangulation()).unwrap();
 
@@ -4208,7 +4205,7 @@ mod tests {
             vertex!([0.0, 0.0, f64::MIN_POSITIVE]).unwrap(),
         ];
 
-        let dt_extreme_result = DelaunayTriangulation::try_new(&vertices_extreme);
+        let dt_extreme_result = DelaunayTriangulation::builder(&vertices_extreme).build();
 
         match dt_extreme_result {
             Ok(dt_extreme) => {
@@ -4244,7 +4241,7 @@ mod tests {
             )) => {
                 // On some platforms, these extreme coordinates may be judged too
                 // numerically unstable to form a reliable 3D simplex. In that
-                // case, it's acceptable for DelaunayTriangulation::try_new to fail with geometric
+                // case, it's acceptable for DelaunayTriangulationBuilder::build to fail with geometric
                 // degeneracy; later parts of this test still exercise max-scale
                 // behavior.
                 test_debug!(
@@ -5625,7 +5622,7 @@ mod tests {
             vertex!([1e10, 1e10, 1e10]).unwrap(),
         ];
 
-        match DelaunayTriangulation::try_new(&large_vertices) {
+        match DelaunayTriangulation::builder(&large_vertices).build() {
             Ok(large_dt) => {
                 match ConvexHull::try_from_triangulation(large_dt.as_triangulation()) {
                     Ok(large_hull) => {
@@ -5673,7 +5670,7 @@ mod tests {
             vertex!([1e-15, 1e-15, 1e-15]).unwrap(),
         ];
 
-        match DelaunayTriangulation::try_new(&small_vertices) {
+        match DelaunayTriangulation::builder(&small_vertices).build() {
             Ok(small_dt) => match ConvexHull::try_from_triangulation(small_dt.as_triangulation()) {
                 Ok(small_hull) => {
                     assert!(small_hull.validate(small_dt.as_triangulation()).is_ok());
@@ -5855,7 +5852,7 @@ mod tests {
             vertex!([0.5, 0.5, 1.0]).unwrap(),   // Out of plane
         ];
 
-        match DelaunayTriangulation::try_new(&near_collinear_vertices) {
+        match DelaunayTriangulation::builder(&near_collinear_vertices).build() {
             Ok(collinear_dt) => {
                 match ConvexHull::try_from_triangulation(collinear_dt.as_triangulation()) {
                     Ok(collinear_hull) => {
@@ -5906,7 +5903,7 @@ mod tests {
             vertex!([0.0, 0.0, 1e-6]).unwrap(),
         ];
 
-        match DelaunayTriangulation::try_new(&tiny_area_vertices) {
+        match DelaunayTriangulation::builder(&tiny_area_vertices).build() {
             Ok(tiny_dt) => {
                 match ConvexHull::try_from_triangulation(tiny_dt.as_triangulation()) {
                     Ok(tiny_hull) => {
@@ -6064,7 +6061,7 @@ mod tests {
         for (description, vertices) in edge_test_cases {
             test_debug!("    Testing {description}...");
 
-            match DelaunayTriangulation::try_new(&vertices) {
+            match DelaunayTriangulation::builder(&vertices).build() {
                 Ok(edge_dt) => match ConvexHull::try_from_triangulation(edge_dt.as_triangulation())
                 {
                     Ok(edge_hull) => {
@@ -6127,7 +6124,7 @@ mod tests {
             vertex!([2.0, 0.0]).unwrap(), // Collinear with first two
         ];
 
-        match DelaunayTriangulation::try_new(&collinear_2d_vertices) {
+        match DelaunayTriangulation::builder(&collinear_2d_vertices).build() {
             Ok(collinear_dt) => {
                 match ConvexHull::try_from_triangulation(collinear_dt.as_triangulation()) {
                     Ok(collinear_hull) => {
@@ -6187,7 +6184,7 @@ mod tests {
             vertex!([2.0, -1e-12]).unwrap(), // Nearly on the line y=0
         ];
 
-        match DelaunayTriangulation::try_new(&nearly_collinear_vertices) {
+        match DelaunayTriangulation::builder(&nearly_collinear_vertices).build() {
             Ok(nearly_dt) => {
                 match ConvexHull::try_from_triangulation(nearly_dt.as_triangulation()) {
                     Ok(nearly_hull) => {
@@ -6229,7 +6226,7 @@ mod tests {
             vertex!([3.0, 3.0, 3.0]).unwrap(), // Also collinear
         ];
 
-        match DelaunayTriangulation::try_new(&collinear_3d_vertices) {
+        match DelaunayTriangulation::builder(&collinear_3d_vertices).build() {
             Ok(_) => {
                 test_debug!(
                     "    Warning: 3D collinear DelaunayTriangulation constructed (unexpected but handled)"
@@ -6263,7 +6260,7 @@ mod tests {
             vertex!([1.0, 1.0, 0.0]).unwrap(), // All in z=0 plane
         ];
 
-        match DelaunayTriangulation::try_new(&coplanar_3d_vertices) {
+        match DelaunayTriangulation::builder(&coplanar_3d_vertices).build() {
             Ok(_) => {
                 test_debug!(
                     "    Warning: Coplanar 3D DelaunayTriangulation constructed (may indicate insufficient degeneracy detection)"
@@ -6285,7 +6282,7 @@ mod tests {
             vertex!([1.0, 1.0, 1e-10]).unwrap(),
         ];
 
-        match DelaunayTriangulation::try_new(&nearly_coplanar_vertices) {
+        match DelaunayTriangulation::builder(&nearly_coplanar_vertices).build() {
             Ok(nearly_coplanar_dt) => {
                 match ConvexHull::try_from_triangulation(nearly_coplanar_dt.as_triangulation()) {
                     Ok(nearly_coplanar_hull) => {
@@ -6368,7 +6365,7 @@ mod tests {
             vertex!([1.0, 1.0, 1.0, 0.0]).unwrap(), // All in w=0 hyperplane
         ];
 
-        match DelaunayTriangulation::try_new(&coplanar_4d_vertices) {
+        match DelaunayTriangulation::builder(&coplanar_4d_vertices).build() {
             Ok(_) => {
                 test_debug!(
                     "    Warning: Coplanar 4D DelaunayTriangulation constructed (may indicate insufficient degeneracy detection)"
@@ -6398,7 +6395,7 @@ mod tests {
             vertex!([0.0, 0.0, 0.0]).unwrap(), // Exact duplicate of first vertex
         ];
 
-        match DelaunayTriangulation::try_new(&duplicate_vertices) {
+        match DelaunayTriangulation::builder(&duplicate_vertices).build() {
             Ok(dup_dt) => {
                 test_debug!("    Duplicate vertices DelaunayTriangulation constructed");
                 match ConvexHull::try_from_triangulation(dup_dt.as_triangulation()) {
@@ -6446,7 +6443,7 @@ mod tests {
             vertex!([1e-15, 1e-15, 1e-15]).unwrap(), // Nearly coincident with first
         ];
 
-        match DelaunayTriangulation::try_new(&nearly_coincident_vertices) {
+        match DelaunayTriangulation::builder(&nearly_coincident_vertices).build() {
             Ok(nearly_coin_dt) => {
                 match ConvexHull::try_from_triangulation(nearly_coin_dt.as_triangulation()) {
                     Ok(nearly_coin_hull) => {
@@ -6514,7 +6511,7 @@ mod tests {
             vertex!([0.1, 0.1, 0.1, 0.1, 0.1, 0.1]).unwrap(), // Interior point to make it non-degenerate
         ];
 
-        match DelaunayTriangulation::try_new(&vertices_6d) {
+        match DelaunayTriangulation::builder(&vertices_6d).build() {
             Ok(dt_6d) => {
                 match ConvexHull::try_from_triangulation(dt_6d.as_triangulation()) {
                     Ok(hull_6d) => {
@@ -6572,7 +6569,7 @@ mod tests {
             vertex!([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]).unwrap(),
         ];
 
-        match DelaunayTriangulation::try_new(&vertices_7d) {
+        match DelaunayTriangulation::builder(&vertices_7d).build() {
             Ok(dt_7d) => match ConvexHull::try_from_triangulation(dt_7d.as_triangulation()) {
                 Ok(hull_7d) => {
                     test_debug!("    ✓ 7D hull constructed successfully");
@@ -6603,7 +6600,7 @@ mod tests {
             vertex!([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]).unwrap(),
         ];
 
-        match DelaunayTriangulation::try_new(&vertices_8d) {
+        match DelaunayTriangulation::builder(&vertices_8d).build() {
             Ok(dt_8d) => {
                 match ConvexHull::try_from_triangulation(dt_8d.as_triangulation()) {
                     Ok(hull_8d) => {
@@ -6663,10 +6660,9 @@ mod tests {
 
         // Use AdaptiveKernel: it tries a fast floating-point filter first and
         // falls back to exact arithmetic only for near-degenerate inputs.
-        match DelaunayTriangulation::<_, (), (), 3>::try_with_kernel(
-            &AdaptiveKernel::new(),
-            &large_vertices,
-        ) {
+        match DelaunayTriangulationBuilder::new(&large_vertices)
+            .build_with_kernel(&AdaptiveKernel::new())
+        {
             Ok(large_dt) => {
                 let dt_construction_time = start_time.elapsed();
                 test_debug!(
@@ -6747,10 +6743,9 @@ mod tests {
 
         // Use AdaptiveKernel: fast filter for most queries, exact fallback
         // only for near-degenerate inputs.
-        match DelaunayTriangulation::<_, (), (), 2>::try_with_kernel(
-            &AdaptiveKernel::<f64>::new(),
-            &large_2d_vertices,
-        ) {
+        match DelaunayTriangulationBuilder::new(&large_2d_vertices)
+            .build_with_kernel(&AdaptiveKernel::<f64>::new())
+        {
             Ok(large_2d_dt) => {
                 match ConvexHull::try_from_triangulation(large_2d_dt.as_triangulation()) {
                     Ok(large_2d_hull) => {
@@ -7131,12 +7126,13 @@ mod tests {
         test_debug!("Testing stale hull detection after invalidate_cache (regression test)");
 
         // Step 1: Create hull from initial DelaunayTriangulation
-        let mut dt = DelaunayTriangulation::try_new(&[
+        let mut dt = DelaunayTriangulation::builder(&[
             vertex!([0.0, 0.0, 0.0]).unwrap(),
             vertex!([1.0, 0.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ])
+        .build()
         .unwrap();
         let initial_gen = dt.as_triangulation().tds.generation();
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
@@ -7235,9 +7231,9 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt1: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let dt2: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         assert_eq!(
             dt1.as_triangulation().tds.generation(),
             dt2.as_triangulation().tds.generation(),
@@ -7276,7 +7272,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt1: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let dt2 = dt1.clone();
         assert_eq!(
             dt1.as_triangulation().tds.generation(),
@@ -7316,7 +7312,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
 
         let cache_before = hull
@@ -7399,12 +7395,13 @@ mod tests {
     fn test_stale_hull_all_operations_fail() {
         test_debug!("Testing that all hull operations fail on stale hull");
 
-        let mut dt = DelaunayTriangulation::try_new(&[
+        let mut dt = DelaunayTriangulation::builder(&[
             vertex!([0.0, 0.0, 0.0]).unwrap(),
             vertex!([1.0, 0.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ])
+        .build()
         .unwrap();
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
 
@@ -7477,12 +7474,13 @@ mod tests {
         test_debug!("Testing fallback visibility check for degenerate facets");
 
         // Create hull with nearly coplanar points (z << x,y) but still valid simplex
-        let dt = DelaunayTriangulation::try_new(&[
+        let dt = DelaunayTriangulation::builder(&[
             vertex!([0.0, 0.0, 0.0]).unwrap(),
             vertex!([1.0, 0.0, 1e-6]).unwrap(),
             vertex!([0.0, 1.0, 1e-6]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ])
+        .build()
         .unwrap();
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
 
@@ -7503,12 +7501,13 @@ mod tests {
         test_debug!("Testing convex hull with extreme aspect ratio facets");
 
         // Create a very flat triangulation (extreme aspect ratio)
-        let dt = DelaunayTriangulation::try_new(&[
+        let dt = DelaunayTriangulation::builder(&[
             vertex!([0.0, 0.0, 0.0]).unwrap(),
             vertex!([1000.0, 0.0, 0.0]).unwrap(), // Very long in x
             vertex!([0.0, 0.001, 0.0]).unwrap(),  // Very short in y
             vertex!([0.0, 0.0, 0.001]).unwrap(),  // Very short in z
         ])
+        .build()
         .unwrap();
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
 
@@ -7624,7 +7623,8 @@ mod tests {
                     $dim,
                     vertices_vec.len()
                 );
-                let dt = DelaunayTriangulation::<_, (), (), $dim>::try_new(&vertices_vec)
+                let dt = DelaunayTriangulation::builder(&vertices_vec)
+                    .build()
                     .expect(&format!("Failed to create {}D DelaunayTriangulation", $dim));
 
                 test_debug!("  Constructing {}D convex hull...", $dim);

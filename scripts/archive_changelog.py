@@ -17,8 +17,6 @@ Usage:
     archive-changelog --archive-dir docs/archive/changelog
 """
 
-from __future__ import annotations
-
 import argparse
 import logging
 import os

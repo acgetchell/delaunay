@@ -669,7 +669,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![1.0, 0.0; data = 20]?,
     ///     delaunay::vertex![0.0, 1.0; data = 30]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let mut tds = dt.tds().clone();
     /// let Some(key) = tds.vertex_keys().next() else {
     ///     return Ok(());
@@ -753,7 +753,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<i32>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).simplex_data_type::<i32>().build()?;
     /// let mut tds = dt.tds().clone();
     /// let Some(key) = tds.simplex_keys().next() else {
     ///     return Ok(());
@@ -791,6 +791,21 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         let previous = simplex.data.take();
         simplex.data = data;
         Ok(previous)
+    }
+
+    /// Fills every live simplex with data computed from the current simplex view.
+    ///
+    /// This does not alter topology, UUID mappings, neighbor links, or generation:
+    /// simplex payloads are orthogonal to the TDS structural invariants.
+    #[inline]
+    pub(crate) fn fill_simplex_data<F>(&mut self, mut data_for: F)
+    where
+        F: FnMut(SimplexKey, &Simplex<V, D>) -> V,
+    {
+        for (simplex_key, simplex) in &mut self.simplices {
+            let data = data_for(simplex_key, simplex);
+            simplex.data = Some(data);
+        }
     }
 
     /// Removes multiple simplices by their keys in a batch operation.
@@ -855,7 +870,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let mut tds = dt.tds().clone();
     /// let Some(simplex_key) = tds.simplex_keys().next() else {
     ///     return Ok(());
@@ -1342,7 +1357,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let tds = dt.tds();
     /// let Some((simplex_key, _)) = tds.simplices().next() else {
     ///     return Ok(());
@@ -1703,7 +1718,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let mut tds = dt.tds().clone();
     /// let Some(simplex_key) = tds.simplex_keys().next() else {
     ///     return Ok(());
@@ -1823,7 +1838,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let mut tds = dt.tds().clone();
     /// tds.assign_incident_simplices()?;
     /// let all_assigned = tds.vertices().all(|(_, v)| v.incident_simplex().is_some());
@@ -2221,7 +2236,9 @@ mod tests {
     #[test]
     fn test_add_vertex_duplicate_coordinates_rejected() {
         let initial_vertices = initial_simplex_vertices_3d();
-        let mut dt = DelaunayTriangulation::try_new(&initial_vertices).unwrap();
+        let mut dt = DelaunayTriangulation::builder(&initial_vertices)
+            .build()
+            .unwrap();
 
         let vertex = vertex!([1.0, 2.0, 3.0]).unwrap();
         let duplicate = vertex!([1.0, 2.0, 3.0]).unwrap();
@@ -2239,7 +2256,9 @@ mod tests {
     #[test]
     fn test_add_vertex_duplicate_uuid_rejected() {
         let initial_vertices = initial_simplex_vertices_3d();
-        let mut dt = DelaunayTriangulation::try_new(&initial_vertices).unwrap();
+        let mut dt = DelaunayTriangulation::builder(&initial_vertices)
+            .build()
+            .unwrap();
 
         let vertex1 = vertex!([1.0, 2.0, 3.0]).unwrap();
         let uuid1 = vertex1.uuid();
@@ -2264,7 +2283,9 @@ mod tests {
     #[test]
     fn test_add_vertex_increases_counts_and_leaves_tds_valid() {
         let initial_vertices = initial_simplex_vertices_3d();
-        let mut dt = DelaunayTriangulation::try_new(&initial_vertices).unwrap();
+        let mut dt = DelaunayTriangulation::builder(&initial_vertices)
+            .build()
+            .unwrap();
         let initial_simplex_count = dt.number_of_simplices();
 
         let new_vertex = vertex!([0.5, 0.5, 0.5]).unwrap();
@@ -2284,7 +2305,9 @@ mod tests {
     #[test]
     fn test_add_vertex_is_accessible_by_uuid_and_coordinates() {
         let initial_vertices = initial_simplex_vertices_3d();
-        let mut dt = DelaunayTriangulation::try_new(&initial_vertices).unwrap();
+        let mut dt = DelaunayTriangulation::builder(&initial_vertices)
+            .build()
+            .unwrap();
 
         let vertex = vertex!([1.0, 2.0, 3.0]).unwrap();
         let uuid = vertex.uuid();
@@ -2329,7 +2352,7 @@ mod tests {
             vertex!([0.5, 1.0]).unwrap(),
             vertex!([1.5, 1.0]).unwrap(),
         ];
-        let mut dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Verify initial state
         let initial_vertices = dt.number_of_vertices();
@@ -2398,7 +2421,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let mut dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Use a key that was never added
         let nonexistent_key = VertexKey::from(KeyData::from_ffi(u64::MAX));
@@ -2434,7 +2457,7 @@ mod tests {
             vertex!([1.0, 1.0]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         let vertex_key = dt.vertices().next().unwrap().0;
 
@@ -2467,7 +2490,9 @@ mod tests {
                 vertex!([1.0, 1.0]).unwrap(),
             ];
             let mut dt_2d: DelaunayTriangulation<_, (), (), 2> =
-                DelaunayTriangulation::try_new(&vertices_2d).unwrap();
+                DelaunayTriangulation::builder(&vertices_2d)
+                    .build()
+                    .unwrap();
             let vertex_key = dt_2d.vertices().next().unwrap().0;
             let simplices_removed = dt_2d.delete_vertex(vertex_key).unwrap();
             assert!(simplices_removed > 0);
@@ -2484,7 +2509,9 @@ mod tests {
                 vertex!([0.2, 0.2, 0.2]).unwrap(),
             ];
             let mut dt_3d: DelaunayTriangulation<_, (), (), 3> =
-                DelaunayTriangulation::try_new(&vertices_3d).unwrap();
+                DelaunayTriangulation::builder(&vertices_3d)
+                    .build()
+                    .unwrap();
             let vertex_key = dt_3d
                 .vertices()
                 .find(|(_, vertex)| {
@@ -2512,7 +2539,9 @@ mod tests {
                 vertex!([0.2, 0.2, 0.2, 0.2]).unwrap(),
             ];
             let mut dt_4d: DelaunayTriangulation<_, (), (), 4> =
-                DelaunayTriangulation::try_new(&vertices_4d).unwrap();
+                DelaunayTriangulation::builder(&vertices_4d)
+                    .build()
+                    .unwrap();
             let vertex_key = dt_4d
                 .vertices()
                 .find(|(_, vertex)| {
@@ -2546,7 +2575,7 @@ mod tests {
             vertex!([0.2, 0.2, 0.2]).unwrap(),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Find the interior vertex by coordinates (order-independent)
         let interior_coords = [0.2, 0.2, 0.2];
@@ -3377,7 +3406,7 @@ mod tests {
     #[test]
     fn test_remove_duplicate_simplices_noop_when_no_duplicates() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
+        let dt = DelaunayTriangulation::builder(&verts).build().unwrap();
         let mut tds = dt.tds().clone();
         let generation_before = tds.generation();
 
@@ -3448,7 +3477,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
             vertex!([0.5, 0.5, 0.5]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let mut tds = dt.tds().clone();
         assert!(tds.number_of_simplices() > 1);
 
@@ -3778,7 +3807,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
             vertex!([0.5, 0.5, 0.5]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let mut tds = dt.tds().clone();
         assert!(tds.number_of_simplices() > 1);
 
@@ -3845,7 +3874,7 @@ mod tests {
     #[test]
     fn test_normalize_coherent_orientation_handles_single_simplex() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
+        let dt = DelaunayTriangulation::builder(&verts).build().unwrap();
         let mut tds = dt.tds().clone();
         assert_eq!(tds.number_of_simplices(), 1);
 
@@ -3862,7 +3891,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
             vertex!([0.5, 0.5, 0.5]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let mut tds = dt.tds().clone();
         assert!(tds.number_of_simplices() > 1);
 
@@ -3993,7 +4022,7 @@ mod tests {
             vertex!([0.0, 1.0]; data = 30).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build::<()>()
+            .build()
             .unwrap();
         let mut tds = dt.tds().clone();
         let key = tds.vertex_keys().next().unwrap();
@@ -4011,7 +4040,7 @@ mod tests {
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let mut tds = dt.tds().clone();
         let key = tds.vertex_keys().next().unwrap();
 
@@ -4037,7 +4066,8 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build::<i32>()
+            .simplex_data_type::<i32>()
+            .build()
             .unwrap();
         let mut tds = dt.tds().clone();
         let key = tds.simplex_keys().next().unwrap();
@@ -4055,7 +4085,8 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build::<i32>()
+            .simplex_data_type::<i32>()
+            .build()
             .unwrap();
         let mut tds = dt.tds().clone();
         let key = tds.simplex_keys().next().unwrap();
@@ -4082,7 +4113,7 @@ mod tests {
             vertex!([0.0, 1.0]; data = 3).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build::<()>()
+            .build()
             .unwrap();
 
         // Mutate every vertex's data through the DT wrapper.
@@ -4110,7 +4141,8 @@ mod tests {
             vertex!([1.5, 0.5]).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build::<i32>()
+            .simplex_data_type::<i32>()
+            .build()
             .unwrap();
         assert!(dt.number_of_simplices() > 1);
 
@@ -4138,7 +4170,7 @@ mod tests {
             vertex!([0.0, 1.0]; data = 30).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build::<()>()
+            .build()
             .unwrap();
         let key = dt.vertices().next().unwrap().0;
 
@@ -4161,7 +4193,7 @@ mod tests {
             vertex!([0.0, 1.0]; data = 30).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build::<()>()
+            .build()
             .unwrap();
         let live_key = dt.vertices().next().unwrap().0;
         let stale = VertexKey::from(KeyData::from_ffi(0xFEED));
@@ -4186,7 +4218,8 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build::<i32>()
+            .simplex_data_type::<i32>()
+            .build()
             .unwrap();
         let key = dt.simplices().next().unwrap().0;
 
@@ -4209,7 +4242,8 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build::<i32>()
+            .simplex_data_type::<i32>()
+            .build()
             .unwrap();
         let live_key = dt.simplices().next().unwrap().0;
         let stale = SimplexKey::from(KeyData::from_ffi(0xFEED));
@@ -4234,7 +4268,7 @@ mod tests {
             vertex!([0.0, 1.0]; data = 0).unwrap(),
         ];
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-            .build::<()>()
+            .build()
             .unwrap();
 
         // Insert a new vertex so the locate hint is populated.

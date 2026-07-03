@@ -63,7 +63,7 @@ where
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// let json = serde_json::to_string(&dt)?;
 ///
 /// let tds: Tds<(), (), 3> = serde_json::from_str(&json)?;
@@ -162,7 +162,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         let json = serde_json::to_string(&dt).unwrap();
 

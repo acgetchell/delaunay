@@ -52,11 +52,9 @@ fn repair_fallback_produces_valid_triangulation() {
         vertex!([4.0, 2.0]).unwrap(),
         vertex!([1.0, 2.0]).unwrap(),
     ];
-    let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )
+    let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
         .expect("fixture construction should succeed");
 
     let mut candidate_facets = Vec::new();
@@ -172,11 +170,9 @@ fn repair_fallback_2d() {
         vertex!([1.0, 3.0]).unwrap(),
     ];
 
-    let dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )
+    let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
         .expect("2D construction should succeed with fallback if needed");
 
     dt.validate()
@@ -199,11 +195,9 @@ fn explicit_repair_call_validates_result() {
         vertex!([0.5, 0.5, 0.5]).unwrap(),
     ];
 
-    let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )
+    let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
         .expect("Construction should succeed");
 
     // Call explicit repair (should be a no-op if already valid, or fix any issues)

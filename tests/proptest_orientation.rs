@@ -37,10 +37,7 @@ macro_rules! gen_orientation_construction_and_tamper_props {
                         try_vertices_from_points(&points).expect("finite point coordinates")
                     })
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
                         prop_assert!(
                             dt.tds().is_coherently_oriented(),
                             "{}D: constructed triangulation must be coherently oriented",
@@ -65,10 +62,7 @@ macro_rules! gen_orientation_construction_and_tamper_props {
                         try_vertices_from_points(&points).expect("finite point coordinates")
                     })
                 ) {
-                    if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::try_new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    ) {
+                    if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
                         prop_assume!(dt.tds().number_of_simplices() >= 2);
                         prop_assert!(dt.tds().is_coherently_oriented());
 

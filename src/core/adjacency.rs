@@ -152,7 +152,7 @@ pub struct SimplexNeighborIndex<'tds> {
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
 /// let dt: DelaunayTriangulation<_, (), (), 3> =
-///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+///     DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// let adjacency = dt.as_triangulation().adjacency()?;
 ///
 /// assert_eq!(adjacency.number_of_edges(), 6);
@@ -404,7 +404,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let tri = dt.as_triangulation();
         let incidence = tri.incidence().unwrap();
         let edge_index = tri.build_edge_index().unwrap();

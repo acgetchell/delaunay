@@ -78,7 +78,7 @@ fn main() -> DelaunayResult<()> {
         vertex![0.0, 1.0, 0.0]?,
         vertex![0.0, 0.0, 1.0]?,
     ];
-    let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     assert!(dt.validate().is_ok());
     let report = dt.validation_report();
@@ -155,7 +155,7 @@ fn main() -> Result<(), DiagnosticsExampleError> {
         vertex![0.0, 1.0, 0.0]?,
         vertex![0.0, 0.0, 1.0]?,
     ];
-    let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     let report = delaunay_violation_report(dt.tds(), None)?;
     assert!(report.is_valid());

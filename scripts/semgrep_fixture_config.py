@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Generate per-fixture Semgrep configs from fixture annotations."""
 
-from __future__ import annotations
-
 import argparse
 import re
 import sys

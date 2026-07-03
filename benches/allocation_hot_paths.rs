@@ -207,7 +207,10 @@ mod allocation_contracts {
             attempts,
             base_seed: Some(seed),
         });
-        let dt = BenchTriangulation::<D>::try_new_with_options(&vertices, options).or_abort();
+        let dt: BenchTriangulation<D> = DelaunayTriangulation::builder(&vertices)
+            .construction_options(options)
+            .build()
+            .or_abort();
         let simplex_key = representative_simplex_key(&dt).or_abort();
         let removal_keys = dt.tds().simplex_keys().take(32).collect();
         let facet_vertices = first_facet_vertices(&dt, simplex_key).or_abort();

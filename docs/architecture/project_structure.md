@@ -23,11 +23,12 @@ delaunay/
 ├── benches/
 │   ├── common/
 │   ├── allocation_hot_paths.rs
-│   ├── boundary_uuid_iter.rs
 │   ├── ci_performance_suite.rs
 │   ├── circumsphere_containment.rs
 │   ├── cold_path_predicates.rs
+│   ├── delaunay_repair.rs
 │   ├── delete_vertex.rs
+│   ├── locate.rs
 │   ├── pachner_stress.rs
 │   ├── pl_manifold_repair.rs
 │   ├── profiling_suite.rs

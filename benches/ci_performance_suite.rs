@@ -190,7 +190,7 @@ fn api_benchmark_entries() -> Vec<ApiBenchmarkEntry> {
     vec![
         ApiBenchmarkEntry {
             group: "construction",
-            public_api: "DelaunayTriangulation::try_new_with_options",
+            public_api: "DelaunayTriangulation::builder(...).construction_options(...).build",
             dimensions: "2,3,4,5",
             benchmark_ids: construction_benchmark_ids(),
             note: "construct_from_calibrated_seeded_and_adversarial_inputs",
@@ -377,7 +377,10 @@ fn prepare_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangulation
         base_seed: Some(seed),
     });
 
-    BenchTriangulation::<D>::try_new_with_options(&vertices, options).or_abort()
+    DelaunayTriangulation::builder(&vertices)
+        .construction_options(options)
+        .build()
+        .or_abort()
 }
 
 fn prepare_adv_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangulation<D> {
@@ -388,7 +391,10 @@ fn prepare_adv_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangula
         base_seed: Some(seed),
     });
 
-    BenchTriangulation::<D>::try_new_with_options(&vertices, options).or_abort()
+    DelaunayTriangulation::builder(&vertices)
+        .construction_options(options)
+        .build()
+        .or_abort()
 }
 
 fn prepare_inserts<const D: usize>(
@@ -430,7 +436,11 @@ fn find_seed_vertices<const D: usize>(
             base_seed: Some(candidate_seed),
         });
 
-        if DelaunayTriangulation::<_, (), (), D>::try_new_with_options(&vertices, options).is_ok() {
+        if DelaunayTriangulation::builder(&vertices)
+            .construction_options(options)
+            .build()
+            .is_ok()
+        {
             return Some((candidate_seed, points, vertices));
         }
     }
@@ -450,7 +460,9 @@ fn stable_adv_points<const D: usize>(
         base_seed: Some(seed),
     });
 
-    BenchTriangulation::<D>::try_new_with_options(&vertices, options)
+    DelaunayTriangulation::builder(&vertices)
+        .construction_options(options)
+        .build()
         .is_ok()
         .then_some((seed, points, vertices))
 }
@@ -811,7 +823,10 @@ fn emit_construction_metric<const D: usize>(
     vertices: &[Vertex<(), D>],
     options: ConstructionOptions,
 ) {
-    let dt = BenchTriangulation::<D>::try_new_with_options(vertices, options).or_abort();
+    let dt: BenchTriangulation<D> = DelaunayTriangulation::builder(vertices)
+        .construction_options(options)
+        .build()
+        .or_abort();
     println!(
         "api_benchmark_metric benchmark_id={benchmark_id} vertices={} simplices={}",
         vertices.len(),
@@ -953,17 +968,17 @@ macro_rules! benchmark_tds_new_dimension {
                     emit_construction_metric::<$dim>(&bench_id, &vertices, options);
 
                     b.iter(|| {
-                        match DelaunayTriangulation::<_, (), (), $dim>::try_new_with_options(
-                            &vertices,
-                            options,
-                        ) {
+                        match DelaunayTriangulation::builder(&vertices)
+                            .construction_options(options)
+                            .build()
+                        {
                             Ok(dt) => {
                                 black_box(dt);
                             }
                             Err(err) => {
                                 let error = format!("{err:?}");
                                 abort_benchmark(format_args!(
-                                    "DelaunayTriangulation::try_new_with_options failed for {}D: {error}; dim={}; count={}; seed={}; bounds={:?}; sample_points={sample_points:?}",
+                                    "DelaunayTriangulation builder construction failed for {}D: {error}; dim={}; count={}; seed={}; bounds={:?}; sample_points={sample_points:?}",
                                     $dim,
                                     $dim,
                                     count,
@@ -992,17 +1007,17 @@ macro_rules! benchmark_tds_new_dimension {
                         emit_construction_metric::<$dim>(&adv_bench_id, &vertices, options);
 
                         b.iter(|| {
-                            match DelaunayTriangulation::<_, (), (), $dim>::try_new_with_options(
-                                &vertices,
-                                options,
-                            ) {
+                            match DelaunayTriangulation::builder(&vertices)
+                                .construction_options(options)
+                                .build()
+                            {
                                 Ok(dt) => {
                                     black_box(dt);
                                 }
                                 Err(err) => {
                                     let error = format!("{err:?}");
                                     abort_benchmark(format_args!(
-                                        "adversarial DelaunayTriangulation::try_new_with_options failed for {}D: {error}; dim={}; count={}; seed={}; sample_points={sample_points:?}",
+                                        "adversarial DelaunayTriangulation builder construction failed for {}D: {error}; dim={}; count={}; seed={}; sample_points={sample_points:?}",
                                         $dim,
                                         $dim,
                                         count,

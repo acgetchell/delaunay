@@ -63,7 +63,7 @@ pub type VertexUuidSet = FastHashSet<Uuid>;
 /// ];
 /// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulationBuilder::new(&vertices)
 ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-///     .build::<()>()?;
+///     .build()?;
 /// println!("Topology guarantee: {:?}", dt.topology_guarantee());
 /// let tds = dt.tds();
 ///
@@ -119,7 +119,7 @@ pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 /// ];
 /// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulationBuilder::new(&vertices)
 ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-///     .build::<()>()?;
+///     .build()?;
 /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
 /// let tds = dt.tds();
 ///

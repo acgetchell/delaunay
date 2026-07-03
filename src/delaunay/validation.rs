@@ -331,7 +331,7 @@ impl From<&DelaunayVerificationError> for DelaunayVerificationErrorKind {
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// let result: Result<(), DelaunayTriangulationValidationError> = dt.validate();
 /// assert!(result.is_ok());
@@ -549,7 +549,7 @@ where
     ///     delaunay::vertex![0.0, 0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices_4d).build()?;
     ///
     /// // Level 5: Delaunay property only
     /// assert!(dt.is_valid_delaunay().is_ok());
@@ -580,7 +580,7 @@ where
     ///     vertex![1.0, 0.0]?,
     ///     vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// assert!(dt.delaunay_diagnostic().is_none());
     /// # Ok(())
@@ -619,7 +619,7 @@ where
     ///     vertex![1.0, 0.0]?,
     ///     vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// assert!(dt.delaunay_report().is_ok());
     /// # Ok(())
@@ -693,7 +693,7 @@ where
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
     ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// // Fast O(N) verification
     /// assert!(dt.is_delaunay_via_flips().is_ok());
@@ -730,7 +730,7 @@ where
     ///     delaunay::vertex![0.0, 0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices_4d).build()?;
     ///
     /// // Levels 1–5: elements + structure + topology + embedding + Delaunay property
     /// assert!(dt.validate().is_ok());
@@ -769,7 +769,7 @@ where
     ///     delaunay::vertex![0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// // Returns Ok(()) on success; otherwise returns a report listing all violations.
     /// let report = dt.validation_report();
@@ -907,7 +907,7 @@ where
     ///     delaunay::vertex![0.0, 0.0, 1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// // Reconstruct DelaunayTriangulation from a Tds snapshot.
     /// let tds: Tds<(), (), 4> = dt.tds().clone();
@@ -952,7 +952,7 @@ where
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// let reconstructed = DelaunayTriangulation::try_from_tds_with_topology_guarantee(
     ///     dt.tds().clone(),
@@ -1006,7 +1006,7 @@ where
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// let reconstructed = DelaunayTriangulation::try_from_tds_with_topology_context(
     ///     dt.tds().clone(),
@@ -1329,7 +1329,7 @@ mod tests {
             test_vertex([0.0, 0.0, 1.0]),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let mut tds = dt.tds().clone();
 
         let vk = tds.vertex_keys().next().unwrap();
@@ -1355,7 +1355,7 @@ mod tests {
             test_vertex([0.0, 0.0, 1.0]),
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let mut tds = dt.tds().clone();
 
         let _ = tds
@@ -1385,7 +1385,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         assert!(dt.validation_report().is_ok());
     }
 
@@ -1400,7 +1400,7 @@ mod tests {
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Break UUID↔key mappings: remove one vertex UUID entry.
         let uuid = dt.tri.tds.vertices().next().unwrap().1.uuid();
@@ -1435,7 +1435,7 @@ mod tests {
         ];
 
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Corrupt a `Vertex::incident_simplex` pointer.
         let vertex_key = dt.tri.tds.vertices().next().unwrap().0;
@@ -1491,7 +1491,7 @@ mod tests {
             test_vertex([0.0, 0.0, 1.0]),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Break vertex mapping so Level 2 structural validation fails.
         let vk = dt.tds().vertex_keys().next().unwrap();
@@ -1517,7 +1517,7 @@ mod tests {
             test_vertex([0.0, 0.0, 1.0]),
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Add an isolated vertex so Level 3 (topology) fails.
         let _ = dt

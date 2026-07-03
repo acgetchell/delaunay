@@ -51,7 +51,7 @@ use thiserror::Error;
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// let tds = dt.tds();
 ///
 /// // Get facet vertex keys from a simplex - no need to materialize Vertex objects
@@ -474,7 +474,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let tds = &dt.as_triangulation().tds;
 
         // Test 1: Basic functionality - successful key derivation
@@ -614,7 +614,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let dt = DelaunayTriangulation::try_new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let tds = &dt.as_triangulation().tds;
         let simplex_key = tds.simplex_keys().next().unwrap();
         assert!(verify_facet_index_consistency(tds, simplex_key, simplex_key, 0).unwrap());

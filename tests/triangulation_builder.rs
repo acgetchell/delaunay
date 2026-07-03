@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::f64::consts::TAU;
 
 use delaunay::prelude::construction::{
-    ConstructionOptions, DelaunayConstructionFailure, DelaunayTriangulation,
+    ConstructionOptions, DelaunayConstructionFailure, DelaunayResult, DelaunayTriangulation,
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
     ExplicitConstructionError, InsertionOrderStrategy, TopologyGuarantee, Vertex,
 };
@@ -28,7 +28,7 @@ use delaunay::prelude::validation::{TriangulationValidationError, ValidationPoli
 // Euclidean path
 // =============================================================================
 
-/// Builder with no options set should produce the same triangulation as `new()`.
+/// The associated builder alias should match the explicit builder path.
 #[test]
 fn test_builder_euclidean_matches_new_2d() {
     let vertices = vec![
@@ -37,9 +37,11 @@ fn test_builder_euclidean_matches_new_2d() {
         vertex!([0.0, 1.0]).unwrap(),
     ];
 
-    let dt_new = DelaunayTriangulation::try_new(&vertices).expect("new() should succeed");
+    let dt_new = DelaunayTriangulation::builder(&vertices)
+        .build()
+        .expect("associated builder should succeed");
     let dt_builder = DelaunayTriangulationBuilder::new(&vertices)
-        .build::<()>()
+        .build()
         .expect("builder should succeed");
 
     assert_eq!(dt_new.number_of_vertices(), dt_builder.number_of_vertices());
@@ -60,7 +62,7 @@ fn test_builder_euclidean_3d() {
         vertex!([0.0, 0.0, 1.0]).unwrap(),
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices)
-        .build::<()>()
+        .build()
         .expect("3D build should succeed");
     assert_eq!(dt.number_of_vertices(), 4);
     assert_eq!(dt.dim(), 3);
@@ -77,7 +79,7 @@ fn test_builder_topology_guarantee_propagated() {
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices)
         .topology_guarantee(TopologyGuarantee::Pseudomanifold)
-        .build::<()>()
+        .build()
         .expect("build should succeed");
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
 }
@@ -94,11 +96,31 @@ fn test_builder_validation_policy_derived_from_topology_guarantee() {
 
     let dt = DelaunayTriangulationBuilder::new(&vertices)
         .topology_guarantee(TopologyGuarantee::PLManifoldStrict)
-        .build::<()>()
+        .build()
         .expect("build should succeed");
 
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifoldStrict);
     assert_eq!(dt.validation_policy(), ValidationPolicy::Always);
+}
+
+#[test]
+fn test_builder_constructs_typed_simplex_storage_for_follow_on_fill() -> DelaunayResult<()> {
+    let vertices = vec![
+        vertex!([0.0_f64, 0.0])?,
+        vertex!([1.0, 0.0])?,
+        vertex!([0.0, 1.0])?,
+    ];
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+        .simplex_data_type::<usize>()
+        .build()?;
+
+    dt.fill_simplex_data(|_, simplex| simplex.number_of_vertices());
+
+    for (_, simplex) in dt.simplices() {
+        assert_eq!(simplex.data(), Some(&3));
+    }
+    dt.validate()?;
+    Ok(())
 }
 
 /// Custom `ConstructionOptions` are accepted and the triangulation is valid.
@@ -112,9 +134,52 @@ fn test_builder_custom_construction_options() {
     let opts = ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
     let dt = DelaunayTriangulationBuilder::new(&vertices)
         .construction_options(opts)
-        .build::<()>()
+        .build()
         .expect("build should succeed");
     assert_eq!(dt.number_of_vertices(), 3);
+    assert!(dt.validate().is_ok());
+}
+
+/// The fluent statistics terminal exposes insertion stats and total timing for Euclidean builds.
+#[test]
+fn test_builder_build_with_statistics_euclidean_records_telemetry() {
+    let vertices = vec![
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
+    ];
+    let (dt, stats) = DelaunayTriangulationBuilder::new(&vertices)
+        .build_with_statistics()
+        .expect("Euclidean statistics build should succeed");
+
+    assert_eq!(dt.number_of_vertices(), stats.inserted);
+    assert_eq!(stats.total_skipped(), 0);
+    assert!(stats.total_attempts >= stats.inserted);
+    assert!(stats.telemetry.has_data());
+    assert!(stats.telemetry.construction_total_nanos > 0);
+    assert!(dt.validate().is_ok());
+}
+
+/// Canonicalized toroidal construction has the same fluent statistics terminal.
+#[test]
+fn test_builder_build_with_statistics_canonicalized_toroidal_records_telemetry() {
+    let vertices = vec![
+        vertex!([0.2_f64, 0.3]).unwrap(),
+        vertex!([1.8, 0.1]).unwrap(),
+        vertex!([0.5, 0.7]).unwrap(),
+        vertex!([-0.4, 0.9]).unwrap(),
+    ];
+    let (dt, stats) = DelaunayTriangulationBuilder::new(&vertices)
+        .try_canonicalized_toroidal([1.0, 1.0])
+        .unwrap()
+        .build_with_statistics()
+        .expect("canonicalized toroidal statistics build should succeed");
+
+    assert_eq!(dt.number_of_vertices(), stats.inserted);
+    assert_eq!(stats.total_skipped(), 0);
+    assert!(stats.total_attempts >= stats.inserted);
+    assert!(stats.telemetry.has_data());
+    assert!(stats.telemetry.construction_total_nanos > 0);
     assert!(dt.validate().is_ok());
 }
 
@@ -131,7 +196,7 @@ fn test_builder_convenience() {
         vertex!([0.0, 1.0]).unwrap(),
     ];
     let dt = DelaunayTriangulation::builder(&vertices)
-        .build::<()>()
+        .build()
         .expect("builder() convenience method should succeed");
     assert_eq!(dt.number_of_vertices(), 3);
     assert!(dt.validate().is_ok());
@@ -149,7 +214,7 @@ fn test_builder_canonicalized_toroidal_convenience() {
     let dt = DelaunayTriangulation::builder(&vertices)
         .try_canonicalized_toroidal([1.0, 1.0])
         .unwrap()
-        .build::<()>()
+        .build()
         .expect("canonicalized toroidal builder should succeed");
     assert_eq!(dt.number_of_vertices(), 4);
     assert!(dt.as_triangulation().validate().is_ok());
@@ -181,13 +246,13 @@ fn test_builder_canonicalized_toroidal_canonicalizes_coordinates() {
     let dt_canonical = DelaunayTriangulationBuilder::new(&canonical_vertices)
         .try_canonicalized_toroidal([1.0, 1.0])
         .unwrap()
-        .build::<()>()
+        .build()
         .expect("canonical build should succeed");
 
     let dt_shifted = DelaunayTriangulationBuilder::new(&shifted_vertices)
         .try_canonicalized_toroidal([1.0, 1.0])
         .unwrap()
-        .build::<()>()
+        .build()
         .expect("shifted build should succeed");
 
     assert_eq!(
@@ -214,7 +279,7 @@ fn test_builder_canonicalized_toroidal_validates_2d() {
     let dt = DelaunayTriangulationBuilder::new(&vertices)
         .try_canonicalized_toroidal([1.0, 1.0])
         .unwrap()
-        .build::<()>()
+        .build()
         .expect("canonicalized toroidal build should succeed");
 
     assert!(
@@ -235,7 +300,7 @@ fn test_builder_canonicalized_toroidal_delaunay_property_valid_2d() {
     let dt = DelaunayTriangulationBuilder::new(&vertices)
         .try_canonicalized_toroidal([1.0, 1.0])
         .unwrap()
-        .build::<()>()
+        .build()
         .expect("canonicalized toroidal build should succeed");
 
     assert!(
@@ -256,7 +321,7 @@ fn test_builder_canonicalized_toroidal_2d_euler_dimension() {
     let dt = DelaunayTriangulationBuilder::new(&vertices)
         .try_canonicalized_toroidal([1.0, 1.0])
         .unwrap()
-        .build::<()>()
+        .build()
         .expect("build should succeed");
 
     assert_eq!(
@@ -275,12 +340,12 @@ fn test_builder_canonicalized_toroidal_matches_euclidean_on_canonical_input() {
         vertex!([0.4, 0.9]).unwrap(),
     ];
     let dt_euclidean = DelaunayTriangulationBuilder::new(&vertices)
-        .build::<()>()
+        .build()
         .expect("euclidean build should succeed");
     let dt_toroidal = DelaunayTriangulationBuilder::new(&vertices)
         .try_canonicalized_toroidal([1.0, 1.0])
         .unwrap()
-        .build::<()>()
+        .build()
         .expect("canonicalized toroidal build should succeed");
 
     assert_eq!(
@@ -313,7 +378,7 @@ fn test_builder_canonicalized_toroidal_larger_point_set_2d() {
     let dt = DelaunayTriangulationBuilder::new(&vertices)
         .try_canonicalized_toroidal([1.0, 1.0])
         .unwrap()
-        .build::<()>()
+        .build()
         .expect("larger canonicalized toroidal build should succeed");
 
     assert_eq!(dt.number_of_vertices(), 8);
@@ -338,7 +403,7 @@ fn test_builder_canonicalized_toroidal_robust_kernel_3d() {
     let dt = DelaunayTriangulationBuilder::new(&vertices)
         .try_canonicalized_toroidal([1.0, 1.0, 1.0])
         .unwrap()
-        .build_with_kernel::<_, ()>(&kernel)
+        .build_with_kernel(&kernel)
         .expect("canonicalized toroidal robust kernel 3D build should succeed");
 
     assert_eq!(dt.number_of_vertices(), 5);
@@ -382,7 +447,7 @@ fn build_toroidal_triangulation<const D: usize>()
     let dt = DelaunayTriangulationBuilder::new(&vertices)
         .try_toroidal([1.0_f64; D])
         .unwrap()
-        .build_with_kernel::<_, ()>(&kernel)
+        .build_with_kernel(&kernel)
         .expect("periodic build should succeed");
 
     assert_eq!(dt.number_of_vertices(), expected_vertices);
@@ -442,12 +507,12 @@ fn test_builder_toroidal_boundary_query_is_topology_aware() {
     let kernel = RobustKernel::new();
 
     let euclidean = DelaunayTriangulationBuilder::new(&vertices)
-        .build_with_kernel::<_, ()>(&kernel)
+        .build_with_kernel(&kernel)
         .expect("Euclidean build should succeed for toroidal fixture points");
     let toroidal = DelaunayTriangulationBuilder::new(&vertices)
         .try_toroidal([1.0_f64; 2])
         .unwrap()
-        .build_with_kernel::<_, ()>(&kernel)
+        .build_with_kernel(&kernel)
         .expect("periodic toroidal builder should succeed");
 
     assert_eq!(
@@ -473,11 +538,32 @@ fn test_builder_toroidal_convenience() {
     let dt = DelaunayTriangulation::builder(&vertices)
         .try_toroidal([1.0_f64; 2])
         .unwrap()
-        .build_with_kernel::<_, ()>(&kernel)
+        .build_with_kernel(&kernel)
         .expect("periodic toroidal builder should succeed");
 
     assert!(dt.global_topology().is_periodic());
     assert!(dt.tds().is_valid().is_ok());
+}
+
+/// Periodic quotient construction exposes the same fluent statistics terminal.
+#[test]
+fn test_builder_build_with_statistics_periodic_toroidal_records_telemetry() {
+    let vertices = toroidal_vertices::<2>();
+    let kernel = RobustKernel::new();
+    let (dt, stats) = DelaunayTriangulationBuilder::new(&vertices)
+        .try_toroidal([1.0_f64; 2])
+        .unwrap()
+        .build_with_kernel_and_statistics(&kernel)
+        .expect("periodic toroidal statistics build should succeed");
+
+    assert_eq!(dt.number_of_vertices(), stats.inserted);
+    assert_eq!(stats.total_skipped(), 0);
+    assert_eq!(stats.total_attempts, 0);
+    assert_eq!(stats.telemetry.insertion_wall_time_calls, 0);
+    assert!(stats.telemetry.has_data());
+    assert!(stats.telemetry.construction_total_nanos > 0);
+    assert!(dt.global_topology().is_periodic());
+    assert!(dt.validate().is_ok());
 }
 
 macro_rules! gen_toroidal_validation_test {
@@ -533,7 +619,7 @@ fn test_builder_toroidal_3d_fails_fast_until_scalable_quotient() {
     let err = DelaunayTriangulationBuilder::new(&vertices)
         .try_toroidal([1.0_f64; 3])
         .unwrap()
-        .build_with_kernel::<_, ()>(&kernel)
+        .build_with_kernel(&kernel)
         .expect_err("compact periodic 3D quotient remains pending scalable selection");
 
     match err {
@@ -561,7 +647,7 @@ macro_rules! gen_toroidal_high_dim_guardrail_test {
                 let err = DelaunayTriangulationBuilder::new(&vertices)
                     .try_toroidal([1.0_f64; $dim])
                     .unwrap()
-                    .build_with_kernel::<_, ()>(&kernel)
+                    .build_with_kernel(&kernel)
                     .expect_err(concat!(
                         stringify!($dim),
                         "D periodic quotient construction should fail fast pending #416"
@@ -596,7 +682,7 @@ fn test_builder_toroidal_large_dimension_fails_before_expansion_math() {
     let err = DelaunayTriangulationBuilder::new(&vertices)
         .try_toroidal([1.0_f64; 64])
         .unwrap()
-        .build_with_kernel::<_, ()>(&kernel)
+        .build_with_kernel(&kernel)
         .expect_err("64D periodic quotient should fail before computing 3^D image count");
 
     match err {
@@ -644,7 +730,7 @@ fn test_explicit_toroidal_heawood_torus_rejected() {
     let err = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .unwrap()
         .global_topology(topology)
-        .build::<()>()
+        .build()
         .expect_err("explicit toroidal connectivity requires a quotient embedding validator");
 
     match err {
@@ -677,7 +763,7 @@ fn test_explicit_toroidal_torus_euler_mismatch_without_override() {
     // Build with default Euclidean topology — should fail at Euler validation.
     let err = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .unwrap()
-        .build::<()>()
+        .build()
         .expect_err("explicit torus without Toroidal metadata should fail Euler validation");
 
     match err {
@@ -735,7 +821,7 @@ fn test_explicit_2d_two_triangle_quad() {
 
     let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .unwrap()
-        .build::<()>()
+        .build()
         .expect("explicit 2D build should succeed");
 
     assert_eq!(dt.number_of_vertices(), 4);
@@ -764,6 +850,32 @@ fn test_explicit_2d_two_triangle_quad() {
     );
 }
 
+/// Explicit connectivity exposes the same fluent statistics terminal.
+#[test]
+fn test_builder_build_with_statistics_explicit_records_telemetry() {
+    let vertices = vec![
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([1.0, 1.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
+    ];
+    let simplices = vec![vec![0, 1, 2], vec![0, 2, 3]];
+
+    let (dt, stats) =
+        DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+            .unwrap()
+            .build_with_statistics()
+            .expect("explicit statistics build should succeed");
+
+    assert_eq!(dt.number_of_vertices(), stats.inserted);
+    assert_eq!(stats.total_skipped(), 0);
+    assert_eq!(stats.total_attempts, 0);
+    assert_eq!(stats.telemetry.insertion_wall_time_calls, 0);
+    assert!(stats.telemetry.has_data());
+    assert!(stats.telemetry.construction_total_nanos > 0);
+    assert!(dt.validate().is_ok());
+}
+
 /// Explicit construction normalizes incoherent local simplex orderings.
 ///
 /// Swapping two vertices in one simplex flips its local orientation relative to an
@@ -782,7 +894,7 @@ fn test_explicit_normalizes_incoherent_simplex_order() {
 
     let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .unwrap()
-        .build::<()>()
+        .build()
         .expect("explicit build should normalize incoherent simplex ordering");
 
     assert!(
@@ -806,7 +918,7 @@ fn test_explicit_3d_two_tetrahedra() {
 
     let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .unwrap()
-        .build::<()>()
+        .build()
         .expect("explicit 3D build should succeed");
 
     assert_eq!(dt.number_of_vertices(), 5);
@@ -828,8 +940,9 @@ fn test_explicit_round_trip_3d() {
         vertex!([1.0, 1.0, 1.0]).unwrap(),
     ];
 
-    let dt_original =
-        DelaunayTriangulation::try_new(&vertices).expect("Delaunay build should succeed");
+    let dt_original = DelaunayTriangulation::builder(&vertices)
+        .build()
+        .expect("Delaunay build should succeed");
     let original_vertex_count = dt_original.number_of_vertices();
     let original_simplex_count = dt_original.number_of_simplices();
 
@@ -861,7 +974,7 @@ fn test_explicit_round_trip_3d() {
         &simplex_specs,
     )
     .unwrap()
-    .build::<()>()
+    .build()
     .expect("explicit 3D reconstruction should succeed");
 
     assert_eq!(dt_reconstructed.number_of_vertices(), original_vertex_count);
@@ -886,8 +999,9 @@ fn test_explicit_round_trip_2d() {
     ];
 
     // Build via standard Delaunay.
-    let dt_original =
-        DelaunayTriangulation::try_new(&vertices).expect("Delaunay build should succeed");
+    let dt_original = DelaunayTriangulation::builder(&vertices)
+        .build()
+        .expect("Delaunay build should succeed");
     let original_vertex_count = dt_original.number_of_vertices();
     let original_simplex_count = dt_original.number_of_simplices();
 
@@ -921,7 +1035,7 @@ fn test_explicit_round_trip_2d() {
         &simplex_specs,
     )
     .unwrap()
-    .build::<()>()
+    .build()
     .expect("explicit reconstruction should succeed");
 
     assert_eq!(dt_reconstructed.number_of_vertices(), original_vertex_count);
@@ -947,7 +1061,11 @@ fn test_explicit_error_empty_simplices() {
     let result =
         DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices);
 
-    assert!(result.is_err(), "Empty simplices should produce an error");
+    assert_matches!(
+        result.err(),
+        Some(ExplicitConstructionError::EmptySimplices),
+        "Empty simplices should produce an error"
+    );
 }
 
 /// Error: wrong simplex arity.
@@ -964,7 +1082,15 @@ fn test_explicit_error_wrong_arity() {
     let result =
         DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices);
 
-    assert!(result.is_err(), "Wrong arity should produce an error");
+    assert_matches!(
+        result.err(),
+        Some(ExplicitConstructionError::InvalidSimplexArity {
+            simplex_index: 0,
+            actual: 2,
+            expected: 3,
+        }),
+        "Wrong arity should produce an error"
+    );
 }
 
 /// Error: out-of-bounds vertex index.
@@ -980,8 +1106,13 @@ fn test_explicit_error_index_out_of_bounds() {
     let result =
         DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices);
 
-    assert!(
-        result.is_err(),
+    assert_matches!(
+        result.err(),
+        Some(ExplicitConstructionError::IndexOutOfBounds {
+            simplex_index: 0,
+            vertex_index: 99,
+            bound: 3,
+        }),
         "Out-of-bounds index should produce an error"
     );
 }
@@ -999,7 +1130,14 @@ fn test_explicit_error_duplicate_vertex_in_simplex() {
     let result =
         DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices);
 
-    assert!(result.is_err(), "Duplicate vertex should produce an error");
+    assert_matches!(
+        result.err(),
+        Some(ExplicitConstructionError::DuplicateVertexInSimplex {
+            simplex_index: 0,
+            vertex_index: 1,
+        }),
+        "Duplicate vertex should produce an error"
+    );
 }
 
 /// Minimal case: a single triangle in 2D.
@@ -1014,7 +1152,7 @@ fn test_explicit_2d_single_triangle() {
 
     let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .unwrap()
-        .build::<()>()
+        .build()
         .expect("single triangle should succeed");
 
     assert_eq!(dt.number_of_vertices(), 3);
@@ -1035,7 +1173,7 @@ fn test_explicit_3d_single_tetrahedron() {
 
     let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .unwrap()
-        .build::<()>()
+        .build()
         .expect("single tetrahedron should succeed");
 
     assert_eq!(dt.number_of_vertices(), 4);
@@ -1066,7 +1204,7 @@ fn test_explicit_non_delaunay_mesh() {
 
     let err = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .unwrap()
-        .build::<()>()
+        .build()
         .expect_err("non-Delaunay mesh must not construct a DelaunayTriangulation");
 
     assert!(
@@ -1097,7 +1235,7 @@ fn test_explicit_topology_guarantee_propagated() {
     let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .unwrap()
         .topology_guarantee(TopologyGuarantee::Pseudomanifold)
-        .build::<()>()
+        .build()
         .expect("build should succeed");
 
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
@@ -1115,7 +1253,7 @@ fn test_explicit_preserves_vertex_data() {
 
     let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .unwrap()
-        .build::<()>()
+        .build()
         .expect("explicit build with vertex data should succeed");
 
     let mut data: Vec<i32> = dt
@@ -1143,7 +1281,7 @@ fn test_explicit_validate_delaunay_mesh() {
 
     let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .unwrap()
-        .build::<()>()
+        .build()
         .expect("build should succeed");
 
     assert!(
@@ -1165,7 +1303,7 @@ fn test_explicit_unreferenced_vertices_rejected() {
 
     let err = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .unwrap()
-        .build::<()>()
+        .build()
         .unwrap_err();
 
     assert!(
@@ -1234,7 +1372,7 @@ fn test_explicit_error_variant_non_manifold_facet() {
 
     let err = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .unwrap()
-        .build::<()>()
+        .build()
         .unwrap_err();
 
     let DelaunayTriangulationConstructionError::ExplicitConstruction(
@@ -1269,7 +1407,10 @@ fn test_explicit_error_variant_duplicate_vertex_in_simplex() {
     assert!(
         matches!(
             err,
-            ExplicitConstructionError::DuplicateVertexInSimplex { simplex_index: 0 }
+            ExplicitConstructionError::DuplicateVertexInSimplex {
+                simplex_index: 0,
+                vertex_index: 1,
+            }
         ),
         "Expected DuplicateVertexInSimplex, got: {err}"
     );
@@ -1289,7 +1430,7 @@ fn test_explicit_error_variant_incompatible_topology() {
         .unwrap()
         .try_canonicalized_toroidal([1.0, 1.0])
         .unwrap()
-        .build::<()>()
+        .build()
         .unwrap_err();
 
     assert!(
@@ -1318,7 +1459,7 @@ fn test_explicit_error_variant_unsupported_construction_options() {
         .construction_options(
             ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input),
         )
-        .build::<()>()
+        .build()
         .unwrap_err();
 
     assert!(
@@ -1339,7 +1480,7 @@ fn test_explicit_error_variant_unsupported_construction_options() {
                     .without_final_delaunay_enforcement()
                     .with_insertion_order(InsertionOrderStrategy::Input),
             )
-            .build::<()>()
+            .build()
             .unwrap_err();
 
     assert!(
@@ -1365,7 +1506,7 @@ fn test_explicit_error_variant_duplicate_simplices_structural_validation() {
 
     let err = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .unwrap()
-        .build::<()>()
+        .build()
         .unwrap_err();
 
     let DelaunayTriangulationConstructionError::ExplicitConstruction(
@@ -1393,7 +1534,7 @@ fn test_explicit_error_variant_geometric_nondegeneracy() {
 
     let err = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .unwrap()
-        .build::<()>()
+        .build()
         .unwrap_err();
 
     match err {

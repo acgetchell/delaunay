@@ -1,7 +1,5 @@
 """Tests for notebook_check.py notebook linting diagnostics."""
 
-from __future__ import annotations
-
 import json
 import os
 import subprocess

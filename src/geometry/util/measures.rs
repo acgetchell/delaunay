@@ -803,7 +803,7 @@ fn facet_measure_gram_matrix<const D: usize>(
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// let tds = dt.tds();
 ///
 /// // Get boundary facets as FacetViews
@@ -1607,7 +1607,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let boundary_facets: Vec<_> = dt
             .tds()
             .one_sided_facets()
@@ -1656,7 +1656,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let boundary_facets: Vec<_> = dt
             .tds()
             .one_sided_facets()
@@ -1987,9 +1987,9 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(), // v8
         ];
         let dt1: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices1).unwrap();
+            DelaunayTriangulation::builder(&vertices1).build().unwrap();
         let dt2: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices2).unwrap();
+            DelaunayTriangulation::builder(&vertices2).build().unwrap();
 
         let boundary_facets1: Vec<_> = dt1
             .tds()
@@ -2069,7 +2069,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let boundary_facets: Vec<_> = dt
             .tds()
             .one_sided_facets()
@@ -2098,7 +2098,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 4> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let boundary_facets: Vec<_> = dt
             .tds()
             .one_sided_facets()
@@ -2134,7 +2134,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let boundary_facets: Vec<_> = dt
             .tds()
             .one_sided_facets()
@@ -2208,7 +2208,7 @@ mod tests {
         ];
 
         let dt: DelaunayTriangulation<_, (), (), 3> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let boundary_facets: Vec<_> = dt
             .tds()
             .one_sided_facets()

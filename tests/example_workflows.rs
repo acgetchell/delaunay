@@ -24,7 +24,8 @@ fn triangulation_and_hull_workflow_remains_valid() -> Result<(), WorkflowTestErr
         vertex!([0.20, 0.60, 0.25])?,
     ];
 
-    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::try_new(&vertices)?;
+    let dt: DelaunayTriangulation<_, (), (), 3> =
+        DelaunayTriangulation::builder(&vertices).build()?;
     dt.validate()?;
 
     let edge_index = dt.build_edge_index()?;

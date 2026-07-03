@@ -4344,7 +4344,7 @@ pub struct FlipInfo<const D: usize> {
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices)
 ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-///     .build::<()>()?;
+///     .build()?;
 /// let Some((simplex_key, _)) = dt.simplices().next() else {
 ///     return Ok(());
 /// };
@@ -4547,7 +4547,7 @@ impl TryFrom<[VertexKey; 3]> for TriangleHandle {
 ///     delaunay::vertex![0.0, 1.0, 0.0]?,
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
-/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// let Some((simplex_key, _)) = dt.simplices().next() else {
 ///     return Ok(());
 /// };
@@ -7434,7 +7434,7 @@ where
 /// ];
 ///
 /// let dt: DelaunayTriangulation<_, (), (), 3> =
-///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+///     DelaunayTriangulationBuilder::new(&vertices).build()?;
 /// let kernel = AdaptiveKernel::<f64>::new();
 ///
 /// // Fast O(N) verification
@@ -7489,7 +7489,7 @@ where
 /// ];
 ///
 /// let dt: DelaunayTriangulation<_, (), (), 3> =
-///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+///     DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// // Topology-aware O(N) verification
 /// assert!(verify_delaunay_for_triangulation(dt.as_triangulation()).is_ok());
@@ -16662,7 +16662,7 @@ mod tests {
             vertex!([1.0, 0.2]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let tds = dt.tds();
         let local_simplex = tds.simplex_keys().next().unwrap();
         let outcome = RepairAttemptOutcome {
@@ -16694,7 +16694,7 @@ mod tests {
             vertex!([1.0, 0.2]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let mut tds = dt.tds().clone();
         let before = snapshot_topology(&tds);
         let kernel = AdaptiveKernel::<f64>::new();
@@ -16725,7 +16725,7 @@ mod tests {
             vertex!([1.0, 0.2]).unwrap(),
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::try_new(&vertices).unwrap();
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
         let mut tds = dt.tds().clone();
         let kernel = AdaptiveKernel::<f64>::new();
 

@@ -50,7 +50,7 @@ use crate::tds::{EdgeKey, FacetHandle, SimplexKey, TopologyOwner, TopologyOwnerI
 /// ];
 /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
 ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-///     .build::<()>()?;
+///     .build()?;
 /// let Some((simplex_key, _)) = dt.simplices().next() else {
 ///     return Ok(());
 /// };
@@ -128,7 +128,7 @@ pub enum PachnerMove<U, const D: usize> {
 /// let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices)
 ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-///     .build::<()>()?;
+///     .build()?;
 /// let Some((simplex_key, _)) = dt.simplices().next() else {
 ///     return Ok(());
 /// };
@@ -180,7 +180,7 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     /// let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build::<()>()?;
+    ///     .build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -213,7 +213,7 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     /// let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build::<()>()?;
+    ///     .build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -248,7 +248,7 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     /// let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build::<()>()?;
+    ///     .build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -291,7 +291,7 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     /// let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build::<()>()?;
+    ///     .build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -346,7 +346,7 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     /// let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build::<()>()?;
+    ///     .build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -398,7 +398,7 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     /// let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build::<()>()?;
+    ///     .build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -453,7 +453,7 @@ impl<U, const D: usize> PachnerProposal<U, D> {
 /// ];
 /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
 ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-///     .build::<()>()?;
+///     .build()?;
 /// let Some((simplex_key, _)) = dt.simplices().next() else {
 ///     return Ok(());
 /// };
@@ -550,7 +550,7 @@ impl<const D: usize> From<PachnerMoveResult<D>> for FlipInfo<D> {
 /// let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices)
 ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-///     .build::<()>()?;
+///     .build()?;
 /// let Some((simplex_key, _)) = dt.simplices().next() else {
 ///     return Ok(());
 /// };
@@ -632,7 +632,7 @@ pub trait PachnerMoves<const D: usize>: BistellarFlips<D> + TopologyOwner {
     /// let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-    ///     .build::<()>()?;
+    ///     .build()?;
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };

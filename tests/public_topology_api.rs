@@ -52,11 +52,9 @@ fn standard_simplex_vertices<const D: usize>()
 fn assert_split_topology_single_simplex<const D: usize>() -> Result<(), PublicTopologyApiTestError>
 {
     let vertices = standard_simplex_vertices::<D>()?;
-    let dt: DelaunayTriangulation<_, (), (), D> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )?;
+    let dt: DelaunayTriangulation<_, (), (), D> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()?;
     let tri = dt.as_triangulation();
     let expected_edges = D * (D + 1) / 2;
 
@@ -126,11 +124,9 @@ fn edges_and_incident_edges_on_single_tetrahedron() -> Result<(), PublicTopology
         vertex!([0.0, 0.0, 1.0])?,
     ];
 
-    let dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )?;
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()?;
     let tri = dt.as_triangulation();
 
     assert_eq!(dt.number_of_vertices(), 4);
@@ -194,11 +190,9 @@ fn split_topology_indexes_on_double_tetrahedron() -> Result<(), PublicTopologyAp
         vertex!([1.0, 0.7, -1.5])?,
     ];
 
-    let dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )?;
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()?;
     let tri = dt.as_triangulation();
 
     assert_eq!(tri.number_of_vertices(), 5);

@@ -361,8 +361,9 @@ impl_exact_predicates_for_supported_dims!(0, 1, 2, 3, 4, 5);
 ///
 /// Use [`AdaptiveKernel`] (the default) for all 3D+ work. `FastKernel` remains
 /// suitable for 2D triangulations with well-conditioned input, or when explicitly
-/// opted into via [`DelaunayTriangulation::try_with_kernel`](crate::DelaunayTriangulation::try_with_kernel) for advanced use cases
-/// where the caller has verified the input is non-degenerate.
+/// opted into via
+/// [`DelaunayTriangulationBuilder::build_with_kernel`](crate::DelaunayTriangulationBuilder::build_with_kernel)
+/// for advanced use cases where the caller has verified the input is non-degenerate.
 ///
 /// # Performance
 ///
@@ -578,8 +579,8 @@ impl<const D: usize> Kernel<D> for RobustKernel<f64> {
 
 /// Adaptive precision kernel with Simulation of Simplicity.
 ///
-/// This is the **default kernel** for [`DelaunayTriangulation`] convenience
-/// constructors (`try_new`, `empty`, `try_new_with_options`, etc.).
+/// This is the **default kernel** for [`DelaunayTriangulation`] builder
+/// construction and empty triangulation constructors.
 ///
 /// [`DelaunayTriangulation`]: crate::DelaunayTriangulation
 ///

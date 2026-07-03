@@ -281,13 +281,10 @@ fn regression_issue_447_exact_layered_strip_preserves_collinear_boundary_vertice
         "exact degenerate construction mode should document that Level 5 enforcement is disabled",
     );
 
-    let (default_dt, default_stats) =
-        DelaunayTriangulation::<_, u32, i32, 2>::try_with_options_and_statistics(
-            &kernel,
-            &vertices,
-            TopologyGuarantee::DEFAULT,
-            exact_degenerate_options,
-        )
+    let (default_dt, default_stats) = DelaunayTriangulationBuilder::new(&vertices)
+        .simplex_data_type::<i32>()
+        .construction_options(exact_degenerate_options)
+        .build_with_kernel_and_statistics(&kernel)
         .expect("exact layered CDT strip point construction should succeed");
 
     assert_exact_strip_construction_result(
@@ -301,13 +298,11 @@ fn regression_issue_447_exact_layered_strip_preserves_collinear_boundary_vertice
         .with_insertion_order(InsertionOrderStrategy::Input)
         .with_retry_policy(RetryPolicy::Disabled)
         .without_final_delaunay_enforcement();
-    let (input_dt, input_stats) =
-        DelaunayTriangulation::<_, u32, i32, 2>::try_with_options_and_statistics(
-            &kernel,
-            &vertices,
-            TopologyGuarantee::Pseudomanifold,
-            input_options,
-        )
+    let (input_dt, input_stats) = DelaunayTriangulationBuilder::new(&vertices)
+        .simplex_data_type::<i32>()
+        .topology_guarantee(TopologyGuarantee::Pseudomanifold)
+        .construction_options(input_options)
+        .build_with_kernel_and_statistics(&kernel)
         .expect("input-order exact layered CDT strip construction should succeed");
 
     assert_exact_strip_construction_result(
@@ -317,16 +312,16 @@ fn regression_issue_447_exact_layered_strip_preserves_collinear_boundary_vertice
         &input_signatures,
     );
 
-    let no_stats_dt =
-        DelaunayTriangulation::<_, u32, i32, 2>::try_with_topology_guarantee_and_options(
-            &kernel,
-            &vertices,
-            TopologyGuarantee::Pseudomanifold,
+    let no_stats_dt = DelaunayTriangulationBuilder::new(&vertices)
+        .simplex_data_type::<i32>()
+        .topology_guarantee(TopologyGuarantee::Pseudomanifold)
+        .construction_options(
             ConstructionOptions::default()
                 .with_insertion_order(InsertionOrderStrategy::Input)
                 .with_retry_policy(RetryPolicy::Disabled)
                 .without_final_delaunay_enforcement(),
         )
+        .build_with_kernel(&kernel)
         .expect("non-stat exact layered CDT strip construction should honor non-enforcing policy");
 
     assert_eq!(
@@ -353,7 +348,8 @@ fn regression_issue_447_explicit_exact_strip_default_strict_level5_fails() {
 
     let err = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .expect("exact CDT strip explicit simplex specs should validate")
-        .build::<i32>()
+        .simplex_data_type::<i32>()
+        .build()
         .expect_err("strict explicit construction should reject the non-Delaunay CDT strip");
 
     assert!(
@@ -377,6 +373,7 @@ fn regression_issue_447_explicit_exact_strip_preserves_vertices_without_level5_e
 
     let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .expect("exact CDT strip explicit simplex specs should validate")
+        .simplex_data_type::<i32>()
         .construction_options(
             ConstructionOptions::default()
                 .without_final_delaunay_enforcement()
@@ -384,7 +381,7 @@ fn regression_issue_447_explicit_exact_strip_preserves_vertices_without_level5_e
                     NonZeroUsize::new(2).unwrap(),
                 )),
         )
-        .build_with_kernel::<_, i32>(&kernel)
+        .build_with_kernel(&kernel)
         .expect("explicit exact CDT strip should import under the non-enforcing policy");
 
     assert_eq!(
@@ -486,11 +483,9 @@ fn regression_empty_circumsphere_2d_minimal_case() {
         vertex!([-93.661_180_847_043, 1.562_430_007_326_195_9]).unwrap(),
     ];
 
-    let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )
+    let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
         .unwrap();
 
     if dt.is_valid_delaunay().is_err() {
@@ -519,11 +514,9 @@ fn regression_issue_120_minimal_failing_input_2d() {
         vertex!([0.0, 38.424]).unwrap(),
     ];
 
-    let dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::try_new_with_topology_guarantee(
-            &vertices,
-            TopologyGuarantee::PLManifold,
-        )
+    let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()
         .unwrap();
 
     if let Err(err) = dt.validate() {
@@ -558,7 +551,7 @@ fn regression_periodic_neighbor_validation_uses_lifted_vertex_offsets() {
     let dt = DelaunayTriangulationBuilder::new(&vertices)
         .try_toroidal([1.0_f64; 2])
         .unwrap()
-        .build_with_kernel::<_, ()>(&kernel)
+        .build_with_kernel(&kernel)
         .expect("periodic 2D build should succeed");
 
     assert!(
@@ -594,7 +587,7 @@ fn regression_issue_306_3d_construction_succeeds() {
         .collect();
 
     let dt: Result<DelaunayTriangulation<_, (), (), 3>, _> =
-        DelaunayTriangulation::try_new(&vertices);
+        DelaunayTriangulation::builder(&vertices).build();
     assert!(
         dt.is_ok(),
         "35-vertex 3D construction with seed 0x{seed:X} should succeed \
@@ -616,13 +609,10 @@ fn regression_issue_307_4d_bulk_repair_keeps_positive_orientation() {
     let options = ConstructionOptions::default()
         .with_insertion_order(InsertionOrderStrategy::Input)
         .with_retry_policy(RetryPolicy::Disabled);
-    let (dt, stats) =
-        DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::try_with_options_and_statistics(
-            &kernel,
-            &vertices,
-            TopologyGuarantee::PLManifoldStrict,
-            options,
-        )
+    let (dt, stats) = DelaunayTriangulationBuilder::new(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifoldStrict)
+        .construction_options(options)
+        .build_with_kernel_and_statistics(&kernel)
         .expect("4D bulk construction should not fail after repair orientation cleanup");
 
     assert_eq!(
@@ -680,15 +670,15 @@ fn regression_issue_204_4d_500_local_repair_budget() {
         .map(|p| vertex!(p.into()).unwrap())
         .collect();
 
-    let (dt, stats) =
-        DelaunayTriangulation::<_, (), (), 4>::try_new_with_construction_statistics(&vertices)
-            .unwrap_or_else(|e| {
-                panic!(
-                    "#204 regression: 4D {n_points}-point construction with seed 0x{seed:X} \
+    let (dt, stats) = DelaunayTriangulation::builder(&vertices)
+        .build_with_statistics()
+        .unwrap_or_else(|e| {
+            panic!(
+                "#204 regression: 4D {n_points}-point construction with seed 0x{seed:X} \
              (ball radius {ball_radius}) must succeed after Fix 2; got: {}",
-                    e.error
-                )
-            });
+                e.error
+            )
+        });
 
     assert_eq!(
         stats.inserted, n_points,

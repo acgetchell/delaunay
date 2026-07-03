@@ -70,7 +70,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     /// let tds = dt.tds();
     /// let facet_index = tds.build_facet_to_simplices_index()?;
     /// assert!(!facet_index.is_empty());
@@ -576,7 +576,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 2> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// assert!(dt.tds().is_coherently_oriented());
     /// # Ok(())
@@ -999,7 +999,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 4> =
-    ///     DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices_4d).build()?;
     ///
     /// // Level 2: TDS structural validation
     /// assert!(dt.tds().is_valid().is_ok());
@@ -1090,7 +1090,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![0.0, 0.0, 0.0, 1.0]?,
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 4> =
-    ///     DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
+    ///     DelaunayTriangulationBuilder::new(&vertices_4d).build()?;
     ///
     /// // Levels 1–2: elements + TDS structure
     /// assert!(dt.tds().validate().is_ok());
@@ -3627,7 +3627,7 @@ mod tests {
     #[test]
     fn test_tds_is_valid_passes_for_valid_simplex() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
+        let dt = DelaunayTriangulation::builder(&verts).build().unwrap();
         assert!(dt.tds().is_valid().is_ok());
         assert!(dt.tds().validate().is_ok());
     }
@@ -3635,7 +3635,7 @@ mod tests {
     #[test]
     fn test_build_facet_to_simplices_map_basic() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
+        let dt = DelaunayTriangulation::builder(&verts).build().unwrap();
         let tds = dt.tds();
 
         let facet_map = tds.build_facet_to_simplices_map().unwrap();
@@ -3746,7 +3746,7 @@ mod tests {
     #[test]
     fn test_validate_simplex_coordinate_uniqueness_passes_for_distinct_coords() {
         let verts = initial_simplex_vertices_3d();
-        let dt = DelaunayTriangulation::try_new(&verts).unwrap();
+        let dt = DelaunayTriangulation::builder(&verts).build().unwrap();
         let tds = dt.tds();
         assert!(tds.validate_simplex_coordinate_uniqueness().is_ok());
     }

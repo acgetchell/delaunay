@@ -333,7 +333,7 @@ fn build_success_source<const D: usize>(
             ^ attempt_seed.wrapping_mul(SEED_SALT.rotate_left(17));
         let fixture_kind = fixture_kind_for_attempt(preferred_kind, attempt);
         let vertices = generate_vertices::<D>(requested_vertices, seed, fixture_kind);
-        let Ok(triangulation) = DelaunayTriangulation::try_new(&vertices) else {
+        let Ok(triangulation) = DelaunayTriangulation::builder(&vertices).build() else {
             continue;
         };
         let Some(vertex_key) = successful_deletion_vertex(&triangulation) else {
@@ -358,7 +358,8 @@ fn build_success_source<const D: usize>(
 /// Build the source triangulation for invalid-deletion rollback measurements.
 fn build_rollback_source<const D: usize>() -> DeletionSource<D> {
     let vertices = simplex_vertices::<D>();
-    let triangulation: BenchTriangulation<D> = DelaunayTriangulation::try_new(&vertices).or_abort();
+    let triangulation: BenchTriangulation<D> =
+        DelaunayTriangulation::builder(&vertices).build().or_abort();
     let vertex_key = triangulation
         .vertices()
         .next()
