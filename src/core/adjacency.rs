@@ -17,7 +17,6 @@ use crate::core::collections::{FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallB
 use crate::core::edge::EdgeKey;
 use crate::core::tds::incidence::VertexIncidenceIndex;
 use crate::core::tds::{SimplexKey, TdsError, VertexKey};
-use std::marker::PhantomData;
 use thiserror::Error;
 
 /// Errors that can occur while building optional topology indexes.
@@ -98,8 +97,8 @@ pub struct EdgeIndex<'tds> {
     /// Number of unique edges in the triangulation snapshot.
     pub(in crate::core) edge_count: usize,
 
-    /// Ties this derived index to the borrowed source TDS snapshot.
-    pub(in crate::core) _tds: PhantomData<&'tds VertexIncidenceIndex>,
+    /// Borrowed canonical incidence relation that ties this index to the source TDS snapshot.
+    pub(in crate::core) _source_incidence: &'tds VertexIncidenceIndex,
 }
 
 /// Derived simplex→neighbor index for one triangulation snapshot.
@@ -118,8 +117,8 @@ pub struct SimplexNeighborIndex<'tds> {
     pub(in crate::core) simplex_to_neighbors:
         FastHashMap<SimplexKey, SmallBuffer<SimplexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
 
-    /// Ties this derived index to the borrowed source TDS snapshot.
-    pub(in crate::core) _tds: PhantomData<&'tds VertexIncidenceIndex>,
+    /// Borrowed canonical incidence relation that ties this index to the source TDS snapshot.
+    pub(in crate::core) _source_incidence: &'tds VertexIncidenceIndex,
 }
 
 /// Borrowed adjacency view for one triangulation snapshot.

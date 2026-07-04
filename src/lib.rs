@@ -51,9 +51,9 @@
 //! |---|---|
 //! | Construct/configure a Delaunay triangulation | `use delaunay::prelude::construction::*` |
 //! | Build/validate/repair generic triangulations | `use delaunay::prelude::triangulation::*` |
-//! | Low-level incremental insertion building blocks | `use delaunay::prelude::insertion::*` |
+//! | Incremental insertion diagnostics and result types | `use delaunay::prelude::insertion::*` |
 //! | Post-construction vertex deletion errors and keys | `use delaunay::prelude::deletion::*` |
-//! | Read-only queries, traversal, simplex barycenters, convex hull | `use delaunay::prelude::query::*` |
+//! | Read-only queries, traversal, ridge views, simplex barycenters, convex hull | `use delaunay::prelude::query::*` |
 //! | Point location and conflict-region algorithms | `use delaunay::prelude::algorithms::*` |
 //! | Geometry helpers, simplex embeddings, coordinate ranges, predicates, points | `use delaunay::prelude::geometry::*` |
 //! | Random points / triangulations for examples and tests | `use delaunay::prelude::generators::*` |
@@ -62,7 +62,7 @@
 //! | Delaunay repair and flip-based Level 5 validation | `use delaunay::prelude::repair::*` |
 //! | Delaunayize workflow (repair + flip) | `use delaunay::prelude::delaunayize::*` |
 //! | Construction telemetry diagnostics | `use delaunay::prelude::diagnostics::*` |
-//! | Validation policies, errors, reports, and Level 5 diagnostics | `use delaunay::prelude::validation::*` |
+//! | Validation policies, errors, reports, PL-manifold link errors, and Level 5 diagnostics | `use delaunay::prelude::validation::*` |
 //! | Topology validation, Euler characteristic, ridge queries | `use delaunay::prelude::topology::validation::*` |
 //! | Topological spaces, topology traits, lifted toroidal IDs | `use delaunay::prelude::topology::spaces::*` |
 //! | Low-level TDS simplices, facets, keys | `use delaunay::prelude::tds::*` |
@@ -113,8 +113,8 @@
 //! ];
 //! let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 //!
-//! // Levels 1–2: elements + structural (TDS)
-//! assert!(dt.tds().validate().is_ok());
+//! // Levels 1–2: elements + structural
+//! assert!(dt.validate_structure().is_ok());
 //!
 //! // Levels 1–3: elements + structural + topology
 //! assert!(dt.as_triangulation().validate().is_ok());
@@ -266,8 +266,8 @@
 //! - Level 1 (elements / `Vertex` + `Simplex`): `Vertex::is_valid()` /
 //!   `Simplex::is_valid()` for fast checks, or `vertex_report()` /
 //!   `simplex_report()` for element-local diagnostics.
-//! - Level 2 (structural / `Tds`): `dt.tds().is_valid()` for a quick check, or `dt.tds().validate()` for
-//!   Levels 1–2.
+//! - Level 2 (structural / `Tds`): `dt.is_valid_structure()` for a quick check, or
+//!   `dt.validate_structure()` for Levels 1–2.
 //! - Level 3 (topology / `Triangulation`): `dt.as_triangulation().is_valid_topology()` for topology-only checks, or
 //!   `dt.as_triangulation().validate()` for Levels 1–3.
 //! - Level 4 (embedding / `Triangulation`): `dt.as_triangulation().validate_embedding()` for cumulative
@@ -801,8 +801,7 @@ pub use crate::core::algorithms::incremental_insertion::{
     HullExtensionReason, InitialSimplexConstructionError, InitialSimplexUnexpectedInsertionStage,
     InsertionError, InsertionErrorKind, InsertionErrorSourceKind,
     InsertionTopologyValidationContext, NeighborRebuildError, NeighborWiringError,
-    SpatialIndexConstructionFailure, TdsConstructionFailure, TdsValidationFailure, extend_hull,
-    fill_cavity, repair_neighbor_pointers, repair_neighbor_pointers_local, wire_cavity_neighbors,
+    SpatialIndexConstructionFailure, TdsConstructionFailure, TdsValidationFailure,
 };
 pub use crate::core::algorithms::pl_manifold_repair::{
     PlManifoldRepairError, PlManifoldRepairStage, PlManifoldRepairStats,
@@ -943,7 +942,7 @@ pub fn try_vertices_from_points<const D: usize>(
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
-/// let result = validation::validate_triangulation_euler(dt.tds(), dt.global_topology())?;
+/// let result = dt.euler_check()?;
 /// assert_eq!(result.chi, 1);  // Tetrahedron has χ = 1
 /// assert!(result.is_valid());
 /// # Ok(())
@@ -1112,7 +1111,7 @@ pub mod tds {
 /// # }
 /// ```
 pub mod algorithms {
-    #[cfg(any(feature = "diagnostics", all(test, debug_assertions)))]
+    #[cfg(feature = "diagnostics")]
     pub use crate::core::algorithms::locate::verify_conflict_region_completeness;
     pub use crate::core::algorithms::locate::{
         ConflictError, InternalInconsistencySite, LocateError, LocateFallback,
@@ -1158,6 +1157,7 @@ pub mod query {
         extract_hull_facet_set, extract_vertex_coordinate_set, format_jaccard_report,
         jaccard_distance, jaccard_index, measure_with_result,
     };
+    pub use crate::flips::RidgeHandle;
     pub use crate::geometry::Point;
     pub use crate::geometry::algorithms::convex_hull::{
         ConvexHull, ConvexHullConstructionError, ConvexHullValidationError,
@@ -1173,6 +1173,9 @@ pub mod query {
         Simplex, SimplexFacetsIter, SimplexKey, SimplexNeighborIndex, TopologyIndexBuildError,
         TriangulationAdjacency, Vertex, VertexKey,
     };
+    pub use crate::topology::ridge::{
+        RidgeCandidate, RidgeCandidateError, RidgeLinkView, RidgeQuery, RidgeView,
+    };
     pub use crate::{DelaunayTriangulation, Triangulation};
     pub use crate::{SimplexBarycenterError, SimplexDataFillError};
 }
@@ -1183,7 +1186,8 @@ pub mod prelude {
     // Re-export the public low-level facades.
     pub use crate::query::{
         DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType,
-        FacetIncidenceAnalysis, QueryError, SimplexBarycenterError, SimplexDataFillError,
+        FacetIncidenceAnalysis, QueryError, RidgeCandidate, RidgeCandidateError, RidgeHandle,
+        RidgeLinkView, RidgeQuery, RidgeView, SimplexBarycenterError, SimplexDataFillError,
     };
     pub use crate::tds::*;
     pub use crate::vertex;
@@ -1401,14 +1405,16 @@ pub mod prelude {
             AllFacetsIter, BoundaryFacetsIter, DataCopy, DataDebug, DataDeserialize, DataIdentity,
             DataSerde, DataSerialize, DataType, EdgeIndex, EdgeKey, EdgeKeyError, EdgeView,
             FacetIncidenceAnalysis, FacetIncidenceView, FacetToSimplicesIndex, FacetView,
-            IncidenceView, OneSidedFacetsIter, QueryError, SimplexFacetsIter, SimplexNeighborIndex,
-            TopologyIndexBuildError, TriangulationAdjacency,
+            IncidenceView, OneSidedFacetsIter, QueryError, RidgeCandidate, RidgeCandidateError,
+            RidgeHandle, RidgeLinkView, RidgeQuery, RidgeView, SimplexFacetsIter,
+            SimplexNeighborIndex, TopologyIndexBuildError, TriangulationAdjacency,
         };
         pub use crate::tds::{
             FacetHandle, InvariantError, NeighborSlot, Simplex, SimplexKey, Tds,
             TdsConstructionError, TdsError, TdsErrorKind, TdsMutationError,
             TriangulationValidationErrorKind, Vertex, VertexKey,
         };
+        pub use crate::topology::manifold::ManifoldError;
         pub use crate::vertex;
         pub use crate::{
             InsertionError, PeriodicDomainPeriodError, SpatialIndexConstructionFailure,
@@ -1490,7 +1496,7 @@ pub mod prelude {
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
-    /// let Ok(facet) = FacetHandle::try_new(dt.tds(), simplex_key, 0) else {
+    /// let Ok(facet) = dt.facet_handle(simplex_key, 0) else {
     ///     return Ok(());
     /// };
     /// if dt.flip_k2(facet).is_err() {
@@ -1514,19 +1520,15 @@ pub mod prelude {
         pub use crate::vertex;
     }
 
-    /// Incremental insertion building blocks and diagnostics.
+    /// Incremental insertion diagnostics and result types.
     pub mod insertion {
-        pub use crate::collections::SimplexKeyBuffer;
-        pub use crate::tds::FacetHandle;
-        pub use crate::tds::{SimplexKey, Tds, TdsMutationError, VertexKey};
         pub use crate::{
             CavityFillingError, CavityRepairStage, DelaunayRepairErrorKind,
             DelaunayRepairFailureContext, HullExtensionReason, InitialSimplexConstructionError,
             InitialSimplexUnexpectedInsertionStage, InsertionError, InsertionErrorKind,
             InsertionErrorSourceKind, InsertionTopologyValidationContext, NeighborRebuildError,
             NeighborWiringError, SpatialIndexConstructionFailure, TdsConstructionFailure,
-            TdsValidationFailure, extend_hull, fill_cavity, repair_neighbor_pointers,
-            repair_neighbor_pointers_local, wire_cavity_neighbors,
+            TdsValidationFailure,
         };
         pub use crate::{InsertionOutcome, InsertionResult, InsertionStatistics};
     }
@@ -1591,8 +1593,7 @@ pub mod prelude {
             FlipNeighborRepairDiagnostics, FlipNeighborRepairFailure, FlipNeighborWiringError,
             FlipOrientationCheckStage, FlipPredicateError, FlipPredicateOperation,
             FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder,
-            TriangleHandleError, verify_delaunay_for_triangulation,
-            verify_delaunay_via_flip_predicates,
+            TriangleHandleError,
         };
         pub use crate::repair::{
             DelaunayCheckPolicy, DelaunayRepairHeuristicConfig, DelaunayRepairHeuristicSeeds,
@@ -1636,6 +1637,7 @@ pub mod prelude {
     /// assert!(cadence.should_validate(32));
     /// ```
     pub mod validation {
+        pub use crate::topology::manifold::ManifoldError;
         pub use crate::validation::*;
         pub use crate::{
             DelaunayTriangulationValidationError, DelaunayVerificationError,
@@ -1859,13 +1861,14 @@ pub mod prelude {
     }
 
     /// Convenience re-exports for common **read-only** workflows (topology traversal, adjacency,
-    /// simplex barycenters, convex-hull extraction, and common input types).
+    /// ridge views, simplex barycenters, convex-hull extraction, and common input types).
     ///
     /// This is useful if you want a smaller import surface than `delaunay::prelude::*`,
     /// while still having access to the key public APIs typically used in docs/tests/examples/benches.
     ///
     /// Includes:
-    /// - Topology traversal: [`DelaunayTriangulation::edges`], [`DelaunayTriangulation::incident_edges`],
+    /// - Topology traversal: [`DelaunayTriangulation::facets`], [`DelaunayTriangulation::ridges`],
+    ///   [`DelaunayTriangulation::edges`], [`DelaunayTriangulation::incident_edges`],
     ///   [`DelaunayTriangulation::simplex_neighbors`]
     /// - Fast repeated queries: [`DelaunayTriangulation::incidence`], [`DelaunayTriangulation::build_edge_index`],
     ///   [`DelaunayTriangulation::build_simplex_neighbor_index`], and composite
@@ -1910,8 +1913,9 @@ pub mod prelude {
         pub use crate::query::{
             AllFacetsIter, BoundaryFacetsIter, DataCopy, DataDebug, DataDeserialize, DataIdentity,
             DataSerde, DataSerialize, DataType, FacetIncidenceAnalysis, FacetView,
-            OneSidedFacetsIter, QueryError, Simplex, SimplexBarycenterError, SimplexDataFillError,
-            SimplexFacetsIter, Vertex,
+            OneSidedFacetsIter, QueryError, RidgeCandidate, RidgeCandidateError, RidgeHandle,
+            RidgeLinkView, RidgeQuery, RidgeView, Simplex, SimplexBarycenterError,
+            SimplexDataFillError, SimplexFacetsIter, Vertex,
         };
 
         // Read-only predicates (useful in benchmarks / lightweight geometry checks)
@@ -2062,8 +2066,7 @@ mod tests {
             triangulation::Triangulation, vertex::Vertex,
         },
         geometry::{
-            Point, algorithms::convex_hull::ConvexHull, kernel::AdaptiveKernel, kernel::FastKernel,
-            util::CircumcenterError,
+            Point, algorithms::convex_hull::ConvexHull, kernel::FastKernel, util::CircumcenterError,
         },
         is_normal,
         prelude::delaunayize::{
@@ -2075,7 +2078,6 @@ mod tests {
             DelaunayCheckPolicy, DelaunayRepairError, DelaunayRepairOutcome, DelaunayRepairPolicy,
             DelaunayRepairStats, DelaunayTriangulation as RepairDelaunayTriangulation,
             FlipContextError, FlipError, RepairQueueOrder, TopologyGuarantee,
-            verify_delaunay_for_triangulation, verify_delaunay_via_flip_predicates,
         },
         prelude::*,
         vertex,
@@ -2195,10 +2197,9 @@ mod tests {
             RepairDelaunayTriangulation::builder(&vertices)
                 .build()
                 .unwrap();
-        let kernel = AdaptiveKernel::<f64>::new();
 
-        assert!(verify_delaunay_for_triangulation(dt.as_triangulation()).is_ok());
-        assert!(verify_delaunay_via_flip_predicates(dt.tds(), &kernel).is_ok());
+        assert!(dt.verify_via_flip_predicates().is_ok());
+        assert!(dt.is_valid_delaunay().is_ok());
 
         let stats = DelaunayRepairStats::default();
         let outcome = DelaunayRepairOutcome {
@@ -2319,16 +2320,14 @@ mod tests {
         assert_eq!(dt.number_of_vertices(), 4);
         assert_eq!(dt.number_of_simplices(), 1);
 
-        // Access Triangulation, Tds, Simplex types
+        // Access Triangulation and simplex query types
         let tri = dt.as_triangulation();
         assert_eq!(tri.number_of_vertices(), 4);
-
-        let tds = &tri.tds;
-        assert_eq!(tds.number_of_simplices(), 1);
+        assert_eq!(tri.number_of_simplices(), 1);
 
         // Iterate over simplices
         for (simplex_key, _simplex) in tri.simplices() {
-            assert!(tds.simplex(simplex_key).is_some());
+            assert!(tri.simplex(simplex_key).is_some());
         }
     }
 
@@ -2343,10 +2342,9 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
 
-        // Test locate function with kernel
-        let kernel = FastKernel::<f64>::new();
+        // Test locate via the owning triangulation.
         let query_point = Point::try_new([0.3, 0.3]).expect("finite point coordinates");
-        let result = locate(dt.tds(), &kernel, &query_point, None);
+        let result = dt.locate(&query_point, None);
         assert!(result.is_ok());
 
         // Result should be a LocateResult
@@ -2360,7 +2358,7 @@ mod tests {
 
         // Test outside point
         let outside_point = Point::try_new([10.0, 10.0]).expect("finite point coordinates");
-        let result = locate(dt.tds(), &kernel, &outside_point, None);
+        let result = dt.locate(&outside_point, None);
         assert!(result.is_ok());
     }
 

@@ -42,8 +42,6 @@ use crate::locality::{
     append_live_unique_simplex_seeds, collect_local_exterior_conflict_seed_simplices,
     replace_simplices_and_record_removed, retain_simplices_and_record_removed,
 };
-#[cfg(debug_assertions)]
-use crate::topology::manifold::validate_ridge_links;
 use std::borrow::Cow;
 use std::env;
 use std::sync::{
@@ -1925,7 +1923,7 @@ where
 
         #[cfg(debug_assertions)]
         if env::var_os("DELAUNAY_DEBUG_RIDGE_LINK").is_some() {
-            match validate_ridge_links(&self.tds) {
+            match self.validate_ridge_links() {
                 Ok(()) => {
                     tracing::debug!(
                         "insert_with_conflict_region: ridge-link validation passed after insertion"
@@ -2169,7 +2167,7 @@ where
             self.tds = new_tds;
 
             // Re-map vertex key to the rebuilt TDS
-            v_key = self.tds.vertex_key_from_uuid(&inserted_uuid).ok_or(
+            v_key = self.vertex_key_from_uuid(&inserted_uuid).ok_or(
                 CavityFillingError::RebuiltVertexMissing {
                     uuid: inserted_uuid,
                 },
@@ -2777,7 +2775,7 @@ where
 
                 #[cfg(debug_assertions)]
                 if env::var_os("DELAUNAY_DEBUG_RIDGE_LINK").is_some() {
-                    match validate_ridge_links(&self.tds) {
+                    match self.validate_ridge_links() {
                         Ok(()) => {
                             tracing::debug!(
                                 "extend_hull: ridge-link validation passed after insertion"
@@ -2864,8 +2862,8 @@ mod tests {
         DUPLICATE_DETECTION_FORCE_ENABLED.load(AtomicOrdering::Relaxed)
     }
 
-    fn set_duplicate_detection_force_enabled(enabled: bool) {
-        DUPLICATE_DETECTION_FORCE_ENABLED.store(enabled, AtomicOrdering::Relaxed);
+    fn set_duplicate_detection_force_enabled(enabled: bool) -> bool {
+        DUPLICATE_DETECTION_FORCE_ENABLED.swap(enabled, AtomicOrdering::Relaxed)
     }
 
     pub(super) fn take_force_next_insertion_retryable_failure() -> bool {
@@ -3131,16 +3129,25 @@ mod tests {
 
     #[test]
     fn test_duplicate_detection_metrics_force_enable() {
-        struct DuplicateDetectionGuard;
+        struct DuplicateDetectionGuard {
+            prior: bool,
+        }
 
-        impl Drop for DuplicateDetectionGuard {
-            fn drop(&mut self) {
-                set_duplicate_detection_force_enabled(false);
+        impl DuplicateDetectionGuard {
+            fn enable() -> Self {
+                Self {
+                    prior: set_duplicate_detection_force_enabled(true),
+                }
             }
         }
 
-        let _guard = DuplicateDetectionGuard;
-        set_duplicate_detection_force_enabled(true);
+        impl Drop for DuplicateDetectionGuard {
+            fn drop(&mut self) {
+                set_duplicate_detection_force_enabled(self.prior);
+            }
+        }
+
+        let _guard = DuplicateDetectionGuard::enable();
 
         let before = Triangulation::<FastKernel<f64>, (), (), 2>::duplicate_detection_metrics()
             .expect("duplicate detection metrics should be enabled");

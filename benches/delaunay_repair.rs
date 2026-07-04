@@ -13,6 +13,11 @@
 //! seed, so the measured closure never times a repair failure chain. Case
 //! labels record whether the prepared fixture was `violating` or already
 //! `delaunay`, so baseline comparisons notice when a fixture changes meaning.
+//! A separate `repair_transaction_pressure` case selects fixtures whose probe
+//! run performs at least one direct flip without heuristic rebuild fallback,
+//! isolating the public repair path most sensitive to per-flip rollback
+//! snapshots. Compare that case with `tds_clone.rs` when evaluating journaled or
+//! reusable rollback designs.
 //! Exactly-cospherical adversarial fixtures are deliberately excluded: strict
 //! flip repair can legitimately fail to converge on them, which is a
 //! correctness scenario rather than a stable performance contract.
@@ -24,7 +29,10 @@
 //! cargo bench --profile perf --bench delaunay_repair
 //! ```
 
-use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{
+    BatchSize, BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
+    measurement::WallTime,
+};
 use delaunay::prelude::construction::{
     ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder, Vertex,
 };
@@ -32,9 +40,10 @@ use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{
     AdaptiveKernel, CoordinateRange, ExactPredicates, Kernel, Point,
 };
-use delaunay::prelude::repair::DelaunayRepairHeuristicConfig;
+use delaunay::prelude::repair::{DelaunayRepairHeuristicConfig, DelaunayRepairOutcome};
 use delaunay::try_vertices_from_points;
 use std::hint::black_box;
+use std::num::NonZeroUsize;
 use std::process;
 use std::time::Duration;
 
@@ -48,13 +57,45 @@ const SEED_SEARCH_ATTEMPTS: usize = 16;
 const SAMPLE_SIZE: usize = 10;
 const WARM_UP_TIME: Duration = Duration::from_millis(500);
 const MEASUREMENT_TIME: Duration = Duration::from_secs(2);
+const TRANSACTION_PRESSURE_MIN_FLIPS: NonZeroUsize = NonZeroUsize::MIN;
+const TRANSACTION_PRESSURE_SEED_SALT: u64 = 0xA511_E9B3_6C4D_27F1;
 
 type BenchTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
+
+#[derive(Clone, Copy)]
+enum RepairFixtureRequirement {
+    AnyConvergent,
+    DirectFlipRepair { min_flips: NonZeroUsize },
+}
+
+impl RepairFixtureRequirement {
+    /// Returns whether a probe run has the repair behavior this benchmark case needs.
+    const fn accepts(self, outcome: &DelaunayRepairOutcome) -> bool {
+        match self {
+            Self::AnyConvergent => true,
+            Self::DirectFlipRepair { min_flips } => {
+                !outcome.used_heuristic() && outcome.stats.flips_performed >= min_flips.get()
+            }
+        }
+    }
+
+    /// Describes the fixture predicate for benchmark setup failure messages.
+    fn description(self) -> String {
+        match self {
+            Self::AnyConvergent => String::from("repair-convergent"),
+            Self::DirectFlipRepair { min_flips } => format!(
+                "direct flip-repair fixture with at least {} performed flips",
+                min_flips.get()
+            ),
+        }
+    }
+}
 
 struct RepairSource<const D: usize> {
     vertex_count: usize,
     simplex_count: usize,
     violating: bool,
+    probe_flips_performed: usize,
     triangulation: BenchTriangulation<D>,
 }
 
@@ -109,6 +150,26 @@ fn build_source<const D: usize>(requested_vertices: usize, seed_base: u64) -> Re
 where
     AdaptiveKernel<f64>: ExactPredicates<D> + Kernel<D, Scalar = f64>,
 {
+    build_source_with_requirement(
+        requested_vertices,
+        seed_base,
+        RepairFixtureRequirement::AnyConvergent,
+    )
+}
+
+/// Build one repair fixture whose probe satisfies the requested repair behavior.
+///
+/// The transaction-pressure case uses this to require successful direct
+/// flip-based repair with performed flips, keeping heuristic rebuild setup out
+/// of the benchmark case that is meant to expose per-flip snapshot cost.
+fn build_source_with_requirement<const D: usize>(
+    requested_vertices: usize,
+    seed_base: u64,
+    requirement: RepairFixtureRequirement,
+) -> RepairSource<D>
+where
+    AdaptiveKernel<f64>: ExactPredicates<D> + Kernel<D, Scalar = f64>,
+{
     let options = ConstructionOptions::default().without_final_delaunay_enforcement();
 
     for attempt in 0..SEED_SEARCH_ATTEMPTS {
@@ -124,25 +185,29 @@ where
         };
 
         let mut probe = triangulation.clone();
-        if probe
-            .repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())
-            .is_err()
-        {
+        let Ok(outcome) =
+            probe.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())
+        else {
+            continue;
+        };
+        if !requirement.accepts(&outcome) {
             continue;
         }
 
-        let violating = triangulation.is_delaunay_via_flips().is_err();
+        let violating = triangulation.verify_via_flip_predicates().is_err();
         return RepairSource {
             vertex_count: triangulation.number_of_vertices(),
             simplex_count: triangulation.number_of_simplices(),
             violating,
+            probe_flips_performed: outcome.stats.flips_performed,
             triangulation,
         };
     }
 
     abort_benchmark(format!(
-        "no repair-convergent {D}D fixture built for {requested_vertices} vertices \
-         after {SEED_SEARCH_ATTEMPTS} seeds"
+        "no {} {D}D fixture built for {requested_vertices} vertices \
+         after {SEED_SEARCH_ATTEMPTS} seeds",
+        requirement.description()
     ))
 }
 
@@ -158,6 +223,7 @@ fn bench_repair_dimension<const D: usize>(
     dim_label: &str,
     counts: &[usize],
     seed_base: u64,
+    transaction_pressure_vertices: usize,
 ) where
     AdaptiveKernel<f64>: ExactPredicates<D> + Kernel<D, Scalar = f64>,
 {
@@ -202,27 +268,77 @@ fn bench_repair_dimension<const D: usize>(
         );
     }
 
+    bench_transaction_pressure_case(
+        &mut group,
+        transaction_pressure_vertices,
+        seed_base ^ TRANSACTION_PRESSURE_SEED_SALT,
+    );
+
     group.finish();
+}
+
+/// Register the public repair case selected to exercise transactional rollback snapshots.
+fn bench_transaction_pressure_case<const D: usize>(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    requested_vertices: usize,
+    seed_base: u64,
+) where
+    AdaptiveKernel<f64>: ExactPredicates<D> + Kernel<D, Scalar = f64>,
+{
+    let source = build_source_with_requirement::<D>(
+        requested_vertices,
+        seed_base,
+        RepairFixtureRequirement::DirectFlipRepair {
+            min_flips: TRANSACTION_PRESSURE_MIN_FLIPS,
+        },
+    );
+    group.throughput(Throughput::Elements(triangulation_element_count(&source)));
+
+    group.bench_with_input(
+        BenchmarkId::new(
+            "repair_transaction_pressure",
+            format!(
+                "flip_repair_vertices_{}_simplices_{}_probe_flips_{}",
+                source.vertex_count, source.simplex_count, source.probe_flips_performed
+            ),
+        ),
+        &source,
+        |b, source| {
+            b.iter_batched(
+                || source.triangulation.clone(),
+                |mut triangulation| {
+                    black_box(
+                        triangulation
+                            .repair_delaunay_with_flips_advanced(
+                                DelaunayRepairHeuristicConfig::default(),
+                            )
+                            .or_abort(),
+                    );
+                },
+                BatchSize::SmallInput,
+            );
+        },
+    );
 }
 
 /// Benchmark 2D flip-based Delaunay repair.
 fn bench_delaunay_repair_2d(c: &mut Criterion) {
-    bench_repair_dimension::<2>(c, "2d", &[500, 2_000], 0x2EFA_0000_0000_0002);
+    bench_repair_dimension::<2>(c, "2d", &[500, 2_000], 0x2EFA_0000_0000_0002, 2_000);
 }
 
 /// Benchmark 3D flip-based Delaunay repair.
 fn bench_delaunay_repair_3d(c: &mut Criterion) {
-    bench_repair_dimension::<3>(c, "3d", &[150, 500], 0x2EFA_0000_0000_0003);
+    bench_repair_dimension::<3>(c, "3d", &[150, 500], 0x2EFA_0000_0000_0003, 500);
 }
 
 /// Benchmark 4D flip-based Delaunay repair.
 fn bench_delaunay_repair_4d(c: &mut Criterion) {
-    bench_repair_dimension::<4>(c, "4d", &[50, 100], 0x2EFA_0000_0000_0004);
+    bench_repair_dimension::<4>(c, "4d", &[50, 100], 0x2EFA_0000_0000_0004, 100);
 }
 
 /// Benchmark 5D flip-based Delaunay repair.
 fn bench_delaunay_repair_5d(c: &mut Criterion) {
-    bench_repair_dimension::<5>(c, "5d", &[25, 40], 0x2EFA_0000_0000_0005);
+    bench_repair_dimension::<5>(c, "5d", &[25, 40], 0x2EFA_0000_0000_0005, 40);
 }
 
 criterion_group!(

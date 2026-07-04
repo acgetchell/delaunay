@@ -24,6 +24,13 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
     (-100.0..100.0).prop_filter("must be finite", |x: &f64| x.is_finite())
 }
 
+fn count_boundary_facets<K, U, V, const D: usize>(dt: &DelaunayTriangulation<K, U, V, D>) -> usize {
+    dt.boundary_facets()
+        .expect("boundary facets should be queryable for valid triangulations")
+        .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+        .expect("boundary facet handles should resolve")
+}
+
 // =============================================================================
 // DIMENSIONAL TEST GENERATION MACROS
 // =============================================================================
@@ -107,7 +114,7 @@ macro_rules! test_convex_hull_properties {
 
                     // Filter: Skip degenerate configurations (no boundary facets)
                     // These are tested separately in dedicated degenerate case tests
-                    let boundary_count = dt.tds().number_of_one_sided_facets().unwrap();
+                    let boundary_count = count_boundary_facets(&dt);
                     prop_assume!(boundary_count > 0);
 
                     // Should be able to construct hull from valid triangulation
@@ -152,7 +159,7 @@ macro_rules! test_convex_hull_properties {
                     let hull = hull_result.expect("assumed hull construction");
 
                     let facet_count = hull.number_of_facets();
-                    let vertex_count = dt.tds().vertices().count();
+                    let vertex_count = dt.number_of_vertices();
 
                     // Lower bound: more than D facets for a simplex in D dimensions
                     let min_facets = $dim;
@@ -200,8 +207,7 @@ macro_rules! test_convex_hull_properties {
                     let mut dt = dt_result.expect("assumed valid random triangulation");
 
                     // Filter: Skip degenerate initial configurations
-                    let initial_boundary_count =
-                        dt.tds().number_of_one_sided_facets().unwrap();
+                    let initial_boundary_count = count_boundary_facets(&dt);
                     prop_assume!(initial_boundary_count > 0);
 
                     let hull_result = ConvexHull::try_from_triangulation(dt.as_triangulation());
@@ -221,8 +227,7 @@ macro_rules! test_convex_hull_properties {
                     prop_assume!(dt.insert_vertex(new_vertex[0]).is_ok());
 
                     // Filter: Skip if modification resulted in degenerate configuration
-                    let modified_boundary_count =
-                        dt.tds().number_of_one_sided_facets().unwrap();
+                    let modified_boundary_count = count_boundary_facets(&dt);
                     prop_assume!(modified_boundary_count > 0);
 
                     // Hull should now be invalid (stale)
@@ -264,7 +269,7 @@ macro_rules! test_convex_hull_properties {
                     prop_assume!(hull_result.is_ok());
                     let hull = hull_result.expect("assumed hull construction");
 
-                    let tds_vertex_count = dt.tds().vertices().count();
+                    let triangulation_vertex_count = dt.number_of_vertices();
                     let facet_count = hull.number_of_facets();
 
                     // Each facet references D vertices (D-dimensional facets in D-space)
@@ -283,10 +288,10 @@ macro_rules! test_convex_hull_properties {
                     // so we just check facet count is reasonable)
                     prop_assert!(
                         facet_count > $dim,
-                        "{}D hull should have more than {} facets for {} TDS vertices",
+                        "{}D hull should have more than {} facets for {} triangulation vertices",
                         $dim,
                         $dim,
-                        tds_vertex_count
+                        triangulation_vertex_count
                     );
                 }
 

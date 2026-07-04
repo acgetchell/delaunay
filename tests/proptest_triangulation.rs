@@ -68,8 +68,8 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 /// comparison function.
 ///
 /// # Arguments
-/// * `tds_orig` - Original triangulation
-/// * `tds_transformed` - Transformed triangulation (translated, scaled, rotated, etc.)
+/// * `dt_orig` - Original triangulation
+/// * `dt_transformed` - Transformed triangulation (translated, scaled, rotated, etc.)
 /// * `uuid_map` - Mapping from original vertex UUIDs to transformed vertex UUIDs
 /// * `_metric_name` - Name of the metric being tested (for error messages)
 /// * `_dimension` - Dimensionality (for error messages)
@@ -103,10 +103,8 @@ fn compare_transformed_simplices<const D: usize, F>(
 where
     F: FnMut(SimplexKey, SimplexKey) -> Result<(), TestCaseError>,
 {
-    let tds_orig = dt_orig.tds();
-    let tds_transformed = dt_transformed.tds();
-    let orig_simplex_count = tds_orig.simplex_keys().count();
-    let transformed_simplex_count = tds_transformed.simplex_keys().count();
+    let orig_simplex_count = dt_orig.number_of_simplices();
+    let transformed_simplex_count = dt_transformed.number_of_simplices();
     prop_assert_eq!(
         orig_simplex_count,
         transformed_simplex_count,
@@ -116,13 +114,14 @@ where
     let mut matched_transformed = Vec::with_capacity(transformed_simplex_count);
 
     // Iterate through all simplices in original triangulation
-    for orig_key in tds_orig.simplex_keys() {
-        prop_assert!(
-            tds_orig.simplex(orig_key).is_some(),
-            "original simplex key from iterator should exist: {orig_key:?}"
-        );
-        let orig_simplex = tds_orig.simplex(orig_key).expect("checked above");
-        let orig_uuids = orig_simplex.vertex_uuids(tds_orig)?;
+    for (orig_key, orig_simplex) in dt_orig.simplices() {
+        let mut orig_uuids = Vec::with_capacity(orig_simplex.number_of_vertices());
+        for &vertex_key in orig_simplex.vertices() {
+            let vertex = dt_orig.vertex(vertex_key).ok_or_else(|| {
+                TestCaseError::fail(format!("missing original vertex {vertex_key:?}"))
+            })?;
+            orig_uuids.push(vertex.uuid());
+        }
         let transformed_uuids: Vec<_> = orig_uuids
             .iter()
             .filter_map(|uuid| uuid_map.get(uuid))
@@ -135,22 +134,22 @@ where
         );
 
         let mut matched_key = None;
-        for trans_key in tds_transformed.simplex_keys() {
-            prop_assert!(
-                tds_transformed.simplex(trans_key).is_some(),
-                "transformed simplex key from iterator should exist: {trans_key:?}"
-            );
-            let trans_simplex = tds_transformed.simplex(trans_key).expect("checked above");
-            if let Ok(trans_simplex_uuids) = trans_simplex.vertex_uuids(tds_transformed) {
-                // Check if simplices have same vertices (by UUID)
-                if transformed_uuids.len() == trans_simplex_uuids.len()
-                    && transformed_uuids
-                        .iter()
-                        .all(|u| trans_simplex_uuids.contains(u))
-                {
-                    matched_key = Some(trans_key);
-                    break;
-                }
+        for (trans_key, trans_simplex) in dt_transformed.simplices() {
+            let mut trans_simplex_uuids = Vec::with_capacity(trans_simplex.number_of_vertices());
+            for &vertex_key in trans_simplex.vertices() {
+                let vertex = dt_transformed.vertex(vertex_key).ok_or_else(|| {
+                    TestCaseError::fail(format!("missing transformed vertex {vertex_key:?}"))
+                })?;
+                trans_simplex_uuids.push(vertex.uuid());
+            }
+            // Check if simplices have same vertices (by UUID)
+            if transformed_uuids.len() == trans_simplex_uuids.len()
+                && transformed_uuids
+                    .iter()
+                    .all(|u| trans_simplex_uuids.contains(u))
+            {
+                matched_key = Some(trans_key);
+                break;
             }
         }
 
@@ -392,9 +391,8 @@ macro_rules! test_quality_properties {
                         .topology_guarantee(TopologyGuarantee::PLManifold)
                         .build()
                     {
-                        let tds = dt.tds();
                         let tri = dt.as_triangulation();
-                        for simplex_key in tds.simplex_keys() {
+                        for (simplex_key, _) in dt.simplices() {
                             if let Ok(ratio) = radius_ratio(tri, simplex_key) {
                                 prop_assert!(
                                     ratio > 0.0,
@@ -640,9 +638,8 @@ macro_rules! test_quality_properties {
                         .topology_guarantee(TopologyGuarantee::PLManifold)
                         .build()
                     {
-                        let tds = dt.tds();
                         let tri = dt.as_triangulation();
-                        for simplex_key in tds.simplex_keys() {
+                        for (simplex_key, _) in dt.simplices() {
                             let rr_result = radius_ratio(tri, simplex_key);
                             let nv_result = normalized_volume(tri, simplex_key);
 
@@ -751,7 +748,7 @@ macro_rules! test_facet_topology_invariant {
                         .topology_guarantee(TopologyGuarantee::PLManifold)
                         .build()
                     {
-                        let mut tri = dt.as_triangulation().clone();
+                        let mut tri = dt.into_triangulation();
 
                         // Get all simplex keys
                         let simplex_keys: Vec<_> = tri.simplices().map(|(k, _)| k).collect();

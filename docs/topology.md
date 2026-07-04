@@ -69,7 +69,7 @@ Level 3 always checks:
   incidence APIs parse this into the owner-bound `FacetToSimplicesIndex` via
   `Tds::build_facet_to_simplices_index`; Level 3 validation builds one raw
   `FacetToSimplicesMap`, parses it into `ValidatedFacetDegreeMap`, and reuses
-  that proof-bearing map so boundary, vertex-link, and Euler checks do not
+  that proof-bearing map so boundary, ridge-link, vertex-link, and Euler checks do not
   rebuild or revalidate the same facet-degree evidence. Boundary classification
   additionally excludes admissible periodic self-identifications, which are
   closed quotient topology rather than boundary.
@@ -94,7 +94,13 @@ Implementation pointers:
 
 - Level 3 entry points and validation vocabulary: `src/core/validation.rs`
   (`Triangulation::is_valid_topology`, `Triangulation::validate`)
-- Public manifold validators: `src/topology/manifold.rs`
+- Owner-level topology validators: `src/core/validation.rs` and
+  `src/delaunay/query.rs`
+  (`Triangulation::validate_ridge_links`,
+  `Triangulation::validate_ridge_links_for_simplices`,
+  `Triangulation::validate_vertex_links`, and the matching
+  `DelaunayTriangulation` forwarding methods)
+- Storage-level manifold validators: `src/topology/manifold.rs`
   (`validate_closed_boundary`, `validate_vertex_links`, `validate_ridge_links`)
 - Internal raw-map reuse helpers: `src/topology/manifold.rs`
   (`ValidatedFacetDegreeMap::try_from_facet_map`,
@@ -108,8 +114,10 @@ Facet incidence by itself does **not** prove that a facet is a manifold boundary
 It only describes how many D-simplices share a canonical facet key in the TDS.
 The current API keeps this distinction explicit:
 
-- `Tds::one_sided_facets()` and `Tds::number_of_one_sided_facets()` report raw
-  one-sided facet incidence. This is a Level 1–2/TDS fact.
+- `Triangulation::facet_incidence_index()` and
+  `DelaunayTriangulation::facet_incidence_index()` report raw facet incidence;
+  `FacetIncidenceView::is_one_sided()` identifies one-sided incidences. This is
+  a Level 1–2 incidence fact, not a topology-aware boundary classification.
 - `Triangulation::boundary_facets()` and `DelaunayTriangulation::boundary_facets()`
   report true boundary facets after interpreting the incidence under the
   triangulation's `GlobalTopology`.
@@ -178,8 +186,24 @@ simplicial complex). This is currently not part of Level 3 validation.
 
 ## PL-manifold validators (`topology::manifold`)
 
-`src/topology/manifold.rs` contains combinatorial validators for manifold and
-PL-manifold invariants (no geometric predicates):
+The public owner-level entry points for PL-manifold link checks are:
+
+- `Triangulation::validate_ridge_links()` and
+  `DelaunayTriangulation::validate_ridge_links()` for the global codimension-2
+  ridge-link screen.
+- `Triangulation::validate_ridge_links_for_simplices()` and
+  `DelaunayTriangulation::validate_ridge_links_for_simplices()` for localized
+  post-edit diagnostics over a touched simplex frontier.
+- `Triangulation::validate_vertex_links()` and
+  `DelaunayTriangulation::validate_vertex_links()` for the canonical
+  vertex-link PL-manifold certification.
+
+These owner methods are the preferred API for papers, examples, tests, and
+application code because they carry the triangulation's topology metadata and
+avoid exposing raw TDS storage.
+
+`src/topology/manifold.rs` also contains storage-level combinatorial validators
+for manifold and PL-manifold invariants (no geometric predicates):
 
 - `validate_closed_boundary`
 - `validate_ridge_links`

@@ -133,22 +133,10 @@ empty-circumsphere violations:
 ```rust
 use delaunay::prelude::diagnostics::delaunay_violation_report;
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    DelaunayResult, DelaunayTriangulationBuilder, vertex,
 };
-use delaunay::prelude::geometry::CoordinateConversionError;
-use delaunay::prelude::DelaunayValidationError;
 
-#[derive(Debug, thiserror::Error)]
-enum DiagnosticsExampleError {
-    #[error(transparent)]
-    Construction(#[from] DelaunayTriangulationConstructionError),
-    #[error(transparent)]
-    Coordinate(#[from] CoordinateConversionError),
-    #[error(transparent)]
-    Validation(#[from] DelaunayValidationError),
-}
-
-fn main() -> Result<(), DiagnosticsExampleError> {
+fn main() -> DelaunayResult<()> {
     let vertices = vec![
         vertex![0.0, 0.0, 0.0]?,
         vertex![1.0, 0.0, 0.0]?,
@@ -157,7 +145,7 @@ fn main() -> Result<(), DiagnosticsExampleError> {
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
-    let report = delaunay_violation_report(dt.tds(), None)?;
+    let report = dt.delaunay_violation_report(None)?;
     assert!(report.is_valid());
     Ok(())
 }
@@ -165,7 +153,9 @@ fn main() -> Result<(), DiagnosticsExampleError> {
 
 Reports store `SimplexKey` and `VertexKey` values rather than copying every
 coordinate. This keeps diagnostics compact and lets callers recover coordinates,
-UUIDs, or attached data from the original `Tds`.
+UUIDs, or attached data from the original triangulation through key-based
+queries such as `dt.simplex(key)`, `dt.vertex(key)`, and
+`dt.simplex_vertices(key)`.
 
 Useful fields:
 
@@ -182,9 +172,7 @@ Useful fields:
 The logging helper is useful when a failure is easier to inspect as a trace:
 
 ```rust
-use delaunay::prelude::diagnostics::debug_print_first_delaunay_violation;
-
-debug_print_first_delaunay_violation(dt.tds(), None);
+dt.debug_print_first_delaunay_violation(None);
 ```
 
 Install a `tracing` subscriber in tests or applications to see output. In tests,

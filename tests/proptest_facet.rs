@@ -10,7 +10,6 @@
 
 use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
 use delaunay::prelude::query::*;
-use delaunay::prelude::tds::facet_key_from_vertices;
 use delaunay::try_vertices_from_points;
 use proptest::prelude::*;
 use std::collections::HashMap;
@@ -43,21 +42,16 @@ macro_rules! test_facet_properties {
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        let tds = dt.tds();
-                        for simplex_key in tds.simplex_keys() {
-                            // Each simplex has D+1 facets (one opposite each vertex)
-                            for facet_index in 0..=($dim as u8) {
-                                if let Ok(facet) = FacetView::try_new(&tds, simplex_key, facet_index) {
-                                    let vertex_count = facet.vertices().count();
-                                    prop_assert_eq!(
-                                        vertex_count,
-                                        $expected_facet_vertices,
-                                        "{}D facet should have exactly {} vertices",
-                                        $dim,
-                                        $expected_facet_vertices
-                                    );
-                                }
-                            }
+                        for facet in dt.facets() {
+                            let facet = facet.expect("facet iterator should resolve valid facets");
+                            let vertex_count = facet.vertices().count();
+                            prop_assert_eq!(
+                                vertex_count,
+                                $expected_facet_vertices,
+                                "{}D facet should have exactly {} vertices",
+                                $dim,
+                                $expected_facet_vertices
+                            );
                         }
                     }
                 }
@@ -72,26 +66,16 @@ macro_rules! test_facet_properties {
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        let tds = dt.tds();
-                        for simplex_key in tds.simplex_keys() {
-                            prop_assert!(
-                                tds.simplex(simplex_key).is_some(),
-                                "simplex key from iterator should exist: {simplex_key:?}"
+                        for facet in dt.facets() {
+                            let facet = facet.expect("facet iterator should resolve valid facets");
+                            let simplex_vertex_count = facet.simplex().vertices().len();
+                            let facet_vertex_count = facet.vertices().count();
+                            prop_assert_eq!(
+                                facet_vertex_count,
+                                simplex_vertex_count - 1,
+                                "{}D facet should have one fewer vertex than simplex",
+                                $dim
                             );
-                            let simplex = tds.simplex(simplex_key).expect("checked above");
-                            let simplex_vertex_count = simplex.vertices().len();
-
-                            for facet_index in 0..=($dim as u8) {
-                                if let Ok(facet) = FacetView::try_new(&tds, simplex_key, facet_index) {
-                                    let facet_vertex_count = facet.vertices().count();
-                                    prop_assert_eq!(
-                                        facet_vertex_count,
-                                        simplex_vertex_count - 1,
-                                        "{}D facet should have one fewer vertex than simplex",
-                                        $dim
-                                    );
-                                }
-                            }
                         }
                     }
                 }
@@ -106,18 +90,12 @@ macro_rules! test_facet_properties {
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        let tds = dt.tds();
-                        // Check that each facet is valid
-                        for simplex_key in tds.simplex_keys() {
-                            for facet_index in 0..=($dim as u8) {
-                                // Each facet should be constructible
-                                prop_assert!(
-                                    FacetView::try_new(&tds, simplex_key, facet_index).is_ok(),
-                                    "{}D facet {} of simplex should be valid",
-                                    $dim,
-                                    facet_index
-                                );
-                            }
+                        for facet in dt.facets() {
+                            prop_assert!(
+                                facet.is_ok(),
+                                "{}D public facet iterator should only yield valid facets",
+                                $dim
+                            );
                         }
                     }
                 }
@@ -132,22 +110,17 @@ macro_rules! test_facet_properties {
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        let tds = dt.tds();
-                        for simplex_key in tds.simplex_keys() {
-                            let mut facet_count = 0;
-                            for facet_index in 0..=($dim as u8) {
-                                if FacetView::try_new(&tds, simplex_key, facet_index).is_ok() {
-                                    facet_count += 1;
-                                }
-                            }
-                            prop_assert_eq!(
-                                facet_count,
-                                $dim + 1,
-                                "{}D simplex should have exactly {} facets",
-                                $dim,
-                                $dim + 1
-                            );
-                        }
+                        let facet_count = dt
+                            .facets()
+                            .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+                            .expect("facet iterator should resolve valid facets");
+                        prop_assert_eq!(
+                            facet_count,
+                            dt.number_of_simplices() * ($dim + 1),
+                            "{}D triangulation should have exactly {} facets per simplex",
+                            $dim,
+                            $dim + 1
+                        );
                     }
                 }
             }
@@ -176,24 +149,14 @@ macro_rules! test_facet_multiplicity {
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        let tds = dt.tds();
                         // Ensure we're checking a valid triangulation to avoid degenerate edge cases
-                        prop_assume!(tds.is_valid().is_ok());
+                        prop_assume!(dt.is_valid_structure().is_ok());
 
                         let mut counts: HashMap<u64, usize> = HashMap::new();
 
-                        for (_simplex_key, simplex) in tds.simplices() {
-                            let vs = simplex.vertices();
-                            for i in 0..vs.len() {
-                                let facet: Vec<_> = vs
-                                    .iter()
-                                    .copied()
-                                    .enumerate()
-                                    .filter_map(|(j, vk)| (j != i).then_some(vk))
-                                    .collect();
-                                let key = facet_key_from_vertices(&facet);
-                                *counts.entry(key).or_default() += 1;
-                            }
+                        for facet in dt.facets() {
+                            let facet = facet.expect("facet iterator should resolve valid facets");
+                            *counts.entry(facet.key()).or_default() += 1;
                         }
 
                         for (facet, c) in counts {

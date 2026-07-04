@@ -10,8 +10,6 @@
 
 #![forbid(unsafe_code)]
 
-#[cfg(test)]
-use crate::construction::test_hooks;
 use crate::core::algorithms::flips::{
     DelaunayRepairError, DelaunayRepairHeuristicRebuildFailure,
     DelaunayRepairHeuristicVertexContext, DelaunayRepairOrientationCanonicalizationFailure,
@@ -28,11 +26,10 @@ use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{ExactPredicates, Kernel, RobustKernel};
 use crate::geometry::traits::coordinate::CoordinateValues;
 use crate::triangulation::DelaunayTriangulation;
-#[cfg(test)]
-use crate::validation::DelaunayTriangulationCandidate;
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use std::{
+    cell::Cell,
     fmt,
     hash::{Hash, Hasher},
     num::NonZeroUsize,
@@ -44,7 +41,7 @@ const HEURISTIC_REBUILD_ATTEMPTS: usize = 6;
 const MAX_HEURISTIC_REBUILD_DEPTH: usize = 1;
 
 thread_local! {
-    static HEURISTIC_REBUILD_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static HEURISTIC_REBUILD_DEPTH: Cell<usize> = const { Cell::new(0) };
 }
 
 struct HeuristicRebuildRecursionGuard {
@@ -405,8 +402,8 @@ where
         V: DataType,
     {
         #[cfg(test)]
-        if test_hooks::force_repair_nonconvergent_enabled() {
-            return Err(test_hooks::synthetic_nonconvergent_error());
+        if tests::force_repair_nonconvergent_enabled() {
+            return Err(tests::synthetic_nonconvergent_error());
         }
         let operation = TopologicalOperation::FacetFlip;
         let topology = self.tri.topology_guarantee();
@@ -477,6 +474,12 @@ where
         let (tds, kernel) = (&mut self.tri.tds, &kernel);
         repair_delaunay_with_flips_k2_k3_run(tds, kernel, seed_simplices, topology, max_flips)
     }
+}
+
+impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
+    // =============================================================================
+    // REPAIR POLICY GATES (No Kernel Bounds)
+    // =============================================================================
 
     /// Applies the repair policy only when the dimension and topology can
     /// support bistellar flips.
@@ -535,7 +538,7 @@ where
     fn force_heuristic_rebuild_enabled() -> bool {
         #[cfg(test)]
         {
-            test_hooks::force_heuristic_rebuild_enabled()
+            tests::force_heuristic_rebuild_enabled()
         }
         #[cfg(not(test))]
         {
@@ -923,10 +926,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::construction::test_hooks;
     use crate::core::algorithms::flips::{
         DelaunayRepairDiagnostics, DelaunayRepairPostconditionFailure, FlipError, RepairQueueOrder,
-        verify_delaunay_via_flip_predicates,
     };
     use crate::core::simplex::Simplex;
     use crate::core::tds::{Tds, TriangulationConstructionState};
@@ -935,8 +936,72 @@ mod tests {
     use crate::geometry::kernel::{AdaptiveKernel, RobustKernel};
     use crate::topology::traits::topological_space::GlobalTopology;
     use crate::triangulation::DelaunayTriangulation;
+    use crate::validation::DelaunayTriangulationCandidate;
     use crate::vertex;
     use std::{assert_matches, num::NonZeroUsize, sync::Once};
+
+    // Last-resort fault injection for rollback branches that are hard to
+    // trigger deterministically; thread-local state avoids cross-test leakage.
+    // Remove this once a cleaner harness can reach the branch directly.
+    thread_local! {
+        static FORCE_HEURISTIC_REBUILD: Cell<bool> = const { Cell::new(false) };
+        static FORCE_REPAIR_NONCONVERGENT: Cell<bool> = const { Cell::new(false) };
+    }
+
+    #[must_use]
+    pub(super) fn force_heuristic_rebuild_enabled() -> bool {
+        FORCE_HEURISTIC_REBUILD.with(Cell::get)
+    }
+
+    #[must_use]
+    pub(super) fn force_repair_nonconvergent_enabled() -> bool {
+        FORCE_REPAIR_NONCONVERGENT.with(Cell::get)
+    }
+
+    #[must_use]
+    pub(super) fn synthetic_nonconvergent_error() -> DelaunayRepairError {
+        DelaunayRepairError::NonConvergent {
+            max_flips: 0,
+            diagnostics: Box::new(DelaunayRepairDiagnostics {
+                facets_checked: 0,
+                flips_performed: 0,
+                max_queue_len: 0,
+                ambiguous_predicates: 0,
+                ambiguous_predicate_samples: Vec::new(),
+                predicate_failures: 0,
+                cycle_detections: 0,
+                cycle_signature_samples: Vec::new(),
+                attempt: 0,
+                queue_order: RepairQueueOrder::Fifo,
+            }),
+        }
+    }
+
+    #[must_use]
+    fn set_force_heuristic_rebuild(enabled: bool) -> bool {
+        FORCE_HEURISTIC_REBUILD.with(|flag| {
+            let prior = flag.get();
+            flag.set(enabled);
+            prior
+        })
+    }
+
+    fn restore_force_heuristic_rebuild(prior: bool) {
+        FORCE_HEURISTIC_REBUILD.with(|flag| flag.set(prior));
+    }
+
+    #[must_use]
+    fn set_force_repair_nonconvergent(enabled: bool) -> bool {
+        FORCE_REPAIR_NONCONVERGENT.with(|flag| {
+            let prior = flag.get();
+            flag.set(enabled);
+            prior
+        })
+    }
+
+    fn restore_force_repair_nonconvergent(prior: bool) {
+        FORCE_REPAIR_NONCONVERGENT.with(|flag| flag.set(prior));
+    }
 
     fn init_tracing() {
         static INIT: Once = Once::new();
@@ -956,14 +1021,14 @@ mod tests {
 
     impl ForceHeuristicRebuildGuard {
         fn enable() -> Self {
-            let prior = test_hooks::set_force_heuristic_rebuild(true);
+            let prior = set_force_heuristic_rebuild(true);
             Self { prior }
         }
     }
 
     impl Drop for ForceHeuristicRebuildGuard {
         fn drop(&mut self) {
-            test_hooks::restore_force_heuristic_rebuild(self.prior);
+            restore_force_heuristic_rebuild(self.prior);
         }
     }
 
@@ -973,14 +1038,14 @@ mod tests {
 
     impl ForceRepairNonconvergentGuard {
         fn enable() -> Self {
-            let prior = test_hooks::set_force_repair_nonconvergent(true);
+            let prior = set_force_repair_nonconvergent(true);
             Self { prior }
         }
     }
 
     impl Drop for ForceRepairNonconvergentGuard {
         fn drop(&mut self) {
-            test_hooks::restore_force_repair_nonconvergent(self.prior);
+            restore_force_repair_nonconvergent(self.prior);
         }
     }
 
@@ -1323,18 +1388,26 @@ mod tests {
         // and robust fallback kernels both see a real flip-repair site.
         let kernel = AdaptiveKernel::<f64>::new();
         let robust_kernel = RobustKernel::<f64>::new();
-        let tds = non_delaunay_quad_tds();
-        assert!(verify_delaunay_via_flip_predicates(&tds, &kernel).is_err());
-        assert!(verify_delaunay_via_flip_predicates(&tds, &robust_kernel).is_err());
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
             DelaunayTriangulationCandidate::assemble(
-                tds,
+                non_delaunay_quad_tds(),
                 kernel,
                 TopologyGuarantee::PLManifold,
                 GlobalTopology::DEFAULT,
             )
             .into_repairable_delaunay_for_test();
         dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        assert!(dt.verify_via_flip_predicates().is_err());
+
+        let robust_dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 2> =
+            DelaunayTriangulationCandidate::assemble(
+                non_delaunay_quad_tds(),
+                robust_kernel,
+                TopologyGuarantee::PLManifold,
+                GlobalTopology::DEFAULT,
+            )
+            .into_repairable_delaunay_for_test();
+        assert!(robust_dt.verify_via_flip_predicates().is_err());
 
         // max_flips=0 should fail (flips are needed but budget is zero).
         let config_zero = DelaunayRepairHeuristicConfig {

@@ -77,7 +77,7 @@ pub enum RidgeCandidateError {
 /// ```rust
 /// use delaunay::prelude::*;
 /// use delaunay::prelude::topology::validation::{
-///     ManifoldError, RidgeCandidate, RidgeCandidateError, ridge_star_simplices,
+///     ManifoldError, RidgeCandidate, RidgeCandidateError,
 /// };
 ///
 /// # #[derive(Debug, thiserror::Error)]
@@ -100,9 +100,9 @@ pub enum RidgeCandidateError {
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// // In 2D, a ridge is a vertex because it has arity D - 1.
-/// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.tds().vertex_keys().take(1))?;
-/// let star = ridge_star_simplices(dt.tds(), &ridge)?;
-/// let view = ridge.view(dt.tds())?;
+/// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.vertices().map(|(key, _)| key).take(1))?;
+/// let star = dt.ridge_star_simplices(&ridge)?;
+/// let view = dt.ridge_view(&ridge)?;
 ///
 /// assert_eq!(ridge.as_slice(), view.vertex_keys());
 /// assert_eq!(star.as_slice(), view.incident_simplices());
@@ -110,7 +110,7 @@ pub enum RidgeCandidateError {
 /// # }
 /// ```
 #[must_use]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct RidgeCandidate<const D: usize> {
     vertices: VertexKeyBuffer,
 }
@@ -152,7 +152,7 @@ impl<const D: usize> RidgeCandidate<D> {
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
-    /// let ridge = RidgeCandidate::<3>::try_from_vertices(dt.tds().vertex_keys().take(2))?;
+    /// let ridge = RidgeCandidate::<3>::try_from_vertices(dt.vertices().map(|(key, _)| key).take(2))?;
     /// assert_eq!(ridge.as_slice().len(), 2);
     /// # Ok(())
     /// # }
@@ -214,7 +214,7 @@ impl<const D: usize> RidgeCandidate<D> {
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
-    /// let ridge = RidgeCandidate::<3>::try_from_vertices(dt.tds().vertex_keys().take(2))?;
+    /// let ridge = RidgeCandidate::<3>::try_from_vertices(dt.vertices().map(|(key, _)| key).take(2))?;
     /// assert_eq!(ridge.as_slice().len(), 2);
     /// # Ok(())
     /// # }
@@ -252,7 +252,7 @@ impl<const D: usize> RidgeCandidate<D> {
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
-    /// let ridge = RidgeCandidate::<3>::try_from_vertices(dt.tds().vertex_keys().take(2))?;
+    /// let ridge = RidgeCandidate::<3>::try_from_vertices(dt.vertices().map(|(key, _)| key).take(2))?;
     /// assert_eq!(ridge.iter().count(), ridge.as_slice().len());
     /// # Ok(())
     /// # }
@@ -297,8 +297,8 @@ impl<const D: usize> RidgeCandidate<D> {
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
-    /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.tds().vertex_keys().take(1))?;
-    /// let query = ridge.query(dt.tds())?;
+    /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.vertices().map(|(key, _)| key).take(1))?;
+    /// let query = dt.ridge_query(&ridge)?;
     /// assert_eq!(query.vertex_keys(), ridge.as_slice());
     /// # Ok(())
     /// # }
@@ -348,8 +348,8 @@ impl<const D: usize> RidgeCandidate<D> {
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
-    /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.tds().vertex_keys().take(1))?;
-    /// let view = ridge.view(dt.tds())?;
+    /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.vertices().map(|(key, _)| key).take(1))?;
+    /// let view = dt.ridge_view(&ridge)?;
     /// assert!(!view.incident_simplices().is_empty());
     /// # Ok(())
     /// # }
@@ -415,8 +415,8 @@ impl<'tds, U, V, const D: usize> RidgeQuery<'tds, U, V, D> {
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
-    /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.tds().vertex_keys().take(1))?;
-    /// let query = RidgeQuery::try_new(dt.tds(), ridge)?;
+    /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.vertices().map(|(key, _)| key).take(1))?;
+    /// let query = dt.ridge_query(&ridge)?;
     /// assert_eq!(query.vertices().len(), 1);
     /// # Ok(())
     /// # }
@@ -434,13 +434,6 @@ impl<'tds, U, V, const D: usize> RidgeQuery<'tds, U, V, D> {
             vertices,
             star_simplices,
         })
-    }
-
-    /// Returns the borrowed TDS backing this query.
-    #[inline]
-    #[must_use]
-    pub const fn tds(&self) -> &'tds Tds<U, V, D> {
-        self.tds
     }
 
     /// Returns the validated ridge candidate represented by this query.
@@ -508,8 +501,8 @@ impl<'tds, U, V, const D: usize> RidgeQuery<'tds, U, V, D> {
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
-    /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.tds().vertex_keys().take(1))?;
-    /// let query = ridge.query(dt.tds())?;
+    /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.vertices().map(|(key, _)| key).take(1))?;
+    /// let query = dt.ridge_query(&ridge)?;
     /// let links = query.links()?;
     /// assert!(!links.is_empty());
     /// # Ok(())
@@ -601,8 +594,8 @@ impl<'tds, U, V, const D: usize> RidgeView<'tds, U, V, D> {
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
-    /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.tds().vertex_keys().take(1))?;
-    /// let view = RidgeView::try_new(dt.tds(), ridge)?;
+    /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.vertices().map(|(key, _)| key).take(1))?;
+    /// let view = dt.ridge_view(&ridge)?;
     /// assert_eq!(view.vertices().len(), 1);
     /// # Ok(())
     /// # }
@@ -624,13 +617,6 @@ impl<'tds, U, V, const D: usize> RidgeView<'tds, U, V, D> {
             vertices: query.vertices,
             star_simplices: query.star_simplices,
         })
-    }
-
-    /// Returns the borrowed TDS backing this view.
-    #[inline]
-    #[must_use]
-    pub const fn tds(&self) -> &'tds Tds<U, V, D> {
-        self.tds
     }
 
     /// Returns the validated ridge candidate represented by this view.
@@ -698,8 +684,8 @@ impl<'tds, U, V, const D: usize> RidgeView<'tds, U, V, D> {
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
-    /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.tds().vertex_keys().take(1))?;
-    /// let view = ridge.view(dt.tds())?;
+    /// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.vertices().map(|(key, _)| key).take(1))?;
+    /// let view = dt.ridge_view(&ridge)?;
     /// let links = view.links()?;
     /// assert_eq!(links[0].quotient_ridge_candidate(), view.ridge_candidate());
     /// # Ok(())
@@ -779,15 +765,14 @@ impl<U, V, const D: usize> Eq for RidgeView<'_, U, V, D> {}
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
-/// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.tds().vertex_keys().take(1))?;
-/// let view = ridge.view(dt.tds())?;
+/// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.vertices().map(|(key, _)| key).take(1))?;
+/// let view = dt.ridge_view(&ridge)?;
 /// let links = view.links()?;
 /// let link = &links[0];
 ///
-/// assert_eq!(link.tds().number_of_vertices(), dt.tds().number_of_vertices());
+/// assert_eq!(link.incident_simplices(), view.incident_simplices());
 /// assert_eq!(link.quotient_ridge_candidate(), view.ridge_candidate());
 /// assert_eq!(link.lifted_ridge_vertices().len(), ridge.as_slice().len());
-/// assert_eq!(link.incident_simplices(), view.incident_simplices());
 /// assert!(!link.edges().is_empty());
 /// # Ok(())
 /// # }
@@ -801,14 +786,7 @@ pub struct RidgeLinkView<'tds, U, V, const D: usize> {
     link_edges: SmallBuffer<LiftedLinkEdge, 8>,
 }
 
-impl<'tds, U, V, const D: usize> RidgeLinkView<'tds, U, V, D> {
-    /// Returns the borrowed TDS backing this link view.
-    #[inline]
-    #[must_use]
-    pub const fn tds(&self) -> &'tds Tds<U, V, D> {
-        self.tds
-    }
-
+impl<U, V, const D: usize> RidgeLinkView<'_, U, V, D> {
     /// Returns the quotient-space ridge candidate that produced this link.
     #[inline]
     pub const fn quotient_ridge_candidate(&self) -> &RidgeCandidate<D> {
@@ -1052,8 +1030,8 @@ pub(crate) fn simplex_star_simplices<U, V, const D: usize>(
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// // In 3D, a ridge is an edge because it has arity D - 1.
-/// let ridge = RidgeCandidate::<3>::try_from_vertices(dt.tds().vertex_keys().take(2))?;
-/// let star = ridge_star_simplices(dt.tds(), &ridge)?;
+/// let ridge = RidgeCandidate::<3>::try_from_vertices(dt.vertices().map(|(key, _)| key).take(2))?;
+/// let star = dt.ridge_star_simplices(&ridge)?;
 /// assert!(!star.is_empty());
 /// # Ok(())
 /// # }
@@ -2133,20 +2111,16 @@ mod tests {
         };
 
         let expected: SimplexKeySet = [c0123, c0134, c0142].into_iter().collect();
-        let tds_ptr = ptr::from_ref(&tds);
-        assert!(ptr::eq(ptr::from_ref(ridge_query.tds()), tds_ptr));
         assert_eq!(ridge_query.ridge_candidate(), &ridge_candidate);
         assert_eq!(ridge_query.vertex_keys(), ridge_candidate.as_slice());
         assert_eq!(star_set, expected);
         assert_eq!(query_star_set, expected);
         assert_eq!(view_star_set, expected);
-        assert!(ptr::eq(ptr::from_ref(ridge_view.tds()), tds_ptr));
         assert_eq!(ridge_view.ridge_candidate(), &ridge_candidate);
         assert_eq!(ridge_view.vertex_keys(), ridge_candidate.as_slice());
         assert_eq!(query_vertex_uuids, ridge_vertex_uuids);
         assert_eq!(ridge_vertex_uuids.len(), 2);
         assert_eq!(ridge_links.len(), 1);
-        assert!(ptr::eq(ptr::from_ref(ridge_link.tds()), tds_ptr));
         assert_eq!(ridge_link.quotient_ridge_candidate(), &ridge_candidate);
         assert_eq!(ridge_link.lifted_ridge_vertices().len(), 2);
         assert_eq!(

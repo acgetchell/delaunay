@@ -304,6 +304,12 @@ construction completion by default. When stronger guarantees are required,
 enables vertex-link validation after every insertion, trading performance for earlier detection and
 improved diagnosability.
 
+The owner-level public API exposes this certification as
+`Triangulation::validate_vertex_links()` and
+`DelaunayTriangulation::validate_vertex_links()`. These methods use the
+triangulation's declared topology metadata when deciding whether a one-sided
+facet is a true boundary or an admissible periodic identification.
+
 ### Ridge links
 
 A **ridge** is a codimension‑2 simplex (e.g. an edge in 3D, a triangle in 4D).
@@ -325,6 +331,12 @@ Ridge‑link validation is *necessary but not sufficient* to fully guarantee
 PL‑manifoldness. Certain global or vertex‑local pathologies are only detectable
 via vertex‑link validation, which is why vertex‑link checks are deferred until
 construction completion by default.
+
+The public owner methods are `Triangulation::validate_ridge_links()`,
+`Triangulation::validate_ridge_links_for_simplices()`, and matching
+`DelaunayTriangulation` forwarding methods. The localized form is intended for
+post-insertion and post-flip diagnostics where the touched simplex frontier is
+known.
 
 ---
 

@@ -17,11 +17,9 @@ use delaunay::prelude::construction::{
     vertex,
 };
 use delaunay::prelude::geometry::{CoordinateConversionError, Point, RobustKernel, simplex_volume};
-use delaunay::prelude::query::{JaccardComputationError, format_jaccard_report};
-use delaunay::prelude::tds::{EdgeKeyError, FacetError, InvariantError, TdsError, VertexKey};
-use delaunay::prelude::topology::validation::{
-    ManifoldError, RidgeCandidate, RidgeCandidateError, ridge_star_simplices,
-};
+use delaunay::prelude::query::{JaccardComputationError, QueryError, format_jaccard_report};
+use delaunay::prelude::tds::{EdgeKeyError, FacetError, InvariantError, VertexKey};
+use delaunay::prelude::topology::validation::{RidgeCandidate, RidgeCandidateError};
 use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 use thiserror::Error;
 use uuid::Uuid;
@@ -68,30 +66,20 @@ pub enum FlipWorkflowError {
         vertex_key: VertexKey,
     },
 
-    /// Facet handle construction failed before candidate inspection.
-    #[error("failed to construct facet handle {simplex_key:?}:{facet_index}: {source}")]
-    FacetHandleConstruction {
-        /// Candidate simplex key.
-        simplex_key: SimplexKey,
-        /// Candidate facet index.
-        facet_index: u8,
-        /// Underlying facet-handle construction failure.
+    /// Facet query failed before candidate inspection.
+    #[error("failed to iterate facet candidates: {source}")]
+    FacetIteration {
+        /// Underlying facet query failure.
         #[source]
         source: FacetError,
     },
 
-    /// Ridge handle construction failed before candidate inspection.
-    #[error("failed to construct ridge handle {simplex_key:?}:({omit_a}, {omit_b}): {source}")]
-    RidgeHandleConstruction {
-        /// Candidate simplex key.
-        simplex_key: SimplexKey,
-        /// First omitted index.
-        omit_a: u8,
-        /// Second omitted index.
-        omit_b: u8,
-        /// Underlying ridge-handle construction failure.
+    /// Ridge query failed before candidate inspection.
+    #[error("failed to iterate ridge candidates: {source}")]
+    RidgeIteration {
+        /// Underlying ridge query failure.
         #[source]
-        source: Box<FlipError>,
+        source: QueryError,
     },
 
     /// Ridge vertices could not be parsed into a valid ridge candidate.
@@ -102,16 +90,6 @@ pub enum FlipWorkflowError {
         /// Underlying ridge candidate parsing failure.
         #[source]
         source: RidgeCandidateError,
-    },
-
-    /// Ridge-star support collection failed.
-    #[error("failed to collect ridge star for {ridge:?}: {source}")]
-    RidgeStar {
-        /// Ridge handle being inspected.
-        ridge: RidgeHandle,
-        /// Underlying manifold helper failure.
-        #[source]
-        source: Box<ManifoldError>,
     },
 
     /// Snapshot collection found a dangling simplex-to-vertex incidence.
@@ -155,8 +133,8 @@ pub enum FlipWorkflowError {
          actual topology: {actual:#?}"
     )]
     TopologyMismatch {
-        /// Roundtrip context label.
-        context: String,
+        /// Topology comparison context.
+        context: FlipWorkflowContext,
         /// Jaccard diagnostics for vertex UUIDs.
         vertex_report: String,
         /// Jaccard diagnostics for simplex incidence.
@@ -320,11 +298,21 @@ pub enum FlipWorkflowError {
         source: TriangleHandleError,
     },
 
+    /// A forward-only flip produced an invalid underlying triangulation.
+    #[error("{context} produced invalid triangulation topology: {source}")]
+    InvalidAfterForward {
+        /// Forward-only context.
+        context: FlipWorkflowContext,
+        /// Underlying triangulation invariant failure.
+        #[source]
+        source: Box<InvariantError>,
+    },
+
     /// A roundtrip produced a triangulation that failed validation.
     #[error("{context} produced invalid triangulation: {source}")]
     InvalidAfterRoundtrip {
-        /// Roundtrip context label.
-        context: String,
+        /// Roundtrip context.
+        context: FlipWorkflowContext,
         /// Underlying validation failure.
         #[source]
         source: DelaunayTriangulationValidationError,
@@ -368,6 +356,58 @@ impl fmt::Display for FlipMoveKind {
             Self::K1 => f.write_str("k=1"),
             Self::K2 => f.write_str("k=2"),
             Self::K3 => f.write_str("k=3"),
+        }
+    }
+}
+
+/// Typed benchmark/test context for exact topology comparisons.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlipWorkflowContext {
+    /// A forward flip was intentionally compared against the pre-flip topology.
+    ForwardOnly {
+        /// Fixture dimension.
+        dimension: usize,
+        /// Move kind that was applied.
+        move_kind: FlipMoveKind,
+    },
+    /// A forward flip followed by its inverse should recover the pre-flip topology.
+    Roundtrip {
+        /// Fixture dimension.
+        dimension: usize,
+        /// Move kind that was roundtripped.
+        move_kind: FlipMoveKind,
+    },
+}
+
+impl FlipWorkflowContext {
+    /// Constructs a forward-only topology comparison context.
+    pub const fn forward_only<const D: usize>(move_kind: FlipMoveKind) -> Self {
+        Self::ForwardOnly {
+            dimension: D,
+            move_kind,
+        }
+    }
+
+    /// Constructs an exact roundtrip topology comparison context.
+    pub const fn roundtrip<const D: usize>(move_kind: FlipMoveKind) -> Self {
+        Self::Roundtrip {
+            dimension: D,
+            move_kind,
+        }
+    }
+}
+
+impl fmt::Display for FlipWorkflowContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ForwardOnly {
+                dimension,
+                move_kind,
+            } => write!(f, "{dimension}D {move_kind} forward-only workflow"),
+            Self::Roundtrip {
+                dimension,
+                move_kind,
+            } => write!(f, "{dimension}D {move_kind} n=1 ergodicity roundtrip"),
         }
     }
 }
@@ -511,21 +551,20 @@ pub fn build_flip_dt<const D: usize>(
 pub fn snapshot_topology<const D: usize>(
     dt: &FlipTriangulation<D>,
 ) -> FlipWorkflowResult<TopologySnapshot> {
-    let tds = dt.tds();
-    let mut vertex_uuids = tds
+    let mut vertex_uuids = dt
         .vertices()
         .map(|(_, vertex)| vertex.uuid())
         .collect::<Vec<_>>();
     vertex_uuids.sort();
 
-    let mut simplex_vertex_uuids = tds
+    let mut simplex_vertex_uuids = dt
         .simplices()
         .map(|(_, simplex)| {
             simplex
                 .vertices()
                 .iter()
                 .map(|&vertex_key| {
-                    tds.vertex(vertex_key)
+                    dt.vertex(vertex_key)
                         .map(Vertex::uuid)
                         .ok_or(FlipWorkflowError::DanglingSnapshotVertex { vertex_key })
                 })
@@ -559,7 +598,7 @@ pub fn snapshot_topology<const D: usize>(
 pub fn assert_same_topology<const D: usize>(
     actual_dt: &FlipTriangulation<D>,
     expected: &TopologySnapshot,
-    context: &str,
+    context: FlipWorkflowContext,
 ) -> FlipWorkflowResult<()> {
     let actual = snapshot_topology(actual_dt)?;
     if actual == *expected {
@@ -605,7 +644,7 @@ pub fn assert_same_topology<const D: usize>(
     })?;
 
     Err(FlipWorkflowError::TopologyMismatch {
-        context: context.to_string(),
+        context,
         vertex_report,
         simplex_report,
         expected: Box::new(expected.clone()),
@@ -668,80 +707,66 @@ pub fn flippable_k2_facet<const D: usize>(
     filter: CandidateFilter,
 ) -> FlipWorkflowResult<FacetHandle> {
     let mut last_error = None;
-    for (simplex_key, simplex) in dt.simplices() {
-        let Some(neighbors) = simplex.neighbors() else {
+    for facet in dt.facets() {
+        let facet = facet
+            .map_err(|source| FlipWorkflowError::FacetIteration { source })?
+            .handle();
+        if facet_neighbor_key(dt, facet)?.is_none() {
             continue;
-        };
+        }
+        let support = facet_support_points(dt, facet)?;
+        if !filter.accepts(&support) {
+            continue;
+        }
 
-        for (facet_index, neighbor) in neighbors.enumerate() {
-            if neighbor.is_none() {
-                continue;
-            }
-            let Ok(facet_index) = u8::try_from(facet_index) else {
-                continue;
-            };
-            let facet =
-                FacetHandle::try_new(dt.tds(), simplex_key, facet_index).map_err(|source| {
-                    FlipWorkflowError::FacetHandleConstruction {
-                        simplex_key,
-                        facet_index,
-                        source,
-                    }
-                })?;
-            let support = facet_support_points(dt, facet)?;
-            if !filter.accepts(&support) {
-                continue;
-            }
-
-            let mut trial = dt.clone();
-            match trial.flip_k2(facet) {
-                Ok(info) => {
-                    if info.inserted_face_vertices.len() != 2 {
-                        last_error = Some(Box::new(
-                            FlipCandidateError::UnexpectedInsertedFaceVertexCount {
-                                move_kind: FlipMoveKind::K2,
-                                observed: info.inserted_face_vertices.len(),
-                                expected: 2,
-                            },
-                        ));
-                        continue;
-                    }
-                    let edge = match EdgeKey::try_new(
-                        trial.tds(),
-                        info.inserted_face_vertices[0],
-                        info.inserted_face_vertices[1],
-                    ) {
-                        Ok(edge) => edge,
-                        Err(source) => {
-                            last_error = Some(Box::new(FlipCandidateError::InvalidInsertedEdge {
-                                move_kind: FlipMoveKind::K2,
-                                source,
-                            }));
-                            continue;
-                        }
-                    };
-                    if let Err(source) = trial.as_triangulation().validate() {
-                        last_error = Some(Box::new(FlipCandidateError::InvalidAfterForwardFlip {
+        let mut trial = dt.clone();
+        match trial.flip_k2(facet) {
+            Ok(info) => {
+                if info.inserted_face_vertices.len() != 2 {
+                    last_error = Some(Box::new(
+                        FlipCandidateError::UnexpectedInsertedFaceVertexCount {
                             move_kind: FlipMoveKind::K2,
-                            source: Box::new(source),
-                        }));
-                        continue;
-                    }
-                    if require_inverse && let Err(source) = trial.flip_k2_inverse_from_edge(edge) {
-                        last_error = Some(Box::new(FlipCandidateError::InverseFlipFailed {
-                            move_kind: FlipMoveKind::K2,
-                            source: Box::new(source),
-                        }));
-                        continue;
-                    }
-                    return Ok(facet);
+                            observed: info.inserted_face_vertices.len(),
+                            expected: 2,
+                        },
+                    ));
+                    continue;
                 }
-                Err(source) => {
-                    last_error = Some(Box::new(FlipCandidateError::FlipFailed {
+                let edge = match find_live_edge(
+                    &trial,
+                    info.inserted_face_vertices[0],
+                    info.inserted_face_vertices[1],
+                ) {
+                    Ok(edge) => edge,
+                    Err(source) => {
+                        last_error = Some(Box::new(FlipCandidateError::InvalidInsertedEdge {
+                            move_kind: FlipMoveKind::K2,
+                            source,
+                        }));
+                        continue;
+                    }
+                };
+                if let Err(source) = trial.as_triangulation().validate() {
+                    last_error = Some(Box::new(FlipCandidateError::InvalidAfterForwardFlip {
                         move_kind: FlipMoveKind::K2,
                         source: Box::new(source),
                     }));
+                    continue;
                 }
+                if require_inverse && let Err(source) = trial.flip_k2_inverse_from_edge(edge) {
+                    last_error = Some(Box::new(FlipCandidateError::InverseFlipFailed {
+                        move_kind: FlipMoveKind::K2,
+                        source: Box::new(source),
+                    }));
+                    continue;
+                }
+                return Ok(facet);
+            }
+            Err(source) => {
+                last_error = Some(Box::new(FlipCandidateError::FlipFailed {
+                    move_kind: FlipMoveKind::K2,
+                    source: Box::new(source),
+                }));
             }
         }
     }
@@ -770,83 +795,63 @@ pub fn flippable_k3_ridge<const D: usize>(
     filter: CandidateFilter,
 ) -> FlipWorkflowResult<RidgeHandle> {
     let mut last_error = None;
-    for (simplex_key, simplex) in dt.simplices() {
-        let vertex_count = simplex.number_of_vertices();
-        for i in 0..vertex_count {
-            for j in (i + 1)..vertex_count {
-                let Ok(omit_a) = u8::try_from(i) else {
-                    continue;
-                };
-                let Ok(omit_b) = u8::try_from(j) else {
-                    continue;
-                };
-                let ridge = RidgeHandle::try_new(dt.tds(), simplex_key, omit_a, omit_b).map_err(
-                    |source| FlipWorkflowError::RidgeHandleConstruction {
-                        simplex_key,
-                        omit_a,
-                        omit_b,
-                        source: Box::new(source),
-                    },
-                )?;
-                let support = ridge_support_points(dt, ridge)?;
-                if !filter.accepts(&support) {
-                    continue;
-                }
+    for ridge in dt.ridge_handles() {
+        let ridge = ridge.map_err(|source| FlipWorkflowError::RidgeIteration { source })?;
+        let support = ridge_support_points(dt, ridge)?;
+        if !filter.accepts(&support) {
+            continue;
+        }
 
-                let mut trial = dt.clone();
-                match trial.flip_k3(ridge) {
-                    Ok(info) => {
-                        if info.inserted_face_vertices.len() != 3 {
-                            last_error = Some(Box::new(
-                                FlipCandidateError::UnexpectedInsertedFaceVertexCount {
-                                    move_kind: FlipMoveKind::K3,
-                                    observed: info.inserted_face_vertices.len(),
-                                    expected: 3,
-                                },
-                            ));
-                            continue;
-                        }
-                        let triangle = match TriangleHandle::try_new(
-                            info.inserted_face_vertices[0],
-                            info.inserted_face_vertices[1],
-                            info.inserted_face_vertices[2],
-                        ) {
-                            Ok(triangle) => triangle,
-                            Err(source) => {
-                                last_error =
-                                    Some(Box::new(FlipCandidateError::InvalidInsertedTriangle {
-                                        move_kind: FlipMoveKind::K3,
-                                        source,
-                                    }));
-                                continue;
-                            }
-                        };
-                        if let Err(source) = trial.as_triangulation().validate() {
-                            last_error =
-                                Some(Box::new(FlipCandidateError::InvalidAfterForwardFlip {
-                                    move_kind: FlipMoveKind::K3,
-                                    source: Box::new(source),
-                                }));
-                            continue;
-                        }
-                        if require_inverse
-                            && let Err(source) = trial.flip_k3_inverse_from_triangle(triangle)
-                        {
-                            last_error = Some(Box::new(FlipCandidateError::InverseFlipFailed {
-                                move_kind: FlipMoveKind::K3,
-                                source: Box::new(source),
-                            }));
-                            continue;
-                        }
-                        return Ok(ridge);
-                    }
-                    Err(source) => {
-                        last_error = Some(Box::new(FlipCandidateError::FlipFailed {
+        let mut trial = dt.clone();
+        match trial.flip_k3(ridge) {
+            Ok(info) => {
+                if info.inserted_face_vertices.len() != 3 {
+                    last_error = Some(Box::new(
+                        FlipCandidateError::UnexpectedInsertedFaceVertexCount {
                             move_kind: FlipMoveKind::K3,
-                            source: Box::new(source),
-                        }));
-                    }
+                            observed: info.inserted_face_vertices.len(),
+                            expected: 3,
+                        },
+                    ));
+                    continue;
                 }
+                let triangle = match TriangleHandle::try_new(
+                    info.inserted_face_vertices[0],
+                    info.inserted_face_vertices[1],
+                    info.inserted_face_vertices[2],
+                ) {
+                    Ok(triangle) => triangle,
+                    Err(source) => {
+                        last_error = Some(Box::new(FlipCandidateError::InvalidInsertedTriangle {
+                            move_kind: FlipMoveKind::K3,
+                            source,
+                        }));
+                        continue;
+                    }
+                };
+                if let Err(source) = trial.as_triangulation().validate() {
+                    last_error = Some(Box::new(FlipCandidateError::InvalidAfterForwardFlip {
+                        move_kind: FlipMoveKind::K3,
+                        source: Box::new(source),
+                    }));
+                    continue;
+                }
+                if require_inverse
+                    && let Err(source) = trial.flip_k3_inverse_from_triangle(triangle)
+                {
+                    last_error = Some(Box::new(FlipCandidateError::InverseFlipFailed {
+                        move_kind: FlipMoveKind::K3,
+                        source: Box::new(source),
+                    }));
+                    continue;
+                }
+                return Ok(ridge);
+            }
+            Err(source) => {
+                last_error = Some(Box::new(FlipCandidateError::FlipFailed {
+                    move_kind: FlipMoveKind::K3,
+                    source: Box::new(source),
+                }));
             }
         }
     }
@@ -910,8 +915,8 @@ pub fn roundtrip_k1<const D: usize>(
         })?;
 
     let new_key = dt
-        .tds()
-        .vertex_key_from_uuid(&new_uuid)
+        .vertices()
+        .find_map(|(vertex_key, vertex)| (vertex.uuid() == new_uuid).then_some(vertex_key))
         .ok_or(FlipWorkflowError::MissingInsertedVertex { uuid: new_uuid })?;
     dt.flip_k1_remove(new_key)
         .map_err(|source| FlipWorkflowError::InverseFlipFailed {
@@ -948,8 +953,8 @@ pub fn roundtrip_k2<const D: usize>(
             expected: 2,
         });
     }
-    let edge = EdgeKey::try_new(
-        dt.tds(),
+    let edge = find_live_edge(
+        dt,
         info.inserted_face_vertices[0],
         info.inserted_face_vertices[1],
     )
@@ -964,6 +969,25 @@ pub fn roundtrip_k2<const D: usize>(
             source: Box::new(source),
         })
         .map(|_| ())
+}
+
+/// Verifies that a selected public k=2 forward flip preserves invariants.
+///
+/// This is the forward-only setup assertion used before benchmark timings are
+/// emitted.
+///
+/// # Errors
+///
+/// Returns an error when the k=2 forward flip or
+/// [`DelaunayTriangulation::validate`] validation fails.
+pub fn verify_k2_forward<const D: usize>(
+    base_dt: &FlipTriangulation<D>,
+    facet: FacetHandle,
+) -> FlipWorkflowResult<()> {
+    let context = FlipWorkflowContext::forward_only::<D>(FlipMoveKind::K2);
+    let mut trial = base_dt.clone();
+    forward_k2(&mut trial, facet)?;
+    validate_forward_topology(&trial, context)
 }
 
 /// Executes a selected public k=3 flip without its inverse.
@@ -1046,6 +1070,32 @@ pub fn roundtrip_k3<const D: usize>(
         .map(|_| ())
 }
 
+/// Verifies that a selected public k=3 forward flip preserves invariants.
+///
+/// This is the forward-only setup assertion used before benchmark timings are
+/// emitted.
+///
+/// # Errors
+///
+/// Returns an error when the k=3 forward flip or
+/// [`DelaunayTriangulation::validate`] validation fails.
+#[cfg_attr(
+    not(feature = "slow-tests"),
+    allow(
+        dead_code,
+        reason = "k=3 forward-only setup is exercised by high-dimensional slow benchmark fixtures"
+    )
+)]
+pub fn verify_k3_forward<const D: usize>(
+    base_dt: &FlipTriangulation<D>,
+    ridge: RidgeHandle,
+) -> FlipWorkflowResult<()> {
+    let context = FlipWorkflowContext::forward_only::<D>(FlipMoveKind::K3);
+    let mut trial = base_dt.clone();
+    forward_k3(&mut trial, ridge)?;
+    validate_forward_topology(&trial, context)
+}
+
 /// Verifies exact topology recovery for a selected k=1 roundtrip.
 ///
 /// This is the n=1 ergodicity assertion used before benchmark timings are
@@ -1059,8 +1109,8 @@ pub fn roundtrip_k3<const D: usize>(
 pub fn verify_k1_roundtrip<const D: usize>(
     base_dt: &FlipTriangulation<D>,
     simplex_key: SimplexKey,
-    context: &str,
 ) -> FlipWorkflowResult<()> {
+    let context = FlipWorkflowContext::roundtrip::<D>(FlipMoveKind::K1);
     let before = snapshot_topology(base_dt)?;
     let mut trial = base_dt.clone();
     roundtrip_k1(&mut trial, simplex_key)?;
@@ -1081,8 +1131,8 @@ pub fn verify_k1_roundtrip<const D: usize>(
 pub fn verify_k2_roundtrip<const D: usize>(
     base_dt: &FlipTriangulation<D>,
     facet: FacetHandle,
-    context: &str,
 ) -> FlipWorkflowResult<()> {
+    let context = FlipWorkflowContext::roundtrip::<D>(FlipMoveKind::K2);
     let before = snapshot_topology(base_dt)?;
     let mut trial = base_dt.clone();
     roundtrip_k2(&mut trial, facet)?;
@@ -1110,8 +1160,8 @@ pub fn verify_k2_roundtrip<const D: usize>(
 pub fn verify_k3_roundtrip<const D: usize>(
     base_dt: &FlipTriangulation<D>,
     ridge: RidgeHandle,
-    context: &str,
 ) -> FlipWorkflowResult<()> {
+    let context = FlipWorkflowContext::roundtrip::<D>(FlipMoveKind::K3);
     let before = snapshot_topology(base_dt)?;
     let mut trial = base_dt.clone();
     roundtrip_k3(&mut trial, ridge)?;
@@ -1121,12 +1171,21 @@ pub fn verify_k3_roundtrip<const D: usize>(
 
 fn validate_topology_and_delaunay<const D: usize>(
     dt: &FlipTriangulation<D>,
-    context: &str,
+    context: FlipWorkflowContext,
 ) -> FlipWorkflowResult<()> {
     dt.validate()
-        .map_err(|source| FlipWorkflowError::InvalidAfterRoundtrip {
-            context: context.to_string(),
-            source,
+        .map_err(|source| FlipWorkflowError::InvalidAfterRoundtrip { context, source })
+}
+
+fn validate_forward_topology<const D: usize>(
+    dt: &FlipTriangulation<D>,
+    context: FlipWorkflowContext,
+) -> FlipWorkflowResult<()> {
+    dt.as_triangulation()
+        .validate()
+        .map_err(|source| FlipWorkflowError::InvalidAfterForward {
+            context,
+            source: Box::new(source),
         })
 }
 
@@ -1180,14 +1239,12 @@ fn simplex_centroid<const D: usize>(
     simplex_key: SimplexKey,
 ) -> FlipWorkflowResult<[f64; D]> {
     let simplex = dt
-        .tds()
         .simplex(simplex_key)
         .ok_or(FlipWorkflowError::MissingSimplex { simplex_key })?;
 
     let mut coords = [0.0_f64; D];
     for &vkey in simplex.vertices() {
         let vertex = dt
-            .tds()
             .vertex(vkey)
             .ok_or(FlipWorkflowError::MissingVertex { vertex_key: vkey })?;
         let vcoords = vertex.point().coords();
@@ -1215,7 +1272,6 @@ fn simplex_points<const D: usize>(
     simplex_key: SimplexKey,
 ) -> FlipWorkflowResult<Vec<Point<D>>> {
     let simplex = dt
-        .tds()
         .simplex(simplex_key)
         .ok_or(FlipWorkflowError::MissingSimplex { simplex_key })?;
     vertex_points(dt, simplex.vertices())
@@ -1232,12 +1288,39 @@ fn facet_support_points<const D: usize>(
     dt: &FlipTriangulation<D>,
     facet: FacetHandle,
 ) -> FlipWorkflowResult<Vec<Point<D>>> {
-    let simplex =
-        dt.tds()
-            .simplex(facet.simplex_key())
-            .ok_or(FlipWorkflowError::MissingSimplex {
-                simplex_key: facet.simplex_key(),
-            })?;
+    let neighbor_key = facet_neighbor_key(dt, facet)?
+        .ok_or(FlipWorkflowError::FacetWithoutInteriorNeighbor { facet })?;
+    let simplex = dt
+        .simplex(facet.simplex_key())
+        .ok_or(FlipWorkflowError::MissingSimplex {
+            simplex_key: facet.simplex_key(),
+        })?;
+
+    let mut keys = simplex.vertices().to_vec();
+    let neighbor = dt
+        .simplex(neighbor_key)
+        .ok_or(FlipWorkflowError::MissingSimplex {
+            simplex_key: neighbor_key,
+        })?;
+    keys.extend(neighbor.vertices());
+    keys.sort_unstable();
+    keys.dedup();
+    vertex_points(dt, &keys)
+}
+
+/// Returns the live neighbor across a facet while preserving support-query errors.
+///
+/// Boundary facets are not flippable k=2 candidates, but direct support
+/// inspection still reports them as [`FlipWorkflowError::FacetWithoutInteriorNeighbor`].
+fn facet_neighbor_key<const D: usize>(
+    dt: &FlipTriangulation<D>,
+    facet: FacetHandle,
+) -> FlipWorkflowResult<Option<SimplexKey>> {
+    let simplex = dt
+        .simplex(facet.simplex_key())
+        .ok_or(FlipWorkflowError::MissingSimplex {
+            simplex_key: facet.simplex_key(),
+        })?;
     let vertex_count = simplex.number_of_vertices();
     let facet_index = usize::from(facet.facet_index());
     if facet_index >= vertex_count {
@@ -1248,22 +1331,7 @@ fn facet_support_points<const D: usize>(
             simplex_key: facet.simplex_key(),
         });
     }
-    let neighbor_key = simplex
-        .neighbors()
-        .and_then(|mut neighbors| neighbors.nth(facet_index).flatten())
-        .ok_or(FlipWorkflowError::FacetWithoutInteriorNeighbor { facet })?;
-
-    let mut keys = simplex.vertices().to_vec();
-    let neighbor = dt
-        .tds()
-        .simplex(neighbor_key)
-        .ok_or(FlipWorkflowError::MissingSimplex {
-            simplex_key: neighbor_key,
-        })?;
-    keys.extend(neighbor.vertices());
-    keys.sort_unstable();
-    keys.dedup();
-    vertex_points(dt, &keys)
+    Ok(simplex.neighbor_key(facet_index).flatten())
 }
 
 /// Collects the union of simplex vertices across the full k=3 ridge star.
@@ -1277,12 +1345,11 @@ fn ridge_support_points<const D: usize>(
     dt: &FlipTriangulation<D>,
     ridge: RidgeHandle,
 ) -> FlipWorkflowResult<Vec<Point<D>>> {
-    let simplex =
-        dt.tds()
-            .simplex(ridge.simplex_key())
-            .ok_or(FlipWorkflowError::MissingSimplex {
-                simplex_key: ridge.simplex_key(),
-            })?;
+    let simplex = dt
+        .simplex(ridge.simplex_key())
+        .ok_or(FlipWorkflowError::MissingSimplex {
+            simplex_key: ridge.simplex_key(),
+        })?;
     let vertex_count = simplex.number_of_vertices();
     let omit_a = usize::from(ridge.omit_a());
     let omit_b = usize::from(ridge.omit_b());
@@ -1314,37 +1381,42 @@ fn ridge_support_points<const D: usize>(
             .map(|(_, vertex_key)| *vertex_key),
     )
     .map_err(|source| FlipWorkflowError::InvalidRidgeCandidate { ridge, source })?;
-    let star_simplices = ridge_star_simplices(dt.tds(), &ridge_candidate)
-        .map_err(|source| ridge_star_error(ridge, source))?;
-
     let mut keys = Vec::new();
-    for simplex_key in star_simplices {
-        let star_simplex = dt
-            .tds()
-            .simplex(simplex_key)
-            .ok_or(FlipWorkflowError::MissingSimplex { simplex_key })?;
-        keys.extend(star_simplex.vertices());
+    for (_, star_simplex) in dt.simplices() {
+        if ridge_candidate
+            .as_slice()
+            .iter()
+            .all(|vertex_key| star_simplex.vertices().contains(vertex_key))
+        {
+            keys.extend(star_simplex.vertices());
+        }
     }
     keys.sort_unstable();
     keys.dedup();
     vertex_points(dt, &keys)
 }
 
-/// Preserves specific missing-simplex and missing-vertex support errors while
-/// keeping other ridge-star failures attached to the inspected ridge.
-fn ridge_star_error(ridge: RidgeHandle, source: ManifoldError) -> FlipWorkflowError {
-    match source {
-        ManifoldError::Tds(TdsError::SimplexNotFound { simplex_key, .. }) => {
-            FlipWorkflowError::MissingSimplex { simplex_key }
-        }
-        ManifoldError::Tds(TdsError::VertexNotFound { vertex_key, .. }) => {
-            FlipWorkflowError::MissingVertex { vertex_key }
-        }
-        source => FlipWorkflowError::RidgeStar {
-            ridge,
-            source: Box::new(source),
-        },
+/// Resolves two vertex keys to a live public edge key.
+fn find_live_edge<const D: usize>(
+    dt: &FlipTriangulation<D>,
+    a: VertexKey,
+    b: VertexKey,
+) -> Result<EdgeKey, EdgeKeyError> {
+    if a == b {
+        return Err(EdgeKeyError::DuplicateEndpoint { endpoint: a });
     }
+    if !dt.contains_vertex_key(a) {
+        return Err(EdgeKeyError::MissingEndpoint { endpoint: a });
+    }
+    if !dt.contains_vertex_key(b) {
+        return Err(EdgeKeyError::MissingEndpoint { endpoint: b });
+    }
+    dt.edges()
+        .find(|edge| {
+            let (first, second) = edge.endpoints();
+            (first == a && second == b) || (first == b && second == a)
+        })
+        .ok_or(EdgeKeyError::EdgeNotFound { v0: a, v1: b })
 }
 
 /// Resolves vertex keys to points.
@@ -1358,12 +1430,11 @@ fn vertex_points<const D: usize>(
 ) -> FlipWorkflowResult<Vec<Point<D>>> {
     keys.iter()
         .map(|vertex_key| {
-            dt.tds()
-                .vertex(*vertex_key)
-                .map(|vertex| *vertex.point())
-                .ok_or(FlipWorkflowError::MissingVertex {
+            dt.vertex(*vertex_key).map(|vertex| *vertex.point()).ok_or(
+                FlipWorkflowError::MissingVertex {
                     vertex_key: *vertex_key,
-                })
+                },
+            )
         })
         .collect()
 }

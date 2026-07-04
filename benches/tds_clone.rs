@@ -1,11 +1,12 @@
 #![forbid(unsafe_code)]
 
-//! Benchmark: `Tds::clone` snapshot cost vs triangulation size (2D-5D)
+//! Benchmark: public triangulation clone snapshot cost vs triangulation size (2D-5D)
 //!
-//! This benchmark measures the full topology/data snapshot cost that currently
-//! dominates transactional rollback designs based on whole-`Tds` cloning. It is
-//! intended as a baseline for comparing future journaled or localized rollback
-//! designs.
+//! This benchmark measures the full owner snapshot cost that currently
+//! dominates transactional rollback designs based on whole-topology cloning. It
+//! is intended as a baseline for comparing future journaled or localized
+//! rollback designs without exposing the raw topology container through the
+//! public API.
 //!
 //! Intended for **manual** runs (not part of the CI performance suite).
 //!
@@ -18,7 +19,6 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use delaunay::prelude::construction::{DelaunayTriangulation, Vertex};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange};
-use delaunay::prelude::tds::Tds;
 use delaunay::try_vertices_from_points;
 use std::hint::black_box;
 use std::time::Duration;
@@ -42,7 +42,7 @@ fn benchmark_bounds() -> CoordinateRange<f64> {
 struct CloneSource<const D: usize> {
     vertex_count: usize,
     simplex_count: usize,
-    tds: Tds<(), (), D>,
+    triangulation: BenchTriangulation<D>,
 }
 
 /// Derive a deterministic, dimension-specific seed for one benchmark case.
@@ -66,12 +66,13 @@ fn build_clone_source<const D: usize>(requested_vertices: usize, seed_base: u64)
     let vertices = generate_vertices::<D>(requested_vertices, seed);
     let triangulation: BenchTriangulation<D> =
         DelaunayTriangulation::builder(&vertices).build().or_abort();
-    let tds = triangulation.tds().clone();
+    let vertex_count = triangulation.number_of_vertices();
+    let simplex_count = triangulation.number_of_simplices();
 
     CloneSource {
-        vertex_count: tds.number_of_vertices(),
-        simplex_count: tds.number_of_simplices(),
-        tds,
+        vertex_count,
+        simplex_count,
+        triangulation,
     }
 }
 
@@ -88,7 +89,7 @@ fn bench_dimension<const D: usize>(
     counts: &[usize],
     seed_base: u64,
 ) {
-    let mut group = c.benchmark_group(format!("tds_clone/{dim_label}"));
+    let mut group = c.benchmark_group(format!("triangulation_clone/{dim_label}"));
     group.sample_size(SAMPLE_SIZE);
     group.warm_up_time(WARM_UP_TIME);
     group.measurement_time(MEASUREMENT_TIME);
@@ -99,7 +100,7 @@ fn bench_dimension<const D: usize>(
 
         group.bench_with_input(
             BenchmarkId::new(
-                "tds_clone",
+                "triangulation_clone",
                 format!(
                     "vertices_{}_simplices_{}",
                     source.vertex_count, source.simplex_count
@@ -107,7 +108,7 @@ fn bench_dimension<const D: usize>(
             ),
             &source,
             |b, source| {
-                b.iter(|| black_box(source.tds.clone()));
+                b.iter(|| black_box(source.triangulation.clone()));
             },
         );
     }

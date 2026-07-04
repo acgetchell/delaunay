@@ -74,8 +74,6 @@ use thiserror::Error;
 
 // Import Orientation for predicates
 use crate::geometry::predicates::Orientation;
-#[cfg(test)]
-use num_traits::NumCast;
 
 // =============================================================================
 // ERROR TYPES
@@ -2103,6 +2101,7 @@ mod tests {
     };
     use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
+    use num_traits::NumCast;
     use std::assert_matches;
     use std::error::Error;
     use std::sync::atomic::Ordering;
@@ -2182,15 +2181,6 @@ mod tests {
     /// 3. **Point containment test** (via `pastey::paste`) - Tests:
     ///    - Inside point (centroid) is correctly identified as not outside
     ///    - Outside point is correctly identified as outside
-    ///
-    /// # Usage
-    ///
-    /// ```ignore
-    /// test_hull_dimensions! {
-    ///     hull_2d => 2 => "triangle" => 3 =>
-    ///         vec![delaunay::vertex![0.0, 0.0]?, delaunay::vertex![1.0, 0.0]?, delaunay::vertex![0.0, 1.0]?],
-    /// }
-    /// ```
     ///
     /// # Arguments
     ///
@@ -3051,12 +3041,7 @@ mod tests {
         );
         // Validate vertices through FacetView
         for (i, facet_handle) in hull_2d.hull_facets.iter().enumerate() {
-            let facet_view = FacetView::try_new(
-                &dt_2d.as_triangulation().tds,
-                facet_handle.simplex_key(),
-                facet_handle.facet_index(),
-            )
-            .unwrap();
+            let facet_view = dt_2d.facet_view(*facet_handle).unwrap();
             let vertices = facet_view.vertices().count();
             assert_eq!(vertices, 2, "2D facet {i} should have exactly 2 vertices");
         }
@@ -3088,12 +3073,7 @@ mod tests {
         );
         // Validate vertices through FacetView
         for (i, facet_handle) in hull_3d.hull_facets.iter().enumerate() {
-            let facet_view = FacetView::try_new(
-                &dt_3d.as_triangulation().tds,
-                facet_handle.simplex_key(),
-                facet_handle.facet_index(),
-            )
-            .unwrap();
+            let facet_view = dt_3d.facet_view(*facet_handle).unwrap();
             let vertices = facet_view.vertices().count();
             assert_eq!(vertices, 3, "3D facet {i} should have exactly 3 vertices");
         }
@@ -3126,12 +3106,7 @@ mod tests {
         );
         // Validate vertices through FacetView
         for (i, facet_handle) in hull_4d.hull_facets.iter().enumerate() {
-            let facet_view = FacetView::try_new(
-                &dt_4d.as_triangulation().tds,
-                facet_handle.simplex_key(),
-                facet_handle.facet_index(),
-            )
-            .unwrap();
+            let facet_view = dt_4d.facet_view(*facet_handle).unwrap();
             let vertices = facet_view.vertices().count();
             assert_eq!(vertices, 4, "4D facet {i} should have exactly 4 vertices");
         }
@@ -3165,12 +3140,7 @@ mod tests {
         );
         // Validate vertices through FacetView
         for (i, facet_handle) in hull_5d.hull_facets.iter().enumerate() {
-            let facet_view = FacetView::try_new(
-                &dt_5d.as_triangulation().tds,
-                facet_handle.simplex_key(),
-                facet_handle.facet_index(),
-            )
-            .unwrap();
+            let facet_view = dt_5d.facet_view(*facet_handle).unwrap();
             let vertices = facet_view.vertices().count();
             assert_eq!(vertices, 5, "5D facet {i} should have exactly 5 vertices");
         }
@@ -3845,12 +3815,7 @@ mod tests {
         // Test fallback with various points
         if let Some(facet_handle) = hull.facet(0) {
             // Create FacetView to get vertices
-            let facet_view = FacetView::try_new(
-                &dt.as_triangulation().tds,
-                facet_handle.simplex_key(),
-                facet_handle.facet_index(),
-            )
-            .unwrap();
+            let facet_view = dt.facet_view(*facet_handle).unwrap();
             let facet_vertices = facet_view_to_vertices(&facet_view);
 
             // Test with a point very close to the facet (should not be visible)
@@ -3974,7 +3939,7 @@ mod tests {
         // Test FacetCacheProvider trait implementation
         let _facet_cache = hull.facet_cache();
         let cached_gen = hull.cached_generation();
-        let tds_gen = dt.as_triangulation().tds.generation();
+        let tds_gen = dt.topology_generation();
         assert_eq!(
             cached_gen.load(std::sync::atomic::Ordering::Acquire),
             tds_gen,
@@ -4060,16 +4025,7 @@ mod tests {
         let vertex_counts: Vec<usize> = hull
             .hull_facets
             .iter()
-            .map(|facet_handle| {
-                FacetView::try_new(
-                    &dt.as_triangulation().tds,
-                    facet_handle.simplex_key(),
-                    facet_handle.facet_index(),
-                )
-                .unwrap()
-                .vertices()
-                .count()
-            })
+            .map(|facet_handle| dt.facet_view(*facet_handle).unwrap().vertices().count())
             .collect();
 
         // All facets should have the same number of vertices (dimension)
@@ -4345,7 +4301,7 @@ mod tests {
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
 
         // Get initial generation values
-        let initial_tds_generation = dt.as_triangulation().tds.generation();
+        let initial_tds_generation = dt.topology_generation();
         let initial_hull_generation = hull.cached_generation().load(Ordering::Acquire);
 
         test_debug!("  Initial TDS generation: {initial_tds_generation}");
@@ -4370,7 +4326,7 @@ mod tests {
         assert!(result1.is_ok(), "Initial visibility test should succeed");
 
         // Cache should now be built, generations should still match
-        let post_cache_tds_gen = dt.as_triangulation().tds.generation();
+        let post_cache_tds_gen = dt.topology_generation();
         let post_cache_hull_gen = hull.cached_generation().load(Ordering::Acquire);
 
         test_debug!(
@@ -4399,7 +4355,7 @@ mod tests {
 
         // Test TDS modification by adding a new vertex
         test_debug!("  Testing TDS modification and hull invalidation...");
-        let old_generation = dt.as_triangulation().tds.generation();
+        let old_generation = dt.topology_generation();
         let stale_hull_gen = hull.cached_generation().load(Ordering::Acquire);
 
         // Add a new vertex - this will bump the generation
@@ -4407,7 +4363,7 @@ mod tests {
         dt.insert_vertex(new_vertex)
             .expect("Failed to insert vertex into DelaunayTriangulation");
 
-        let modified_tds_gen = dt.as_triangulation().tds.generation();
+        let modified_tds_gen = dt.topology_generation();
         test_debug!("  After TDS modification (added vertex):");
         test_debug!("    TDS generation: {modified_tds_gen}");
         test_debug!("    Hull cached generation: {stale_hull_gen}");
@@ -4511,7 +4467,7 @@ mod tests {
 
         // Generation should be updated to current TDS generation
         let final_hull_gen = new_hull.cached_generation().load(Ordering::Acquire);
-        let final_tds_gen = dt.as_triangulation().tds.generation();
+        let final_tds_gen = dt.topology_generation();
         assert_eq!(
             final_hull_gen, final_tds_gen,
             "Hull generation should match TDS generation after cache rebuild"
@@ -4591,7 +4547,7 @@ mod tests {
         // First call should build the cache
         test_debug!("  Testing initial cache building...");
         let cache1 = hull
-            .try_get_or_build_facet_cache(&dt.as_triangulation().tds)
+            .try_get_or_build_facet_cache(dt.tds())
             .expect("Failed to build cache");
         assert!(
             !cache1.is_empty(),
@@ -4608,7 +4564,7 @@ mod tests {
         // Second call with same generation should reuse cache
         test_debug!("  Testing cache reuse with same generation...");
         let cache2 = hull
-            .try_get_or_build_facet_cache(&dt.as_triangulation().tds)
+            .try_get_or_build_facet_cache(dt.tds())
             .expect("Failed to reuse cache");
         assert_eq!(
             cache1.len(),
@@ -4632,14 +4588,14 @@ mod tests {
 
         // Modify triangulation by adding a vertex to trigger generation change
         test_debug!("  Testing cache invalidation with generation change...");
-        let old_generation = dt.as_triangulation().tds.generation();
+        let old_generation = dt.topology_generation();
 
         // Add a new vertex to trigger generation bump
         let new_vertex = vertex!([0.5, 0.5, 0.5]).unwrap(); // Interior point
         dt.insert_vertex(new_vertex)
             .expect("Failed to insert vertex");
 
-        let new_generation = dt.as_triangulation().tds.generation();
+        let new_generation = dt.topology_generation();
         assert!(
             new_generation > old_generation,
             "Generation should increase after adding vertex"
@@ -4647,7 +4603,7 @@ mod tests {
 
         // Next call should rebuild cache due to generation change
         let cache3 = hull
-            .try_get_or_build_facet_cache(&dt.as_triangulation().tds)
+            .try_get_or_build_facet_cache(dt.tds())
             .expect("Failed to rebuild cache");
 
         // The cache content might be different since we added a vertex
@@ -4688,7 +4644,7 @@ mod tests {
         // Test that cache contains keys derivable by the key derivation method
         test_debug!("  Testing cache-key derivation consistency...");
         let cache = hull
-            .try_get_or_build_facet_cache(&dt.as_triangulation().tds)
+            .try_get_or_build_facet_cache(dt.tds())
             .expect("Failed to build cache");
 
         // For each facet in the hull, derive its key and check it exists in cache
@@ -4696,18 +4652,13 @@ mod tests {
         for i in 0..hull.number_of_facets() {
             let facet_handle = hull.facet(i).unwrap();
             // Create FacetView to get vertices
-            let facet_view = FacetView::try_new(
-                &dt.as_triangulation().tds,
-                facet_handle.simplex_key(),
-                facet_handle.facet_index(),
-            )
-            .unwrap();
+            let facet_view = dt.facet_view(*facet_handle).unwrap();
             let facet_vertices = facet_view_to_vertices(&facet_view);
 
             // Get vertex keys from vertices via TDS
             let facet_vertex_keys: Vec<_> = facet_vertices
                 .iter()
-                .filter_map(|v| dt.as_triangulation().tds.vertex_key_from_uuid(&v.uuid()))
+                .filter_map(|v| dt.vertex_key_from_uuid(&v.uuid()))
                 .collect();
 
             let derived_key_result = checked_facet_key_from_vertex_keys::<3>(&facet_vertex_keys);
@@ -5001,9 +4952,7 @@ mod tests {
         test_debug!("  Testing cache consistency after concurrent access...");
 
         // Verify cache is in a consistent state after concurrent access
-        let cache = hull
-            .try_get_or_build_facet_cache(&dt.as_triangulation().tds)
-            .unwrap();
+        let cache = hull.try_get_or_build_facet_cache(dt.tds()).unwrap();
         assert!(
             !cache.is_empty(),
             "Cache should be populated after concurrent access"
@@ -5039,9 +4988,7 @@ mod tests {
 
         // Build initial cache
         test_debug!("  Building initial cache...");
-        let initial_cache = hull
-            .try_get_or_build_facet_cache(&dt.as_triangulation().tds)
-            .unwrap();
+        let initial_cache = hull.try_get_or_build_facet_cache(dt.tds()).unwrap();
         assert!(
             !initial_cache.is_empty(),
             "Initial cache should not be empty"
@@ -5053,7 +5000,7 @@ mod tests {
 
         // Check initial generation
         let initial_gen = hull.cached_generation().load(Ordering::Acquire);
-        let expected_gen = dt.as_triangulation().tds.generation();
+        let expected_gen = dt.topology_generation();
         assert_eq!(
             initial_gen, expected_gen,
             "Initial cached generation should match TDS generation"
@@ -5079,9 +5026,7 @@ mod tests {
 
         // Rebuild cache after invalidation
         test_debug!("  Rebuilding cache after invalidation...");
-        let rebuilt_cache = hull
-            .try_get_or_build_facet_cache(&dt.as_triangulation().tds)
-            .unwrap();
+        let rebuilt_cache = hull.try_get_or_build_facet_cache(dt.tds()).unwrap();
         assert!(
             !rebuilt_cache.is_empty(),
             "Rebuilt cache should not be empty"
@@ -5096,7 +5041,7 @@ mod tests {
 
         // Generation should be updated to TDS generation
         let final_gen = hull.cached_generation().load(Ordering::Acquire);
-        let tds_gen = dt.as_triangulation().tds.generation();
+        let tds_gen = dt.topology_generation();
         assert_eq!(
             final_gen, tds_gen,
             "Generation should match TDS generation after rebuild"
@@ -5748,12 +5693,7 @@ mod tests {
         test_debug!("  Testing fallback with points at various distances...");
 
         let facet_handle = hull.facet(0).unwrap();
-        let facet_view = FacetView::try_new(
-            &dt.as_triangulation().tds,
-            facet_handle.simplex_key(),
-            facet_handle.facet_index(),
-        )
-        .unwrap();
+        let facet_view = dt.facet_view(*facet_handle).unwrap();
         let test_facet_vertices = facet_view_to_vertices(&facet_view);
 
         // Test points at different distance scales
@@ -6799,7 +6739,7 @@ mod tests {
         test_debug!("  Testing rapid generation changes...");
 
         // Record initial generation
-        let initial_generation = dt.as_triangulation().tds.generation();
+        let initial_generation = dt.topology_generation();
         let initial_hull_generation = hull.cached_generation().load(Ordering::Acquire);
 
         test_debug!("    Initial TDS generation: {initial_generation}");
@@ -6810,7 +6750,7 @@ mod tests {
             let new_vertex =
                 vertex!([<f64 as From<_>>::from(i).mul_add(0.01, 0.1), 0.1, 0.1]).unwrap();
             if dt.insert_vertex(new_vertex).is_ok() {
-                let current_gen = dt.as_triangulation().tds.generation();
+                let current_gen = dt.topology_generation();
                 test_debug!("    After modification {i}: TDS generation = {current_gen}");
 
                 // Test that hull detects staleness
@@ -6827,7 +6767,7 @@ mod tests {
 
         test_debug!("  Testing cache rebuild with high generation values...");
 
-        let final_generation = dt.as_triangulation().tds.generation();
+        let final_generation = dt.topology_generation();
         test_debug!("    Final TDS generation: {final_generation}");
 
         // Force cache rebuild
@@ -6954,7 +6894,7 @@ mod tests {
             assert!(final_cache.is_some(), "Cache should exist at end of cycle");
 
             let final_generation = hull.cached_generation().load(Ordering::Acquire);
-            let tds_generation = dt.as_triangulation().tds.generation();
+            let tds_generation = dt.topology_generation();
             assert_eq!(
                 final_generation, tds_generation,
                 "Hull generation should match TDS at end of cycle"
@@ -7134,7 +7074,7 @@ mod tests {
         ])
         .build()
         .unwrap();
-        let initial_gen = dt.as_triangulation().tds.generation();
+        let initial_gen = dt.topology_generation();
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
 
         // Verify hull is valid initially
@@ -7146,7 +7086,7 @@ mod tests {
 
         // Step 2: Mutate triangulation (increases generation)
         dt.insert_vertex(vertex![0.5, 0.5, 0.5].unwrap()).unwrap();
-        let new_gen = dt.as_triangulation().tds.generation();
+        let new_gen = dt.topology_generation();
         assert_ne!(
             initial_gen, new_gen,
             "Triangulation generation should increase after mutation"
@@ -7235,8 +7175,8 @@ mod tests {
         let dt2: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         assert_eq!(
-            dt1.as_triangulation().tds.generation(),
-            dt2.as_triangulation().tds.generation(),
+            dt1.topology_generation(),
+            dt2.topology_generation(),
             "regression setup needs matching generation counters"
         );
 
@@ -7275,8 +7215,8 @@ mod tests {
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         let dt2 = dt1.clone();
         assert_eq!(
-            dt1.as_triangulation().tds.generation(),
-            dt2.as_triangulation().tds.generation(),
+            dt1.topology_generation(),
+            dt2.topology_generation(),
             "regression setup needs matching generation counters"
         );
 
@@ -7315,9 +7255,7 @@ mod tests {
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
 
-        let cache_before = hull
-            .try_get_or_build_facet_cache(&dt.as_triangulation().tds)
-            .unwrap();
+        let cache_before = hull.try_get_or_build_facet_cache(dt.tds()).unwrap();
         assert!(!cache_before.is_empty());
 
         let creation_generation = hull
@@ -7329,16 +7267,11 @@ mod tests {
             .creation_identity
             .get()
             .expect("constructed hull should capture TDS identity");
-        assert_eq!(creation_generation, dt.as_triangulation().tds.generation());
-        assert!(Arc::ptr_eq(
-            creation_identity,
-            dt.as_triangulation().tds.identity()
-        ));
+        assert_eq!(creation_generation, dt.topology_generation());
+        assert!(Arc::ptr_eq(creation_identity, dt.tds().identity()));
         assert!(hull.is_valid_for_triangulation(dt.as_triangulation()));
 
         let duplicate_uuid = dt
-            .as_triangulation()
-            .tds
             .vertices()
             .next()
             .expect("tetrahedron should have vertices")
@@ -7357,12 +7290,12 @@ mod tests {
         );
 
         assert_eq!(
-            dt.as_triangulation().tds.generation(),
+            dt.topology_generation(),
             creation_generation,
             "failed insert rollback should restore the generation captured by the hull"
         );
         assert!(
-            Arc::ptr_eq(creation_identity, dt.as_triangulation().tds.identity()),
+            Arc::ptr_eq(creation_identity, dt.tds().identity()),
             "failed insert rollback must preserve TDS identity for cache provenance"
         );
         assert!(
@@ -7370,9 +7303,7 @@ mod tests {
             "hull cache key should remain valid after failed insert rollback"
         );
 
-        let cache_after = hull
-            .try_get_or_build_facet_cache(&dt.as_triangulation().tds)
-            .unwrap();
+        let cache_after = hull.try_get_or_build_facet_cache(dt.tds()).unwrap();
         assert!(
             Arc::ptr_eq(&cache_before, &cache_after),
             "facet cache should be reused when rollback restores the same generation"

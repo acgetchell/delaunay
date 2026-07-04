@@ -4,11 +4,10 @@
 //! Delaunay violations, the deterministic rebuild heuristic is triggered and
 //! successfully produces a valid Delaunay triangulation.
 
-use delaunay::flips::BistellarFlips;
-use delaunay::flips::FacetHandle;
 use delaunay::prelude::construction::{
     DelaunayRepairPolicy, DelaunayTriangulation, TopologyGuarantee,
 };
+use delaunay::prelude::pachner::{PachnerMove, PachnerMoves};
 use delaunay::prelude::repair::DelaunayRepairHeuristicConfig;
 use delaunay::vertex;
 
@@ -58,23 +57,28 @@ fn repair_fallback_produces_valid_triangulation() {
         .expect("fixture construction should succeed");
 
     let mut candidate_facets = Vec::new();
-    for (simplex_key, simplex) in dt.simplices() {
-        if let Some(neighbors) = simplex.neighbors() {
-            for (index, neighbor) in neighbors.enumerate() {
-                if neighbor.is_some() {
-                    let facet_index = u8::try_from(index).expect("2D facet index fits in u8");
-                    candidate_facets.push(
-                        FacetHandle::try_new(dt.tds(), simplex_key, facet_index)
-                            .expect("interior facet index should be valid"),
-                    );
-                }
-            }
+    for facet in dt.facets() {
+        let facet = facet.expect("facet iterator should resolve valid facets");
+        if facet
+            .simplex()
+            .neighbor_key(usize::from(facet.facet_index()))
+            .flatten()
+            .is_some()
+        {
+            candidate_facets.push(facet.handle());
         }
     }
 
-    let flipped = candidate_facets
-        .into_iter()
-        .any(|facet| dt.flip_k2(facet).is_ok());
+    let mut flipped = false;
+    for facet in candidate_facets {
+        let Ok(proposal) = dt.propose_pachner(PachnerMove::K2 { facet }) else {
+            continue;
+        };
+        if proposal.attempt_on(&mut dt).is_ok() {
+            flipped = true;
+            break;
+        }
+    }
     assert!(flipped, "fixture should contain a flippable interior facet");
 
     let mut config = DelaunayRepairHeuristicConfig::default();

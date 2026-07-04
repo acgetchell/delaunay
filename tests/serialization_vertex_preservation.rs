@@ -14,8 +14,6 @@ use delaunay::prelude::construction::{
     ConstructionOptions, DelaunayTriangulation, InsertionOrderStrategy, TopologyGuarantee,
 };
 use delaunay::prelude::geometry::*;
-use delaunay::prelude::query::extract_vertex_coordinate_set;
-use delaunay::prelude::tds::Tds;
 use delaunay::try_vertices_from_points;
 use std::collections::HashSet;
 
@@ -29,6 +27,12 @@ macro_rules! diag_debug {
 #[cfg(not(feature = "diagnostics"))]
 macro_rules! diag_debug {
     ($($arg:tt)*) => {};
+}
+
+fn vertex_coordinate_set<K, const D: usize>(
+    dt: &DelaunayTriangulation<K, (), (), D>,
+) -> HashSet<Point<D>> {
+    dt.vertices().map(|(_, vertex)| *vertex.point()).collect()
 }
 
 /// Test vertex preservation with duplicate coordinates
@@ -55,12 +59,11 @@ fn test_vertex_preservation_with_duplicates_3d() {
     // Construct triangulation - duplicates should be skipped
     let dt = DelaunayTriangulation::builder(&vertices)
         .topology_guarantee(TopologyGuarantee::PLManifold)
-        .build()
+        .build_with_kernel(&RobustKernel::new())
         .expect("DelaunayTriangulation::builder(...).build() failed");
-    let tds = dt.tds();
 
-    let tds_vertex_count = tds.vertices().count();
-    let tds_coords = extract_vertex_coordinate_set(tds);
+    let tds_vertex_count = dt.vertices().count();
+    let tds_coords = vertex_coordinate_set(&dt);
     diag_debug!(
         tds_vertex_count,
         unique_tds_coordinates = tds_coords.len(),
@@ -75,14 +78,15 @@ fn test_vertex_preservation_with_duplicates_3d() {
     );
 
     // Serialize
-    let json = serde_json::to_string(&tds).expect("Serialization failed");
+    let json = serde_json::to_string(&dt).expect("Serialization failed");
     diag_debug!(json_bytes = json.len(), "serialized TDS size");
 
     // Deserialize
-    let deserialized: Tds<(), (), 3> = serde_json::from_str(&json).expect("Deserialization failed");
+    let deserialized: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
+        serde_json::from_str(&json).expect("Deserialization failed");
 
     let deser_vertex_count = deserialized.vertices().count();
-    let deser_coords = extract_vertex_coordinate_set(&deserialized);
+    let deser_coords = vertex_coordinate_set(&deserialized);
     diag_debug!(
         deser_vertex_count,
         unique_deserialized_coordinates = deser_coords.len(),
@@ -114,10 +118,9 @@ fn test_vertex_preservation_without_duplicates_3d() {
 
     let dt = DelaunayTriangulation::builder(&vertices)
         .topology_guarantee(TopologyGuarantee::PLManifold)
-        .build()
+        .build_with_kernel(&RobustKernel::new())
         .expect("Tds construction failed");
-    let tds = dt.tds();
-    let tds_vertex_count = tds.vertices().count();
+    let tds_vertex_count = dt.vertices().count();
     diag_debug!(
         input_vertices = vertices.len(),
         tds_vertex_count,
@@ -125,13 +128,14 @@ fn test_vertex_preservation_without_duplicates_3d() {
     );
 
     // Extract vertex coordinate sets for Jaccard comparison
-    let before_coords = extract_vertex_coordinate_set(tds);
+    let before_coords = vertex_coordinate_set(&dt);
 
-    let json = serde_json::to_string(&tds).expect("Serialization failed");
-    let deserialized: Tds<(), (), 3> = serde_json::from_str(&json).expect("Deserialization failed");
+    let json = serde_json::to_string(&dt).expect("Serialization failed");
+    let deserialized: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
+        serde_json::from_str(&json).expect("Deserialization failed");
 
     let deser_vertex_count = deserialized.vertices().count();
-    let after_coords = extract_vertex_coordinate_set(&deserialized);
+    let after_coords = vertex_coordinate_set(&deserialized);
     diag_debug!(
         deser_vertex_count,
         unique_deserialized_coordinates = after_coords.len(),
@@ -184,10 +188,9 @@ fn test_vertex_preservation_many_duplicates_3d() {
     let opts = ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
     let dt = DelaunayTriangulation::builder(&vertices)
         .construction_options(opts)
-        .build()
+        .build_with_kernel(&RobustKernel::new())
         .expect("Tds construction succeeded");
-    let tds = dt.tds();
-    let tds_vertex_count = tds.vertices().count();
+    let tds_vertex_count = dt.vertices().count();
     diag_debug!(
         tds_vertex_count,
         "many-duplicate vertex preservation after construction"
@@ -200,13 +203,14 @@ fn test_vertex_preservation_many_duplicates_3d() {
     );
 
     // Extract vertex coordinate sets for Jaccard comparison
-    let before_coords = extract_vertex_coordinate_set(tds);
+    let before_coords = vertex_coordinate_set(&dt);
 
-    let json = serde_json::to_string(&tds).expect("Serialization failed");
-    let deserialized: Tds<(), (), 3> = serde_json::from_str(&json).expect("Deserialization failed");
+    let json = serde_json::to_string(&dt).expect("Serialization failed");
+    let deserialized: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
+        serde_json::from_str(&json).expect("Deserialization failed");
 
     let deser_vertex_count = deserialized.vertices().count();
-    let after_coords = extract_vertex_coordinate_set(&deserialized);
+    let after_coords = vertex_coordinate_set(&deserialized);
     diag_debug!(
         deser_vertex_count,
         unique_deserialized_coordinates = after_coords.len(),

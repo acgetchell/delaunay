@@ -25,7 +25,7 @@ use delaunay::prelude::construction::{
 };
 use delaunay::prelude::delaunayize::*;
 use delaunay::prelude::geometry::CoordinateConversionError;
-use delaunay::prelude::pachner::{FacetError, FacetHandle, FlipError, PachnerMove, PachnerMoves};
+use delaunay::prelude::pachner::{FacetError, FlipError, PachnerMove, PachnerMoves};
 use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 
 // For the generic print_outcome helper.
@@ -173,7 +173,7 @@ fn flip_then_repair_2d() -> Result<(), DelaunayizeRepairExampleError> {
         if let Some(neighbors) = simplex.neighbors() {
             for (i, n) in neighbors.enumerate() {
                 if let (Some(_), Ok(idx)) = (n, u8::try_from(i)) {
-                    facets.push(FacetHandle::try_new(dt.tds(), ck, idx)?);
+                    facets.push(dt.facet_handle(ck, idx)?);
                 }
             }
         }

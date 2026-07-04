@@ -11,7 +11,7 @@
 
 use approx::assert_relative_eq;
 use delaunay::geometry::kernel::RobustKernel;
-use delaunay::prelude::algorithms::{LocateResult, find_conflict_region, locate};
+use delaunay::prelude::algorithms::LocateResult;
 use delaunay::prelude::collections::MAX_PRACTICAL_DIMENSION_SIZE;
 use delaunay::prelude::construction::{
     ConstructionOptions, DedupPolicy, DelaunayTriangulation, DelaunayTriangulationBuilder,
@@ -46,7 +46,7 @@ fn assert_neighbors_valid_and_symmetric<const D: usize>(
             let Some(neighbor_key) = neighbor_opt else {
                 continue;
             };
-            let neighbor_simplex = dt.tds().simplex(neighbor_key).unwrap_or_else(|| {
+            let neighbor_simplex = dt.simplex(neighbor_key).unwrap_or_else(|| {
                 panic!("neighbor {neighbor_key:?} for {simplex_key:?} is missing")
             });
             let facet_key = facet_key_for_simplex(simplex, facet_idx);
@@ -77,10 +77,7 @@ fn centroid_of_first_simplex<const D: usize>(
         .expect("test triangulation should contain at least one simplex");
     let mut coords = [0.0; D];
     for &vertex_key in simplex.vertices() {
-        let vertex = dt
-            .tds()
-            .vertex(vertex_key)
-            .expect("simplex vertex should exist");
+        let vertex = dt.vertex(vertex_key).expect("simplex vertex should exist");
         for (coord, &value) in coords.iter_mut().zip(vertex.point().coords()) {
             *coord += value;
         }
@@ -103,12 +100,12 @@ fn centroid_of_first_simplex<const D: usize>(
 fn assert_locate_and_conflict_traversal<const D: usize>(
     dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
 ) {
-    let kernel = AdaptiveKernel::<f64>::new();
     let (hint_simplex, query) = centroid_of_first_simplex(dt);
 
-    let no_hint = locate(dt.tds(), &kernel, &query, None).expect("locate without hint failed");
-    let with_hint =
-        locate(dt.tds(), &kernel, &query, Some(hint_simplex)).expect("locate with hint failed");
+    let no_hint = dt.locate(&query, None).expect("locate without hint failed");
+    let with_hint = dt
+        .locate(&query, Some(hint_simplex))
+        .expect("locate with hint failed");
 
     let start_simplex = match with_hint {
         LocateResult::InsideSimplex(simplex_key) => simplex_key,
@@ -119,11 +116,12 @@ fn assert_locate_and_conflict_traversal<const D: usize>(
         "centroid should locate inside a simplex without hint, got {no_hint:?}"
     );
 
-    let conflict_simplices = find_conflict_region(dt.tds(), &kernel, &query, start_simplex)
+    let conflict_simplices = dt
+        .find_conflict_region(&query, start_simplex)
         .expect("conflict traversal failed");
     assert!(!conflict_simplices.is_empty());
     for &simplex_key in &conflict_simplices {
-        assert!(dt.tds().contains_simplex(simplex_key));
+        assert!(dt.contains_simplex(simplex_key));
     }
 }
 
@@ -687,7 +685,7 @@ macro_rules! test_bootstrap_key_stability {
 
                 // Verify all keys remain valid after simplex creation
                 for (i, &key) in keys.iter().enumerate() {
-                    let vertex = dt.tds().vertex(key);
+                    let vertex = dt.vertex(key);
                     assert!(vertex.is_some(),
                         "Key {} should remain valid after simplex creation", i);
 
@@ -783,7 +781,7 @@ fn test_bootstrap_returns_valid_key_after_tds_rebuild() {
     assert_eq!(dt.number_of_simplices(), 1);
 
     // Verify all returned keys are valid in the final TDS
-    let vertex1 = dt.tds().vertex(key1);
+    let vertex1 = dt.vertex(key1);
     assert!(
         vertex1.is_some(),
         "First key should be valid after simplex creation"
@@ -794,7 +792,7 @@ fn test_bootstrap_returns_valid_key_after_tds_rebuild() {
         "First key should map to correct vertex UUID"
     );
 
-    let vertex2 = dt.tds().vertex(key2);
+    let vertex2 = dt.vertex(key2);
     assert!(
         vertex2.is_some(),
         "Second key should be valid after simplex creation"
@@ -805,7 +803,7 @@ fn test_bootstrap_returns_valid_key_after_tds_rebuild() {
         "Second key should map to correct vertex UUID"
     );
 
-    let vertex3 = dt.tds().vertex(key3);
+    let vertex3 = dt.vertex(key3);
     assert!(
         vertex3.is_some(),
         "Third key (D+1) should be valid after simplex creation"

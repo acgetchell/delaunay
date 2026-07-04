@@ -15,8 +15,6 @@
 
 #![forbid(unsafe_code)]
 
-#[cfg(test)]
-use crate::construction::test_hooks;
 use crate::core::algorithms::flips::{
     DelaunayRepairError, DelaunayRepairRun, repair_delaunay_with_flips_k2_k3_run,
 };
@@ -32,13 +30,9 @@ use crate::core::validation::{TopologyGuarantee, TriangulationValidationError};
 use crate::core::vertex::Vertex;
 use crate::delaunay_rollback::{DelaunayRollbackTransaction, DelaunaySpatialIndexRollback};
 use crate::geometry::kernel::Kernel;
-use crate::topology::manifold::{ManifoldError, validate_ridge_links_for_simplices};
+use crate::topology::manifold::ManifoldError;
 use crate::triangulation::DelaunayTriangulation;
-#[cfg(test)]
-use crate::validation::DelaunayTriangulationCandidate;
 use std::env;
-#[cfg(test)]
-use std::iter::once;
 
 fn ridge_link_repair_validation_error(err: ManifoldError) -> InsertionError {
     match TriangulationValidationError::try_from(err) {
@@ -490,8 +484,8 @@ where
         };
 
         #[cfg(test)]
-        let repair_result = if test_hooks::force_repair_nonconvergent_enabled() {
-            Err(test_hooks::synthetic_nonconvergent_error())
+        let repair_result = if tests::force_repair_nonconvergent_enabled() {
+            Err(tests::synthetic_nonconvergent_error())
         } else {
             repair_result
         };
@@ -559,14 +553,12 @@ where
                     run.touched_simplices.len()
                 );
             }
-            return validate_ridge_links_for_simplices(
-                &self.tri.tds,
-                run.touched_simplices.iter().copied(),
-            )
-            .map_err(ridge_link_repair_validation_error);
+            return self
+                .validate_ridge_links_for_simplices(run.touched_simplices.iter().copied())
+                .map_err(ridge_link_repair_validation_error);
         }
 
-        validate_ridge_links_for_simplices(&self.tri.tds, self.tri.tds.simplex_keys())
+        self.validate_ridge_links_for_simplices(self.simplices().map(|(key, _)| key))
             .map_err(ridge_link_repair_validation_error)
     }
 
@@ -620,17 +612,62 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::algorithms::flips::DelaunayRepairStats;
+    use crate::core::algorithms::flips::{
+        DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairStats, RepairQueueOrder,
+    };
     use crate::core::simplex::Simplex;
     use crate::core::tds::{Tds, TdsError};
     use crate::geometry::kernel::{AdaptiveKernel, RobustKernel};
     use crate::repair::{DelaunayCheckPolicy, DelaunayRepairPolicy};
     use crate::topology::traits::topological_space::GlobalTopology;
+    use crate::validation::DelaunayTriangulationCandidate;
     use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
+    use std::cell::Cell;
+    use std::iter::once;
     use std::num::NonZeroUsize;
     use std::sync::Once;
+
+    // Last-resort fault injection for rollback branches that are hard to
+    // trigger deterministically; thread-local state avoids cross-test leakage.
+    // Remove this once a cleaner harness can reach the branch directly.
+    thread_local! {
+        static FORCE_REPAIR_NONCONVERGENT: Cell<bool> = const { Cell::new(false) };
+    }
+
+    #[must_use]
+    pub(super) fn force_repair_nonconvergent_enabled() -> bool {
+        FORCE_REPAIR_NONCONVERGENT.with(Cell::get)
+    }
+
+    #[must_use]
+    pub(super) fn synthetic_nonconvergent_error() -> DelaunayRepairError {
+        DelaunayRepairError::NonConvergent {
+            max_flips: 0,
+            diagnostics: Box::new(DelaunayRepairDiagnostics {
+                facets_checked: 0,
+                flips_performed: 0,
+                max_queue_len: 0,
+                ambiguous_predicates: 0,
+                ambiguous_predicate_samples: Vec::new(),
+                predicate_failures: 0,
+                cycle_detections: 0,
+                cycle_signature_samples: Vec::new(),
+                attempt: 0,
+                queue_order: RepairQueueOrder::Fifo,
+            }),
+        }
+    }
+
+    #[must_use]
+    fn set_force_repair_nonconvergent(enabled: bool) -> bool {
+        FORCE_REPAIR_NONCONVERGENT.with(|flag| {
+            let prior = flag.get();
+            flag.set(enabled);
+            prior
+        })
+    }
 
     fn init_tracing() {
         static INIT: Once = Once::new();
@@ -651,14 +688,14 @@ mod tests {
     impl ForceRepairNonconvergentGuard {
         fn enable() -> Self {
             Self {
-                previous: test_hooks::set_force_repair_nonconvergent(true),
+                previous: set_force_repair_nonconvergent(true),
             }
         }
     }
 
     impl Drop for ForceRepairNonconvergentGuard {
         fn drop(&mut self) {
-            let _ = test_hooks::set_force_repair_nonconvergent(self.previous);
+            let _ = set_force_repair_nonconvergent(self.previous);
         }
     }
 

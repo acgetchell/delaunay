@@ -190,24 +190,13 @@ preserving owner/generation evidence between stages.
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    DelaunayResult, DelaunayTriangulationBuilder, vertex,
 };
-use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::pachner::{
-    EdgeKey, FacetHandle, FlipError, PachnerMove, PachnerMoves, TriangleHandle,
+    EdgeKey, FacetHandle, PachnerMove, PachnerMoves, TriangleHandle,
 };
 
-#[derive(Debug, thiserror::Error)]
-enum ExampleError {
-    #[error(transparent)]
-    Construction(#[from] DelaunayTriangulationConstructionError),
-    #[error(transparent)]
-    Flip(#[from] FlipError),
-    #[error(transparent)]
-    Coordinate(#[from] CoordinateConversionError),
-}
-
-fn main() -> Result<(), ExampleError> {
+fn main() -> DelaunayResult<()> {
     // Start with a valid triangulation
     let vertices = vec![
         vertex![0.0, 0.0, 0.0]?,
@@ -367,25 +356,11 @@ You can mix both APIs in the same workflow:
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    DelaunayResult, DelaunayTriangulationBuilder, vertex,
 };
-use delaunay::prelude::geometry::CoordinateConversionError;
-use delaunay::prelude::insertion::InsertionError;
-use delaunay::prelude::pachner::{FacetHandle, FlipError, PachnerMove, PachnerMoves};
+use delaunay::prelude::pachner::{FacetHandle, PachnerMove, PachnerMoves};
 
-#[derive(Debug, thiserror::Error)]
-enum ExampleError {
-    #[error(transparent)]
-    Construction(#[from] DelaunayTriangulationConstructionError),
-    #[error(transparent)]
-    Insertion(#[from] InsertionError),
-    #[error(transparent)]
-    Flip(#[from] FlipError),
-    #[error(transparent)]
-    Coordinate(#[from] CoordinateConversionError),
-}
-
-fn main() -> Result<(), ExampleError> {
+fn main() -> DelaunayResult<()> {
     // 1. Build initial triangulation (Builder API)
     let vertices = vec![
         vertex![0.0, 0.0, 0.0]?,
@@ -436,7 +411,7 @@ Use the appropriate validation level for your needs:
 
 ```rust
 // Level 2: Structural only (fast)
-assert!(dt.tds().is_valid().is_ok());
+assert!(dt.is_valid_structure().is_ok());
 
 // Level 3: + Manifold topology
 assert!(dt.as_triangulation().is_valid_topology().is_ok());

@@ -151,7 +151,7 @@ and [`docs/numerical_robustness_guide.md`](docs/numerical_robustness_guide.md).
 | Level | Validates | Primary API |
 |---|---|---|
 | 1 | Vertex, simplex, and facet element invariants | `vertex.is_valid()` / `simplex.is_valid()` |
-| 2 | TDS keys, incidences, and neighbor links | `dt.tds().is_valid()` / `dt.tds().structure_report()` |
+| 2 | TDS keys, incidences, and neighbor links | `dt.validate_structure()` / `dt.structure_report()` |
 | 3 | Manifold topology, ridge links, and Euler consistency | `dt.as_triangulation().is_valid_topology()` / `dt.as_triangulation().topology_report()` |
 | 4 | Faithful embedding | `dt.as_triangulation().is_valid_embedding()` / `dt.as_triangulation().embedding_report()` |
 | 5 | Delaunay property via local predicates | `dt.is_valid_delaunay()` / `dt.delaunay_report()` |

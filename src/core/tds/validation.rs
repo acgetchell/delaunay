@@ -71,8 +71,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-    /// let tds = dt.tds();
-    /// let facet_index = tds.build_facet_to_simplices_index()?;
+    /// let facet_index = dt.facet_incidence_index()?;
     /// assert!(!facet_index.is_empty());
     /// # Ok(())
     /// # }
@@ -578,7 +577,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// let dt: DelaunayTriangulation<_, (), (), 2> =
     ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
-    /// assert!(dt.tds().is_coherently_oriented());
+    /// assert!(dt.is_coherently_oriented());
     /// # Ok(())
     /// # }
     /// ```
@@ -1001,8 +1000,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// let dt: DelaunayTriangulation<_, (), (), 4> =
     ///     DelaunayTriangulationBuilder::new(&vertices_4d).build()?;
     ///
-    /// // Level 2: TDS structural validation
-    /// assert!(dt.tds().is_valid().is_ok());
+    /// // Level 2: structural validation
+    /// assert!(dt.is_valid_structure().is_ok());
     /// # Ok(())
     /// # }
     /// ```
@@ -1092,8 +1091,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// let dt: DelaunayTriangulation<_, (), (), 4> =
     ///     DelaunayTriangulationBuilder::new(&vertices_4d).build()?;
     ///
-    /// // Levels 1–2: elements + TDS structure
-    /// assert!(dt.tds().validate().is_ok());
+    /// // Levels 1–2: elements + structure
+    /// assert!(dt.validate_structure().is_ok());
     /// # Ok(())
     /// # }
     /// ```

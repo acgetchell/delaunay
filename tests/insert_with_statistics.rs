@@ -162,7 +162,7 @@ fn delaunay_insert_with_statistics_handles_degenerate_k2_flips_4d() {
     }
 
     assert_eq!(dt.number_of_vertices(), 7);
-    assert!(dt.tds().validate().is_ok());
+    assert!(dt.validate_structure().is_ok());
 }
 
 #[test]
@@ -207,7 +207,7 @@ fn delaunay_insert_with_statistics_duplicate_coordinates_2d() {
     }
 
     // Still in bootstrap (no simplices yet), so validate only Levels 1–2 (elements + structure).
-    assert!(dt.tds().validate().is_ok());
+    assert!(dt.validate_structure().is_ok());
     assert_eq!(dt.number_of_vertices(), 1);
 }
 

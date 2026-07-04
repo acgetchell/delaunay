@@ -21,7 +21,7 @@
 //! ```
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use delaunay::prelude::algorithms::{LocateResult, locate};
+use delaunay::prelude::algorithms::LocateResult;
 use delaunay::prelude::construction::{
     DelaunayTriangulation, DelaunayTriangulationBuilder, Vertex,
 };
@@ -74,8 +74,6 @@ fn query_bounds() -> CoordinateRange<f64> {
 
 /// Build one deterministic triangulation plus an inside-the-hull query batch.
 fn build_source<const D: usize>(requested_vertices: usize, seed_base: u64) -> LocateSource<D> {
-    let kernel = AdaptiveKernel::<f64>::new();
-
     for attempt in 0..SEED_SEARCH_ATTEMPTS {
         let attempt_seed = u64::try_from(attempt).or_abort();
         let seed = seed_for_case::<D>(requested_vertices, seed_base)
@@ -100,7 +98,7 @@ fn build_source<const D: usize>(requested_vertices: usize, seed_base: u64) -> Lo
             if hinted_queries.len() == QUERY_COUNT {
                 break;
             }
-            let located = locate(triangulation.tds(), &kernel, &query, None).or_abort();
+            let located = triangulation.locate(&query, None).or_abort();
             if let LocateResult::InsideSimplex(simplex_key) = located {
                 hinted_queries.push((query, simplex_key));
             }
@@ -130,7 +128,6 @@ fn bench_locate_dimension<const D: usize>(
     counts: &[usize],
     seed_base: u64,
 ) {
-    let kernel = AdaptiveKernel::<f64>::new();
     let sources: Vec<LocateSource<D>> = counts
         .iter()
         .map(|&requested_vertices| build_source::<D>(requested_vertices, seed_base))
@@ -156,9 +153,7 @@ fn bench_locate_dimension<const D: usize>(
                 |b, source| {
                     b.iter(|| {
                         for (query, _) in &source.hinted_queries {
-                            black_box(
-                                locate(source.triangulation.tds(), &kernel, query, None).or_abort(),
-                            );
+                            black_box(source.triangulation.locate(query, None).or_abort());
                         }
                     });
                 },
@@ -186,10 +181,7 @@ fn bench_locate_dimension<const D: usize>(
                 |b, source| {
                     b.iter(|| {
                         for (query, hint) in &source.hinted_queries {
-                            black_box(
-                                locate(source.triangulation.tds(), &kernel, query, Some(*hint))
-                                    .or_abort(),
-                            );
+                            black_box(source.triangulation.locate(query, Some(*hint)).or_abort());
                         }
                     });
                 },

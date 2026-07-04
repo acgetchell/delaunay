@@ -3,15 +3,14 @@
 #![forbid(unsafe_code)]
 
 use crate::core::facet::FacetError;
-use crate::core::tds::Tds;
 use crate::core::traits::data_type::DataType;
-use crate::core::traits::facet_incidence_analysis::FacetIncidenceAnalysis;
 use crate::core::triangulation::Triangulation;
 use crate::geometry::algorithms::convex_hull::{ConvexHull, ConvexHullConstructionError};
 use crate::geometry::point::Point;
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::{BuildHasher, Hash};
+use std::sync::Arc;
 use thiserror::Error;
 
 /// Errors that can occur during Jaccard similarity computation.
@@ -192,7 +191,7 @@ where
 ///
 /// # Arguments
 ///
-/// * `tds` - The triangulation data structure to extract vertex coordinates from
+/// * `tri` - The triangulation to extract vertex coordinates from
 ///
 /// # Returns
 ///
@@ -219,20 +218,20 @@ where
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-/// let tds = dt.tds();
-///
-/// let coord_set = extract_vertex_coordinate_set(tds);
+/// let coord_set = extract_vertex_coordinate_set(dt.as_triangulation());
 /// assert_eq!(coord_set.len(), 4);
 /// # Ok(())
 /// # }
 /// ```
 #[must_use]
-pub fn extract_vertex_coordinate_set<U, V, const D: usize>(tds: &Tds<U, V, D>) -> HashSet<Point<D>>
+pub fn extract_vertex_coordinate_set<K, U, V, const D: usize>(
+    tri: &Triangulation<K, U, V, D>,
+) -> HashSet<Point<D>>
 where
     U: DataType,
     V: DataType,
 {
-    tds.vertices().map(|(_, vertex)| *vertex.point()).collect()
+    tri.vertices().map(|(_, vertex)| *vertex.point()).collect()
 }
 
 /// Canonicalize an edge by ordering vertex UUIDs.
@@ -250,7 +249,7 @@ const fn canonical_edge(u: u128, v: u128) -> (u128, u128) {
 ///
 /// # Arguments
 ///
-/// * `tds` - The triangulation data structure to extract edges from
+/// * `tri` - The triangulation to extract edges from
 ///
 /// # Returns
 ///
@@ -285,16 +284,14 @@ const fn canonical_edge(u: u128, v: u128) -> (u128, u128) {
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-/// let tds = dt.tds();
-///
-/// let edge_set = extract_edge_set(tds)?;
+/// let edge_set = extract_edge_set(dt.as_triangulation())?;
 /// // A tetrahedron has 6 edges
 /// assert_eq!(edge_set.len(), 6);
 /// # Ok(())
 /// # }
 /// ```
-pub fn extract_edge_set<U, V, const D: usize>(
-    tds: &Tds<U, V, D>,
+pub fn extract_edge_set<K, U, V, const D: usize>(
+    tri: &Triangulation<K, U, V, D>,
 ) -> Result<HashSet<(u128, u128)>, FacetError>
 where
     U: DataType,
@@ -302,17 +299,17 @@ where
 {
     let mut edges = HashSet::new();
 
-    for (_, simplex) in tds.simplices() {
+    for (_, simplex) in tri.simplices() {
         let vertex_keys = simplex.vertices();
         // Generate all pairs of vertices (edges)
         for i in 0..vertex_keys.len() {
             for j in (i + 1)..vertex_keys.len() {
-                let v_i = tds.vertex(vertex_keys[i]).ok_or(
+                let v_i = tri.vertex(vertex_keys[i]).ok_or(
                     FacetError::VertexKeyNotFoundInTriangulation {
                         key: vertex_keys[i],
                     },
                 )?;
-                let v_j = tds.vertex(vertex_keys[j]).ok_or(
+                let v_j = tri.vertex(vertex_keys[j]).ok_or(
                     FacetError::VertexKeyNotFoundInTriangulation {
                         key: vertex_keys[j],
                     },
@@ -335,7 +332,7 @@ where
 ///
 /// # Arguments
 ///
-/// * `tds` - The triangulation data structure to extract facet identifiers from
+/// * `tri` - The triangulation to extract facet identifiers from
 ///
 /// # Returns
 ///
@@ -368,16 +365,14 @@ where
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-/// let tds = dt.tds();
-///
-/// let facet_set = extract_facet_identifier_set(tds)?;
+/// let facet_set = extract_facet_identifier_set(dt.as_triangulation())?;
 /// // A tetrahedron has 4 facets
 /// assert_eq!(facet_set.len(), 4);
 /// # Ok(())
 /// # }
 /// ```
-pub fn extract_facet_identifier_set<U, V, const D: usize>(
-    tds: &Tds<U, V, D>,
+pub fn extract_facet_identifier_set<K, U, V, const D: usize>(
+    tri: &Triangulation<K, U, V, D>,
 ) -> Result<HashSet<u64>, FacetError>
 where
     U: DataType,
@@ -385,19 +380,16 @@ where
 {
     let mut facet_ids = HashSet::new();
 
-    // one_sided_facets() returns TDS-level incidence candidates.
-    // Wrap the underlying error for better diagnostics
-    let boundary_facets =
-        tds.one_sided_facets()
-            .map_err(|e| FacetError::BoundaryFacetRetrievalFailed {
-                source: std::sync::Arc::new(e),
+    let facet_index =
+        tri.facet_incidence_index()
+            .map_err(|source| FacetError::BoundaryFacetRetrievalFailed {
+                source: Arc::new(source),
             })?;
-
-    for facet_view in boundary_facets {
-        let facet_view = facet_view?;
-        // Use the existing FacetView::key() method
-        let facet_id = facet_view.key();
-        facet_ids.insert(facet_id);
+    for incidence in facet_index
+        .iter()
+        .filter(|incidence| incidence.is_one_sided())
+    {
+        facet_ids.insert(incidence.facet_key());
     }
 
     Ok(facet_ids)
@@ -648,7 +640,8 @@ mod tests {
     use crate::vertex;
     use std::assert_matches;
 
-    use crate::core::tds::{Tds, VertexKey};
+    use crate::core::tds::VertexKey;
+    use crate::geometry::kernel::FastKernel;
     use crate::triangulation::DelaunayTriangulation;
     use approx::assert_relative_eq;
     use slotmap::KeyData;
@@ -711,10 +704,10 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = &dt.as_triangulation().tds;
+        let tri = dt.as_triangulation();
 
         // Sub-test: Vertex coordinate extraction
-        let coord_set = extract_vertex_coordinate_set(tds);
+        let coord_set = extract_vertex_coordinate_set(tri);
         assert_eq!(coord_set.len(), 4, "Should have 4 unique coordinates");
         assert!(
             coord_set.contains(&Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"))
@@ -730,11 +723,11 @@ mod tests {
         );
 
         // Sub-test: Edge extraction - tetrahedron has 6 edges (binomial(4,2))
-        let edge_set = extract_edge_set(tds).unwrap();
+        let edge_set = extract_edge_set(tri).unwrap();
         assert_eq!(edge_set.len(), 6, "Tetrahedron should have 6 edges");
 
         // Sub-test: Facet identifier extraction - tetrahedron has 4 facets
-        let facet_set = extract_facet_identifier_set(tds).unwrap();
+        let facet_set = extract_facet_identifier_set(tri).unwrap();
         assert_eq!(facet_set.len(), 4, "Tetrahedron should have 4 facets");
 
         // Sub-test: Hull facet extraction
@@ -755,7 +748,7 @@ mod tests {
         ];
         let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
 
-        let simplex_key = dt.as_triangulation().tds.simplex_keys().next().unwrap();
+        let simplex_key = dt.simplices().next().unwrap().0;
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
         dt.tri
             .tds
@@ -763,7 +756,7 @@ mod tests {
             .unwrap()
             .push_vertex_key(invalid_vkey);
 
-        let err = extract_edge_set(&dt.as_triangulation().tds).unwrap_err();
+        let err = extract_edge_set(dt.as_triangulation()).unwrap_err();
         assert_matches!(
             err,
             FacetError::VertexKeyNotFoundInTriangulation { key } if key == invalid_vkey
@@ -780,7 +773,7 @@ mod tests {
         ];
         let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
 
-        let simplex_key = dt.as_triangulation().tds.simplex_keys().next().unwrap();
+        let simplex_key = dt.simplices().next().unwrap().0;
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
         dt.tri
             .tds
@@ -788,7 +781,7 @@ mod tests {
             .unwrap()
             .push_vertex_key(invalid_vkey);
 
-        let err = extract_facet_identifier_set(&dt.as_triangulation().tds).unwrap_err();
+        let err = extract_facet_identifier_set(dt.as_triangulation()).unwrap_err();
         assert_matches!(err, FacetError::BoundaryFacetRetrievalFailed { .. });
     }
 
@@ -822,15 +815,16 @@ mod tests {
         let hull = ConvexHull::try_from_triangulation(tri).unwrap();
 
         let hull_facet_set = extract_hull_facet_set(&hull, tri).unwrap();
-        let boundary_set = extract_facet_identifier_set(&tri.tds).unwrap();
+        let boundary_set = extract_facet_identifier_set(tri).unwrap();
 
         assert_eq!(hull_facet_set, boundary_set);
     }
 
     #[test]
     fn test_extract_edge_set_empty_tds_is_empty() {
-        let tds: Tds<(), (), 3> = Tds::empty();
-        let edges = extract_edge_set(&tds).unwrap();
+        let tri: Triangulation<FastKernel<f64>, (), (), 3> =
+            Triangulation::new_empty(FastKernel::new());
+        let edges = extract_edge_set(&tri).unwrap();
         assert!(edges.is_empty());
     }
 }

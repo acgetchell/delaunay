@@ -315,6 +315,46 @@ rules:
               ...
           }
 
+  - id: delaunay.rust.no-module-scope-cfg-test-use
+    languages:
+      - generic
+    severity: WARNING
+    message: "Move test-only imports into the test module instead of gating module-scope use items with #[cfg(test)]."
+    metadata:
+      category: maintainability
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/253"
+      rationale: >-
+        Module-scope `#[cfg(test)] use` items make production imports depend on
+        test-only compilation. Unit-test dependencies should live inside the
+        `#[cfg(test)] mod tests` block that uses them.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/examples/**/*.rs"
+    pattern-regex: '(?m)^[ \t]*#\[cfg\(test\)\][ \t]*\n[ \t]*use[ \t]+[^;]+;'
+
+  - id: delaunay.rust.no-public-api-cfg-test-shim
+    languages:
+      - generic
+    severity: WARNING
+    message: "Do not expose public APIs through cfg(test); use a real feature gate or keep helpers inside mod tests."
+    metadata:
+      category: api
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/253"
+      rationale: >-
+        Public or owner-level APIs should not exist only to satisfy unit tests.
+        If downstream users may call the item, gate it on the real feature that
+        owns the workflow; otherwise keep test helpers inside `mod tests`.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/examples/**/*.rs"
+    pattern-regex: '(?ms)^[ \t]*#\[cfg\(any\([^\]\n]*\btest\b[^\]\n]*\)\)\][^\n]*\n(?:(?!^[ \t]*pub[ \t]+(?:use|(?:const[ \t]+)?fn)\b).*\n)*^[ \t]*pub[ \t]+(?:use|(?:const[ \t]+)?fn)\b' # yamllint disable-line rule:line-length
+
   - id: delaunay.rust.no-deep-crate-paths-in-functions
     languages:
       - rust
@@ -1094,6 +1134,135 @@ rules:
       - pattern-regex: '^\s*pub\s+mod\s+tds_snapshot\b'
       - pattern-regex: '^\s*pub\s+use\s+.*\btds_snapshot\b'
 
+  - id: delaunay.rust.no-public-tds-accessor-methods
+    languages:
+      - generic
+    severity: WARNING
+    message: "Keep tds() accessors crate-private; expose owner-scoped query methods instead."
+    metadata:
+      category: api
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/253"
+      rationale: >-
+        Triangulation and DelaunayTriangulation should not expose their storage
+        layer through public tds() accessors. Public callers should use
+        owner-scoped queries such as facet_incidence_index(), ridges(),
+        simplex_vertices(), uuid lookup methods, and validation/report methods.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-regex: '^\s*pub\s+(?:const\s+)?fn\s+tds\s*(?:<[^>{}]*>)?\s*\('
+
+  - id: delaunay.rust.no-tds-accessor-in-doctests
+    languages:
+      - generic
+    severity: WARNING
+    message: "Doctests should use public owner queries instead of .tds()."
+    metadata:
+      category: api
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/253"
+      rationale: >-
+        Public Rust documentation should not teach callers to reach through a
+        triangulation owner into TDS storage. Use owner-scoped query and
+        validation APIs instead.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-regex: '^\s*//[!/].*\.tds\s*\('
+
+  - id: delaunay.rust.no-tds-accessor-in-markdown-examples
+    languages:
+      - generic
+    severity: WARNING
+    message: "Markdown examples should use public owner queries instead of .tds()."
+    metadata:
+      category: api
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/253"
+      rationale: >-
+        README and docs examples form part of the public API contract. They
+        should model owner-scoped queries and validators rather than exposing
+        TDS storage details.
+    paths:
+      include:
+        - "/README.md"
+        - "/docs/**/*.md"
+        - "/tests/semgrep/docs/**/*.md"
+      exclude:
+        - "/docs/archive/**"
+    pattern-regex: '\.tds\s*\('
+
+  - id: delaunay.rust.no-as-triangulation-storage-reach-through
+    languages:
+      - generic
+    severity: WARNING
+    message: "Use owner-scoped query methods or crate-private owner helpers instead of as_triangulation().tds/kernel reach-through."
+    metadata:
+      category: api
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/253"
+      rationale: >-
+        `as_triangulation()` is a public owner view, not a storage escape hatch.
+        Code and examples should use public owner queries when available, or a
+        named crate-private `tds()`/`kernel()` helper for intentionally
+        low-level internals.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/examples/**/*.rs"
+        - "/README.md"
+        - "/docs/**/*.md"
+      exclude:
+        - "/docs/archive/**"
+    pattern-regex: 'as_triangulation\s*\(\s*\)\s*(?:\n\s*)?\.\s*(?:tds|kernel)\b'
+
+  - id: delaunay.rust.no-as-triangulation-clone
+    languages:
+      - generic
+    severity: WARNING
+    message: "Use into_triangulation() when consuming a DelaunayTriangulation instead of cloning its borrowed as_triangulation() view."
+    metadata:
+      category: api
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/253"
+      rationale: >-
+        `as_triangulation()` is the borrowed view API. When a caller is done
+        with a DelaunayTriangulation and needs an owned Triangulation, moving
+        through `into_triangulation()` preserves the ownership intent and avoids
+        a large topology clone.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/examples/**/*.rs"
+        - "/README.md"
+        - "/docs/**/*.md"
+      exclude:
+        - "/docs/archive/**"
+    pattern-regex: 'as_triangulation\s*\(\s*\)\s*(?:\n\s*)?\.\s*clone\s*\('
+
+  - id: delaunay.rust.no-raw-tds-flip-predicate-verifier-outside-core-flips
+    languages:
+      - generic
+    severity: WARNING
+    message: "Use DelaunayTriangulation::verify_via_flip_predicates outside the low-level flip core."
+    metadata:
+      category: api
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/253"
+      rationale: >-
+        The raw TDS flip-predicate verifier pairs storage and kernels manually.
+        Ordinary validation should go through DelaunayTriangulation so topology,
+        kernel, and storage stay owned by one API boundary.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/tests/**/*.rs"
+      exclude:
+        - "/src/core/algorithms/flips.rs"
+    pattern-regex: '\bverify_tds_via_flip_predicates\s*\('
+
   - id: delaunay.rust.tds-serialize-must-use-snapshot
     languages:
       - generic
@@ -1562,6 +1731,26 @@ rules:
         - "/tests/semgrep/src/project_rules/rust_style.rs"
     pattern-regex: >-
       (?ms)^\s*pub\s+fn\s+(?!validated_)[A-Za-z0-9_]+\s*\([^{};]*?\)\s*->\s*Result\s*<\s*[A-Za-z0-9_:<> ,]*Fixture[A-Za-z0-9_:<> ,]*\s*,
+
+  - id: delaunay.rust.benchmark-k2-facet-selection-requires-interior-neighbor-guard
+    languages:
+      - generic
+    severity: WARNING
+    message: "Check the k=2 candidate has an interior neighbor before collecting facet support points."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/253"
+      rationale: >-
+        Boundary facets can share the same local support shape as interior k=2
+        candidates. The benchmark candidate selector must skip one-sided facets
+        before collecting support points so it diagnoses the real public flip
+        precondition instead of selecting an invalid boundary candidate.
+    paths:
+      include:
+        - "/benches/common/flip_workflows.rs"
+        - "/tests/semgrep/src/project_rules/rust_style.rs"
+    pattern-regex: >-
+      (?ms)pub\s+fn\s+flippable_k2_facet[A-Za-z0-9_]*\b[^{]*\{(?:(?!facet_neighbor_key\s*\(\s*dt\s*,\s*facet\s*\)\?\s*\.is_none\s*\(\)).)*facet_support_points\s*\(\s*dt\s*,\s*facet\s*\)\?
 
   - id: delaunay.rust.no-box-dyn-error-in-examples-benches
     languages:

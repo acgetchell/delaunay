@@ -9,8 +9,6 @@ use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
     ExplicitConstructionError, InsertionOrderStrategy, RetryPolicy, TopologyGuarantee, Vertex,
 };
-#[cfg(feature = "diagnostics")]
-use delaunay::prelude::diagnostics::debug_print_first_delaunay_violation;
 use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
 use delaunay::prelude::geometry::{CoordinateRange, Point, RobustKernel};
 use delaunay::prelude::insertion::{HullExtensionReason, InsertionError};
@@ -490,7 +488,7 @@ fn regression_empty_circumsphere_2d_minimal_case() {
 
     if dt.is_valid_delaunay().is_err() {
         #[cfg(feature = "diagnostics")]
-        debug_print_first_delaunay_violation(dt.tds(), None);
+        dt.debug_print_first_delaunay_violation(None);
     }
 
     dt.repair_delaunay_with_flips().unwrap();
@@ -521,7 +519,7 @@ fn regression_issue_120_minimal_failing_input_2d() {
 
     if let Err(err) = dt.validate() {
         #[cfg(feature = "diagnostics")]
-        debug_print_first_delaunay_violation(dt.tds(), None);
+        dt.debug_print_first_delaunay_violation(None);
         panic!("Issue #120 2D regression must validate Levels 1-4: {err}");
     }
 }
@@ -560,7 +558,7 @@ fn regression_periodic_neighbor_validation_uses_lifted_vertex_offsets() {
         "periodic image-point construction should populate lifted per-simplex offsets"
     );
     assert!(
-        dt.tds().is_valid().is_ok(),
+        dt.is_valid_structure().is_ok(),
         "neighbor validation must compare lifted (offset) identities"
     );
 }

@@ -2074,7 +2074,7 @@ impl InsertionError {
     }
 }
 
-/// Fill cavity by creating new simplices connecting boundary facets to new vertex.
+/// Fills a caller-validated replacement cavity with prechecked topology insertion.
 ///
 /// Each boundary facet becomes the base of a new (D+1)-simplex with the new vertex as apex.
 ///
@@ -2119,59 +2119,6 @@ impl InsertionError {
 /// boundary facets and logs warnings if found. Duplicate facets will create
 /// overlapping simplices, which will be detected and repaired by subsequent topology
 /// validation passes (see `detect_local_facet_issues` / `repair_local_facet_issues`).
-///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::insertion::fill_cavity;
-/// use delaunay::prelude::tds::FacetHandle;
-/// use delaunay::prelude::*;
-///
-/// # #[derive(Debug, thiserror::Error)]
-/// # enum ExampleError {
-/// #     #[error(transparent)]
-/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-/// #     #[error(transparent)]
-/// #     Insertion(#[from] delaunay::prelude::insertion::InsertionError),
-/// #     #[error(transparent)]
-/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-/// # }
-/// # fn main() -> Result<(), ExampleError> {
-/// let vertices = vec![
-///     delaunay::vertex![0.0, 0.0, 0.0]?,
-///     delaunay::vertex![1.0, 0.0, 0.0]?,
-///     delaunay::vertex![0.0, 1.0, 0.0]?,
-///     delaunay::vertex![0.0, 0.0, 1.0]?,
-/// ];
-/// let dt: DelaunayTriangulation<_, (), (), 3> =
-///     DelaunayTriangulationBuilder::new(&vertices).build()?;
-/// let mut tds = dt.tds().clone();
-/// let Some(vkey) = tds.vertex_keys().next() else { return Ok(()); };
-/// let boundary_facets: Vec<FacetHandle> = Vec::new();
-///
-/// let new_simplices = fill_cavity(&mut tds, vkey, &boundary_facets)?;
-/// assert!(new_simplices.is_empty());
-/// # Ok(())
-/// # }
-/// ```
-pub fn fill_cavity<U, V, const D: usize>(
-    tds: &mut Tds<U, V, D>,
-    new_vertex_key: VertexKey,
-    boundary_facets: &[FacetHandle],
-) -> Result<SimplexKeyBuffer, InsertionError>
-where
-    U: DataType,
-    V: DataType,
-{
-    fill_cavity_impl(
-        tds,
-        new_vertex_key,
-        boundary_facets,
-        CavityInsertionTopology::Checked,
-    )
-}
-
-/// Fills a replacement cavity using the transactional replacement insertion path.
 pub(crate) fn fill_cavity_replacing_simplices<U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     new_vertex_key: VertexKey,
@@ -2181,12 +2128,7 @@ where
     U: DataType,
     V: DataType,
 {
-    fill_cavity_impl(
-        tds,
-        new_vertex_key,
-        boundary_facets,
-        CavityInsertionTopology::Prechecked,
-    )
+    fill_cavity_impl(tds, new_vertex_key, boundary_facets)
 }
 
 /// Fills a caller-validated cavity without per-simplex global insertion scans.
@@ -2199,24 +2141,10 @@ where
     U: DataType,
     V: DataType,
 {
-    fill_cavity_impl(
-        tds,
-        new_vertex_key,
-        boundary_facets,
-        CavityInsertionTopology::Prechecked,
-    )
+    fill_cavity_impl(tds, new_vertex_key, boundary_facets)
 }
 
-/// Topology-check mode used while filling new cavity simplices.
-#[derive(Clone, Copy)]
-enum CavityInsertionTopology {
-    /// Run the standard TDS insertion checks against every existing simplex.
-    Checked,
-    /// Skip global insertion scans because the caller validated the local boundary.
-    Prechecked,
-}
-
-/// Shared cavity-fill implementation for checked, replacement, and prechecked insertions.
+/// Shared cavity-fill implementation for caller-validated replacement insertions.
 #[expect(
     clippy::too_many_lines,
     reason = "Cavity filling includes detailed debug instrumentation and error handling"
@@ -2225,7 +2153,6 @@ fn fill_cavity_impl<U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     new_vertex_key: VertexKey,
     boundary_facets: &[FacetHandle],
-    insertion_topology: CavityInsertionTopology,
 ) -> Result<SimplexKeyBuffer, InsertionError>
 where
     U: DataType,
@@ -2416,15 +2343,9 @@ where
         // Create and insert the new simplex
         let new_simplex =
             Simplex::try_new(new_simplex_vertices).map_err(CavityFillingError::from)?;
-        let simplex_key = match insertion_topology {
-            CavityInsertionTopology::Checked => {
-                tds.insert_simplex_with_mapping_trusted_vertices(new_simplex)
-            }
-            CavityInsertionTopology::Prechecked => {
-                tds.insert_simplex_with_mapping_prechecked_topology(new_simplex)
-            }
-        }
-        .map_err(CavityFillingError::from)?;
+        let simplex_key = tds
+            .insert_simplex_with_mapping_prechecked_topology(new_simplex)
+            .map_err(CavityFillingError::from)?;
 
         // Simplex creation provenance: log each newly created simplex with its
         // vertex ordering, geometric orientation, and source boundary facet.
@@ -2516,26 +2437,11 @@ where
 /// # Errors
 /// Returns error if neighbor wiring fails or simplices cannot be found.
 ///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::insertion::{InsertionError, wire_cavity_neighbors};
-/// use delaunay::prelude::collections::SimplexKeyBuffer;
-/// use delaunay::prelude::tds::Tds;
-///
-/// # fn main() -> Result<(), InsertionError> {
-/// let mut tds: Tds<(), (), 3> = Tds::empty();
-/// let new_simplices = SimplexKeyBuffer::new();
-///
-/// wire_cavity_neighbors(&mut tds, &new_simplices, [], None)?;
-/// # Ok(())
-/// # }
-/// ```
 #[expect(
     clippy::too_many_lines,
     reason = "Neighbor wiring keeps cohesive logic and debug accounting together"
 )]
-pub fn wire_cavity_neighbors<U, V, const D: usize, I>(
+pub(crate) fn wire_cavity_neighbors<U, V, const D: usize, I>(
     tds: &mut Tds<U, V, D>,
     new_simplices: &SimplexKeyBuffer,
     external_facets: I,
@@ -3096,63 +3002,11 @@ where
 /// pointer. Returns [`InsertionError::NonManifoldTopology`] if local facet incidence has more
 /// than two incident simplices for one facet.
 ///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
-/// use delaunay::prelude::DelaunayTriangulationConstructionError;
-/// use delaunay::prelude::insertion::{
-///     InsertionError, TdsMutationError, repair_neighbor_pointers_local,
-/// };
-///
-/// # #[derive(Debug, thiserror::Error)]
-/// # enum ExampleError {
-/// #     #[error(transparent)]
-/// #     Construction(#[from] DelaunayTriangulationConstructionError),
-/// #     #[error(transparent)]
-/// #     Mutation(#[from] TdsMutationError),
-/// #     #[error(transparent)]
-/// #     Insertion(#[from] InsertionError),
-/// #     #[error(transparent)]
-/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-/// # }
-/// # fn main() -> Result<(), ExampleError> {
-/// let vertices = [
-///     delaunay::vertex![0.0, 0.0]?,
-///     delaunay::vertex![1.0, 0.0]?,
-///     delaunay::vertex![0.0, 1.0]?,
-///     delaunay::vertex![1.0, 1.1]?,
-/// ];
-/// let dt: DelaunayTriangulation<_, (), (), 2> =
-///     DelaunayTriangulationBuilder::new(&vertices).build()?;
-/// let mut tds = dt.tds().clone();
-///
-/// let Some((simplex_key, facet_idx, neighbor_key)) = tds
-///     .simplices()
-///     .find_map(|(simplex_key, simplex)| {
-///         simplex.neighbors()?.enumerate().find_map(|(facet_idx, neighbor)| {
-///             neighbor.map(|neighbor_key| (simplex_key, facet_idx, neighbor_key))
-///         })
-///     })
-/// else {
-///     return Ok(());
-/// };
-///
-/// let repaired = repair_neighbor_pointers_local(&mut tds, &[simplex_key], Some(&[neighbor_key]))?;
-/// assert_eq!(repaired, 0);
-/// assert_eq!(
-///     tds.simplex(simplex_key)
-///         .and_then(|simplex| simplex.neighbor_key(facet_idx).flatten()),
-///     Some(neighbor_key)
-/// );
-/// # Ok(())
-/// # }
-/// ```
 #[expect(
     clippy::too_many_lines,
     reason = "Local neighbor repair keeps affected-set construction, facet indexing, and slot application together"
 )]
-pub fn repair_neighbor_pointers_local<U, V, const D: usize>(
+pub(crate) fn repair_neighbor_pointers_local<U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     seeds: &[SimplexKey],
     optional_external_simplices: Option<&[SimplexKey]>,
@@ -3342,43 +3196,11 @@ where
 /// Returns [`InsertionError::NonManifoldTopology`] if any facet is shared by more than
 /// 2 simplices, since neighbor pointers are not well-defined in that case.
 ///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::construction::{
-///     DelaunayTriangulation, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
-/// };
-/// use delaunay::prelude::insertion::{InsertionError, repair_neighbor_pointers};
-///
-/// # #[derive(Debug, thiserror::Error)]
-/// # enum ExampleError {
-/// #     #[error(transparent)]
-/// #     Construction(#[from] DelaunayTriangulationConstructionError),
-/// #     #[error(transparent)]
-/// #     Insertion(#[from] InsertionError),
-/// #     #[error(transparent)]
-/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-/// # }
-/// # fn main() -> Result<(), ExampleError> {
-/// let vertices = vec![
-///     delaunay::vertex![0.0, 0.0]?,
-///     delaunay::vertex![1.0, 0.0]?,
-///     delaunay::vertex![0.0, 1.0]?,
-/// ];
-/// let dt: DelaunayTriangulation<_, (), (), 2> =
-///     DelaunayTriangulationBuilder::new(&vertices).build()?;
-/// let mut tds = dt.tds().clone();
-///
-/// let _changed_slots = repair_neighbor_pointers(&mut tds)?;
-/// assert!(tds.is_valid().is_ok());
-/// # Ok(())
-/// # }
-/// ```
 #[expect(
     clippy::too_many_lines,
     reason = "Neighbor rebuild keeps facet indexing + wiring + application cohesive; prefer correctness and debuggability"
 )]
-pub fn repair_neighbor_pointers<U, V, const D: usize>(
+pub(crate) fn repair_neighbor_pointers<U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
 ) -> Result<usize, InsertionError>
 where
@@ -3742,29 +3564,7 @@ where
 /// - Finding visible facets fails
 /// - Cavity filling or neighbor wiring fails
 ///
-/// # Examples
-///
-/// ```rust
-/// use delaunay::prelude::insertion::extend_hull;
-/// use delaunay::prelude::tds::Tds;
-/// use delaunay::prelude::tds::VertexKey;
-/// use delaunay::prelude::geometry::FastKernel;
-/// use delaunay::prelude::geometry::Point;
-/// use delaunay::prelude::geometry::Coordinate;
-/// use slotmap::Key;
-///
-/// # fn main() -> Result<(), delaunay::prelude::geometry::CoordinateConversionError> {
-/// let mut tds: Tds<(), (), 3> = Tds::empty();
-/// let vkey = VertexKey::null();
-/// let kernel = FastKernel::<f64>::new();
-/// let point = Point::try_from([2.0, 2.0, 2.0])?;
-///
-/// let result = extend_hull(&mut tds, &kernel, vkey, &point);
-/// assert!(result.is_err());
-/// # Ok(())
-/// # }
-/// ```
-pub fn extend_hull<K, U, V, const D: usize>(
+pub(crate) fn extend_hull<K, U, V, const D: usize>(
     tds: &mut Tds<U, V, D>,
     kernel: &K,
     new_vertex_key: VertexKey,
@@ -4887,16 +4687,16 @@ mod tests {
         assert_matches!(insertion_source, Some(HullExtensionReason::Tds(_)));
     }
 
-    /// Macro to generate cavity filling tests for different dimensions
-    macro_rules! test_fill_cavity {
+    /// Macro to generate cavity replacement filling tests for different dimensions.
+    macro_rules! test_fill_cavity_replacing_simplices {
         ($dim:literal, $initial_vertices:expr, $new_vertex:expr, $expected_facets:literal) => {
             pastey::paste! {
                 #[test]
-                fn [<test_fill_cavity_ $dim d>]() {
+                fn [<test_fill_cavity_replacing_simplices_ $dim d>]() {
                     // Create initial simplex
                     let vertices = $initial_vertices;
                     let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-                    let tds = dt.tds_mut();
+                    let tds = dt.tds_mut_for_repair();
 
                     // Insert new vertex
                     let new_vertex = $new_vertex;
@@ -4911,8 +4711,9 @@ mod tests {
                     // Verify expected number of facets
                     assert_eq!(boundary_facets.len(), $expected_facets);
 
-                    // Fill cavity
-                    let new_simplices = fill_cavity(tds, new_vkey, &boundary_facets).unwrap();
+                    // Fill the replacement cavity.
+                    let new_simplices =
+                        fill_cavity_replacing_simplices(tds, new_vkey, &boundary_facets).unwrap();
 
                     // Should create one simplex per boundary facet
                     assert_eq!(new_simplices.len(), $expected_facets);
@@ -4948,7 +4749,7 @@ mod tests {
     }
 
     // Generate tests for dimensions 2-5
-    test_fill_cavity!(
+    test_fill_cavity_replacing_simplices!(
         2,
         vec![
             vertex!([0.0, 0.0]).unwrap(),
@@ -4959,7 +4760,7 @@ mod tests {
         3 // D+1 facets for a 2-simplex
     );
 
-    test_fill_cavity!(
+    test_fill_cavity_replacing_simplices!(
         3,
         vec![
             vertex!([0.0, 0.0, 0.0]).unwrap(),
@@ -4971,7 +4772,7 @@ mod tests {
         4 // D+1 facets for a 3-simplex
     );
 
-    test_fill_cavity!(
+    test_fill_cavity_replacing_simplices!(
         4,
         vec![
             vertex!([0.0, 0.0, 0.0, 0.0]).unwrap(),
@@ -4984,7 +4785,7 @@ mod tests {
         5 // D+1 facets for a 4-simplex
     );
 
-    test_fill_cavity!(
+    test_fill_cavity_replacing_simplices!(
         5,
         vec![
             vertex!([0.0, 0.0, 0.0, 0.0, 0.0]).unwrap(),
@@ -5001,14 +4802,14 @@ mod tests {
     // Error case tests
 
     #[test]
-    fn test_fill_cavity_with_invalid_vertex_key() {
+    fn test_fill_cavity_replacing_simplices_with_invalid_vertex_key() {
         let vertices = vec![
             vertex!([0.0, 0.0]).unwrap(),
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut();
+        let tds = dt.tds_mut_for_repair();
 
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
         let simplex_key = tds.simplex_keys().next().unwrap();
@@ -5016,7 +4817,7 @@ mod tests {
             .map(|i| FacetHandle::from_validated(simplex_key, i))
             .collect();
 
-        let result = fill_cavity(tds, invalid_vkey, &boundary_facets);
+        let result = fill_cavity_replacing_simplices(tds, invalid_vkey, &boundary_facets);
         assert_matches!(
             result,
             Err(InsertionError::CavityFilling {
@@ -5027,14 +4828,14 @@ mod tests {
     }
 
     #[test]
-    fn test_fill_cavity_with_invalid_facet_simplex() {
+    fn test_fill_cavity_replacing_simplices_with_invalid_facet_simplex() {
         let vertices = vec![
             vertex!([0.0, 0.0]).unwrap(),
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut();
+        let tds = dt.tds_mut_for_repair();
 
         let new_vkey = tds
             .insert_vertex_with_mapping(vertex!([0.5, 0.5]).unwrap())
@@ -5044,7 +4845,7 @@ mod tests {
             .map(|i| FacetHandle::from_validated(invalid_simplex_key, i))
             .collect();
 
-        let result = fill_cavity(tds, new_vkey, &invalid_boundary_facets);
+        let result = fill_cavity_replacing_simplices(tds, new_vkey, &invalid_boundary_facets);
         assert!(result.is_err());
         assert_matches!(
             result,
@@ -5055,14 +4856,14 @@ mod tests {
     }
 
     #[test]
-    fn test_fill_cavity_with_invalid_facet_index() {
+    fn test_fill_cavity_replacing_simplices_with_invalid_facet_index() {
         let vertices = vec![
             vertex!([0.0, 0.0]).unwrap(),
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut();
+        let tds = dt.tds_mut_for_repair();
 
         let new_vkey = tds
             .insert_vertex_with_mapping(vertex!([0.5, 0.5]).unwrap())
@@ -5071,7 +4872,7 @@ mod tests {
         let original_simplex_count = tds.number_of_simplices();
         let invalid_boundary_facets = vec![FacetHandle::from_validated(simplex_key, 3)];
 
-        let result = fill_cavity(tds, new_vkey, &invalid_boundary_facets);
+        let result = fill_cavity_replacing_simplices(tds, new_vkey, &invalid_boundary_facets);
 
         assert_matches!(
             result,
@@ -5094,7 +4895,7 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut();
+        let tds = dt.tds_mut_for_repair();
 
         let mut invalid_simplices = SimplexKeyBuffer::new();
         invalid_simplices.push(SimplexKey::from(KeyData::from_ffi(u64::MAX)));
@@ -5347,34 +5148,34 @@ mod tests {
     }
 
     #[test]
-    fn test_fill_cavity_with_empty_boundary_facets() {
+    fn test_fill_cavity_replacing_simplices_with_empty_boundary_facets() {
         let vertices = vec![
             vertex!([0.0, 0.0]).unwrap(),
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut();
+        let tds = dt.tds_mut_for_repair();
 
         let new_vkey = tds
             .insert_vertex_with_mapping(vertex!([0.5, 0.5]).unwrap())
             .unwrap();
         let empty_facets: Vec<FacetHandle> = vec![];
-        let result = fill_cavity(tds, new_vkey, &empty_facets);
+        let result = fill_cavity_replacing_simplices(tds, new_vkey, &empty_facets);
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 0);
     }
 
     #[test]
-    fn test_fill_cavity_errors_on_boundary_simplex_wrong_vertex_count() {
+    fn test_fill_cavity_replacing_simplices_errors_on_boundary_simplex_wrong_vertex_count() {
         let vertices = vec![
             vertex!([0.0, 0.0]).unwrap(),
             vertex!([1.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut();
+        let tds = dt.tds_mut_for_repair();
 
         // Insert a new vertex (apex)
         let new_vkey = tds
@@ -5389,7 +5190,7 @@ mod tests {
             .push_vertex_key(extra_vkey);
 
         let boundary_facets = vec![FacetHandle::from_validated(simplex_key, 0)];
-        let err = fill_cavity(tds, new_vkey, &boundary_facets).unwrap_err();
+        let err = fill_cavity_replacing_simplices(tds, new_vkey, &boundary_facets).unwrap_err();
 
         assert_matches!(
             err,
@@ -5460,7 +5261,7 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut();
+        let tds = dt.tds_mut_for_repair();
 
         let simplex_key = tds.simplex_keys().next().unwrap();
         let vkey0 = tds.simplex(simplex_key).unwrap().vertices()[0];
@@ -6347,7 +6148,7 @@ mod tests {
                 fn [<test_repair_neighbor_pointers_ $dim d>]() {
                     let vertices = $initial_vertices;
                     let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-                    let tds = dt.tds_mut();
+                    let tds = dt.tds_mut_for_repair();
 
                     // Verify all neighbor pointers are initially valid
                     for (_, simplex) in tds.simplices() {
@@ -6435,7 +6236,7 @@ mod tests {
             vertex!([1.0, 1.1]).unwrap(), // break cocircular symmetry
         ];
         let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut();
+        let tds = dt.tds_mut_for_repair();
 
         // Remove all neighbor pointers.
         tds.clear_all_neighbors();
@@ -6472,7 +6273,7 @@ mod tests {
                 fn [<test_repair_neighbor_pointers_local_reconstructs_missing_slot_ $dim d>]() {
                     let vertices = $initial_vertices;
                     let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-                    let tds = dt.tds_mut();
+                    let tds = dt.tds_mut_for_repair();
                     let (simplex_key, facet_idx, neighbor_key, _) =
                         first_neighbor_pair(tds).expect("test triangulation should have adjacent simplices");
 
@@ -6620,7 +6421,7 @@ mod tests {
             vertex!([1.0, 1.1]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut();
+        let tds = dt.tds_mut_for_repair();
         let (simplex_key, facet_idx, neighbor_key, _) =
             first_neighbor_pair(tds).expect("test triangulation should have adjacent simplices");
         let stale_neighbor = SimplexKey::from(KeyData::from_ffi(u64::MAX - 7));
@@ -6708,7 +6509,7 @@ mod tests {
             vertex!([0.5, 0.35]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut();
+        let tds = dt.tds_mut_for_repair();
         let (simplex_key, facet_idx, _neighbor_key, _) =
             first_neighbor_pair(tds).expect("test triangulation should have adjacent simplices");
 
@@ -6733,7 +6534,7 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut();
+        let tds = dt.tds_mut_for_repair();
 
         let kernel = FastKernel::<f64>::new();
         let p = Point::try_new([2.0, 2.0]).expect("finite point coordinates");
@@ -6754,7 +6555,7 @@ mod tests {
             vertex!([0.0, 1.0]).unwrap(),
         ];
         let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = dt.tds_mut();
+        let tds = dt.tds_mut_for_repair();
 
         let kernel = FastKernel::<f64>::new();
         let p = Point::try_new([0.25, 0.25]).expect("finite point coordinates"); // inside

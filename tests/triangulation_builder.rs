@@ -19,9 +19,7 @@ use delaunay::prelude::geometry::RobustKernel;
 use delaunay::prelude::insertion::InsertionError;
 use delaunay::prelude::tds::{InvariantError, TdsConstructionError, TdsError, VertexKey};
 use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
-use delaunay::prelude::topology::validation::{
-    TopologyClassification, count_simplices, euler_characteristic, validate_triangulation_euler,
-};
+use delaunay::prelude::topology::validation::{TopologyClassification, euler_characteristic};
 use delaunay::prelude::validation::{TriangulationValidationError, ValidationPolicy};
 
 // =============================================================================
@@ -471,7 +469,7 @@ fn count_boundary_facets<K, U, V, const D: usize>(dt: &DelaunayTriangulation<K, 
 
 /// `toroidal` builds a valid 2D periodic triangulation with χ = 0.
 ///
-/// Verifies TDS structural validity and χ = 0 directly.
+/// Verifies structural validity and χ = 0 directly.
 /// See the macro-generated toroidal validation tests for the full
 /// `PLManifold` and Level 4 `validate()` paths.
 #[test]
@@ -479,17 +477,17 @@ fn test_builder_toroidal_chi_zero_2d() {
     let dt = build_toroidal_triangulation::<2>();
 
     assert!(
-        dt.tds().is_valid().is_ok(),
-        "TDS structural validity should pass for periodic triangulation"
+        dt.is_valid_structure().is_ok(),
+        "structural validity should pass for periodic triangulation"
     );
-    let counts = count_simplices(dt.tds()).unwrap();
+    let counts = dt.simplex_counts().unwrap();
     let chi = euler_characteristic(&counts);
     assert_eq!(
         chi, 0,
         "Euler characteristic of periodic 2D triangulation must be 0 (torus)"
     );
 
-    let semantic_result = validate_triangulation_euler(dt.tds(), dt.global_topology()).unwrap();
+    let semantic_result = dt.euler_check().unwrap();
     assert_eq!(
         semantic_result.classification,
         TopologyClassification::ClosedToroid(2),
@@ -542,7 +540,7 @@ fn test_builder_toroidal_convenience() {
         .expect("periodic toroidal builder should succeed");
 
     assert!(dt.global_topology().is_periodic());
-    assert!(dt.tds().is_valid().is_ok());
+    assert!(dt.is_valid_structure().is_ok());
 }
 
 /// Periodic quotient construction exposes the same fluent statistics terminal.
@@ -827,8 +825,8 @@ fn test_explicit_2d_two_triangle_quad() {
     assert_eq!(dt.number_of_vertices(), 4);
     assert_eq!(dt.number_of_simplices(), 2);
     assert!(
-        dt.tds().is_valid().is_ok(),
-        "TDS should be structurally valid"
+        dt.is_valid_structure().is_ok(),
+        "triangulation should be structurally valid"
     );
 
     // Verify neighbor pointers: the two triangles share the edge (0,2) so
@@ -898,8 +896,8 @@ fn test_explicit_normalizes_incoherent_simplex_order() {
         .expect("explicit build should normalize incoherent simplex ordering");
 
     assert!(
-        dt.tds().is_valid().is_ok(),
-        "builder should canonicalize incoherent simplex orderings into a valid TDS"
+        dt.is_valid_structure().is_ok(),
+        "builder should canonicalize incoherent simplex orderings into a valid structure"
     );
 }
 
@@ -924,8 +922,8 @@ fn test_explicit_3d_two_tetrahedra() {
     assert_eq!(dt.number_of_vertices(), 5);
     assert_eq!(dt.number_of_simplices(), 2);
     assert!(
-        dt.tds().is_valid().is_ok(),
-        "TDS should be structurally valid"
+        dt.is_valid_structure().is_ok(),
+        "triangulation should be structurally valid"
     );
 }
 
@@ -946,8 +944,7 @@ fn test_explicit_round_trip_3d() {
     let original_vertex_count = dt_original.number_of_vertices();
     let original_simplex_count = dt_original.number_of_simplices();
 
-    let tds = dt_original.tds();
-    let vertex_keys: Vec<_> = tds.vertex_keys().collect();
+    let vertex_keys: Vec<_> = dt_original.vertices().map(|(key, _)| key).collect();
     let key_to_index: HashMap<_, _> = vertex_keys
         .iter()
         .enumerate()
@@ -956,11 +953,11 @@ fn test_explicit_round_trip_3d() {
 
     let extracted_vertices: Vec<_> = vertex_keys
         .iter()
-        .map(|&vk| *tds.vertex(vk).unwrap())
+        .map(|&vk| *dt_original.vertex(vk).unwrap())
         .collect();
 
     let mut simplex_specs: Vec<Vec<usize>> = Vec::new();
-    for (_, simplex) in tds.simplices() {
+    for (_, simplex) in dt_original.simplices() {
         let spec: Vec<usize> = simplex
             .vertices()
             .iter()
@@ -983,8 +980,8 @@ fn test_explicit_round_trip_3d() {
         original_simplex_count
     );
     assert!(
-        dt_reconstructed.tds().is_valid().is_ok(),
-        "Reconstructed 3D TDS should be structurally valid"
+        dt_reconstructed.is_valid_structure().is_ok(),
+        "reconstructed 3D triangulation should be structurally valid"
     );
 }
 
@@ -1006,8 +1003,7 @@ fn test_explicit_round_trip_2d() {
     let original_simplex_count = dt_original.number_of_simplices();
 
     // Extract vertex keys → index mapping and simplex specifications.
-    let tds = dt_original.tds();
-    let vertex_keys: Vec<_> = tds.vertex_keys().collect();
+    let vertex_keys: Vec<_> = dt_original.vertices().map(|(key, _)| key).collect();
     let key_to_index: HashMap<_, _> = vertex_keys
         .iter()
         .enumerate()
@@ -1016,11 +1012,11 @@ fn test_explicit_round_trip_2d() {
 
     let extracted_vertices: Vec<_> = vertex_keys
         .iter()
-        .map(|&vk| *tds.vertex(vk).unwrap())
+        .map(|&vk| *dt_original.vertex(vk).unwrap())
         .collect();
 
     let mut simplex_specs: Vec<Vec<usize>> = Vec::new();
-    for (_, simplex) in tds.simplices() {
+    for (_, simplex) in dt_original.simplices() {
         let spec: Vec<usize> = simplex
             .vertices()
             .iter()
@@ -1044,8 +1040,8 @@ fn test_explicit_round_trip_2d() {
         original_simplex_count
     );
     assert!(
-        dt_reconstructed.tds().is_valid().is_ok(),
-        "Reconstructed TDS should be structurally valid"
+        dt_reconstructed.is_valid_structure().is_ok(),
+        "reconstructed triangulation should be structurally valid"
     );
 }
 
@@ -1157,7 +1153,7 @@ fn test_explicit_2d_single_triangle() {
 
     assert_eq!(dt.number_of_vertices(), 3);
     assert_eq!(dt.number_of_simplices(), 1);
-    assert!(dt.tds().is_valid().is_ok());
+    assert!(dt.is_valid_structure().is_ok());
 }
 
 /// Minimal case: a single tetrahedron in 3D.
@@ -1178,7 +1174,7 @@ fn test_explicit_3d_single_tetrahedron() {
 
     assert_eq!(dt.number_of_vertices(), 4);
     assert_eq!(dt.number_of_simplices(), 1);
-    assert!(dt.tds().is_valid().is_ok());
+    assert!(dt.is_valid_structure().is_ok());
 }
 
 /// Non-Delaunay mesh: prescribed connectivity that violates the empty-circumsphere

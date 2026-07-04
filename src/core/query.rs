@@ -7,19 +7,33 @@
 use crate::core::adjacency::{
     EdgeIndex, IncidenceView, SimplexNeighborIndex, TopologyIndexBuildError, TriangulationAdjacency,
 };
+use crate::core::algorithms::flips::{FlipError, RidgeHandle};
+use crate::core::algorithms::locate::{
+    ConflictError, LocateError, LocateResult, LocateStats,
+    find_conflict_region as find_conflict_region_in_tds, locate as locate_in_tds,
+    locate_with_stats as locate_with_stats_in_tds,
+};
 use crate::core::collections::{
-    FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
-    fast_hash_map_with_capacity, fast_hash_set_with_capacity,
+    FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer, SmallBuffer, Uuid,
+    VertexKeyBuffer, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
 };
 use crate::core::edge::{EdgeKey, EdgeKeyError, EdgeView};
-use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter, FacetHandle};
+use crate::core::facet::{
+    AllFacetsIter, BoundaryFacetsIter, FacetError, FacetHandle, FacetToSimplicesIndex, FacetView,
+    SimplexFacetsIter,
+};
 use crate::core::simplex::Simplex;
 use crate::core::tds::{SimplexKey, TdsError, VertexKey};
 use crate::core::triangulation::Triangulation;
 use crate::core::util::usize_to_u8;
 use crate::core::vertex::Vertex;
+use crate::geometry::kernel::Kernel;
+use crate::geometry::point::Point;
 use crate::topology::manifold::{ManifoldError, boundary_facet_handles_from_index};
-use std::marker::PhantomData;
+use crate::topology::ridge::{
+    RidgeCandidate, RidgeCandidateError, RidgeQuery, RidgeView,
+    ridge_star_simplices as ridge_star_simplices_in_tds,
+};
 
 /// Errors returned by read-only triangulation queries.
 ///
@@ -77,6 +91,29 @@ pub enum QueryError {
         /// Typed topology validation error that prevented the query.
         #[source]
         source: Box<ManifoldError>,
+    },
+
+    /// A simplex-local ridge handle cannot represent the omitted vertex index.
+    #[error(
+        "ridge index {original_index} for simplex {simplex_key:?} cannot fit in u8 handle storage; simplex has {vertex_count} vertices"
+    )]
+    RidgeIndexCapacityExceeded {
+        /// Simplex whose local ridge index overflowed handle storage.
+        simplex_key: SimplexKey,
+        /// Local omitted-vertex index that could not fit in `u8`.
+        original_index: usize,
+        /// Number of vertices in the simplex.
+        vertex_count: usize,
+    },
+
+    /// A simplex produced invalid ridge vertices while building a topology ridge query.
+    #[error("simplex {simplex_key:?} produced an invalid topology ridge: {source}")]
+    InvalidRidgeCandidate {
+        /// Simplex whose vertex set produced the invalid ridge candidate.
+        simplex_key: SimplexKey,
+        /// Typed ridge-candidate validation failure.
+        #[source]
+        source: RidgeCandidateError,
     },
 }
 
@@ -139,6 +176,169 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         self.tds.simplices()
     }
 
+    /// Returns simplex keys paired with their stable UUIDs.
+    ///
+    /// This is a zero-allocation identity iterator for diagnostics, snapshots,
+    /// and downstream bookkeeping that should not borrow the storage owner.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let tri = dt.as_triangulation();
+    /// let Some((simplex_key, simplex_uuid)) = tri.simplex_uuids().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// assert_eq!(tri.simplex_uuid_from_key(simplex_key), Some(simplex_uuid));
+    /// assert_eq!(tri.simplex_key_from_uuid(&simplex_uuid), Some(simplex_key));
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn simplex_uuids(&self) -> impl Iterator<Item = (SimplexKey, Uuid)> + '_ {
+        self.tds
+            .simplices()
+            .map(|(simplex_key, simplex)| (simplex_key, simplex.uuid()))
+    }
+
+    /// Returns a read-only simplex view by key.
+    ///
+    /// This is the keyed counterpart to [`Triangulation::simplices`](Self::simplices).
+    /// It lends only the requested element instead of exposing the underlying
+    /// topology owner.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::tds::SimplexKey;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let tri = dt.as_triangulation();
+    /// let Some((simplex_key, _)) = tri.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// assert!(tri.simplex(simplex_key).is_some());
+    /// assert!(tri.simplex(SimplexKey::default()).is_none());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn simplex(&self, key: SimplexKey) -> Option<&Simplex<V, D>> {
+        self.tds.simplex(key)
+    }
+
+    /// Returns a simplex key for a stable simplex UUID.
+    ///
+    /// This is the owner-bound counterpart to
+    /// [`Tds::simplex_key_from_uuid`](crate::prelude::tds::Tds::simplex_key_from_uuid).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    /// use uuid::Uuid;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let tri = dt.as_triangulation();
+    /// let Some((simplex_key, simplex_uuid)) = tri.simplex_uuids().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// assert_eq!(tri.simplex_key_from_uuid(&simplex_uuid), Some(simplex_key));
+    /// assert_eq!(tri.simplex_key_from_uuid(&Uuid::nil()), None);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn simplex_key_from_uuid(&self, simplex_uuid: &Uuid) -> Option<SimplexKey> {
+        self.tds.simplex_key_from_uuid(simplex_uuid)
+    }
+
+    /// Returns the stable UUID for a live simplex key.
+    ///
+    /// This is the owner-bound counterpart to
+    /// [`Tds::simplex_uuid_from_key`](crate::prelude::tds::Tds::simplex_uuid_from_key).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::tds::SimplexKey;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let tri = dt.as_triangulation();
+    /// let Some((simplex_key, simplex_uuid)) = tri.simplex_uuids().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// assert_eq!(tri.simplex_uuid_from_key(simplex_key), Some(simplex_uuid));
+    /// assert_eq!(tri.simplex_uuid_from_key(SimplexKey::default()), None);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn simplex_uuid_from_key(&self, simplex_key: SimplexKey) -> Option<Uuid> {
+        self.tds.simplex_uuid_from_key(simplex_key)
+    }
+
+    /// Returns `true` when `key` identifies a live simplex in this triangulation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::tds::SimplexKey;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let tri = dt.as_triangulation();
+    /// let Some((simplex_key, _)) = tri.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// assert!(tri.contains_simplex(simplex_key));
+    /// assert!(!tri.contains_simplex(SimplexKey::default()));
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn contains_simplex(&self, key: SimplexKey) -> bool {
+        self.tds.contains_simplex(key)
+    }
+
     /// Returns an iterator over all vertices in the triangulation.
     ///
     /// Delegates to the underlying Tds.
@@ -176,6 +376,169 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// ```
     pub fn vertices(&self) -> impl Iterator<Item = (VertexKey, &Vertex<U, D>)> {
         self.tds.vertices()
+    }
+
+    /// Returns vertex keys paired with their stable UUIDs.
+    ///
+    /// This is a zero-allocation identity iterator for diagnostics, snapshots,
+    /// and downstream bookkeeping that should not borrow the storage owner.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let tri = dt.as_triangulation();
+    /// let Some((vertex_key, vertex_uuid)) = tri.vertex_uuids().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// assert_eq!(tri.vertex_uuid_from_key(vertex_key), Some(vertex_uuid));
+    /// assert_eq!(tri.vertex_key_from_uuid(&vertex_uuid), Some(vertex_key));
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn vertex_uuids(&self) -> impl Iterator<Item = (VertexKey, Uuid)> + '_ {
+        self.tds
+            .vertices()
+            .map(|(vertex_key, vertex)| (vertex_key, vertex.uuid()))
+    }
+
+    /// Returns a read-only vertex view by key.
+    ///
+    /// This is the keyed counterpart to [`Triangulation::vertices`](Self::vertices).
+    /// It lends only the requested element instead of exposing the underlying
+    /// topology owner.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::tds::VertexKey;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let tri = dt.as_triangulation();
+    /// let Some((vertex_key, _)) = tri.vertices().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// assert!(tri.vertex(vertex_key).is_some());
+    /// assert!(tri.vertex(VertexKey::default()).is_none());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn vertex(&self, key: VertexKey) -> Option<&Vertex<U, D>> {
+        self.tds.vertex(key)
+    }
+
+    /// Returns a vertex key for a stable vertex UUID.
+    ///
+    /// This is the owner-bound counterpart to
+    /// [`Tds::vertex_key_from_uuid`](crate::prelude::tds::Tds::vertex_key_from_uuid).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    /// use uuid::Uuid;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let tri = dt.as_triangulation();
+    /// let Some((vertex_key, vertex_uuid)) = tri.vertex_uuids().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// assert_eq!(tri.vertex_key_from_uuid(&vertex_uuid), Some(vertex_key));
+    /// assert_eq!(tri.vertex_key_from_uuid(&Uuid::nil()), None);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn vertex_key_from_uuid(&self, vertex_uuid: &Uuid) -> Option<VertexKey> {
+        self.tds.vertex_key_from_uuid(vertex_uuid)
+    }
+
+    /// Returns the stable UUID for a live vertex key.
+    ///
+    /// This is the owner-bound counterpart to
+    /// [`Tds::vertex_uuid_from_key`](crate::prelude::tds::Tds::vertex_uuid_from_key).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::tds::VertexKey;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let tri = dt.as_triangulation();
+    /// let Some((vertex_key, vertex_uuid)) = tri.vertex_uuids().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// assert_eq!(tri.vertex_uuid_from_key(vertex_key), Some(vertex_uuid));
+    /// assert_eq!(tri.vertex_uuid_from_key(VertexKey::default()), None);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn vertex_uuid_from_key(&self, vertex_key: VertexKey) -> Option<Uuid> {
+        self.tds.vertex_uuid_from_key(vertex_key)
+    }
+
+    /// Returns `true` when `key` identifies a live vertex in this triangulation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::tds::VertexKey;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let tri = dt.as_triangulation();
+    /// let Some((vertex_key, _)) = tri.vertices().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// assert!(tri.contains_vertex_key(vertex_key));
+    /// assert!(!tri.contains_vertex_key(VertexKey::default()));
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn contains_vertex_key(&self, key: VertexKey) -> bool {
+        self.tds.contains_vertex_key(key)
     }
 
     /// Returns the number of vertices in the triangulation.
@@ -244,6 +607,58 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         self.tds.number_of_simplices()
     }
 
+    /// Returns the topology generation counter for this triangulation.
+    ///
+    /// The value changes after topology mutations and is useful for detecting
+    /// stale detached handles in tests and diagnostics.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let tri = dt.as_triangulation();
+    ///
+    /// assert_eq!(tri.topology_generation(), tri.topology_generation());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn topology_generation(&self) -> u64 {
+        self.tds.generation()
+    }
+
+    /// Returns whether adjacent simplices have coherent opposite facet orientations.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    ///
+    /// assert!(dt.as_triangulation().is_coherently_oriented());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn is_coherently_oriented(&self) -> bool {
+        self.tds.is_coherently_oriented()
+    }
+
     /// Returns the dimension of the triangulation.
     ///
     /// # Examples
@@ -293,7 +708,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// An iterator yielding `Result<FacetView, FacetError>` items for all facets
     /// in the triangulation.
     ///
-    /// Individual iterator items return [`FacetError`](crate::prelude::tds::FacetError)
+    /// Individual iterator items return [`FacetError`]
     /// if a facet view cannot be constructed from the current TDS state.
     ///
     /// # Examples
@@ -333,6 +748,448 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     #[must_use]
     pub fn facets(&self) -> AllFacetsIter<'_, U, V, D> {
         self.tds.facets()
+    }
+
+    /// Returns an iterator over all facets of one simplex.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FacetError`] if `simplex_key` is missing or this dimension
+    /// cannot be represented by public facet-index storage.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let tri = dt.as_triangulation();
+    /// let Some((simplex_key, _)) = tri.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// assert_eq!(tri.simplex_facets(simplex_key)?.count(), 4);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn simplex_facets(
+        &self,
+        simplex_key: SimplexKey,
+    ) -> Result<SimplexFacetsIter<'_, U, V, D>, FacetError> {
+        self.tds.try_simplex_facets(simplex_key)
+    }
+
+    /// Validates and returns a simplex-local facet handle.
+    ///
+    /// This is the owner-bound counterpart to [`FacetHandle::try_new`]. It lets
+    /// callers validate a runtime simplex key and facet index without borrowing
+    /// the underlying storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FacetError`] if `simplex_key` is missing or `facet_index` is
+    /// outside the simplex's local facet range.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let tri = dt.as_triangulation();
+    /// let Some((simplex_key, _)) = tri.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// let facet = tri.facet_handle(simplex_key, 0)?;
+    /// assert_eq!(facet.simplex_key(), simplex_key);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn facet_handle(
+        &self,
+        simplex_key: SimplexKey,
+        facet_index: u8,
+    ) -> Result<FacetHandle, FacetError> {
+        FacetHandle::try_new(&self.tds, simplex_key, facet_index)
+    }
+
+    /// Revalidates a facet handle and returns a borrowed facet view.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FacetError`] if the handle is stale or no longer identifies a
+    /// live simplex-local facet.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let tri = dt.as_triangulation();
+    /// let Some((simplex_key, _)) = tri.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    /// let facet = tri.facet_handle(simplex_key, 0)?;
+    ///
+    /// let view = tri.facet_view(facet)?;
+    /// assert_eq!(view.handle(), facet);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn facet_view(&self, facet: FacetHandle) -> Result<FacetView<'_, U, V, D>, FacetError> {
+        facet.view(&self.tds)
+    }
+
+    /// Builds the owner-bound facet-to-simplices incidence index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TdsError`] if the triangulation's facet incidence is
+    /// structurally inconsistent.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let tri = dt.as_triangulation();
+    ///
+    /// let index = tri.facet_incidence_index()?;
+    /// assert_eq!(index.iter().filter(|facet| facet.is_one_sided()).count(), 3);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn facet_incidence_index(&self) -> Result<FacetToSimplicesIndex<'_, U, V, D>, TdsError> {
+        self.tds.build_facet_to_simplices_index()
+    }
+
+    /// Returns unique topology ridges in the triangulation.
+    ///
+    /// A ridge is a codimension-two face. In 2D, ridges are vertices; in 3D,
+    /// ridges are edges. Dimensions below 2 have no topological ridges and
+    /// yield an empty iterator.
+    ///
+    /// ## Allocation and iteration order
+    ///
+    /// This method streams ridge candidates while maintaining an internal
+    /// deduplication set for ridges shared by multiple simplices. The iteration
+    /// order follows the current simplex storage order and is not stable across
+    /// topology edits.
+    ///
+    /// # Errors
+    ///
+    /// Individual iterator items return [`QueryError::InvalidRidgeCandidate`]
+    /// if stored simplex vertices cannot form a valid codimension-two ridge.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Query(#[from] delaunay::query::QueryError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = vec![
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    ///
+    /// let ridge_count = dt
+    ///     .as_triangulation()
+    ///     .ridges()
+    ///     .try_fold(0_usize, |count, ridge| ridge.map(|_| count + 1))?;
+    /// assert_eq!(ridge_count, 3);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn ridges(&self) -> impl Iterator<Item = Result<RidgeCandidate<D>, QueryError>> + '_ {
+        let simplex_cap = self.tds.number_of_simplices();
+        let ridges_per_simplex = (D + 1).saturating_mul(D) / 2;
+        let mut seen = fast_hash_set_with_capacity(simplex_cap.saturating_mul(ridges_per_simplex));
+
+        self.tds
+            .simplices()
+            .filter(move |_| D >= 2)
+            .flat_map(|(simplex_key, simplex)| {
+                let vertices = simplex.vertices();
+                (0..vertices.len()).flat_map(move |omit_a| {
+                    ((omit_a + 1)..vertices.len()).map(move |omit_b| {
+                        ridge_candidate_from_simplex_vertices::<D>(
+                            simplex_key,
+                            vertices,
+                            omit_a,
+                            omit_b,
+                        )
+                    })
+                })
+            })
+            .filter_map(move |result| match result {
+                Ok(ridge) => {
+                    if seen.insert(ridge.clone()) {
+                        Some(Ok(ridge))
+                    } else {
+                        None
+                    }
+                }
+                Err(error) => Some(Err(error)),
+            })
+    }
+
+    /// Returns simplex-local ridge handles for `K3` Pachner moves.
+    ///
+    /// These handles identify codimension-two faces by a containing simplex and
+    /// two omitted vertex indices, matching the representation required by
+    /// `K3` Pachner moves. Dimensions below 3 have no `K3` Pachner ridge
+    /// candidates and yield an empty iterator.
+    ///
+    /// ## Allocation and iteration order
+    ///
+    /// This method streams handles in the current simplex storage order. The
+    /// order is not stable across topology edits.
+    ///
+    /// # Errors
+    ///
+    /// Individual iterator items return [`QueryError::RidgeIndexCapacityExceeded`]
+    /// if a simplex-local omitted vertex index cannot fit in the public
+    /// [`RidgeHandle`] index storage.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Query(#[from] delaunay::query::QueryError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = vec![
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    ///
+    /// let ridge_count = dt
+    ///     .as_triangulation()
+    ///     .ridge_handles()
+    ///     .try_fold(0_usize, |count, ridge| ridge.map(|_| count + 1))?;
+    /// assert_eq!(ridge_count, 6);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn ridge_handles(&self) -> impl Iterator<Item = Result<RidgeHandle, QueryError>> + '_ {
+        self.tds
+            .simplices()
+            .filter(move |_| D >= 3)
+            .flat_map(|(simplex_key, simplex)| {
+                ridge_handles_for_simplex(simplex_key, simplex.number_of_vertices())
+            })
+    }
+
+    /// Validates and returns a simplex-local ridge handle.
+    ///
+    /// This is the owner-bound counterpart to [`RidgeHandle::try_new`]. It lets
+    /// callers validate runtime omitted-vertex indices without borrowing the
+    /// underlying storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FlipError`] if the dimension does not support ridge flips, the
+    /// simplex key is missing, or either omitted vertex index is invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let tri = dt.as_triangulation();
+    /// let Some((simplex_key, _)) = tri.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// let ridge = tri.ridge_handle(simplex_key, 0, 1)?;
+    /// assert_eq!(ridge.simplex_key(), simplex_key);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn ridge_handle(
+        &self,
+        simplex_key: SimplexKey,
+        omit_a: u8,
+        omit_b: u8,
+    ) -> Result<RidgeHandle, FlipError> {
+        RidgeHandle::try_new(&self.tds, simplex_key, omit_a, omit_b)
+    }
+
+    /// Returns the simplex star incident to a ridge candidate.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ManifoldError`] if any ridge vertex is stale or incidence
+    /// bookkeeping cannot be traversed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::RidgeCandidate;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let tri = dt.as_triangulation();
+    /// let Ok(ridge) = RidgeCandidate::<2>::try_from_vertices(
+    ///     tri.vertices().map(|(key, _)| key).take(1),
+    /// ) else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// assert!(!tri.ridge_star_simplices(&ridge)?.is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn ridge_star_simplices(
+        &self,
+        ridge_candidate: &RidgeCandidate<D>,
+    ) -> Result<SmallBuffer<SimplexKey, 8>, ManifoldError> {
+        ridge_star_simplices_in_tds(&self.tds, ridge_candidate)
+    }
+
+    /// Revalidates a ridge candidate and returns a borrowed ridge query.
+    ///
+    /// Unlike [`Triangulation::ridge_view`], the query permits an empty
+    /// incident star.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ManifoldError`] if any ridge vertex is stale or incidence
+    /// bookkeeping cannot be traversed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::RidgeCandidate;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let tri = dt.as_triangulation();
+    /// let Ok(ridge) = RidgeCandidate::<2>::try_from_vertices(
+    ///     tri.vertices().map(|(key, _)| key).take(1),
+    /// ) else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// let query = tri.ridge_query(&ridge)?;
+    /// assert_eq!(query.ridge_candidate(), &ridge);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn ridge_query(
+        &self,
+        ridge_candidate: &RidgeCandidate<D>,
+    ) -> Result<RidgeQuery<'_, U, V, D>, ManifoldError> {
+        ridge_candidate.query(&self.tds)
+    }
+
+    /// Revalidates a ridge candidate and returns a borrowed ridge view.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ManifoldError`] if any ridge vertex is stale, incidence
+    /// bookkeeping cannot be traversed, or the ridge has an empty star.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::query::RidgeCandidate;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let tri = dt.as_triangulation();
+    /// let Ok(ridge) = RidgeCandidate::<2>::try_from_vertices(
+    ///     tri.vertices().map(|(key, _)| key).take(1),
+    /// ) else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// let view = tri.ridge_view(&ridge)?;
+    /// assert_eq!(view.ridge_candidate(), &ridge);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn ridge_view(
+        &self,
+        ridge_candidate: &RidgeCandidate<D>,
+    ) -> Result<RidgeView<'_, U, V, D>, ManifoldError> {
+        ridge_candidate.view(&self.tds)
     }
 
     /// Returns an iterator over boundary (hull) facets in the triangulation.
@@ -389,7 +1246,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// topology-aware boundary classification detects a closed topology that
     /// cannot contain open boundary facets, or another manifold-boundary
     /// inconsistency.
-    /// Individual iterator items return [`FacetError`](crate::prelude::tds::FacetError)
+    /// Individual iterator items return [`FacetError`]
     /// if a boundary facet handle cannot be reborrowed as a view.
     pub fn boundary_facets(&self) -> Result<BoundaryFacetsIter<'_, U, V, D>, QueryError> {
         let facet_index = self
@@ -452,6 +1309,73 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         self.collect_edges().into_iter()
     }
 
+    /// Validates and returns an edge key for two live vertices.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EdgeKeyError`] if the vertices are stale, duplicated, or do not
+    /// share a stored simplex edge.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let tri = dt.as_triangulation();
+    /// let Some((_simplex_key, simplex)) = tri.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// let edge = tri.edge_key(simplex.vertices()[0], simplex.vertices()[1])?;
+    /// assert!(tri.edges().any(|candidate| candidate == edge));
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn edge_key(&self, a: VertexKey, b: VertexKey) -> Result<EdgeKey, EdgeKeyError> {
+        EdgeKey::try_new(&self.tds, a, b)
+    }
+
+    /// Revalidates an edge key and returns a borrowed edge view.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EdgeKeyError`] if the key is stale or the maintained incidence
+    /// relation cannot prove a live edge star.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let tri = dt.as_triangulation();
+    /// let Some((_simplex_key, simplex)) = tri.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// let key = tri.edge_key(simplex.vertices()[0], simplex.vertices()[1])?;
+    /// let view = tri.edge_view(key)?;
+    /// assert_eq!(view.key(), key);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn edge_view(&self, edge: EdgeKey) -> Result<EdgeView<'_, U, V, D>, EdgeKeyError> {
+        edge.view(&self.tds)
+    }
+
     /// Returns the number of unique edges in the triangulation.
     ///
     /// This is equivalent to `self.edges().count()`.
@@ -511,6 +1435,161 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             .flat_map(IntoIterator::into_iter)
             .flatten()
             .filter(|&neighbor_key| self.tds.contains_simplex(neighbor_key))
+    }
+
+    /// Locates a point in this triangulation using the owner's kernel.
+    ///
+    /// This is the owner-bound counterpart to the low-level
+    /// [`locate_in_tds`](crate::prelude::algorithms::locate) function. It keeps
+    /// callers on the `Triangulation` API while preserving the same typed
+    /// location result.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LocateError`] if structural data or predicates fail during the
+    /// facet-walking query.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::algorithms::{LocateError, LocateResult};
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Locate(#[from] LocateError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let query = Point::try_from([0.2, 0.2])?;
+    ///
+    /// let location = dt.as_triangulation().locate(&query, None)?;
+    /// std::assert_matches!(location, LocateResult::InsideSimplex(_));
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn locate(
+        &self,
+        point: &Point<D>,
+        hint: Option<SimplexKey>,
+    ) -> Result<LocateResult, LocateError>
+    where
+        K: Kernel<D, Scalar = f64>,
+    {
+        locate_in_tds(&self.tds, &self.kernel, point, hint)
+    }
+
+    /// Locates a point and returns facet-walk traversal statistics.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LocateError`] if structural data or predicates fail during the
+    /// facet-walking query.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::algorithms::LocateError;
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Locate(#[from] LocateError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let query = Point::try_from([0.2, 0.2])?;
+    ///
+    /// let (_location, stats) = dt.as_triangulation().locate_with_stats(&query, None)?;
+    /// assert!(!stats.fell_back_to_scan());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn locate_with_stats(
+        &self,
+        point: &Point<D>,
+        hint: Option<SimplexKey>,
+    ) -> Result<(LocateResult, LocateStats), LocateError>
+    where
+        K: Kernel<D, Scalar = f64>,
+    {
+        locate_with_stats_in_tds(&self.tds, &self.kernel, point, hint)
+    }
+
+    /// Finds the conflict region for inserting `point` from a known start simplex.
+    ///
+    /// This is the owner-bound counterpart to the low-level
+    /// [`find_conflict_region_in_tds`](crate::prelude::algorithms::find_conflict_region)
+    /// function.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConflictError`] if the start simplex is stale, structural data is
+    /// inconsistent, or the conflict boundary cannot be classified.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::algorithms::{ConflictError, LocateError, LocateResult};
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Locate(#[from] LocateError),
+    /// #     #[error(transparent)]
+    /// #     Conflict(#[from] ConflictError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = [
+    ///     delaunay::vertex![0.0, 0.0]?,
+    ///     delaunay::vertex![1.0, 0.0]?,
+    ///     delaunay::vertex![0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let tri = dt.as_triangulation();
+    /// let query = Point::try_from([0.2, 0.2])?;
+    ///
+    /// if let LocateResult::InsideSimplex(start) = tri.locate(&query, None)? {
+    ///     let conflict = tri.find_conflict_region(&query, start)?;
+    ///     assert!(!conflict.is_empty());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn find_conflict_region(
+        &self,
+        point: &Point<D>,
+        start_simplex: SimplexKey,
+    ) -> Result<SimplexKeyBuffer, ConflictError>
+    where
+        K: Kernel<D, Scalar = f64>,
+    {
+        find_conflict_region_in_tds(&self.tds, &self.kernel, point, start_simplex)
     }
 
     /// Returns an iterator over all unique edges incident to a vertex.
@@ -675,7 +1754,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         Ok(EdgeIndex {
             edge_count: seen_edges.len(),
             vertex_to_edges,
-            _tds: PhantomData,
+            _source_incidence: self.tds.vertex_to_simplices_index(),
         })
     }
 
@@ -727,7 +1806,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
 
         Ok(SimplexNeighborIndex {
             simplex_to_neighbors,
-            _tds: PhantomData,
+            _source_incidence: self.tds.vertex_to_simplices_index(),
         })
     }
 
@@ -770,6 +1849,52 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
 
         edges
     }
+}
+
+/// Builds one topology ridge candidate from a simplex after omitting two vertices.
+fn ridge_candidate_from_simplex_vertices<const D: usize>(
+    simplex_key: SimplexKey,
+    vertices: &[VertexKey],
+    omit_a: usize,
+    omit_b: usize,
+) -> Result<RidgeCandidate<D>, QueryError> {
+    let mut ridge_vertices = VertexKeyBuffer::with_capacity(D.saturating_sub(1));
+    for (index, &vertex_key) in vertices.iter().enumerate() {
+        if index != omit_a && index != omit_b {
+            ridge_vertices.push(vertex_key);
+        }
+    }
+
+    RidgeCandidate::try_from_vertices(ridge_vertices).map_err(|source| {
+        QueryError::InvalidRidgeCandidate {
+            simplex_key,
+            source,
+        }
+    })
+}
+
+/// Streams simplex-local Pachner ridge handles for one simplex.
+fn ridge_handles_for_simplex(
+    simplex_key: SimplexKey,
+    vertex_count: usize,
+) -> impl Iterator<Item = Result<RidgeHandle, QueryError>> {
+    (0..vertex_count).flat_map(move |omit_a| {
+        ((omit_a + 1)..vertex_count).map(move |omit_b| {
+            let omit_a =
+                u8::try_from(omit_a).map_err(|_| QueryError::RidgeIndexCapacityExceeded {
+                    simplex_key,
+                    original_index: omit_a,
+                    vertex_count,
+                })?;
+            let omit_b =
+                u8::try_from(omit_b).map_err(|_| QueryError::RidgeIndexCapacityExceeded {
+                    simplex_key,
+                    original_index: omit_b,
+                    vertex_count,
+                })?;
+            Ok(RidgeHandle::from_validated(simplex_key, omit_a, omit_b))
+        })
+    })
 }
 
 impl<K, U, V> Triangulation<K, U, V, 2> {
@@ -822,7 +1947,7 @@ impl<K, U, V> Triangulation<K, U, V, 2> {
     ///     return Ok(());
     /// };
     ///
-    /// let boundary_edge = EdgeKey::try_new(dt.tds(), simplex.vertices()[0], simplex.vertices()[1])?;
+    /// let boundary_edge = tri.edge_key(simplex.vertices()[0], simplex.vertices()[1])?;
     /// assert!(tri.try_interior_facet_for_edge_2d(boundary_edge)?.is_none());
     /// # Ok(())
     /// # }
@@ -880,7 +2005,7 @@ impl<K, U, V> Triangulation<K, U, V, 2> {
     ///     return Ok(());
     /// };
     ///
-    /// let boundary_edge = EdgeKey::try_new(dt.tds(), simplex.vertices()[0], simplex.vertices()[1])?;
+    /// let boundary_edge = tri.edge_key(simplex.vertices()[0], simplex.vertices()[1])?;
     /// assert_eq!(tri.try_incident_facets_to_edge_2d(boundary_edge)?.count(), 1);
     /// # Ok(())
     /// # }
@@ -1113,11 +2238,35 @@ mod tests {
                             .unwrap(),
                         0
                     );
+                    assert_eq!(
+                        empty
+                            .ridges()
+                            .try_fold(0_usize, |count, ridge| ridge.map(|_| count + 1))
+                            .unwrap(),
+                        0
+                    );
+                    assert_eq!(
+                        empty
+                            .ridge_handles()
+                            .try_fold(0_usize, |count, ridge| ridge.map(|_| count + 1))
+                            .unwrap(),
+                        0
+                    );
 
                     let vertices = vec![
                         $(vertex!($simplex_coords).unwrap()),+
                     ];
                     let expected_vertex_count = vertices.len();
+                    let expected_ridge_count = if $dim >= 2 {
+                        expected_vertex_count * (expected_vertex_count - 1) / 2
+                    } else {
+                        0
+                    };
+                    let expected_ridge_handle_count = if $dim >= 3 {
+                        expected_ridge_count
+                    } else {
+                        0
+                    };
 
                     let tds =
                         Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices)
@@ -1144,6 +2293,18 @@ mod tests {
                             .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
                             .unwrap(),
                         expected_vertex_count
+                    );
+                    assert_eq!(
+                        tri.ridges()
+                            .try_fold(0_usize, |count, ridge| ridge.map(|_| count + 1))
+                            .unwrap(),
+                        expected_ridge_count
+                    );
+                    assert_eq!(
+                        tri.ridge_handles()
+                            .try_fold(0_usize, |count, ridge| ridge.map(|_| count + 1))
+                            .unwrap(),
+                        expected_ridge_handle_count
                     );
                 }
             }

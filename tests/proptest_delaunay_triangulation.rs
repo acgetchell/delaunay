@@ -27,7 +27,7 @@
 //!
 //! ## Performance Note
 //!
-//! Delaunay property validation now uses `verify_delaunay_via_flip_predicates()` which checks
+//! Delaunay property validation now uses `DelaunayTriangulation::verify_via_flip_predicates()` which checks
 //! local flip configurations (O(simplices)) instead of the naive O(simplices × vertices) brute-force.
 //! This provides ~40-100x speedup for property-based testing while remaining equally correct.
 
@@ -1001,7 +1001,7 @@ proptest! {
 
                     // Verify the triangulation satisfies the Delaunay property (Level 5)
                     // Use fast O(N) flip-based verification instead of O(N×V) brute-force
-                    let delaunay_result = dt.is_delaunay_via_flips();
+                    let delaunay_result = dt.verify_via_flip_predicates();
                     prop_assert!(
                         delaunay_result.is_ok(),
                         "{}D triangulation should satisfy Delaunay property: {:?}",
@@ -1096,7 +1096,7 @@ macro_rules! gen_high_dim_delaunay_smoke {
                     };
                     prop_assert_levels_1_to_3_valid!($dim, &dt, "active smoke construction");
 
-                    let delaunay_result = dt.is_delaunay_via_flips();
+                    let delaunay_result = dt.verify_via_flip_predicates();
                     prop_assert!(
                         delaunay_result.is_ok(),
                         "{}D active smoke triangulation should satisfy Level 5 Delaunay validation: {:?}",

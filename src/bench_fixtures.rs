@@ -38,9 +38,9 @@ pub mod pl_manifold {
     }
 
     impl OversharedFacetOrphanCleanupFixture3d {
-        /// Returns the structurally coherent benchmark TDS.
+        /// Returns the structurally coherent TDS used as repair benchmark input.
         #[must_use]
-        pub const fn tds(&self) -> &Tds<(), (), 3> {
+        pub const fn repair_input_storage(&self) -> &Tds<(), (), 3> {
             &self.tds
         }
 
@@ -64,9 +64,9 @@ pub mod pl_manifold {
     }
 
     impl<const D: usize> TargetedTopologyRepairFixture<D> {
-        /// Returns the structurally coherent benchmark TDS.
+        /// Returns the structurally coherent TDS used as repair benchmark input.
         #[must_use]
-        pub const fn tds(&self) -> &Tds<(), (), D> {
+        pub const fn repair_input_storage(&self) -> &Tds<(), (), D> {
             &self.tds
         }
 

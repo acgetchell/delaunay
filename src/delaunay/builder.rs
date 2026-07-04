@@ -109,7 +109,7 @@
 //!
 //! assert_eq!(dt.number_of_vertices(), 7);
 //! // Every vertex has a valid incident simplex (no boundary).
-//! assert!(dt.tds().is_valid().is_ok());
+//! assert!(dt.is_valid_structure().is_ok());
 //! # Ok(())
 //! # }
 //! ```
@@ -960,7 +960,7 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     ///     .build_with_kernel(&kernel)?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 7);
-    /// assert!(dt.tds().is_valid().is_ok());
+    /// assert!(dt.is_valid_structure().is_ok());
     /// # Ok(())
     /// # }
     /// ```
@@ -2430,7 +2430,11 @@ where
 
                         let canonical_present = canonical_uuids
                             .iter()
-                            .filter(|uuid| candidate_dt.tds().vertex_key_from_uuid(uuid).is_some())
+                            .filter(|uuid| {
+                                candidate_dt
+                                    .vertices()
+                                    .any(|(_, vertex)| vertex.uuid() == **uuid)
+                            })
                             .count();
                         if canonical_present > best_fallback_stats.0
                             || (canonical_present == best_fallback_stats.0
@@ -2442,7 +2446,7 @@ where
 
                         if canonical_present == n
                             && candidate_dt.number_of_simplices() > 0
-                            && candidate_dt.tds().is_valid().is_ok()
+                            && candidate_dt.is_valid_structure().is_ok()
                         {
                             built = Some(candidate_dt);
                             break;
@@ -2469,12 +2473,15 @@ where
                 Err(err) => return Err(err),
             };
 
-        let tds_ref = full_dt.tds();
+        let uuid_to_key: FastHashMap<Uuid, VertexKey> = full_dt
+            .vertices()
+            .map(|(key, vertex)| (vertex.uuid(), key))
+            .collect();
 
         // Map canonical UUIDs → VertexKeys in the full DT.
         let Some(central_keys) = canonical_uuids
             .iter()
-            .map(|uuid| tds_ref.vertex_key_from_uuid(uuid))
+            .map(|uuid| uuid_to_key.get(uuid).copied())
             .collect::<Option<Vec<_>>>()
         else {
             return Err(
@@ -2489,16 +2496,13 @@ where
         // Map every full-DT vertex key to its canonical key and lattice offset.
         let mut vertex_key_to_lifted: FastHashMap<VertexKey, (VertexKey, [i8; D])> =
             FastHashMap::default();
-        for vk in tds_ref.vertex_keys() {
-            let Some(vertex) = tds_ref.vertex(vk) else {
-                continue;
-            };
+        for (vk, vertex) in full_dt.vertices() {
             let Some((canonical_uuid, offset)) =
                 image_uuid_to_canonical_with_offset.get(&vertex.uuid())
             else {
                 continue;
             };
-            let Some(canonical_key) = tds_ref.vertex_key_from_uuid(canonical_uuid) else {
+            let Some(canonical_key) = uuid_to_key.get(canonical_uuid).copied() else {
                 continue;
             };
             vertex_key_to_lifted.insert(vk, (canonical_key, *offset));
@@ -2506,7 +2510,7 @@ where
 
         let normalize_simplex_lifted =
             |simplex_key: SimplexKey| -> Option<Vec<(VertexKey, [i8; D])>> {
-                let simplex = tds_ref.simplex(simplex_key)?;
+                let simplex = full_dt.simplex(simplex_key)?;
                 let mut lifted: Vec<(VertexKey, [i8; D])> = simplex
                     .vertices()
                     .iter()
@@ -2532,11 +2536,11 @@ where
                 Some(lifted)
             };
         let simplex_circumcenter_in_fundamental_domain = |simplex_key: SimplexKey| -> Option<bool> {
-            let simplex = tds_ref.simplex(simplex_key)?;
+            let simplex = full_dt.simplex(simplex_key)?;
             let mut points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
                 SmallBuffer::with_capacity(D + 1);
             for vk in simplex.vertices() {
-                let vertex = tds_ref.vertex(*vk)?;
+                let vertex = full_dt.vertex(*vk)?;
                 points.push(*vertex.point());
             }
             let center = circumcenter(&points).ok()?;
@@ -2557,7 +2561,7 @@ where
         // `normalize_simplex_lifted` (it is not canonical-key-sorted).
         let mut candidates_by_symbolic: FastHashMap<SymbolicSignature<D>, PeriodicCandidate<D>> =
             FastHashMap::default();
-        for ck in tds_ref.simplex_keys() {
+        for (ck, _) in full_dt.simplices() {
             let Some(lifted_vertices) = normalize_simplex_lifted(ck) else {
                 continue;
             };
@@ -2591,7 +2595,7 @@ where
         if candidates.is_empty() {
             return Err(
                 TriangulationConstructionError::PeriodicQuotientNoCandidates {
-                    full_simplex_count: tds_ref.number_of_simplices(),
+                    full_simplex_count: full_dt.number_of_simplices(),
                     canonical_vertex_count: central_key_set.len(),
                 }
                 .into(),
@@ -2887,8 +2891,8 @@ where
                 TriangulationConstructionError::PeriodicQuotientSelectionBoundaryFacets {
                     boundary_facet_count: best_boundary_count,
                     search_attempts,
-                    full_vertex_count: tds_ref.number_of_vertices(),
-                    full_simplex_count: tds_ref.number_of_simplices(),
+                    full_vertex_count: full_dt.number_of_vertices(),
+                    full_simplex_count: full_dt.number_of_simplices(),
                     canonical_vertex_count: central_key_set.len(),
                     candidate_count: candidates.len(),
                     selected_simplex_count: best_selected_count,
@@ -2930,6 +2934,7 @@ where
         }
 
         // Clone TDS and rebuild simplex complex from quotient representatives.
+        let tds_ref = full_dt.tds();
         let mut tds_mut = tds_ref.clone();
 
         // Remove all simplices first.
@@ -3610,7 +3615,7 @@ mod tests {
             .build_with_kernel(&kernel)
             .unwrap();
         assert_eq!(dt.number_of_vertices(), n);
-        assert!(dt.tds().is_valid().is_ok());
+        assert!(dt.is_valid_structure().is_ok());
         assert_matches!(
             dt.global_topology(),
             GlobalTopology::Toroidal {

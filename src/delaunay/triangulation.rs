@@ -37,17 +37,14 @@ use crate::core::triangulation::Triangulation;
 /// Uses efficient incremental cavity-based insertion algorithm:
 /// - ✅ Point location (facet walking) - [`locate`]
 /// - ✅ Conflict region computation (local BFS) - [`find_conflict_region`]
-/// - ✅ Cavity extraction and filling - [`extract_cavity_boundary`], [`fill_cavity`]
-/// - ✅ Local neighbor wiring - [`wire_cavity_neighbors`]
-/// - ✅ Hull extension for outside points - [`extend_hull`]
+/// - ✅ Cavity extraction and filling - [`extract_cavity_boundary`] plus internal cavity replacement
+/// - ✅ Local neighbor wiring after cavity replacement
+/// - ✅ Hull extension for outside points
 /// - ✅ Flip-based Delaunay repair (k=2/k=3 bistellar flips)
 ///
 /// [`locate`]: crate::algorithms::locate
 /// [`find_conflict_region`]: crate::algorithms::find_conflict_region
 /// [`extract_cavity_boundary`]: crate::algorithms::extract_cavity_boundary
-/// [`fill_cavity`]: crate::fill_cavity
-/// [`wire_cavity_neighbors`]: crate::wire_cavity_neighbors
-/// [`extend_hull`]: crate::extend_hull
 ///
 /// # Examples
 ///

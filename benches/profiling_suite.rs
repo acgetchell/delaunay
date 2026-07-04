@@ -523,16 +523,16 @@ fn bench_neighbor_queries<const D: usize>(
     let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
     let vertices = benchmark_vertices_from_generated_points(&points);
     let dt = construct_triangulation::<D>(&vertices, seed);
-    let tds = dt.tds();
-    let simplex_keys: Vec<_> = tds.simplex_keys().collect();
+    let simplex_keys: Vec<_> = dt.simplices().map(|(simplex_key, _)| simplex_key).collect();
 
     group.throughput(Throughput::Elements(simplex_keys.len() as u64));
 
     group.bench_function("find_neighbors_all_simplices", |b| {
         b.iter(|| {
             for &simplex_key in &simplex_keys {
-                let neighbors = tds.find_neighbors_by_key(simplex_key);
-                black_box(neighbors);
+                for neighbor in dt.simplex_neighbors(simplex_key) {
+                    black_box(neighbor);
+                }
             }
         });
     });
@@ -560,12 +560,11 @@ fn bench_vertex_iteration<const D: usize>(
     let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
     let vertices = benchmark_vertices_from_generated_points(&points);
     let dt = construct_triangulation::<D>(&vertices, seed);
-    let tds = dt.tds();
 
     group.bench_function("iterate_all_vertices", |b| {
         b.iter(|| {
             let mut count = 0;
-            for (_, vertex) in tds.vertices() {
+            for (_, vertex) in dt.vertices() {
                 black_box(vertex);
                 count += 1;
             }
@@ -595,14 +594,13 @@ fn bench_simplex_iteration<const D: usize>(
     let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
     let vertices = benchmark_vertices_from_generated_points(&points);
     let dt = construct_triangulation::<D>(&vertices, seed);
-    let tds = dt.tds();
 
-    group.throughput(Throughput::Elements(tds.number_of_simplices() as u64));
+    group.throughput(Throughput::Elements(dt.number_of_simplices() as u64));
 
     group.bench_function("iterate_all_simplices", |b| {
         b.iter(|| {
             let mut count = 0;
-            for simplex_key in tds.simplex_keys() {
+            for (simplex_key, _) in dt.simplices() {
                 black_box(simplex_key);
                 count += 1;
             }
@@ -932,7 +930,6 @@ fn benchmark_query_latency(c: &mut Criterion) {
                     b.iter(|| {});
                     return;
                 };
-                let tds = dt.tds();
 
                 // Generate query points
                 let query_points = gen_points::<3>(100, PointDistribution::Random, QUERY_SEED);
@@ -942,7 +939,7 @@ fn benchmark_query_latency(c: &mut Criterion) {
                     SmallBuffer<Point<3>, SIMPLEX_VERTICES_BUFFER_SIZE>,
                 > = Vec::with_capacity(MAX_PRECOMPUTED_SIMPLICES);
                 let mut sampled_count = 0;
-                for simplex in tds.simplices() {
+                for simplex in dt.simplices() {
                     if sampled_count >= MAX_PRECOMPUTED_SIMPLICES {
                         break;
                     }
@@ -954,7 +951,7 @@ fn benchmark_query_latency(c: &mut Criterion) {
                         let mut vertex_points: SmallBuffer<Point<3>, SIMPLEX_VERTICES_BUFFER_SIZE> =
                             SmallBuffer::new();
                         for vkey in vertex_keys {
-                            if let Some(vertex) = tds.vertex(*vkey) {
+                            if let Some(vertex) = dt.vertex(*vkey) {
                                 vertex_points.push(*vertex.point());
                             }
                         }
@@ -1055,11 +1052,11 @@ macro_rules! benchmark_validation_components_dimension {
             group.measurement_time(bench_time(15));
             group.throughput(Throughput::Elements($count as u64));
 
-            group.bench_function("tds_is_valid", |b| {
+            group.bench_function("is_valid_structure", |b| {
                 b.iter(|| {
-                    if let Err(error) = black_box(dt.tds().is_valid()) {
+                    if let Err(error) = black_box(dt.is_valid_structure()) {
                         abort_benchmark(format_args!(
-                            "TDS validation should pass for benchmark triangulation: {error}"
+                            "structure validation should pass for benchmark triangulation: {error}"
                         ));
                     }
                 });
@@ -1149,15 +1146,24 @@ fn bench_bottlenecks(c: &mut Criterion) {
                     },
                     |dt| {
                         if let Some(dt) = dt {
-                            let boundary_facets = match dt.tds().one_sided_facets() {
-                                Ok(value) => value,
+                            let boundary_facet_count = match dt.boundary_facets() {
+                                Ok(mut value) => match value
+                                    .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))
+                                {
+                                    Ok(count) => count,
+                                    Err(error) => {
+                                        abort_benchmark(format_args!(
+                                            "boundary_facets failed: {error}"
+                                        ));
+                                    }
+                                },
                                 Err(error) => {
                                     abort_benchmark(format_args!(
                                         "boundary_facets failed: {error}"
                                     ));
                                 }
                             };
-                            black_box(boundary_facets.len());
+                            black_box(boundary_facet_count);
                         }
                     },
                     BatchSize::LargeInput,

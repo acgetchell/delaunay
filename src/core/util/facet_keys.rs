@@ -52,10 +52,9 @@ use thiserror::Error;
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-/// let tds = dt.tds();
 ///
 /// // Get facet vertex keys from a simplex - no need to materialize Vertex objects
-/// if let Some(simplex) = tds.simplices().map(|(_, simplex)| simplex).next() {
+/// if let Some((_, simplex)) = dt.simplices().next() {
 ///     let facet_vertex_keys: Vec<_> = simplex.vertices().iter().skip(1).copied().collect(); // Skip 1 vertex to get D vertices
 ///     assert_eq!(facet_vertex_keys.len(), 3); // For 3D triangulation, facet has 3 vertices
 ///     let facet_key = checked_facet_key_from_vertex_keys::<3>(&facet_vertex_keys)?;
@@ -475,7 +474,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = &dt.as_triangulation().tds;
+        let tds = dt.tds();
 
         // Test 1: Basic functionality - successful key derivation
         println!("  Testing basic functionality...");
@@ -615,7 +614,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
         let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = &dt.as_triangulation().tds;
+        let tds = dt.tds();
         let simplex_key = tds.simplex_keys().next().unwrap();
         assert!(verify_facet_index_consistency(tds, simplex_key, simplex_key, 0).unwrap());
 

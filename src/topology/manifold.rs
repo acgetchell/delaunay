@@ -341,7 +341,7 @@ pub enum BoundaryFacetClassification {
 ///     delaunay::vertex![0.5, 1.0]?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-/// let facet_index = dt.tds().build_facet_to_simplices_index()?;
+/// let facet_index = dt.facet_incidence_index()?;
 ///
 /// let Some(incidence) = facet_index.iter().find(|incidence| incidence.is_one_sided())
 /// else {

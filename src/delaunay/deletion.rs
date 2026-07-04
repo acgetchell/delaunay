@@ -8,10 +8,8 @@
 #![forbid(unsafe_code)]
 
 use crate::construction::local_repair_flip_budget;
-#[cfg(test)]
-use crate::construction::test_hooks;
 use crate::core::algorithms::flips::{
-    FlipError, apply_bistellar_flip_k1_inverse, repair_delaunay_with_flips_k2_k3,
+    FlipError, apply_bistellar_flip_k1_inverse_raw, repair_delaunay_with_flips_k2_k3,
 };
 use crate::core::collections::SimplexKeyBuffer;
 use crate::core::tds::{InvariantError, NeighborValidationError, TdsError, VertexKey};
@@ -48,6 +46,41 @@ impl From<InvariantError> for DeleteVertexError {
     fn from(source: InvariantError) -> Self {
         Self::InvariantViolation {
             source: Box::new(source),
+        }
+    }
+}
+
+/// Tries the inverse-k1 fast path before falling back to fan deletion so the
+/// transaction can reuse the cheapest valid removal proof available.
+fn remove_with_fast_path_or_fallback<K, U, V, const D: usize>(
+    transaction: &mut DelaunayRollbackTransaction<'_, K, U, V, D>,
+    vertex_key: VertexKey,
+) -> Result<(usize, Option<SimplexKeyBuffer>), InvariantError>
+where
+    K: Kernel<D, Scalar = f64>,
+    U: DataType,
+    V: DataType,
+{
+    let fast_path_result = {
+        let delaunay = transaction.delaunay_mut();
+        apply_bistellar_flip_k1_inverse_raw(&mut delaunay.tri.tds, vertex_key)
+    };
+    match fast_path_result {
+        Ok(info) => Ok((info.removed_simplices.len(), Some(info.new_simplices))),
+        Err(FlipError::NeighborWiring { reason }) => {
+            transaction.restore();
+            Err(TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::FlipNeighborWiring { reason },
+            }
+            .into())
+        }
+        Err(_) => {
+            transaction.restore();
+            let delaunay = transaction.delaunay_mut();
+            let outcome = delaunay.tri.remove_vertex_with_repair_seeds(vertex_key)?;
+            let seed_simplices = (!outcome.repair_seed_simplices.is_empty())
+                .then_some(outcome.repair_seed_simplices);
+            Ok((outcome.simplices_removed, seed_simplices))
         }
     }
 }
@@ -132,18 +165,9 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     DeleteVertex(#[from] delaunay::DeleteVertexError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let interior = delaunay::vertex![0.3, 0.3]?;
     /// let interior_uuid = interior.uuid();
     /// let vertices = [
@@ -172,21 +196,12 @@ where
     /// Deletions that would leave a non-manifold remnant fail and roll back:
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder};
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::deletion::DeleteVertexError;
     /// use delaunay::prelude::tds::InvariantError;
     /// use delaunay::prelude::triangulation::TriangulationValidationError;
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// #     #[error(transparent)]
-    /// #     Delete(#[from] DeleteVertexError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices = [
     ///     delaunay::vertex![0.0, 0.0]?,
     ///     delaunay::vertex![1.0, 0.0]?,
@@ -220,33 +235,12 @@ where
 
         let mut transaction =
             DelaunayRollbackTransaction::begin(self, DelaunaySpatialIndexRollback::Restore);
-        let result: Result<usize, InvariantError> = {
-            let delaunay = transaction.delaunay_mut();
-            (|| {
-                // Fast path: inverse k=1 flip when the vertex star is a simplex.
-                let mut seed_simplices: Option<SimplexKeyBuffer> = None;
-                let simplices_removed =
-                    match apply_bistellar_flip_k1_inverse(&mut delaunay.tri.tds, vertex_key) {
-                        Ok(info) => {
-                            seed_simplices = Some(info.new_simplices);
-                            info.removed_simplices.len()
-                        }
-                        Err(FlipError::NeighborWiring { reason }) => {
-                            return Err(TdsError::InvalidNeighbors {
-                                reason: NeighborValidationError::FlipNeighborWiring { reason },
-                            }
-                            .into());
-                        }
-                        Err(_) => {
-                            let outcome =
-                                delaunay.tri.remove_vertex_with_repair_seeds(vertex_key)?;
-                            if !outcome.repair_seed_simplices.is_empty() {
-                                seed_simplices = Some(outcome.repair_seed_simplices);
-                            }
-                            outcome.simplices_removed
-                        }
-                    };
+        let result: Result<usize, InvariantError> = (|| {
+            let (simplices_removed, seed_simplices) =
+                remove_with_fast_path_or_fallback(&mut transaction, vertex_key)?;
 
+            {
+                let delaunay = transaction.delaunay_mut();
                 let topology = delaunay.tri.topology_guarantee();
                 if delaunay.should_run_delaunay_repair_after_mutation(topology) {
                     let seed_ref = seed_simplices.as_deref();
@@ -266,8 +260,8 @@ where
                     };
 
                     #[cfg(test)]
-                    let repair_result = if test_hooks::force_repair_nonconvergent_enabled() {
-                        Err(test_hooks::synthetic_nonconvergent_error())
+                    let repair_result = if tests::force_repair_nonconvergent_enabled() {
+                        Err(tests::synthetic_nonconvergent_error())
                     } else {
                         repair_result
                     };
@@ -297,10 +291,10 @@ where
                         .is_valid_delaunay()
                         .map_err(InvariantError::Delaunay)?;
                 }
+            }
 
-                Ok(simplices_removed)
-            })()
-        };
+            Ok(simplices_removed)
+        })();
 
         match result {
             Ok(simplices_removed) => {
@@ -323,7 +317,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::algorithms::flips::DelaunayRepairError;
+    use crate::core::algorithms::flips::{
+        DelaunayRepairDiagnostics, DelaunayRepairError, RepairQueueOrder,
+    };
     use crate::core::collections::spatial_hash_grid::HashGridIndex;
     use crate::core::validation::{TopologyGuarantee, TriangulationValidationError};
     use crate::core::vertex::Vertex;
@@ -333,8 +329,49 @@ mod tests {
     use crate::repair::DelaunayRepairPolicy;
     use crate::vertex;
     use std::assert_matches;
+    use std::cell::Cell;
     use std::sync::Once;
     use uuid::Uuid;
+
+    // Last-resort fault injection for rollback branches that are hard to
+    // trigger deterministically; thread-local state avoids cross-test leakage.
+    // Remove this once a cleaner harness can reach the branch directly.
+    thread_local! {
+        static FORCE_REPAIR_NONCONVERGENT: Cell<bool> = const { Cell::new(false) };
+    }
+
+    #[must_use]
+    pub(super) fn force_repair_nonconvergent_enabled() -> bool {
+        FORCE_REPAIR_NONCONVERGENT.with(Cell::get)
+    }
+
+    #[must_use]
+    pub(super) fn synthetic_nonconvergent_error() -> DelaunayRepairError {
+        DelaunayRepairError::NonConvergent {
+            max_flips: 0,
+            diagnostics: Box::new(DelaunayRepairDiagnostics {
+                facets_checked: 0,
+                flips_performed: 0,
+                max_queue_len: 0,
+                ambiguous_predicates: 0,
+                ambiguous_predicate_samples: Vec::new(),
+                predicate_failures: 0,
+                cycle_detections: 0,
+                cycle_signature_samples: Vec::new(),
+                attempt: 0,
+                queue_order: RepairQueueOrder::Fifo,
+            }),
+        }
+    }
+
+    #[must_use]
+    fn set_force_repair_nonconvergent(enabled: bool) -> bool {
+        FORCE_REPAIR_NONCONVERGENT.with(|flag| {
+            let prior = flag.get();
+            flag.set(enabled);
+            prior
+        })
+    }
 
     fn init_tracing() {
         static INIT: Once = Once::new();
@@ -355,14 +392,14 @@ mod tests {
     impl ForceRepairNonconvergentGuard {
         fn enable() -> Self {
             Self {
-                previous: test_hooks::set_force_repair_nonconvergent(true),
+                previous: set_force_repair_nonconvergent(true),
             }
         }
     }
 
     impl Drop for ForceRepairNonconvergentGuard {
         fn drop(&mut self) {
-            let _ = test_hooks::set_force_repair_nonconvergent(self.previous);
+            let _ = set_force_repair_nonconvergent(self.previous);
         }
     }
 

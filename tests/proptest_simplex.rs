@@ -105,14 +105,14 @@ macro_rules! test_simplex_properties {
                 /// Property: Simplices retrieved from a valid triangulation should pass validation
                 $(#[$attr])*
                 #[test]
-                fn [<prop_simplices_in_valid_tds_are_valid_ $dim d>](
+                fn [<prop_simplices_in_valid_triangulation_are_valid_ $dim d>](
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| Point::try_new(coords).expect("finite point coordinates")),
                         $min_vertices..=$max_vertices
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        if dt.tds().validate().is_ok() {
+                        if dt.validate_structure().is_ok() {
                             for (_simplex_key, simplex) in dt.simplices() {
                                 prop_assert_eq!(simplex.vertices().len(), $expected_vertices);
                                 prop_assert!(simplex.uuid().as_u128() != 0);

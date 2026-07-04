@@ -789,6 +789,8 @@ fn facet_measure_gram_matrix<const D: usize>(
 /// #     #[error(transparent)]
 /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
 /// #     #[error(transparent)]
+/// #     Query(#[from] delaunay::prelude::query::QueryError),
+/// #     #[error(transparent)]
 /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
 /// #     #[error(transparent)]
 /// #     SurfaceMeasure(#[from] delaunay::prelude::geometry::SurfaceMeasureError),
@@ -804,10 +806,9 @@ fn facet_measure_gram_matrix<const D: usize>(
 ///     delaunay::vertex![0.0, 0.0, 1.0]?,
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-/// let tds = dt.tds();
 ///
 /// // Get boundary facets as FacetViews
-/// let boundary_facets = tds.one_sided_facets()?.collect::<Result<Vec<_>, _>>()?;
+/// let boundary_facets = dt.boundary_facets()?.collect::<Result<Vec<_>, _>>()?;
 ///
 /// // Calculate surface area
 /// let surface_area = surface_measure(&boundary_facets)?;

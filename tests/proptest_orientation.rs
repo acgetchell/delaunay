@@ -39,7 +39,7 @@ macro_rules! gen_orientation_construction_and_tamper_props {
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
                         prop_assert!(
-                            dt.tds().is_coherently_oriented(),
+                            dt.is_coherently_oriented(),
                             "{}D: constructed triangulation must be coherently oriented",
                             $dim
                         );
@@ -63,10 +63,10 @@ macro_rules! gen_orientation_construction_and_tamper_props {
                     })
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        prop_assume!(dt.tds().number_of_simplices() >= 2);
-                        prop_assert!(dt.tds().is_coherently_oriented());
+                        prop_assume!(dt.number_of_simplices() >= 2);
+                        prop_assert!(dt.is_coherently_oriented());
 
-                        let mut serialized = serde_json::to_value(dt.tds()).unwrap();
+                        let mut serialized = serde_json::to_value(&dt).unwrap();
                         let simplex_vertices_map = serialized
                             .get_mut("simplex_vertices")
                             .and_then(serde_json::Value::as_object_mut)
@@ -140,7 +140,7 @@ macro_rules! gen_orientation_incremental_props {
                         let result = dt.insert_best_effort_with_statistics(vertex);
                         if let Ok((InsertionOutcome::Inserted { .. }, _stats)) = result {
                             prop_assert!(
-                                dt.tds().is_coherently_oriented(),
+                                dt.is_coherently_oriented(),
                                 "{}D: orientation must remain coherent after successful insertion",
                                 $dim
                             );

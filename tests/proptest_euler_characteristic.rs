@@ -6,7 +6,7 @@
 //! ## Test Properties
 //!
 //! 1. **Euler Formula Consistency**: Computed χ matches expected value for classification
-//! 2. **Simplex Count Validity**: Vertex and simplex counts match Tds counts
+//! 2. **Simplex Count Validity**: Vertex and simplex counts match owner counts
 //! 3. **Classification Consistency**: Expected χ for classification matches computed χ  
 //!
 //! ## Notes
@@ -18,7 +18,6 @@
 
 use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
 use delaunay::prelude::generators::try_generate_random_triangulation_with_topology_guarantee;
-use delaunay::topology::characteristics::{euler, validation};
 use delaunay::vertex;
 use proptest::prelude::*;
 use std::num::NonZeroUsize;
@@ -78,8 +77,7 @@ macro_rules! test_euler_properties {
                         .build()
                     {
                         // Validate Euler characteristic
-                        let result =
-                            validation::validate_triangulation_euler(dt.tds(), dt.global_topology())?;
+                        let result = dt.euler_check()?;
 
 
                         // Core property: χ must match expected value for the topology
@@ -110,7 +108,7 @@ macro_rules! test_euler_properties {
                         .topology_guarantee(TopologyGuarantee::PLManifold)
                         .build()
                     {
-                        let counts = euler::count_simplices(dt.tds())?;
+                        let counts = dt.simplex_counts()?;
 
                         // Basic sanity checks
                         prop_assert_eq!(
@@ -150,8 +148,7 @@ macro_rules! test_euler_properties {
                         .topology_guarantee(TopologyGuarantee::PLManifold)
                         .build()
                     {
-                        let result =
-                            validation::validate_triangulation_euler(dt.tds(), dt.global_topology())?;
+                        let result = dt.euler_check()?;
 
                         // If we have an expected χ, computed χ must match
                         if let Some(expected_chi) = result.expected {
@@ -182,8 +179,7 @@ fn test_seeded_random_generator_euler_consistent() {
         TopologyGuarantee::PLManifold,
     )
     .unwrap();
-    let result_2d =
-        validation::validate_triangulation_euler(dt_2d.tds(), dt_2d.global_topology()).unwrap();
+    let result_2d = dt_2d.euler_check().unwrap();
     assert!(
         result_2d.is_valid(),
         "2D seeded random triangulation Euler mismatch: χ={}, expected={:?}, classification={:?}, V={}, simplices={}",
@@ -202,8 +198,7 @@ fn test_seeded_random_generator_euler_consistent() {
         TopologyGuarantee::PLManifold,
     )
     .unwrap();
-    let result_3d =
-        validation::validate_triangulation_euler(dt_3d.tds(), dt_3d.global_topology()).unwrap();
+    let result_3d = dt_3d.euler_check().unwrap();
     assert!(
         result_3d.is_valid(),
         "3D seeded random triangulation Euler mismatch: χ={}, expected={:?}, classification={:?}, V={}, simplices={}",

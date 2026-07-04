@@ -522,9 +522,9 @@ where
 ///     Some(789)
 /// );
 ///
-/// // Access the underlying Tds if needed
+/// // Access triangulation-level counts
 /// let dt = triangulation_3d?;
-/// let vertex_count = dt.tds().number_of_vertices();
+/// let vertex_count = dt.number_of_vertices();
 /// # Ok(())
 /// # }
 /// ```
