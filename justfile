@@ -214,6 +214,73 @@ bench-perf-summary: _ensure-uv
 bench-smoke:
     CRIT_SAMPLE_SIZE=10 CRIT_MEASUREMENT_MS=500 CRIT_WARMUP_MS=200 cargo bench --workspace --profile perf --features bench
 
+# Run the 3D and 4D Pachner Monte Carlo stress cases with reports enabled.
+pachner-stress attempts="100000" validate_every="1000" samples="10":
+    just _pachner-stress-dim 3d 10000 "{{ attempts }}" "{{ validate_every }}" "{{ samples }}"
+    just _pachner-stress-dim 4d 1000 "{{ attempts }}" "{{ validate_every }}" "{{ samples }}"
+
+# Run the 3D Pachner Monte Carlo stress case with reports enabled.
+pachner-stress-3d attempts="100000" vertices="10000" validate_every="1000" samples="10":
+    just _pachner-stress-dim 3d "{{ vertices }}" "{{ attempts }}" "{{ validate_every }}" "{{ samples }}"
+
+# Run the 4D Pachner Monte Carlo stress case with reports enabled.
+pachner-stress-4d attempts="100000" vertices="1000" validate_every="1000" samples="10":
+    just _pachner-stress-dim 4d "{{ vertices }}" "{{ attempts }}" "{{ validate_every }}" "{{ samples }}"
+
+[private]
+_pachner-stress-dim label vertices attempts validate_every samples:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    label="{{ label }}"
+    vertices="{{ vertices }}"
+    attempts="{{ attempts }}"
+    validate_every="{{ validate_every }}"
+    samples="{{ samples }}"
+
+    require_positive_integer() {
+        local name="$1"
+        local value="$2"
+        if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then
+            echo "ERROR: $name must be a positive integer, got: $value" >&2
+            exit 2
+        fi
+    }
+
+    require_positive_integer "vertices" "$vertices"
+    require_positive_integer "attempts" "$attempts"
+    require_positive_integer "validate_every" "$validate_every"
+    require_positive_integer "samples" "$samples"
+
+    if (( samples < 10 )); then
+        echo "ERROR: samples must be at least 10 because Criterion requires sample_size >= 10." >&2
+        exit 2
+    fi
+
+    case "$label" in
+        3d)
+            suffix="3D"
+            filter="monte_carlo/3d"
+            ;;
+        4d)
+            suffix="4D"
+            filter="monte_carlo/4d"
+            ;;
+        *)
+            echo "ERROR: unsupported Pachner stress dimension: $label" >&2
+            exit 2
+            ;;
+    esac
+
+    echo "Pachner stress ${suffix}: ${vertices} vertices, ${attempts} attempted moves per Criterion sample."
+    env \
+        DELAUNAY_PACHNER_STRESS_REPORT=1 \
+        "DELAUNAY_PACHNER_STRESS_VERTICES_${suffix}=$vertices" \
+        "DELAUNAY_PACHNER_STRESS_ATTEMPTS_${suffix}=$attempts" \
+        "DELAUNAY_PACHNER_STRESS_VALIDATE_EVERY_${suffix}=$validate_every" \
+        "MONTE_CARLO_SAMPLE_SIZE=$samples" \
+        cargo bench --profile perf --bench pachner_stress -- "$filter" --noplot
+
 # Compile benchmarks and release integration tests without running.
 bench-test-compile: bench-compile test-integration-compile
 
@@ -382,6 +449,11 @@ help-workflows:
     @echo "  just bench-smoke        # Smoke-test benchmark harnesses (minimal samples)"
     @echo "  just bench              # Run all benchmarks with perf profile (ThinLTO)"
     @echo "  just bench-ci           # CI regression benchmarks with perf profile (~5-10 min)"
+    @echo "  just pachner-stress     # 3D+4D Pachner MCMC stress with report lines"
+    @echo "  just pachner-stress-3d [attempts] [vertices] [validate_every] [samples]"
+    @echo "                          # 3D Pachner MCMC stress (defaults: 100K, 10K vertices)"
+    @echo "  just pachner-stress-4d [attempts] [vertices] [validate_every] [samples]"
+    @echo "                          # 4D Pachner MCMC stress (defaults: 100K, 1K vertices)"
     @echo "  just perf-large-scale-smoke [max_secs] # Quick pre-push 2D-5D wall-clock guard (default 60s)"
     @echo "  just perf-no-regressions [threshold] # Fast pre-PR 2D-5D regression guard (default 7.5%)"
     @echo "  just perf-baseline [ref] # Persist/update default local baseline (default: main)"
@@ -602,6 +674,9 @@ perf-help:
     @echo "  just bench                 # Full benchmark suite with perf profile"
     @echo "  just bench-ci              # CI benchmark suite with perf profile"
     @echo "  just bench-allocations     # Allocation-contract microbenchmarks"
+    @echo "  just pachner-stress        # 3D+4D Pachner MCMC stress with report lines"
+    @echo "  just pachner-stress-3d     # 3D Pachner MCMC stress (100K moves, 10K vertices)"
+    @echo "  just pachner-stress-4d     # 4D Pachner MCMC stress (100K moves, 1K vertices)"
     @echo "  just perf-no-regressions   # Fast pre-PR 2D-5D regression guard"
     @echo "  just bench-smoke           # Smoke-test benchmark harnesses"
     @echo ""
@@ -620,6 +695,8 @@ perf-help:
     @echo "  just perf-baseline-to /tmp/delaunay-main-baseline"
     @echo "                              # Generate scratch main baseline without overwriting baseline-artifact"
     @echo "  CRIT_SAMPLE_SIZE=100 just bench  # Custom sample size"
+    @echo "  just pachner-stress-4d 100000 1000 1000 10"
+    @echo "                              # 4D long-run Pachner diagnostics with minimum Criterion samples"
     @echo "  just bench-ci              # Final optimized CI-suite benchmark run"
     @echo "  just profile v0.7.5        # v0.7.5 code on its declared Rust toolchain"
     @echo "  just profile 1.96.0        # Current tree on Rust 1.96.0"

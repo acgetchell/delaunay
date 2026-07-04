@@ -43,7 +43,7 @@ predicates fast across 2D-5D.
 | Predicate cold-path work | `cargo bench --profile perf --bench cold_path_predicates -- --noplot` |
 | Flip-based Delaunay repair | `cargo bench --profile perf --bench delaunay_repair -- --noplot` |
 | Flip-repair transaction pressure | `cargo bench --profile perf --bench delaunay_repair -- repair_transaction_pressure --noplot` |
-| Unified Pachner move stress | `cargo bench --profile perf --bench pachner_stress -- --noplot` |
+| Unified Pachner move stress | `just pachner-stress` |
 | PL-manifold repair path | `cargo bench --profile perf --features bench --bench pl_manifold_repair -- --noplot` |
 | Large-scale scaling suite | `cargo bench --profile perf --bench profiling_suite -- --noplot` |
 | Vertex deletion mutation baseline | `cargo bench --profile perf --bench delete_vertex -- --noplot` |
@@ -188,7 +188,9 @@ profile summary workflow and captures the construction metrics automatically.
 ## Pachner Stress
 
 ```bash
-cargo bench --profile perf --bench pachner_stress -- --noplot
+just pachner-stress
+just pachner-stress-3d
+just pachner-stress-4d
 ```
 
 `pachner_stress.rs` contains two layers:
@@ -196,25 +198,33 @@ cargo bench --profile perf --bench pachner_stress -- --noplot
 - accepted-move microcases for the unified 4D Pachner API facade
 - manual Monte Carlo stress cases for 3D and 4D long-run topology stability
 
-The Monte Carlo cases default to 10,000 vertices in 3D and 1,000 vertices in
-4D, with 100,000 attempted random Pachner moves and topology validation every
-1,000 attempts. They validate topology plus the Level 4 embedding invariant
-that arbitrary Pachner moves are expected to preserve; Level 5 Delaunay
-validity is not a postcondition of random topology edits. The move stream runs
-through the `markov-chain-monte-carlo` delayed proposal API with a flat target,
-so successfully planned Pachner proposals commit with 100% acceptance while
-invalid local candidates are recorded as no-proposal self-loops. Each measured
-sequence emits a `pachner_stress_metric` line with accepted/rejected attempts,
-proposal diagnostics, validation time, final simplex count, and RSS memory
-counters. Validation failures include recent MCMC trace rows so long chains can
-be diagnosed by step, outcome, and topology size.
+The `just` recipes run the Monte Carlo cases at the default issue-scale target:
+10,000 vertices in 3D and 1,000 vertices in 4D, with 100,000 attempted random
+Pachner moves per Criterion sample and topology validation every 1,000
+attempts. Criterion requires at least 10 samples, so a default dimension-specific
+recipe measures at least ten 100K-move sequences. These recipes enable
+`DELAUNAY_PACHNER_STRESS_REPORT=1`, causing each measured sequence to emit a
+`pachner_stress_metric` line with accepted/rejected attempts, proposal
+diagnostics, validation time, final simplex count, and RSS memory counters.
+
+The stress cases validate topology plus the Level 4 embedding invariant that
+arbitrary Pachner moves are expected to preserve; Level 5 Delaunay validity is
+not a postcondition of random topology edits. The move stream runs through the
+`markov-chain-monte-carlo` delayed proposal API with a flat target, so
+successfully planned Pachner proposals commit with 100% acceptance while invalid
+local candidates are recorded as no-proposal self-loops. Validation failures
+include recent MCMC trace rows so long chains can be diagnosed by step, outcome,
+and topology size.
 
 Useful overrides:
 
 ```bash
+just pachner-stress-4d 10000 250 1000 10
+
+DELAUNAY_PACHNER_STRESS_REPORT=1 \
 DELAUNAY_PACHNER_STRESS_ATTEMPTS=10000 \
 DELAUNAY_PACHNER_STRESS_VERTICES_4D=250 \
-cargo bench --profile perf --bench pachner_stress -- "monte_carlo/4d"
+cargo bench --profile perf --bench pachner_stress -- "monte_carlo/4d" --noplot
 ```
 
 Supported override families are `DELAUNAY_PACHNER_STRESS_VERTICES`,
@@ -222,7 +232,8 @@ Supported override families are `DELAUNAY_PACHNER_STRESS_VERTICES`,
 `DELAUNAY_PACHNER_STRESS_VALIDATE_EVERY`,
 `DELAUNAY_PACHNER_STRESS_KEY_REFRESH_EVERY`, and
 `DELAUNAY_PACHNER_STRESS_SEED`. Append `_3D` or `_4D` for a
-dimension-specific value.
+dimension-specific value. Use `MONTE_CARLO_SAMPLE_SIZE` to change Criterion's
+sample count; the benchmark enforces Criterion's minimum of 10 samples.
 
 ## Circumsphere Containment
 

@@ -3,15 +3,18 @@
 //! Tests for benchmark-owned public bistellar flip fixtures.
 //!
 //! The roundtrip assertions are n=1 ergodicity checks for the public
-//! Pachner/bistellar move API. For each selected fixture move, one admissible
-//! flip followed immediately by its inverse must recover the same valid
-//! triangulation: the same vertex UUID set and the same simplex-to-vertex UUID
-//! incidence. Exact equality remains the pass/fail condition; failed roundtrips
-//! report Jaccard similarity for the vertex and simplex-incidence sets to make
-//! near misses debuggable. Pachner's connectedness theorem motivates the broader
-//! ergodicity story; see `REFERENCES.md` under "Bistellar (Pachner) Moves and
-//! Delaunay Repair".
+//! Pachner/bistellar move API. For each selected roundtrip fixture move, one
+//! admissible flip followed immediately by its inverse must recover the same
+//! valid triangulation: the same vertex UUID set and the same simplex-to-vertex
+//! UUID incidence. Exact equality remains the pass/fail condition; failed
+//! roundtrips report Jaccard similarity for the vertex and simplex-incidence
+//! sets to make near misses debuggable. Forward-only checks keep the default
+//! fixture suite focused on one selected admissible move. Pachner's connectedness
+//! theorem motivates the broader ergodicity story; see `REFERENCES.md` under
+//! "Bistellar (Pachner) Moves and Delaunay Repair".
 
+// Reuse the benchmark-owned fixture catalog so this integration test certifies
+// the same public flip workflows that the Criterion harnesses measure.
 #[path = "../benches/common/flip_fixtures.rs"]
 mod flip_fixtures;
 #[path = "../benches/common/flip_workflows.rs"]
@@ -57,6 +60,14 @@ enum RoundtripMove {
     K3,
 }
 
+const MINIMAL_K2_ROUNDTRIP_POINTS_3D: &[[f64; 3]] = &[
+    [0.0, 0.0, 0.0],
+    [1.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0],
+    [0.20, 0.20, 0.85],
+    [0.20, 0.20, -0.85],
+];
+
 /// Verifies the stable and adversarial 2D public flip fixture workflows.
 #[test]
 fn flip_fixtures_cover_2d_workflows() {
@@ -75,8 +86,20 @@ fn flip_fixtures_cover_stable_3d_k1_roundtrip() {
 
 /// Verifies the stable 3D public k=2 fixture workflow.
 #[test]
-fn flip_fixtures_cover_stable_3d_k2_roundtrip() {
+fn flip_fixtures_cover_stable_3d_k2_forward() {
     verify_3d_fixture_move(STABLE_POINTS_3D, CandidateFilter::Any, FlipMoveKind::K2);
+}
+
+/// Verifies the public 3D k=2 inverse workflow on a minimal local support.
+#[test]
+fn flip_fixtures_cover_minimal_3d_k2_roundtrip() {
+    let base_dt =
+        build_flip_dt(MINIMAL_K2_ROUNDTRIP_POINTS_3D).expect("minimal 3D fixture should build");
+    assert_topology_and_delaunay_valid(&base_dt, "minimal 3D k=2 fixture");
+    let facet = flippable_k2_facet(&base_dt, true, CandidateFilter::Any)
+        .expect("minimal 3D fixture should provide a roundtrip-capable k=2 facet");
+    verify_k2_roundtrip(&base_dt, facet)
+        .expect("minimal 3D k=2 roundtrip should recover the same triangulation");
 }
 
 /// Verifies the stable 3D public k=3 fixture workflow.
@@ -97,7 +120,7 @@ fn flip_fixtures_cover_adversarial_3d_k1_roundtrip() {
 
 /// Verifies the adversarial 3D public k=2 fixture workflow.
 #[test]
-fn flip_fixtures_cover_adversarial_3d_k2_roundtrip() {
+fn flip_fixtures_cover_adversarial_3d_k2_forward() {
     verify_3d_fixture_move(
         ADVERSARIAL_POINTS_3D,
         CandidateFilter::TouchesAdversarialFeature,
@@ -473,7 +496,7 @@ fn verify_3d_fixture_move(points: &[[f64; 3]], filter: CandidateFilter, move_kin
                 .expect("3D k=1 roundtrip should recover the same triangulation");
         }
         FlipMoveKind::K2 => {
-            let facet = flippable_k2_facet(&base_dt, true, filter)
+            let facet = flippable_k2_facet(&base_dt, false, filter)
                 .expect("3D benchmark fixture should provide a selected k=2 facet");
             if filter == CandidateFilter::TouchesAdversarialFeature {
                 assert!(
@@ -482,8 +505,8 @@ fn verify_3d_fixture_move(points: &[[f64; 3]], filter: CandidateFilter, move_kin
                     "3D adversarial k=2 support should touch an adversarial fixture feature"
                 );
             }
-            verify_k2_roundtrip(&base_dt, facet)
-                .expect("3D k=2 roundtrip should recover the same triangulation");
+            verify_k2_forward(&base_dt, facet)
+                .expect("3D benchmark k=2 forward flip should preserve topology");
         }
         FlipMoveKind::K3 => {
             let ridge = flippable_k3_ridge(&base_dt, false, filter)

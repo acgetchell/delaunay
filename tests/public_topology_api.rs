@@ -122,6 +122,28 @@ macro_rules! gen_split_topology_single_simplex_tests {
 gen_split_topology_single_simplex_tests!(2, 3, 4, 5);
 
 #[test]
+fn owner_level_structure_validation_helpers_succeed_on_valid_topology()
+-> Result<(), PublicTopologyApiTestError> {
+    let vertices = standard_simplex_vertices::<3>()?;
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()?;
+    let tri = dt.as_triangulation();
+
+    assert!(dt.is_valid_structure().is_ok());
+    assert!(dt.validate_structure().is_ok());
+    assert!(dt.structure_diagnostic().is_none());
+    assert!(dt.structure_report().is_ok());
+
+    assert!(tri.is_valid_structure().is_ok());
+    assert!(tri.validate_structure().is_ok());
+    assert!(tri.structure_diagnostic().is_none());
+    assert!(tri.structure_report().is_ok());
+
+    Ok(())
+}
+
+#[test]
 fn public_ridges_return_vertex_candidates_in_2d() -> Result<(), PublicTopologyApiTestError> {
     let vertices = standard_simplex_vertices::<2>()?;
     let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::builder(&vertices)
