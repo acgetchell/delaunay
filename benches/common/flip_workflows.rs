@@ -19,7 +19,7 @@ use delaunay::prelude::construction::{
 use delaunay::prelude::geometry::{CoordinateConversionError, Point, RobustKernel, simplex_volume};
 use delaunay::prelude::query::{JaccardComputationError, QueryError, format_jaccard_report};
 use delaunay::prelude::tds::{EdgeKeyError, FacetError, InvariantError, VertexKey};
-use delaunay::prelude::topology::validation::{RidgeCandidate, RidgeCandidateError};
+use delaunay::prelude::topology::validation::{ManifoldError, RidgeCandidate, RidgeCandidateError};
 use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 use thiserror::Error;
 use uuid::Uuid;
@@ -90,6 +90,16 @@ pub enum FlipWorkflowError {
         /// Underlying ridge candidate parsing failure.
         #[source]
         source: RidgeCandidateError,
+    },
+
+    /// Ridge star traversal failed before support inspection.
+    #[error("failed to inspect ridge star for {ridge:?}: {source}")]
+    RidgeStar {
+        /// Ridge handle being inspected.
+        ridge: RidgeHandle,
+        /// Underlying ridge-star traversal failure.
+        #[source]
+        source: Box<ManifoldError>,
     },
 
     /// Snapshot collection found a dangling simplex-to-vertex incidence.
@@ -1381,15 +1391,20 @@ fn ridge_support_points<const D: usize>(
             .map(|(_, vertex_key)| *vertex_key),
     )
     .map_err(|source| FlipWorkflowError::InvalidRidgeCandidate { ridge, source })?;
+    let ridge_view =
+        dt.ridge_view(&ridge_candidate)
+            .map_err(|source| FlipWorkflowError::RidgeStar {
+                ridge,
+                source: Box::new(source),
+            })?;
     let mut keys = Vec::new();
-    for (_, star_simplex) in dt.simplices() {
-        if ridge_candidate
-            .as_slice()
-            .iter()
-            .all(|vertex_key| star_simplex.vertices().contains(vertex_key))
-        {
-            keys.extend(star_simplex.vertices());
-        }
+    for &star_simplex_key in ridge_view.incident_simplices() {
+        let star_simplex =
+            dt.simplex(star_simplex_key)
+                .ok_or(FlipWorkflowError::MissingSimplex {
+                    simplex_key: star_simplex_key,
+                })?;
+        keys.extend(star_simplex.vertices());
     }
     keys.sort_unstable();
     keys.dedup();

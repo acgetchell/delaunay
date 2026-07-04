@@ -67,18 +67,51 @@ fn flip_fixtures_cover_2d_workflows() {
     );
 }
 
-/// Verifies the stable 3D public flip fixture workflows.
+/// Verifies the stable 3D public k=1 fixture workflow.
 #[test]
-fn flip_fixtures_cover_stable_3d_workflows() {
-    verify_3d_fixture(STABLE_POINTS_3D, CandidateFilter::Any);
+fn flip_fixtures_cover_stable_3d_k1_roundtrip() {
+    verify_3d_fixture_move(STABLE_POINTS_3D, CandidateFilter::Any, FlipMoveKind::K1);
 }
 
-/// Verifies the adversarial 3D public flip fixture workflows.
+/// Verifies the stable 3D public k=2 fixture workflow.
 #[test]
-fn flip_fixtures_cover_adversarial_3d_workflows() {
-    verify_3d_fixture(
+fn flip_fixtures_cover_stable_3d_k2_roundtrip() {
+    verify_3d_fixture_move(STABLE_POINTS_3D, CandidateFilter::Any, FlipMoveKind::K2);
+}
+
+/// Verifies the stable 3D public k=3 fixture workflow.
+#[test]
+fn flip_fixtures_cover_stable_3d_k3_forward() {
+    verify_3d_fixture_move(STABLE_POINTS_3D, CandidateFilter::Any, FlipMoveKind::K3);
+}
+
+/// Verifies the adversarial 3D public k=1 fixture workflow.
+#[test]
+fn flip_fixtures_cover_adversarial_3d_k1_roundtrip() {
+    verify_3d_fixture_move(
         ADVERSARIAL_POINTS_3D,
         CandidateFilter::TouchesAdversarialFeature,
+        FlipMoveKind::K1,
+    );
+}
+
+/// Verifies the adversarial 3D public k=2 fixture workflow.
+#[test]
+fn flip_fixtures_cover_adversarial_3d_k2_roundtrip() {
+    verify_3d_fixture_move(
+        ADVERSARIAL_POINTS_3D,
+        CandidateFilter::TouchesAdversarialFeature,
+        FlipMoveKind::K2,
+    );
+}
+
+/// Verifies the adversarial 3D public k=3 fixture workflow.
+#[test]
+fn flip_fixtures_cover_adversarial_3d_k3_forward() {
+    verify_3d_fixture_move(
+        ADVERSARIAL_POINTS_3D,
+        CandidateFilter::TouchesAdversarialFeature,
+        FlipMoveKind::K3,
     );
 }
 
@@ -420,46 +453,52 @@ fn verify_2d_fixture(points: &[[f64; 2]], filter: CandidateFilter) {
         .expect("2D benchmark k=2 forward flip should preserve topology");
 }
 
-/// Verifies all selected 3D public flip workflows for one fixture.
-fn verify_3d_fixture(points: &[[f64; 3]], filter: CandidateFilter) {
+/// Verifies one selected 3D public flip workflow for one fixture.
+fn verify_3d_fixture_move(points: &[[f64; 3]], filter: CandidateFilter, move_kind: FlipMoveKind) {
     let base_dt = build_flip_dt(points).expect("3D benchmark flip fixture should build");
     assert_topology_and_delaunay_valid(&base_dt, "3D benchmark flip fixture");
 
-    let simplex_key = largest_volume_simplex(&base_dt, filter)
-        .expect("3D benchmark fixture should provide a selected k=1 simplex");
-    if filter == CandidateFilter::TouchesAdversarialFeature {
-        assert!(
-            simplex_touches_adversarial_feature(&base_dt, simplex_key)
-                .expect("3D k=1 support should be inspectable"),
-            "3D adversarial k=1 support should touch an adversarial fixture feature"
-        );
+    match move_kind {
+        FlipMoveKind::K1 => {
+            let simplex_key = largest_volume_simplex(&base_dt, filter)
+                .expect("3D benchmark fixture should provide a selected k=1 simplex");
+            if filter == CandidateFilter::TouchesAdversarialFeature {
+                assert!(
+                    simplex_touches_adversarial_feature(&base_dt, simplex_key)
+                        .expect("3D k=1 support should be inspectable"),
+                    "3D adversarial k=1 support should touch an adversarial fixture feature"
+                );
+            }
+            verify_k1_roundtrip(&base_dt, simplex_key)
+                .expect("3D k=1 roundtrip should recover the same triangulation");
+        }
+        FlipMoveKind::K2 => {
+            let facet = flippable_k2_facet(&base_dt, true, filter)
+                .expect("3D benchmark fixture should provide a selected k=2 facet");
+            if filter == CandidateFilter::TouchesAdversarialFeature {
+                assert!(
+                    facet_support_touches_adversarial_feature(&base_dt, facet)
+                        .expect("3D k=2 support should be inspectable"),
+                    "3D adversarial k=2 support should touch an adversarial fixture feature"
+                );
+            }
+            verify_k2_roundtrip(&base_dt, facet)
+                .expect("3D k=2 roundtrip should recover the same triangulation");
+        }
+        FlipMoveKind::K3 => {
+            let ridge = flippable_k3_ridge(&base_dt, false, filter)
+                .expect("3D benchmark fixture should provide a selected k=3 ridge");
+            if filter == CandidateFilter::TouchesAdversarialFeature {
+                assert!(
+                    ridge_support_touches_adversarial_feature(&base_dt, ridge)
+                        .expect("3D k=3 support should be inspectable"),
+                    "3D adversarial k=3 support should touch an adversarial fixture feature"
+                );
+            }
+            verify_k3_forward(&base_dt, ridge)
+                .expect("3D benchmark k=3 forward flip should preserve topology");
+        }
     }
-    verify_k1_roundtrip(&base_dt, simplex_key)
-        .expect("3D k=1 roundtrip should recover the same triangulation");
-
-    let facet = flippable_k2_facet(&base_dt, true, filter)
-        .expect("3D benchmark fixture should provide a selected k=2 facet");
-    if filter == CandidateFilter::TouchesAdversarialFeature {
-        assert!(
-            facet_support_touches_adversarial_feature(&base_dt, facet)
-                .expect("3D k=2 support should be inspectable"),
-            "3D adversarial k=2 support should touch an adversarial fixture feature"
-        );
-    }
-    verify_k2_roundtrip(&base_dt, facet)
-        .expect("3D k=2 roundtrip should recover the same triangulation");
-
-    let ridge = flippable_k3_ridge(&base_dt, false, filter)
-        .expect("3D benchmark fixture should provide a selected k=3 ridge");
-    if filter == CandidateFilter::TouchesAdversarialFeature {
-        assert!(
-            ridge_support_touches_adversarial_feature(&base_dt, ridge)
-                .expect("3D k=3 support should be inspectable"),
-            "3D adversarial k=3 support should touch an adversarial fixture feature"
-        );
-    }
-    verify_k3_forward(&base_dt, ridge)
-        .expect("3D benchmark k=3 forward flip should preserve topology");
 }
 
 /// Verifies one selected roundtrip-capable public flip workflow for one dimension.

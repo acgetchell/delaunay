@@ -424,26 +424,27 @@ gen_simplex_vertex_count!(4, 5, #[cfg(feature = "slow-tests")]);
 gen_simplex_vertex_count!(5, 6, #[cfg(feature = "slow-tests")]);
 
 // =============================================================================
-// CONNECTIVITY TESTS (2D-5D)
+// TOPOLOGY VALIDITY TESTS (2D-5D)
 // =============================================================================
 //
-// Property: every successfully-constructed Delaunay triangulation is connected.
-// This validates that `Tds::is_connected` (BFS over neighbor pointers) does not
-// produce false negatives on well-formed triangulations.
+// Property: every successfully-constructed Delaunay triangulation satisfies the
+// public Level 3 topology validator.
 
-macro_rules! gen_is_connected {
+macro_rules! gen_is_valid_topology {
     ($dim:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
                 $(#[$attr])*
                 #[test]
-                fn [<prop_tds_is_connected_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
+                fn [<prop_triangulation_is_valid_topology_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     if let Ok(dt) = DelaunayTriangulation::builder(&vertices).build() {
+                        let topology_result = dt.as_triangulation().is_valid_topology();
                         prop_assert!(
-                            dt.as_triangulation().is_valid_topology().is_ok(),
-                            "{}D successfully-built triangulation must be connected ({} simplices)",
+                            topology_result.is_ok(),
+                            "{}D successfully-built triangulation must satisfy Level 3 topology ({} simplices): {:?}",
                             $dim,
-                            dt.number_of_simplices()
+                            dt.number_of_simplices(),
+                            topology_result.err()
                         );
                     }
                 }
@@ -452,13 +453,13 @@ macro_rules! gen_is_connected {
     };
 }
 
-gen_is_connected!(2);
+gen_is_valid_topology!(2);
 
-gen_is_connected!(3);
+gen_is_valid_topology!(3);
 
-gen_is_connected!(4, #[cfg(feature = "slow-tests")]);
+gen_is_valid_topology!(4, #[cfg(feature = "slow-tests")]);
 
-gen_is_connected!(5, #[cfg(feature = "slow-tests")]);
+gen_is_valid_topology!(5, #[cfg(feature = "slow-tests")]);
 
 // =============================================================================
 // FAST HIGH-DIMENSIONAL CI SMOKE TESTS
@@ -510,10 +511,12 @@ macro_rules! gen_high_dim_tds_smoke {
                         $dim,
                         dt.is_valid_structure().err()
                     );
+                    let topology_result = dt.as_triangulation().is_valid_topology();
                     prop_assert!(
-                        dt.as_triangulation().is_valid_topology().is_ok(),
-                        "{}D active TDS smoke should be connected",
-                        $dim
+                        topology_result.is_ok(),
+                        "{}D active TDS smoke should satisfy Level 3 topology: {:?}",
+                        $dim,
+                        topology_result.err()
                     );
                     prop_assert_eq!(
                         dt.dim(),

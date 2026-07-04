@@ -353,7 +353,7 @@ rules:
         - "/tests/**/*.rs"
         - "/benches/**/*.rs"
         - "/examples/**/*.rs"
-    pattern-regex: '(?ms)^[ \t]*#\[cfg\(any\([^\]\n]*\btest\b[^\]\n]*\)\)\][^\n]*\n(?:(?!^[ \t]*pub[ \t]+(?:use|(?:const[ \t]+)?fn)\b).*\n)*^[ \t]*pub[ \t]+(?:use|(?:const[ \t]+)?fn)\b' # yamllint disable-line rule:line-length
+    pattern-regex: '(?m)^[ \t]*#\[cfg\((?:test|any\([^\]\n]*\btest\b[^\]\n]*\))\)\][^\n]*\n(?:[ \t]*#\[[^\]\n]*\][^\n]*\n|[ \t]*#\[[^\n]*\n(?:[ \t]+[^\n]*\n){0,8}[ \t]*[)\]]+[^\n]*\n|[ \t]*///[^\n]*\n|[ \t]*\n){0,8}[ \t]*pub[ \t]+(?:use|(?:const[ \t]+)?fn)\b' # yamllint disable-line rule:line-length
 
   - id: delaunay.rust.no-deep-crate-paths-in-functions
     languages:

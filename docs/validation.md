@@ -309,6 +309,18 @@ Validates the combinatorial structure of the Triangulation Data Structure.
 - `Tds::structure_diagnostic()` - First actionable Level 2 diagnostic.
 - `Tds::structure_report()` - All checkable Level 2 structural failures.
 - `Tds::validate()` - Levels 1–2 (elements + structural).
+- `Triangulation::is_valid_structure()` /
+  `DelaunayTriangulation::is_valid_structure()` - Owner-level Level 2
+  fast-fail validation without exposing storage.
+- `Triangulation::validate_structure()` /
+  `DelaunayTriangulation::validate_structure()` - Owner-level Levels 1–2
+  validation.
+- `Triangulation::structure_diagnostic()` /
+  `DelaunayTriangulation::structure_diagnostic()` - Owner-level first
+  actionable Level 2 diagnostic.
+- `Triangulation::structure_report()` /
+  `DelaunayTriangulation::structure_report()` - Owner-level aggregate Level 2
+  diagnostics.
 - `DelaunayTriangulation::validation_report()` - Cumulative diagnostic report across Levels 1–5.
 
 ### What It Checks
