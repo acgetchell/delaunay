@@ -2,6 +2,7 @@
 //!
 //! These tests cover:
 //! - Global edge enumeration via [`DelaunayTriangulation::edges`]
+//! - Topological ridge enumeration via [`DelaunayTriangulation::ridges`]
 //! - Vertex incident edges via [`DelaunayTriangulation::incident_edges`]
 //! - Simplex neighborhood traversal via [`DelaunayTriangulation::simplex_neighbors`]
 //! - Building and validating opt-in split topology views
@@ -11,9 +12,11 @@ use delaunay::prelude::TopologyGuarantee;
 use delaunay::prelude::Vertex;
 use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::query::*;
-use delaunay::prelude::tds::TdsError;
+use delaunay::prelude::tds::{SimplexKey, TdsError, VertexKey};
+use delaunay::prelude::validation::ManifoldError;
 use delaunay::vertex;
 use std::collections::HashSet;
+use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
 enum PublicTopologyApiTestError {
@@ -23,6 +26,10 @@ enum PublicTopologyApiTestError {
     CoordinateConversion(#[from] CoordinateConversionError),
     #[error(transparent)]
     TopologyIndex(#[from] TopologyIndexBuildError),
+    #[error(transparent)]
+    Query(#[from] QueryError),
+    #[error(transparent)]
+    Manifold(#[from] ManifoldError),
     #[error("single tetrahedron triangulation has no vertices")]
     EmptySingleTetrahedronVertices,
     #[error("single tetrahedron triangulation has no simplices")]
@@ -115,6 +122,58 @@ macro_rules! gen_split_topology_single_simplex_tests {
 gen_split_topology_single_simplex_tests!(2, 3, 4, 5);
 
 #[test]
+fn owner_level_structure_validation_helpers_succeed_on_valid_topology()
+-> Result<(), PublicTopologyApiTestError> {
+    let vertices = standard_simplex_vertices::<3>()?;
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()?;
+    let tri = dt.as_triangulation();
+
+    assert!(dt.is_valid_structure().is_ok());
+    assert!(dt.validate_structure().is_ok());
+    assert!(dt.structure_diagnostic().is_none());
+    assert!(dt.structure_report().is_ok());
+
+    assert!(tri.is_valid_structure().is_ok());
+    assert!(tri.validate_structure().is_ok());
+    assert!(tri.structure_diagnostic().is_none());
+    assert!(tri.structure_report().is_ok());
+
+    Ok(())
+}
+
+#[test]
+fn public_ridges_return_vertex_candidates_in_2d() -> Result<(), PublicTopologyApiTestError> {
+    let vertices = standard_simplex_vertices::<2>()?;
+    let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()?;
+
+    let ridges = dt.ridges().collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(ridges.len(), 3);
+
+    let vertex_keys = dt.vertices().map(|(key, _)| key).collect::<HashSet<_>>();
+    let mut ridge_vertices = HashSet::with_capacity(ridges.len());
+    for ridge in &ridges {
+        assert_eq!(ridge.as_slice().len(), 1);
+        ridge_vertices.insert(ridge.as_slice()[0]);
+
+        let view = dt.ridge_view(ridge)?;
+        assert_eq!(view.vertex_keys(), ridge.as_slice());
+        assert_eq!(view.incident_simplices().len(), 1);
+    }
+    assert_eq!(ridge_vertices, vertex_keys);
+
+    assert_eq!(
+        dt.ridge_handles()
+            .try_fold(0_usize, |count, ridge| ridge.map(|_| count + 1))?,
+        0,
+    );
+    Ok(())
+}
+
+#[test]
 fn edges_and_incident_edges_on_single_tetrahedron() -> Result<(), PublicTopologyApiTestError> {
     // Single tetrahedron: 4 vertices, 1 simplex, 6 unique edges.
     let vertices = vec![
@@ -174,6 +233,55 @@ fn edges_and_incident_edges_on_single_tetrahedron() -> Result<(), PublicTopology
         tri.simplex_vertices(simplex_key)
     );
     assert_eq!(dt.simplex_vertices(simplex_key)?.len(), 4);
+    Ok(())
+}
+
+#[test]
+fn owner_identity_queries_reject_unknown_ids_and_keys() -> Result<(), PublicTopologyApiTestError> {
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0])?,
+        vertex!([1.0, 0.0, 0.0])?,
+        vertex!([0.0, 1.0, 0.0])?,
+        vertex!([0.0, 0.0, 1.0])?,
+    ];
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::builder(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .build()?;
+    let tri = dt.as_triangulation();
+    let (simplex_key, simplex) = dt
+        .simplices()
+        .next()
+        .ok_or(PublicTopologyApiTestError::EmptySingleTetrahedronSimplices)?;
+    let vertex_key = simplex.vertices()[0];
+    let simplex_uuid = dt
+        .simplex_uuid_from_key(simplex_key)
+        .ok_or(PublicTopologyApiTestError::EmptySingleTetrahedronSimplices)?;
+    let vertex_uuid = dt
+        .vertex_uuid_from_key(vertex_key)
+        .ok_or(PublicTopologyApiTestError::EmptySingleTetrahedronVertices)?;
+
+    assert_eq!(dt.simplex_key_from_uuid(&simplex_uuid), Some(simplex_key));
+    assert_eq!(tri.simplex_key_from_uuid(&simplex_uuid), Some(simplex_key));
+    assert_eq!(dt.vertex_key_from_uuid(&vertex_uuid), Some(vertex_key));
+    assert_eq!(tri.vertex_key_from_uuid(&vertex_uuid), Some(vertex_key));
+
+    assert_eq!(dt.simplex_key_from_uuid(&Uuid::nil()), None);
+    assert_eq!(tri.simplex_key_from_uuid(&Uuid::nil()), None);
+    assert_eq!(dt.vertex_key_from_uuid(&Uuid::nil()), None);
+    assert_eq!(tri.vertex_key_from_uuid(&Uuid::nil()), None);
+    assert_eq!(dt.simplex_uuid_from_key(SimplexKey::default()), None);
+    assert_eq!(tri.simplex_uuid_from_key(SimplexKey::default()), None);
+    assert_eq!(dt.vertex_uuid_from_key(VertexKey::default()), None);
+    assert_eq!(tri.vertex_uuid_from_key(VertexKey::default()), None);
+    assert!(dt.simplex(SimplexKey::default()).is_none());
+    assert!(tri.simplex(SimplexKey::default()).is_none());
+    assert!(dt.vertex(VertexKey::default()).is_none());
+    assert!(tri.vertex(VertexKey::default()).is_none());
+    assert!(!dt.contains_simplex(SimplexKey::default()));
+    assert!(!tri.contains_simplex(SimplexKey::default()));
+    assert!(!dt.contains_vertex_key(VertexKey::default()));
+    assert!(!tri.contains_vertex_key(VertexKey::default()));
+
     Ok(())
 }
 
@@ -249,6 +357,23 @@ fn split_topology_indexes_on_double_tetrahedron() -> Result<(), PublicTopologyAp
     // Direct traversal should match the edge index.
     let edges_via_tri: HashSet<_> = tri.edges().collect();
     assert_eq!(edges_via_tri, edges);
+
+    // In 3D, topology ridges are edges and should be deduplicated across the shared facet.
+    let ridge_edges: HashSet<_> = dt
+        .ridges()
+        .map(|ridge| {
+            let ridge = ridge?;
+            assert_eq!(ridge.as_slice().len(), 2);
+            Ok((ridge.as_slice()[0], ridge.as_slice()[1]))
+        })
+        .collect::<Result<_, QueryError>>()?;
+    let edge_endpoints: HashSet<_> = edges.iter().map(|edge| edge.endpoints()).collect();
+    assert_eq!(ridge_edges, edge_endpoints);
+    assert_eq!(
+        dt.ridge_handles()
+            .try_fold(0_usize, |count, ridge| ridge.map(|_| count + 1))?,
+        simplex_keys.len() * 6,
+    );
 
     // Missing keys should yield empty iterators.
     assert_eq!(

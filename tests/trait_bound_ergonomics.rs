@@ -4,6 +4,11 @@ use std::{assert_matches, hash::Hasher};
 
 use delaunay::DelaunayTriangulation;
 use delaunay::prelude::Triangulation;
+use delaunay::prelude::algorithms::{
+    ConflictError, LocateError, extract_cavity_boundary, find_conflict_region, locate,
+    locate_with_stats,
+};
+use delaunay::prelude::collections::SimplexKeyBuffer;
 use delaunay::prelude::construction::{GlobalTopology, TopologyGuarantee, TopologyKind};
 use delaunay::prelude::geometry::{Coordinate, CoordinateValidationError, FastKernel, Point};
 use delaunay::prelude::query::FacetIncidenceAnalysis;
@@ -161,6 +166,61 @@ fn read_only_topology_apis_accept_non_datatype_payloads() {
 
     let topology = validate_triangulation_euler(&tds, GlobalTopology::Euclidean).unwrap();
     assert!(topology.is_valid());
+}
+
+#[test]
+fn locate_and_conflict_apis_accept_non_datatype_payloads() {
+    let point = Point::try_new([0.25, 0.25]).unwrap();
+    let kernel = FastKernel::new();
+    let tds: Tds<Payload, Payload, 2> = Tds::empty();
+    let empty_conflict_region = SimplexKeyBuffer::default();
+    let tri: Triangulation<FastKernel<f64>, Payload, Payload, 2> =
+        Triangulation::new_empty(FastKernel::new());
+    let dt: DelaunayTriangulation<FastKernel<f64>, Payload, Payload, 2> =
+        DelaunayTriangulation::with_empty_kernel(FastKernel::new());
+
+    assert_matches!(
+        locate(&tds, &kernel, &point, None),
+        Err(LocateError::EmptyTriangulation)
+    );
+    assert_matches!(
+        locate_with_stats(&tds, &kernel, &point, None),
+        Err(LocateError::EmptyTriangulation)
+    );
+    assert_matches!(
+        find_conflict_region(&tds, &kernel, &point, SimplexKey::default()),
+        Err(ConflictError::InvalidStartSimplex { .. })
+    );
+    assert_matches!(
+        extract_cavity_boundary(&tds, &empty_conflict_region),
+        Ok(boundary) if boundary.is_empty()
+    );
+
+    assert_matches!(
+        tri.locate(&point, None),
+        Err(LocateError::EmptyTriangulation)
+    );
+    assert_matches!(
+        tri.locate_with_stats(&point, None),
+        Err(LocateError::EmptyTriangulation)
+    );
+    assert_matches!(
+        tri.find_conflict_region(&point, SimplexKey::default()),
+        Err(ConflictError::InvalidStartSimplex { .. })
+    );
+
+    assert_matches!(
+        dt.locate(&point, None),
+        Err(LocateError::EmptyTriangulation)
+    );
+    assert_matches!(
+        dt.locate_with_stats(&point, None),
+        Err(LocateError::EmptyTriangulation)
+    );
+    assert_matches!(
+        dt.find_conflict_region(&point, SimplexKey::default()),
+        Err(ConflictError::InvalidStartSimplex { .. })
+    );
 }
 
 #[test]

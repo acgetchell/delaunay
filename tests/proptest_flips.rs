@@ -258,7 +258,7 @@ fn check_k1_roundtrip<const D: usize>(
             ))
         })?;
 
-    let mut triangulation = simplex.as_triangulation().clone();
+    let mut triangulation = simplex.into_triangulation();
     assert_valid(&triangulation, "initial")?;
     assert_positive_simplex_orientations(&triangulation, "before k=1 insertion")?;
     let before = snapshot_topology(&triangulation)?;

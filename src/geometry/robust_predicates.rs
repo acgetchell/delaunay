@@ -17,8 +17,6 @@ use crate::geometry::point::Point;
 use crate::geometry::sos::{sos_insphere_sign, sos_orientation_sign};
 use crate::geometry::traits::coordinate::CoordinateConversionError;
 use core::{cmp::Ordering, hint::cold_path};
-#[cfg(test)]
-use std::cell::Cell;
 use std::sync::LazyLock;
 
 static PROCESS_WIDE_STRICT_INSPHERE_CONSISTENCY: LazyLock<bool> =
@@ -26,8 +24,8 @@ static PROCESS_WIDE_STRICT_INSPHERE_CONSISTENCY: LazyLock<bool> =
 
 #[cfg(test)]
 thread_local! {
-    static STRICT_INSPHERE_CONSISTENCY_TEST_OVERRIDE: Cell<Option<bool>> =
-        const { Cell::new(None) };
+    static STRICT_INSPHERE_CONSISTENCY_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
 }
 
 #[cfg(test)]
@@ -51,7 +49,7 @@ impl Drop for StrictInsphereConsistencyOverrideGuard {
 /// branch coverage does not depend on process-wide environment mutation.
 fn strict_insphere_consistency_enabled() -> bool {
     #[cfg(test)]
-    if let Some(enabled) = STRICT_INSPHERE_CONSISTENCY_TEST_OVERRIDE.with(Cell::get) {
+    if let Some(enabled) = STRICT_INSPHERE_CONSISTENCY_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return enabled;
     }
 

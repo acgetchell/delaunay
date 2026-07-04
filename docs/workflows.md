@@ -371,7 +371,7 @@ fn main() -> DelaunayResult<()> {
         return Ok(());
     };
     dt.set_simplex_data(simplex_key, Some(42))?;
-    assert_eq!(dt.tds().simplex(simplex_key).map(|s| s.data()), Some(Some(&42)));
+    assert_eq!(dt.simplex(simplex_key).map(|s| s.data()), Some(Some(&42)));
     Ok(())
 }
 ```
@@ -443,22 +443,10 @@ orientation canonicalization fails, the operation rolls back to the pre-deletion
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    DelaunayResult, DelaunayTriangulationBuilder, vertex,
 };
-use delaunay::prelude::deletion::DeleteVertexError;
-use delaunay::prelude::geometry::CoordinateConversionError;
 
-#[derive(Debug, thiserror::Error)]
-enum DeletionExampleError {
-    #[error(transparent)]
-    Construction(#[from] DelaunayTriangulationConstructionError),
-    #[error(transparent)]
-    DeleteVertex(#[from] DeleteVertexError),
-    #[error(transparent)]
-    Coordinate(#[from] CoordinateConversionError),
-}
-
-fn main() -> Result<(), DeletionExampleError> {
+fn main() -> DelaunayResult<()> {
     let vertices = vec![
         vertex![0.0, 0.0, 0.0]?,
         vertex![1.0, 0.0, 0.0]?,
@@ -508,22 +496,11 @@ See [`api_design.md`](api_design.md) for the full construction vs local move API
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    DelaunayResult, DelaunayTriangulationBuilder, vertex,
 };
-use delaunay::prelude::geometry::CoordinateConversionError;
-use delaunay::prelude::pachner::{FlipError, PachnerMove, PachnerMoves};
+use delaunay::prelude::pachner::{PachnerMove, PachnerMoves};
 
-#[derive(Debug, thiserror::Error)]
-enum FlipExampleError {
-    #[error(transparent)]
-    Construction(#[from] DelaunayTriangulationConstructionError),
-    #[error(transparent)]
-    Flip(#[from] FlipError),
-    #[error(transparent)]
-    Coordinate(#[from] CoordinateConversionError),
-}
-
-fn main() -> Result<(), FlipExampleError> {
+fn main() -> DelaunayResult<()> {
     let vertices = vec![
         vertex![0.0, 0.0, 0.0]?,
         vertex![1.0, 0.0, 0.0]?,

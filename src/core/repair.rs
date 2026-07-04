@@ -21,8 +21,6 @@ use crate::core::tds::{InvariantError, SimplexKey, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::validation::{TriangulationValidationError, insertion_error_to_invariant_error};
-#[cfg(test)]
-use crate::deletion::DeleteVertexError;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::quality::{QualityError, QualitySimplexVerticesError, radius_ratio};
 use std::env;
@@ -1344,7 +1342,7 @@ where
     ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// // Empty issues map => nothing to remove.
-    /// let mut tri = dt.as_triangulation().clone();
+    /// let mut tri = dt.into_triangulation();
     /// let removed = tri.repair_local_facet_issues(&FacetIssuesMap::default(), 0)?;
     /// assert_eq!(removed, 0);
     /// # Ok(())
@@ -1409,6 +1407,7 @@ mod tests {
     use crate::core::simplex::{NeighborSlot, Simplex};
     use crate::core::tds::Tds;
     use crate::core::vertex::Vertex;
+    use crate::deletion::DeleteVertexError;
     use crate::geometry::kernel::FastKernel;
     use crate::vertex;
     use std::assert_matches;
@@ -2011,7 +2010,7 @@ mod tests {
             })
             .map(|(key, _)| key)
             .unwrap();
-        let mut tri = dt.as_triangulation().clone();
+        let mut tri = dt.into_triangulation();
 
         let outcome = tri.remove_vertex_with_repair_seeds(vertex_key).unwrap();
 
@@ -2037,7 +2036,7 @@ mod tests {
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let mut tri = dt.as_triangulation().clone();
+        let mut tri = dt.into_triangulation();
         let missing_vertex = VertexKey::from(KeyData::from_ffi(0xBAD));
         let vertex_count = tri.tds.number_of_vertices();
         let simplex_count = tri.tds.number_of_simplices();
@@ -2063,7 +2062,7 @@ mod tests {
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let mut tri = dt.as_triangulation().clone();
+        let mut tri = dt.into_triangulation();
         let isolated_vertex = tri
             .tds
             .insert_vertex_with_mapping(vertex![0.5, 0.5, 0.5].unwrap())
@@ -2360,7 +2359,7 @@ mod tests {
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let mut tri = dt.as_triangulation().clone();
+        let mut tri = dt.into_triangulation();
 
         // Add a duplicate simplex with the same vertices as an existing simplex.
         let (_, existing_simplex) = tri.tds.simplices().next().unwrap();

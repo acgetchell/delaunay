@@ -69,7 +69,7 @@ use crate::core::algorithms::pl_manifold_repair::{
 };
 use crate::core::collections::{Entry, FastHashMap, SimplexVertexUuidBuffer};
 use crate::core::simplex::Simplex;
-use crate::core::tds::{SimplexKey, Tds, TdsMutationError};
+use crate::core::tds::{SimplexKey, TdsMutationError};
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::delaunay_rollback::{DelaunayRollbackTransaction, DelaunaySpatialIndexRollback};
@@ -77,55 +77,6 @@ use crate::geometry::kernel::ExactPredicates;
 use crate::repair::DelaunayRepairHeuristicConfig;
 use crate::triangulation::DelaunayTriangulation;
 use thiserror::Error;
-
-#[cfg(test)]
-mod test_hooks {
-    use super::DelaunayRepairError;
-    use crate::core::algorithms::flips::{DelaunayRepairDiagnostics, RepairQueueOrder};
-    use std::cell::Cell as ThreadCell;
-
-    thread_local! {
-        static FORCE_DELAUNAY_REPAIR_FAILURE: ThreadCell<bool> = const { ThreadCell::new(false) };
-    }
-
-    /// Enables or disables a synthetic Delaunay repair failure for branch tests.
-    pub(super) fn set_force_delaunay_repair_failure(enabled: bool) -> bool {
-        FORCE_DELAUNAY_REPAIR_FAILURE.with(|flag| {
-            let prior = flag.get();
-            flag.set(enabled);
-            prior
-        })
-    }
-
-    /// Restores the previous synthetic Delaunay repair failure state.
-    pub(super) fn restore_force_delaunay_repair_failure(prior: bool) {
-        FORCE_DELAUNAY_REPAIR_FAILURE.with(|flag| flag.set(prior));
-    }
-
-    /// Reports whether synthetic Delaunay repair failure is enabled.
-    pub(super) fn force_delaunay_repair_failure_enabled() -> bool {
-        FORCE_DELAUNAY_REPAIR_FAILURE.with(ThreadCell::get)
-    }
-
-    /// Builds the synthetic non-convergence error used by fallback branch tests.
-    pub(super) fn synthetic_repair_error() -> DelaunayRepairError {
-        DelaunayRepairError::NonConvergent {
-            max_flips: 0,
-            diagnostics: Box::new(DelaunayRepairDiagnostics {
-                facets_checked: 1,
-                flips_performed: 0,
-                max_queue_len: 1,
-                ambiguous_predicates: 0,
-                ambiguous_predicate_samples: Vec::new(),
-                predicate_failures: 0,
-                cycle_detections: 0,
-                cycle_signature_samples: Vec::new(),
-                attempt: 1,
-                queue_order: RepairQueueOrder::Fifo,
-            }),
-        }
-    }
-}
 
 // =============================================================================
 // CONFIGURATION
@@ -498,18 +449,18 @@ impl<U, V, const D: usize> FallbackRebuildSnapshot<U, V, D> {
 ///
 /// Returns [`SimplexValidationError`] if any simplex cannot resolve all vertex
 /// UUIDs needed to build its order-independent payload signature.
-fn snapshot_rebuild_state<U, V, const D: usize>(
-    tds: &Tds<U, V, D>,
+fn snapshot_rebuild_state<K, U, V, const D: usize>(
+    dt: &DelaunayTriangulation<K, U, V, D>,
 ) -> Result<FallbackRebuildSnapshot<U, V, D>, SimplexValidationError>
 where
     U: Copy,
     V: Copy,
 {
-    let vertices = tds
+    let vertices = dt
         .vertices()
         .map(|(_, v)| Vertex::from_validated_point_with_uuid(*v.point(), v.uuid(), v.data))
         .collect::<Vec<_>>();
-    let simplex_data = collect_simplex_data(tds)?;
+    let simplex_data = collect_simplex_data(dt)?;
     Ok(FallbackRebuildSnapshot {
         vertices,
         simplex_data,
@@ -523,15 +474,15 @@ where
 ///
 /// Returns [`SimplexValidationError`] if a simplex references a vertex whose
 /// UUID cannot be resolved.
-fn collect_simplex_data<U, V, const D: usize>(
-    tds: &Tds<U, V, D>,
+fn collect_simplex_data<K, U, V, const D: usize>(
+    dt: &DelaunayTriangulation<K, U, V, D>,
 ) -> Result<SimplexDataByVertexUuids<V>, SimplexValidationError>
 where
     V: Copy,
 {
     let mut simplex_data = FastHashMap::default();
-    for (_, simplex) in tds.simplices() {
-        let vertex_uuids = simplex_vertex_uuids(tds, simplex)?;
+    for (_, simplex) in dt.simplices() {
+        let vertex_uuids = simplex_vertex_uuids(dt, simplex)?;
         match simplex_data.entry(vertex_uuids) {
             Entry::Vacant(entry) => {
                 entry.insert(SimplexDataMatch::Unique(simplex.data().copied()));
@@ -551,13 +502,17 @@ where
 ///
 /// Returns [`SimplexValidationError`] if any simplex vertex key cannot be
 /// resolved to its stable vertex UUID.
-fn simplex_vertex_uuids<U, V, const D: usize>(
-    tds: &Tds<U, V, D>,
+fn simplex_vertex_uuids<K, U, V, const D: usize>(
+    dt: &DelaunayTriangulation<K, U, V, D>,
     simplex: &Simplex<V, D>,
 ) -> Result<SimplexVertexUuidBuffer, SimplexValidationError> {
-    let mut vertex_uuids = simplex
-        .vertex_uuid_iter(tds)
-        .collect::<Result<SimplexVertexUuidBuffer, SimplexValidationError>>()?;
+    let mut vertex_uuids = SimplexVertexUuidBuffer::new();
+    for &vertex_key in simplex.vertices() {
+        let vertex_uuid = dt
+            .vertex_uuid_from_key(vertex_key)
+            .ok_or(SimplexValidationError::VertexKeyNotFound { key: vertex_key })?;
+        vertex_uuids.push(vertex_uuid);
+    }
     vertex_uuids.sort_unstable();
     Ok(vertex_uuids)
 }
@@ -578,7 +533,7 @@ where
 {
     let mut assignments: Vec<(SimplexKey, V)> = Vec::new();
     for (simplex_key, simplex) in rebuilt.simplices() {
-        let vertex_uuids = simplex_vertex_uuids(rebuilt.tds(), simplex)?;
+        let vertex_uuids = simplex_vertex_uuids(rebuilt, simplex)?;
         let Some(SimplexDataMatch::Unique(Some(data))) = original_simplex_data.get(&vertex_uuids)
         else {
             continue;
@@ -823,7 +778,7 @@ where
             let failed_delaunay_stats = failed_delaunay_repair_stats(&repair_err);
 
             let fallback_result = {
-                let kernel = &transaction.delaunay_mut().as_triangulation().kernel;
+                let kernel = transaction.delaunay_mut().kernel();
                 rebuild_preserving_data(kernel, &fallback_snapshot)
             };
             match fallback_result {
@@ -955,8 +910,7 @@ where
 
     // Step 1: PL-manifold topology repair.
     let fallback_snapshot = if config.fallback_rebuild {
-        let tds = &transaction.delaunay_mut().as_triangulation().tds;
-        match snapshot_rebuild_state(tds) {
+        match snapshot_rebuild_state(transaction.delaunay_mut()) {
             Ok(snapshot) => Some(snapshot),
             Err(source) => {
                 transaction.rollback();
@@ -982,7 +936,7 @@ where
             };
             let failed_topology_stats = failed_topology_repair_stats(&topo_err);
             let fallback_result = {
-                let kernel = &transaction.delaunay_mut().as_triangulation().kernel;
+                let kernel = transaction.delaunay_mut().kernel();
                 rebuild_preserving_data(kernel, &fallback_snapshot)
             };
             match fallback_result {
@@ -1010,14 +964,13 @@ where
     // Step 2: Flip-based Delaunay repair.
     // This is rebuild input only; rollback remains owned by `transaction`.
     let pre_delaunay_fallback_snapshot = if config.fallback_rebuild {
-        let tds = &transaction.delaunay_mut().as_triangulation().tds;
-        Some(snapshot_rebuild_state(tds))
+        Some(snapshot_rebuild_state(transaction.delaunay_mut()))
     } else {
         None
     };
     #[cfg(test)]
-    let delaunay_result = if test_hooks::force_delaunay_repair_failure_enabled() {
-        Err(test_hooks::synthetic_repair_error())
+    let delaunay_result = if tests::force_delaunay_repair_failure_enabled() {
+        Err(tests::synthetic_repair_error())
     } else {
         run_configured_delaunay_repair(transaction.delaunay_mut(), config)
     };
@@ -1039,16 +992,115 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::algorithms::flips::{DelaunayRepairDiagnostics, RepairQueueOrder};
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::geometry::point::Point;
-    use crate::tds::{TdsError, VertexKey};
+    use crate::tds::{Tds, TdsError, VertexKey};
     use crate::try_vertices_from_points;
     use crate::vertex;
     use crate::{DelaunayTriangulationBuilder, TriangulationConstructionError};
     use slotmap::KeyData;
     use std::assert_matches;
+    use std::cell::Cell;
     use std::error::Error as StdError;
     use uuid::Uuid;
+
+    // Last-resort fault injection for rollback branches that are hard to
+    // trigger deterministically; thread-local state avoids cross-test leakage.
+    // Remove this once a cleaner harness can reach the branch directly.
+    thread_local! {
+        static FORCE_DELAUNAY_REPAIR_FAILURE: Cell<bool> = const { Cell::new(false) };
+    }
+
+    #[must_use]
+    pub(super) fn force_delaunay_repair_failure_enabled() -> bool {
+        FORCE_DELAUNAY_REPAIR_FAILURE.with(Cell::get)
+    }
+
+    #[must_use]
+    pub(super) fn synthetic_repair_error() -> DelaunayRepairError {
+        DelaunayRepairError::NonConvergent {
+            max_flips: 0,
+            diagnostics: Box::new(DelaunayRepairDiagnostics {
+                facets_checked: 1,
+                flips_performed: 0,
+                max_queue_len: 1,
+                ambiguous_predicates: 0,
+                ambiguous_predicate_samples: Vec::new(),
+                predicate_failures: 0,
+                cycle_detections: 0,
+                cycle_signature_samples: Vec::new(),
+                attempt: 1,
+                queue_order: RepairQueueOrder::Fifo,
+            }),
+        }
+    }
+
+    #[must_use]
+    fn set_force_delaunay_repair_failure(enabled: bool) -> bool {
+        FORCE_DELAUNAY_REPAIR_FAILURE.with(|flag| {
+            let prior = flag.get();
+            flag.set(enabled);
+            prior
+        })
+    }
+
+    fn restore_force_delaunay_repair_failure(prior: bool) {
+        FORCE_DELAUNAY_REPAIR_FAILURE.with(|flag| flag.set(prior));
+    }
+
+    /// Snapshots deliberately malformed raw TDS fixtures for payload-disambiguation tests.
+    fn snapshot_rebuild_state_from_tds<U, V, const D: usize>(
+        tds: &Tds<U, V, D>,
+    ) -> Result<FallbackRebuildSnapshot<U, V, D>, SimplexValidationError>
+    where
+        U: Copy,
+        V: Copy,
+    {
+        let vertices = tds
+            .vertices()
+            .map(|(_, v)| Vertex::from_validated_point_with_uuid(*v.point(), v.uuid(), v.data))
+            .collect::<Vec<_>>();
+        let simplex_data = collect_simplex_data_from_tds(tds)?;
+        Ok(FallbackRebuildSnapshot {
+            vertices,
+            simplex_data,
+        })
+    }
+
+    /// Hashes simplex payloads from invalid raw TDS fixtures by sorted vertex UUIDs.
+    fn collect_simplex_data_from_tds<U, V, const D: usize>(
+        tds: &Tds<U, V, D>,
+    ) -> Result<SimplexDataByVertexUuids<V>, SimplexValidationError>
+    where
+        V: Copy,
+    {
+        let mut simplex_data = FastHashMap::default();
+        for (_, simplex) in tds.simplices() {
+            let vertex_uuids = simplex_vertex_uuids_from_tds(tds, simplex)?;
+            match simplex_data.entry(vertex_uuids) {
+                Entry::Vacant(entry) => {
+                    entry.insert(SimplexDataMatch::Unique(simplex.data().copied()));
+                }
+                Entry::Occupied(mut entry) => {
+                    entry.insert(SimplexDataMatch::Ambiguous);
+                }
+            }
+        }
+        Ok(simplex_data)
+    }
+
+    /// Builds the sorted vertex-UUID simplex identity for invalid raw TDS fixtures.
+    fn simplex_vertex_uuids_from_tds<U, V, const D: usize>(
+        tds: &Tds<U, V, D>,
+        simplex: &Simplex<V, D>,
+    ) -> Result<SimplexVertexUuidBuffer, SimplexValidationError> {
+        let mut vertex_uuids = simplex
+            .vertex_uuid_iter(tds)
+            .collect::<Result<SimplexVertexUuidBuffer, SimplexValidationError>>()?;
+        vertex_uuids.sort_unstable();
+        Ok(vertex_uuids)
+    }
 
     // =============================================================================
     // HELPER FUNCTIONS
@@ -1177,7 +1229,7 @@ mod tests {
     fn boundary_ridge_multiplicity_dt() -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> {
         let vertices = unit_simplex_vertices::<3>();
         let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        *dt.tds_mut() = make_boundary_ridge_multiplicity_tds();
+        *dt.tds_mut_for_repair() = make_boundary_ridge_multiplicity_tds();
         dt
     }
 
@@ -1185,7 +1237,7 @@ mod tests {
     fn cone_on_torus_dt() -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> {
         let vertices = unit_simplex_vertices::<3>();
         let mut dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        *dt.tds_mut() = make_cone_on_torus_tds();
+        *dt.tds_mut_for_repair() = make_cone_on_torus_tds();
         dt
     }
 
@@ -1322,14 +1374,14 @@ mod tests {
         /// Enables synthetic Delaunay repair failure until the guard is dropped.
         fn enable() -> Self {
             Self {
-                prior: test_hooks::set_force_delaunay_repair_failure(true),
+                prior: set_force_delaunay_repair_failure(true),
             }
         }
     }
 
     impl Drop for ForceDelaunayRepairFailureGuard {
         fn drop(&mut self) {
-            test_hooks::restore_force_delaunay_repair_failure(self.prior);
+            restore_force_delaunay_repair_failure(self.prior);
         }
     }
 
@@ -1428,7 +1480,7 @@ mod tests {
         let simplex = Simplex::try_new_with_data(vertex_keys, Some(7)).unwrap();
         tds.remove_isolated_vertex(missing).unwrap();
 
-        let err = simplex_vertex_uuids(&tds, &simplex).unwrap_err();
+        let err = simplex_vertex_uuids_from_tds(&tds, &simplex).unwrap_err();
 
         assert_eq!(
             err,
@@ -1884,10 +1936,9 @@ mod tests {
         let original_simplex_key = dt.simplices().next().unwrap().0;
         dt.set_simplex_data(original_simplex_key, Some(42)).unwrap();
 
-        let tds = &dt.as_triangulation().tds;
-        let snapshot = snapshot_rebuild_state(tds).unwrap();
+        let snapshot = snapshot_rebuild_state(&dt).unwrap();
 
-        let rebuilt = rebuild_preserving_data(&dt.as_triangulation().kernel, &snapshot).unwrap();
+        let rebuilt = rebuild_preserving_data(dt.kernel(), &snapshot).unwrap();
 
         let (_, rebuilt_simplex) = rebuilt.simplices().next().unwrap();
         assert_eq!(rebuilt_simplex.data(), Some(&42));
@@ -1915,7 +1966,7 @@ mod tests {
         tds.insert_simplex_bypassing_topology_checks_for_test(duplicate_b)
             .unwrap();
 
-        let snapshot = snapshot_rebuild_state(&tds).unwrap();
+        let snapshot = snapshot_rebuild_state_from_tds(&tds).unwrap();
         let kernel = AdaptiveKernel::new();
         let mut rebuilt: DelaunayTriangulation<_, (), i32, 2> =
             DelaunayTriangulationBuilder::new(snapshot.vertices())

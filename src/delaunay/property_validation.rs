@@ -1,7 +1,7 @@
-//! Delaunay empty-circumsphere property scans over bare TDS storage.
+//! Delaunay empty-circumsphere property scans over triangulation storage.
 //!
 //! This module is the reusable Level 5 property engine: it answers whether a
-//! [`Tds`](crate::tds::Tds) violates the Delaunay empty-circumsphere condition and returns
+//! topology storage violates the Delaunay empty-circumsphere condition and returns
 //! repair-oriented keys for offending simplices, vertices, and neighbors. It
 //! does not own wrapper-level validation policy, cumulative roll-up, or
 //! construction proofs; those live in `validation`.
@@ -94,9 +94,12 @@ pub enum DelaunayValidationError {
 /// Structured summary of Delaunay empty-circumsphere violations.
 ///
 /// This diagnostic report is intended for repair planning, bug reports,
-/// regression tests, and local investigation. It records stable TDS keys rather
-/// than copying all coordinates; callers can look up coordinates, UUIDs, and
-/// simplex data in the original [`Tds`].
+/// regression tests, and local investigation. It records runtime topology
+/// handles rather than copying every coordinate; callers can inspect the source
+/// triangulation through public owner accessors such as
+/// [`DelaunayTriangulation::simplex`](crate::DelaunayTriangulation::simplex),
+/// [`DelaunayTriangulation::vertex`](crate::DelaunayTriangulation::vertex), and
+/// [`DelaunayTriangulation::simplex_vertices`](crate::DelaunayTriangulation::simplex_vertices).
 ///
 /// # Examples
 ///
@@ -104,16 +107,7 @@ pub enum DelaunayValidationError {
 /// use delaunay::prelude::validation::delaunay_violation_report;
 /// use delaunay::prelude::*;
 ///
-/// # #[derive(Debug, thiserror::Error)]
-/// # enum ExampleError {
-/// #     #[error(transparent)]
-/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-/// #     #[error(transparent)]
-/// #     Validation(#[from] delaunay::DelaunayValidationError),
-/// #     #[error(transparent)]
-/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-/// # }
-/// # fn main() -> Result<(), ExampleError> {
+/// # fn main() -> DelaunayResult<()> {
 /// let vertices = vec![
 ///     delaunay::vertex![0.0, 0.0]?,
 ///     delaunay::vertex![1.0, 0.0]?,
@@ -121,7 +115,7 @@ pub enum DelaunayValidationError {
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
-/// let report = delaunay_violation_report(dt.tds(), None)?;
+/// let report = dt.delaunay_violation_report(None)?;
 /// assert!(report.is_valid());
 /// # Ok(())
 /// # }
@@ -129,15 +123,16 @@ pub enum DelaunayValidationError {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[must_use]
 pub struct DelaunayViolationReport {
-    /// Number of vertices in the TDS when the report was generated.
+    /// Number of vertices in the triangulation when the report was generated.
     pub number_of_vertices: usize,
-    /// Number of simplices in the TDS when the report was generated.
+    /// Number of simplices in the triangulation when the report was generated.
     pub number_of_simplices: usize,
     /// Number of requested simplices considered by the report.
     ///
-    /// When `simplices_to_check` is `None`, this is the TDS simplex count. When a
-    /// subset is provided, this is the subset length; missing simplex keys are
-    /// still counted as requested work and are skipped by the violation scan.
+    /// When `simplices_to_check` is `None`, this is the triangulation simplex
+    /// count. When a subset is provided, this is the subset length; missing
+    /// simplex keys are still counted as requested work and are skipped by the
+    /// violation scan.
     pub checked_simplices: usize,
     /// Simplices that failed the empty-circumsphere property.
     pub violating_simplices: ViolationBuffer,
@@ -182,8 +177,8 @@ impl DelaunayViolationReport {
 ///
 /// The detail record keeps the report compact and key-oriented. Use
 /// [`simplex_key`](Self::simplex_key), [`simplex_vertices`](Self::simplex_vertices), and
-/// [`offending_vertex`](Self::offending_vertex) to recover full vertex or simplex
-/// records from the source [`Tds`].
+/// [`offending_vertex`](Self::offending_vertex) with the source triangulation's
+/// public accessors to recover full vertex or simplex records.
 ///
 /// [`neighbor_simplices`](Self::neighbor_simplices) preserves the violating simplex's raw
 /// [`NeighborSlot`] state for each facet so diagnostics can distinguish
@@ -429,18 +424,8 @@ pub fn is_delaunay_property_only<U, V, const D: usize>(
 ///
 /// ```
 /// use delaunay::prelude::*;
-/// use delaunay::prelude::validation::find_delaunay_violations;
 ///
-/// # #[derive(Debug, thiserror::Error)]
-/// # enum ExampleError {
-/// #     #[error(transparent)]
-/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-/// #     #[error(transparent)]
-/// #     Validation(#[from] delaunay::DelaunayValidationError),
-/// #     #[error(transparent)]
-/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-/// # }
-/// # fn main() -> Result<(), ExampleError> {
+/// # fn main() -> DelaunayResult<()> {
 /// let vertices = vec![
 ///     delaunay::vertex![0.0, 0.0, 0.0]?,
 ///     delaunay::vertex![1.0, 0.0, 0.0]?,
@@ -449,11 +434,9 @@ pub fn is_delaunay_property_only<U, V, const D: usize>(
 /// ];
 ///
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-/// let tds = dt.tds();
-///
 /// // Find all violating simplices (should be empty for valid Delaunay triangulation)
-/// let violations = find_delaunay_violations(tds, None)?;
-/// assert!(violations.is_empty());
+/// let report = dt.delaunay_violation_report(None)?;
+/// assert!(report.violating_simplices.is_empty());
 /// # Ok(())
 /// # }
 /// ```
@@ -540,19 +523,9 @@ pub fn find_delaunay_violations<U, V, const D: usize>(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::validation::delaunay_violation_report;
 /// use delaunay::prelude::*;
 ///
-/// # #[derive(Debug, thiserror::Error)]
-/// # enum ExampleError {
-/// #     #[error(transparent)]
-/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-/// #     #[error(transparent)]
-/// #     Validation(#[from] delaunay::DelaunayValidationError),
-/// #     #[error(transparent)]
-/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-/// # }
-/// # fn main() -> Result<(), ExampleError> {
+/// # fn main() -> DelaunayResult<()> {
 /// let vertices = vec![
 ///     delaunay::vertex![0.0, 0.0, 0.0]?,
 ///     delaunay::vertex![1.0, 0.0, 0.0]?,
@@ -561,7 +534,7 @@ pub fn find_delaunay_violations<U, V, const D: usize>(
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
-/// let report = delaunay_violation_report(dt.tds(), None)?;
+/// let report = dt.delaunay_violation_report(None)?;
 /// assert!(report.violating_simplices.is_empty());
 /// # Ok(())
 /// # }
@@ -632,7 +605,7 @@ impl From<DelaunayViolationDetail> for DelaunayValidationError {
 /// Debug helper: print detailed information about the first detected Delaunay
 /// violation (or all vertices if none are found) to aid in debugging.
 ///
-/// This function is intended for use in tests and debug builds only. It uses the
+/// This function is intended for diagnostics-enabled debugging workflows. It uses the
 /// same robust predicates as [`find_delaunay_violations`] (and the crate-private Delaunay-property-only check)
 /// and prints:
 /// - A triangulation summary (vertex and simplex counts)
@@ -651,7 +624,7 @@ impl From<DelaunayViolationDetail> for DelaunayValidationError {
 /// let tds: Tds<(), (), 3> = Tds::empty();
 /// debug_print_first_delaunay_violation(&tds, None);
 /// ```
-#[cfg(any(test, feature = "diagnostics"))]
+#[cfg(feature = "diagnostics")]
 #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
 #[expect(
     clippy::too_many_lines,
@@ -831,23 +804,22 @@ mod tests {
         ];
 
         let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = &dt.as_triangulation().tds;
 
-        // Basic Delaunay helpers should report no violations.
+        // Public owner-level Delaunay helpers should report no violations.
         assert!(
-            is_delaunay_property_only(tds).is_ok(),
+            dt.is_valid_delaunay().is_ok(),
             "Simple tetrahedron should satisfy the Delaunay property"
         );
-        let violations = find_delaunay_violations(tds, None).unwrap();
+        let violations = dt.delaunay_violation_report(None).unwrap();
         assert!(
-            violations.is_empty(),
-            "find_delaunay_violations should report no violating simplices for a tetrahedron"
+            violations.is_valid(),
+            "owner-level Delaunay report should have no violating simplices for a tetrahedron"
         );
 
         // Smoke test for the debug helper: it should not panic and should print a
         // summary indicating that no violations were found.
-        #[cfg(any(test, feature = "diagnostics"))]
-        debug_print_first_delaunay_violation(tds, None);
+        #[cfg(feature = "diagnostics")]
+        dt.debug_print_first_delaunay_violation(None);
     }
 
     fn init_tracing() {
@@ -1037,12 +1009,12 @@ mod tests {
         assert!(message.contains("Non-finite value"));
     }
 
+    #[cfg(feature = "diagnostics")]
     #[test]
     fn debug_print_first_delaunay_violation_handles_violations() {
         init_tracing();
         let (tds, _, _) = build_non_delaunay_quad_2d();
 
-        #[cfg(any(test, feature = "diagnostics"))]
         debug_print_first_delaunay_violation(&tds, None);
     }
 
@@ -1057,7 +1029,7 @@ mod tests {
         ];
         let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
 
-        let report = delaunay_violation_report(dt.tds(), None).unwrap();
+        let report = dt.delaunay_violation_report(None).unwrap();
 
         assert!(report.is_valid());
         assert_eq!(report.number_of_vertices, 4);

@@ -610,8 +610,8 @@ use delaunay::prelude::query::{
 ```rust
 use delaunay::assert_jaccard_gte;
 
-let before = extract_vertex_coordinate_set(&tds_before);
-let after = extract_vertex_coordinate_set(&tds_after);
+let before = extract_vertex_coordinate_set(tri_before);
+let after = extract_vertex_coordinate_set(tri_after);
 
 // With custom label (4-arg form)
 assert_jaccard_gte!(
@@ -662,9 +662,9 @@ println!("{}", report);
 use delaunay::assert_jaccard_gte;
 use delaunay::prelude::query::extract_vertex_coordinate_set;
 
-let original_coords = extract_vertex_coordinate_set(&tds);
+let original_coords = extract_vertex_coordinate_set(tri);
 // ... perform operation (serialization, transformation, etc.) ...
-let result_coords = extract_vertex_coordinate_set(&tds_after);
+let result_coords = extract_vertex_coordinate_set(tri_after);
 
 assert_jaccard_gte!(
     &original_coords,
@@ -679,8 +679,8 @@ assert_jaccard_gte!(
 ```rust
 use delaunay::prelude::query::extract_edge_set;
 
-let edges_a = extract_edge_set(&tds_a);
-let edges_b = extract_edge_set(&tds_b);
+let edges_a = extract_edge_set(tri_a);
+let edges_b = extract_edge_set(tri_b);
 
 assert_jaccard_gte!(
     &edges_a,

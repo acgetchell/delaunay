@@ -105,7 +105,7 @@ macro_rules! test_serialization_properties {
                     ).prop_map(|v| try_vertices_from_points(&v).expect("finite point coordinates"))
                 ) {
                     if let Ok(dt) = DelaunayTriangulation::builder(&vertices).topology_guarantee(TopologyGuarantee::PLManifold).build() {
-                        if dt.tds().validate().is_ok() {
+                        if dt.validate_structure().is_ok() {
                             // Serialize and deserialize via try_from_tds
                             let json = serde_json::to_string(&dt).expect("Serialization failed");
                             let tds: Tds<(), (), $dim> =
@@ -116,10 +116,10 @@ macro_rules! test_serialization_properties {
 
                             // Deserialized triangulation should also be valid
                             prop_assert!(
-                                deserialized.tds().validate().is_ok(),
+                                deserialized.validate_structure().is_ok(),
                                 "{}D deserialized triangulation should be valid: {:?}",
                                 $dim,
-                                deserialized.tds().validate().err()
+                                deserialized.validate_structure().err()
                             );
                         }
                     }
@@ -139,7 +139,7 @@ macro_rules! test_serialization_properties {
                         // Need more than minimal simplex (D+1) to have meaningful serialization test
                         prop_assume!(dt.number_of_vertices() > $dim + 1);
                         // Also skip invalid TDS (can happen with nearly-degenerate geometries)
-                        prop_assume!(dt.tds().validate().is_ok());
+                        prop_assume!(dt.validate_structure().is_ok());
 
                         // Collect original vertex points
                         let original_points: Vec<_> = dt.vertices()

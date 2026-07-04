@@ -24,7 +24,6 @@ use crate::topology::{
 ///
 /// ```rust
 /// use delaunay::prelude::*;
-/// use delaunay::prelude::topology::validation;
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -44,7 +43,7 @@ use crate::topology::{
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
-/// let result = validation::validate_triangulation_euler(dt.tds(), dt.global_topology())?;
+/// let result = dt.euler_check()?;
 /// assert_eq!(result.chi, 1);
 /// assert!(result.is_valid());
 /// # Ok(())
@@ -121,7 +120,6 @@ impl TopologyCheckResult {
 ///
 /// ```rust
 /// use delaunay::prelude::*;
-/// use delaunay::prelude::topology::validation;
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -140,7 +138,7 @@ impl TopologyCheckResult {
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
-/// let result = validation::validate_triangulation_euler(dt.tds(), dt.global_topology())?;
+/// let result = dt.euler_check()?;
 /// assert_eq!(result.chi, 1);
 /// assert_eq!(result.counts.count(0), 3);  // 3 vertices
 /// assert_eq!(result.counts.count(1), 3);  // 3 edges

@@ -1465,15 +1465,6 @@ mod tests {
     /// - Basic vertex creation and property validation
     /// - Serialization roundtrip (Some and None data)
     /// - UUID validation
-    ///
-    /// # Usage
-    ///
-    /// ```ignore
-    /// test_vertex_dimensions! {
-    ///     vertex_2d => 2 => [1.0, 2.0],
-    ///     vertex_3d => 3 => [1.0, 2.0, 3.0],
-    /// }
-    /// ```
     macro_rules! test_vertex_dimensions {
         ($(
             $test_name:ident => $dim:expr => [$($coord:expr),+ $(,)?]

@@ -89,12 +89,6 @@ pub(crate) enum CanonicalFacetPointError {
 /// * `tds` - The triangulation data structure for vertex lookups
 /// * `simplex` - The simplex whose vertices to collect
 ///
-/// # Examples
-///
-/// ```rust,ignore
-/// let points = sorted_simplex_points(tds, simplex)?;
-/// let sign = kernel.in_sphere(&points, &query_point)?;
-/// ```
 pub(crate) fn sorted_simplex_points<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     simplex: &Simplex<V, D>,
@@ -140,12 +134,6 @@ pub(crate) fn sorted_simplex_points<U, V, const D: usize>(
 /// * `facet_keys` - Vertex keys forming the facet (will be sorted internally)
 /// * `extra` - The extra point to append at position D (opposite vertex or query)
 ///
-/// # Examples
-///
-/// ```rust,ignore
-/// let points = sorted_facet_points_with_extra(tds, &facet_keys, opposite_point)?;
-/// let orient = kernel.orientation(&points)?;
-/// ```
 pub(crate) fn sorted_facet_points_with_extra<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     facet_keys: &[VertexKey],

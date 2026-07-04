@@ -271,6 +271,9 @@ just perf-compare
 just perf-vs-ref
 just perf-no-regressions
 just bench-perf-summary
+just pachner-stress
+just pachner-stress-3d
+just pachner-stress-4d
 cargo bench --profile perf --bench ci_performance_suite
 ```
 
@@ -283,6 +286,12 @@ do not treat smoke output as performance data.
 Workspace-wide benchmark recipes (`just bench`, `just bench-smoke`,
 `just bench-compile`, and the benchmark compile step inside `just ci`) enable
 `--features bench` so feature-gated benchmark fixtures are compiled.
+
+Use `just pachner-stress [attempts] [validate_every] [samples]` for the full
+manual 3D+4D Pachner Monte Carlo diagnostic run. The dimension-specific
+`just pachner-stress-3d` and `just pachner-stress-4d` recipes default to
+100,000 attempted moves per Criterion sample and enable report lines so long
+chains can be diagnosed without making the workflow part of routine CI.
 
 Some repair benchmarks need feature-gated fixtures that deliberately construct
 invalid-but-structurally-coherent topology. Run those harnesses with

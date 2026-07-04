@@ -43,6 +43,7 @@
 #![forbid(unsafe_code)]
 
 use crate::builder::{DelaunayTriangulationBuilder, ExplicitConstructionError};
+use crate::core::adjacency::TopologyIndexBuildError;
 use crate::core::algorithms::flips::{
     DelaunayRepairError, DelaunayRepairStats, FlipError, LocalRepairPhaseTiming,
     repair_delaunay_local_single_pass, repair_delaunay_local_single_pass_timed,
@@ -63,7 +64,9 @@ use crate::core::construction::{
     FinalDelaunayValidationContext, FinalTopologyValidationContext,
     PeriodicQuotientFacetKeyDerivationFailure, TriangulationConstructionError,
 };
+use crate::core::edge::EdgeKeyError;
 use crate::core::embedding::TriangulationEmbeddingValidationError;
+use crate::core::facet::FacetError;
 use crate::core::insertion::record_duplicate_detection_metrics;
 use crate::core::operations::{
     DelaunayInsertionState, InsertionOutcome, InsertionResult, InsertionStatistics,
@@ -82,6 +85,7 @@ use crate::core::validation::{
     TopologyGuarantee, TriangulationValidationError, ValidationConfigurationError, ValidationPolicy,
 };
 use crate::core::vertex::Vertex;
+use crate::delaunay_property_validation::DelaunayValidationError;
 use crate::deletion::DeleteVertexError;
 use crate::diagnostics::{BatchLocalRepairTrigger, ConstructionTelemetry, LocalRepairSample};
 use crate::geometry::coordinate_range::CoordinateRange;
@@ -98,8 +102,9 @@ use crate::io::visualization::{VisualizationDataValidationError, VisualizationEx
 use crate::locality::{
     accumulate_live_simplex_seeds, clear_simplex_seed_set, retain_live_simplex_seeds,
 };
-use crate::query::{SimplexBarycenterError, SimplexDataFillError};
+use crate::query::{QueryError, SimplexBarycenterError, SimplexDataFillError};
 use crate::repair::DelaunayRepairPolicy;
+use crate::topology::manifold::ManifoldError;
 use crate::topology::traits::{
     GlobalTopology, GlobalTopologyModelError, TopologyKind, ToroidalConstructionMode,
     ToroidalDomainError,
@@ -131,85 +136,6 @@ fn batch_repair_trace_enabled() -> bool {
     env::var_os("DELAUNAY_BATCH_REPAIR_TRACE").is_some()
 }
 
-#[cfg(test)]
-pub(crate) mod test_hooks {
-    use crate::core::algorithms::flips::{
-        DelaunayRepairDiagnostics, DelaunayRepairError, RepairQueueOrder,
-    };
-    use std::cell::Cell;
-
-    thread_local! {
-        static FORCE_HEURISTIC_REBUILD: Cell<bool> = const { Cell::new(false) };
-        static FORCE_REPAIR_NONCONVERGENT: Cell<bool> = const { Cell::new(false) };
-        static BATCH_LOCAL_REPAIR_CALLS: Cell<usize> = const { Cell::new(0) };
-    }
-
-    pub fn force_heuristic_rebuild_enabled() -> bool {
-        FORCE_HEURISTIC_REBUILD.with(Cell::get)
-    }
-
-    #[must_use]
-    pub fn set_force_heuristic_rebuild(enabled: bool) -> bool {
-        FORCE_HEURISTIC_REBUILD.with(|flag| {
-            let prior = flag.get();
-            flag.set(enabled);
-            prior
-        })
-    }
-
-    pub fn restore_force_heuristic_rebuild(prior: bool) {
-        FORCE_HEURISTIC_REBUILD.with(|flag| flag.set(prior));
-    }
-
-    pub fn force_repair_nonconvergent_enabled() -> bool {
-        FORCE_REPAIR_NONCONVERGENT.with(Cell::get)
-    }
-
-    #[must_use]
-    pub fn set_force_repair_nonconvergent(enabled: bool) -> bool {
-        FORCE_REPAIR_NONCONVERGENT.with(|flag| {
-            let prior = flag.get();
-            flag.set(enabled);
-            prior
-        })
-    }
-
-    pub fn restore_force_repair_nonconvergent(prior: bool) {
-        FORCE_REPAIR_NONCONVERGENT.with(|flag| flag.set(prior));
-    }
-
-    pub fn reset_batch_local_repair_calls() {
-        BATCH_LOCAL_REPAIR_CALLS.with(|calls| calls.set(0));
-    }
-
-    pub fn batch_local_repair_calls() -> usize {
-        BATCH_LOCAL_REPAIR_CALLS.with(Cell::get)
-    }
-
-    pub fn record_batch_local_repair_call() {
-        BATCH_LOCAL_REPAIR_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
-    }
-
-    #[must_use]
-    pub fn synthetic_nonconvergent_error() -> DelaunayRepairError {
-        DelaunayRepairError::NonConvergent {
-            max_flips: 0,
-            diagnostics: Box::new(DelaunayRepairDiagnostics {
-                facets_checked: 0,
-                flips_performed: 0,
-                max_queue_len: 0,
-                ambiguous_predicates: 0,
-                ambiguous_predicate_samples: Vec::new(),
-                predicate_failures: 0,
-                cycle_detections: 0,
-                cycle_signature_samples: Vec::new(),
-                attempt: 0,
-                queue_order: RepairQueueOrder::Fifo,
-            }),
-        }
-    }
-}
-
 /// Common errors for user-facing Delaunay triangulation workflows.
 ///
 /// This convenience error covers the fallible path most examples use:
@@ -217,21 +143,26 @@ pub(crate) mod test_hooks {
 /// [`DelaunayTriangulation`], computing simplex barycenters for local editing,
 /// editing it through the Delaunay insertion/deletion API or explicit
 /// flip/Pachner APIs, updating auxiliary vertex/simplex data through checked
-/// keys, validating its Delaunay invariants, exporting mesh data, and
-/// validating the export schema. More specialized workflows such as convex hull
-/// extraction, repair, and delaunayize continue to expose their narrower error
-/// types directly.
+/// keys, running owner-bound query views, point-location and conflict-region
+/// queries, topology-index and edge-key views, Level 3 PL-manifold checks,
+/// cumulative invariant-validation roll-ups, validating its Delaunay
+/// invariants, exporting mesh data, and validating the export schema. More
+/// specialized workflows such as convex hull extraction, repair, and
+/// delaunayize continue to expose their narrower error types directly.
 /// Each variant keeps the concrete typed source error behind a box so the
 /// umbrella result stays small without erasing matchable failure details.
 ///
 /// # Examples
 ///
 /// Use [`DelaunayResult`] for examples, binaries, and quick workflows whose
-/// fallible operations stay inside coordinate conversion, construction,
-/// random-triangulation builder setup, checked auxiliary-data mutation,
-/// simplex barycenter queries, post-construction simplex-data filling,
-/// insertion/deletion, explicit flip editing, validation, mesh export, and
-/// export-schema validation:
+/// fallible operations stay inside coordinate conversion, Delaunay or generic
+/// triangulation construction, random-triangulation builder setup, checked
+/// auxiliary-data mutation, owner-bound query views, point-location and
+/// conflict-region queries, topology-index and edge-key views, low-level
+/// TDS/facet/simplex helpers, simplex barycenter queries, post-construction
+/// simplex-data filling, insertion/deletion, explicit flip editing, Level 3
+/// PL-manifold checks, cumulative invariant-validation roll-ups, validation,
+/// mesh export, and export-schema validation:
 ///
 /// ```rust
 /// use delaunay::prelude::construction::{
@@ -261,6 +192,14 @@ pub enum DelaunayError {
         /// Underlying construction failure.
         #[source]
         source: Box<DelaunayTriangulationConstructionError>,
+    },
+
+    /// Generic triangulation construction failed.
+    #[error("{source}")]
+    TriangulationConstruction {
+        /// Underlying generic triangulation construction failure.
+        #[source]
+        source: Box<TriangulationConstructionError>,
     },
 
     /// Coordinate conversion or validation failed before construction.
@@ -303,6 +242,94 @@ pub enum DelaunayError {
         source: Box<TdsMutationError>,
     },
 
+    /// TDS construction failed.
+    #[error("{source}")]
+    TdsConstruction {
+        /// Underlying TDS construction failure.
+        #[source]
+        source: Box<TdsConstructionError>,
+    },
+
+    /// TDS validation or lookup failed.
+    #[error("{source}")]
+    Tds {
+        /// Underlying TDS failure.
+        #[source]
+        source: Box<TdsError>,
+    },
+
+    /// Facet query or view construction failed.
+    #[error("{source}")]
+    Facet {
+        /// Underlying facet failure.
+        #[source]
+        source: Box<FacetError>,
+    },
+
+    /// Simplex validation failed.
+    #[error("{source}")]
+    SimplexValidation {
+        /// Underlying simplex validation failure.
+        #[source]
+        source: Box<SimplexValidationError>,
+    },
+
+    /// Read-only triangulation query failed.
+    #[error("{source}")]
+    Query {
+        /// Underlying query failure.
+        #[source]
+        source: Box<QueryError>,
+    },
+
+    /// Point-location query failed.
+    #[error("{source}")]
+    Locate {
+        /// Underlying point-location failure.
+        #[source]
+        source: Box<LocateError>,
+    },
+
+    /// Conflict-region query failed.
+    #[error("{source}")]
+    Conflict {
+        /// Underlying conflict-region failure.
+        #[source]
+        source: Box<ConflictError>,
+    },
+
+    /// Topology index or borrowed topology view construction failed.
+    #[error("{source}")]
+    TopologyIndex {
+        /// Underlying topology-index construction failure.
+        #[source]
+        source: Box<TopologyIndexBuildError>,
+    },
+
+    /// Edge-key parsing or edge-view construction failed.
+    #[error("{source}")]
+    EdgeKey {
+        /// Underlying edge-key failure.
+        #[source]
+        source: Box<EdgeKeyError>,
+    },
+
+    /// PL-manifold topology validation failed.
+    #[error("{source}")]
+    Manifold {
+        /// Underlying PL-manifold validation failure.
+        #[source]
+        source: Box<ManifoldError>,
+    },
+
+    /// Cumulative invariant validation failed.
+    #[error("{source}")]
+    Invariant {
+        /// Underlying invariant roll-up failure.
+        #[source]
+        source: Box<InvariantError>,
+    },
+
     /// Post-construction simplex payload filling failed.
     #[error("{source}")]
     SimplexDataFill {
@@ -335,6 +362,14 @@ pub enum DelaunayError {
         source: Box<DelaunayTriangulationValidationError>,
     },
 
+    /// Local Delaunay-property validation failed.
+    #[error("{source}")]
+    DelaunayPropertyValidation {
+        /// Underlying local Delaunay-property validation failure.
+        #[source]
+        source: Box<DelaunayValidationError>,
+    },
+
     /// Visualization or mesh export failed.
     #[error("{source}")]
     VisualizationExport {
@@ -363,6 +398,14 @@ pub enum DelaunayError {
 impl From<DelaunayTriangulationConstructionError> for DelaunayError {
     fn from(source: DelaunayTriangulationConstructionError) -> Self {
         Self::Construction {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<TriangulationConstructionError> for DelaunayError {
+    fn from(source: TriangulationConstructionError) -> Self {
+        Self::TriangulationConstruction {
             source: Box::new(source),
         }
     }
@@ -414,6 +457,94 @@ impl From<TdsMutationError> for DelaunayError {
     }
 }
 
+impl From<TdsConstructionError> for DelaunayError {
+    fn from(source: TdsConstructionError) -> Self {
+        Self::TdsConstruction {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<TdsError> for DelaunayError {
+    fn from(source: TdsError) -> Self {
+        Self::Tds {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<FacetError> for DelaunayError {
+    fn from(source: FacetError) -> Self {
+        Self::Facet {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<SimplexValidationError> for DelaunayError {
+    fn from(source: SimplexValidationError) -> Self {
+        Self::SimplexValidation {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<QueryError> for DelaunayError {
+    fn from(source: QueryError) -> Self {
+        Self::Query {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<LocateError> for DelaunayError {
+    fn from(source: LocateError) -> Self {
+        Self::Locate {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<ConflictError> for DelaunayError {
+    fn from(source: ConflictError) -> Self {
+        Self::Conflict {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<TopologyIndexBuildError> for DelaunayError {
+    fn from(source: TopologyIndexBuildError) -> Self {
+        Self::TopologyIndex {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<EdgeKeyError> for DelaunayError {
+    fn from(source: EdgeKeyError) -> Self {
+        Self::EdgeKey {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<ManifoldError> for DelaunayError {
+    fn from(source: ManifoldError) -> Self {
+        Self::Manifold {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<InvariantError> for DelaunayError {
+    fn from(source: InvariantError) -> Self {
+        Self::Invariant {
+            source: Box::new(source),
+        }
+    }
+}
+
 impl From<SimplexDataFillError> for DelaunayError {
     fn from(source: SimplexDataFillError) -> Self {
         Self::SimplexDataFill {
@@ -441,6 +572,14 @@ impl From<ValidationConfigurationError> for DelaunayError {
 impl From<DelaunayTriangulationValidationError> for DelaunayError {
     fn from(source: DelaunayTriangulationValidationError) -> Self {
         Self::Validation {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<DelaunayValidationError> for DelaunayError {
+    fn from(source: DelaunayValidationError) -> Self {
+        Self::DelaunayPropertyValidation {
             source: Box::new(source),
         }
     }
@@ -474,9 +613,13 @@ impl From<ToroidalDomainError> for DelaunayError {
 ///
 /// This is equivalent to `Result<T, DelaunayError>` with [`DelaunayError`] as
 /// the error type, and is intended for caller-facing examples and applications
-/// that use the standard construction, checked auxiliary-data mutation,
+/// that use standard construction, generic triangulation construction,
+/// random-triangulation builder setup, checked auxiliary-data mutation,
+/// owner-bound query views, point-location and conflict-region queries,
+/// topology-index and edge-key views, low-level TDS/facet/simplex helpers,
 /// simplex barycenter queries, post-construction simplex-data filling,
-/// insertion/deletion, explicit flip editing, validation, mesh export, and
+/// insertion/deletion, explicit flip editing, Level 3 PL-manifold checks,
+/// cumulative invariant-validation roll-ups, validation, mesh export, and
 /// export-schema validation APIs.
 pub type DelaunayResult<T> = Result<T, DelaunayError>;
 
@@ -3193,7 +3336,7 @@ where
                     log_construction_retry_result(0, None, 0_u64, "succeeded", None, None);
                     return Ok(candidate);
                 }
-                match candidate.is_delaunay_via_flips() {
+                match candidate.verify_via_flip_predicates() {
                     Ok(()) => {
                         log_construction_retry_result(0, None, 0_u64, "succeeded", None, None);
                         return Ok(candidate);
@@ -3293,7 +3436,7 @@ where
                         );
                         return Ok(candidate);
                     }
-                    match candidate.is_delaunay_via_flips() {
+                    match candidate.verify_via_flip_predicates() {
                         Ok(()) => {
                             log_construction_retry_result(
                                 attempt,
@@ -3440,7 +3583,7 @@ where
                         return Ok((candidate, aggregate_stats));
                     }
                     let delaunay_started = Instant::now();
-                    let delaunay_result = candidate.is_delaunay_via_flips();
+                    let delaunay_result = candidate.verify_via_flip_predicates();
                     stats
                         .telemetry
                         .record_construction_final_delaunay_validation_timing(
@@ -3577,7 +3720,7 @@ where
                         return Ok((candidate, aggregate_stats));
                     }
                     let delaunay_started = Instant::now();
-                    let delaunay_result = candidate.is_delaunay_via_flips();
+                    let delaunay_result = candidate.verify_via_flip_predicates();
                     stats
                         .telemetry
                         .record_construction_final_delaunay_validation_timing(
@@ -4069,7 +4212,7 @@ where
         }
 
         #[cfg(test)]
-        test_hooks::record_batch_local_repair_call();
+        tests::record_batch_local_repair_call();
 
         let seed_simplices_len = pending_seed_simplices.len();
         let max_flips = local_repair_flip_budget::<D>(seed_simplices_len);
@@ -4104,8 +4247,8 @@ where
             )
         };
         #[cfg(test)]
-        let repair_result = if test_hooks::force_repair_nonconvergent_enabled() {
-            Err(test_hooks::synthetic_nonconvergent_error())
+        let repair_result = if tests::force_repair_nonconvergent_enabled() {
+            Err(tests::synthetic_nonconvergent_error())
         } else {
             repair_result
         };
@@ -5668,12 +5811,71 @@ mod tests {
     use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
+    use std::cell::Cell;
     use std::num::NonZeroUsize;
     use std::sync::Once;
     use std::time::Instant;
     use uuid::Uuid;
 
     type TestDelaunay<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
+
+    // Last-resort fault injection for rollback branches that are hard to
+    // trigger deterministically; thread-local state avoids cross-test leakage.
+    // Remove this once a cleaner harness can reach the branch directly.
+    thread_local! {
+        static FORCE_REPAIR_NONCONVERGENT: Cell<bool> = const { Cell::new(false) };
+        static BATCH_LOCAL_REPAIR_CALLS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    #[must_use]
+    pub(super) fn force_repair_nonconvergent_enabled() -> bool {
+        FORCE_REPAIR_NONCONVERGENT.with(Cell::get)
+    }
+
+    #[must_use]
+    pub(super) fn synthetic_nonconvergent_error() -> DelaunayRepairError {
+        DelaunayRepairError::NonConvergent {
+            max_flips: 0,
+            diagnostics: Box::new(DelaunayRepairDiagnostics {
+                facets_checked: 0,
+                flips_performed: 0,
+                max_queue_len: 0,
+                ambiguous_predicates: 0,
+                ambiguous_predicate_samples: Vec::new(),
+                predicate_failures: 0,
+                cycle_detections: 0,
+                cycle_signature_samples: Vec::new(),
+                attempt: 0,
+                queue_order: RepairQueueOrder::Fifo,
+            }),
+        }
+    }
+
+    #[must_use]
+    fn set_force_repair_nonconvergent(enabled: bool) -> bool {
+        FORCE_REPAIR_NONCONVERGENT.with(|flag| {
+            let prior = flag.get();
+            flag.set(enabled);
+            prior
+        })
+    }
+
+    fn restore_force_repair_nonconvergent(prior: bool) {
+        FORCE_REPAIR_NONCONVERGENT.with(|flag| flag.set(prior));
+    }
+
+    fn reset_batch_local_repair_calls() {
+        BATCH_LOCAL_REPAIR_CALLS.with(|calls| calls.set(0));
+    }
+
+    #[must_use]
+    fn batch_local_repair_calls() -> usize {
+        BATCH_LOCAL_REPAIR_CALLS.with(Cell::get)
+    }
+
+    pub(super) fn record_batch_local_repair_call() {
+        BATCH_LOCAL_REPAIR_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
+    }
 
     fn synthetic_delaunay_verification_error() -> DelaunayTriangulationValidationError {
         DelaunayTriangulationValidationError::VerificationFailed {
@@ -5770,14 +5972,14 @@ mod tests {
 
     impl ForceRepairNonconvergentGuard {
         fn enable() -> Self {
-            let prior = test_hooks::set_force_repair_nonconvergent(true);
+            let prior = set_force_repair_nonconvergent(true);
             Self { prior }
         }
     }
 
     impl Drop for ForceRepairNonconvergentGuard {
         fn drop(&mut self) {
-            test_hooks::restore_force_repair_nonconvergent(self.prior);
+            restore_force_repair_nonconvergent(self.prior);
         }
     }
 
@@ -6223,7 +6425,7 @@ mod tests {
             vertex!([0.35, 0.25, 0.15, 0.3]).unwrap(),
         ];
 
-        test_hooks::reset_batch_local_repair_calls();
+        reset_batch_local_repair_calls();
         let _guard = ForceRepairNonconvergentGuard::enable();
         let kernel = RobustKernel::<f64>::new();
         let options = ConstructionOptions::default()
@@ -6235,7 +6437,7 @@ mod tests {
 
         assert_eq!(dt.number_of_vertices(), vertices.len());
         assert_eq!(stats.inserted, vertices.len());
-        assert_eq!(test_hooks::batch_local_repair_calls(), 1);
+        assert_eq!(batch_local_repair_calls(), 1);
         assert!(dt.validate().is_ok());
     }
 
@@ -7330,7 +7532,7 @@ mod tests {
             DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         assert_eq!(
-            *dt.as_triangulation().tds.construction_state(),
+            *dt.tds().construction_state(),
             TriangulationConstructionState::Constructed
         );
     }

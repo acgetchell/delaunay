@@ -683,7 +683,7 @@ fn bench_k1_roundtrip_case<const D: usize>(
     base_dt: &FlipTriangulation<D>,
     simplex_key: SimplexKey,
 ) {
-    flip_workflows::verify_k1_roundtrip(base_dt, simplex_key, name).or_abort();
+    flip_workflows::verify_k1_roundtrip(base_dt, simplex_key).or_abort();
     group.bench_function(name, |b| {
         b.iter_batched(
             || base_dt.clone(),
@@ -703,6 +703,7 @@ fn bench_k2_forward_case<const D: usize>(
     base_dt: &FlipTriangulation<D>,
     facet: FacetHandle,
 ) {
+    flip_workflows::verify_k2_forward(base_dt, facet).or_abort();
     group.bench_function(name, |b| {
         b.iter_batched(
             || base_dt.clone(),
@@ -722,7 +723,7 @@ fn bench_k2_roundtrip_case<const D: usize>(
     base_dt: &FlipTriangulation<D>,
     facet: FacetHandle,
 ) {
-    flip_workflows::verify_k2_roundtrip(base_dt, facet, name).or_abort();
+    flip_workflows::verify_k2_roundtrip(base_dt, facet).or_abort();
     group.bench_function(name, |b| {
         b.iter_batched(
             || base_dt.clone(),
@@ -742,6 +743,7 @@ fn bench_k3_forward_case<const D: usize>(
     base_dt: &FlipTriangulation<D>,
     ridge: RidgeHandle,
 ) {
+    flip_workflows::verify_k3_forward(base_dt, ridge).or_abort();
     group.bench_function(name, |b| {
         b.iter_batched(
             || base_dt.clone(),
@@ -761,7 +763,7 @@ fn bench_k3_roundtrip_case<const D: usize>(
     base_dt: &FlipTriangulation<D>,
     ridge: RidgeHandle,
 ) {
-    flip_workflows::verify_k3_roundtrip(base_dt, ridge, name).or_abort();
+    flip_workflows::verify_k3_roundtrip(base_dt, ridge).or_abort();
     group.bench_function(name, |b| {
         b.iter_batched(
             || base_dt.clone(),

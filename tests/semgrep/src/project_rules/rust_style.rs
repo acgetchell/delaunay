@@ -2,6 +2,10 @@
 
 use num_traits::NumCast;
 
+// ruleid: delaunay.rust.no-module-scope-cfg-test-use
+#[cfg(test)]
+use crate::tests::FixtureOnlyImport;
+
 // ruleid: delaunay.rust.prefer-prelude-imports-in-examples-benches
 use delaunay::core::vertex::Vertex as DeepVertex;
 // ok: delaunay.rust.prefer-prelude-imports-in-examples-benches
@@ -50,6 +54,22 @@ pub fn function_local_use_fixture() {
 
     let _ordering = Ordering::Equal;
 }
+
+// ruleid: delaunay.rust.no-public-api-cfg-test-shim
+#[cfg(any(test, feature = "diagnostics"))]
+pub fn public_api_test_cfg_shim_fixture() {}
+
+// ruleid: delaunay.rust.no-public-api-cfg-test-shim
+#[cfg(any(test, feature = "diagnostics"))]
+#[expect(
+    clippy::missing_const_for_fn,
+    reason = "fixture models multi-line attributes between cfg and public item"
+)]
+pub fn public_api_test_cfg_with_multiline_attr_fixture() {}
+
+// ok: delaunay.rust.no-public-api-cfg-test-shim
+#[cfg(feature = "diagnostics")]
+pub fn public_api_feature_cfg_fixture() {}
 
 pub fn deep_crate_path_fixture() {
     // ruleid: delaunay.rust.no-deep-crate-paths-in-functions
@@ -802,6 +822,97 @@ pub struct Tds {
     vertices: StorageMap<VertexKey, Vertex<(), 3>>,
 }
 
+struct PublicTdsAccessorOwner;
+
+impl PublicTdsAccessorOwner {
+    // ruleid: delaunay.rust.no-public-tds-accessor-methods
+    pub const fn tds(&self) -> &Tds {
+        todo!()
+    }
+}
+
+struct CratePrivateTdsAccessorOwner;
+
+impl CratePrivateTdsAccessorOwner {
+    // ok: delaunay.rust.no-public-tds-accessor-methods
+    pub(crate) const fn tds(&self) -> &Tds {
+        todo!()
+    }
+}
+
+struct KernelFixture;
+
+struct TriangulationOwnerFixture {
+    tds: Tds,
+    kernel: KernelFixture,
+}
+
+impl TriangulationOwnerFixture {
+    fn tds(&self) -> &Tds {
+        todo!()
+    }
+
+    fn kernel(&self) -> &KernelFixture {
+        todo!()
+    }
+}
+
+struct DelaunayOwnerFixture;
+
+impl DelaunayOwnerFixture {
+    fn as_triangulation(&self) -> &TriangulationOwnerFixture {
+        todo!()
+    }
+
+    fn into_triangulation(self) -> TriangulationOwnerFixture {
+        todo!()
+    }
+
+    fn tds(&self) -> &Tds {
+        todo!()
+    }
+
+    fn topology_generation(&self) -> u64 {
+        todo!()
+    }
+}
+
+fn as_triangulation_storage_bypass_fixture(dt: &DelaunayOwnerFixture) {
+    // ruleid: delaunay.rust.no-as-triangulation-storage-reach-through
+    let _storage = &dt.as_triangulation().tds;
+    // ruleid: delaunay.rust.no-as-triangulation-storage-reach-through
+    let _storage = dt.as_triangulation().tds();
+    // ruleid: delaunay.rust.no-as-triangulation-storage-reach-through
+    let _kernel = &dt.as_triangulation().kernel;
+    // ruleid: delaunay.rust.no-as-triangulation-storage-reach-through
+    let _kernel = dt.as_triangulation().kernel();
+    // ok: delaunay.rust.no-as-triangulation-storage-reach-through
+    let _storage = dt.tds();
+    // ok: delaunay.rust.no-as-triangulation-storage-reach-through
+    let _generation = dt.topology_generation();
+    // ok: delaunay.rust.no-as-triangulation-storage-reach-through
+    let _tri = dt.as_triangulation();
+}
+
+fn as_triangulation_clone_fixture(dt: DelaunayOwnerFixture) {
+    // ruleid: delaunay.rust.no-as-triangulation-clone
+    let _owned = dt.as_triangulation().clone();
+    // ruleid: delaunay.rust.no-as-triangulation-clone
+    let _owned_multiline = dt.as_triangulation()
+        .clone();
+    // ok: delaunay.rust.no-as-triangulation-clone
+    let _tri = dt.as_triangulation();
+    // ok: delaunay.rust.no-as-triangulation-clone
+    let _owned = dt.into_triangulation();
+}
+
+fn raw_tds_flip_predicate_verifier_fixture() {
+    // ruleid: delaunay.rust.no-raw-tds-flip-predicate-verifier-outside-core-flips
+    verify_tds_via_flip_predicates(tds, kernel);
+    // ok: delaunay.rust.no-raw-tds-flip-predicate-verifier-outside-core-flips
+    dt.verify_via_flip_predicates();
+}
+
 // ruleid: delaunay.rust.tds-serialize-must-use-snapshot
 impl Serialize for Tds {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -1310,6 +1421,13 @@ fn doctest_unwrap_expect_fixture() {}
 /// # fn main() -> delaunay::DelaunayResult<()> { Ok(()) }
 fn doctest_erased_error_fixture() {}
 
+// ruleid: delaunay.rust.no-tds-accessor-in-doctests
+/// let storage = dt.tds();
+///
+// ok: delaunay.rust.no-tds-accessor-in-doctests
+/// let index = dt.facet_incidence_index()?;
+fn doctest_tds_accessor_fixture() {}
+
 // ruleid: delaunay.rust.prefer-assert-matches-in-doctests
 /// assert!(matches!(value, Some(_)));
 ///
@@ -1328,3 +1446,29 @@ fn doctest_assert_matches_fixture() {}
 /// # use delaunay::flips::BistellarFlips as HiddenDeepImport;
 /// ```
 fn triangulation_doctest_deep_import_fixture() {}
+
+// ruleid: delaunay.rust.benchmark-k2-facet-selection-requires-interior-neighbor-guard
+pub fn flippable_k2_facet_missing_interior_neighbor_guard() -> Result<(), Error> {
+    for facet in facets {
+        let support = facet_support_points(dt, facet)?;
+        if accepts(&support) {
+            return Ok(());
+        }
+    }
+    Err(Error)
+}
+
+pub fn flippable_k2_facet_with_interior_neighbor_guard() -> Result<(), Error> {
+    for facet in facets {
+        if facet_neighbor_key(dt, facet)?.is_none() {
+            continue;
+        }
+
+        // ok: delaunay.rust.benchmark-k2-facet-selection-requires-interior-neighbor-guard
+        let support = facet_support_points(dt, facet)?;
+        if accepts(&support) {
+            return Ok(());
+        }
+    }
+    Err(Error)
+}

@@ -11,10 +11,17 @@ use crate::core::{
 /// incident to one or two D-simplices. That is deliberately weaker than manifold
 /// boundary semantics. A one-sided facet can be a Euclidean boundary facet, but
 /// in a periodic quotient triangulation it can also be a closed
-/// self-identification. Use [`Triangulation::boundary_facets`] or
+/// self-identification. Public owner-level callers can inspect raw incidence
+/// through [`Triangulation::facet_incidence_index`] or
+/// [`DelaunayTriangulation::facet_incidence_index`] and
+/// [`FacetIncidenceView::is_one_sided`]. Use
+/// [`Triangulation::boundary_facets`] or
 /// [`DelaunayTriangulation::boundary_facets`] for topology-aware boundary
 /// queries.
 ///
+/// [`Triangulation::facet_incidence_index`]: crate::Triangulation::facet_incidence_index
+/// [`DelaunayTriangulation::facet_incidence_index`]: crate::DelaunayTriangulation::facet_incidence_index
+/// [`FacetIncidenceView::is_one_sided`]: crate::tds::FacetIncidenceView::is_one_sided
 /// [`Triangulation::boundary_facets`]: crate::Triangulation::boundary_facets
 /// [`DelaunayTriangulation::boundary_facets`]: crate::DelaunayTriangulation::boundary_facets
 pub trait FacetIncidenceAnalysis<U, V, const D: usize> {

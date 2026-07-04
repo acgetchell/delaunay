@@ -525,6 +525,24 @@ All `use` imports for a test module must go at the **top** of the module,
 not inside individual test functions. This keeps dependencies visible in
 one place and avoids duplicated or scattered imports.
 
+Local test-only helpers, shims, forced-failure hooks, and fixture state belong
+inside the owning file's `#[cfg(test)] mod tests { ... }` block. Do not put
+local test-only modules or imports in the production module preamble. Production
+code that must branch for a unit test should reference helpers under
+`tests::...` only from code guarded by `#[cfg(test)]`. Shared cross-module test
+support that must live beside private storage internals must be named
+`test_support`, placed near the owning tests rather than in the preamble, and
+given the narrowest visibility that still lets the tests compile.
+
+Thread-local fault-injection flags are a last-resort unit-test seam for rare
+rollback, repair, and validation branches that cannot be reached
+deterministically through public APIs or narrower test fixtures. Keep them
+inside the owning `mod tests`, use an RAII guard that restores the previous
+value, and document why thread-local state is needed for parallel-test
+isolation. Prefer explicit inputs, typed fixtures, or harness APIs whenever they
+can cover the branch, and remove the thread-local hook once a cleaner trigger
+exists.
+
 Keeping helpers and types **above** macros and tests makes them easy to
 find and avoids forward-reference confusion. New helpers should be added
 to this section rather than inlined next to the tests that use them.

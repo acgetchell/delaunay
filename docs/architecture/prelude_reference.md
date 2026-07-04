@@ -11,18 +11,18 @@ they exercise.
 | Construct/configure a Delaunay triangulation | `use delaunay::prelude::construction::*` |
 | Construction telemetry diagnostics | `use delaunay::prelude::diagnostics::*` |
 | Export stable simplicial-complex primitives | `use delaunay::prelude::export::*` |
-| Validation policies, errors, reports, and Level 5 diagnostics | `use delaunay::prelude::validation::*` |
+| Validation policies, errors, reports, PL-manifold link errors, and Level 5 diagnostics | `use delaunay::prelude::validation::*` |
 | Delaunay repair diagnostics and policies | `use delaunay::prelude::repair::*` |
 | Delaunayize workflow | `use delaunay::prelude::delaunayize::*` |
 | Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
-| Low-level incremental insertion building blocks | `use delaunay::prelude::insertion::*` |
+| Incremental insertion diagnostics and result types | `use delaunay::prelude::insertion::*` |
 | Post-construction vertex deletion errors and keys | `use delaunay::prelude::deletion::*` |
 | Low-level TDS simplices, facets, keys, and validation reports | `use delaunay::prelude::tds::*` |
 | Points, simplex embeddings, coordinate ranges, kernels, predicates, and geometric measures | `use delaunay::prelude::geometry::*` |
 | Random points or triangulations for examples, tests, and benchmarks | `use delaunay::prelude::generators::*` |
-| Read-only traversal, adjacency, simplex barycenters, convex hulls, and comparison helpers | `use delaunay::prelude::query::*` |
+| Read-only traversal, adjacency, ridge views, simplex barycenters, convex hulls, and comparison helpers | `use delaunay::prelude::query::*` |
 | Topological spaces, topology traits, and lifted toroidal IDs | `use delaunay::prelude::topology::spaces::*` |
-| Topology validation, Euler characteristic helpers, and ridge queries | `use delaunay::prelude::topology::validation::*` |
+| Low-level topology validation, Euler characteristic helpers, manifold validators, and ridge queries | `use delaunay::prelude::topology::validation::*` |
 
 ## Policy
 

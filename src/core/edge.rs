@@ -95,7 +95,6 @@ pub enum EdgeKeyError {
 ///
 /// ```rust
 /// use delaunay::prelude::*;
-/// use delaunay::prelude::tds::EdgeKey;
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -118,7 +117,7 @@ pub enum EdgeKeyError {
 /// };
 /// let a = simplex.vertices()[0];
 /// let b = simplex.vertices()[1];
-/// let edge = EdgeKey::try_new(dt.tds(), a, b)?;
+/// let edge = dt.edge_key(a, b)?;
 /// assert_eq!(edge.endpoints(), (edge.v0(), edge.v1()));
 /// # Ok(())
 /// # }
@@ -148,7 +147,6 @@ impl EdgeKey {
     ///
     /// ```rust
     /// use delaunay::prelude::*;
-    /// use delaunay::prelude::tds::EdgeKey;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -172,8 +170,8 @@ impl EdgeKey {
     /// let a = simplex.vertices()[0];
     /// let b = simplex.vertices()[1];
     ///
-    /// let e1 = EdgeKey::try_new(dt.tds(), a, b)?;
-    /// let e2 = EdgeKey::try_new(dt.tds(), b, a)?;
+    /// let e1 = dt.edge_key(a, b)?;
+    /// let e2 = dt.edge_key(b, a)?;
     /// assert_eq!(e1, e2);
     /// assert!(e1.v0() <= e1.v1());
     /// # Ok(())
@@ -300,7 +298,6 @@ impl EdgeKey {
     ///
     /// ```rust
     /// use delaunay::prelude::*;
-    /// use delaunay::prelude::tds::EdgeKey;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -324,7 +321,7 @@ impl EdgeKey {
     /// let a = simplex.vertices()[1];
     /// let b = simplex.vertices()[0];
     ///
-    /// let e = EdgeKey::try_new(dt.tds(), a, b)?;
+    /// let e = dt.edge_key(a, b)?;
     /// let v0 = e.v0();
     /// let v1 = e.v1();
     /// assert!(v0 <= v1);
@@ -343,7 +340,6 @@ impl EdgeKey {
     ///
     /// ```rust
     /// use delaunay::prelude::*;
-    /// use delaunay::prelude::tds::EdgeKey;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -367,7 +363,7 @@ impl EdgeKey {
     /// let a = simplex.vertices()[0];
     /// let b = simplex.vertices()[1];
     ///
-    /// let e = EdgeKey::try_new(dt.tds(), a, b)?;
+    /// let e = dt.edge_key(a, b)?;
     /// let v0 = e.v0();
     /// let v1 = e.v1();
     /// assert!(v0 <= v1);
@@ -386,7 +382,6 @@ impl EdgeKey {
     ///
     /// ```rust
     /// use delaunay::prelude::*;
-    /// use delaunay::prelude::tds::EdgeKey;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -410,7 +405,7 @@ impl EdgeKey {
     /// let a = simplex.vertices()[0];
     /// let b = simplex.vertices()[1];
     ///
-    /// let e = EdgeKey::try_new(dt.tds(), a, b)?;
+    /// let e = dt.edge_key(a, b)?;
     /// let (v0, v1) = e.endpoints();
     /// assert_eq!(v0, e.v0());
     /// assert_eq!(v1, e.v1());
@@ -440,7 +435,6 @@ impl EdgeKey {
     ///
     /// ```rust
     /// use delaunay::prelude::*;
-    /// use delaunay::prelude::tds::EdgeKey;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -462,8 +456,8 @@ impl EdgeKey {
     ///     return Ok(());
     /// };
     ///
-    /// let edge = EdgeKey::try_new(dt.tds(), simplex.vertices()[0], simplex.vertices()[1])?;
-    /// let view = edge.view(dt.tds())?;
+    /// let edge = dt.edge_key(simplex.vertices()[0], simplex.vertices()[1])?;
+    /// let view = dt.edge_view(edge)?;
     /// assert_eq!(view.endpoint_keys(), edge.endpoints());
     /// # Ok(())
     /// # }
@@ -503,7 +497,7 @@ impl<'tds, U, V, const D: usize> EdgeView<'tds, U, V, D> {
     ///
     /// ```rust
     /// use delaunay::prelude::*;
-    /// use delaunay::prelude::tds::{EdgeKey, EdgeKeyError, EdgeView};
+    /// use delaunay::prelude::tds::EdgeKeyError;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -525,8 +519,8 @@ impl<'tds, U, V, const D: usize> EdgeView<'tds, U, V, D> {
     ///     return Ok(());
     /// };
     ///
-    /// let key = EdgeKey::try_new(dt.tds(), simplex.vertices()[0], simplex.vertices()[1])?;
-    /// let view = EdgeView::try_new(dt.tds(), key)?;
+    /// let key = dt.edge_key(simplex.vertices()[0], simplex.vertices()[1])?;
+    /// let view = dt.edge_view(key)?;
     /// assert_eq!(view.key(), key);
     /// # Ok(())
     /// # }
@@ -564,7 +558,7 @@ impl<'tds, U, V, const D: usize> EdgeView<'tds, U, V, D> {
     /// Returns the borrowed TDS backing this view.
     #[inline]
     #[must_use]
-    pub const fn tds(&self) -> &'tds Tds<U, V, D> {
+    pub(crate) const fn tds(&self) -> &'tds Tds<U, V, D> {
         self.tds
     }
 

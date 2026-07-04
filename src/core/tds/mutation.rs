@@ -5,7 +5,7 @@ use super::errors::{
 };
 use super::incidence::SimplexIncidenceRemoval;
 use super::storage::{SimplexUuidSortKey, Tds};
-use super::{SimplexKey, VertexKey};
+use super::{SimplexKey, TdsRollbackTransaction, VertexKey};
 use crate::core::collections::{
     CLEANUP_OPERATION_BUFFER_SIZE, Entry, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE,
     NeighborBuffer, SimplexKeySet, SimplexRemovalBuffer, SmallBuffer, VertexKeySet,
@@ -13,13 +13,7 @@ use crate::core::collections::{
 };
 use crate::core::simplex::{NeighborSlot, Simplex};
 use crate::core::vertex::Vertex;
-#[cfg(test)]
-use crate::deletion::DeleteVertexError;
 use std::collections::VecDeque;
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-};
 
 /// Topology validation mode for checked TDS simplex insertion.
 #[derive(Clone, Copy)]
@@ -197,9 +191,9 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// operations. It works entirely with vertex keys, simplex keys, and topological relationships.
     ///
     /// **Internal use only**: This method rebuilds ALL neighbor pointers from scratch, which is
-    /// inefficient for most use cases. For external use, prefer
-    /// [`repair_neighbor_pointers`](crate::prelude::insertion::repair_neighbor_pointers),
-    /// which rebuilds neighbor pointers from facet incidence.
+    /// inefficient for most use cases. Public callers should use owning
+    /// triangulation repair and validation workflows instead of mutating raw
+    /// neighbor storage directly.
     ///
     /// # Errors
     ///
@@ -647,30 +641,30 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// # Examples
     ///
-    /// ```
-    /// use delaunay::prelude::*;
+    /// ```rust
+    /// use delaunay::prelude::geometry::CoordinateConversionError;
+    /// use delaunay::prelude::tds::TdsMutationError;
+    /// use delaunay::prelude::triangulation::{
+    ///     FastKernel, Triangulation, TriangulationConstructionError,
+    /// };
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
-    /// #     #[error(transparent)] Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
-    /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
-    /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] TdsMutation(#[from] delaunay::prelude::tds::TdsMutationError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
-    /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
-    /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// #     Construction(#[from] TriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Mutation(#[from] TdsMutationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
-    /// let vertices: [Vertex<i32, 2>; 3] = [
+    /// let vertices = [
     ///     delaunay::vertex![0.0, 0.0; data = 10i32]?,
     ///     delaunay::vertex![1.0, 0.0; data = 20]?,
     ///     delaunay::vertex![0.0, 1.0; data = 30]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-    /// let mut tds = dt.tds().clone();
+    /// let mut tds =
+    ///     Triangulation::<FastKernel<f64>, i32, (), 2>::build_initial_simplex(&vertices)?;
     /// let Some(key) = tds.vertex_keys().next() else {
     ///     return Ok(());
     /// };
@@ -731,21 +725,21 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// # Examples
     ///
-    /// ```
-    /// use delaunay::prelude::*;
+    /// ```rust
+    /// use delaunay::prelude::geometry::CoordinateConversionError;
+    /// use delaunay::prelude::tds::TdsMutationError;
+    /// use delaunay::prelude::triangulation::{
+    ///     FastKernel, Triangulation, TriangulationConstructionError,
+    /// };
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
-    /// #     #[error(transparent)] Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
-    /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
-    /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] TdsMutation(#[from] delaunay::prelude::tds::TdsMutationError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
-    /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
-    /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// #     Construction(#[from] TriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Mutation(#[from] TdsMutationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
@@ -753,8 +747,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).simplex_data_type::<i32>().build()?;
-    /// let mut tds = dt.tds().clone();
+    /// let mut tds =
+    ///     Triangulation::<FastKernel<f64>, (), i32, 2>::build_initial_simplex(&vertices)?;
     /// let Some(key) = tds.simplex_keys().next() else {
     ///     return Ok(());
     /// };
@@ -848,21 +842,21 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// # Examples
     ///
-    /// ```
-    /// use delaunay::prelude::*;
+    /// ```rust
+    /// use delaunay::prelude::geometry::CoordinateConversionError;
+    /// use delaunay::prelude::tds::TdsMutationError;
+    /// use delaunay::prelude::triangulation::{
+    ///     FastKernel, Triangulation, TriangulationConstructionError,
+    /// };
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
-    /// #     #[error(transparent)] Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
-    /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
-    /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] TdsMutation(#[from] delaunay::prelude::tds::TdsMutationError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
-    /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
-    /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// #     Construction(#[from] TriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Mutation(#[from] TdsMutationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
@@ -870,8 +864,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-    /// let mut tds = dt.tds().clone();
+    /// let mut tds =
+    ///     Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices)?;
     /// let Some(simplex_key) = tds.simplex_keys().next() else {
     ///     return Ok(());
     /// };
@@ -1337,19 +1331,17 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::geometry::CoordinateConversionError;
+    /// use delaunay::prelude::triangulation::{
+    ///     FastKernel, Triangulation, TriangulationConstructionError,
+    /// };
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
-    /// #     #[error(transparent)] Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
-    /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
-    /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
-    /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
-    /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// #     Construction(#[from] TriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
@@ -1357,8 +1349,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-    /// let tds = dt.tds();
+    /// let tds =
+    ///     Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices)?;
     /// let Some((simplex_key, _)) = tds.simplices().next() else {
     ///     return Ok(());
     /// };
@@ -1696,21 +1688,21 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// # Examples
     ///
-    /// ```
-    /// use delaunay::prelude::*;
+    /// ```rust
+    /// use delaunay::prelude::geometry::CoordinateConversionError;
+    /// use delaunay::prelude::tds::TdsMutationError;
+    /// use delaunay::prelude::triangulation::{
+    ///     FastKernel, Triangulation, TriangulationConstructionError,
+    /// };
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
-    /// #     #[error(transparent)] Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
-    /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
-    /// #     #[error(transparent)] TdsMutation(#[from] delaunay::prelude::tds::TdsMutationError),
-    /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
-    /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
-    /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// #     Construction(#[from] TriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Mutation(#[from] TdsMutationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
@@ -1718,8 +1710,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-    /// let mut tds = dt.tds().clone();
+    /// let mut tds =
+    ///     Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices)?;
     /// let Some(simplex_key) = tds.simplex_keys().next() else {
     ///     return Ok(());
     /// };
@@ -1816,21 +1808,21 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// # Examples
     ///
-    /// ```
-    /// use delaunay::prelude::*;
+    /// ```rust
+    /// use delaunay::prelude::geometry::CoordinateConversionError;
+    /// use delaunay::prelude::tds::TdsMutationError;
+    /// use delaunay::prelude::triangulation::{
+    ///     FastKernel, Triangulation, TriangulationConstructionError,
+    /// };
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
-    /// #     #[error(transparent)] Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
-    /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
-    /// #     #[error(transparent)] TdsMutation(#[from] delaunay::prelude::tds::TdsMutationError),
-    /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
-    /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
-    /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
     /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
+    /// #     Construction(#[from] TriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Mutation(#[from] TdsMutationError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] CoordinateConversionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
@@ -1838,8 +1830,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///     delaunay::vertex![1.0, 0.0]?,
     ///     delaunay::vertex![0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-    /// let mut tds = dt.tds().clone();
+    /// let mut tds =
+    ///     Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices)?;
     /// tds.assign_incident_simplices()?;
     /// let all_assigned = tds.vertices().all(|(_, v)| v.incident_simplex().is_some());
     /// assert!(all_assigned);
@@ -2112,16 +2104,14 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// Returns the number of duplicate simplices that were removed.
     ///
-    /// Duplicate removal is applied to a cloned trial [`Tds`], then the
+    /// Duplicate removal runs inside the shared rollback transaction, then the
     /// topology (neighbor relationships and incident simplices) is rebuilt to
     /// maintain data structure invariants and prevent stale references. If the
-    /// rebuild or validation fails, the original structure is left unchanged.
+    /// rebuild or validation fails, the original structure is restored.
     ///
-    /// When duplicates are present, the rollback guarantee is implemented by
-    /// cloning the current [`Tds`] before removal. This keeps failed mutations
-    /// atomic, but the snapshot cost is linear in the size of the stored
-    /// topology. The method therefore requires the stored coordinates and
-    /// payloads to be cloneable so the trial structure can preserve them.
+    /// When duplicates are present, the rollback snapshot cost is linear in the
+    /// size of the stored topology. The method therefore requires stored
+    /// coordinates and payloads to be cloneable so rollback can preserve them.
     ///
     /// # Errors
     ///
@@ -2172,24 +2162,23 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             return Ok(0);
         }
 
-        let original_generation = self.generation();
-        let mut trial = self.clone_for_rollback();
-        trial.generation = Arc::new(AtomicU64::new(original_generation));
-        let removed = trial.remove_simplices_by_keys(&simplices_to_remove)?;
+        let mut transaction = TdsRollbackTransaction::begin(self);
+        let removed = transaction
+            .tds_mut()
+            .remove_simplices_by_keys(&simplices_to_remove)?;
         let rebuild_result = (|| -> Result<(), TdsMutationError> {
-            trial.assign_neighbors().map_err(TdsMutationError::from)?;
-            trial.assign_incident_simplices()?;
-            trial.is_valid().map_err(TdsMutationError::from)?;
-            Ok(())
+            let tds = transaction.tds_mut();
+            tds.assign_neighbors().map_err(TdsMutationError::from)?;
+            tds.assign_incident_simplices()?;
+            tds.is_valid().map_err(TdsMutationError::from)
         })();
 
         if let Err(error) = rebuild_result {
-            self.generation
-                .store(original_generation, Ordering::Relaxed);
+            transaction.rollback();
             return Err(error);
         }
 
-        *self = trial;
+        transaction.commit();
         Ok(removed)
     }
 }
@@ -2202,6 +2191,7 @@ mod tests {
     use crate::core::algorithms::incremental_insertion::InsertionError;
     use crate::core::simplex::Simplex;
     use crate::core::tds::errors::TriangulationConstructionState;
+    use crate::deletion::DeleteVertexError;
     use crate::geometry::point::Point;
     use crate::vertex;
     use slotmap::KeyData;
@@ -2296,10 +2286,7 @@ mod tests {
             dt.number_of_simplices() >= initial_simplex_count,
             "Simplex count should not decrease"
         );
-        assert!(
-            dt.as_triangulation().tds.is_valid().is_ok(),
-            "TDS should remain valid"
-        );
+        assert!(dt.is_valid_structure().is_ok(), "TDS should remain valid");
     }
 
     #[test]
@@ -2315,18 +2302,14 @@ mod tests {
         assert_eq!(dt.number_of_vertices(), 5);
 
         // Vertex should be findable by UUID.
-        let vertex_key = dt.as_triangulation().tds.vertex_key_from_uuid(&uuid);
+        let vertex_key = dt.vertex_key_from_uuid(&uuid);
         assert!(
             vertex_key.is_some(),
             "Added vertex should be findable by UUID"
         );
 
         // Vertex should be in the vertices collection.
-        let stored_vertex = dt
-            .as_triangulation()
-            .tds
-            .vertex(vertex_key.unwrap())
-            .unwrap();
+        let stored_vertex = dt.vertex(vertex_key.unwrap()).unwrap();
         let coords = *stored_vertex.point().coords();
         let expected = [1.0, 2.0, 3.0];
         assert!(
@@ -2369,10 +2352,7 @@ mod tests {
 
         // Verify the vertex was removed
         assert!(
-            dt.as_triangulation()
-                .tds
-                .vertex_key_from_uuid(&vertex_uuid)
-                .is_none(),
+            dt.vertex_key_from_uuid(&vertex_uuid).is_none(),
             "Vertex should be removed from TDS"
         );
         assert!(
@@ -2396,10 +2376,7 @@ mod tests {
                 for (i, neighbor_opt) in neighbors.enumerate() {
                     if let Some(neighbor_key) = neighbor_opt {
                         assert!(
-                            dt.as_triangulation()
-                                .tds
-                                .simplices
-                                .contains_key(neighbor_key),
+                            dt.contains_simplex(neighbor_key),
                             "Simplex {simplex_key:?} has dangling neighbor reference at index {i}: {neighbor_key:?}"
                         );
                     }
@@ -2409,7 +2386,7 @@ mod tests {
 
         // Verify the TDS is valid (this should pass with the bug fix)
         assert!(
-            dt.as_triangulation().tds.is_valid().is_ok(),
+            dt.is_valid_structure().is_ok(),
             "TDS should be valid after removing vertex"
         );
     }
@@ -2496,7 +2473,7 @@ mod tests {
             let vertex_key = dt_2d.vertices().next().unwrap().0;
             let simplices_removed = dt_2d.delete_vertex(vertex_key).unwrap();
             assert!(simplices_removed > 0);
-            assert!(dt_2d.as_triangulation().tds.is_valid().is_ok());
+            assert!(dt_2d.is_valid_structure().is_ok());
         }
 
         // 3D test
@@ -2525,7 +2502,7 @@ mod tests {
                 .0;
             let simplices_removed = dt_3d.delete_vertex(vertex_key).unwrap();
             assert!(simplices_removed > 0);
-            assert!(dt_3d.as_triangulation().tds.is_valid().is_ok());
+            assert!(dt_3d.is_valid_structure().is_ok());
         }
 
         // 4D test
@@ -2555,7 +2532,7 @@ mod tests {
                 .0;
             let simplices_removed = dt_4d.delete_vertex(vertex_key).unwrap();
             assert!(simplices_removed > 0);
-            assert!(dt_4d.as_triangulation().tds.is_valid().is_ok());
+            assert!(dt_4d.is_valid_structure().is_ok());
         }
     }
 
@@ -2611,17 +2588,11 @@ mod tests {
 
         // CRITICAL CHECK 2: The vertex should no longer exist in TDS
         assert!(
-            dt.as_triangulation()
-                .tds
-                .vertex_key_from_uuid(&removed_vertex_uuid)
-                .is_none(),
+            dt.vertex_key_from_uuid(&removed_vertex_uuid).is_none(),
             "Deleted vertex UUID should not be in mapping"
         );
         assert!(
-            dt.as_triangulation()
-                .tds
-                .vertex(removed_vertex_key)
-                .is_none(),
+            dt.vertex(removed_vertex_key).is_none(),
             "Deleted vertex key should not exist in storage"
         );
 
@@ -2629,19 +2600,12 @@ mod tests {
         for (vertex_key, vertex) in dt.vertices() {
             if let Some(incident_simplex_key) = vertex.incident_simplex() {
                 assert!(
-                    dt.as_triangulation()
-                        .tds
-                        .simplices
-                        .contains_key(incident_simplex_key),
+                    dt.contains_simplex(incident_simplex_key),
                     "Vertex {vertex_key:?} has dangling incident_simplex pointer to {incident_simplex_key:?}"
                 );
 
                 // Verify the incident simplex actually contains this vertex
-                let incident_simplex = dt
-                    .as_triangulation()
-                    .tds
-                    .simplex(incident_simplex_key)
-                    .unwrap();
+                let incident_simplex = dt.simplex(incident_simplex_key).unwrap();
                 assert!(
                     incident_simplex.contains_vertex(vertex_key),
                     "Vertex {vertex_key:?} incident_simplex {incident_simplex_key:?} does not contain the vertex"
@@ -2651,7 +2615,7 @@ mod tests {
 
         // CRITICAL CHECK 4: TDS should be valid
         assert!(
-            dt.as_triangulation().tds.is_valid().is_ok(),
+            dt.is_valid_structure().is_ok(),
             "TDS should be valid after vertex removal"
         );
     }

@@ -1786,7 +1786,7 @@ fn regression_issue_228_3d_1000_flip_repair_convergence() {
         "Topology validation (L1-L3) must pass (#228 regression, seed=0x{seed:X})"
     );
     assert!(
-        dt.is_delaunay_via_flips().is_ok(),
+        dt.verify_via_flip_predicates().is_ok(),
         "Delaunay property must hold (#228 regression, seed=0x{seed:X})"
     );
 }

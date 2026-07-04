@@ -8,10 +8,9 @@
 //! - Repeat-run determinism for outcome stats
 //! - Multi-dimensional coverage (2D–3D)
 
-use delaunay::flips::BistellarFlips;
-use delaunay::flips::FacetHandle;
 use delaunay::prelude::construction::{DelaunayTriangulation, TriangulationConstructionError};
 use delaunay::prelude::delaunayize::*;
+use delaunay::prelude::pachner::{PachnerMove, PachnerMoves};
 use delaunay::vertex;
 use std::{error::Error, mem::size_of};
 
@@ -261,8 +260,9 @@ fn test_vertex_count_preserved_after_delaunayize() {
 // NON-DELAUNAY REPAIR VIA FLIPS TEST
 // =============================================================================
 
-/// Build a valid Delaunay triangulation, apply a k=2 flip to intentionally
-/// break the Delaunay property, then verify `delaunayize_by_flips` restores it.
+/// Build a valid Delaunay triangulation, apply a k=2 Pachner move to
+/// intentionally break the Delaunay property, then verify
+/// `delaunayize_by_flips` restores it.
 #[test]
 fn test_flip_breaks_delaunay_then_delaunayize_restores() {
     init_tracing();
@@ -280,22 +280,24 @@ fn test_flip_breaks_delaunay_then_delaunayize_restores() {
 
     // Collect candidate interior facets (immutable borrow ends before mutation).
     let mut candidate_facets = Vec::new();
-    for (ck, simplex) in dt.simplices() {
-        if let Some(neighbors) = simplex.neighbors() {
-            for (i, n) in neighbors.enumerate() {
-                if let (Some(_), Ok(idx)) = (n, u8::try_from(i)) {
-                    candidate_facets.push(
-                        FacetHandle::try_new(dt.tds(), ck, idx)
-                            .expect("interior facet index should be valid"),
-                    );
-                }
-            }
+    for facet in dt.facets() {
+        let facet = facet.expect("facet iterator should resolve valid facets");
+        if facet
+            .simplex()
+            .neighbor_key(usize::from(facet.facet_index()))
+            .flatten()
+            .is_some()
+        {
+            candidate_facets.push(facet.handle());
         }
     }
 
     let mut flipped = false;
     for facet in candidate_facets {
-        if dt.flip_k2(facet).is_ok() {
+        let Ok(proposal) = dt.propose_pachner(PachnerMove::K2 { facet }) else {
+            continue;
+        };
+        if proposal.attempt_on(&mut dt).is_ok() {
             flipped = true;
             break;
         }
@@ -522,7 +524,7 @@ fn test_delaunayize_with_flip_budget_and_fallback_2d() {
     assert!(dt.validate().is_ok());
 }
 
-/// Apply a k=2 flip to break the Delaunay property, then verify
+/// Apply a k=2 Pachner move to break the Delaunay property, then verify
 /// `delaunayize_by_flips` with an explicit flip budget restores it.
 #[test]
 fn test_flip_breaks_then_delaunayize_with_budget_restores_3d() {
@@ -540,22 +542,24 @@ fn test_flip_breaks_then_delaunayize_with_budget_restores_3d() {
 
     // Collect candidate interior facets.
     let mut candidate_facets = Vec::new();
-    for (ck, simplex) in dt.simplices() {
-        if let Some(neighbors) = simplex.neighbors() {
-            for (i, n) in neighbors.enumerate() {
-                if let (Some(_), Ok(idx)) = (n, u8::try_from(i)) {
-                    candidate_facets.push(
-                        FacetHandle::try_new(dt.tds(), ck, idx)
-                            .expect("interior facet index should be valid"),
-                    );
-                }
-            }
+    for facet in dt.facets() {
+        let facet = facet.expect("facet iterator should resolve valid facets");
+        if facet
+            .simplex()
+            .neighbor_key(usize::from(facet.facet_index()))
+            .flatten()
+            .is_some()
+        {
+            candidate_facets.push(facet.handle());
         }
     }
 
     let mut flipped = false;
     for facet in candidate_facets {
-        if dt.flip_k2(facet).is_ok() {
+        let Ok(proposal) = dt.propose_pachner(PachnerMove::K2 { facet }) else {
+            continue;
+        };
+        if proposal.attempt_on(&mut dt).is_ok() {
             flipped = true;
             break;
         }

@@ -13,10 +13,8 @@ use delaunay::prelude::construction::{
     DelaunayConstructionFailure, DelaunayTriangulation, DelaunayTriangulationBuilder,
     DelaunayTriangulationConstructionError, TopologyGuarantee, Vertex,
 };
-#[cfg(feature = "diagnostics")]
-use delaunay::prelude::diagnostics::debug_print_first_delaunay_violation;
 use delaunay::prelude::generators::{
-    generate_random_points_in_ball_seeded,
+    RandomPointCount, generate_random_points_in_ball_seeded,
     try_generate_random_triangulation_with_topology_guarantee,
 };
 use delaunay::prelude::geometry::RobustKernel;
@@ -27,6 +25,8 @@ use delaunay::vertex;
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use std::num::NonZeroUsize;
+
+const EXACT_PREDICATE_FAST_POINT_COUNT: NonZeroUsize = nonzero(8);
 
 const fn nonzero(value: usize) -> NonZeroUsize {
     NonZeroUsize::new(value).expect("test point count must be non-zero")
@@ -275,12 +275,10 @@ fn debug_issue_120_empty_circumsphere_5d() {
         }
     }
     let mut dt_robust: DelaunayTriangulation<RobustKernel<f64>, (), (), 5> =
-        DelaunayTriangulation::try_from_tds_with_topology_guarantee(
-            dt.tds().clone(),
-            RobustKernel::new(),
-            TopologyGuarantee::PLManifold,
-        )
-        .unwrap_or_else(|err| panic!("5D robust TDS should validate: {err}"));
+        DelaunayTriangulation::builder(&vertices)
+            .topology_guarantee(TopologyGuarantee::PLManifold)
+            .build_with_kernel(&RobustKernel::new())
+            .unwrap_or_else(|err| panic!("5D robust fixture should validate: {err}"));
     match dt_robust.repair_delaunay_with_flips() {
         Ok(stats) => {
             test_debug_info!(
@@ -320,7 +318,7 @@ fn debug_issue_120_empty_circumsphere_5d() {
     for (simplex_key, simplex) in dt.simplices() {
         test_debug_info!("[Issue #120 debug] simplex {simplex_key:?}:");
         for &vkey in simplex.vertices() {
-            let vertex = dt.tds().vertex(vkey).expect("vertex key should exist");
+            let vertex = dt.vertex(vkey).expect("vertex key should exist");
             test_debug_info!(
                 "  vkey={vkey:?}, uuid={}, point={:?}",
                 vertex.uuid(),
@@ -331,9 +329,7 @@ fn debug_issue_120_empty_circumsphere_5d() {
 
     if let Err(err) = dt.is_valid_delaunay() {
         #[cfg(feature = "diagnostics")]
-        {
-            debug_print_first_delaunay_violation(dt.tds(), None);
-        }
+        dt.debug_print_first_delaunay_violation(None);
         panic!("5D debug configuration violates Delaunay property: {err:?}");
     }
 }
@@ -924,7 +920,7 @@ fn test_collinear_points_2d() {
 
 /// Fast regression test for the exact-predicate code paths changed in #228.
 ///
-/// Constructs a 3D triangulation from 16 random ball-distributed points using
+/// Constructs a 3D triangulation from a small random ball-distributed point set using
 /// `AdaptiveKernel` (the default; exact+SoS predicates) and verifies the
 /// Delaunay property. This exercises:
 /// - `det_errbound()` fast filter in orientation/insphere predicates
@@ -936,7 +932,9 @@ fn test_collinear_points_2d() {
 #[test]
 fn regression_issue_228_exact_predicate_paths_3d_fast() {
     let seed: u64 = 0x0228_FA53_0003;
-    let points = generate_random_points_in_ball_seeded::<3>(16, 100.0, seed)
+    let point_count = RandomPointCount::<3>::try_new(EXACT_PREDICATE_FAST_POINT_COUNT)
+        .expect("fast regression point count should build a 3D triangulation");
+    let points = generate_random_points_in_ball_seeded::<3>(point_count.get(), 100.0, seed)
         .expect("point generation should succeed");
     let vertices: Vec<Vertex<(), 3>> = points
         .into_iter()
@@ -946,11 +944,13 @@ fn regression_issue_228_exact_predicate_paths_3d_fast() {
     let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::builder(&vertices)
         .topology_guarantee(TopologyGuarantee::Pseudomanifold)
         .build()
-        .expect("3D 16-point construction must not fail (#228 fast regression)");
+        .expect("3D exact-predicate fast regression construction must not fail (#228)");
 
+    let delaunay_result = dt.verify_via_flip_predicates();
     assert!(
-        dt.is_delaunay_via_flips().is_ok(),
-        "Delaunay property must hold (#228 fast regression, seed=0x{seed:X})"
+        delaunay_result.is_ok(),
+        "Delaunay property must hold (#228 fast regression, seed=0x{seed:X}): {:?}",
+        delaunay_result.err()
     );
     assert!(dt.number_of_vertices() > 0);
     assert!(dt.number_of_simplices() > 0);

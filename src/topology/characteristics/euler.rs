@@ -7,7 +7,6 @@
 //!
 //! ```rust
 //! use delaunay::prelude::*;
-//! use delaunay::prelude::topology::validation::euler;
 //!
 //! # #[derive(Debug, thiserror::Error)]
 //! # enum ExampleError {
@@ -27,9 +26,8 @@
 //! ];
 //! let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 //!
-//! let counts = euler::count_simplices(dt.tds())?;
-//! let chi = euler::euler_characteristic(&counts);
-//! assert_eq!(chi, 1);  // Single tetrahedron has χ = 1
+//! let result = dt.euler_check()?;
+//! assert_eq!(result.chi, 1);  // Single tetrahedron has χ = 1
 //! # Ok(())
 //! # }
 //! ```
@@ -207,7 +205,6 @@ pub enum TopologyClassification {
 ///
 /// ```rust
 /// use delaunay::prelude::*;
-/// use delaunay::prelude::topology::validation::euler;
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -226,7 +223,7 @@ pub enum TopologyClassification {
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
-/// let counts = euler::count_simplices(dt.tds())?;
+/// let counts = dt.simplex_counts()?;
 /// assert_eq!(counts.count(0), 3);  // 3 vertices
 /// assert_eq!(counts.count(1), 3);  // 3 edges
 /// assert_eq!(counts.count(2), 1);  // 1 face
@@ -479,7 +476,7 @@ fn insert_simplices_of_size(
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
-/// let boundary_counts = euler::count_boundary_simplices(dt.tds(), dt.global_topology())?;
+/// let boundary_counts = dt.boundary_simplex_counts()?;
 /// let boundary_chi = euler::euler_characteristic(&boundary_counts);
 /// assert_eq!(boundary_chi, 2);  // S² has χ = 2
 /// # Ok(())
@@ -750,7 +747,7 @@ pub(crate) fn triangulated_surface_boundary_component_count(
 ///
 /// ```rust
 /// use delaunay::prelude::*;
-/// use delaunay::prelude::topology::validation::{classify_triangulation, TopologyClassification};
+/// use delaunay::prelude::topology::validation::TopologyClassification;
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -770,7 +767,7 @@ pub(crate) fn triangulated_surface_boundary_component_count(
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
-/// let classification = classify_triangulation(dt.tds(), dt.global_topology())?;
+/// let classification = dt.topology_classification_for(dt.global_topology())?;
 /// assert_eq!(classification, TopologyClassification::SingleSimplex(3));
 /// # Ok(())
 /// # }

@@ -162,6 +162,8 @@ These variables configure property tests in `tests/proptest_*.rs`.
 
 ## Benchmarks
 
+### CI Performance Suite
+
 These variables configure `benches/ci_performance_suite.rs` and run in
 release builds only.
 
@@ -171,6 +173,26 @@ release builds only.
 | `DELAUNAY_BENCH_DISCOVER_SEEDS` | presence | Seed-discovery mode: find and print stable seeds instead of running benchmarks |
 | `DELAUNAY_BENCH_DISCOVER_SEEDS_LIMIT` | **value** (integer) | Maximum seeds to try per (dim, count) pair during discovery or fallback (default: 2000) |
 | `DELAUNAY_BENCH_EXPORT_METRICS` | presence | Metric-only mode: print `api_benchmark_metric` vertex/simplex counts; optional `tds_new` filter |
+
+### Pachner Stress Benchmarks
+
+These variables configure `benches/pachner_stress.rs` and run in release builds.
+The `just pachner-stress*` recipes set the report flag and dimension-specific
+defaults for the 3D and 4D Monte Carlo cases.
+
+| Variable | Activation | Description |
+|---|---|---|
+| `DELAUNAY_PACHNER_STRESS_REPORT` | presence | `[release]` Print source and `pachner_stress_metric` lines for Monte Carlo runs |
+| `DELAUNAY_PACHNER_STRESS_VERTICES` | **value** (integer) | `[release]` Shared initial vertex count override |
+| `DELAUNAY_PACHNER_STRESS_VERTICES_{D}D` | **value** (integer) | `[release]` Per-dimension vertex count override, e.g. `_3D` or `_4D` |
+| `DELAUNAY_PACHNER_STRESS_ATTEMPTS` | **value** (integer) | `[release]` Shared attempted-move count per Criterion sample |
+| `DELAUNAY_PACHNER_STRESS_ATTEMPTS_{D}D` | **value** (integer) | `[release]` Per-dimension attempted-move count per Criterion sample |
+| `DELAUNAY_PACHNER_STRESS_VALIDATE_EVERY` | **value** (integer) | `[release]` Shared periodic topology/embedding validation cadence |
+| `DELAUNAY_PACHNER_STRESS_VALIDATE_EVERY_{D}D` | **value** (integer) | `[release]` Per-dimension validation cadence |
+| `DELAUNAY_PACHNER_STRESS_KEY_REFRESH_EVERY` | **value** (integer) | `[release]` Shared cached-key refresh cadence |
+| `DELAUNAY_PACHNER_STRESS_KEY_REFRESH_EVERY_{D}D` | **value** (integer) | `[release]` Per-dimension cached-key refresh cadence |
+| `DELAUNAY_PACHNER_STRESS_SEED` | **value** (integer) | `[release]` Shared Monte Carlo RNG seed |
+| `DELAUNAY_PACHNER_STRESS_SEED_{D}D` | **value** (integer) | `[release]` Per-dimension Monte Carlo RNG seed |
 
 ## Miscellaneous
 

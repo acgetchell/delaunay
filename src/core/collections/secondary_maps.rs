@@ -49,11 +49,10 @@ use slotmap::SparseSecondaryMap;
 /// ];
 /// let dt: DelaunayTriangulation<_, _, _, 3> =
 ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
-/// let tds = dt.tds();
 ///
 /// use delaunay::prelude::collections::SimplexSecondaryMap;
 /// let mut in_conflict: SimplexSecondaryMap<bool> = SimplexSecondaryMap::new();
-/// for (simplex_key, _) in tds.simplices() {
+/// for (simplex_key, _) in dt.simplices() {
 ///     in_conflict.insert(simplex_key, true);
 /// }
 /// # Ok(())
@@ -100,11 +99,10 @@ pub type SimplexSecondaryMap<V> = SparseSecondaryMap<SimplexKey, V>;
 /// ];
 /// let dt: DelaunayTriangulation<_, _, _, 3> =
 ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
-/// let tds = dt.tds();
 ///
 /// use delaunay::prelude::collections::VertexSecondaryMap;
 /// let mut processing_order: VertexSecondaryMap<usize> = VertexSecondaryMap::new();
-/// for (idx, (vertex_key, _)) in tds.vertices().enumerate() {
+/// for (idx, (vertex_key, _)) in dt.vertices().enumerate() {
 ///     processing_order.insert(vertex_key, idx);
 /// }
 /// # Ok(())

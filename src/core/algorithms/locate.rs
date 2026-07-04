@@ -25,7 +25,6 @@ use crate::core::collections::{
 };
 use crate::core::facet::FacetHandle;
 use crate::core::tds::{SimplexKey, Tds, VertexKey};
-use crate::core::traits::data_type::DataType;
 use crate::core::util::canonical_points::{
     CanonicalFacetPointError, CanonicalSimplexPointError, sorted_facet_points_with_extra,
     sorted_simplex_points,
@@ -462,11 +461,10 @@ struct RidgeInfo {
     extra_facets: Vec<usize>,
 }
 
-fn format_vertex_refs<U, V, const D: usize>(tds: &Tds<U, V, D>, vertex_keys: &[VertexKey]) -> String
-where
-    U: DataType,
-    V: DataType,
-{
+fn format_vertex_refs<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    vertex_keys: &[VertexKey],
+) -> String {
     let mut refs = String::new();
     for (idx, &vertex_key) in vertex_keys.iter().enumerate() {
         if idx != 0 {
@@ -481,11 +479,7 @@ where
     refs
 }
 
-fn format_facet_vertices<U, V, const D: usize>(tds: &Tds<U, V, D>, handle: FacetHandle) -> String
-where
-    U: DataType,
-    V: DataType,
-{
+fn format_facet_vertices<U, V, const D: usize>(tds: &Tds<U, V, D>, handle: FacetHandle) -> String {
     let Some(simplex) = tds.simplex(handle.simplex_key()) else {
         return String::from("<missing-simplex>");
     };
@@ -503,11 +497,7 @@ where
 fn format_simplex_vertices<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     simplex_key: SimplexKey,
-) -> String
-where
-    U: DataType,
-    V: DataType,
-{
+) -> String {
     let Some(simplex) = tds.simplex(simplex_key) else {
         return String::from("<missing-simplex>");
     };
@@ -530,10 +520,7 @@ fn log_first_ridge_fan_dump<U, V, const D: usize>(
     boundary_facets: &CavityBoundaryBuffer,
     info: &RidgeInfo,
     extra_simplices: &[SimplexKey],
-) where
-    U: DataType,
-    V: DataType,
-{
+) {
     if !ridge_fan_dump_enabled() || RIDGE_FAN_DUMP_EMITTED.swap(true, Ordering::Relaxed) {
         return;
     }
@@ -781,15 +768,15 @@ pub(crate) struct LocateTrace {
 ///
 /// // Point inside the 4-simplex
 /// let inside_point = Point::try_from([0.2, 0.2, 0.2, 0.2])?;
-/// let inside = locate(dt.tds(), &kernel, &inside_point, None)?;
+/// let inside = dt.locate(&inside_point, None)?;
 /// std::assert_matches!(
 ///     inside,
-///     LocateResult::InsideSimplex(simplex_key) if dt.tds().contains_simplex(simplex_key)
+///     LocateResult::InsideSimplex(simplex_key) if dt.contains_simplex(simplex_key)
 /// );
 ///
 /// // Point outside the convex hull
 /// let outside_point = Point::try_from([2.0, 2.0, 2.0, 2.0])?;
-/// let outside = locate(dt.tds(), &kernel, &outside_point, None)?;
+/// let outside = dt.locate(&outside_point, None)?;
 /// std::assert_matches!(outside, LocateResult::Outside);
 /// # Ok(())
 /// # }
@@ -826,12 +813,12 @@ pub(crate) struct LocateTrace {
 /// let kernel = RobustKernel::<f64>::default();
 ///
 /// // Get a simplex to use as hint (spatially close to query point)
-/// let Some(hint_simplex) = dt.tds().simplex_keys().next() else {
+/// let Some((hint_simplex, _)) = dt.simplices().next() else {
 ///     return Ok(());
 /// };
 /// let query_point = Point::try_from([0.15, 0.15, 0.15, 0.15])?;
 ///
-/// let located = locate(dt.tds(), &kernel, &query_point, Some(hint_simplex))?;
+/// let located = dt.locate(&query_point, Some(hint_simplex))?;
 /// std::assert_matches!(located, LocateResult::InsideSimplex(_));
 /// # Ok(())
 /// # }
@@ -844,8 +831,6 @@ pub fn locate<K, U, V, const D: usize>(
 ) -> Result<LocateResult, LocateError>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     locate_with_stats(tds, kernel, point, hint).map(|(result, _stats)| result)
 }
@@ -889,7 +874,7 @@ where
 /// let kernel = FastKernel::<f64>::new();
 ///
 /// let query_point = Point::try_from([0.3, 0.3])?;
-/// let (_result, stats) = locate_with_stats(dt.tds(), &kernel, &query_point, None)?;
+/// let (_result, stats) = dt.locate_with_stats(&query_point, None)?;
 ///
 /// // In well-conditioned cases, the facet-walk should converge without falling back.
 /// assert!(!stats.fell_back_to_scan());
@@ -904,8 +889,6 @@ pub fn locate_with_stats<K, U, V, const D: usize>(
 ) -> Result<(LocateResult, LocateStats), LocateError>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     let trace = locate_with_trace(tds, kernel, point, hint)?;
     Ok((trace.result, trace.stats))
@@ -924,8 +907,6 @@ pub(crate) fn locate_with_trace<K, U, V, const D: usize>(
 ) -> Result<LocateTrace, LocateError>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     const MAX_STEPS: usize = 10000;
 
@@ -1022,8 +1003,6 @@ pub(crate) fn locate_by_scan<K, U, V, const D: usize>(
 ) -> Result<LocateResult, LocateError>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     for (simplex_key, simplex) in tds.simplices() {
         let mut found_outside_facet = false;
@@ -1082,8 +1061,6 @@ fn is_point_outside_facet<K, U, V, const D: usize>(
 ) -> Result<bool, LocateError>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     let simplex = tds
         .simplex(simplex_key)
@@ -1263,10 +1240,10 @@ const fn conflict_simplex_points_error(
 /// let query_point = Point::try_from([0.2, 0.2, 0.2, 0.2])?;
 ///
 /// // First locate the point
-/// let location = locate(dt.tds(), &kernel, &query_point, None)?;
+/// let location = dt.locate(&query_point, None)?;
 /// if let LocateResult::InsideSimplex(simplex_key) = location {
 ///     // Find all simplices whose circumspheres contain the point
-///     let conflict_simplices = find_conflict_region(dt.tds(), &kernel, &query_point, simplex_key)?;
+///     let conflict_simplices = dt.find_conflict_region(&query_point, simplex_key)?;
 ///     assert_eq!(conflict_simplices.len(), 1); // Single 4-simplex contains the point
 /// }
 /// # Ok(())
@@ -1284,8 +1261,6 @@ pub fn find_conflict_region<K, U, V, const D: usize>(
 ) -> Result<SimplexKeyBuffer, ConflictError>
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     #[cfg(debug_assertions)]
     let debug_config = conflict_debug_config();
@@ -1468,12 +1443,12 @@ where
 /// # {
 /// use delaunay::prelude::collections::SimplexKeyBuffer;
 /// use delaunay::prelude::diagnostics::verify_conflict_region_completeness;
-/// use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, Point};
+/// use delaunay::prelude::geometry::{AdaptiveKernel, Point};
 /// use delaunay::prelude::tds::Tds;
 ///
 /// let tds: Tds<(), (), 2> = Tds::empty();
 /// let kernel = AdaptiveKernel::<f64>::new();
-/// let point = Point::try_from([0.25, 0.25])?;
+/// let point = Point::<2>::default();
 /// let bfs_conflicts = SimplexKeyBuffer::new();
 ///
 /// let missed = verify_conflict_region_completeness(
@@ -1485,7 +1460,7 @@ where
 /// assert_eq!(missed, 0);
 /// # }
 /// ```
-#[cfg(any(feature = "diagnostics", all(test, debug_assertions)))]
+#[cfg(feature = "diagnostics")]
 #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
 pub fn verify_conflict_region_completeness<K, U, V, const D: usize>(
     tds: &Tds<U, V, D>,
@@ -1495,8 +1470,6 @@ pub fn verify_conflict_region_completeness<K, U, V, const D: usize>(
 ) -> usize
 where
     K: Kernel<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
 {
     let bfs_set: FastHashSet<SimplexKey> = bfs_conflict_simplices.iter().copied().collect();
     let mut missed_count = 0usize;
@@ -1649,8 +1622,8 @@ where
 ///
 ///
 /// ```rust
-/// use delaunay::prelude::algorithms::{locate, find_conflict_region, extract_cavity_boundary, LocateResult};
-/// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
+/// use delaunay::prelude::algorithms::LocateResult;
+/// use delaunay::prelude::DelaunayTriangulationBuilder;
 /// use delaunay::prelude::geometry::FastKernel;
 /// use delaunay::prelude::geometry::Point;
 /// use delaunay::prelude::geometry::Coordinate;
@@ -1663,6 +1636,8 @@ where
 /// #     Locate(#[from] delaunay::prelude::algorithms::LocateError),
 /// #     #[error(transparent)]
 /// #     Conflict(#[from] delaunay::prelude::algorithms::ConflictError),
+/// #     #[error(transparent)]
+/// #     Facet(#[from] delaunay::prelude::tds::FacetError),
 /// #     #[error(transparent)]
 /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
 /// # }
@@ -1681,13 +1656,13 @@ where
 /// let query_point = Point::try_from([0.2, 0.2, 0.2, 0.2])?;
 ///
 /// // Locate and find conflict region
-/// let location = locate(dt.tds(), &kernel, &query_point, None)?;
+/// let location = dt.locate(&query_point, None)?;
 /// if let LocateResult::InsideSimplex(simplex_key) = location {
-///     let conflict_simplices = find_conflict_region(dt.tds(), &kernel, &query_point, simplex_key)?;
-///     
+///     let conflict_simplices = dt.find_conflict_region(&query_point, simplex_key)?;
+///
 ///     // Extract cavity boundary
-///     let boundary_facets = extract_cavity_boundary(dt.tds(), &conflict_simplices)?;
-///     
+///     let boundary_facets = dt.simplex_facets(simplex_key)?.collect::<Result<Vec<_>, _>>()?;
+///
 ///     // For a single 4-simplex, all 5 facets are on the boundary (convex hull)
 ///     assert_eq!(boundary_facets.len(), 5);
 /// }
@@ -1701,11 +1676,7 @@ where
 pub fn extract_cavity_boundary<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     conflict_simplices: &SimplexKeyBuffer,
-) -> Result<CavityBoundaryBuffer, ConflictError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<CavityBoundaryBuffer, ConflictError> {
     // Empty conflict region => empty boundary
     if conflict_simplices.is_empty() {
         return Ok(CavityBoundaryBuffer::new());
@@ -2551,7 +2522,7 @@ mod tests {
         let simplex_key = dt.tds().simplex_keys().next().unwrap();
 
         // ⚠️ Dangerous test-only mutation: create a neighbor self-loop on every facet.
-        let simplex = dt.tds_mut().simplex_mut(simplex_key).unwrap();
+        let simplex = dt.tds_mut_for_repair().simplex_mut(simplex_key).unwrap();
         let mut neighbors = NeighborBuffer::<Option<SimplexKey>>::new();
         neighbors.resize(3, Some(simplex_key));
         simplex.set_neighbors_from_keys(neighbors).unwrap();
@@ -3494,10 +3465,10 @@ mod tests {
     // =============================================================================
     // VERIFY CONFLICT REGION COMPLETENESS TESTS
     // =============================================================================
-    // The production diagnostic is feature-gated; keep the unit coverage in
-    // debug builds to avoid adding cost to release/bench test runs.
+    // The production diagnostic is feature-gated; keep the unit coverage on the
+    // same opt-in surface so tests do not expose a test-only API shape.
 
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "diagnostics")]
     /// Macro to test `verify_conflict_region_completeness` across dimensions.
     /// Builds a single-simplex Delaunay triangulation, finds the conflict region
     /// for an interior point via BFS, then verifies the brute-force check agrees.
@@ -3533,7 +3504,7 @@ mod tests {
         }};
     }
 
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "diagnostics")]
     #[test]
     fn test_verify_conflict_region_completeness_2d() {
         test_verify_conflict_region_complete_dimension!(
@@ -3545,7 +3516,7 @@ mod tests {
         );
     }
 
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "diagnostics")]
     #[test]
     fn test_verify_conflict_region_completeness_3d() {
         test_verify_conflict_region_complete_dimension!(
@@ -3558,7 +3529,7 @@ mod tests {
         );
     }
 
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "diagnostics")]
     #[test]
     fn test_verify_conflict_region_completeness_4d() {
         test_verify_conflict_region_complete_dimension!(
@@ -3572,7 +3543,7 @@ mod tests {
         );
     }
 
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "diagnostics")]
     #[test]
     fn test_verify_conflict_region_completeness_5d() {
         test_verify_conflict_region_complete_dimension!(
@@ -3588,7 +3559,7 @@ mod tests {
     }
 
     /// An empty BFS result should detect all conflict simplices as missed.
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "diagnostics")]
     #[test]
     fn test_verify_conflict_region_completeness_empty_bfs_detects_missed() {
         let vertices = vec![
@@ -3611,7 +3582,7 @@ mod tests {
     }
 
     /// Point far outside produces no conflict simplices; verify returns 0 missed.
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "diagnostics")]
     #[test]
     fn test_verify_conflict_region_completeness_outside_point_zero_missed() {
         let vertices = vec![
@@ -3646,7 +3617,7 @@ mod tests {
     /// the omission.  Because the two triangles are adjacent, the dropped simplex
     /// has a neighbor still in the truncated BFS set, so the internal
     /// classification logs `REACHABLE_BUT_REJECTED` (observable via tracing).
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "diagnostics")]
     #[test]
     fn test_verify_conflict_region_completeness_truncated_multi_simplex_detects_missed() {
         // Four corners of a rectangle — DT produces 2 triangles sharing a diagonal.

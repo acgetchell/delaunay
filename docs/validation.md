@@ -309,6 +309,18 @@ Validates the combinatorial structure of the Triangulation Data Structure.
 - `Tds::structure_diagnostic()` - First actionable Level 2 diagnostic.
 - `Tds::structure_report()` - All checkable Level 2 structural failures.
 - `Tds::validate()` - Levels 1–2 (elements + structural).
+- `Triangulation::is_valid_structure()` /
+  `DelaunayTriangulation::is_valid_structure()` - Owner-level Level 2
+  fast-fail validation without exposing storage.
+- `Triangulation::validate_structure()` /
+  `DelaunayTriangulation::validate_structure()` - Owner-level Levels 1–2
+  validation.
+- `Triangulation::structure_diagnostic()` /
+  `DelaunayTriangulation::structure_diagnostic()` - Owner-level first
+  actionable Level 2 diagnostic.
+- `Triangulation::structure_report()` /
+  `DelaunayTriangulation::structure_report()` - Owner-level aggregate Level 2
+  diagnostics.
 - `DelaunayTriangulation::validation_report()` - Cumulative diagnostic report across Levels 1–5.
 
 ### What It Checks
@@ -361,7 +373,7 @@ fn main() -> DelaunayResult<()> {
     let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     // Quick structural check (Level 2)
-    assert!(dt.tds().is_valid().is_ok());
+    assert!(dt.is_valid_structure().is_ok());
 
     // Detailed report showing all violations across Levels 1–5 (on failure)
     match dt.validation_report() {
@@ -378,7 +390,7 @@ fn main() -> DelaunayResult<()> {
 
 ### Diagnostics
 
-For most users, start with `dt.tds().is_valid()` (fast-fail) or `dt.validation_report()` (full diagnostics across Levels 1–5).
+For most users, start with `dt.is_valid_structure()` (fast-fail) or `dt.validation_report()` (full diagnostics across Levels 1–5).
 
 ---
 
@@ -393,6 +405,12 @@ Validates that the triangulation forms a valid topological manifold.
 - `Triangulation::is_valid_topology()` - Level 3 topology fast-fail validation only.
 - `Triangulation::topology_diagnostic()` - First actionable Level 3 diagnostic.
 - `Triangulation::topology_report()` - All checkable Level 3 topology failures.
+- `Triangulation::validate_ridge_links()` - Explicit global ridge-link
+  PL-manifold diagnostic.
+- `Triangulation::validate_ridge_links_for_simplices()` - Explicit localized
+  ridge-link diagnostic for a touched simplex frontier.
+- `Triangulation::validate_vertex_links()` - Explicit vertex-link
+  PL-manifold certification.
 - `Triangulation::validate()` - Levels 1–3 (elements + structure + topology).
 
 ### What It Checks
@@ -404,18 +422,29 @@ Validates that the triangulation forms a valid topological manifold.
 2. **Codimension-2 boundary manifoldness (closed boundary)**: Each (d−2)-ridge on the boundary must be incident to exactly 2 boundary facets
    - This is the "no boundary of boundary" condition
    - Interior ridges can have higher degree; only boundary ridges are constrained
-3. **PL-manifold vertex-link condition** (when `TopologyGuarantee::PLManifold`):
+3. **PL-manifold ridge-link condition** (when `TopologyGuarantee::PLManifold` or
+   `TopologyGuarantee::PLManifoldStrict`):
+   The link of every checked ridge is a connected path or cycle. Use
+   `dt.validate_ridge_links()` for a global explicit check, or
+   `dt.validate_ridge_links_for_simplices(touched)` after a local edit.
+4. **PL-manifold vertex-link condition** (when `TopologyGuarantee::PLManifold` certifies
+   construction completion, or when `TopologyGuarantee::PLManifoldStrict` checks every insertion):
    For every vertex `v`, the link `Lk(v)` must be a (D−1)-sphere (interior vertex) or (D−1)-ball (boundary vertex).
-4. **Connectedness**: All simplices form a single connected component in the simplex neighbor graph
+   Use `dt.validate_vertex_links()` for an explicit owner-level check.
+5. **Connectedness**: All simplices form a single connected component in the simplex neighbor graph
    - Detected via a graph traversal over neighbor pointers (O(N·D))
-5. **No isolated vertices**: Every vertex must be incident to at least one simplex
-6. **Euler Characteristic**: χ matches expected topology (when an expectation is defined)
+6. **No isolated vertices**: Every vertex must be incident to at least one simplex
+7. **Euler Characteristic**: χ matches expected topology (when an expectation is defined)
    - Empty: χ = 0
    - Single simplex / Ball(D): χ = 1
    - Closed sphere S^D: χ = 1 + (-1)^D
    - Unknown: χ is computed but not enforced
 
 `Triangulation::validate()` (Levels 1–3) additionally runs `Tds::validate()` first.
+The `DelaunayTriangulation` wrapper forwards the explicit ridge-link and
+vertex-link validators to its owned `Triangulation`, so Delaunay workflows can
+call `dt.validate_ridge_links()`, `dt.validate_ridge_links_for_simplices(...)`,
+and `dt.validate_vertex_links()` directly.
 
 ### Complexity
 
@@ -621,14 +650,14 @@ Start: Do you need to validate?
     │   ├─ Production hot path? → Usually skip (but validate during integration testing / when debugging)
     │   └─ Need certainty? → Validate (Level 2 or 3; add Level 4 if embedding matters, Level 5 if Delaunay matters)
     │
-    ├─ After manual TDS mutation? → Level 2 (`dt.tds().is_valid()`)
+    ├─ After manual topology mutation? → Level 2 (`dt.is_valid_structure()`)
     │
     ├─ Debugging embedded-geometry issues? → Level 4 (`dt.as_triangulation().validate_embedding()`)
     │
     ├─ Debugging Delaunay issues? → Level 5 (`dt.is_valid_delaunay()`)
     │
     ├─ Production validation?
-    │   ├─ Performance critical? → Level 2 (`dt.tds().is_valid()`)
+    │   ├─ Performance critical? → Level 2 (`dt.is_valid_structure()`)
     │   ├─ Topological correctness critical? → Level 3 (`dt.as_triangulation().is_valid_topology()`)
     │   ├─ Embedded correctness critical? → Level 4 (`dt.as_triangulation().validate_embedding()`)
     │   └─ Delaunay correctness critical? → Level 5 (`dt.is_valid_delaunay()`)
@@ -680,7 +709,7 @@ fn test_my_triangulation_operation() {
     my_operation(&mut dt);
 
     // Validate at appropriate level
-    assert!(dt.tds().is_valid().is_ok()); // Level 2: Structural
+    assert!(dt.is_valid_structure().is_ok()); // Level 2: Structural
     assert!(dt.as_triangulation().is_valid_topology().is_ok()); // Level 3: Topology
     assert!(dt.as_triangulation().validate_embedding().is_ok()); // Level 4: Faithful embedding
     assert!(dt.is_valid_delaunay().is_ok());        // Level 5: Delaunay property
@@ -709,7 +738,7 @@ pub fn my_algorithm(
 
     #[cfg(debug_assertions)]
     {
-        dt.tds().is_valid()?;
+        dt.validate_structure()?;
         dt.as_triangulation().is_valid_topology()?;
     }
 
@@ -745,7 +774,7 @@ pub fn validate_with_level(
     level: u8,
 ) -> Result<(), ValidationLevelError> {
     match level {
-        2 => dt.tds().is_valid().map_err(ValidationLevelError::from),
+        2 => dt.validate_structure().map_err(ValidationLevelError::from),
         3 => dt
             .as_triangulation()
             .is_valid_topology()

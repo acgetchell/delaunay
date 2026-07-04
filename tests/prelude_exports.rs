@@ -113,7 +113,7 @@ use delaunay::prelude::geometry::{
 use delaunay::prelude::insertion::{
     InitialSimplexConstructionError, InitialSimplexUnexpectedInsertionStage, InsertionError,
     InsertionErrorKind as FocusedInsertionErrorKind, InsertionTopologyValidationContext,
-    NeighborRebuildError, Tds as InsertionTds, TdsMutationError, repair_neighbor_pointers_local,
+    NeighborRebuildError,
 };
 use delaunay::prelude::ordering::{
     HilbertBitDepth, HilbertError, HilbertQuantizedBatch, MAX_HILBERT_BITS, hilbert_index_in_range,
@@ -140,6 +140,9 @@ use delaunay::prelude::query::{
     FacetIncidenceAnalysis as QueryFacetIncidenceAnalysis,
     FacetIncidenceView as QueryFacetIncidenceView, IncidenceView as QueryIncidenceView,
     OneSidedFacetsIter as QueryOneSidedFacetsIter, QueryError,
+    RidgeCandidate as QueryRidgeCandidate, RidgeCandidateError as QueryRidgeCandidateError,
+    RidgeHandle as QueryRidgeHandle, RidgeLinkView as QueryRidgeLinkView,
+    RidgeQuery as QueryRidgeQuery, RidgeView as QueryRidgeView,
     SimplexBarycenterError as QuerySimplexBarycenterError,
     SimplexDataFillError as QuerySimplexDataFillError, SimplexFacetsIter as QuerySimplexFacetsIter,
     SimplexNeighborIndex as QuerySimplexNeighborIndex, TopologyIndexBuildError,
@@ -154,14 +157,15 @@ use delaunay::prelude::repair::{
     DelaunayRepairPostconditionFailure, DelaunayRepairStats, DelaunayRepairVerificationContext,
     DelaunayTriangulationValidationError, FlipEdgeAdjacencyError, FlipError, FlipFailureKind,
     FlipOrientationCheckStage as RepairFlipOrientationCheckStage, FlipTriangleAdjacencyError,
-    FlipVertexAdjacencyError, RepairQueueOrder, verify_delaunay_for_triangulation,
+    FlipVertexAdjacencyError, RepairQueueOrder,
 };
 use delaunay::prelude::tds::{
-    AllFacetsIter as TdsAllFacetsIter, BoundaryFacetsIter as TdsBoundaryFacetsIter, EdgeKey,
-    EdgeKeyError, EdgeView, FacetError, FacetHandle, FacetIncidenceView as TdsFacetIncidenceView,
-    FacetView, InvariantError, NeighborSlot, OneSidedFacetsIter as TdsOneSidedFacetsIter,
+    AllFacetsIter as TdsAllFacetsIter, BoundaryFacetsIter as TdsBoundaryFacetsIter, EdgeKeyError,
+    EdgeView, FacetError, FacetIncidenceView as TdsFacetIncidenceView, FacetView, InvariantError,
+    NeighborSlot, OneSidedFacetsIter as TdsOneSidedFacetsIter,
     SimplexFacetsIter as TdsSimplexFacetsIter, SimplexKey, Tds, TdsConstructionError, TdsError,
-    TopologyOwner as TdsTopologyOwner, TopologyOwnerId as TdsTopologyOwnerId, VertexKey,
+    TdsMutationError, TopologyOwner as TdsTopologyOwner, TopologyOwnerId as TdsTopologyOwnerId,
+    VertexKey,
 };
 use delaunay::prelude::topology::spaces::{
     GlobalTopology, GlobalTopologyModelError, LiftedLinkEdge, LiftedVertexId, TopologyKind,
@@ -169,14 +173,19 @@ use delaunay::prelude::topology::spaces::{
 };
 use delaunay::prelude::topology::validation::{
     GlobalTopology as TopologyValidationGlobalTopology, ManifoldError, RidgeCandidate,
-    RidgeCandidateError, RidgeLinkView, RidgeQuery, RidgeView, ridge_star_simplices,
+    RidgeCandidateError, RidgeLinkView, RidgeQuery, RidgeView,
 };
 use delaunay::prelude::triangulation::{
     AllFacetsIter as TriangulationAllFacetsIter,
     BoundaryFacetsIter as TriangulationBoundaryFacetsIter, EdgeIndex as GenericEdgeIndex,
     FacetIssuesMap as TriangulationFacetIssuesMap, FastKernel as TriangulationFastKernel,
     IncidenceView as GenericIncidenceView, InsertionError as TriangulationInsertionError,
+    ManifoldError as TriangulationManifoldError,
     OneSidedFacetsIter as TriangulationOneSidedFacetsIter, QueryError as TriangulationQueryError,
+    RidgeCandidate as TriangulationRidgeCandidate,
+    RidgeCandidateError as TriangulationRidgeCandidateError,
+    RidgeHandle as TriangulationRidgeHandle, RidgeLinkView as TriangulationRidgeLinkView,
+    RidgeQuery as TriangulationRidgeQuery, RidgeView as TriangulationRidgeView,
     SimplexFacetsIter as GenericSimplexFacetsIter,
     SimplexNeighborIndex as GenericSimplexNeighborIndex,
     SpatialIndexConstructionFailure as GenericSpatialIndexConstructionFailure,
@@ -191,6 +200,7 @@ use delaunay::prelude::validation::{
     DelaunayValidationError as FocusedDelaunayValidationError,
     DelaunayViolationDetail as FocusedDelaunayViolationDetail,
     DelaunayViolationReport as FocusedDelaunayViolationReport,
+    ManifoldError as FocusedValidationManifoldError,
     PeriodicDomainPeriodError as FocusedPeriodicDomainPeriodError,
     TopologyGuarantee as FocusedValidationTopologyGuarantee,
     TriangulationValidationReport as FocusedValidationReport, ValidationCadence,
@@ -213,7 +223,10 @@ use delaunay::prelude::{
     IncidenceView as RootIncidenceView,
     InitialSimplexUnexpectedInsertionStage as RootInitialSimplexUnexpectedInsertionStage,
     PeriodicDomainPeriodError as RootPeriodicDomainPeriodError,
-    PlManifoldRepairStage as RootPreludePlManifoldRepairStage, SecureHashMap, SecureHashSet,
+    PlManifoldRepairStage as RootPreludePlManifoldRepairStage,
+    RidgeCandidate as RootRidgeCandidate, RidgeCandidateError as RootRidgeCandidateError,
+    RidgeHandle as RootRidgeHandle, RidgeLinkView as RootRidgeLinkView,
+    RidgeQuery as RootRidgeQuery, RidgeView as RootRidgeView, SecureHashMap, SecureHashSet,
     SimplexBarycenterError as RootPreludeSimplexBarycenterError,
     SimplexDataFillError as RootPreludeSimplexDataFillError,
     SimplexNeighborIndex as RootSimplexNeighborIndex, TopologyError as RootTopologyError,
@@ -230,7 +243,10 @@ use delaunay::query::{
     AllFacetsIter as QueryFacadeAllFacetsIter, BoundaryFacetsIter as QueryFacadeBoundaryFacetsIter,
     EdgeIndex as QueryFacadeEdgeIndex, FacetHandle as QueryFacadeFacetHandle,
     IncidenceView as QueryFacadeIncidenceView, OneSidedFacetsIter as QueryFacadeOneSidedFacetsIter,
-    SimplexBarycenterError as QueryFacadeSimplexBarycenterError,
+    RidgeCandidate as QueryFacadeRidgeCandidate,
+    RidgeCandidateError as QueryFacadeRidgeCandidateError, RidgeHandle as QueryFacadeRidgeHandle,
+    RidgeLinkView as QueryFacadeRidgeLinkView, RidgeQuery as QueryFacadeRidgeQuery,
+    RidgeView as QueryFacadeRidgeView, SimplexBarycenterError as QueryFacadeSimplexBarycenterError,
     SimplexDataFillError as QueryFacadeSimplexDataFillError,
     SimplexFacetsIter as QueryFacadeSimplexFacetsIter,
     SimplexNeighborIndex as QueryFacadeSimplexNeighborIndex,
@@ -305,6 +321,8 @@ enum PreludeExportTestError {
     #[error(transparent)]
     DelaunayValidation(#[from] DelaunayValidationError),
     #[error(transparent)]
+    DelaunayTriangulationValidation(#[from] DelaunayTriangulationValidationError),
+    #[error(transparent)]
     DelaunayRepair(#[from] DelaunayRepairError),
     #[error(transparent)]
     Delaunayize(#[from] DelaunayizeError),
@@ -350,10 +368,8 @@ const fn assert_bistellar_flips(_: &impl BistellarFlips<3, VertexData = ()>) {}
 /// Proves the root flips module exports the same public trait bound.
 const fn assert_root_bistellar_flips(_: &impl BistellarFlips<3, VertexData = ()>) {}
 
-struct NonKernelMarker;
-
-/// Proves explicit topology edits do not require kernel-backed predicates.
-const fn assert_bistellar_flips_without_kernel<T: BistellarFlips<2, VertexData = ()>>() {}
+/// Proves explicit topology edits are available on kernel-backed triangulations.
+const fn assert_bistellar_flips_for_kernel<T: BistellarFlips<2, VertexData = ()>>() {}
 
 /// Proves the focused Pachner prelude exports the unified workflow trait.
 const fn assert_pachner_moves(_: &impl PachnerMoves<3, VertexData = ()>) {}
@@ -361,8 +377,8 @@ const fn assert_pachner_moves(_: &impl PachnerMoves<3, VertexData = ()>) {}
 /// Proves the root Pachner module exports the same unified workflow trait.
 const fn assert_root_pachner_moves(_: &impl DirectPachnerMoves<3, VertexData = ()>) {}
 
-/// Proves unified Pachner dispatch inherits the kernel-free explicit flip contract.
-const fn assert_pachner_moves_without_kernel<T: PachnerMoves<2, VertexData = ()>>() {}
+/// Proves unified Pachner dispatch inherits the kernel-backed explicit flip contract.
+const fn assert_pachner_moves_for_kernel<T: PachnerMoves<2, VertexData = ()>>() {}
 
 /// Proves the focused Pachner prelude exposes topology-owner provenance.
 const fn assert_pachner_topology_owner(_: &impl PachnerTopologyOwner) {}
@@ -551,6 +567,68 @@ fn construction_prelude_exports_common_delaunay_error_aliases() {
     assert_matches!(
         DelaunayError::from(tds_mutation.clone()),
         DelaunayError::TdsMutation { source: err } if err.as_ref() == &tds_mutation
+    );
+}
+
+#[test]
+fn construction_prelude_exports_low_level_delaunay_error_aliases() {
+    let generic_construction = GenericTriangulationConstructionError::FailedToCreateSimplex {
+        message: "prelude smoke test".to_owned(),
+    };
+    assert_matches!(
+        DelaunayError::from(generic_construction.clone()),
+        DelaunayError::TriangulationConstruction { source: err }
+            if err.as_ref() == &generic_construction
+    );
+
+    let tds_construction =
+        TdsConstructionError::ValidationError(TdsError::InconsistentDataStructure {
+            message: "prelude smoke test".to_owned(),
+        });
+    assert_matches!(
+        DelaunayError::from(tds_construction.clone()),
+        DelaunayError::TdsConstruction { source: err } if err.as_ref() == &tds_construction
+    );
+
+    let tds = TdsError::SimplexNotFound {
+        simplex_key: SimplexKey::from(KeyData::from_ffi(4)),
+        context: "prelude smoke test".to_owned(),
+    };
+    assert_matches!(
+        DelaunayError::from(tds.clone()),
+        DelaunayError::Tds { source: err } if err.as_ref() == &tds
+    );
+
+    let facet = FacetError::FacetNotFoundInTriangulation;
+    assert_matches!(
+        DelaunayError::from(facet.clone()),
+        DelaunayError::Facet { source: err } if err.as_ref() == &facet
+    );
+
+    let simplex = SimplexValidationError::DuplicateVertices;
+    assert_matches!(
+        DelaunayError::from(simplex.clone()),
+        DelaunayError::SimplexValidation { source: err } if err.as_ref() == &simplex
+    );
+
+    let query = QueryError::from(TdsError::InconsistentDataStructure {
+        message: "prelude smoke test".to_owned(),
+    });
+    assert_matches!(
+        DelaunayError::from(query.clone()),
+        DelaunayError::Query { source: err } if err.as_ref() == &query
+    );
+
+    let local_delaunay = DelaunayValidationError::DelaunayViolation {
+        simplex_key: SimplexKey::from(KeyData::from_ffi(5)),
+        simplex_vertices: Box::default(),
+        offending_vertex: None,
+        neighbor_simplices: Box::default(),
+    };
+    assert_matches!(
+        DelaunayError::from(local_delaunay.clone()),
+        DelaunayError::DelaunayPropertyValidation { source: err }
+            if err.as_ref() == &local_delaunay
     );
 }
 
@@ -989,8 +1067,11 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
 
 #[test]
 fn flip_exports_cover_orientation_check_stage() {
-    assert_bistellar_flips_without_kernel::<GenericTriangulation<NonKernelMarker, (), (), 2>>();
-    assert_pachner_moves_without_kernel::<GenericTriangulation<NonKernelMarker, (), (), 2>>();
+    assert_bistellar_flips_for_kernel::<
+        GenericTriangulation<TriangulationFastKernel<f64>, (), (), 2>,
+    >();
+    assert_pachner_moves_for_kernel::<GenericTriangulation<TriangulationFastKernel<f64>, (), (), 2>>(
+    );
     assert_pachner_moves_for_unsized_trait_objects::<dyn PachnerMoves<2, VertexData = ()>>();
     assert_matches!(
         DirectFlipOrientationCheckStage::BeforeMutation,
@@ -1010,15 +1091,15 @@ fn flip_exports_cover_orientation_check_stage() {
     );
 }
 
-fn assert_edge_view_exports(
-    tds: &Tds<(), (), 3>,
+fn assert_edge_view_exports<K>(
+    dt: &DelaunayTriangulation<K, (), (), 3>,
     a: VertexKey,
     b: VertexKey,
 ) -> Result<(), PreludeExportTestError> {
-    let edge_key = EdgeKey::try_new(tds, a, b)?;
+    let edge_key = dt.edge_key(a, b)?;
     let query_edge_key: QueryEdgeKey = edge_key;
-    let edge_view: EdgeView<'_, (), (), 3> = edge_key.view(tds)?;
-    let query_edge_view: QueryEdgeView<'_, (), (), 3> = edge_key.view(tds)?;
+    let edge_view: EdgeView<'_, (), (), 3> = dt.edge_view(edge_key)?;
+    let query_edge_view: QueryEdgeView<'_, (), (), 3> = dt.edge_view(edge_key)?;
 
     assert_eq!(query_edge_key, edge_key);
     assert_eq!(edge_view.key(), edge_key);
@@ -1027,34 +1108,34 @@ fn assert_edge_view_exports(
     Ok(())
 }
 
-fn assert_simplex_facet_iter_exports(
-    tds: &Tds<(), (), 3>,
+fn assert_simplex_facet_iter_exports<K>(
+    dt: &DelaunayTriangulation<K, (), (), 3>,
     simplex_key: SimplexKey,
 ) -> Result<(), FacetError> {
     let _query_facade_simplex_facets: QueryFacadeSimplexFacetsIter<'_, (), (), 3> =
-        tds.try_simplex_facets(simplex_key)?;
+        dt.simplex_facets(simplex_key)?;
     let _query_simplex_facets: QuerySimplexFacetsIter<'_, (), (), 3> =
-        tds.try_simplex_facets(simplex_key)?;
+        dt.simplex_facets(simplex_key)?;
     let _tds_simplex_facets: TdsSimplexFacetsIter<'_, (), (), 3> =
-        tds.try_simplex_facets(simplex_key)?;
+        dt.simplex_facets(simplex_key)?;
     let _triangulation_simplex_facets: GenericSimplexFacetsIter<'_, (), (), 3> =
-        tds.try_simplex_facets(simplex_key)?;
+        dt.simplex_facets(simplex_key)?;
     Ok(())
 }
 
-fn assert_facet_incidence_exports(
-    tds: &Tds<(), (), 3>,
+fn assert_facet_incidence_exports<K>(
+    dt: &DelaunayTriangulation<K, (), (), 3>,
     simplex_key: SimplexKey,
 ) -> Result<(), PreludeExportTestError> {
-    let facet_handle = FacetHandle::try_new(tds, simplex_key, 0)?;
+    let facet_handle = dt.facet_handle(simplex_key, 0)?;
     let query_facet_handle: QueryFacetHandle = facet_handle;
     let query_facade_facet_handle: QueryFacadeFacetHandle = facet_handle;
-    let facet_view: FacetView<'_, (), (), 3> = facet_handle.view(tds)?;
+    let facet_view: FacetView<'_, (), (), 3> = dt.facet_view(facet_handle)?;
     assert_eq!(facet_view.handle(), facet_handle);
     assert_eq!(query_facet_handle, facet_handle);
     assert_eq!(query_facade_facet_handle, facet_handle);
 
-    let facet_index = tds.build_facet_to_simplices_index()?;
+    let facet_index = dt.facet_incidence_index()?;
     let incidence = facet_index
         .get(&facet_view.key())
         .expect("fresh index should contain the facet view key");
@@ -1065,7 +1146,8 @@ fn assert_facet_incidence_exports(
     assert_eq!(root_incidence.facet_key(), query_incidence.facet_key());
     assert_eq!(query_incidence.facet_key(), tds_incidence.facet_key());
     assert!(tds_incidence.is_one_sided());
-    assert_query_facet_incidence_trait_export(tds);
+    let empty_tds: Tds<(), (), 3> = Tds::empty();
+    assert_query_facet_incidence_trait_export(&empty_tds);
 
     let query_facade_one_sided_facets: Option<QueryFacadeOneSidedFacetsIter<'_, (), (), 3>> = None;
     let query_one_sided_facets: Option<QueryOneSidedFacetsIter<'_, (), (), 3>> = None;
@@ -1076,8 +1158,8 @@ fn assert_facet_incidence_exports(
     assert!(query_one_sided_facets.is_none());
     assert!(tds_one_sided_facets.is_none());
     assert!(triangulation_one_sided_facets.is_none());
-    let one_sided_count = tds
-        .one_sided_facets()?
+    let one_sided_count = dt
+        .boundary_facets()?
         .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
     assert!(one_sided_count > 0);
 
@@ -1087,6 +1169,31 @@ fn assert_facet_incidence_exports(
         topology_classification,
         TopologyBoundaryFacetClassification::Boundary(_)
     );
+    Ok(())
+}
+
+fn assert_ridge_handle_exports<K>(
+    dt: &DelaunayTriangulation<K, (), (), 3>,
+    simplex_key: SimplexKey,
+) -> Result<(), PreludeExportTestError> {
+    let ridge = dt.ridge_handle(simplex_key, 0, 1)?;
+    let query_ridge: QueryRidgeHandle = ridge;
+    let query_facade_ridge: QueryFacadeRidgeHandle = ridge;
+    let root_ridge: RootRidgeHandle = ridge;
+    let triangulation_ridge: TriangulationRidgeHandle = ridge;
+
+    assert_eq!(query_ridge, ridge);
+    assert_eq!(query_facade_ridge, ridge);
+    assert_eq!(root_ridge, ridge);
+    assert_eq!(triangulation_ridge, ridge);
+
+    let iter_ridge = dt
+        .ridge_handles()
+        .next()
+        .transpose()?
+        .expect("constructed tetrahedron should expose at least one ridge");
+    let query_iter_ridge: QueryRidgeHandle = iter_ridge;
+    assert_eq!(query_iter_ridge.simplex_key(), iter_ridge.simplex_key());
     Ok(())
 }
 
@@ -1128,15 +1235,11 @@ fn assert_export_prelude_exports<K, U, V, const D: usize>(
     Ok(())
 }
 
-fn assert_insertion_prelude_empty_tds_exports() -> Result<(), PreludeExportTestError> {
-    let mut empty_tds: InsertionTds<(), (), 2> = InsertionTds::empty();
+fn assert_insertion_prelude_empty_tds_exports() {
+    let empty_tds: Tds<(), (), 2> = Tds::empty();
     let _tds_all_facets: TdsAllFacetsIter<'_, (), (), 2> = empty_tds.facets();
     let tds_boundary_facets: Option<TdsBoundaryFacetsIter<'static, (), (), 2>> = None;
     assert!(tds_boundary_facets.is_none());
-    assert_eq!(
-        repair_neighbor_pointers_local(&mut empty_tds, &[], None)?,
-        0
-    );
     assert_eq!(
         CavityRepairStage::PrimaryInsertion.to_string(),
         "primary insertion"
@@ -1146,7 +1249,54 @@ fn assert_insertion_prelude_empty_tds_exports() -> Result<(), PreludeExportTestE
         ValidationCadence::from_optional_every(Some(128)),
         ValidationCadence::EveryN(every) if every.get() == 128
     );
-    Ok(())
+}
+
+fn assert_misc_bench_prelude_exports() {
+    assert_insertion_prelude_empty_tds_exports();
+    assert_send_sync_unpin::<TdsMutationError>();
+    assert_send_sync_unpin::<NeighborRebuildError>();
+    assert_send_sync_unpin::<ConstructionSkipSample>();
+    assert_send_sync_unpin::<ConstructionSlowInsertionSample>();
+    assert_send_sync_unpin::<DelaunayError>();
+    assert_send_sync_unpin::<RootSimplexBarycenterError>();
+    assert_send_sync_unpin::<RootSimplexDataFillError>();
+    assert_send_sync_unpin::<CoordinateConversionError>();
+    assert_send_sync_unpin::<DegenerateSimplexReason>();
+    assert_send_sync_unpin::<LaError>();
+    assert_send_sync_unpin::<MatrixError>();
+    assert!(NeighborSlot::Boundary.is_boundary());
+    assert_eq!(
+        DegenerateSimplexReason::ZeroOrientation.to_string(),
+        "zero orientation"
+    );
+    assert_matches!(
+        MatrixError::OutOfBounds {
+            row: 1,
+            column: 2,
+            dimension: 3
+        },
+        MatrixError::OutOfBounds { .. }
+    );
+
+    let mut root_secure_map: SecureHashMap<[u64; 2], usize> = SecureHashMap::default();
+    root_secure_map.insert([1, 2], 3);
+    assert_eq!(root_secure_map.get(&[1, 2]), Some(&3));
+
+    let mut root_secure_set: SecureHashSet<[u64; 2]> = SecureHashSet::default();
+    root_secure_set.insert([1, 2]);
+    assert!(root_secure_set.contains(&[1, 2]));
+
+    let mut scoped_secure_map: ScopedSecureHashMap<[u64; 2], usize> =
+        ScopedSecureHashMap::default();
+    scoped_secure_map.insert([3, 4], 5);
+    assert_eq!(scoped_secure_map.get(&[3, 4]), Some(&5));
+
+    let mut scoped_secure_set: ScopedSecureHashSet<[u64; 2]> = ScopedSecureHashSet::default();
+    scoped_secure_set.insert([3, 4]);
+    assert!(scoped_secure_set.contains(&[3, 4]));
+
+    let telemetry = ConstructionTelemetry::default();
+    assert!(!telemetry.has_data());
 }
 
 #[test]
@@ -1181,9 +1331,27 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
         .simplices()
         .next()
         .expect("constructed tetrahedron should contain a simplex");
-    assert_edge_view_exports(dt.tds(), simplex.vertices()[0], simplex.vertices()[1])?;
-    assert_simplex_facet_iter_exports(dt.tds(), simplex_key)?;
-    assert_facet_incidence_exports(dt.tds(), simplex_key)?;
+    let simplex_uuid = dt
+        .simplex_uuid_from_key(simplex_key)
+        .expect("simplex key should resolve to a UUID");
+    assert_eq!(dt.simplex_key_from_uuid(&simplex_uuid), Some(simplex_key));
+    assert!(
+        dt.simplex_uuids()
+            .any(|(key, uuid)| key == simplex_key && uuid == simplex_uuid)
+    );
+    let vertex_key = simplex.vertices()[0];
+    let vertex_uuid = dt
+        .vertex_uuid_from_key(vertex_key)
+        .expect("simplex vertex key should resolve to a UUID");
+    assert_eq!(dt.vertex_key_from_uuid(&vertex_uuid), Some(vertex_key));
+    assert!(
+        dt.vertex_uuids()
+            .any(|(key, uuid)| key == vertex_key && uuid == vertex_uuid)
+    );
+    assert_edge_view_exports(&dt, simplex.vertices()[0], simplex.vertices()[1])?;
+    assert_simplex_facet_iter_exports(&dt, simplex_key)?;
+    assert_facet_incidence_exports(&dt, simplex_key)?;
+    assert_ridge_handle_exports(&dt, simplex_key)?;
     let boundary_facet_count = dt.boundary_facets()?.try_fold(0_usize, |count, facet| {
         facet
             .map(|_| count + 1)
@@ -1198,58 +1366,26 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
         .try_facets(dt.as_triangulation())?
         .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
     assert_eq!(hull_facet_view_count, boundary_facet_count);
-    dt.validate().unwrap();
-    assert_tds_topology_owner(dt.tds());
+    let generic_ridge_link_result: Result<(), TriangulationManifoldError> =
+        dt.as_triangulation().validate_ridge_links();
+    generic_ridge_link_result?;
+    let generic_vertex_link_result: Result<(), TriangulationManifoldError> =
+        dt.as_triangulation().validate_vertex_links();
+    generic_vertex_link_result?;
+    let focused_validation_link_result: Result<(), FocusedValidationManifoldError> =
+        dt.validate_ridge_links();
+    focused_validation_link_result?;
+    dt.validate_ridge_links()?;
+    dt.validate_vertex_links()?;
+    dt.validate()?;
+    let empty_tds: Tds<(), (), 3> = Tds::empty();
+    assert_tds_topology_owner(&empty_tds);
     assert_bistellar_flips(&dt);
     assert_pachner_prelude_exports(&dt, simplex_key)?;
     assert_send_sync_unpin::<PachnerProposal<(), 3>>();
     assert_send_sync_unpin::<PachnerTopologyOwnerId>();
     assert_send_sync_unpin::<TdsTopologyOwnerId>();
-
-    assert_insertion_prelude_empty_tds_exports()?;
-    assert_send_sync_unpin::<TdsMutationError>();
-    assert_send_sync_unpin::<NeighborRebuildError>();
-    assert_send_sync_unpin::<ConstructionSkipSample>();
-    assert_send_sync_unpin::<ConstructionSlowInsertionSample>();
-    assert_send_sync_unpin::<DelaunayError>();
-    assert_send_sync_unpin::<RootSimplexBarycenterError>();
-    assert_send_sync_unpin::<RootSimplexDataFillError>();
-    assert_send_sync_unpin::<CoordinateConversionError>();
-    assert_send_sync_unpin::<DegenerateSimplexReason>();
-    assert_send_sync_unpin::<LaError>();
-    assert_send_sync_unpin::<MatrixError>();
-    assert!(NeighborSlot::Boundary.is_boundary());
-    assert_eq!(
-        DegenerateSimplexReason::ZeroOrientation.to_string(),
-        "zero orientation"
-    );
-    assert_matches!(
-        MatrixError::OutOfBounds {
-            row: 1,
-            column: 2,
-            dimension: 3
-        },
-        MatrixError::OutOfBounds { .. }
-    );
-    let mut root_secure_map: SecureHashMap<[u64; 2], usize> = SecureHashMap::default();
-    root_secure_map.insert([1, 2], 3);
-    assert_eq!(root_secure_map.get(&[1, 2]), Some(&3));
-
-    let mut root_secure_set: SecureHashSet<[u64; 2]> = SecureHashSet::default();
-    root_secure_set.insert([1, 2]);
-    assert!(root_secure_set.contains(&[1, 2]));
-
-    let mut scoped_secure_map: ScopedSecureHashMap<[u64; 2], usize> =
-        ScopedSecureHashMap::default();
-    scoped_secure_map.insert([3, 4], 5);
-    assert_eq!(scoped_secure_map.get(&[3, 4]), Some(&5));
-
-    let mut scoped_secure_set: ScopedSecureHashSet<[u64; 2]> = ScopedSecureHashSet::default();
-    scoped_secure_set.insert([3, 4]);
-    assert!(scoped_secure_set.contains(&[3, 4]));
-
-    let telemetry = ConstructionTelemetry::default();
-    assert!(!telemetry.has_data());
+    assert_misc_bench_prelude_exports();
     Ok(())
 }
 
@@ -1802,21 +1938,60 @@ fn degenerate_prelude_vertices<const D: usize>()
     Ok(vertices)
 }
 
+fn assert_ridge_query_type_exports<const D: usize>() {
+    let _query_candidate_size = size_of::<QueryRidgeCandidate<D>>();
+    let _query_facade_candidate_size = size_of::<QueryFacadeRidgeCandidate<D>>();
+    let _root_candidate_size = size_of::<RootRidgeCandidate<D>>();
+    let _triangulation_candidate_size = size_of::<TriangulationRidgeCandidate<D>>();
+    let _query_query_size = size_of::<QueryRidgeQuery<'static, (), (), D>>();
+    let _query_facade_query_size = size_of::<QueryFacadeRidgeQuery<'static, (), (), D>>();
+    let _root_query_size = size_of::<RootRidgeQuery<'static, (), (), D>>();
+    let _triangulation_query_size = size_of::<TriangulationRidgeQuery<'static, (), (), D>>();
+    let _query_view_size = size_of::<QueryRidgeView<'static, (), (), D>>();
+    let _query_facade_view_size = size_of::<QueryFacadeRidgeView<'static, (), (), D>>();
+    let _root_view_size = size_of::<RootRidgeView<'static, (), (), D>>();
+    let _triangulation_view_size = size_of::<TriangulationRidgeView<'static, (), (), D>>();
+    let _query_link_size = size_of::<QueryRidgeLinkView<'static, (), (), D>>();
+    let _query_facade_link_size = size_of::<QueryFacadeRidgeLinkView<'static, (), (), D>>();
+    let _root_link_size = size_of::<RootRidgeLinkView<'static, (), (), D>>();
+    let _triangulation_link_size = size_of::<TriangulationRidgeLinkView<'static, (), (), D>>();
+    assert_send_sync_unpin::<QueryRidgeCandidateError>();
+    assert_send_sync_unpin::<QueryFacadeRidgeCandidateError>();
+    assert_send_sync_unpin::<RootRidgeCandidateError>();
+    assert_send_sync_unpin::<TriangulationRidgeCandidateError>();
+}
+
 fn assert_single_simplex_ridge_star<const D: usize>(
     vertices: &[Vertex<(), D>],
 ) -> Result<(), PreludeExportTestError> {
+    assert_ridge_query_type_exports::<D>();
     let dt = DelaunayTriangulation::builder(vertices).build()?;
-    let ridge = RidgeCandidate::<D>::try_from_vertices(dt.tds().vertex_keys().take(D - 1))?;
-    let star = ridge_star_simplices(dt.tds(), &ridge)?;
-    let ridge_query: RidgeQuery<'_, (), (), D> = ridge.query(dt.tds())?;
+    let ridge: QueryRidgeCandidate<D> =
+        RidgeCandidate::<D>::try_from_vertices(dt.vertices().map(|(key, _)| key).take(D - 1))?;
+    let star = dt.ridge_star_simplices(&ridge)?;
+    let ridge_query: RidgeQuery<'_, (), (), D> = dt.ridge_query(&ridge)?;
+    let query_ridge_query: QueryRidgeQuery<'_, (), (), D> = dt.ridge_query(&ridge)?;
+    let query_facade_ridge_query: QueryFacadeRidgeQuery<'_, (), (), D> = dt.ridge_query(&ridge)?;
+    let root_ridge_query: RootRidgeQuery<'_, (), (), D> = dt.ridge_query(&ridge)?;
+    let triangulation_ridge_query: TriangulationRidgeQuery<'_, (), (), D> =
+        dt.as_triangulation().ridge_query(&ridge)?;
     let query_star = ridge_query.incident_simplices();
-    let ridge_view: RidgeView<'_, (), (), D> = ridge.view(dt.tds())?;
+    let ridge_view: RidgeView<'_, (), (), D> = dt.ridge_view(&ridge)?;
+    let query_ridge_view: QueryRidgeView<'_, (), (), D> = dt.ridge_view(&ridge)?;
+    let query_facade_ridge_view: QueryFacadeRidgeView<'_, (), (), D> = dt.ridge_view(&ridge)?;
+    let root_ridge_view: RootRidgeView<'_, (), (), D> = dt.ridge_view(&ridge)?;
+    let triangulation_ridge_view: TriangulationRidgeView<'_, (), (), D> =
+        dt.as_triangulation().ridge_view(&ridge)?;
     let view_star = ridge_view.incident_simplices();
     let ridge_vertices = ridge_view.vertices();
     let ridge_links = ridge_view.links()?;
     let ridge_link: &RidgeLinkView<'_, (), (), D> = ridge_links
         .first()
         .expect("simplex ridge should have a link");
+    let query_ridge_link: &QueryRidgeLinkView<'_, (), (), D> = ridge_link;
+    let query_facade_ridge_link: &QueryFacadeRidgeLinkView<'_, (), (), D> = ridge_link;
+    let root_ridge_link: &RootRidgeLinkView<'_, (), (), D> = ridge_link;
+    let triangulation_ridge_link: &TriangulationRidgeLinkView<'_, (), (), D> = ridge_link;
     let link_edges = ridge_link.edges();
     let link_edge: &LiftedLinkEdge = link_edges
         .first()
@@ -1826,10 +2001,40 @@ fn assert_single_simplex_ridge_star<const D: usize>(
 
     assert_eq!(star.len(), 1);
     assert_eq!(query_star.len(), star.len());
+    assert_eq!(query_ridge_query.incident_simplices().len(), star.len());
+    assert_eq!(
+        query_facade_ridge_query.incident_simplices().len(),
+        star.len()
+    );
+    assert_eq!(root_ridge_query.incident_simplices().len(), star.len());
+    assert_eq!(
+        triangulation_ridge_query.incident_simplices().len(),
+        star.len()
+    );
     assert_eq!(view_star.len(), star.len());
+    assert_eq!(query_ridge_view.incident_simplices().len(), star.len());
+    assert_eq!(
+        query_facade_ridge_view.incident_simplices().len(),
+        star.len()
+    );
+    assert_eq!(root_ridge_view.incident_simplices().len(), star.len());
+    assert_eq!(
+        triangulation_ridge_view.incident_simplices().len(),
+        star.len()
+    );
     assert_eq!(ridge_vertices.len(), D - 1);
     assert_eq!(ridge_links.len(), 1);
     assert_eq!(ridge_link.incident_simplices().len(), star.len());
+    assert_eq!(query_ridge_link.incident_simplices().len(), star.len());
+    assert_eq!(
+        query_facade_ridge_link.incident_simplices().len(),
+        star.len()
+    );
+    assert_eq!(root_ridge_link.incident_simplices().len(), star.len());
+    assert_eq!(
+        triangulation_ridge_link.incident_simplices().len(),
+        star.len()
+    );
     assert_eq!(first_endpoint.vertex_key(), link_edge.vertex_keys().0);
     assert_eq!(link_edges.len(), star.len());
     Ok(())
@@ -1838,8 +2043,9 @@ fn assert_single_simplex_ridge_star<const D: usize>(
 fn assert_cospherical_ridge_star<const D: usize>() -> Result<(), PreludeExportTestError> {
     let vertices = cospherical_prelude_vertices::<D>()?;
     let dt = DelaunayTriangulation::builder(&vertices).build()?;
-    let ridge = RidgeCandidate::<D>::try_from_vertices(dt.tds().vertex_keys().take(D - 1))?;
-    let star = ridge_star_simplices(dt.tds(), &ridge)?;
+    let ridge =
+        RidgeCandidate::<D>::try_from_vertices(dt.vertices().map(|(key, _)| key).take(D - 1))?;
+    let star = dt.ridge_star_simplices(&ridge)?;
 
     assert!(!star.is_empty());
     Ok(())
@@ -1871,7 +2077,7 @@ fn assert_topology_prelude_dimension<const D: usize>() -> Result<(), PreludeExpo
     assert_single_simplex_ridge_star(&near_boundary_vertices)?;
 
     let dt = DelaunayTriangulation::builder(&simplex_vertices).build()?;
-    let keys = dt.tds().vertex_keys().collect::<Vec<_>>();
+    let keys = dt.vertices().map(|(key, _)| key).collect::<Vec<_>>();
     assert_ridge_candidate_reject_adversarial_keys::<D>(&keys);
 
     assert_cospherical_ridge_star::<D>()?;
@@ -2177,7 +2383,7 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
     };
     assert!(validation_error.to_string().contains("vertex removal"));
 
-    verify_delaunay_for_triangulation(dt.as_triangulation())?;
+    dt.verify_via_flip_predicates()?;
 
     let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
     assert!(!outcome.used_fallback_rebuild);

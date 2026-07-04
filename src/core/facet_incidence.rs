@@ -6,37 +6,12 @@
 
 #![forbid(unsafe_code)]
 
-#[cfg(test)]
-use super::collections::FacetToSimplicesMap;
 use super::{
     facet::{FacetError, FacetToSimplicesIndex, FacetView, OneSidedFacetsIter},
     tds::{Tds, TdsError},
     traits::facet_incidence_analysis::FacetIncidenceAnalysis,
 };
 use std::ptr;
-
-/// Counts one-sided raw facet incidences and rejects non-manifold multiplicities.
-///
-/// This test helper exercises raw multiplicity parsing only. Production
-/// topology-aware boundary classification uses [`FacetToSimplicesIndex`] so
-/// admissible periodic self-identifications remain closed topology instead of
-/// being counted as boundary.
-#[cfg(test)]
-fn number_of_one_sided_facets_in_map(
-    facet_to_simplices: &FacetToSimplicesMap,
-) -> Result<usize, TdsError> {
-    let mut count = 0usize;
-    for (&facet_key, simplices) in facet_to_simplices {
-        match simplices.len() {
-            1 => count = count.saturating_add(1),
-            2 => {}
-            found => {
-                return Err(FacetError::InvalidFacetMultiplicity { facet_key, found }.into());
-            }
-        }
-    }
-    Ok(count)
-}
 
 /// Implementation of `FacetIncidenceAnalysis` trait for `Tds`.
 ///
@@ -81,23 +56,10 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust
     /// use delaunay::prelude::*;
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Query(#[from] delaunay::query::QueryError),
-    /// #     #[error(transparent)]
-    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
-    /// #     #[error(transparent)]
-    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// // Create a simple 3D triangulation (single tetrahedron)
     /// let vertices = vec![
     ///     delaunay::vertex![0.0, 0.0, 0.0]?,
@@ -113,11 +75,12 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     ///     .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
     /// assert_eq!(high_level_count, 4);
     ///
-    /// // TDS-level API reports raw one-sided incidence.
+    /// // Raw incidence is available through the owner-bound facet index.
     /// let count = dt
-    ///     .tds()
-    ///     .one_sided_facets()?
-    ///     .try_fold(0_usize, |count, facet| facet.map(|_| count + 1))?;
+    ///     .facet_incidence_index()?
+    ///     .iter()
+    ///     .filter(|incidence| incidence.is_one_sided())
+    ///     .count();
     /// assert_eq!(count, 4);
     /// # Ok(())
     /// # }
@@ -161,23 +124,10 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust
     /// use delaunay::prelude::*;
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Query(#[from] delaunay::query::QueryError),
-    /// #     #[error(transparent)]
-    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
-    /// #     #[error(transparent)]
-    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
     ///     delaunay::vertex![0.0, 0.0, 0.0]?,
     ///     delaunay::vertex![1.0, 0.0, 0.0]?,
@@ -186,11 +136,16 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
-    /// // Get one-sided facets using the TDS incidence API.
-    /// let Some(first_facet) = dt.tds().one_sided_facets()?.next().transpose()? else {
+    /// // Inspect raw one-sided incidence without exposing storage internals.
+    /// let facet_index = dt.facet_incidence_index()?;
+    /// let Some(first_facet) = facet_index
+    ///     .iter()
+    ///     .find_map(|incidence| incidence.one_sided_handle())
+    /// else {
     ///     return Ok(());
     /// };
-    /// assert!(dt.tds().is_one_sided_facet(&first_facet)?);
+    /// let facet = dt.facet_view(first_facet)?;
+    /// assert!(facet_index.is_one_sided_facet_key(&facet.key()));
     /// # Ok(())
     /// # }
     /// ```
@@ -226,23 +181,10 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust
     /// use delaunay::prelude::*;
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Query(#[from] delaunay::query::QueryError),
-    /// #     #[error(transparent)]
-    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
-    /// #     #[error(transparent)]
-    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
     ///     delaunay::vertex![0.0, 0.0, 0.0]?,
     ///     delaunay::vertex![1.0, 0.0, 0.0]?,
@@ -251,13 +193,12 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
-    /// // Build the facet index once for multiple queries
-    /// let facet_to_simplices = dt.tds().build_facet_to_simplices_index()?;
+    /// // Build the owner-bound facet index once for multiple raw incidence queries.
+    /// let facet_to_simplices = dt.facet_incidence_index()?;
     ///
-    /// // Check one-sided incidence efficiently using the iterator API.
-    /// for facet in dt.tds().one_sided_facets()? {
-    ///     let facet = facet?;
-    ///     let is_one_sided = dt.tds().is_one_sided_facet_with_index(&facet, &facet_to_simplices)?;
+    /// // Check one-sided incidence efficiently from the borrowed index entries.
+    /// for incidence in facet_to_simplices.iter() {
+    ///     let is_one_sided = incidence.is_one_sided();
     ///     println!("Facet is one-sided: {is_one_sided}");
     /// }
     /// # Ok(())
@@ -292,21 +233,10 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust
     /// use delaunay::prelude::*;
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Query(#[from] delaunay::query::QueryError),
-    /// #     #[error(transparent)]
-    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
     ///     delaunay::vertex![0.0, 0.0, 0.0]?,
     ///     delaunay::vertex![1.0, 0.0, 0.0]?,
@@ -316,7 +246,12 @@ impl<U, V, const D: usize> FacetIncidenceAnalysis<U, V, D> for Tds<U, V, D> {
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// // A single Euclidean tetrahedron has 4 one-sided facets.
-    /// assert_eq!(dt.tds().number_of_one_sided_facets()?, 4);
+    /// let one_sided_count = dt
+    ///     .facet_incidence_index()?
+    ///     .iter()
+    ///     .filter(|incidence| incidence.is_one_sided())
+    ///     .count();
+    /// assert_eq!(one_sided_count, 4);
     /// # Ok(())
     /// # }
     /// ```
@@ -358,7 +293,7 @@ fn ensure_facet_index_owner<U, V, const D: usize>(
 
 #[cfg(test)]
 mod tests {
-    use super::{FacetIncidenceAnalysis, number_of_one_sided_facets_in_map};
+    use super::FacetIncidenceAnalysis;
     use crate::core::collections::{FacetToSimplicesMap, SmallBuffer};
     use crate::core::facet::{FacetError, FacetHandle, FacetToSimplicesIndex, FacetView};
     use crate::core::query::QueryError;
@@ -369,6 +304,27 @@ mod tests {
     use crate::try_vertices_from_points;
     use crate::vertex;
     use std::assert_matches;
+
+    /// Counts one-sided raw facet incidences and rejects non-manifold multiplicities.
+    ///
+    /// This helper exercises raw multiplicity parsing only. Production topology-aware
+    /// boundary classification uses `FacetToSimplicesIndex` so admissible periodic
+    /// self-identifications remain closed topology instead of being counted as boundary.
+    fn number_of_one_sided_facets_in_map(
+        facet_to_simplices: &FacetToSimplicesMap,
+    ) -> Result<usize, TdsError> {
+        let mut count = 0usize;
+        for (&facet_key, simplices) in facet_to_simplices {
+            match simplices.len() {
+                1 => count = count.saturating_add(1),
+                2 => {}
+                found => {
+                    return Err(FacetError::InvalidFacetMultiplicity { facet_key, found }.into());
+                }
+            }
+        }
+        Ok(count)
+    }
 
     #[cfg(feature = "diagnostics")]
     macro_rules! test_debug {

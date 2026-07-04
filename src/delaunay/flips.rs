@@ -1,7 +1,10 @@
 //! Triangulation editing operations (bistellar flips).
 //!
-//! This module exposes **high-level** flip methods for explicit triangulation editing.
+//! This module exposes direct bistellar-flip methods for explicit triangulation editing.
 //! These operations do **not** automatically restore the Delaunay property.
+//! For queued, randomized, or Monte-Carlo-style local edits, prefer the staged
+//! [`PachnerMoves`](crate::pachner::PachnerMoves) workflow:
+//! `propose_pachner(...)?.attempt_on(...)`.
 //! For Delaunay construction/deletion, use
 //! [`crate::DelaunayTriangulation::insert_vertex`] and
 //! [`crate::DelaunayTriangulation::delete_vertex`].
@@ -19,42 +22,81 @@ pub use crate::core::algorithms::flips::{
     FlipNeighborHullExtensionFailureKind, FlipNeighborRepairDiagnostics, FlipNeighborRepairFailure,
     FlipNeighborWiringError, FlipOrientationCheckStage, FlipPredicateError, FlipPredicateOperation,
     FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder, RidgeHandle,
-    TriangleHandle, TriangleHandleError, verify_delaunay_for_triangulation,
-    verify_delaunay_via_flip_predicates,
+    TriangleHandle, TriangleHandleError,
 };
 pub use crate::tds::{EdgeKey, FacetHandle, SimplexKey, VertexKey};
 
 use crate::core::algorithms::flips::{
-    apply_bistellar_flip_dynamic, apply_bistellar_flip_k1, apply_bistellar_flip_k1_inverse,
-    apply_bistellar_flip_k2, apply_bistellar_flip_k3, build_k2_flip_context,
+    apply_bistellar_flip_dynamic_raw, apply_bistellar_flip_k1_inverse_raw,
+    apply_bistellar_flip_k1_raw, apply_bistellar_flip_raw, build_k2_flip_context,
     build_k2_flip_context_from_edge, build_k3_flip_context, build_k3_flip_context_from_triangle,
     validate_bistellar_flip_dynamic, validate_bistellar_flip_k1_insert,
     validate_bistellar_flip_k1_inverse, validate_bistellar_flip_k2, validate_bistellar_flip_k3,
 };
-#[cfg(test)]
-use crate::core::facet::FacetError;
+use crate::core::rollback::TriangulationRollbackTransaction;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::vertex::Vertex;
+use crate::geometry::kernel::Kernel;
 use crate::triangulation::DelaunayTriangulation;
-/// High-level triangulation editing operations via bistellar flips.
+
+/// Applies a high-level flip transaction and preserves topology/embedding invariants.
+fn apply_embedded_flip<K, U, V, const D: usize>(
+    tri: &mut Triangulation<K, U, V, D>,
+    apply: impl FnOnce(&mut Triangulation<K, U, V, D>) -> Result<FlipInfo<D>, FlipError>,
+) -> Result<FlipInfo<D>, FlipError>
+where
+    K: Kernel<D, Scalar = f64>,
+    U: DataType,
+    V: DataType,
+{
+    let mut transaction = TriangulationRollbackTransaction::begin(tri);
+    let result = apply(transaction.triangulation_mut());
+    let info = match result {
+        Ok(info) => info,
+        Err(error) => {
+            transaction.rollback();
+            return Err(error);
+        }
+    };
+
+    if let Err(error) = transaction
+        .triangulation_mut()
+        .normalize_and_promote_positive_orientation()
+    {
+        transaction.rollback();
+        return Err(FlipError::PostconditionRepair {
+            source: Box::new(error),
+        });
+    }
+    if let Err(source) = transaction.triangulation_mut().validate_embedding() {
+        transaction.rollback();
+        return Err(FlipError::EmbeddingValidation {
+            source: Box::new(source),
+        });
+    }
+
+    transaction.commit();
+    Ok(info)
+}
+/// Direct triangulation editing operations via bistellar flips.
+///
+/// This trait is the primitive/expert editing layer. Public workflows that
+/// store, randomize, or queue moves should normally parse a raw
+/// [`PachnerMove`](crate::pachner::PachnerMove) into a provenanced
+/// [`PachnerProposal`](crate::pachner::PachnerProposal), then call
+/// [`PachnerProposal::attempt_on`](crate::pachner::PachnerProposal::attempt_on)
+/// as the mutating terminal step.
 ///
 /// # Example
 ///
 /// ```rust
-/// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, TopologyGuarantee};
+/// use delaunay::prelude::construction::{
+///     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee,
+/// };
 /// use delaunay::flips::BistellarFlips;
 ///
-/// # #[derive(Debug, thiserror::Error)]
-/// # enum ExampleError {
-/// #     #[error(transparent)]
-/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-/// #     #[error(transparent)]
-/// #     Flip(#[from] delaunay::flips::FlipError),
-/// #     #[error(transparent)]
-/// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-/// # }
-/// # fn main() -> Result<(), ExampleError> {
+/// # fn main() -> DelaunayResult<()> {
 /// let vertices = vec![
 ///     delaunay::vertex![0.0, 0.0, 0.0]?,
 ///     delaunay::vertex![1.0, 0.0, 0.0]?,
@@ -87,19 +129,12 @@ pub trait BistellarFlips<const D: usize> {
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, TopologyGuarantee};
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee,
+    /// };
     /// use delaunay::flips::BistellarFlips;
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Flip(#[from] delaunay::flips::FlipError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
     ///     delaunay::vertex![0.0, 0.0, 0.0]?,
     ///     delaunay::vertex![1.0, 0.0, 0.0]?,
@@ -185,19 +220,12 @@ pub trait BistellarFlips<const D: usize> {
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, TopologyGuarantee};
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee,
+    /// };
     /// use delaunay::flips::BistellarFlips;
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Flip(#[from] delaunay::flips::FlipError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
     ///     delaunay::vertex![0.0, 0.0, 0.0]?,
     ///     delaunay::vertex![1.0, 0.0, 0.0]?,
@@ -275,19 +303,10 @@ pub trait BistellarFlips<const D: usize> {
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
-    /// use delaunay::flips::{BistellarFlips, FacetHandle};
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
+    /// use delaunay::flips::BistellarFlips;
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
     ///     delaunay::vertex![0.0, 0.0, 0.0]?,
     ///     delaunay::vertex![1.0, 0.0, 0.0]?,
@@ -297,17 +316,23 @@ pub trait BistellarFlips<const D: usize> {
     /// ];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
-    /// // Find an interior facet and attempt a k=2 flip
-    /// // Note: k=2 flips require specific geometric conditions
-    /// let simplex_key = dt.simplices().next().map(|(k, _)| k);
-    /// if let Some(key) = simplex_key {
-    ///     let has_neighbor = dt.tds().simplex(key)
-    ///         .and_then(|simplex| simplex.neighbors())
-    ///         .is_some_and(|mut neighbors| neighbors.any(|n| n.is_some()));
-    ///     if has_neighbor {
-    ///         let facet = FacetHandle::try_new(dt.tds(), key, 0)?;
-    ///         let _ = dt.flip_k2(facet);  // May succeed or fail depending on configuration
+    /// // Find an interior facet and attempt a k=2 flip. k=2 flips require
+    /// // specific geometric conditions, so this may still fail.
+    /// let mut interior_facet = None;
+    /// for facet in dt.facets() {
+    ///     let facet = facet?;
+    ///     if facet
+    ///         .simplex()
+    ///         .neighbor_key(usize::from(facet.facet_index()))
+    ///         .flatten()
+    ///         .is_some()
+    ///     {
+    ///         interior_facet = Some(facet.handle());
+    ///         break;
     ///     }
+    /// }
+    /// if let Some(facet) = interior_facet {
+    ///     let _ = dt.flip_k2(facet);
     /// }
     /// # Ok(())
     /// # }
@@ -327,7 +352,7 @@ pub trait BistellarFlips<const D: usize> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::flips::{BistellarFlipKind, BistellarFlips, FacetHandle};
+    /// use delaunay::flips::{BistellarFlipKind, BistellarFlips};
     /// use delaunay::prelude::construction::{
     ///     DelaunayResult, DelaunayTriangulationBuilder,
     ///     DelaunayTriangulationConstructionError,
@@ -349,24 +374,21 @@ pub trait BistellarFlips<const D: usize> {
     /// .build()?;
     ///
     /// let mut accepted = None;
-    /// 'simplices: for (simplex_key, simplex) in dt.simplices() {
-    ///     let Some(neighbors) = simplex.neighbors() else {
+    /// for facet in dt.facets() {
+    ///     let Ok(facet) = facet else {
     ///         continue;
     ///     };
-    ///     for (facet_index, neighbor) in neighbors.enumerate() {
-    ///         if neighbor.is_none() {
-    ///             continue;
-    ///         }
-    ///         let Ok(facet_index) = u8::try_from(facet_index) else {
-    ///             continue;
-    ///         };
-    ///         let Ok(facet) = FacetHandle::try_new(dt.tds(), simplex_key, facet_index) else {
-    ///             continue;
-    ///         };
-    ///         if let Ok(feasibility) = dt.can_flip_k2(facet) {
-    ///             accepted = Some(feasibility);
-    ///             break 'simplices;
-    ///         }
+    ///     if facet
+    ///         .simplex()
+    ///         .neighbor_key(usize::from(facet.facet_index()))
+    ///         .flatten()
+    ///         .is_none()
+    ///     {
+    ///         continue;
+    ///     }
+    ///     if let Ok(feasibility) = dt.can_flip_k2(facet.handle()) {
+    ///         accepted = Some(feasibility);
+    ///         break;
     ///     }
     /// }
     ///
@@ -386,17 +408,10 @@ pub trait BistellarFlips<const D: usize> {
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
     /// use delaunay::flips::{BistellarFlips, RidgeHandle};
     ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Source(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
+    /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
     ///     delaunay::vertex![0.0, 0.0, 0.0]?,
     ///     delaunay::vertex![1.0, 0.0, 0.0]?,
@@ -427,7 +442,7 @@ pub trait BistellarFlips<const D: usize> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::flips::{BistellarFlips, FlipError, RidgeHandle};
+    /// use delaunay::flips::{BistellarFlips, FlipError};
     /// use delaunay::prelude::construction::{
     ///     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee,
     /// };
@@ -445,7 +460,7 @@ pub trait BistellarFlips<const D: usize> {
     /// let Some((simplex_key, _)) = dt.simplices().next() else {
     ///     return Ok(());
     /// };
-    /// let Ok(ridge) = RidgeHandle::try_new(dt.tds(), simplex_key, 0, 1) else {
+    /// let Ok(ridge) = dt.ridge_handle(simplex_key, 0, 1) else {
     ///     return Ok(());
     /// };
     ///
@@ -477,7 +492,7 @@ pub trait BistellarFlips<const D: usize> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::flips::{BistellarFlips, EdgeKey, FlipError};
+    /// use delaunay::flips::{BistellarFlips, FlipError};
     /// use delaunay::prelude::construction::{
     ///     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee,
     /// };
@@ -492,13 +507,7 @@ pub trait BistellarFlips<const D: usize> {
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::PLManifold)
     ///     .build()?;
-    /// let Some((_, simplex)) = dt.simplices().next() else {
-    ///     return Ok(());
-    /// };
-    /// let [a, b, ..] = simplex.vertices() else {
-    ///     return Ok(());
-    /// };
-    /// let Ok(edge) = EdgeKey::try_new(dt.tds(), *a, *b) else {
+    /// let Some(edge) = dt.edges().next() else {
     ///     return Ok(());
     /// };
     ///
@@ -577,6 +586,7 @@ pub trait BistellarFlips<const D: usize> {
 
 impl<K, U, V, const D: usize> BistellarFlips<D> for Triangulation<K, U, V, D>
 where
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -587,7 +597,9 @@ where
         simplex_key: SimplexKey,
         vertex: Vertex<U, D>,
     ) -> Result<FlipInfo<D>, FlipError> {
-        apply_bistellar_flip_k1(&mut self.tds, simplex_key, vertex)
+        apply_embedded_flip(self, |tri| {
+            apply_bistellar_flip_k1_raw(&mut tri.tds, simplex_key, vertex)
+        })
     }
 
     fn can_flip_k1_insert(
@@ -599,7 +611,9 @@ where
     }
 
     fn flip_k1_remove(&mut self, vertex_key: VertexKey) -> Result<FlipInfo<D>, FlipError> {
-        apply_bistellar_flip_k1_inverse(&mut self.tds, vertex_key)
+        apply_embedded_flip(self, |tri| {
+            apply_bistellar_flip_k1_inverse_raw(&mut tri.tds, vertex_key)
+        })
     }
 
     fn can_flip_k1_remove(&self, vertex_key: VertexKey) -> Result<FlipFeasibility<D>, FlipError> {
@@ -607,8 +621,10 @@ where
     }
 
     fn flip_k2(&mut self, facet: FacetHandle) -> Result<FlipInfo<D>, FlipError> {
-        let context = build_k2_flip_context(&self.tds, facet)?;
-        apply_bistellar_flip_k2(&mut self.tds, &context)
+        apply_embedded_flip(self, |tri| {
+            let context = build_k2_flip_context(&tri.tds, facet)?;
+            apply_bistellar_flip_raw::<U, V, D, 2>(&mut tri.tds, &context)
+        })
     }
 
     fn can_flip_k2(&self, facet: FacetHandle) -> Result<FlipFeasibility<D>, FlipError> {
@@ -617,8 +633,10 @@ where
     }
 
     fn flip_k3(&mut self, ridge: RidgeHandle) -> Result<FlipInfo<D>, FlipError> {
-        let context = build_k3_flip_context(&self.tds, ridge)?;
-        apply_bistellar_flip_k3(&mut self.tds, &context)
+        apply_embedded_flip(self, |tri| {
+            let context = build_k3_flip_context(&tri.tds, ridge)?;
+            apply_bistellar_flip_raw::<U, V, D, 3>(&mut tri.tds, &context)
+        })
     }
 
     fn can_flip_k3(&self, ridge: RidgeHandle) -> Result<FlipFeasibility<D>, FlipError> {
@@ -627,8 +645,10 @@ where
     }
 
     fn flip_k2_inverse_from_edge(&mut self, edge: EdgeKey) -> Result<FlipInfo<D>, FlipError> {
-        let context = build_k2_flip_context_from_edge(&self.tds, edge)?;
-        apply_bistellar_flip_dynamic(&mut self.tds, D, &context)
+        apply_embedded_flip(self, |tri| {
+            let context = build_k2_flip_context_from_edge(&tri.tds, edge)?;
+            apply_bistellar_flip_dynamic_raw(&mut tri.tds, D, &context)
+        })
     }
 
     fn can_flip_k2_inverse_from_edge(
@@ -647,15 +667,17 @@ where
             return Err(FlipError::UnsupportedDimension { dimension: D });
         }
 
-        let context = build_k3_flip_context_from_triangle(&self.tds, triangle)?;
+        apply_embedded_flip(self, |tri| {
+            let context = build_k3_flip_context_from_triangle(&tri.tds, triangle)?;
 
-        // Avoid const-eval underflow for invalid instantiations (e.g. D=0), even though
-        // the public contract for this method requires D>=4.
-        let k_move = D
-            .checked_sub(1)
-            .ok_or(FlipError::UnsupportedDimension { dimension: D })?;
+            // Avoid const-eval underflow for invalid instantiations (e.g. D=0), even though
+            // the public contract for this method requires D>=4.
+            let k_move = D
+                .checked_sub(1)
+                .ok_or(FlipError::UnsupportedDimension { dimension: D })?;
 
-        apply_bistellar_flip_dynamic(&mut self.tds, k_move, &context)
+            apply_bistellar_flip_dynamic_raw(&mut tri.tds, k_move, &context)
+        })
     }
 
     fn can_flip_k3_inverse_from_triangle(
@@ -680,6 +702,7 @@ where
 
 impl<K, U, V, const D: usize> BistellarFlips<D> for DelaunayTriangulation<K, U, V, D>
 where
+    K: Kernel<D, Scalar = f64>,
     U: DataType,
     V: DataType,
 {
@@ -778,11 +801,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::embedding::TriangulationEmbeddingValidationError;
+    use crate::core::facet::FacetError;
     use crate::vertex;
     use std::assert_matches;
 
     use crate::TopologyGuarantee;
-    use crate::core::collections::spatial_hash_grid::HashGridIndex;
+    use crate::core::collections::{
+        SimplexKeyBuffer, SmallBuffer, spatial_hash_grid::HashGridIndex,
+    };
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use slotmap::KeyData;
 
@@ -798,7 +825,7 @@ mod tests {
             .topology_guarantee(TopologyGuarantee::PLManifold)
             .build()
             .unwrap();
-        let mut tri = dt.as_triangulation().clone();
+        let mut tri = dt.into_triangulation();
         let simplex_key = tri.simplices().next().unwrap().0;
 
         let inserted = tri
@@ -811,6 +838,75 @@ mod tests {
         let removed = tri.flip_k1_remove(inserted_vertex).unwrap();
         assert!(!removed.removed_simplices.is_empty());
         assert!(tri.validate().is_ok());
+    }
+
+    #[test]
+    fn triangulation_flip_k1_insert_rolls_back_degenerate_insert() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::builder(&vertices)
+            .topology_guarantee(TopologyGuarantee::PLManifold)
+            .build()
+            .unwrap();
+        let mut tri = dt.into_triangulation();
+        let simplex_key = tri.simplices().next().unwrap().0;
+        let before_vertices = tri.tds.number_of_vertices();
+        let before_simplices = tri.tds.number_of_simplices();
+        let inserted = vertex!([0.5, 0.0]).unwrap();
+        let inserted_uuid = inserted.uuid();
+
+        let err = tri.flip_k1_insert(simplex_key, inserted).unwrap_err();
+
+        assert_matches!(err, FlipError::DegenerateSimplex);
+        assert_eq!(tri.tds.number_of_vertices(), before_vertices);
+        assert_eq!(tri.tds.number_of_simplices(), before_simplices);
+        assert!(tri.vertex_key_from_uuid(&inserted_uuid).is_none());
+        assert!(tri.validate().is_ok());
+        assert!(tri.is_valid_embedding().is_ok());
+    }
+
+    #[test]
+    fn embedded_flip_transaction_rolls_back_topology_validation_failure() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::builder(&vertices)
+            .topology_guarantee(TopologyGuarantee::PLManifold)
+            .build()
+            .unwrap();
+        let mut tri = dt.into_triangulation();
+        let before_vertices = tri.tds.number_of_vertices();
+        let before_simplices = tri.tds.number_of_simplices();
+
+        let err = apply_embedded_flip(&mut tri, |tri| {
+            tri.tds
+                .insert_vertex_with_mapping(vertex!([2.0, 2.0]).unwrap())
+                .unwrap();
+            Ok(FlipInfo {
+                kind: BistellarFlipKind::k1(2),
+                direction: FlipDirection::Forward,
+                removed_simplices: SimplexKeyBuffer::default(),
+                new_simplices: SimplexKeyBuffer::default(),
+                removed_face_vertices: SmallBuffer::default(),
+                inserted_face_vertices: SmallBuffer::default(),
+            })
+        })
+        .unwrap_err();
+
+        assert_matches!(
+            err,
+            FlipError::EmbeddingValidation { source }
+                if matches!(*source, TriangulationEmbeddingValidationError::Triangulation(_))
+        );
+        assert_eq!(tri.tds.number_of_vertices(), before_vertices);
+        assert_eq!(tri.tds.number_of_simplices(), before_simplices);
+        assert!(tri.validate().is_ok());
+        assert!(tri.validate_embedding().is_ok());
     }
 
     #[test]
@@ -852,10 +948,10 @@ mod tests {
             .topology_guarantee(TopologyGuarantee::PLManifold)
             .build()
             .unwrap();
-        let tri = dt.as_triangulation().clone();
+        let tri = dt.into_triangulation();
         let simplex_key = tri.simplices().next().unwrap().0;
 
-        let err = FacetHandle::try_new(&tri.tds, simplex_key, u8::MAX).unwrap_err();
+        let err = tri.facet_handle(simplex_key, u8::MAX).unwrap_err();
 
         assert_matches!(
             err,

@@ -306,8 +306,10 @@ pub trait Kernel<const D: usize>: Clone {
 /// flip-based Delaunay repair — should bound their kernel parameter with this
 /// trait:
 ///
-/// ```rust,ignore
-/// fn repair<K, const D: usize>(kernel: &K)
+/// ```rust
+/// use delaunay::prelude::geometry::ExactPredicates;
+///
+/// fn repair<K, const D: usize>(_kernel: &K)
 /// where
 ///     K: ExactPredicates<D>,
 /// { /* ... */ }

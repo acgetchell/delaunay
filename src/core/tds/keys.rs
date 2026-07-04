@@ -34,7 +34,7 @@ new_key_type! {
         ///     delaunay::vertex![0.0, 1.0]?,
         /// ];
         /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-        /// let Some(key) = dt.tds().vertex_keys().next() else {
+        /// let Some((key, _)) = dt.vertices().next() else {
         ///     return Ok(());
         /// };
         /// let _ = key;
@@ -76,7 +76,7 @@ new_key_type! {
         ///     delaunay::vertex![0.0, 1.0]?,
         /// ];
         /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-        /// let Some(key) = dt.tds().simplex_keys().next() else {
+        /// let Some((key, _)) = dt.simplices().next() else {
         ///     return Ok(());
         /// };
         /// let _ = key;

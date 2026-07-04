@@ -9,35 +9,15 @@
 //! ```
 
 #[cfg(feature = "diagnostics")]
-use delaunay::prelude::DelaunayValidationError;
-#[cfg(feature = "diagnostics")]
 use delaunay::prelude::construction::{
-    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder,
+    ConstructionOptions, DelaunayResult, DelaunayTriangulation, DelaunayTriangulationBuilder,
     DelaunayTriangulationConstructionError, vertex,
 };
 #[cfg(feature = "diagnostics")]
-use delaunay::prelude::diagnostics::{
-    debug_print_first_delaunay_violation, delaunay_violation_report,
-};
-#[cfg(feature = "diagnostics")]
-use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateConversionError};
-#[cfg(feature = "diagnostics")]
-use delaunay::prelude::tds::InvariantError;
-#[cfg(feature = "diagnostics")]
-#[derive(Debug, thiserror::Error)]
-enum DiagnosticsExampleError {
-    #[error(transparent)]
-    Construction(#[from] DelaunayTriangulationConstructionError),
-    #[error(transparent)]
-    DelaunayValidation(#[from] DelaunayValidationError),
-    #[error(transparent)]
-    CoordinateConversion(#[from] CoordinateConversionError),
-    #[error(transparent)]
-    Invariant(#[from] InvariantError),
-}
+use delaunay::prelude::geometry::AdaptiveKernel;
 
 #[cfg(feature = "diagnostics")]
-fn main() -> Result<(), DiagnosticsExampleError> {
+fn main() -> DelaunayResult<()> {
     init_tracing();
 
     println!("Diagnostics feature example");
@@ -67,7 +47,7 @@ fn init_tracing() {
 
 /// Shows the shape of an empty diagnostics report for a valid triangulation.
 #[cfg(feature = "diagnostics")]
-fn report_valid_triangulation() -> Result<(), DiagnosticsExampleError> {
+fn report_valid_triangulation() -> DelaunayResult<()> {
     let vertices = vec![
         vertex![0.0, 0.0, 0.0]?,
         vertex![1.0, 0.0, 0.0]?,
@@ -77,7 +57,7 @@ fn report_valid_triangulation() -> Result<(), DiagnosticsExampleError> {
     let dt: DelaunayTriangulation<_, (), (), 3> =
         DelaunayTriangulationBuilder::new(&vertices).build()?;
 
-    let report = delaunay_violation_report(dt.tds(), None)?;
+    let report = dt.delaunay_violation_report(None)?;
 
     println!("Valid 3D triangulation:");
     println!("  vertices: {}", report.number_of_vertices);
@@ -90,9 +70,9 @@ fn report_valid_triangulation() -> Result<(), DiagnosticsExampleError> {
 
 /// Imports valid explicit connectivity that is not Delaunay, then reports the violation.
 #[cfg(feature = "diagnostics")]
-fn report_non_delaunay_triangulation() -> Result<(), DiagnosticsExampleError> {
+fn report_non_delaunay_triangulation() -> DelaunayResult<()> {
     let dt = build_non_delaunay_triangulation_2d()?;
-    let report = delaunay_violation_report(dt.tds(), None)?;
+    let report = dt.delaunay_violation_report(None)?;
 
     println!("Explicit non-Delaunay 2D triangulation:");
     println!("  vertices: {}", report.number_of_vertices);
@@ -109,14 +89,14 @@ fn report_non_delaunay_triangulation() -> Result<(), DiagnosticsExampleError> {
         println!("  offending external vertex: {:?}", detail.offending_vertex);
     }
 
-    debug_print_first_delaunay_violation(dt.tds(), None);
+    dt.debug_print_first_delaunay_violation(None);
     Ok(())
 }
 
 /// Builds a valid Levels 1-4 triangulation whose prescribed diagonal violates Delaunayness.
 #[cfg(feature = "diagnostics")]
 fn build_non_delaunay_triangulation_2d()
--> Result<DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2>, DiagnosticsExampleError> {
+-> DelaunayResult<DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2>> {
     let vertices = vec![
         vertex![0.0, 0.0]?,
         vertex![4.0, 0.0]?,

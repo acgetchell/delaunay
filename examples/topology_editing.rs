@@ -23,6 +23,7 @@
     reason = "example preserves the crate's typed insertion and flip errors instead of erasing them"
 )]
 
+use delaunay::InvariantError;
 use delaunay::prelude::construction::{
     DelaunayTriangulation, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
     vertex,
@@ -36,7 +37,7 @@ use delaunay::prelude::pachner::{
     EdgeKey, EdgeKeyError, FacetError, FacetHandle, FlipError, PachnerMove, PachnerMoves,
     RidgeHandle, TriangleHandle, TriangleHandleError, Vertex, VertexKey,
 };
-use delaunay::prelude::tds::{InvariantError, TdsError};
+use delaunay::prelude::tds::TdsError;
 use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 
 type ExampleResult<T = ()> = Result<T, TopologyEditingExampleError>;
@@ -49,6 +50,8 @@ enum TopologyEditingExampleError {
     #[error(transparent)]
     Validation(#[from] DelaunayTriangulationValidationError),
     #[error(transparent)]
+    Topology(#[from] InvariantError),
+    #[error(transparent)]
     Insertion(#[from] InsertionError),
     #[error(transparent)]
     Flip(#[from] FlipError),
@@ -60,8 +63,6 @@ enum TopologyEditingExampleError {
     Facet(#[from] FacetError),
     #[error(transparent)]
     Tds(#[from] TdsError),
-    #[error(transparent)]
-    Invariant(#[from] InvariantError),
     #[error(transparent)]
     Circumcenter(#[from] CircumcenterError),
     #[error(transparent)]
@@ -179,17 +180,16 @@ fn pachner_2d_k1() -> ExampleResult {
         .ok_or(TopologyEditingExampleError::EmptyTriangulation {
             demo: "2D k=1 demo",
         })?;
-    let simplex =
-        dt.tds()
-            .simplex(simplex_key)
-            .ok_or(TopologyEditingExampleError::MissingSimplex {
-                demo: "2D k=1 demo",
-            })?;
+    let simplex = dt
+        .simplex(simplex_key)
+        .ok_or(TopologyEditingExampleError::MissingSimplex {
+            demo: "2D k=1 demo",
+        })?;
     let vertex_points: Vec<Point<2>> = simplex
         .vertices()
         .iter()
         .map(|vkey| {
-            dt.tds().vertex(*vkey).map(|vertex| *vertex.point()).ok_or(
+            dt.vertex(*vkey).map(|vertex| *vertex.point()).ok_or(
                 TopologyEditingExampleError::MissingVertex {
                     demo: "2D k=1 demo",
                     vertex_key: *vkey,
@@ -231,7 +231,7 @@ fn pachner_2d_k1() -> ExampleResult {
     println!("  New vertex: {:?}", flip_info.inserted_face_vertices);
 
     // Verify structural validity (always maintained)
-    dt.tds().is_valid()?;
+    dt.validate_structure()?;
     println!("  ✓ Structural invariants preserved");
 
     // Apply inverse k=1 flip (remove vertex)
@@ -392,17 +392,16 @@ fn pachner_3d_k1() -> ExampleResult {
         .ok_or(TopologyEditingExampleError::EmptyTriangulation {
             demo: "3D k=1 demo",
         })?;
-    let simplex =
-        dt.tds()
-            .simplex(simplex_key)
-            .ok_or(TopologyEditingExampleError::MissingSimplex {
-                demo: "3D k=1 demo",
-            })?;
+    let simplex = dt
+        .simplex(simplex_key)
+        .ok_or(TopologyEditingExampleError::MissingSimplex {
+            demo: "3D k=1 demo",
+        })?;
     let vertex_points: Vec<Point<3>> = simplex
         .vertices()
         .iter()
         .map(|vkey| {
-            dt.tds().vertex(*vkey).map(|vertex| *vertex.point()).ok_or(
+            dt.vertex(*vkey).map(|vertex| *vertex.point()).ok_or(
                 TopologyEditingExampleError::MissingVertex {
                     demo: "3D k=1 demo",
                     vertex_key: *vkey,
@@ -592,11 +591,7 @@ fn find_interior_facet<K, const D: usize>(
                 let Ok(facet_idx) = u8::try_from(facet_idx) else {
                     continue;
                 };
-                return Ok(Some(FacetHandle::try_new(
-                    dt.tds(),
-                    simplex_key,
-                    facet_idx,
-                )?));
+                return Ok(Some(dt.facet_handle(simplex_key, facet_idx)?));
             }
         }
     }
@@ -616,7 +611,7 @@ fn find_roundtrip_k2_facet_3d(dt: &Dt3) -> ExampleResult<Option<FacetHandle>> {
             let Ok(facet_idx) = u8::try_from(facet_idx) else {
                 continue;
             };
-            let facet = FacetHandle::try_new(dt.tds(), simplex_key, facet_idx)?;
+            let facet = dt.facet_handle(simplex_key, facet_idx)?;
             if dt.propose_pachner(PachnerMove::K2 { facet }).is_err() {
                 continue;
             }
@@ -654,7 +649,7 @@ fn find_flippable_ridge_3d(dt: &Dt3) -> ExampleResult<Option<RidgeHandle>> {
                 let Ok(omit_b) = u8::try_from(j) else {
                     continue;
                 };
-                let ridge = RidgeHandle::try_new(dt.tds(), simplex_key, omit_a, omit_b)?;
+                let ridge = dt.ridge_handle(simplex_key, omit_a, omit_b)?;
                 let mut trial = dt.clone();
                 let Ok(proposal) = trial.propose_pachner(PachnerMove::K3 { ridge }) else {
                     continue;
@@ -685,7 +680,7 @@ fn inserted_edge_3d(
             },
         );
     };
-    Ok(EdgeKey::try_new(dt.tds(), *a, *b)?)
+    Ok(dt.edge_key(*a, *b)?)
 }
 
 /// Parses the inserted face of a k=3 move into its inverse triangle candidate.

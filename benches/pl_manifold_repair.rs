@@ -45,7 +45,7 @@ fn bench_overshared_facets_orphan_cleanup(c: &mut Criterion) {
             &fixture,
             |b, fixture| {
                 b.iter_batched(
-                    || fixture.tds().clone(),
+                    || fixture.repair_input_storage().clone(),
                     |mut tds| {
                         let stats = repair_overshared_facet_orphan_cleanup_3d(&mut tds).or_abort();
                         let _ = black_box(stats);
@@ -100,7 +100,7 @@ fn bench_targeted_fixture<const D: usize>(
         fixture,
         |b, fixture| {
             b.iter_batched(
-                || fixture.tds().clone(),
+                || fixture.repair_input_storage().clone(),
                 |mut tds| {
                     let stats = repair_targeted_pl_manifold_topology(&mut tds).or_abort();
                     let _ = black_box(stats);

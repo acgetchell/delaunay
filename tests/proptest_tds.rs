@@ -19,7 +19,8 @@
 //! - **Vertex count consistency** - Vertex key count matches reported vertex count
 //! - **Dimension consistency** - Reported dimension matches actual structure
 //!
-//! All tests use `dt.tds().is_valid()` (Level 2 structural validation).
+//! Tests that construct through the Delaunay owner use owner-level Level 2
+//! structural validation instead of borrowing the underlying storage.
 
 use delaunay::prelude::collections::{SimplexVertexBuffer, SimplexVertexKeyBuffer};
 use delaunay::prelude::construction::{DelaunayTriangulation, Vertex};
@@ -116,9 +117,9 @@ macro_rules! gen_tds_validity {
                 #[test]
                 fn [<prop_tds_from_vertices_is_valid_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     if let Ok(dt) = DelaunayTriangulation::builder(&vertices).build() {
-                        prop_assert!(dt.tds().is_valid().is_ok(),
+                        prop_assert!(dt.is_valid_structure().is_ok(),
                             "{}D Tds should be valid: {:?}",
-                            $dim, dt.tds().is_valid().err());
+                            $dim, dt.is_valid_structure().err());
                     }
                 }
             }
@@ -134,19 +135,18 @@ macro_rules! gen_neighbor_symmetry {
                 #[test]
                 fn [<prop_neighbor_symmetry_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     if let Ok(dt) = DelaunayTriangulation::builder(&vertices).build() {
-                        let tds = dt.tds();
                         for (simplex_key, simplex) in dt.simplices() {
                             if let Some(neighbors) = simplex.neighbors() {
                                 let simplex_neighbors: HashSet<_> = neighbors.flatten().collect();
                                 for neighbor_key in &simplex_neighbors {
-                                    let found_reciprocal = tds
+                                    let found_reciprocal = dt
                                         .simplex(*neighbor_key)
                                         .and_then(|c| c.neighbors())
                                         .is_some_and(|mut nn| nn.any(|n| n == Some(simplex_key)));
 
                                     if !found_reciprocal {
                                         // Enhanced diagnostics with Jaccard similarity
-                                        let neighbor_neighbors: HashSet<_> = tds
+                                        let neighbor_neighbors: HashSet<_> = dt
                                             .simplex(*neighbor_key)
                                             .and_then(|c| c.neighbors())
                                             .map(|nn| nn.flatten().collect())
@@ -195,14 +195,13 @@ macro_rules! gen_neighbor_index_semantics {
                 fn [<prop_neighbor_index_semantics_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     // Use stack-allocated buffer for D facet vertices (D ≤ 7 typical)
                     if let Ok(dt) = DelaunayTriangulation::builder(&vertices).build() {
-                        prop_assume!(dt.tds().is_valid().is_ok());
-                        let tds = dt.tds();
+                        prop_assume!(dt.is_valid_structure().is_ok());
                         for (simplex_key, simplex) in dt.simplices() {
                             if let Some(neighbors) = simplex.neighbors() {
                                 let a_vertices = simplex.vertices();
                                 for (i, nb) in neighbors.enumerate() {
                                     if let Some(b_key) = nb {
-                                        let b_simplex = tds.simplex(b_key).unwrap();
+                                        let b_simplex = dt.simplex(b_key).unwrap();
                                         let b_vertices = b_simplex.vertices();
                                         let mut a_facet: SimplexVertexBuffer<_> = a_vertices.iter().enumerate()
                                             .filter_map(|(idx, &vk)| (idx != i).then_some(vk))
@@ -240,7 +239,7 @@ macro_rules! gen_simplex_vertices_exist_in_tds {
                 #[test]
                 fn [<prop_simplex_vertices_exist_in_tds_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     if let Ok(dt) = DelaunayTriangulation::builder(&vertices).build() {
-                        let all_vertex_keys: HashSet<_> = dt.tds().vertex_keys().collect();
+                        let all_vertex_keys: HashSet<_> = dt.vertices().map(|(key, _)| key).collect();
                         for (_simplex_key, simplex) in dt.simplices() {
                             for vertex_key in simplex.vertices() {
                                 prop_assert!(all_vertex_keys.contains(vertex_key),
@@ -302,7 +301,7 @@ macro_rules! gen_vertex_count_consistency {
                 #[test]
                 fn [<prop_vertex_count_consistency_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     if let Ok(dt) = DelaunayTriangulation::builder(&vertices).build() {
-                        let keys = dt.tds().vertex_keys().count();
+                        let keys = dt.vertices().count();
                         let n = dt.number_of_vertices();
                         prop_assert_eq!(keys, n, "{}D vertex keys count should match number_of_vertices", $dim);
                     }
@@ -425,26 +424,27 @@ gen_simplex_vertex_count!(4, 5, #[cfg(feature = "slow-tests")]);
 gen_simplex_vertex_count!(5, 6, #[cfg(feature = "slow-tests")]);
 
 // =============================================================================
-// CONNECTIVITY TESTS (2D-5D)
+// TOPOLOGY VALIDITY TESTS (2D-5D)
 // =============================================================================
 //
-// Property: every successfully-constructed Delaunay triangulation is connected.
-// This validates that `Tds::is_connected` (BFS over neighbor pointers) does not
-// produce false negatives on well-formed triangulations.
+// Property: every successfully-constructed Delaunay triangulation satisfies the
+// public Level 3 topology validator.
 
-macro_rules! gen_is_connected {
+macro_rules! gen_is_valid_topology {
     ($dim:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
                 $(#[$attr])*
                 #[test]
-                fn [<prop_tds_is_connected_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
+                fn [<prop_triangulation_is_valid_topology_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     if let Ok(dt) = DelaunayTriangulation::builder(&vertices).build() {
+                        let topology_result = dt.as_triangulation().is_valid_topology();
                         prop_assert!(
-                            dt.tds().is_connected(),
-                            "{}D successfully-built triangulation must be connected ({} simplices)",
+                            topology_result.is_ok(),
+                            "{}D successfully-built triangulation must satisfy Level 3 topology ({} simplices): {:?}",
                             $dim,
-                            dt.tds().number_of_simplices()
+                            dt.number_of_simplices(),
+                            topology_result.err()
                         );
                     }
                 }
@@ -453,13 +453,13 @@ macro_rules! gen_is_connected {
     };
 }
 
-gen_is_connected!(2);
+gen_is_valid_topology!(2);
 
-gen_is_connected!(3);
+gen_is_valid_topology!(3);
 
-gen_is_connected!(4, #[cfg(feature = "slow-tests")]);
+gen_is_valid_topology!(4, #[cfg(feature = "slow-tests")]);
 
-gen_is_connected!(5, #[cfg(feature = "slow-tests")]);
+gen_is_valid_topology!(5, #[cfg(feature = "slow-tests")]);
 
 // =============================================================================
 // FAST HIGH-DIMENSIONAL CI SMOKE TESTS
@@ -505,17 +505,18 @@ macro_rules! gen_high_dim_tds_smoke {
                         }
                     };
 
-                    let tds = dt.tds();
                     prop_assert!(
-                        tds.is_valid().is_ok(),
+                        dt.is_valid_structure().is_ok(),
                         "{}D active TDS smoke should pass structural validation: {:?}",
                         $dim,
-                        tds.is_valid().err()
+                        dt.is_valid_structure().err()
                     );
+                    let topology_result = dt.as_triangulation().is_valid_topology();
                     prop_assert!(
-                        tds.is_connected(),
-                        "{}D active TDS smoke should be connected",
-                        $dim
+                        topology_result.is_ok(),
+                        "{}D active TDS smoke should satisfy Level 3 topology: {:?}",
+                        $dim,
+                        topology_result.err()
                     );
                     prop_assert_eq!(
                         dt.dim(),
@@ -524,8 +525,8 @@ macro_rules! gen_high_dim_tds_smoke {
                         $dim
                     );
                     prop_assert_eq!(
-                        tds.number_of_vertices(),
-                        tds.vertex_keys().count(),
+                        dt.number_of_vertices(),
+                        dt.vertices().count(),
                         "{}D active TDS smoke vertex count should match key iteration",
                         $dim
                     );
@@ -533,7 +534,7 @@ macro_rules! gen_high_dim_tds_smoke {
                     for (simplex_key, simplex) in dt.simplices() {
                         if let Some(neighbors) = simplex.neighbors() {
                             for neighbor_key in neighbors.flatten() {
-                                let reciprocal = tds
+                                let reciprocal = dt
                                     .simplex(neighbor_key)
                                     .and_then(|neighbor| neighbor.neighbors())
                                     .is_some_and(|mut neighbor_neighbors| {

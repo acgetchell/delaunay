@@ -169,7 +169,7 @@ where
     /// // Clear data
     /// let prev = dt.set_vertex_data(key, None)?;
     /// assert_eq!(prev, Some(99));
-    /// let vertex = dt.tds().vertex(key).ok_or(ExampleError::MissingVertex)?;
+    /// let vertex = dt.vertex(key).ok_or(ExampleError::MissingVertex)?;
     /// assert_eq!(vertex.data(), None);
     /// # Ok(())
     /// # }
@@ -229,7 +229,7 @@ where
     /// // Clear data
     /// let prev = dt.set_simplex_data(key, None)?;
     /// assert_eq!(prev, Some(42));
-    /// let simplex = dt.tds().simplex(key).ok_or(ExampleError::MissingSimplex)?;
+    /// let simplex = dt.simplex(key).ok_or(ExampleError::MissingSimplex)?;
     /// assert_eq!(simplex.data(), None);
     /// # Ok(())
     /// # }

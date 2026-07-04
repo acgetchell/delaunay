@@ -352,8 +352,8 @@ mod tests {
 
         let dt1 = DelaunayTriangulation::builder(&vertices1).build().unwrap();
         let dt2 = DelaunayTriangulation::builder(&vertices2).build().unwrap();
-        let tds1 = &dt1.as_triangulation().tds;
-        let tds2 = &dt2.as_triangulation().tds;
+        let tds1 = dt1.tds();
+        let tds2 = dt2.tds();
 
         let simplex1_key = tds1.simplex_keys().next().unwrap();
         let simplex2_key = tds2.simplex_keys().next().unwrap();
@@ -443,8 +443,8 @@ mod tests {
 
         let dt1 = DelaunayTriangulation::builder(&vertices1).build().unwrap();
         let dt2 = DelaunayTriangulation::builder(&vertices2).build().unwrap();
-        let tds1 = &dt1.as_triangulation().tds;
-        let tds2 = &dt2.as_triangulation().tds;
+        let tds1 = dt1.tds();
+        let tds2 = dt2.tds();
 
         let simplex1_key = tds1.simplex_keys().next().unwrap();
         let simplex2_key = tds2.simplex_keys().next().unwrap();
@@ -492,8 +492,8 @@ mod tests {
 
         let dt1 = DelaunayTriangulation::builder(&vertices1).build().unwrap();
         let dt2 = DelaunayTriangulation::builder(&vertices2).build().unwrap();
-        let tds1 = &dt1.as_triangulation().tds;
-        let tds2 = &dt2.as_triangulation().tds;
+        let tds1 = dt1.tds();
+        let tds2 = dt2.tds();
 
         let simplex1_key = tds1.simplex_keys().next().unwrap();
         let simplex2_key = tds2.simplex_keys().next().unwrap();
@@ -543,7 +543,7 @@ mod tests {
         ];
 
         let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = &dt.as_triangulation().tds;
+        let tds = dt.tds();
         let simplex_key = tds.simplex_keys().next().unwrap();
 
         // All facets of the same tetrahedron should be different from each other
@@ -583,7 +583,7 @@ mod tests {
         ];
 
         let dt = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds = &dt.as_triangulation().tds;
+        let tds = dt.tds();
         let simplex_key = tds.simplex_keys().next().unwrap();
 
         let facet1 = FacetView::try_new(tds, simplex_key, 0).unwrap();
@@ -630,8 +630,8 @@ mod tests {
 
         let dt1 = DelaunayTriangulation::builder(&vertices1).build().unwrap();
         let dt2 = DelaunayTriangulation::builder(&vertices2).build().unwrap();
-        let tds1 = &dt1.as_triangulation().tds;
-        let tds2 = &dt2.as_triangulation().tds;
+        let tds1 = dt1.tds();
+        let tds2 = dt2.tds();
 
         let simplex1_key = tds1.simplex_keys().next().unwrap();
         let simplex2_key = tds2.simplex_keys().next().unwrap();
@@ -662,8 +662,8 @@ mod tests {
 
         let dt1 = DelaunayTriangulation::builder(&vertices).build().unwrap();
         let dt2 = DelaunayTriangulation::builder(&vertices).build().unwrap();
-        let tds1 = &dt1.as_triangulation().tds;
-        let tds2 = &dt2.as_triangulation().tds;
+        let tds1 = dt1.tds();
+        let tds2 = dt2.tds();
 
         let simplex1_key = tds1.simplex_keys().next().unwrap();
         let simplex2_key = tds2.simplex_keys().next().unwrap();
@@ -726,8 +726,8 @@ mod tests {
 
         let dt1 = DelaunayTriangulation::builder(&vertices1).build().unwrap();
         let dt2 = DelaunayTriangulation::builder(&vertices2).build().unwrap();
-        let tds1 = &dt1.as_triangulation().tds;
-        let tds2 = &dt2.as_triangulation().tds;
+        let tds1 = dt1.tds();
+        let tds2 = dt2.tds();
 
         let simplex1_key = tds1.simplex_keys().next().unwrap();
         let simplex2_key = tds2.simplex_keys().next().unwrap();
@@ -787,8 +787,8 @@ mod tests {
 
         let dt1 = DelaunayTriangulation::builder(&vertices1).build().unwrap();
         let dt2 = DelaunayTriangulation::builder(&vertices2).build().unwrap();
-        let tds1 = &dt1.as_triangulation().tds;
-        let tds2 = &dt2.as_triangulation().tds;
+        let tds1 = dt1.tds();
+        let tds2 = dt2.tds();
 
         let simplex1_key = tds1.simplex_keys().next().unwrap();
         let simplex2_key = tds2.simplex_keys().next().unwrap();

@@ -65,16 +65,15 @@ pub type VertexUuidSet = FastHashSet<Uuid>;
 ///     .topology_guarantee(TopologyGuarantee::PLManifold)
 ///     .build()?;
 /// println!("Topology guarantee: {:?}", dt.topology_guarantee());
-/// let tds = dt.tds();
 ///
 /// // Get first vertex key and its UUID
-/// let Some((vertex_key, _)) = tds.vertices().next() else {
+/// let Some((vertex_key, _)) = dt.vertices().next() else {
 ///     return Err(ReverseLookupExampleError::MissingVertex);
 /// };
-/// let Some(vertex) = tds.vertex(vertex_key) else {
+/// let Some(vertex_uuid) = dt.vertex_uuid_from_key(vertex_key) else {
 ///     return Err(ReverseLookupExampleError::UnresolvedVertexKey);
 /// };
-/// let vertex_uuid = vertex.uuid();
+/// assert_eq!(dt.vertex_key_from_uuid(&vertex_uuid), Some(vertex_key));
 /// # Ok(())
 /// # }
 /// ```
@@ -121,17 +120,16 @@ pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 ///     .topology_guarantee(TopologyGuarantee::PLManifold)
 ///     .build()?;
 /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
-/// let tds = dt.tds();
 ///
 /// // Get first simplex key and its UUID
-/// let Some((simplex_key, _)) = tds.simplices().next() else {
+/// let Some((simplex_key, _)) = dt.simplices().next() else {
 ///     return Err(ReverseLookupExampleError::MissingSimplex);
 /// };
-/// let Some(simplex) = tds.simplex(simplex_key) else {
+/// let Some(simplex) = dt.simplex(simplex_key) else {
 ///     return Err(ReverseLookupExampleError::UnresolvedSimplexKey);
 /// };
 /// let simplex_uuid = simplex.uuid();
-/// assert_eq!(tds.simplex_key_from_uuid(&simplex_uuid), Some(simplex_key));
+/// assert_eq!(dt.simplex_key_from_uuid(&simplex_uuid), Some(simplex_key));
 /// # Ok(())
 /// # }
 /// ```

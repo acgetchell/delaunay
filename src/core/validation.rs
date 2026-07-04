@@ -118,12 +118,21 @@ use crate::core::tds::{
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::geometry::kernel::Kernel;
-use crate::topology::characteristics::euler::TopologyClassification;
-use crate::topology::characteristics::validation::validate_triangulation_euler_from_validated_facet_map;
+use crate::topology::characteristics::euler::{
+    FVector, TopologyClassification, classify_triangulation, count_boundary_simplices,
+    count_simplices,
+};
+use crate::topology::characteristics::validation::{
+    TopologyCheckResult, validate_triangulation_euler,
+    validate_triangulation_euler_from_validated_facet_map,
+};
 use crate::topology::manifold::{
     ManifoldError, ValidatedFacetDegreeMap, validate_closed_boundary_from_validated_facet_map,
-    validate_local_pseudomanifold_for_simplices, validate_ridge_links,
-    validate_ridge_links_for_simplices, validate_vertex_links_from_validated_facet_map,
+    validate_local_pseudomanifold_for_simplices,
+    validate_ridge_links as validate_ridge_links_in_tds,
+    validate_ridge_links_for_simplices as validate_ridge_links_for_simplices_in_tds,
+    validate_vertex_links as validate_vertex_links_in_index,
+    validate_vertex_links_from_validated_facet_map,
 };
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyError, TopologyKind};
 use std::time::{Duration, Instant};
@@ -776,6 +785,281 @@ pub(crate) enum InsertionValidationWork {
 }
 
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
+    /// Fast-fail Level 2 structural validation.
+    ///
+    /// This checks the triangulation data structure's key mappings, incidence
+    /// bookkeeping, duplicate-simplex invariant, facet sharing, neighbor
+    /// consistency, and coherent orientation without exposing the underlying
+    /// storage owner.
+    ///
+    /// Use [`Triangulation::validate_structure`](Self::validate_structure) for
+    /// cumulative Levels 1-2 element plus structure validation, or
+    /// [`Triangulation::validate`](Self::validate) for cumulative Levels 1-3.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`TdsError`] encountered by the structural validator.
+    pub fn is_valid_structure(&self) -> Result<(), TdsError> {
+        self.tds.is_valid()
+    }
+
+    /// Cumulative Levels 1-2 validation for the triangulation structure.
+    ///
+    /// This validates all stored vertices and simplices first, then runs
+    /// [`Triangulation::is_valid_structure`](Self::is_valid_structure).
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`TdsError`] encountered by element or structural
+    /// validation.
+    pub fn validate_structure(&self) -> Result<(), TdsError> {
+        self.tds.validate()
+    }
+
+    /// Returns the first actionable Level 2 structural diagnostic, if any.
+    #[must_use]
+    pub fn structure_diagnostic(&self) -> Option<InvariantViolation> {
+        self.tds.structure_diagnostic()
+    }
+
+    /// Runs Level 2 structure checks and returns all checkable failures.
+    ///
+    /// This is the aggregate-report counterpart to
+    /// [`Triangulation::is_valid_structure`](Self::is_valid_structure).
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`TriangulationValidationReport`] containing all invariant
+    /// violations if any structural validation step fails.
+    pub fn structure_report(&self) -> Result<(), TriangulationValidationReport> {
+        self.tds.structure_report()
+    }
+
+    /// Counts simplices by dimension for this triangulation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TopologyError`] if the facet-incidence map required for
+    /// intermediate-dimensional counts cannot be built.
+    pub fn simplex_counts(&self) -> Result<FVector, TopologyError> {
+        count_simplices(&self.tds)
+    }
+
+    /// Counts simplices on the topology-approved boundary only.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TopologyError`] if boundary facets cannot be classified or
+    /// enumerated for this triangulation.
+    pub fn boundary_simplex_counts(&self) -> Result<FVector, TopologyError> {
+        count_boundary_simplices(&self.tds, self.global_topology)
+    }
+
+    /// Classifies this triangulation for Euler-characteristic checks.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TopologyError`] if facet incidence cannot be classified for
+    /// the provided global topology.
+    pub fn topology_classification_for(
+        &self,
+        global_topology: GlobalTopology<D>,
+    ) -> Result<TopologyClassification, TopologyError> {
+        classify_triangulation(&self.tds, global_topology)
+    }
+
+    /// Validates this triangulation's Euler characteristic against its topology metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TopologyError`] if simplex counts or boundary classification
+    /// cannot be computed.
+    pub fn euler_check(&self) -> Result<TopologyCheckResult, TopologyError> {
+        self.euler_check_for_topology(self.global_topology)
+    }
+
+    /// Validates this triangulation's Euler characteristic against explicit topology metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TopologyError`] if simplex counts or boundary classification
+    /// cannot be computed.
+    pub fn euler_check_for_topology(
+        &self,
+        global_topology: GlobalTopology<D>,
+    ) -> Result<TopologyCheckResult, TopologyError> {
+        validate_triangulation_euler(&self.tds, global_topology)
+    }
+
+    /// Validates all ridge links for the Level 3 PL-manifold codimension-2 condition.
+    ///
+    /// Ridge-link validation checks that every `(D-2)`-simplex has a 1-dimensional
+    /// link that is a connected path for boundary ridges or a connected cycle for
+    /// interior ridges. It is cheaper and more local than vertex-link validation
+    /// and catches many branching or wedge singularities, but in dimensions
+    /// `D >= 3` it is not by itself a complete PL-manifold certificate.
+    ///
+    /// This explicit check runs regardless of [`TopologyGuarantee`]. Use
+    /// [`Triangulation::validate_vertex_links`](Self::validate_vertex_links) for
+    /// the canonical vertex-link PL-manifold certification, or
+    /// [`Triangulation::is_valid_topology`](Self::is_valid_topology) for the
+    /// configured full Level 3 topology policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ManifoldError::Tds`] if the triangulation storage is
+    /// structurally inconsistent while resolving ridge stars. Returns
+    /// [`ManifoldError::RidgeLinkNotManifold`] when a ridge link is not a
+    /// connected path or cycle.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayTriangulation, DelaunayTriangulationBuilder,
+    ///     DelaunayTriangulationConstructionError, vertex,
+    /// };
+    /// use delaunay::prelude::geometry::CoordinateConversionError;
+    /// use delaunay::prelude::validation::ManifoldError;
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Manifold(#[from] ManifoldError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = vec![
+    ///     vertex![0.0, 0.0, 0.0]?,
+    ///     vertex![1.0, 0.0, 0.0]?,
+    ///     vertex![0.0, 1.0, 0.0]?,
+    ///     vertex![0.0, 0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    ///
+    /// dt.as_triangulation().validate_ridge_links()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn validate_ridge_links(&self) -> Result<(), ManifoldError> {
+        validate_ridge_links_in_tds(&self.tds)
+    }
+
+    /// Validates ridge links incident to a selected set of simplices.
+    ///
+    /// This is the localized form of
+    /// [`Triangulation::validate_ridge_links`](Self::validate_ridge_links). It
+    /// checks only ridges touching the supplied simplex keys, which is useful
+    /// after local insertion or flip work when a caller wants targeted Level 3
+    /// diagnostics without rebuilding the global ridge-star map.
+    ///
+    /// Missing simplex keys are ignored by the underlying local ridge-star
+    /// builder because they may have been removed by a preceding topology edit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ManifoldError::Tds`] if the triangulation storage is
+    /// structurally inconsistent while resolving ridge stars. Returns
+    /// [`ManifoldError::RidgeLinkNotManifold`] when a checked ridge link is not
+    /// a connected path or cycle.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayTriangulation, DelaunayTriangulationBuilder,
+    ///     DelaunayTriangulationConstructionError, vertex,
+    /// };
+    /// use delaunay::prelude::geometry::CoordinateConversionError;
+    /// use delaunay::prelude::validation::ManifoldError;
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Manifold(#[from] ManifoldError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = vec![
+    ///     vertex![0.0, 0.0, 0.0]?,
+    ///     vertex![1.0, 0.0, 0.0]?,
+    ///     vertex![0.0, 1.0, 0.0]?,
+    ///     vertex![0.0, 0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let touched = dt.simplices().map(|(key, _)| key);
+    ///
+    /// dt.as_triangulation().validate_ridge_links_for_simplices(touched)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn validate_ridge_links_for_simplices(
+        &self,
+        simplices: impl IntoIterator<Item = SimplexKey>,
+    ) -> Result<(), ManifoldError> {
+        validate_ridge_links_for_simplices_in_tds(&self.tds, simplices)
+    }
+
+    /// Validates all vertex links for the canonical Level 3 PL-manifold condition.
+    ///
+    /// A pure `D`-dimensional simplicial complex is a PL-manifold with boundary
+    /// only when every vertex link is a `(D-1)`-sphere for interior vertices or
+    /// a `(D-1)`-ball for boundary vertices. This check is the public,
+    /// owner-level entry point for that scientific validity criterion.
+    ///
+    /// This explicit check runs regardless of [`TopologyGuarantee`]. It uses the
+    /// triangulation's [`GlobalTopology`] metadata to distinguish true boundary
+    /// facets from periodic identifications.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ManifoldError::Tds`] if facet incidence cannot be built from
+    /// the current storage. Returns [`ManifoldError::VertexLinkNotManifold`]
+    /// when a vertex link fails the expected sphere/ball manifold condition.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayTriangulation, DelaunayTriangulationBuilder,
+    ///     DelaunayTriangulationConstructionError, vertex,
+    /// };
+    /// use delaunay::prelude::geometry::CoordinateConversionError;
+    /// use delaunay::prelude::validation::ManifoldError;
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Manifold(#[from] ManifoldError),
+    /// #     #[error(transparent)]
+    /// #     Coordinate(#[from] CoordinateConversionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = vec![
+    ///     vertex![0.0, 0.0, 0.0]?,
+    ///     vertex![1.0, 0.0, 0.0]?,
+    ///     vertex![0.0, 1.0, 0.0]?,
+    ///     vertex![0.0, 0.0, 1.0]?,
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    ///
+    /// dt.as_triangulation().validate_vertex_links()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn validate_vertex_links(&self) -> Result<(), ManifoldError> {
+        let facet_to_simplices = self.tds.build_facet_to_simplices_index()?;
+        validate_vertex_links_in_index(&facet_to_simplices, self.global_topology)
+    }
+
     /// Returns the topology guarantee used for Level 3 topology validation.
     #[inline]
     #[must_use]
@@ -881,7 +1165,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
 
         // 2c. Ridge-link validation for PLManifold/PLManifoldStrict (fast, catches many PL issues).
         if self.topology_guarantee.requires_ridge_links() {
-            validate_ridge_links(&self.tds)?;
+            validate_ridge_links_in_tds(&self.tds)?;
         }
         // 2d. PL-manifold vertex-link condition during insertion (strict mode).
         if self
@@ -1192,7 +1476,12 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayTriangulation, DelaunayTriangulationBuilder,
+    ///     DelaunayTriangulationConstructionError, vertex,
+    /// };
+    /// use delaunay::prelude::geometry::CoordinateConversionError;
+    /// use delaunay::prelude::validation::ManifoldError;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1367,7 +1656,10 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    /// };
+    /// use delaunay::DelaunayTriangulation;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -1600,7 +1892,7 @@ where
         )?;
 
         if self.topology_guarantee.requires_ridge_links() {
-            validate_ridge_links(&self.tds)?;
+            validate_ridge_links_in_tds(&self.tds)?;
         }
 
         if self
@@ -1749,7 +2041,7 @@ where
         validate_local_pseudomanifold_for_simplices(&self.tds, self.global_topology, simplices)?;
 
         if self.topology_guarantee.requires_ridge_links() {
-            validate_ridge_links_for_simplices(&self.tds, simplices.iter().copied())?;
+            validate_ridge_links_for_simplices_in_tds(&self.tds, simplices.iter().copied())?;
         }
 
         self.validate_geometric_simplex_orientation_for_simplices(simplices)?;

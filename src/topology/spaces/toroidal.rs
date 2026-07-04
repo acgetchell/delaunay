@@ -65,8 +65,8 @@ use std::{
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
-/// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.tds().vertex_keys().take(1))?;
-/// let view = ridge.view(dt.tds())?;
+/// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.vertices().map(|(key, _)| key).take(1))?;
+/// let view = dt.ridge_view(&ridge)?;
 /// let links = view.links()?;
 /// let Some(edge) = links.first().and_then(|link| link.edges().first()) else {
 ///     return Ok(());
@@ -159,8 +159,8 @@ impl LiftedVertexId {
 /// ];
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
-/// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.tds().vertex_keys().take(1))?;
-/// let view = ridge.view(dt.tds())?;
+/// let ridge = RidgeCandidate::<2>::try_from_vertices(dt.vertices().map(|(key, _)| key).take(1))?;
+/// let view = dt.ridge_view(&ridge)?;
 /// let links = view.links()?;
 /// let Some(edge) = links.first().and_then(|link| link.edges().first()) else {
 ///     return Ok(());

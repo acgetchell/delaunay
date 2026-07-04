@@ -20,3 +20,24 @@ The crate provides a 5-level validation hierarchy.
 
 // ok: delaunay.docs.no-stale-four-level-validation-hierarchy
 Level 5: Delaunay Property
+
+// ruleid: delaunay.rust.no-tds-accessor-in-markdown-examples
+let storage = dt.tds();
+
+// ok: delaunay.rust.no-tds-accessor-in-markdown-examples
+let index = dt.facet_incidence_index()?;
+
+// ruleid: delaunay.rust.no-as-triangulation-storage-reach-through
+let storage = dt.as_triangulation().tds;
+
+// ruleid: delaunay.rust.no-as-triangulation-storage-reach-through, delaunay.rust.no-tds-accessor-in-markdown-examples
+let storage = dt.as_triangulation().tds();
+
+// ruleid: delaunay.rust.no-as-triangulation-storage-reach-through
+let kernel = dt.as_triangulation().kernel;
+
+// ruleid: delaunay.rust.no-as-triangulation-storage-reach-through
+let kernel = dt.as_triangulation().kernel();
+
+// ok: delaunay.rust.no-as-triangulation-storage-reach-through
+let generation = dt.topology_generation();
