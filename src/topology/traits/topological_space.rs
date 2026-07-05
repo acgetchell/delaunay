@@ -621,11 +621,14 @@ pub trait TopologicalSpace {
     /// Different topologies have different canonicalization rules:
     /// - **Euclidean**: No modification (identity operation)
     /// - **Toroidal**: Wraps coordinates into fundamental domain `[0, L)`
-    /// - **Spherical**: Currently a scaffolded identity operation; unit-sphere
-    ///   projection is tracked separately
+    /// - **Spherical**: Projects finite nonzero coordinate vectors onto the unit sphere
     /// - **Hyperbolic**: Currently a scaffolded identity operation
     ///
     /// The coordinate slice length must match `Self::DIM`.
+    /// This helper is infallible; implementations without an error channel may
+    /// leave inputs unchanged when no valid canonical representative exists.
+    /// Fallible construction paths surface those cases through
+    /// [`crate::topology::traits::GlobalTopologyModelError`].
     ///
     /// # Arguments
     ///

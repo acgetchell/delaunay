@@ -27,7 +27,7 @@ the guarantees stated in the public API documentation.
   - [Validation layering](#validation-layering)
   - [Coherent orientation](#coherent-orientation)
   - [Geometric invariants](#geometric-invariants)
-    - [Faithful embedding in affine charts](#faithful-embedding-in-affine-charts)
+    - [Valid affine realization in affine charts](#valid-affine-realization-in-affine-charts)
     - [Delaunay condition (empty circumsphere property)](#delaunay-condition-empty-circumsphere-property)
     - [Robust predicate envelope](#robust-predicate-envelope)
   - [PL-manifold conditions](#pl-manifold-conditions)
@@ -116,21 +116,22 @@ operation has certified which part of the structure:
 3. **Level 3 — topology**: the triangulation satisfies the requested `TopologyGuarantee`
    (pseudomanifold, PL manifold, or strict PL manifold) through incidence, connectivity,
    Euler-characteristic, and link checks.
-4. **Level 4 — embedding**: each maximal simplex is nondegenerate in the active affine chart, and
-   maximal simplices intersect only along their shared faces. Euclidean topology validates in the
-   ambient chart; toroidal topology validates in periodic covering-space charts.
+4. **Level 4 — valid affine realization**: each maximal simplex is nondegenerate in the active
+   affine chart, and maximal simplices intersect only along their shared faces. Euclidean topology
+   validates in the ambient chart; toroidal topology validates in periodic covering-space charts.
 5. **Level 5 — Delaunay property**: the embedded triangulation satisfies the local Delaunay
    predicates for its facets.
 
 `Triangulation::is_valid_topology()` is a Level 3 topology check. `DelaunayTriangulation::is_valid_delaunay()` is a
 Level 5 Delaunay-property check for an already-formed Delaunay triangulation. `Triangulation` also
-exposes Level 4 embedding validation through `is_valid_embedding` / `validate_embedding`.
+exposes Level 4 valid-affine-realization validation through `is_valid_embedding` /
+`validate_embedding`.
 Cumulative validation is exposed through the `validate` / `validation_report` APIs described in
 [`docs/validation.md`](validation.md).
 
 Automatic validation during construction is intentionally topology-oriented: `ValidationPolicy`
 controls Level 3 checks during insertion and can enable local insertion-time embedding checks.
-Full/global Level 4 embedding certification and Level 5 Delaunay validation remain explicit
+Full/global Level 4 valid-affine-realization certification and Level 5 Delaunay validation remain explicit
 certification steps for workflows that need them.
 
 ---
@@ -160,15 +161,15 @@ map, and test expectations.
 
 ## Geometric invariants
 
-### Faithful embedding in affine charts
+### Valid affine realization in affine charts
 
 Levels 1-3 validate the abstract oriented simplicial complex: elements, incidence, neighbor
 reciprocity, coherent orientation, manifoldness, links, connectedness, and Euler consistency. These
-checks do not by themselves prove that the complex is faithfully realized by its coordinates. A
+checks do not by themselves prove that the complex has a valid affine realization in its coordinates. A
 topologically valid complex can still fold over itself, contain a zero-volume maximal simplex, or
 identify simplices in a way that overlaps in the chosen geometric chart.
 
-Level 4 is the embedded-realization check. It is independent of the Delaunay predicate and enforces:
+Level 4 is the valid-affine-realization check. It is independent of the Delaunay predicate and enforces:
 
 - every maximal simplex has nonzero `D`-volume under the robust orientation predicate;
 - every pair of maximal simplices intersects only in the face spanned by their shared vertices;
@@ -178,7 +179,7 @@ Level 4 is the embedded-realization check. It is independent of the Delaunay pre
 This is intentionally separate from topology. Non-orientable spaces are valid objects in topology in
 general, but this crate's TDS contract maintains coherent orientation for the oriented complexes its
 construction, flip, and predicate machinery operate on. Level 4 then asks whether that oriented
-complex is faithfully embedded in the active affine chart. Spherical and hyperbolic topologies need
+complex is a valid affine realization in the active chart. Spherical and hyperbolic topologies need
 model-specific chart validators before they can offer the same Level 4 guarantee.
 
 ### Delaunay condition (empty circumsphere property)
@@ -355,9 +356,9 @@ Toroidal workflows are integrated as first-class topology options:
   periodic construction fails fast until quotient selection scales to routine release validation
   under issue #416.
 
-Spherical and hyperbolic topology models are present as metadata and validation scaffolding, but
-they do not yet provide full non-Euclidean geometric construction semantics. Treat them as
-extension points rather than completed domains.
+Spherical topology models provide unit-sphere coordinate projection, while hyperbolic topology
+models remain metadata and validation scaffolding. Neither yet provides full non-Euclidean
+geometric construction semantics, so treat them as extension points rather than completed domains.
 
 ---
 
@@ -489,7 +490,8 @@ Some limitations are inherent to incremental high-dimensional computational geom
   currently `D <= 5`; dimensions above that should be treated as experimental unless a workflow
   performs its own validation.
 - **Topological-domain scope**: Euclidean and toroidal workflows are the active domains. Spherical
-  and hyperbolic models are scaffolding for future work, not complete construction semantics.
+  models provide unit-sphere projection but not complete construction semantics; hyperbolic models
+  remain scaffolding for future work.
 - **Iterative refinement constraints**: cavity-based insertion and flip-based repair are local
   procedures. In rare cases, local refinement can be blocked by topology or by non-progressing
   numerical predicates.

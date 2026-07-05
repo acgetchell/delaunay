@@ -214,21 +214,74 @@ bench-perf-summary: _ensure-uv
 bench-smoke:
     CRIT_SAMPLE_SIZE=10 CRIT_MEASUREMENT_MS=500 CRIT_WARMUP_MS=200 cargo bench --workspace --profile perf --features bench
 
-# Run the 3D and 4D Pachner Monte Carlo stress cases with reports enabled.
-pachner-stress attempts="100000" validate_every="1000" samples="10":
-    just _pachner-stress-dim 3d 10000 "{{ attempts }}" "{{ validate_every }}" "{{ samples }}"
-    just _pachner-stress-dim 4d 1000 "{{ attempts }}" "{{ validate_every }}" "{{ samples }}"
+# Run the opt-in companion binary with the CLI feature and perf profile.
+run *args:
+    cargo run --profile perf --features cli --bin delaunay -- {{ args }}
 
-# Run the 3D Pachner Monte Carlo stress case with reports enabled.
-pachner-stress-3d attempts="100000" vertices="10000" validate_every="1000" samples="10":
-    just _pachner-stress-dim 3d "{{ vertices }}" "{{ attempts }}" "{{ validate_every }}" "{{ samples }}"
+# Run one 3D and one 4D Pachner Monte Carlo stress chain with reports enabled.
+pachner-stress attempts="100000" validate_every="1000":
+    just _pachner-stress-dim 3d 10000 "{{ attempts }}" "{{ validate_every }}" target/pachner_stress/3d
+    just _pachner-stress-dim 4d 1000 "{{ attempts }}" "{{ validate_every }}" target/pachner_stress/4d
 
-# Run the 4D Pachner Monte Carlo stress case with reports enabled.
-pachner-stress-4d attempts="100000" vertices="1000" validate_every="1000" samples="10":
-    just _pachner-stress-dim 4d "{{ vertices }}" "{{ attempts }}" "{{ validate_every }}" "{{ samples }}"
+# Run one 3D Pachner Monte Carlo stress chain with reports enabled.
+pachner-stress-3d attempts="100000" vertices="10000" validate_every="1000" output_dir="target/pachner_stress/3d":
+    just _pachner-stress-dim 3d "{{ vertices }}" "{{ attempts }}" "{{ validate_every }}" "{{ output_dir }}"
+
+# Run one 4D Pachner Monte Carlo stress chain with reports enabled.
+pachner-stress-4d attempts="100000" vertices="1000" validate_every="1000" output_dir="target/pachner_stress/4d":
+    just _pachner-stress-dim 4d "{{ vertices }}" "{{ attempts }}" "{{ validate_every }}" "{{ output_dir }}"
+
+# Run Criterion's Pachner Monte Carlo stress benchmark for statistical timing.
+bench-pachner-stress attempts="100000" validate_every="1000" samples="10":
+    just _bench-pachner-stress-dim 3d 10000 "{{ attempts }}" "{{ validate_every }}" "{{ samples }}"
+    just _bench-pachner-stress-dim 4d 1000 "{{ attempts }}" "{{ validate_every }}" "{{ samples }}"
+
+# Run Criterion's 3D Pachner Monte Carlo stress benchmark for statistical timing.
+bench-pachner-stress-3d attempts="100000" vertices="10000" validate_every="1000" samples="10":
+    just _bench-pachner-stress-dim 3d "{{ vertices }}" "{{ attempts }}" "{{ validate_every }}" "{{ samples }}"
+
+# Run Criterion's 4D Pachner Monte Carlo stress benchmark for statistical timing.
+bench-pachner-stress-4d attempts="100000" vertices="1000" validate_every="1000" samples="10":
+    just _bench-pachner-stress-dim 4d "{{ vertices }}" "{{ attempts }}" "{{ validate_every }}" "{{ samples }}"
 
 [private]
-_pachner-stress-dim label vertices attempts validate_every samples:
+_pachner-stress-dim label vertices attempts validate_every output_dir:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    label="{{ label }}"
+    vertices="{{ vertices }}"
+    attempts="{{ attempts }}"
+    validate_every="{{ validate_every }}"
+    output_dir="{{ output_dir }}"
+
+    require_positive_integer() {
+        local name="$1"
+        local value="$2"
+        if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then
+            echo "ERROR: $name must be a positive integer, got: $value" >&2
+            exit 2
+        fi
+    }
+
+    require_positive_integer "vertices" "$vertices"
+    require_positive_integer "attempts" "$attempts"
+    require_positive_integer "validate_every" "$validate_every"
+
+    mkdir -p "$output_dir"
+
+    echo "Pachner stress ${label}: ${vertices} vertices, ${attempts} attempted moves."
+    cargo run --profile perf --features cli --bin delaunay -- \
+        pachner-stress \
+        --dimension "$label" \
+        --vertices "$vertices" \
+        --attempts "$attempts" \
+        --validate-every "$validate_every" \
+        --progress-csv "$output_dir/progress.csv" \
+        --summary-json "$output_dir/summary.json"
+
+[private]
+_bench-pachner-stress-dim label vertices attempts validate_every samples:
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -279,7 +332,7 @@ _pachner-stress-dim label vertices attempts validate_every samples:
         "DELAUNAY_PACHNER_STRESS_ATTEMPTS_${suffix}=$attempts" \
         "DELAUNAY_PACHNER_STRESS_VALIDATE_EVERY_${suffix}=$validate_every" \
         "MONTE_CARLO_SAMPLE_SIZE=$samples" \
-        cargo bench --profile perf --bench pachner_stress -- "$filter" --noplot
+        cargo bench --profile perf --features bench --bench pachner_stress -- "$filter" --noplot
 
 # Compile benchmarks and release integration tests without running.
 bench-test-compile: bench-compile test-integration-compile
@@ -325,7 +378,7 @@ check-fast:
     cargo check
 
 # CI simulation: comprehensive validation.
-ci: github-actions-check markdown-ci json-check toml-ci yaml-ci python-ci notebook-check rust-core-check test-rust-ci test-doc bench-compile examples
+ci: github-actions-check markdown-ci json-check toml-ci yaml-ci python-ci notebook-clear-outputs-all notebook-check rust-core-check test-rust-ci test-doc bench-compile examples
     @echo "🎯 CI checks complete!"
 
 # CI followed by an explicit persistent local baseline refresh.
@@ -420,7 +473,7 @@ help-workflows:
     @echo ""
     @echo "Focused testing:"
     @echo "  just test-rust         # Rust unit, doctest, and integration tests"
-    @echo "  just test-rust-ci      # CI Rust unit + integration tests in one release nextest run"
+    @echo "  just test-rust-ci      # CI Rust unit, integration, and CLI tests"
     @echo "  just test-unit         # Rust lib unit tests only"
     @echo "  just test-doc          # Rust doctests only, in release profile"
     @echo "  just test-integration  # All integration tests (includes proptests)"
@@ -436,6 +489,8 @@ help-workflows:
     @echo "  just notebook-check    # Lint notebooks and execute fast notebooks under target/notebooks"
     @echo "  just notebook-check-slow # Include slow notebook execution"
     @echo "  just notebook-clear-outputs-all # Clear source notebook outputs"
+    @echo "  just notebook-reset-from-git # Restore tracked source notebooks and clear artifacts"
+    @echo "  just run <args>        # Run the opt-in delaunay binary with --features cli"
     @echo ""
     @echo "Active large-scale debugging:"
     @echo "  just test-diagnostics      # Run diagnostics tools with output"
@@ -449,11 +504,12 @@ help-workflows:
     @echo "  just bench-smoke        # Smoke-test benchmark harnesses (minimal samples)"
     @echo "  just bench              # Run all benchmarks with perf profile (ThinLTO)"
     @echo "  just bench-ci           # CI regression benchmarks with perf profile (~5-10 min)"
-    @echo "  just pachner-stress     # 3D+4D Pachner MCMC stress with report lines"
-    @echo "  just pachner-stress-3d [attempts] [vertices] [validate_every] [samples]"
+    @echo "  just pachner-stress     # 3D+4D Pachner MCMC CLI stress with CSV/JSON artifacts"
+    @echo "  just pachner-stress-3d [attempts] [vertices] [validate_every] [output_dir]"
     @echo "                          # 3D Pachner MCMC stress (defaults: 100K, 10K vertices)"
-    @echo "  just pachner-stress-4d [attempts] [vertices] [validate_every] [samples]"
+    @echo "  just pachner-stress-4d [attempts] [vertices] [validate_every] [output_dir]"
     @echo "                          # 4D Pachner MCMC stress (defaults: 100K, 1K vertices)"
+    @echo "  just bench-pachner-stress # Criterion timing for Pachner MCMC stress"
     @echo "  just perf-large-scale-smoke [max_secs] # Quick pre-push 2D-5D wall-clock guard (default 60s)"
     @echo "  just perf-no-regressions [threshold] # Fast pre-PR 2D-5D regression guard (default 7.5%)"
     @echo "  just perf-baseline [ref] # Persist/update default local baseline (default: main)"
@@ -581,12 +637,45 @@ notebook-clear-outputs-all: _ensure-uv
         echo "No notebooks found to clear."
     fi
 
+notebook-reset-from-git source="index":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -d notebooks ]; then
+        echo "No source notebooks directory found."
+        exit 0
+    fi
+
+    tracked_notebooks=()
+    while IFS= read -r notebook; do
+        tracked_notebooks+=("$notebook")
+    done < <(git ls-files -- notebooks | grep '\.ipynb$' || true)
+
+    tracked_count="${#tracked_notebooks[@]}"
+    if [ "$tracked_count" -eq 0 ]; then
+        echo "No tracked source notebooks found."
+        exit 0
+    fi
+
+    if [ "{{ source }}" = "index" ]; then
+        git restore --worktree -- "${tracked_notebooks[@]}"
+        restored_from="index"
+    else
+        git restore --source="{{ source }}" --worktree -- "${tracked_notebooks[@]}"
+        restored_from="{{ source }}"
+    fi
+
+    rm -rf target/notebooks
+    find notebooks -type d -name .ipynb_checkpoints -prune -exec rm -rf {} +
+    printf 'Restored %s tracked source notebook(s) from %s and removed target/notebooks.\n' "$tracked_count" "$restored_from"
+
 notebook-execute notebook="notebooks/00_quickstart.ipynb" output_dir="target/notebooks": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
     output_path="$(pwd)/{{ output_dir }}"
-    mkdir -p "$output_path/.ipython" "$output_path/.matplotlib"
-    MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout=600 --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "{{ output_dir }}" "{{ notebook }}"
+    notebook_stem="$(basename "{{ notebook }}" .ipynb)"
+    notebook_output_dir="$output_path/$notebook_stem"
+    mkdir -p "$output_path/.ipython" "$output_path/.matplotlib" "$notebook_output_dir"
+    MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout=600 --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "$notebook_output_dir" "{{ notebook }}"
 
 notebook-execute-fast output_dir="target/notebooks": _ensure-uv
     #!/usr/bin/env bash
@@ -600,7 +689,10 @@ notebook-execute-fast output_dir="target/notebooks": _ensure-uv
     found=0
     while IFS= read -r notebook; do
         found=1
-        MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout=600 --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "{{ output_dir }}" "$notebook"
+        notebook_stem="$(basename "$notebook" .ipynb)"
+        notebook_output_dir="$output_path/$notebook_stem"
+        mkdir -p "$notebook_output_dir"
+        MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout=600 --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "$notebook_output_dir" "$notebook"
     done < <(find notebooks -type f -name '*.ipynb' ! -path '*/.ipynb_checkpoints/*' ! -path 'notebooks/slow/*' ! -name '*_slow.ipynb' | sort)
     if [ "$found" -eq 0 ]; then
         echo "No fast notebooks found to execute."
@@ -618,7 +710,10 @@ notebook-execute-slow output_dir="target/notebooks": _ensure-uv
     found=0
     while IFS= read -r notebook; do
         found=1
-        MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout=1800 --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "{{ output_dir }}" "$notebook"
+        notebook_stem="$(basename "$notebook" .ipynb)"
+        notebook_output_dir="$output_path/$notebook_stem"
+        mkdir -p "$notebook_output_dir"
+        MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout=1800 --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "$notebook_output_dir" "$notebook"
     done < <(find notebooks -type f \( -path 'notebooks/slow/*' -o -name '*_slow.ipynb' \) ! -path '*/.ipynb_checkpoints/*' | sort)
     if [ "$found" -eq 0 ]; then
         echo "No slow notebooks found to execute."
@@ -674,9 +769,10 @@ perf-help:
     @echo "  just bench                 # Full benchmark suite with perf profile"
     @echo "  just bench-ci              # CI benchmark suite with perf profile"
     @echo "  just bench-allocations     # Allocation-contract microbenchmarks"
-    @echo "  just pachner-stress        # 3D+4D Pachner MCMC stress with report lines"
-    @echo "  just pachner-stress-3d     # 3D Pachner MCMC stress (100K moves, 10K vertices)"
-    @echo "  just pachner-stress-4d     # 4D Pachner MCMC stress (100K moves, 1K vertices)"
+    @echo "  just pachner-stress        # 3D+4D Pachner MCMC CLI stress with CSV/JSON artifacts"
+    @echo "  just pachner-stress-3d     # 3D Pachner MCMC CLI stress (100K moves, 10K vertices)"
+    @echo "  just pachner-stress-4d     # 4D Pachner MCMC CLI stress (100K moves, 1K vertices)"
+    @echo "  just bench-pachner-stress  # Criterion timing for Pachner MCMC stress"
     @echo "  just perf-no-regressions   # Fast pre-PR 2D-5D regression guard"
     @echo "  just bench-smoke           # Smoke-test benchmark harnesses"
     @echo ""
@@ -695,8 +791,8 @@ perf-help:
     @echo "  just perf-baseline-to /tmp/delaunay-main-baseline"
     @echo "                              # Generate scratch main baseline without overwriting baseline-artifact"
     @echo "  CRIT_SAMPLE_SIZE=100 just bench  # Custom sample size"
-    @echo "  just pachner-stress-4d 100000 1000 1000 10"
-    @echo "                              # 4D long-run Pachner diagnostics with minimum Criterion samples"
+    @echo "  just pachner-stress-4d 100000 1000 1000 target/pachner_stress/4d"
+    @echo "                              # 4D long-run Pachner diagnostics with CSV/JSON artifacts"
     @echo "  just bench-ci              # Final optimized CI-suite benchmark run"
     @echo "  just profile v0.7.5        # v0.7.5 code on its declared Rust toolchain"
     @echo "  just profile 1.96.0        # Current tree on Rust 1.96.0"
@@ -1316,9 +1412,10 @@ test-release: test-rust-ci test-doc
 test-rust: test-rust-ci test-doc
     @echo "✅ Rust tests passed!"
 
-# test-rust-ci: runs Rust lib unit tests and integration tests in one release-profile nextest invocation.
+# test-rust-ci: runs Rust lib unit tests, integration tests, and feature-gated CLI tests.
 test-rust-ci: _ensure-nextest
     cargo nextest run --release --profile ci --lib --tests
+    cargo nextest run --release --profile ci --features cli --test cli
 
 # Run correctness tests that exceed the 10s default-suite budget.
 # Slow tests run in release mode because debug exact-predicate paths can turn

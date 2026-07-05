@@ -10,7 +10,7 @@
 //!
 //! - [`EuclideanModel`]: Identity operations (no wrapping or lifting)
 //! - [`ToroidalModel`]: Domain wrapping and lattice-offset lifting for periodic boundaries
-//! - [`SphericalModel`]: Scaffold for future sphere-constrained projection
+//! - [`SphericalModel`]: Unit-sphere projection for finite nonzero coordinates
 //! - [`HyperbolicModel`]: Scaffold for future hyperbolic projection
 //!
 //! The [`GlobalTopologyModelAdapter`] enum provides dynamic dispatch over these models and is
@@ -19,8 +19,11 @@
 
 #![forbid(unsafe_code)]
 
-use crate::topology::traits::topological_space::{
-    GlobalTopology, TopologyKind, ToroidalConstructionMode, ToroidalDomain, ToroidalDomainError,
+use crate::topology::{
+    spaces::spherical::normalize_unit_sphere_coordinates,
+    traits::topological_space::{
+        GlobalTopology, TopologyKind, ToroidalConstructionMode, ToroidalDomain, ToroidalDomainError,
+    },
 };
 use thiserror::Error;
 
@@ -46,6 +49,14 @@ pub enum GlobalTopologyModelError {
         value: f64,
     },
 
+    /// A spherical point is zero length, so fallible canonicalization cannot
+    /// project it onto the unit sphere.
+    ///
+    /// The rejected coordinate array is left unchanged by spherical
+    /// canonicalization.
+    #[error("Cannot canonicalize zero-length spherical point onto the unit sphere")]
+    ZeroSphericalPointNorm,
+
     /// Periodic offsets were requested for a non-periodic topology model.
     #[error("Periodic offsets are unsupported for {kind:?} topology")]
     PeriodicOffsetsUnsupported {
@@ -62,6 +73,22 @@ impl From<ToroidalDomainError> for GlobalTopologyModelError {
             }
         }
     }
+}
+
+/// Reject non-finite topology-model coordinates with axis-specific diagnostics.
+///
+/// This keeps fallible model APIs aligned with the public
+/// [`GlobalTopologyModelError::NonFiniteCoordinate`] contract before topology
+/// implementations canonicalize points or lift them for orientation predicates.
+fn validate_finite_coordinates<const D: usize>(
+    coords: &[f64; D],
+) -> Result<(), GlobalTopologyModelError> {
+    for (axis, coord) in coords.iter().copied().enumerate() {
+        if !coord.is_finite() {
+            return Err(GlobalTopologyModelError::NonFiniteCoordinate { axis, value: coord });
+        }
+    }
+    Ok(())
 }
 
 /// Scalar-generic topology behavior abstraction used by core triangulation code.
@@ -92,6 +119,8 @@ pub trait GlobalTopologyModel<const D: usize> {
     ///   domain periods are invalid.
     /// - [`GlobalTopologyModelError::NonFiniteCoordinate`] when a coordinate is
     ///   `NaN` or infinite.
+    /// - [`GlobalTopologyModelError::ZeroSphericalPointNorm`] when spherical
+    ///   canonicalization receives the zero vector.
     fn canonicalize_point_in_place(
         &self,
         coords: &mut [f64; D],
@@ -212,25 +241,11 @@ pub struct ToroidalModel<const D: usize> {
 impl<const D: usize> ToroidalModel<D> {
     /// Creates a toroidal model from an already-validated domain.
     ///
-    /// Use [`Self::try_new`] at raw numeric boundaries. This constructor is
-    /// infallible because [`ToroidalDomain`] already proves every period is
-    /// finite and strictly positive.
+    /// This constructor is infallible because [`ToroidalDomain`] already proves
+    /// every period is finite and strictly positive.
     #[must_use]
     pub const fn new(domain: ToroidalDomain<D>, mode: ToroidalConstructionMode) -> Self {
         Self { domain, mode }
-    }
-
-    /// Creates a toroidal model from raw domain periods.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ToroidalDomainError::InvalidPeriod`] when any period is
-    /// non-finite, zero, or negative.
-    pub fn try_new(
-        domain: [f64; D],
-        mode: ToroidalConstructionMode,
-    ) -> Result<Self, ToroidalDomainError> {
-        Ok(Self::new(ToroidalDomain::try_new(domain)?, mode))
     }
 }
 
@@ -263,11 +278,7 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
         mut coords: [f64; D],
         periodic_offset: Option<[i8; D]>,
     ) -> Result<[f64; D], GlobalTopologyModelError> {
-        for (axis, coord) in coords.iter().copied().enumerate() {
-            if !coord.is_finite() {
-                return Err(GlobalTopologyModelError::NonFiniteCoordinate { axis, value: coord });
-            }
-        }
+        validate_finite_coordinates(&coords)?;
 
         // Canonicalized toroidal mode intentionally accepts optional periodic offsets but
         // does not apply them. This differs from `EuclideanModel`, which treats any
@@ -310,7 +321,12 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
     }
 }
 
-/// Spherical behavior model scaffold.
+/// Spherical behavior model for unit-sphere projection.
+///
+/// This model backs [`GlobalTopology::Spherical`] canonicalization by projecting
+/// finite nonzero coordinates onto the unit sphere. Non-finite coordinates and
+/// zero-length vectors are reported as typed [`GlobalTopologyModelError`]
+/// values instead of producing `NaN` coordinates.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SphericalModel;
 
@@ -325,10 +341,15 @@ impl<const D: usize> GlobalTopologyModel<D> for SphericalModel {
 
     fn canonicalize_point_in_place(
         &self,
-        _coords: &mut [f64; D],
+        coords: &mut [f64; D],
     ) -> Result<(), GlobalTopologyModelError> {
-        // Scaffold: full sphere-constrained projection will be expanded in #188.
-        Ok(())
+        validate_finite_coordinates(coords)?;
+
+        if normalize_unit_sphere_coordinates(coords) {
+            Ok(())
+        } else {
+            Err(GlobalTopologyModelError::ZeroSphericalPointNorm)
+        }
     }
 
     fn lift_for_orientation(
@@ -341,6 +362,7 @@ impl<const D: usize> GlobalTopologyModel<D> for SphericalModel {
                 kind: TopologyKind::Spherical,
             });
         }
+        validate_finite_coordinates(&coords)?;
         Ok(coords)
     }
 }
@@ -424,7 +446,7 @@ impl<const D: usize> GlobalTopology<D> {
     /// that implements the `GlobalTopologyModel` trait. The returned adapter can be used internally
     /// to perform topology-specific operations like coordinate canonicalization and orientation lifting.
     #[must_use]
-    pub const fn model(self) -> GlobalTopologyModelAdapter<D> {
+    pub(crate) const fn model(self) -> GlobalTopologyModelAdapter<D> {
         GlobalTopologyModelAdapter::from_global_topology(self)
     }
 }
@@ -561,15 +583,27 @@ impl<const D: usize> GlobalTopologyModel<D> for GlobalTopologyModelAdapter<D> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::{assert_matches, f64::consts::FRAC_1_SQRT_2};
+
     use approx::assert_relative_eq;
-    use std::assert_matches;
+
+    use super::*;
 
     fn toroidal_model<const D: usize>(
         domain: [f64; D],
         mode: ToroidalConstructionMode,
     ) -> ToroidalModel<D> {
-        ToroidalModel::try_new(domain, mode).unwrap()
+        ToroidalModel::new(ToroidalDomain::try_new(domain).unwrap(), mode)
+    }
+
+    fn squared_norm(coords: &[f64]) -> f64 {
+        coords
+            .iter()
+            .fold(0.0, |acc, &coord| coord.mul_add(coord, acc))
+    }
+
+    fn assert_unit_norm(coords: &[f64]) {
+        assert_relative_eq!(squared_norm(coords), 1.0, epsilon = 1e-12);
     }
 
     #[test]
@@ -823,6 +857,66 @@ mod tests {
     }
 
     #[test]
+    fn spherical_model_canonicalizes_to_unit_sphere() {
+        let model = SphericalModel;
+        let mut coords = [3.0_f64, 4.0_f64, 0.0_f64];
+        model.canonicalize_point_in_place(&mut coords).unwrap();
+        assert_relative_eq!(coords[0], 0.6);
+        assert_relative_eq!(coords[1], 0.8);
+        assert_relative_eq!(coords[2], 0.0);
+        assert_unit_norm(&coords);
+    }
+
+    #[test]
+    fn spherical_model_handles_near_zero_vector() {
+        let model = SphericalModel;
+        let mut coords = [f64::MIN_POSITIVE, f64::MIN_POSITIVE];
+        model.canonicalize_point_in_place(&mut coords).unwrap();
+        assert_relative_eq!(coords[0], FRAC_1_SQRT_2);
+        assert_relative_eq!(coords[1], FRAC_1_SQRT_2);
+        assert_unit_norm(&coords);
+    }
+
+    #[test]
+    fn spherical_model_rejects_zero_vector() {
+        let model = SphericalModel;
+        let mut coords = [0.0_f64, 0.0_f64, 0.0_f64];
+        let err = model.canonicalize_point_in_place(&mut coords).unwrap_err();
+        assert_matches!(err, GlobalTopologyModelError::ZeroSphericalPointNorm);
+        assert_relative_eq!(coords[0], 0.0);
+        assert_relative_eq!(coords[1], 0.0);
+        assert_relative_eq!(coords[2], 0.0);
+    }
+
+    #[test]
+    fn spherical_model_rejects_non_finite_coordinate() {
+        let model = SphericalModel;
+        let mut coords = [1.0_f64, f64::NAN, 0.0_f64];
+        let err = model.canonicalize_point_in_place(&mut coords).unwrap_err();
+        assert_matches!(
+            err,
+            GlobalTopologyModelError::NonFiniteCoordinate { axis: 1, value }
+                if value.is_nan()
+        );
+        assert_relative_eq!(coords[0], 1.0);
+        assert!(coords[1].is_nan());
+        assert_relative_eq!(coords[2], 0.0);
+    }
+
+    #[test]
+    fn spherical_model_lift_rejects_non_finite_coordinate() {
+        let model = SphericalModel;
+        let err = model
+            .lift_for_orientation([1.0_f64, f64::INFINITY, 0.0_f64], None)
+            .unwrap_err();
+        assert_matches!(
+            err,
+            GlobalTopologyModelError::NonFiniteCoordinate { axis: 1, value }
+                if value.is_infinite()
+        );
+    }
+
+    #[test]
     fn hyperbolic_model_returns_correct_kind() {
         let model = HyperbolicModel;
         assert_eq!(
@@ -889,14 +983,6 @@ mod tests {
             ToroidalConstructionMode::Canonicalized,
         ));
         assert!(adapter.validate_configuration().is_ok());
-
-        let err = ToroidalModel::<2>::try_new([0.0, 3.0], ToroidalConstructionMode::Canonicalized)
-            .unwrap_err();
-        assert_matches!(
-            err,
-            ToroidalDomainError::InvalidPeriod { axis: 0, period }
-                if period.abs() < f64::EPSILON
-        );
     }
 
     #[test]
@@ -980,17 +1066,18 @@ mod tests {
     }
 
     #[test]
-    fn spherical_and_hyperbolic_models_are_identity_without_offsets() {
+    fn spherical_normalizes_hyperbolic_identity_without_offsets() {
         let spherical = SphericalModel;
-        let mut spherical_coords = [1.25_f64, -0.5_f64];
+        let mut spherical_coords = [3.0_f64, -4.0_f64];
         spherical
             .canonicalize_point_in_place(&mut spherical_coords)
             .unwrap();
         let spherical_lifted = spherical
             .lift_for_orientation(spherical_coords, None)
             .unwrap();
-        assert_relative_eq!(spherical_lifted[0], 1.25);
-        assert_relative_eq!(spherical_lifted[1], -0.5);
+        assert_relative_eq!(spherical_lifted[0], 0.6);
+        assert_relative_eq!(spherical_lifted[1], -0.8);
+        assert_unit_norm(&spherical_lifted);
 
         let hyperbolic = HyperbolicModel;
         let mut hyperbolic_coords = [-2.0_f64, 3.5_f64];
@@ -1034,8 +1121,7 @@ mod tests {
         let spherical_lifted = spherical
             .lift_for_orientation(spherical_coords, None)
             .unwrap();
-        assert_relative_eq!(spherical_lifted[0], 1.1);
-        assert_relative_eq!(spherical_lifted[1], -0.4);
+        assert_unit_norm(&spherical_lifted);
         assert_eq!(spherical.periodic_domain(), None);
         assert!(!spherical.supports_periodic_facet_signatures());
         assert!(!spherical.supports_periodic_orientation_offsets());
@@ -1058,13 +1144,24 @@ mod tests {
         assert!(!hyperbolic.supports_periodic_orientation_offsets());
     }
 
+    #[test]
+    fn spherical_adapter_reports_zero_norm_error() {
+        let model = GlobalTopology::<3>::Spherical.model();
+        let mut coords = [0.0_f64, 0.0_f64, 0.0_f64];
+        let err = model.canonicalize_point_in_place(&mut coords).unwrap_err();
+        assert_matches!(err, GlobalTopologyModelError::ZeroSphericalPointNorm);
+        assert_relative_eq!(coords[0], 0.0);
+        assert_relative_eq!(coords[1], 0.0);
+        assert_relative_eq!(coords[2], 0.0);
+    }
+
     // =========================================================================
     // Error handling tests
     // =========================================================================
 
     #[test]
     fn toroidal_model_rejects_zero_period() {
-        let err = ToroidalModel::<2>::try_new([0.0, 3.0], ToroidalConstructionMode::Canonicalized)
+        let err = ToroidalDomain::try_new([0.0, 3.0])
             .map_err(GlobalTopologyModelError::from)
             .unwrap_err();
         assert_matches!(
@@ -1076,7 +1173,7 @@ mod tests {
 
     #[test]
     fn toroidal_model_rejects_negative_period() {
-        let err = ToroidalModel::<2>::try_new([2.0, -1.0], ToroidalConstructionMode::Canonicalized)
+        let err = ToroidalDomain::try_new([2.0, -1.0])
             .map_err(GlobalTopologyModelError::from)
             .unwrap_err();
         assert_matches!(
@@ -1088,12 +1185,9 @@ mod tests {
 
     #[test]
     fn toroidal_model_rejects_infinite_period() {
-        let err = ToroidalModel::<2>::try_new(
-            [f64::INFINITY, 3.0],
-            ToroidalConstructionMode::Canonicalized,
-        )
-        .map_err(GlobalTopologyModelError::from)
-        .unwrap_err();
+        let err = ToroidalDomain::try_new([f64::INFINITY, 3.0])
+            .map_err(GlobalTopologyModelError::from)
+            .unwrap_err();
         assert_matches!(
             err,
             GlobalTopologyModelError::InvalidToroidalPeriod { axis: 0, period }
@@ -1103,10 +1197,9 @@ mod tests {
 
     #[test]
     fn toroidal_model_rejects_nan_period() {
-        let err =
-            ToroidalModel::<2>::try_new([f64::NAN, 3.0], ToroidalConstructionMode::Canonicalized)
-                .map_err(GlobalTopologyModelError::from)
-                .unwrap_err();
+        let err = ToroidalDomain::try_new([f64::NAN, 3.0])
+            .map_err(GlobalTopologyModelError::from)
+            .unwrap_err();
         assert_matches!(
             err,
             GlobalTopologyModelError::InvalidToroidalPeriod { axis: 0, period }
@@ -1316,10 +1409,9 @@ mod tests {
 
     #[test]
     fn invalid_toroidal_period_error_includes_axis_and_value() {
-        let err =
-            ToroidalModel::<3>::try_new([2.0, -5.0, 3.0], ToroidalConstructionMode::Canonicalized)
-                .map_err(GlobalTopologyModelError::from)
-                .unwrap_err();
+        let err = ToroidalDomain::try_new([2.0, -5.0, 3.0])
+            .map_err(GlobalTopologyModelError::from)
+            .unwrap_err();
 
         let err_str = err.to_string();
         assert!(
@@ -1371,6 +1463,23 @@ mod tests {
         assert!(
             err_str.contains("unsupported") || err_str.contains("not supported"),
             "Error should indicate unsupported operation: {err_str}"
+        );
+    }
+
+    #[test]
+    fn zero_spherical_point_norm_error_explains_projection_failure() {
+        let model = SphericalModel;
+        let mut coords = [0.0_f64, 0.0_f64];
+        let err = model.canonicalize_point_in_place(&mut coords).unwrap_err();
+
+        let err_str = err.to_string();
+        assert!(
+            err_str.contains("zero-length"),
+            "Error should explain missing norm: {err_str}"
+        );
+        assert!(
+            err_str.contains("unit sphere"),
+            "Error should mention the projection target: {err_str}"
         );
     }
 

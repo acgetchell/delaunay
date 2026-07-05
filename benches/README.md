@@ -191,21 +191,27 @@ profile summary workflow and captures the construction metrics automatically.
 just pachner-stress
 just pachner-stress-3d
 just pachner-stress-4d
+just bench-pachner-stress
 ```
 
-`pachner_stress.rs` contains two layers:
+`pachner_stress.rs` contains two Criterion layers:
 
 - accepted-move microcases for the unified 4D Pachner API facade
-- manual Monte Carlo stress cases for 3D and 4D long-run topology stability
+- Monte Carlo stress timing cases for 3D and 4D long-run topology stability
 
-The `just` recipes run the Monte Carlo cases at the default issue-scale target:
-10,000 vertices in 3D and 1,000 vertices in 4D, with 100,000 attempted random
-Pachner moves per Criterion sample and topology validation every 1,000
-attempts. Criterion requires at least 10 samples, so a default dimension-specific
-recipe measures at least ten 100K-move sequences. These recipes enable
-`DELAUNAY_PACHNER_STRESS_REPORT=1`, causing each measured sequence to emit a
-`pachner_stress_metric` line with accepted/rejected attempts, proposal
-diagnostics, validation time, final simplex count, and RSS memory counters.
+The `just pachner-stress*` recipes run one exact CLI diagnostic chain at the
+default issue-scale target: 10,000 vertices in 3D and 1,000 vertices in 4D, with
+100,000 attempted random Pachner moves and topology validation every 1,000
+attempts. They write progress CSV and summary JSON under `target/pachner_stress/`
+and also emit parseable stdout telemetry: one `pachner_stress_source` line for
+the prepared triangulation, `pachner_stress_progress` lines after each successful
+validation cadence, and a final `pachner_stress_metric` line with
+accepted/rejected attempts, proposal diagnostics, validation time, final simplex
+count, and RSS memory counters.
+
+Use `just bench-pachner-stress*` for Criterion timing evidence. Criterion
+requires at least 10 samples, so a default dimension-specific timing recipe
+measures at least ten 100K-move sequences.
 
 The stress cases validate topology plus the Level 4 embedding invariant that
 arbitrary Pachner moves are expected to preserve; Level 5 Delaunay validity is
@@ -219,12 +225,12 @@ and topology size.
 Useful overrides:
 
 ```bash
-just pachner-stress-4d 10000 250 1000 10
+just pachner-stress-4d 10000 250 1000 target/pachner_stress/4d
 
 DELAUNAY_PACHNER_STRESS_REPORT=1 \
 DELAUNAY_PACHNER_STRESS_ATTEMPTS=10000 \
 DELAUNAY_PACHNER_STRESS_VERTICES_4D=250 \
-cargo bench --profile perf --bench pachner_stress -- "monte_carlo/4d" --noplot
+cargo bench --profile perf --features pachner-stress --bench pachner_stress -- "monte_carlo/4d" --noplot
 ```
 
 Supported override families are `DELAUNAY_PACHNER_STRESS_VERTICES`,
@@ -234,6 +240,16 @@ Supported override families are `DELAUNAY_PACHNER_STRESS_VERTICES`,
 `DELAUNAY_PACHNER_STRESS_SEED`. Append `_3D` or `_4D` for a
 dimension-specific value. Use `MONTE_CARLO_SAMPLE_SIZE` to change Criterion's
 sample count; the benchmark enforces Criterion's minimum of 10 samples.
+
+`notebooks/02_pachner_stress_cli.ipynb` is the analysis front end for this
+telemetry. It runs the `delaunay pachner-stress` CLI from scalar first-cell
+controls, captures stdout/stderr logs plus CLI CSV/JSON under
+`target/notebooks/02_pachner_stress_cli/runs/`, normalizes telemetry into
+Polars-backed Parquet tables under
+`target/notebooks/02_pachner_stress_cli/tables/`, and renders summary figures
+under `target/notebooks/02_pachner_stress_cli/figures/`. Set `RUN_FRESH = False`
+in the first cell to reuse existing artifacts for the configured cases instead
+of launching a new CLI run during exploratory analysis.
 
 ## Circumsphere Containment
 

@@ -119,7 +119,7 @@
 //! // Levels 1–3: elements + structural + topology
 //! assert!(dt.as_triangulation().validate().is_ok());
 //!
-//! // Levels 1–4: elements + structural + topology + faithful embedding
+//! // Levels 1–4: elements + structural + topology + valid affine realization
 //! assert!(dt.as_triangulation().validate_embedding().is_ok());
 //!
 //! // Level 5 only: Delaunay property (assumes Levels 1–4)
@@ -233,8 +233,8 @@
 //!     boundary; two-sided facets are interior.
 //!   - Checks the **Euler characteristic** of the triangulation (using the topology module).
 //!
-//! - [`Triangulation`] also validates the **faithfulness of the embedding** in
-//!   the active affine chart. Level 4 (embedding) validation is performed by
+//! - [`Triangulation`] also validates the **valid affine realization** of the
+//!   abstract complex in the active affine chart. Level 4 validation is performed by
 //!   [`Triangulation::is_valid_embedding`](crate::Triangulation::is_valid_embedding) (Level 4 only) and
 //!   [`Triangulation::validate_embedding`](crate::Triangulation::validate_embedding) (Levels 1–4).
 //!   Euclidean topology is checked directly in its ambient chart; toroidal
@@ -257,7 +257,7 @@
 //! ## Validation
 //!
 //! The crate exposes five validation levels
-//! (element → structural → topology → embedding → Delaunay). The
+//! (element → structural → topology → valid affine realization → Delaunay). The
 //! canonical guide (when to use each level, complexity, examples, troubleshooting) lives in
 //! `docs/validation.md`:
 //! <https://github.com/acgetchell/delaunay/blob/main/docs/validation.md>
@@ -270,8 +270,8 @@
 //!   `dt.validate_structure()` for Levels 1–2.
 //! - Level 3 (topology / `Triangulation`): `dt.as_triangulation().is_valid_topology()` for topology-only checks, or
 //!   `dt.as_triangulation().validate()` for Levels 1–3.
-//! - Level 4 (embedding / `Triangulation`): `dt.as_triangulation().validate_embedding()` for cumulative
-//!   faithful embedded-geometry checks, or `dt.as_triangulation().embedding_report()` for layer-local diagnostics.
+//! - Level 4 (valid affine realization / `Triangulation`): `dt.as_triangulation().validate_embedding()`
+//!   for cumulative embedded-geometry checks, or `dt.as_triangulation().embedding_report()` for layer-local diagnostics.
 //! - Level 5 (Delaunay / `DelaunayTriangulation`): `dt.is_valid_delaunay()` for the Delaunay
 //!   property, or `dt.delaunay_report()` for layer-local diagnostics.
 //! - Cumulative Delaunay validation: `dt.validate()` for Levels 1–5, or

@@ -31,7 +31,7 @@ fn main() -> DelaunayResult<()> {
     let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     // Optional verification (see docs/validation.md for when to use each):
-    assert!(dt.as_triangulation().validate_embedding().is_ok()); // Levels 1-4 (faithful embedding)
+    assert!(dt.as_triangulation().validate_embedding().is_ok()); // Levels 1-4 (valid affine realization)
     assert!(dt.is_valid_delaunay().is_ok()); // Level 5 only (Delaunay property)
     Ok(())
 }

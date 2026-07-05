@@ -933,7 +933,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// This is a **Level 2 (TDS structural)** check in the validation hierarchy.
     /// It intentionally does **not** validate individual vertices/simplices (Level 1),
-    /// nor triangulation topology (Level 3), faithful embedding (Level 4), or the Delaunay property (Level 5).
+    /// nor triangulation topology (Level 3), valid affine realization (Level 4),
+    /// or the Delaunay property (Level 5).
     ///
     /// # Structural invariants checked
     /// - Vertex UUID↔key mapping consistency

@@ -1,7 +1,7 @@
 /target*
 /.vscode
 /.idea
-/.DS_Store
+.DS_Store
 /.env
 /*.html
 /coverage
@@ -18,6 +18,11 @@
 /package.json
 /__pycache__/
 **/__pycache__/
+
+# Jupyter notebook artifacts
+.ipynb_checkpoints/
+.virtual_documents/
+*.nbconvert.ipynb
 
 # Python packaging artifacts
 *.egg-info/

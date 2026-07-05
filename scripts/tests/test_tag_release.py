@@ -1,7 +1,5 @@
 """Tests for tag_release.py — repo URL normalization and credential safety."""
 
-from __future__ import annotations
-
 import subprocess
 from pathlib import PureWindowsPath
 from unittest.mock import patch

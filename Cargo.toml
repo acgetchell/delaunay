@@ -3,27 +3,39 @@ name = "delaunay"
 version = "0.7.8"
 edition = "2024"
 rust-version = "1.96.0"
+autobins = false
 authors = [ "Adam Getchell <adam@adamgetchell.org>" ]
 homepage = "https://github.com/acgetchell/delaunay"
 documentation = "https://docs.rs/delaunay"
 repository = "https://github.com/acgetchell/delaunay"
-description = "D-dimensional Delaunay triangulations and convex hulls in Rust, with exact predicates, multi-level validation, and bistellar flips"
+description = "D-dimensional Delaunay triangulations and convex hulls in Rust, with exact predicates, deterministic degeneracy handling, explicit topology validation, and bistellar flips for finite point sets."
 license = "BSD-3-Clause"
 keywords = [ "delaunay", "triangulation", "geometry", "convex-hull", "simplicial-complex" ]
 categories = [ "algorithms", "mathematics", "science" ]
 readme = "README.md"
 include = [
+    "/AGENTS.md",
     "/Cargo.toml",
+    "/CHANGELOG.md",
     "/CITATION.cff",
+    "/CODE_OF_CONDUCT.md",
+    "/CONTRIBUTING.md",
     "/LICENSE",
     "/README.md",
     "/REFERENCES.md",
+    "/SECURITY.md",
+    "/benches/PERFORMANCE_RESULTS.md",
     "/benches/**/*.rs",
     "/benches/README.md",
     "/docs/*.md",
     "/docs/architecture/*.md",
+    "/docs/archive/changelog/*.md",
+    "/docs/dev/*.md",
+    "/docs/dev/rust/*.md",
+    "/docs/images/*.png",
     "/examples/**/*.rs",
     "/examples/README.md",
+    "/notebooks/*.ipynb",
     "/src/**/*.rs",
     "/tests/*.proptest-regressions",
     "/tests/*.rs",
@@ -40,7 +52,9 @@ rustdoc-args = [ "--cfg", "docsrs" ]
 [dependencies]
 allocation-counter = { version = "0.8.1", optional = true } # for memory profiling
 arc-swap = "1.9.2"
+clap = { version = "4.6.1", features = [ "derive" ], optional = true }
 la-stack = { version = "0.4.3", default-features = false, features = [ "exact" ] }
+markov-chain-monte-carlo = { version = "0.4.0", optional = true }
 tracing = { version = "0.1.44", default-features = false, features = [ "std" ] }
 rustc-hash = "2.1.3" # Fast non-cryptographic hashing for performance
 smallvec = { version = "1.15.2", features = [ "serde" ] } # Stack allocation for small collections
@@ -48,29 +62,32 @@ num-traits = "0.2.19"
 ordered-float = { version = "5.3.0", features = [ "serde" ] }
 rand = "0.10.2"
 serde = { version = "1.0.228", features = [ "derive" ] }
+serde_json = { version = "1.0.150", optional = true }
 slotmap = { version = "1.1.1", features = [ "serde" ] }
+sysinfo = { version = "0.39.5", default-features = false, features = [ "system" ], optional = true } # Process memory monitoring for diagnostics
 thiserror = "2.0.18"
 uuid = { version = "1.23.4", features = [ "v4", "serde", "fast-rng" ] }
 
 [dev-dependencies]
 approx = "0.5.1"
 criterion = { version = "0.8.2", features = [ "html_reports" ] }
-markov-chain-monte-carlo = "0.4.0"
 pastey = "0.2.3"
 proptest = "1.11.0"
 serde_json = "1.0.150"
-sysinfo = "0.39.5" # Process memory monitoring for benchmarks
+sysinfo = { version = "0.39.5", default-features = false, features = [ "system" ] } # Process memory monitoring for benchmarks
 tracing-subscriber = { version = "0.3.23", features = [ "env-filter" ] }
 
 [features]
 # Dependency-backed feature gates.
+cli = [ "dep:clap", "dep:serde_json", "dep:sysinfo", "pachner-stress" ] # Build the companion `delaunay` command-line workflows.
 count-allocations = [ "dep:allocation-counter" ] # Enable allocation counting through the optional profiler dependency.
+pachner-stress = [ "dep:markov-chain-monte-carlo" ] # Enable MCMC-backed Pachner stress workflows.
 
 # cfg-only feature gates.
 #
 # These features intentionally do not enable dependencies. They select optional
 # diagnostics, logging, or long-running tests through `#[cfg(feature = "...")]`.
-bench = [  ] # Enable doc-hidden internal fixtures needed by benchmarks for invalid-topology repair cases.
+bench = [  ] # Enable doc-hidden internal fixtures needed by repair benchmarks.
 bench-logging = [  ] # Enable extra benchmark logging for CI diagnostics.
 diagnostics = [  ] # Enable opt-in diagnostic helpers and verbose test diagnostics.
 slow-tests = [  ] # Enable correctness tests that exceed the default-suite 10-second budget.
@@ -119,6 +136,12 @@ harness = false
 name = "pachner_stress"
 path = "benches/pachner_stress.rs"
 harness = false
+required-features = [ "pachner-stress" ]
+
+[[bin]]
+name = "delaunay"
+path = "src/main.rs"
+required-features = [ "cli" ]
 
 [[bench]]
 name = "pl_manifold_repair"
