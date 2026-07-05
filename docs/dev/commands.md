@@ -87,8 +87,9 @@ default test suite. When a diff touches multiple focused test surfaces, compose
 the matching recipes once each; for example, run `just test-doc` and
 `just test-integration` for doctest plus integration-test changes. Broad Rust
 correctness workflows such as `just test-rust` and `just ci` use
-`just test-rust-ci`, which runs Rust lib unit tests and integration tests
-together in one release-profile nextest invocation.
+`just test-rust-ci`, which runs Rust lib unit tests, default-feature integration
+tests, and feature-gated CLI integration tests in release-profile nextest
+invocations.
 
 During fast code-writing cycles, start with the smallest changed test or
 doctest rather than the whole focused bucket. For single-item rustdoc edits, run
@@ -237,8 +238,9 @@ correctness invariants throughout.
 Actions. It is a flat union of leaf validators rather than a nested call to
 `just check`. The target classes are kept separate: `rust-core-check` covers
 formatting, all-targets Clippy, rustdoc, and Semgrep; `bench-compile` compiles
-benchmark harnesses once; `test-rust-ci` compiles and runs Rust lib unit tests
-and release integration tests in one release-profile nextest invocation;
+benchmark harnesses once; `test-rust-ci` compiles and runs Rust lib unit tests,
+default-feature integration tests, and feature-gated CLI integration tests in
+release-profile nextest invocations;
 `test-doc` compiles and runs Rust doctests once in release profile;
 `notebook-check` lints notebooks and executes fast notebooks headlessly once.
 
@@ -271,9 +273,9 @@ just perf-compare
 just perf-vs-ref
 just perf-no-regressions
 just bench-perf-summary
-just pachner-stress
-just pachner-stress-3d
-just pachner-stress-4d
+just bench-pachner-stress
+just bench-pachner-stress-3d
+just bench-pachner-stress-4d
 cargo bench --profile perf --bench ci_performance_suite
 ```
 
@@ -285,18 +287,22 @@ do not treat smoke output as performance data.
 
 Workspace-wide benchmark recipes (`just bench`, `just bench-smoke`,
 `just bench-compile`, and the benchmark compile step inside `just ci`) enable
-`--features bench` so feature-gated benchmark fixtures are compiled.
+`--features bench` so feature-gated benchmark fixtures and benchmark-only
+dependencies are compiled.
 
-Use `just pachner-stress [attempts] [validate_every] [samples]` for the full
-manual 3D+4D Pachner Monte Carlo diagnostic run. The dimension-specific
-`just pachner-stress-3d` and `just pachner-stress-4d` recipes default to
-100,000 attempted moves per Criterion sample and enable report lines so long
-chains can be diagnosed without making the workflow part of routine CI.
+Use `just pachner-stress [attempts] [validate_every]` for the full manual 3D+4D
+Pachner Monte Carlo diagnostic run through the opt-in `delaunay` CLI. The
+dimension-specific `just pachner-stress-3d` and `just pachner-stress-4d`
+recipes default to 100,000 attempted moves, write progress CSV plus summary JSON
+under `target/pachner_stress/`, and keep parseable stdout report/progress lines
+so long chains can be diagnosed without making the workflow part of routine CI.
+Use `just bench-pachner-stress*` when Criterion timing statistics are needed.
 
 Some repair benchmarks need feature-gated fixtures that deliberately construct
 invalid-but-structurally-coherent topology. Run those harnesses with
 `--features bench`; the `bench` feature exists only for benchmark fixtures and
-must not expose normal construction escape hatches:
+benchmark-only dependencies, and must not expose normal construction escape
+hatches:
 
 ```bash
 cargo bench --profile perf --features bench --bench pl_manifold_repair -- --noplot
@@ -473,12 +479,34 @@ just notebook-clear-outputs-all
 ```
 
 `notebook-check` runs notebook hygiene and fast headless execution. Headless
-execution writes executed notebooks under `target/notebooks/` and leaves source
-notebooks unchanged. Slow notebooks should be named `*_slow.ipynb` or placed
-under `notebooks/slow/`; those run through `notebook-check-slow`.
+execution writes executed notebooks and generated notebook artifacts under
+`target/notebooks/<notebook-stem>/` and leaves source notebooks unchanged. The
+quickstart README hero preview also defaults to
+`target/notebooks/00_quickstart/delaunay_3d_readme.png`; set
+`DELAUNAY_README_FIGURE=docs/images/delaunay_3d_readme.png` only when
+intentionally refreshing the tracked asset. Slow notebooks should be named
+`*_slow.ipynb` or placed under `notebooks/slow/`; those run through
+`notebook-check-slow`.
 
-Before notebooks exist, these recipes are clean no-ops so the CI shape can stay
-stable ahead of notebook work.
+The Pachner stress notebook drives the opt-in `delaunay pachner-stress` CLI with
+a tiny smoke configuration by default, so it does not launch a long benchmark
+during `notebook-check`. To collect fresh telemetry and plots, edit the scalar
+run controls in the first cell and run:
+
+```bash
+just notebook notebooks/02_pachner_stress_cli.ipynb
+```
+
+It writes per-run CSV/JSON artifacts and raw stdout/stderr logs, normalizes
+analysis tables to Parquet with Polars, and reads those Parquet tables through
+`pl.scan_parquet` for displays and plots under
+`target/notebooks/02_pachner_stress_cli/`. The first cell controls scalar
+dimension, vertex count, attempted move count, validation cadence, cached-key
+refresh cadence, retries, seed, timeout, output location, and whether to reuse
+existing artifacts. Use `RUN_COUNT` with scalar step values for small sweeps.
+`DELAUNAY_BINARY` may still point the notebook at a prebuilt CLI binary.
+
+These recipes keep the CI shape stable as notebooks are added or split.
 
 ---
 
@@ -598,7 +626,7 @@ just action-lint
 | Validate core Rust checks | `just rust-core-check` |
 | Run all default test buckets | `just test` |
 | Run Rust tests only | `just test-rust` |
-| Run Rust CI nextest bucket | `just test-rust-ci` |
+| Run Rust CI nextest buckets, including CLI | `just test-rust-ci` |
 | Run Rust lib unit tests only | `just test-unit` |
 | Run doctests only | `just test-doc` |
 | Run integration tests | `just test-integration` |

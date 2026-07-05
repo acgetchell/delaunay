@@ -77,9 +77,10 @@ Toroidal support has two modes:
   issue #416 makes quotient selection scalable and diagnosable enough for
   release validation.
 
-Spherical and hyperbolic topologies are public metadata and behavior-model
-scaffolds today. They do not yet provide full construction or validation
-semantics for points constrained to a sphere or hyperbolic model.
+Spherical topologies provide public metadata and behavior-model support for
+projecting finite nonzero coordinates onto the unit sphere, but they do not yet
+provide full construction or validation semantics for sphere-constrained point
+sets. Hyperbolic topologies remain public metadata and behavior-model scaffolds.
 
 Manual topological editing APIs are intentionally low level. After bistellar
 flips or direct TDS-oriented work, callers should run repair and validation

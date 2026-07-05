@@ -48,9 +48,7 @@ before shipping.
 - **Transactional rollback architecture (#364):** replace or centralize
   full-TDS clone rollback where benchmarks show it matters, while preserving
   the current strong failed-mutation rollback guarantee.
-- **Naming and spherical topology (#323/#188):** make the breaking
-  `Cell` → `Simplex` rename and implement unit-sphere normalization for
-  `SphericalSpace::canonicalize_point()`.
+- **Naming cleanup (#323):** make the breaking `Cell` → `Simplex` rename.
 - **Iterator cleanup (#353):** prefer iterator-based collection-building paths
   where that improves clarity and allocation behavior.
 - **Rust 1.97.0 release gate (#329/#496):** raise the v0.8.0 MSRV to Rust

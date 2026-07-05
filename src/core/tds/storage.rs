@@ -104,7 +104,7 @@
 //! 3. **Level 3: Manifold Topology** - [`Triangulation::is_valid_topology()`]
 //!    - Builds on Level 2, and rejects isolated vertices (every vertex must be incident to ≥ 1 simplex)
 //!    - Adds manifold-with-boundary + Euler characteristic
-//! 4. **Level 4: Faithful Embedding** - [`Triangulation::validate_embedding()`](crate::Triangulation::validate_embedding)
+//! 4. **Level 4: Valid Affine Realization** - [`Triangulation::validate_embedding()`](crate::Triangulation::validate_embedding)
 //!    - Nondegenerate embedded simplices and no intersections outside shared faces
 //! 5. **Level 5: Delaunay Property** - [`DelaunayTriangulation::is_valid_delaunay()`]
 //!    - Empty circumsphere property

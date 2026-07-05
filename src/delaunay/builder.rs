@@ -3155,7 +3155,7 @@ mod tests {
         EuclideanModel, GlobalTopologyModel, ToroidalModel,
     };
     use crate::topology::traits::topological_space::{
-        GlobalTopology, TopologyKind, ToroidalConstructionMode, ToroidalDomainError,
+        GlobalTopology, TopologyKind, ToroidalConstructionMode, ToroidalDomain, ToroidalDomainError,
     };
     use crate::vertex;
     use approx::assert_relative_eq;
@@ -3166,7 +3166,7 @@ mod tests {
         domain: [f64; D],
         mode: ToroidalConstructionMode,
     ) -> ToroidalModel<D> {
-        ToroidalModel::try_new(domain, mode).unwrap()
+        ToroidalModel::new(ToroidalDomain::try_new(domain).unwrap(), mode)
     }
 
     fn assert_invalid_toroidal_domain_error(

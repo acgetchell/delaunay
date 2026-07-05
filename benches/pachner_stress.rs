@@ -8,7 +8,7 @@
 
 use std::{
     env,
-    fmt::{Display, Write as _},
+    fmt::Write as _,
     hint::black_box,
     num::{NonZeroUsize, TryFromIntError},
     sync::LazyLock,
@@ -109,21 +109,22 @@ struct MonteCarloConfig {
 }
 
 impl MonteCarloConfig {
-    const fn move_attempts(self) -> usize {
-        self.move_attempts.get()
+    const fn move_attempts(self) -> NonZeroUsize {
+        self.move_attempts
     }
 
-    const fn validate_every(self) -> usize {
-        self.validate_every.get()
+    const fn validate_every(self) -> NonZeroUsize {
+        self.validate_every
     }
 
-    const fn key_refresh_every(self) -> usize {
-        self.key_refresh_every.get()
+    const fn key_refresh_every(self) -> NonZeroUsize {
+        self.key_refresh_every
     }
 }
 
 #[derive(Clone, Copy, Debug)]
 struct MonteCarloReport {
+    sequence: usize,
     attempts: usize,
     accepted: usize,
     rejected: usize,
@@ -140,6 +141,82 @@ struct MonteCarloReport {
     final_rss_kib: u64,
 }
 
+#[derive(Clone, Copy)]
+struct MonteCarloProgress {
+    sequence: usize,
+    step: usize,
+    validations: usize,
+    validation_nanos: u128,
+    acceptance_rate: f64,
+    rss_kib: u64,
+}
+
+fn emit_monte_carlo_source<const D: usize>(
+    config: MonteCarloConfig,
+    tri: &MonteCarloTriangulation<D>,
+) {
+    println!(
+        "pachner_stress_source dimension={D} label={} vertices={} simplices={} seed={}",
+        config.label,
+        tri.number_of_vertices(),
+        tri.number_of_simplices(),
+        config.seed
+    );
+}
+
+fn emit_monte_carlo_progress<const D: usize>(
+    config: MonteCarloConfig,
+    chain: &Chain<MonteCarloTriangulation<D>>,
+    proposal: &PachnerProposalKernel<D>,
+    progress: MonteCarloProgress,
+) {
+    println!(
+        "pachner_stress_progress dimension={D} label={} sequence={} step={} attempts={} accepted={} \
+         rejected={} candidate_misses={} proposal_rejections={} validations={} \
+         validation_nanos={} acceptance_rate={:.6} vertices={} simplices={} rss_kib={}",
+        config.label,
+        progress.sequence,
+        progress.step,
+        config.move_attempts().get(),
+        chain.accepted(),
+        chain.rejected(),
+        proposal.candidate_misses,
+        proposal.proposal_rejections,
+        progress.validations,
+        progress.validation_nanos,
+        progress.acceptance_rate,
+        chain.state().number_of_vertices(),
+        chain.state().number_of_simplices(),
+        progress.rss_kib
+    );
+}
+
+fn emit_monte_carlo_report<const D: usize>(config: MonteCarloConfig, report: MonteCarloReport) {
+    println!(
+        "pachner_stress_metric dimension={D} label={} sequence={} attempts={} accepted={} rejected={} \
+         candidate_misses={} proposal_rejections={} validations={} validation_nanos={} \
+         elapsed_nanos={} attempts_per_second={} final_vertices={} final_simplices={} \
+         start_rss_kib={} max_rss_kib={} final_rss_kib={}",
+        config.label,
+        report.sequence,
+        report.attempts,
+        report.accepted,
+        report.rejected,
+        report.candidate_misses,
+        report.proposal_rejections,
+        report.validations,
+        report.validation_nanos,
+        report.elapsed_nanos,
+        report.attempts_per_second,
+        report.final_vertices,
+        report.final_simplices,
+        report.start_rss_kib,
+        report.max_rss_kib,
+        report.final_rss_kib
+    );
+}
+
+#[derive(Default)]
 struct MoveSampler {
     simplex_keys: Vec<SimplexKey>,
     vertex_keys: Vec<VertexKey>,
@@ -151,13 +228,7 @@ struct MoveSampler {
 impl MoveSampler {
     /// Captures the current live key frontier used for randomized move proposals.
     fn from_triangulation<const D: usize>(dt: &MonteCarloTriangulation<D>) -> Self {
-        let mut sampler = Self {
-            simplex_keys: Vec::new(),
-            vertex_keys: Vec::new(),
-            facet_handles: Vec::new(),
-            edge_keys: Vec::new(),
-            ridge_handles: Vec::new(),
-        };
+        let mut sampler = Self::default();
         sampler.refresh(dt);
         sampler
     }
@@ -185,37 +256,38 @@ impl MoveSampler {
     }
 
     /// Selects a cached simplex key uniformly from the last refresh.
-    fn random_simplex_key<R: Rng + ?Sized>(&self, rng: &mut R) -> Option<SimplexKey> {
+    fn random_simplex_key(&self, rng: &mut (impl Rng + ?Sized)) -> Option<SimplexKey> {
         random_cached(&self.simplex_keys, rng)
     }
 
     /// Selects a cached vertex key uniformly from the last refresh.
-    fn random_vertex_key<R: Rng + ?Sized>(&self, rng: &mut R) -> Option<VertexKey> {
+    fn random_vertex_key(&self, rng: &mut (impl Rng + ?Sized)) -> Option<VertexKey> {
         random_cached(&self.vertex_keys, rng)
     }
 
     /// Selects a cached facet handle uniformly from the last refresh.
-    fn random_facet<R: Rng + ?Sized>(&self, rng: &mut R) -> Option<FacetHandle> {
+    fn random_facet(&self, rng: &mut (impl Rng + ?Sized)) -> Option<FacetHandle> {
         random_cached(&self.facet_handles, rng)
     }
 
     /// Selects a cached edge key uniformly from the last refresh.
-    fn random_edge<R: Rng + ?Sized>(&self, rng: &mut R) -> Option<EdgeKey> {
+    fn random_edge(&self, rng: &mut (impl Rng + ?Sized)) -> Option<EdgeKey> {
         random_cached(&self.edge_keys, rng)
     }
 
     /// Selects a cached ridge handle uniformly from the last refresh.
-    fn random_ridge<R: Rng + ?Sized>(&self, rng: &mut R) -> Option<RidgeHandle> {
+    fn random_ridge(&self, rng: &mut (impl Rng + ?Sized)) -> Option<RidgeHandle> {
         random_cached(&self.ridge_handles, rng)
     }
 }
 
 /// Selects a cached proposal item uniformly while preserving empty-cache misses.
-fn random_cached<T: Copy, R: Rng + ?Sized>(values: &[T], rng: &mut R) -> Option<T> {
-    (!values.is_empty()).then(|| {
-        let index = rng.random_range(0..values.len());
-        values[index]
-    })
+fn random_cached<T: Copy>(values: &[T], rng: &mut (impl Rng + ?Sized)) -> Option<T> {
+    if values.is_empty() {
+        return None;
+    }
+    let index = rng.random_range(0..values.len());
+    Some(values[index])
 }
 
 /// Flat diagnostic target: successful planned Pachner moves accept with probability one.
@@ -229,7 +301,6 @@ impl<const D: usize> Target<MonteCarloTriangulation<D>> for FlatPachnerTarget {
 
 #[derive(Clone, Debug)]
 struct PachnerChainPlan<const D: usize> {
-    request: PachnerMove<(), D>,
     proposal: PachnerProposal<(), D>,
 }
 
@@ -273,7 +344,7 @@ impl<const D: usize> PachnerProposalKernel<D> {
     fn maybe_refresh(&mut self, dt: &MonteCarloTriangulation<D>) {
         if self
             .proposed_steps
-            .is_multiple_of(self.config.key_refresh_every())
+            .is_multiple_of(self.config.key_refresh_every().get())
         {
             self.sampler.refresh(dt);
         }
@@ -305,7 +376,7 @@ impl<const D: usize> DelayedProposal<MonteCarloTriangulation<D>> for PachnerProp
         match state.propose_pachner(request) {
             Ok(proposal) => {
                 self.last_no_plan_info = None;
-                Ok(Some(PachnerChainPlan { request, proposal }))
+                Ok(Some(PachnerChainPlan { proposal }))
             }
             Err(error) => {
                 self.proposal_rejections = self.proposal_rejections.saturating_add(1);
@@ -333,7 +404,7 @@ impl<const D: usize> DelayedProposal<MonteCarloTriangulation<D>> for PachnerProp
 
     fn info(&self, plan: &Self::Plan) -> Self::Info {
         PachnerStepInfo::Proposed {
-            request: plan.request,
+            request: *plan.proposal.request(),
         }
     }
 
@@ -453,10 +524,7 @@ fn monte_carlo_bounds() -> CoordinateRange<f64> {
 }
 
 /// Builds the initial randomized triangulation for one Monte Carlo stress case.
-fn build_monte_carlo_dt<const D: usize>(
-    config: MonteCarloConfig,
-    emit_report: bool,
-) -> MonteCarloTriangulation<D> {
+fn build_monte_carlo_dt<const D: usize>(config: MonteCarloConfig) -> MonteCarloTriangulation<D> {
     let points = generate_random_points_in_range_seeded::<D>(
         config.vertex_count,
         monte_carlo_bounds(),
@@ -475,36 +543,28 @@ fn build_monte_carlo_dt<const D: usize>(
         .build_with_kernel(&RobustKernel::new())
         .or_abort();
     let tri = dt.into_triangulation();
-    validate_monte_carlo_state(
-        &tri,
-        format_args!(
+    validate_monte_carlo_state(&tri, || {
+        format!(
             "initial Monte Carlo state dimension={D} label={} seed={}",
             config.label, config.seed
-        ),
-    );
-    if emit_report {
-        println!(
-            "pachner_stress_source dimension={D} label={} vertices={} simplices={} seed={}",
-            config.label,
-            tri.number_of_vertices(),
-            tri.number_of_simplices(),
-            config.seed
-        );
-    }
+        )
+    });
     tri
 }
 
 /// Validates the invariants Pachner moves are expected to preserve.
 fn validate_monte_carlo_state<const D: usize>(
     dt: &MonteCarloTriangulation<D>,
-    context: impl Display,
+    context: impl FnOnce() -> String,
 ) {
     if let Err(error) = dt.validate() {
+        let context = context();
         abort_benchmark(format_args!(
             "{context}: topology validation failed: {error}"
         ));
     }
     if let Err(error) = dt.is_valid_embedding() {
+        let context = context();
         abort_benchmark(format_args!(
             "{context}: embedding validation failed: {error}"
         ));
@@ -530,6 +590,16 @@ fn memory_usage_kib() -> u64 {
 /// Converts bounded diagnostic counters into trace-observable values.
 fn trace_value(value: usize) -> f64 {
     f64::from(u32::try_from(value).or_abort())
+}
+
+/// Computes the accepted-step ratio from chain counters without scanning trace rows.
+fn chain_acceptance_rate<S>(chain: &Chain<S>) -> f64 {
+    let total = chain.total_steps();
+    if total == 0 {
+        0.0
+    } else {
+        trace_value(chain.accepted()) / trace_value(total)
+    }
 }
 
 /// Numeric observables recorded for each completed MCMC step.
@@ -616,7 +686,7 @@ fn monte_carlo_validation_context<const D: usize>(
          last_request={:?} last_result={:?}",
         config.label,
         step,
-        config.move_attempts(),
+        config.move_attempts().get(),
         chain.accepted(),
         chain.rejected(),
         proposal.candidate_misses,
@@ -654,10 +724,10 @@ fn abort_monte_carlo_step_error<const D: usize>(
 }
 
 /// Chooses one raw Pachner request from the current cached topology frontier.
-fn random_pachner_move<R: Rng + ?Sized, const D: usize>(
+fn random_pachner_move<const D: usize>(
     dt: &MonteCarloTriangulation<D>,
     sampler: &MoveSampler,
-    rng: &mut R,
+    rng: &mut (impl Rng + ?Sized),
     config: MonteCarloConfig,
 ) -> Option<PachnerMove<(), D>> {
     let move_kind_count = if D >= 4 { 6 } else { 5 };
@@ -674,9 +744,15 @@ fn random_pachner_move<R: Rng + ?Sized, const D: usize>(
         1 => sampler
             .random_vertex_key(rng)
             .map(|vertex_key| PachnerMove::K1Remove { vertex_key }),
-        2 => random_k2(sampler, rng),
-        3 => random_k2_inverse(sampler, rng),
-        4 => random_k3(sampler, rng),
+        2 => sampler
+            .random_facet(rng)
+            .map(|facet| PachnerMove::K2 { facet }),
+        3 => sampler
+            .random_edge(rng)
+            .map(|edge| PachnerMove::K2Inverse { edge }),
+        4 => sampler
+            .random_ridge(rng)
+            .map(|ridge| PachnerMove::K3 { ridge }),
         5 => random_k3_inverse(dt, sampler, rng),
         _ => None,
     }
@@ -689,39 +765,12 @@ fn random_k1_insert<const D: usize>(
     rng: &mut (impl Rng + ?Sized),
 ) -> Option<PachnerMove<(), D>> {
     let simplex_key = sampler.random_simplex_key(rng)?;
-    let coords = random_simplex_centroid(dt, simplex_key)?.or_abort();
+    let coords = random_simplex_centroid(dt, simplex_key)?;
     let vertex: Vertex<(), D> = vertex!(coords).or_abort();
     Some(PachnerMove::K1Insert {
         simplex_key,
         vertex,
     })
-}
-
-/// Chooses a random simplex facet for a k=2 move.
-fn random_k2<const D: usize>(
-    sampler: &MoveSampler,
-    rng: &mut (impl Rng + ?Sized),
-) -> Option<PachnerMove<(), D>> {
-    let facet = sampler.random_facet(rng)?;
-    Some(PachnerMove::K2 { facet })
-}
-
-/// Chooses two vertices from a random simplex as an inverse k=2 edge candidate.
-fn random_k2_inverse<const D: usize>(
-    sampler: &MoveSampler,
-    rng: &mut (impl Rng + ?Sized),
-) -> Option<PachnerMove<(), D>> {
-    let edge = sampler.random_edge(rng)?;
-    Some(PachnerMove::K2Inverse { edge })
-}
-
-/// Chooses a random ridge from a random simplex for a k=3 move.
-fn random_k3<const D: usize>(
-    sampler: &MoveSampler,
-    rng: &mut (impl Rng + ?Sized),
-) -> Option<PachnerMove<(), D>> {
-    let ridge = sampler.random_ridge(rng)?;
-    Some(PachnerMove::K3 { ridge })
 }
 
 /// Chooses three vertices from a random simplex as an inverse k=3 triangle candidate.
@@ -741,7 +790,7 @@ fn random_k3_inverse<const D: usize>(
 fn random_simplex_centroid<const D: usize>(
     dt: &MonteCarloTriangulation<D>,
     simplex_key: SimplexKey,
-) -> Option<Result<[f64; D], TryFromIntError>> {
+) -> Option<[f64; D]> {
     let vertices = dt.simplex_vertices(simplex_key).ok()?;
     let mut coords = [0.0; D];
     for &vertex_key in vertices {
@@ -751,14 +800,11 @@ fn random_simplex_centroid<const D: usize>(
         }
     }
 
-    let vertex_count = match u32::try_from(vertices.len()) {
-        Ok(value) => f64::from(value),
-        Err(error) => return Some(Err(error)),
-    };
+    let vertex_count = f64::from(u32::try_from(vertices.len()).ok()?);
     for coord in &mut coords {
         *coord /= vertex_count;
     }
-    Some(Ok(coords))
+    Some(coords)
 }
 
 /// Chooses three distinct indices from a collection length.
@@ -782,6 +828,8 @@ fn three_distinct_indices(rng: &mut (impl Rng + ?Sized), len: usize) -> Option<[
 fn run_monte_carlo_sequence<const D: usize>(
     dt: MonteCarloTriangulation<D>,
     config: MonteCarloConfig,
+    sequence: usize,
+    emit_reports: bool,
 ) -> MonteCarloReport {
     let mut rng = StdRng::seed_from_u64(config.seed ^ 0x0253_0253_0253_0253);
     let target = FlatPachnerTarget;
@@ -803,7 +851,7 @@ fn run_monte_carlo_sequence<const D: usize>(
     let mut validation_nanos = 0;
     let mut last_step = None;
 
-    for step in 1..=config.move_attempts() {
+    for step in 1..=config.move_attempts().get() {
         let mcmc_step = chain
             .step_delayed(&target, &mut proposal, &mut rng)
             .unwrap_or_else(|error| {
@@ -819,46 +867,49 @@ fn run_monte_carlo_sequence<const D: usize>(
         record_monte_carlo_step(&mut recorder, &chain, &proposal, &mcmc_step);
         last_step = Some(mcmc_step);
 
-        if step.is_multiple_of(config.validate_every()) {
-            let validation_start = Instant::now();
-            let context = monte_carlo_validation_context(
+        if step.is_multiple_of(config.validate_every().get()) {
+            validate_monte_carlo_step(
                 config,
                 step,
                 &chain,
                 &proposal,
                 last_step.as_ref(),
                 recorder.trace(),
+                &mut validations,
+                &mut validation_nanos,
+                &mut max_rss_kib,
+                emit_reports,
+                sequence,
             );
-            validate_monte_carlo_state(chain.state(), context);
-            validation_nanos += validation_start.elapsed().as_nanos();
-            validations += 1;
-            max_rss_kib = max_rss_kib.max(memory_usage_kib());
             proposal.sampler.refresh(chain.state());
         }
     }
 
     if !config
         .move_attempts()
-        .is_multiple_of(config.validate_every())
+        .get()
+        .is_multiple_of(config.validate_every().get())
     {
-        let validation_start = Instant::now();
-        let context = monte_carlo_validation_context(
+        validate_monte_carlo_step(
             config,
-            config.move_attempts(),
+            config.move_attempts().get(),
             &chain,
             &proposal,
             last_step.as_ref(),
             recorder.trace(),
+            &mut validations,
+            &mut validation_nanos,
+            &mut max_rss_kib,
+            emit_reports,
+            sequence,
         );
-        validate_monte_carlo_state(chain.state(), context);
-        validation_nanos += validation_start.elapsed().as_nanos();
-        validations += 1;
     }
 
     let final_rss_kib = memory_usage_kib();
     max_rss_kib = max_rss_kib.max(final_rss_kib);
     MonteCarloReport {
-        attempts: config.move_attempts(),
+        sequence,
+        attempts: config.move_attempts().get(),
         accepted: chain.accepted(),
         rejected: chain.rejected(),
         candidate_misses: proposal.candidate_misses,
@@ -875,32 +926,54 @@ fn run_monte_carlo_sequence<const D: usize>(
     }
 }
 
-/// Records the Monte Carlo sequence counters in a parseable one-line format.
-fn emit_monte_carlo_report<const D: usize>(config: MonteCarloConfig, report: MonteCarloReport) {
-    println!(
-        "pachner_stress_metric dimension={D} label={} attempts={} accepted={} rejected={} \
-         candidate_misses={} proposal_rejections={} validations={} validation_nanos={} \
-         elapsed_nanos={} attempts_per_second={} final_vertices={} final_simplices={} \
-         start_rss_kib={} max_rss_kib={} final_rss_kib={}",
-        config.label,
-        report.attempts,
-        report.accepted,
-        report.rejected,
-        report.candidate_misses,
-        report.proposal_rejections,
-        report.validations,
-        report.validation_nanos,
-        report.elapsed_nanos,
-        report.attempts_per_second,
-        report.final_vertices,
-        report.final_simplices,
-        report.start_rss_kib,
-        report.max_rss_kib,
-        report.final_rss_kib
-    );
+/// Validate one cadence boundary and optionally emit progress telemetry.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "benchmark diagnostics keep live chain state visible at validation boundaries"
+)]
+fn validate_monte_carlo_step<const D: usize>(
+    config: MonteCarloConfig,
+    step: usize,
+    chain: &Chain<MonteCarloTriangulation<D>>,
+    proposal: &PachnerProposalKernel<D>,
+    last_step: Option<&DelayedStep<PachnerStepInfo<D>>>,
+    trace: &Trace,
+    validations: &mut usize,
+    validation_nanos: &mut u128,
+    max_rss_kib: &mut u64,
+    emit_reports: bool,
+    sequence: usize,
+) {
+    let validation_start = Instant::now();
+    validate_monte_carlo_state(chain.state(), || {
+        monte_carlo_validation_context(config, step, chain, proposal, last_step, trace)
+    });
+    *validation_nanos += validation_start.elapsed().as_nanos();
+    *validations += 1;
+    let rss_kib = memory_usage_kib();
+    *max_rss_kib = (*max_rss_kib).max(rss_kib);
+
+    if emit_reports {
+        emit_monte_carlo_progress::<D>(
+            config,
+            chain,
+            proposal,
+            MonteCarloProgress {
+                sequence,
+                step,
+                validations: *validations,
+                validation_nanos: *validation_nanos,
+                acceptance_rate: chain_acceptance_rate(chain),
+                rss_kib,
+            },
+        );
+    }
 }
 
-/// Runs one Monte Carlo sequence per Criterion iteration and excludes reporting overhead.
+/// Runs one Monte Carlo sequence per Criterion iteration.
+///
+/// Report-enabled runs emit live progress from inside the sequence so long
+/// diagnostics can be watched in real time; use quiet runs for timing evidence.
 fn bench_monte_carlo_case<const D: usize>(
     c: &mut Criterion,
     label: &'static str,
@@ -913,26 +986,38 @@ fn bench_monte_carlo_case<const D: usize>(
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(30));
     group.throughput(Throughput::Elements(
-        u64::try_from(config.move_attempts()).or_abort(),
+        u64::try_from(config.move_attempts().get()).or_abort(),
     ));
 
     let bench_name = format!(
         "{}v_{}attempts_validate{}",
         config.vertex_count,
-        config.move_attempts(),
-        config.validate_every()
+        config.move_attempts().get(),
+        config.validate_every().get()
     );
     let emit_reports = monte_carlo_report_enabled();
     group.bench_function(bench_name, |b| {
         let mut source: Option<MonteCarloTriangulation<D>> = None;
+        let mut sequence = 0;
         b.iter_custom(|iters| {
             let mut total = Duration::new(0, 0);
             for _ in 0..iters {
+                sequence += 1;
+                if source.is_none() {
+                    let tri = build_monte_carlo_dt::<D>(config);
+                    if emit_reports {
+                        emit_monte_carlo_source::<D>(config, &tri);
+                    }
+                    source = Some(tri);
+                }
                 let dt = source
-                    .get_or_insert_with(|| build_monte_carlo_dt::<D>(config, emit_reports))
+                    .as_ref()
+                    .or_abort(format_args!(
+                        "Monte Carlo source triangulation should exist"
+                    ))
                     .clone();
                 let start = Instant::now();
-                let mut report = run_monte_carlo_sequence(dt, config);
+                let mut report = run_monte_carlo_sequence(dt, config, sequence, emit_reports);
                 let elapsed = start.elapsed();
                 total += elapsed;
                 report.elapsed_nanos = elapsed.as_nanos();

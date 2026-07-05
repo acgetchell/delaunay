@@ -16,7 +16,7 @@ The library provides **five levels of validation**, each building on the previou
 1. **Element Validity** - Basic data integrity
 2. **TDS Structural Validity** - Combinatorial correctness
 3. **Manifold Topology** - Topological properties
-4. **Faithful Embedding** - Nondegenerate embedded simplices and no overlap outside shared faces
+4. **Valid Affine Realization** - Nondegenerate realized simplices and no overlap outside shared faces
 5. **Delaunay Property** - Geometric optimality
 
 ## Validation Hierarchy
@@ -28,7 +28,7 @@ Level 2: TDS Structural Validity
     ↓ (called by)
 Level 3: Manifold Topology
     ↓ (independent)
-Level 4: Faithful Embedding
+Level 4: Valid Affine Realization
     ↓ (independent)
 Level 5: Delaunay Property
 ```
@@ -64,12 +64,12 @@ as a full audit and as input to future repair workflows.
 The library always provides **explicit** validation APIs (Levels 1–5) that you can call when you need them.
 
 Separately, incremental construction (`new()` / `insert*()`) can run an **automatic**
-global Level 3 topology pass plus changed-scope Level 4 embedding guards after an insertion attempt,
+global Level 3 topology pass plus changed-scope Level 4 valid-affine-realization guards after an insertion attempt,
 controlled by a `ValidationPolicy` on the triangulation.
 
-This is a performance vs certainty knob: Level 3 (`Triangulation::is_valid_topology()`) and
-full pairwise Level 4 (`Triangulation::is_valid_embedding()`) are relatively expensive, so the
-default behavior is to run automatic global topology and changed-scope embedding checks only when
+This is a performance vs certainty knob: Level 3 (`Triangulation::is_valid_topology()`) and full
+pairwise Level 4 (`Triangulation::is_valid_embedding()`) are relatively expensive, so the default
+behavior is to run automatic global topology and changed-scope realization checks only when
 something looks “off”.
 
 ### What is validated automatically?
@@ -487,11 +487,12 @@ fn main() -> DelaunayResult<()> {
 
 ---
 
-## Level 4: Faithful Embedding
+## Level 4: Valid Affine Realization
 
 ### Purpose
 
-Validates that the abstract triangulation is faithfully realized in the active affine chart.
+Validates that the abstract triangulation has a geometrically valid affine realization in the active
+affine chart.
 
 ### Methods
 
@@ -510,7 +511,7 @@ Validates that the abstract triangulation is faithfully realized in the active a
 - **Toroidal periodic images**: toroidal topology is checked in covering-space charts, including
   periodic translates that can overlap across the fundamental-domain boundary.
 - **Independent of Delaunay predicates**: Level 4 does not evaluate the empty-circumsphere property.
-  It catches invalid embedded realizations before Level 5 asks whether the faithful embedding is
+  It catches invalid affine realizations before Level 5 asks whether the realized triangulation is
   Delaunay.
 
 Spherical and hyperbolic topologies currently return an unsupported-topology error for Level 4 until
@@ -531,7 +532,7 @@ section of `REFERENCES.md`.
 - **Tests**: After construction or manual edits when embedded correctness matters.
 - **Debug**: Investigating folded, self-overlapping, or zero-volume triangulations.
 - **Before Delaunay certification**: Level 5 validation runs Level 4 first so Delaunay predicates are
-  evaluated only on a faithful embedded complex.
+  evaluated only on a valid affine realization.
 - **Repair planning**: `Triangulation::embedding_report()` reports simplex keys, UUIDs, shared
   vertices, and witness vertices that can guide explicit rollback or deletion-based repair. The
   validator itself is pure and does not delete vertices.
@@ -552,7 +553,7 @@ fn main() -> DelaunayResult<()> {
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
-    // Faithful embedding validation (Levels 1-4)
+    // Valid affine realization validation (Levels 1-4)
     match dt.as_triangulation().validate_embedding() {
         Ok(()) => println!("valid embedded triangulation"),
         Err(e) => eprintln!("embedding violation: {}", e),
@@ -567,7 +568,7 @@ fn main() -> DelaunayResult<()> {
 
 ### Purpose
 
-Validates the geometric optimality of a faithfully embedded triangulation.
+Validates the geometric optimality of a valid affine realization.
 
 ### Methods
 
@@ -659,7 +660,7 @@ Start: Do you need to validate?
     ├─ Production validation?
     │   ├─ Performance critical? → Level 2 (`dt.is_valid_structure()`)
     │   ├─ Topological correctness critical? → Level 3 (`dt.as_triangulation().is_valid_topology()`)
-    │   ├─ Embedded correctness critical? → Level 4 (`dt.as_triangulation().validate_embedding()`)
+    │   ├─ Realization correctness critical? → Level 4 (`dt.as_triangulation().validate_embedding()`)
     │   └─ Delaunay correctness critical? → Level 5 (`dt.is_valid_delaunay()`)
     │
     └─ Paranoid mode? → All levels (`dt.validate()`)
@@ -670,14 +671,14 @@ Start: Do you need to validate?
 ## Performance notes
 
 - Level 2 and Level 3 validation are dominated by combinatorial bookkeeping (roughly O(simplices × D²)).
-- Level 4 embedding validation checks simplex degeneracy and pairwise embedded intersections, using
-  bounding boxes before exact rational witness construction.
+- Level 4 valid-affine-realization validation checks simplex degeneracy and pairwise realized-simplex
+  intersections, using bounding boxes before exact rational witness construction.
 - Level 5 `DelaunayTriangulation::is_valid_delaunay()` verifies the Delaunay property via local flip predicates after
-  Level 4 embedding validation.
+  Level 4 valid-affine-realization validation.
 - A brute-force empty-circumsphere check would be O(simplices × vertices) and is not used by `is_valid_delaunay()`.
 
 In practice, `DelaunayTriangulation::validate()` is usually dominated by Level 3 topology work or
-Level 4 pairwise embedding checks, depending on mesh size and overlap candidates.
+Level 4 pairwise realization checks, depending on mesh size and overlap candidates.
 As a post-construction acceptance check, the current 7,500-vertex 3D large-scale
 debug harness is the default near-one-minute `validation_report` run for Levels
 1–5; on maintainer Apple M4 Max hardware the final report itself is a
@@ -694,7 +695,7 @@ helper.
 used for validation failures across Levels 1–4. Its variants preserve the
 failing layer's typed error: `TdsError` for Levels 1–2,
 `TriangulationValidationError` for Level 3 topology failures, and
-`TriangulationEmbeddingValidationError` for Level 4 embedding failures. In normal
+`TriangulationEmbeddingValidationError` for Level 4 valid-affine-realization failures. In normal
 Level 3 code, handle the wrapper as shown in Patterns 2 and 3 rather than
 expecting `TriangulationValidationError` directly.
 
@@ -711,7 +712,7 @@ fn test_my_triangulation_operation() {
     // Validate at appropriate level
     assert!(dt.is_valid_structure().is_ok()); // Level 2: Structural
     assert!(dt.as_triangulation().is_valid_topology().is_ok()); // Level 3: Topology
-    assert!(dt.as_triangulation().validate_embedding().is_ok()); // Level 4: Faithful embedding
+    assert!(dt.as_triangulation().validate_embedding().is_ok()); // Level 4: valid affine realization
     assert!(dt.is_valid_delaunay().is_ok());        // Level 5: Delaunay property
     assert!(dt.validate().is_ok());                 // Levels 1–5: Full validation
 }

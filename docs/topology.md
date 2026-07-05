@@ -2,8 +2,10 @@
 
 This document describes the topology-related parts of the `delaunay` crate:
 Level 3 manifold validation, Euler characteristic checks, and support for
-different topological spaces (Euclidean and toroidal are fully integrated;
-spherical and hyperbolic are currently scaffolded for future integration).
+different topological spaces. Euclidean and toroidal workflows are fully
+integrated; spherical topology currently provides unit-sphere coordinate
+projection, while full spherical construction/validation and hyperbolic support
+remain future work.
 
 If you want the user-facing guide to the full validation stack (Levels 1–5), start
 with `docs/validation.md`.
@@ -237,7 +239,7 @@ internal implementation flexibility:
 - Concrete implementations:
   - `EuclideanModel`: identity operations (no wrapping or lifting)
   - `ToroidalModel`: domain wrapping and lattice-offset lifting
-  - `SphericalModel`: scaffold for sphere-constrained operations (future work)
+  - `SphericalModel`: unit-sphere projection for finite nonzero coordinates
   - `HyperbolicModel`: scaffold for hyperbolic model operations (future work)
 - Accessed internally via `GlobalTopology::model()` adapter method
 
@@ -283,9 +285,10 @@ For more examples, see the toroidal section in the main `README.md`.
 
 ### Future work
 
-Spherical and hyperbolic topologies are defined in metadata/behavior-model
-layers but are not yet fully integrated with the construction and validation
-pipeline.
+Spherical topology is defined in metadata/behavior-model layers and now
+canonicalizes finite nonzero coordinates onto the unit sphere. Spherical
+construction/validation beyond that projection and hyperbolic integration
+remain future work.
 
 ## Triangulation editing (`src/delaunay/`)
 

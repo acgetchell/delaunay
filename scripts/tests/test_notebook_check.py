@@ -198,6 +198,23 @@ def test_lint_without_external_tools_passes_clean_notebook(tmp_path: Path) -> No
     assert result == 0
 
 
+def test_lint_accepts_python_314_type_alias_syntax(tmp_path: Path) -> None:
+    """Notebook linting should accept the repository's Python 3.14 syntax."""
+    notebook = tmp_path / "type-alias.ipynb"
+    write_notebook(
+        notebook,
+        [
+            code_cell(
+                "type Count = int\n\ndef increment(value: Count) -> Count:\n    return value + 1\n",
+            )
+        ],
+    )
+
+    result = lint(notebook, LintOptions(run_ruff=False, run_format=False, run_ty=False))
+
+    assert result == 0
+
+
 def test_external_tool_diagnostics_report_missing_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     """Missing Ruff or ty should be explicit notebook diagnostics."""
     monkeypatch.setattr("notebook_check.shutil.which", lambda _command: None)

@@ -10,7 +10,7 @@
     reason = "tests preserve typed construction, repair, and delaunayize errors"
 )]
 
-use std::{assert_matches, error::Error, mem::size_of, num::NonZeroUsize};
+use std::{assert_matches, error::Error, iter, mem::size_of, num::NonZeroUsize};
 
 use approx::{abs_diff_eq, assert_relative_eq};
 use slotmap::KeyData;
@@ -168,8 +168,8 @@ use delaunay::prelude::tds::{
     VertexKey,
 };
 use delaunay::prelude::topology::spaces::{
-    GlobalTopology, GlobalTopologyModelError, LiftedLinkEdge, LiftedVertexId, TopologyKind,
-    ToroidalConstructionMode, ToroidalDomain, ToroidalDomainError,
+    GlobalTopology, GlobalTopologyModelError, LiftedLinkEdge, LiftedVertexId, SphericalSpace,
+    TopologicalSpace, TopologyKind, ToroidalConstructionMode, ToroidalDomain, ToroidalDomainError,
 };
 use delaunay::prelude::topology::validation::{
     GlobalTopology as TopologyValidationGlobalTopology, ManifoldError, RidgeCandidate,
@@ -838,7 +838,7 @@ fn construction_prelude_covers_vertex_macro() -> Result<(), PreludeExportTestErr
         crate_root.point().coords().as_slice(),
         [0.5, 0.5].as_slice()
     );
-    std::assert_matches!(
+    assert_matches!(
         vertex![f64::NAN, 0.0],
         Err(CoordinateConversionError::NonFiniteValue {
             coordinate_index: 0,
@@ -2063,7 +2063,7 @@ fn assert_ridge_candidate_reject_adversarial_keys<const D: usize>(keys: &[Vertex
 
     if D >= 3 {
         assert_matches!(
-            RidgeCandidate::<D>::try_from_vertices(std::iter::repeat_n(keys[0], D - 1)),
+            RidgeCandidate::<D>::try_from_vertices(iter::repeat_n(keys[0], D - 1)),
             Err(RidgeCandidateError::DuplicateVertex { vertex_key }) if vertex_key == keys[0]
         );
     }
@@ -2136,6 +2136,23 @@ fn topology_spaces_prelude_covers_toroidal_domain_api() -> Result<(), PreludeExp
     assert_send_sync_unpin::<ToroidalDomainError>();
     assert_send_sync_unpin::<RootToroidalDomainError>();
     Ok(())
+}
+
+#[test]
+fn topology_spaces_prelude_covers_spherical_space_api() {
+    let space = SphericalSpace::<3>::new();
+    assert_eq!(space.kind(), TopologyKind::Spherical);
+    assert!(!space.allows_boundary());
+
+    let mut coords = [3.0_f64, 4.0, 0.0];
+    space.canonicalize_point(&mut coords);
+    assert_relative_eq!(coords[0], 0.6);
+    assert_relative_eq!(coords[1], 0.8);
+    assert_relative_eq!(coords[2], 0.0);
+
+    let zero_norm = GlobalTopologyModelError::ZeroSphericalPointNorm;
+    assert!(zero_norm.to_string().contains("unit sphere"));
+    assert_send_sync_unpin::<SphericalSpace<3>>();
 }
 
 #[test]

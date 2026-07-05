@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_REGRESSION_THRESHOLD = 7.5
 TIME_UNIT_TO_MICROSECONDS = {"ns": 1e-3, "µs": 1.0, "μs": 1.0, "us": 1.0, "ms": 1e3, "s": 1e6}
-ComparisonFailurePolicy = Literal["strict", "total-time"]
+type ComparisonFailurePolicy = Literal["strict", "total-time"]
 
 
 class BaselineParseError(ValueError):

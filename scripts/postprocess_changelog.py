@@ -164,9 +164,9 @@ _CANONICAL_TEXT_REPLACEMENTS = {
 }
 
 
-SyntheticEntries = dict[str, list[list[str]]]
-DuplicateEntryKey = tuple[str, str, str]
-ContextualEntryRanges = dict[DuplicateEntryKey, dict[int, list[tuple[int, int]]]]
+type SyntheticEntries = dict[str, list[list[str]]]
+type DuplicateEntryKey = tuple[str, str, str]
+type ContextualEntryRanges = dict[DuplicateEntryKey, dict[int, list[tuple[int, int]]]]
 _TOP_LEVEL_LIST_MARKERS = ("- ", "* ", "• ")
 
 

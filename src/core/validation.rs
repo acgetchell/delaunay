@@ -12,7 +12,7 @@
 //!   [`Tds`](crate::prelude::tds::Tds).
 //! - **Level 3** topological validation is orchestrated here for
 //!   [`Triangulation`](crate::Triangulation).
-//! - **Level 4** faithful embedded-geometry validation is implemented by
+//! - **Level 4** valid-affine-realization validation is implemented by
 //!   [`Triangulation::validate_embedding`](crate::Triangulation::validate_embedding).
 //!
 //! Delaunay-specific Level 5 validation lives in [`crate::validation`]. Keeping
@@ -60,7 +60,7 @@
 //! Use [`Triangulation::validate()`](crate::prelude::triangulation::Triangulation::validate)
 //! for cumulative Levels 1–3.
 //!
-//! ## Level 4: Faithful Embedding
+//! ## Level 4: Valid Affine Realization
 //!
 //! - **Method**: [`Triangulation::validate_embedding`](crate::prelude::triangulation::Triangulation::validate_embedding)
 //! - **Checks**: Nondegenerate maximal simplices and no intersections outside shared faces

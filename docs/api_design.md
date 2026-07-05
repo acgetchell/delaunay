@@ -342,7 +342,7 @@ After applying flips, you should:
 1. Manually verify the Delaunay property if needed:
 
    ```rust
-   assert!(dt.as_triangulation().validate_embedding().is_ok()); // Check Level 4 (faithful embedding)
+   assert!(dt.as_triangulation().validate_embedding().is_ok()); // Check Level 4 (valid affine realization)
    assert!(dt.is_valid_delaunay().is_ok()); // Check Level 5 (Delaunay property)
    ```
 
@@ -395,7 +395,7 @@ Both APIs work with the same validation framework but have different guarantees:
 
 - ✅ Maintains **structural invariants** (Level 1-2)
 - ✅ Maintains **manifold topology** (Level 3, controlled by `TopologyGuarantee`)
-- ✅ Designed to maintain **faithful embedding** (Level 4) and **Delaunay property** (Level 5)
+- ✅ Designed to maintain **valid affine realization** (Level 4) and **Delaunay property** (Level 5)
 - ✅ Fails gracefully if invariants cannot be maintained
 
 ### Pachner Move API Guarantees
@@ -416,7 +416,7 @@ assert!(dt.is_valid_structure().is_ok());
 // Level 3: + Manifold topology
 assert!(dt.as_triangulation().is_valid_topology().is_ok());
 
-// Level 4: + Faithful embedding
+// Level 4: + valid affine realization
 assert!(dt.as_triangulation().validate_embedding().is_ok());
 
 // Level 5: + Delaunay property (most comprehensive)

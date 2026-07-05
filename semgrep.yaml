@@ -2078,6 +2078,132 @@ rules:
         - "/tests/semgrep/**"
     pattern-regex: '^\s*except\s+Exception(?:\s+as\s+\w+)?\s*:'
 
+  - id: delaunay.notebook.no-pandas-table-engine
+    languages:
+      - generic
+    severity: WARNING
+    message: "Use Polars for notebook table work instead of pandas."
+    metadata:
+      category: notebook
+      rationale: >-
+        Repository notebooks should use Polars-first dataframe workflows so
+        table analysis stays consistent with notebook CI and Parquet caching.
+    paths:
+      include:
+        - "/notebooks/**/*.ipynb"
+        - "/tests/semgrep/notebooks/**/*.ipynb"
+    pattern-regex: '"\s*(?:import\s+pandas\b|from\s+pandas\b)'
+
+  - id: delaunay.notebook.no-pachner-env-run-controls
+    languages:
+      - generic
+    severity: WARNING
+    message: "Keep Pachner notebook run controls as first-cell variables, not notebook-specific environment variables."
+    metadata:
+      category: notebook
+      rationale: >-
+        Pachner stress notebooks should make dimensionality, vertices, move
+        counts, and related parameters visible in the first code cell instead of
+        hiding them behind RUN_PACHNER_STRESS/PACHNER_STRESS_* environment
+        variables.
+    paths:
+      include:
+        - "/notebooks/**/*.ipynb"
+        - "/tests/semgrep/notebooks/**/*.ipynb"
+    pattern-regex: '\b(?:RUN_PACHNER_STRESS|PACHNER_STRESS_[A-Z0-9_]+)\b'
+
+  - id: delaunay.notebook.no-list-valued-run-controls
+    languages:
+      - generic
+    severity: WARNING
+    message: "Keep notebook run controls as scalar first-cell variables; parse sweeps from scalar counts/steps later."
+    metadata:
+      category: notebook
+      rationale: >-
+        Notebook entry cells should expose simple ints, bools, floats, strings,
+        and paths. Invariant-bearing sweep/run objects should be parsed in later
+        cells rather than asking users to edit list-shaped controls.
+    paths:
+      include:
+        - "/notebooks/**/*.ipynb"
+        - "/tests/semgrep/notebooks/**/*.ipynb"
+    pattern-regex: '"\s*(?:DIMENSIONS|VERTEX_COUNTS|MOVE_ATTEMPT_COUNTS|VALIDATE_EVERY_VALUES)\s*:\s*list\s*\['
+
+  - id: delaunay.notebook.no-committed-execution-counts
+    languages:
+      - generic
+    severity: WARNING
+    message: "Clear notebook execution counts before committing source notebooks."
+    metadata:
+      category: notebook
+      rationale: "Committed source notebooks should be rerunnable artifacts without stale execution state."
+    paths:
+      include:
+        - "/notebooks/**/*.ipynb"
+        - "/tests/semgrep/notebooks/**/*.ipynb"
+    pattern-regex: '"execution_count":\s*[0-9]+'
+
+  - id: delaunay.notebook.no-committed-cell-outputs
+    languages:
+      - generic
+    severity: WARNING
+    message: "Clear notebook outputs before committing source notebooks."
+    metadata:
+      category: notebook
+      rationale: "Notebook outputs belong in generated target artifacts unless a source notebook intentionally tracks rendered output."
+    paths:
+      include:
+        - "/notebooks/**/*.ipynb"
+        - "/tests/semgrep/notebooks/**/*.ipynb"
+    pattern-regex: '(?s)"outputs":\s*\[\s*\{'
+
+  - id: delaunay.notebook.no-random-cell-ids
+    languages:
+      - generic
+    severity: WARNING
+    message: "Use stable descriptive notebook cell IDs instead of generated-looking IDs."
+    metadata:
+      category: notebook
+      rationale: "Descriptive cell IDs make notebook diffs, review comments, and output clearing stable."
+    paths:
+      include:
+        - "/notebooks/**/*.ipynb"
+        - "/tests/semgrep/notebooks/**/*.ipynb"
+    pattern-regex: '"id":\s*"[a-f0-9]{8}"'
+
+  - id: delaunay.notebook.no-direct-csv-in-display-or-plot-cells
+    languages:
+      - generic
+    severity: WARNING
+    message: "Display and plot cells should read normalized Polars Parquet tables, not raw CSV artifacts."
+    metadata:
+      category: notebook
+      rationale: >-
+        CLI CSV/JSON artifacts are ingestion boundaries. Notebook displays and
+        plots should use the normalized Parquet analysis tables through Polars.
+    paths:
+      include:
+        - "/notebooks/**/*.ipynb"
+        - "/tests/semgrep/notebooks/**/*.ipynb"
+    pattern-regex: '(?s)"id":\s*"(?:summarize|plot)[^"]*"[\s\S]*?"source":\s*\[[\s\S]*?"[^"]*(?:pl|pd)\.read_csv\s*\('
+
+  - id: delaunay.notebook.no-eager-frame-plot-source
+    languages:
+      - generic
+    severity: WARNING
+    message: "Plot cells should source data from Polars LazyFrame Parquet scans instead of eager *_df.sort() frames."
+    metadata:
+      category: notebook
+      rationale: >-
+        Pachner stress plots can grow large; keep plot inputs flowing from
+        Polars LazyFrame scans over Parquet rather than eager CSV-derived
+        dataframe intermediates.
+    paths:
+      include:
+        - "/notebooks/**/*.ipynb"
+        - "/tests/semgrep/notebooks/**/*.ipynb"
+    pattern-regex: '"\s*(?:progress|summary)\s*=\s*(?:progress_df|summary_df)\.sort\s*\('
+
   - id: delaunay.python.no-raw-exception-in-tests
     languages:
       - python

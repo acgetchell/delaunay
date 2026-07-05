@@ -13,7 +13,7 @@ remains the architecture hub.
 |-----|-----|
 | [`commands.md`](commands.md) | Validation command selection, `just` recipes, benchmark profiles, and CI expectations |
 | [`git.md`](git.md) | Git safety, GitHub CLI usage, issue dependencies, branch names, and commit-message rules |
-| [`rust.md`](rust.md) | Rust API, invariant, naming, error, documentation, and implementation conventions |
+| [`rust.md`](rust.md) | Rust guidance index; read its focused links before touching Rust code |
 | [`testing.md`](testing.md) | Unit, integration, property, doctest, slow-test, and dimension-coverage expectations |
 | [`perf-tuning.md`](perf-tuning.md) | Benchmark-before/after workflow for performance-sensitive Rust changes |
 | [`docs.md`](docs.md) | Documentation ownership, scientific notation, references, changelog, and crates.io docs |
@@ -25,6 +25,8 @@ remains the architecture hub.
 
 - Add new guidance here only as a link and one-line ownership note.
 - Prefer updating an existing focused file over growing broad catch-all rules.
+- Keep top-level files short enough for agents to parse in one pass; move
+  detailed Rust policy under [`rust/`](rust/).
 - When a command name or validation policy changes, update
   [`commands.md`](commands.md).
 - When architecture or module ownership changes, update the focused docs linked

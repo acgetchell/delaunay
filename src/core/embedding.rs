@@ -119,9 +119,9 @@ impl From<PeriodicSimplexSpanError> for PeriodicDomainPeriodError {
 /// Errors returned by embedded-geometry validation (Level 4).
 ///
 /// This error type is independent of the Delaunay empty-circumsphere predicate:
-/// it certifies that the generic triangulation is faithfully embedded in the
-/// topology's supported affine chart before any Delaunay-specific predicate is
-/// evaluated.
+/// it certifies that the generic triangulation has a valid affine realization
+/// in the topology's supported affine chart before any Delaunay-specific
+/// predicate is evaluated.
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum TriangulationEmbeddingValidationError {

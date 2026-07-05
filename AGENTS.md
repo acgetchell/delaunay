@@ -32,13 +32,16 @@ Before modifying code, agents MUST read:
 
 - `AGENTS.md` (this file)
 - `docs/dev/README.md` - development guidance index
-- **All files in `docs/dev/*.md`** - focused repository development rules
+- **All top-level files in `docs/dev/*.md`** - focused repository development
+  rules and routing indexes
 - `docs/code_organization.md` - short architecture hub; follow its focused
   links when touching module layout, public namespace, preludes, or file
   organization
 
 `docs/dev/README.md` explains which focused document owns each development
-workflow. Agents must load every file in `docs/dev/` before making changes.
+workflow. Agents must load every top-level file in `docs/dev/` before making
+changes, then follow any workflow-specific links to deeper focused references
+for the files they will touch.
 
 ## Non-Negotiable Rules
 
@@ -181,7 +184,7 @@ enforce that contract.
 | Development guidance index | `docs/dev/README.md` |
 | Git, GitHub CLI, issue dependencies, branch names, commit messages | `docs/dev/git.md` |
 | Validation command selection and `just` recipes | `docs/dev/commands.md` |
-| Rust API, naming, error, panic, prelude, and implementation conventions | `docs/dev/rust.md` |
+| Rust API, naming, error, panic, prelude, and implementation conventions | `docs/dev/rust.md`, then its focused links |
 | Tests, doctests, proptests, slow tests, and dimension coverage | `docs/dev/testing.md` |
 | Performance tuning and benchmark evidence | `docs/dev/perf-tuning.md` |
 | Documentation, references, changelog, and scientific notation | `docs/dev/docs.md` |
