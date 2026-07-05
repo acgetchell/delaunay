@@ -476,6 +476,7 @@ just notebook-lint
 just notebook-check
 just notebook-check-slow
 just notebook-clear-outputs-all
+just notebook-reset-from-git
 ```
 
 `notebook-check` runs notebook hygiene and fast headless execution. Headless
@@ -487,6 +488,12 @@ quickstart README hero preview also defaults to
 intentionally refreshing the tracked asset. Slow notebooks should be named
 `*_slow.ipynb` or placed under `notebooks/slow/`; those run through
 `notebook-check-slow`.
+
+`just notebook-reset-from-git` discards edits to tracked source notebooks by
+restoring tracked `.ipynb` files under `notebooks/` from the Git index, removes
+`target/notebooks/`, and deletes Jupyter checkpoint directories. Pass an
+explicit source when needed, for example `just notebook-reset-from-git HEAD`, to
+restore notebooks from a committed tree instead of the current index.
 
 The Pachner stress notebook drives the opt-in `delaunay pachner-stress` CLI with
 a tiny smoke configuration by default, so it does not launch a long benchmark

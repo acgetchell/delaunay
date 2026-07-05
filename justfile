@@ -489,6 +489,7 @@ help-workflows:
     @echo "  just notebook-check    # Lint notebooks and execute fast notebooks under target/notebooks"
     @echo "  just notebook-check-slow # Include slow notebook execution"
     @echo "  just notebook-clear-outputs-all # Clear source notebook outputs"
+    @echo "  just notebook-reset-from-git # Restore tracked source notebooks and clear artifacts"
     @echo "  just run <args>        # Run the opt-in delaunay binary with --features cli"
     @echo ""
     @echo "Active large-scale debugging:"
@@ -635,6 +636,37 @@ notebook-clear-outputs-all: _ensure-uv
     if [ "$found" -eq 0 ]; then
         echo "No notebooks found to clear."
     fi
+
+notebook-reset-from-git source="index":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -d notebooks ]; then
+        echo "No source notebooks directory found."
+        exit 0
+    fi
+
+    tracked_notebooks=()
+    while IFS= read -r notebook; do
+        tracked_notebooks+=("$notebook")
+    done < <(git ls-files -- notebooks | grep '\.ipynb$' || true)
+
+    tracked_count="${#tracked_notebooks[@]}"
+    if [ "$tracked_count" -eq 0 ]; then
+        echo "No tracked source notebooks found."
+        exit 0
+    fi
+
+    if [ "{{ source }}" = "index" ]; then
+        git restore --worktree -- "${tracked_notebooks[@]}"
+        restored_from="index"
+    else
+        git restore --source="{{ source }}" --worktree -- "${tracked_notebooks[@]}"
+        restored_from="{{ source }}"
+    fi
+
+    rm -rf target/notebooks
+    find notebooks -type d -name .ipynb_checkpoints -prune -exec rm -rf {} +
+    printf 'Restored %s tracked source notebook(s) from %s and removed target/notebooks.\n' "$tracked_count" "$restored_from"
 
 notebook-execute notebook="notebooks/00_quickstart.ipynb" output_dir="target/notebooks": _ensure-uv
     #!/usr/bin/env bash

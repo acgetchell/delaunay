@@ -32,9 +32,6 @@ pub(crate) fn normalize_unit_sphere_coordinates(coords: &mut [f64]) -> bool {
         scaled.mul_add(scaled, acc)
     });
     let scale = sum_scaled_squares.sqrt();
-    if scale == 0.0 || !scale.is_finite() {
-        return false;
-    }
 
     for coord in coords.iter_mut() {
         *coord = (*coord / max_abs) / scale;

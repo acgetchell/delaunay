@@ -44,6 +44,7 @@ create the annotated release tag from the matching changelog section.
 ```bash
 just notebook-lint
 just notebook-check
+just notebook-reset-from-git
 uv run --group dev --group notebooks notebook-check --help
 ```
 
@@ -51,6 +52,9 @@ uv run --group dev --group notebooks notebook-check --help
 execution counts, extracts code cells for Ruff and ty, and can execute notebooks
 headlessly. The `just notebook-check` recipe writes executed notebooks under
 `target/notebooks/<notebook-stem>/` and leaves source notebooks unchanged.
+`just notebook-reset-from-git` restores tracked source notebooks from the Git
+index, or from an explicit source such as `HEAD`, and removes generated
+notebook artifacts and Jupyter checkpoints.
 
 ### Benchmark utilities
 

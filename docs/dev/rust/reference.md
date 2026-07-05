@@ -1051,21 +1051,18 @@ fn test_large_dataset_performance() { ... }
 
 ## API Stability
 
-The crate is intended for external use.
+The crate is intended for external use, but it is still pre-1.0.0. Intentional
+breaking changes to public types, functions, and modules are acceptable when
+they improve correctness, invariants, orthogonality, or the constructor taxonomy
+described above.
 
-Agents must avoid:
-
-- breaking public APIs
-- renaming public types
-- removing public functions
-
-If an API change is necessary, prefer:
-
-```rust
-#[deprecated]
-```
-
-with migration guidance.
+Do not preserve stale public APIs by adding deprecated compatibility aliases,
+compatibility re-exports, or shim functions. Prefer a clean public surface with
+clear migration guidance in docs and changelog material. For example,
+`GlobalTopology::model` is crate-private behavior-model plumbing, and raw
+toroidal input is parsed through public domain constructors such as
+`ToroidalDomain::try_new` and `GlobalTopology::try_toroidal`; do not reintroduce
+a public `ToroidalModel::try_new` alias.
 
 ---
 

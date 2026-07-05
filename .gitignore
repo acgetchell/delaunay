@@ -19,6 +19,11 @@
 /__pycache__/
 **/__pycache__/
 
+# Jupyter notebook artifacts
+.ipynb_checkpoints/
+.virtual_documents/
+*.nbconvert.ipynb
+
 # Python packaging artifacts
 *.egg-info/
 .ruff_cache/
