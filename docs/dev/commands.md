@@ -23,6 +23,7 @@ Agents must run appropriate checks after modifying code.
 - [YAML Checks](#yaml-checks)
 - [Shell Script Validation](#shell-script-validation)
 - [JSON Validation](#json-validation)
+- [Paper Build](#paper-build)
 - [CITATION.cff Validation](#citationcff-validation)
 - [GitHub Actions Validation](#github-actions-validation)
 - [Recommended Command Matrix](#recommended-command-matrix)
@@ -70,6 +71,7 @@ changed surface.
 | Markdown documentation (`*.md`) | `just markdown-check` | `just markdown-ci` |
 | Python under `scripts/` | Targeted pytest or `just test-python`; add `just python-check` for logic/style | `just python-check` and `just test-python` |
 | Jupyter notebooks (`notebooks/**/*.ipynb`) | `just notebook-lint` | `just notebook-check` |
+| Paper sources and figures (`papers/**/*`, paper notebooks) | `just paper-check` | `just papers` |
 | Configuration only (JSON, TOML, YAML, CFF, workflows) | Matching config validator | `just lint-config` |
 | Rust unit tests only (`#[cfg(test)]` in `src/**`) | Targeted `cargo test --lib <filter>` or `just test-unit` | `just test-unit` |
 | Rust doctests only (`///` examples or crate docs) | Targeted `cargo test --doc --release <filter>` or `just test-doc` | `just test-doc` |
@@ -514,6 +516,43 @@ existing artifacts. Use `RUN_COUNT` with scalar step values for small sweeps.
 `DELAUNAY_BINARY` may still point the notebook at a prebuilt CLI binary.
 
 These recipes keep the CI shape stable as notebooks are added or split.
+
+---
+
+## Paper Build
+
+Publication-facing TeX lives under `papers/`. The source `.tex` file and the
+compiled reviewer `.pdf` live side by side, while LaTeX auxiliary files are
+ignored and build under `target/papers/`.
+
+Commands:
+
+```bash
+just paper-figures
+just paper-tex-lint
+just paper-build
+just paper-pdf-check
+just paper-check
+just papers
+```
+
+`just paper-figures` executes `notebooks/01_validation.ipynb` with
+`DELAUNAY_VALIDATION_PAPER_FIGURE_DIR=papers/generated`, refreshing the PNG
+figures included by `papers/validation.tex`. Ordinary notebook validation does
+not refresh tracked paper figures. `just paper-tex-lint` runs `tex-fmt --check`
+and `chktex` over `papers/*.tex`. `just paper-build` compiles
+`papers/validation.tex` with Tectonic in `target/papers/validation/` and copies
+the reading copy to `papers/validation.pdf`. `just paper-pdf-check` uses the
+uv-managed `paper-pdf-check` helper to verify the PDF opens, has pages, includes
+expected title/reference text, and does not contain the literal `\today`.
+`just paper-check` lints, builds, and sanity-checks a paper without refreshing
+figures. `just papers` runs the full figure, lint, build, and PDF-check path.
+
+Tectonic and `tex-fmt` are pinned Cargo-installed tools. `chktex` comes from a
+TeX distribution or system package manager. Building Tectonic from Cargo also
+requires `pkg-config` to resolve ICU (`icu-uc`). `just setup-tools` checks that
+dependency and auto-detects common Homebrew ICU pkg-config directories before it
+asks for a manual `PKG_CONFIG_PATH`.
 
 ---
 

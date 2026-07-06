@@ -1,9 +1,17 @@
 # Triangulation Validation Guide
 
-This document explains the validation hierarchy in the delaunay library and provides guidance on when and how to use each validation level.
+This document is the developer-facing validation contract for the `delaunay`
+library. It explains the validation hierarchy and gives practical guidance on
+when and how to use each validation level.
 
 For the theoretical background, rationale, and implementation pointers behind the invariants, see
 [`invariants.md`](invariants.md).
+
+For publication-facing exposition, see
+[`../papers/validation.tex`](../papers/validation.tex) and the compiled reviewer
+copy at [`../papers/validation.pdf`](../papers/validation.pdf). For
+reproducible figures used by the paper, see
+[`../notebooks/01_validation.ipynb`](../notebooks/01_validation.ipynb).
 
 Examples that derive `thiserror::Error` assume the example crate includes
 `thiserror`; run `cargo add thiserror` alongside `delaunay` when copying those
@@ -11,26 +19,39 @@ snippets into an application.
 
 ## Overview
 
-The library provides **five levels of validation**, each building on the previous level to provide increasingly comprehensive correctness guarantees:
+The library provides **five levels of validation**, each answering a different
+correctness question while building on the previous level:
 
-1. **Element Validity** - Basic data integrity
-2. **TDS Structural Validity** - Combinatorial correctness
-3. **Manifold Topology** - Topological properties
-4. **Valid Affine Realization** - Nondegenerate realized simplices and no overlap outside shared faces
-5. **Delaunay Property** - Geometric optimality
+1. **Element Validity** - Are individual geometric and combinatorial objects internally valid?
+2. **Combinatorial Consistency** - Does the simplicial complex satisfy the required incidence invariants?
+3. **Intrinsic PL Topology** - Does the abstract complex represent the intended PL topology?
+4. **Embedding Validity** - Is the complex faithfully realized in the chosen ambient space?
+5. **Geometric Predicates** - Does the embedding satisfy the selected geometry-specific predicate family?
+
+| Level | Concern | Depends on embedding? |
+|---|---|---|
+| 1 | Local object correctness | No |
+| 2 | Combinatorial structure | No |
+| 3 | Intrinsic PL topology | No |
+| 4 | Geometric realization | Yes |
+| 5 | Geometric predicates | Yes |
+
+This separation is why Level 3 does not change when spherical support is added:
+PL-manifoldness is intrinsic, while spherical realization belongs in Level 4 and
+spherical Delaunay belongs in Level 5.
 
 ## Validation Hierarchy
 
 ```text
 Level 1: Element Validity
     ↓ (called by)
-Level 2: TDS Structural Validity
+Level 2: Combinatorial Consistency
     ↓ (called by)
-Level 3: Manifold Topology
+Level 3: Intrinsic PL Topology
     ↓ (independent)
-Level 4: Valid Affine Realization
+Level 4: Embedding Validity
     ↓ (independent)
-Level 5: Delaunay Property
+Level 5: Geometric Predicates
 ```
 
 ## Validation API Pattern
@@ -64,12 +85,12 @@ as a full audit and as input to future repair workflows.
 The library always provides **explicit** validation APIs (Levels 1–5) that you can call when you need them.
 
 Separately, incremental construction (`new()` / `insert*()`) can run an **automatic**
-global Level 3 topology pass plus changed-scope Level 4 valid-affine-realization guards after an insertion attempt,
+global Level 3 intrinsic-topology pass plus changed-scope Level 4 embedding guards after an insertion attempt,
 controlled by a `ValidationPolicy` on the triangulation.
 
 This is a performance vs certainty knob: Level 3 (`Triangulation::is_valid_topology()`) and full
 pairwise Level 4 (`Triangulation::is_valid_embedding()`) are relatively expensive, so the default
-behavior is to run automatic global topology and changed-scope realization checks only when
+behavior is to run automatic global topology and changed-scope embedding checks only when
 something looks “off”.
 
 ### What is validated automatically?
@@ -86,14 +107,14 @@ When the policy triggers automatic validation, it runs **Level 3**
 - No isolated vertices
 - Euler characteristic
 
-Note: neighbor-pointer consistency is a **Level 2** structural invariant checked by
+Note: neighbor-pointer consistency is a **Level 2 Combinatorial Consistency** invariant checked by
 `Tds::is_valid()` / `Tds::validate()`, and is intentionally not part of Level 3.
 
-The same automatic validation pass then runs **Level 4** embedding guards for the changed simplex
+The same automatic validation pass then runs **Level 4 Embedding Validity** guards for the changed simplex
 scope. It always checks changed simplices for degeneracy and checks changed-vs-current pairwise
 intersections. It does **not** rescan old-vs-old simplex pairs. It also does **not** run Level 5
-Delaunay empty-circumsphere validation. If you need a complete embedding or
-Delaunay-property check, call `dt.as_triangulation().validate_embedding()`, `dt.is_valid_delaunay()`,
+Delaunay empty-circumsphere validation. If you need complete Embedding Validity or a Level 5
+geometric-predicate check, call `dt.as_triangulation().validate_embedding()`, `dt.is_valid_delaunay()`,
 `dt.delaunay_report()`, or `dt.validate()` explicitly.
 
 ### Default: derived from `TopologyGuarantee`
@@ -162,9 +183,9 @@ fn main() -> DelaunayResult<()> {
 
 ---
 
-## Choosing Level 3 topology guarantee (`TopologyGuarantee`)
+## Choosing Level 3 Intrinsic PL Topology guarantee (`TopologyGuarantee`)
 
-Level 3 topology validation can be configured to enforce either:
+Level 3 Intrinsic PL Topology validation can be configured to enforce either:
 
 - **PL-manifold** invariants (default, uses ridge-link checks during insertion and
   requires completion-time vertex-link validation), or
@@ -229,7 +250,7 @@ The library separates **construction-time** failures from **validation-time** in
   triangulation-layer failures (e.g. `GeometricDegeneracy`, `DuplicateCoordinates`,
   `InsufficientVertices`).
 - `DelaunayTriangulationConstructionError` (Level 5 construction): wraps
-  `TriangulationConstructionError`.
+  `TriangulationConstructionError` and currently certifies the Delaunay predicate family.
 
 ### Validation errors (checking invariants)
 
@@ -240,7 +261,7 @@ The library separates **construction-time** failures from **validation-time** in
 - `TriangulationEmbeddingValidationError` (Level 4): wraps `TriangulationValidationError` and adds
   nondegenerate-simplex and overlap checks in the active affine chart.
 - `DelaunayTriangulationValidationError` (Level 5): wraps `TriangulationEmbeddingValidationError`
-  and adds the empty-circumsphere (Delaunay) checks.
+  and adds the implemented geometric predicate checks, currently Delaunay.
 
 ### Reporting (full diagnostics)
 
@@ -297,18 +318,19 @@ assert!(v.is_valid().is_ok());
 
 ---
 
-## Level 2: TDS Structural Validity
+## Level 2: Combinatorial Consistency
 
 ### Purpose
 
-Validates the combinatorial structure of the Triangulation Data Structure.
+Validates the combinatorial structure of the simplicial complex as represented
+by the Triangulation Data Structure.
 
 ### Methods
 
-- `Tds::is_valid()` - Level 2 (structural) checks only (fast-fail).
+- `Tds::is_valid()` - Level 2 Combinatorial Consistency checks only (fast-fail).
 - `Tds::structure_diagnostic()` - First actionable Level 2 diagnostic.
-- `Tds::structure_report()` - All checkable Level 2 structural failures.
-- `Tds::validate()` - Levels 1–2 (elements + structural).
+- `Tds::structure_report()` - All checkable Level 2 combinatorial failures.
+- `Tds::validate()` - Levels 1–2 (Element Validity + Combinatorial Consistency).
 - `Triangulation::is_valid_structure()` /
   `DelaunayTriangulation::is_valid_structure()` - Owner-level Level 2
   fast-fail validation without exposing storage.
@@ -372,7 +394,7 @@ fn main() -> DelaunayResult<()> {
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
-    // Quick structural check (Level 2)
+    // Quick Combinatorial Consistency check (Level 2)
     assert!(dt.is_valid_structure().is_ok());
 
     // Detailed report showing all violations across Levels 1–5 (on failure)
@@ -394,7 +416,7 @@ For most users, start with `dt.is_valid_structure()` (fast-fail) or `dt.validati
 
 ---
 
-## Level 3: Manifold Topology
+## Level 3: Intrinsic PL Topology
 
 ### Purpose
 
@@ -402,20 +424,21 @@ Validates that the triangulation forms a valid topological manifold.
 
 ### Methods
 
-- `Triangulation::is_valid_topology()` - Level 3 topology fast-fail validation only.
+- `Triangulation::is_valid_topology()` - Level 3 Intrinsic PL Topology fast-fail validation only.
 - `Triangulation::topology_diagnostic()` - First actionable Level 3 diagnostic.
-- `Triangulation::topology_report()` - All checkable Level 3 topology failures.
+- `Triangulation::topology_report()` - All checkable Level 3 Intrinsic PL Topology failures.
 - `Triangulation::validate_ridge_links()` - Explicit global ridge-link
   PL-manifold diagnostic.
 - `Triangulation::validate_ridge_links_for_simplices()` - Explicit localized
   ridge-link diagnostic for a touched simplex frontier.
 - `Triangulation::validate_vertex_links()` - Explicit vertex-link
   PL-manifold certification.
-- `Triangulation::validate()` - Levels 1–3 (elements + structure + topology).
+- `Triangulation::validate()` - Levels 1–3 (Element Validity + Combinatorial Consistency +
+  Intrinsic PL Topology).
 
 ### What It Checks
 
-`Triangulation::is_valid_topology()` (Level 3) checks:
+`Triangulation::is_valid_topology()` (Level 3 Intrinsic PL Topology) checks:
 
 1. **Codimension-1 manifoldness (facet degree)**: Each facet belongs to exactly 1 simplex (boundary) or exactly 2 simplices (interior)
    - Stronger than Level 2's "≤2 simplices per facet"
@@ -487,12 +510,12 @@ fn main() -> DelaunayResult<()> {
 
 ---
 
-## Level 4: Valid Affine Realization
+## Level 4: Embedding Validity
 
 ### Purpose
 
-Validates that the abstract triangulation has a geometrically valid affine realization in the active
-affine chart.
+Validates that the abstract triangulation has a faithful geometric realization
+in the active embedding model.
 
 ### Methods
 
@@ -500,7 +523,7 @@ affine chart.
 - `Triangulation::embedding_diagnostic()` - First actionable Level 4 diagnostic.
 - `Triangulation::embedding_report()` - Level 4 diagnostic report with offending
   simplex and vertex keys/UUIDs.
-- `Triangulation::validate_embedding()` - Levels 1–4 (elements + structure + topology + embedding).
+- `Triangulation::validate_embedding()` - Levels 1–4 (elements + combinatorics + intrinsic topology + embedding).
 
 ### What It Checks
 
@@ -510,12 +533,15 @@ affine chart.
   spanned by their shared vertices.
 - **Toroidal periodic images**: toroidal topology is checked in covering-space charts, including
   periodic translates that can overlap across the fundamental-domain boundary.
-- **Independent of Delaunay predicates**: Level 4 does not evaluate the empty-circumsphere property.
-  It catches invalid affine realizations before Level 5 asks whether the realized triangulation is
-  Delaunay.
+- **Spherical prototype simplices**: `SphericalDelaunayTriangulation` validates `S^2`/`S^3`
+  maximal simplices as nondegenerate spherical simplices embedded in `S^D \subset R^(D+1)`.
+- **Independent of geometric predicates**: Level 4 does not evaluate empty-circumsphere,
+  empty-cap, regular, weighted, or constrained predicates. It catches invalid embeddings before
+  Level 5 asks whether the realized triangulation satisfies the selected predicate family.
 
-Spherical and hyperbolic topologies currently return an unsupported-topology error for Level 4 until
-model-specific chart validators are implemented.
+General spherical integration with the ordinary mutable triangulation surface, dimensions beyond
+the bounded `S^2`/`S^3` prototype, and hyperbolic topology still return unsupported-topology errors
+until model-specific chart validators are implemented.
 
 ### Complexity
 
@@ -531,8 +557,8 @@ section of `REFERENCES.md`.
 
 - **Tests**: After construction or manual edits when embedded correctness matters.
 - **Debug**: Investigating folded, self-overlapping, or zero-volume triangulations.
-- **Before Delaunay certification**: Level 5 validation runs Level 4 first so Delaunay predicates are
-  evaluated only on a valid affine realization.
+- **Before geometric-predicate certification**: Level 5 validation runs Level 4 first so Delaunay
+  or future predicates are evaluated only on a valid embedding.
 - **Repair planning**: `Triangulation::embedding_report()` reports simplex keys, UUIDs, shared
   vertices, and witness vertices that can guide explicit rollback or deletion-based repair. The
   validator itself is pure and does not delete vertices.
@@ -553,7 +579,7 @@ fn main() -> DelaunayResult<()> {
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
-    // Valid affine realization validation (Levels 1-4)
+    // Embedding validity validation (Levels 1-4)
     match dt.as_triangulation().validate_embedding() {
         Ok(()) => println!("valid embedded triangulation"),
         Err(e) => eprintln!("embedding violation: {}", e),
@@ -564,30 +590,38 @@ fn main() -> DelaunayResult<()> {
 
 ---
 
-## Level 5: Delaunay Property
+## Level 5: Geometric Predicates
 
 ### Purpose
 
-Validates the geometric optimality of a valid affine realization.
+Validates geometry-specific predicates on a valid embedding. The implemented
+predicate family today is Delaunay; the layer is intentionally broad enough for
+future regular, weighted, Gabriel, alpha, constrained, or related predicates.
 
 ### Methods
 
-- `DelaunayTriangulation::is_valid_delaunay()` - Level 5 Delaunay property only after Level 4 embedding
+- `DelaunayTriangulation::is_valid_delaunay()` - implemented Level 5 Delaunay predicate only after Level 4 Embedding Validity
 - `DelaunayTriangulation::delaunay_diagnostic()` - First actionable Level 5 diagnostic, including the
   violating simplex, its vertices, neighbor slots, and an offending vertex when available.
 - `DelaunayTriangulation::delaunay_report()` - All checkable Level 5 Delaunay failures with the same
   repair-oriented detail where it can be reconstructed.
-- `DelaunayTriangulation::validate()` - Levels 1–5 (elements + structure + topology + embedding +
-  Delaunay property).
+- `DelaunayTriangulation::validate()` - Levels 1–5 (elements + combinatorics + intrinsic topology +
+  embedding + geometric predicates).
 
 ### What It Checks
 
-- **Delaunay property**: Verified via local flip predicates (k=2/k=3 and
+- **Delaunay property**: verified via local flip predicates (k=2/k=3 and
   inverses), equivalent to the empty-circumsphere condition for properly
   constructed triangulations
 - Uses geometric predicates from the kernel (`insphere` test)
-- **Layered after Levels 1-4**: `validate()` checks elements, structure, topology, and embedding
-  before the Delaunay predicate layer.
+- **Spherical prototype**: `SphericalDelaunayTriangulation` keeps Level 5 Geometric Predicates
+  backend-specific. Its `S^2`/`S^3` path checks the spherical empty-cap
+  condition by requiring each simplex to be an ambient supporting hull facet in
+  `R^(D+1)`, with all non-simplex vertices on the same side as the sphere center
+  or on the facet hyperplane. Euclidean and toroidal triangulations keep using
+  their existing empty-circumsphere validators.
+- **Layered after Levels 1-4**: `validate()` checks elements, combinatorics, intrinsic topology,
+  and embedding before the geometric-predicate layer.
 - **Flip-based repair**: Insertions run k=2/k=3 flip repairs with inverse edge/triangle queues in
   higher dimensions by default. Delaunay validation can still fail if repair is disabled, if repair
   fails to converge, or if inputs are highly degenerate/duplicate-heavy. See
@@ -629,7 +663,7 @@ fn main() -> DelaunayResult<()> {
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
-    // Delaunay property validation (Level 5)
+    // Delaunay geometric-predicate validation (Level 5)
     match dt.is_valid_delaunay() {
         Ok(()) => println!("✓ All simplices satisfy empty circumsphere property"),
         Err(e) => eprintln!("✗ Delaunay violation: {}", e),
@@ -649,19 +683,19 @@ Start: Do you need to validate?
     │
     ├─ Just built triangulation?
     │   ├─ Production hot path? → Usually skip (but validate during integration testing / when debugging)
-    │   └─ Need certainty? → Validate (Level 2 or 3; add Level 4 if embedding matters, Level 5 if Delaunay matters)
+    │   └─ Need certainty? → Validate (Level 2 or 3; add Level 4 if embedding matters, Level 5 if predicates matter)
     │
     ├─ After manual topology mutation? → Level 2 (`dt.is_valid_structure()`)
     │
     ├─ Debugging embedded-geometry issues? → Level 4 (`dt.as_triangulation().validate_embedding()`)
     │
-    ├─ Debugging Delaunay issues? → Level 5 (`dt.is_valid_delaunay()`)
+    ├─ Debugging Delaunay or other geometric-predicate issues? → Level 5 (`dt.is_valid_delaunay()`)
     │
     ├─ Production validation?
     │   ├─ Performance critical? → Level 2 (`dt.is_valid_structure()`)
     │   ├─ Topological correctness critical? → Level 3 (`dt.as_triangulation().is_valid_topology()`)
     │   ├─ Realization correctness critical? → Level 4 (`dt.as_triangulation().validate_embedding()`)
-    │   └─ Delaunay correctness critical? → Level 5 (`dt.is_valid_delaunay()`)
+    │   └─ Delaunay or geometric-predicate correctness critical? → Level 5 (`dt.is_valid_delaunay()`)
     │
     └─ Paranoid mode? → All levels (`dt.validate()`)
 ```
@@ -670,14 +704,15 @@ Start: Do you need to validate?
 
 ## Performance notes
 
-- Level 2 and Level 3 validation are dominated by combinatorial bookkeeping (roughly O(simplices × D²)).
-- Level 4 valid-affine-realization validation checks simplex degeneracy and pairwise realized-simplex
+- Level 2 Combinatorial Consistency and Level 3 Intrinsic PL Topology validation are dominated by
+  combinatorial bookkeeping (roughly O(simplices × D²)).
+- Level 4 Embedding Validity checks simplex degeneracy and pairwise realized-simplex
   intersections, using bounding boxes before exact rational witness construction.
-- Level 5 `DelaunayTriangulation::is_valid_delaunay()` verifies the Delaunay property via local flip predicates after
-  Level 4 valid-affine-realization validation.
+- Level 5 `DelaunayTriangulation::is_valid_delaunay()` verifies the implemented Delaunay predicate
+  family via local flip predicates after Level 4 Embedding Validity.
 - A brute-force empty-circumsphere check would be O(simplices × vertices) and is not used by `is_valid_delaunay()`.
 
-In practice, `DelaunayTriangulation::validate()` is usually dominated by Level 3 topology work or
+In practice, `DelaunayTriangulation::validate()` is usually dominated by Level 3 Intrinsic PL Topology work or
 Level 4 pairwise realization checks, depending on mesh size and overlap candidates.
 As a post-construction acceptance check, the current 7,500-vertex 3D large-scale
 debug harness is the default near-one-minute `validation_report` run for Levels
@@ -694,8 +729,8 @@ helper.
 `Triangulation::is_valid_topology()` returns `InvariantError`, the public wrapper enum
 used for validation failures across Levels 1–4. Its variants preserve the
 failing layer's typed error: `TdsError` for Levels 1–2,
-`TriangulationValidationError` for Level 3 topology failures, and
-`TriangulationEmbeddingValidationError` for Level 4 valid-affine-realization failures. In normal
+`TriangulationValidationError` for Level 3 Intrinsic PL Topology failures, and
+`TriangulationEmbeddingValidationError` for Level 4 embedding failures. In normal
 Level 3 code, handle the wrapper as shown in Patterns 2 and 3 rather than
 expecting `TriangulationValidationError` directly.
 
@@ -710,10 +745,10 @@ fn test_my_triangulation_operation() {
     my_operation(&mut dt);
 
     // Validate at appropriate level
-    assert!(dt.is_valid_structure().is_ok()); // Level 2: Structural
-    assert!(dt.as_triangulation().is_valid_topology().is_ok()); // Level 3: Topology
-    assert!(dt.as_triangulation().validate_embedding().is_ok()); // Level 4: valid affine realization
-    assert!(dt.is_valid_delaunay().is_ok());        // Level 5: Delaunay property
+    assert!(dt.is_valid_structure().is_ok()); // Level 2: Combinatorial Consistency
+    assert!(dt.as_triangulation().is_valid_topology().is_ok()); // Level 3: Intrinsic PL Topology
+    assert!(dt.as_triangulation().validate_embedding().is_ok()); // Level 4: Embedding Validity
+    assert!(dt.is_valid_delaunay().is_ok());        // Level 5: Geometric Predicates (Delaunay)
     assert!(dt.validate().is_ok());                 // Levels 1–5: Full validation
 }
 ```
@@ -852,6 +887,6 @@ converge, consider the opt-in heuristic rebuild fallback via
 ## See Also
 
 - [Invariants](invariants.md) - Theoretical background and rationale for the invariants
-- [Topology](topology.md) - Level 3 topology invariants and combinatorial checks
+- [Topology](topology.md) - Level 3 Intrinsic PL Topology invariants and combinatorial checks
 - [Code Organization](code_organization.md) - Where to find validation code
 - [CGAL Triangulation](https://doc.cgal.org/latest/Triangulation/index.html) - Inspiration for validation design

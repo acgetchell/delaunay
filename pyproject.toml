@@ -25,7 +25,10 @@ classifiers = [
 ]
 
 # Project dependencies
-dependencies = [ "packaging>=26.2" ]
+dependencies = [
+    "packaging>=26.2",
+    "pypdf>=6.0.0",
+]
 
 [project.urls]
 "Homepage" = "https://github.com/acgetchell/delaunay"
@@ -39,6 +42,9 @@ archive-changelog = "archive_changelog:main"
 benchmark-utils = "benchmark_utils:main"
 hardware-utils = "hardware_utils:main"
 notebook-check = "notebook_check:main"
+paper-pdf-check = "paper_check:main"
+paper-pdf-normalize = "paper_pdf_normalize:main"
+paper-source-date-epoch = "paper_source_date:main"
 postprocess-changelog = "postprocess_changelog:main"
 tag-release = "tag_release:main"
 
@@ -50,6 +56,9 @@ py-modules = [
     "benchmark_utils",
     "hardware_utils",
     "notebook_check",
+    "paper_check",
+    "paper_pdf_normalize",
+    "paper_source_date",
     "postprocess_changelog",
     "subprocess_utils",
     "tag_release",
@@ -172,6 +181,7 @@ known-first-party = [
     "benchmark_utils",
     "hardware_utils",
     "notebook_check",
+    "paper_check",
     "postprocess_changelog",
     "subprocess_utils",
     "tag_release",

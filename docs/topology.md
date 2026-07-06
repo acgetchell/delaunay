@@ -1,11 +1,11 @@
 # Topology
 
 This document describes the topology-related parts of the `delaunay` crate:
-Level 3 manifold validation, Euler characteristic checks, and support for
-different topological spaces. Euclidean and toroidal workflows are fully
-integrated; spherical topology currently provides unit-sphere coordinate
-projection, while full spherical construction/validation and hyperbolic support
-remain future work.
+Level 3 Intrinsic PL Topology validation, Euler characteristic checks, and
+support for different topological spaces. Euclidean and toroidal workflows are
+fully integrated; spherical support provides a real `S^D` coordinate/metric
+backend plus a bounded `S^2`/`S^3` construction and validation prototype, while
+full spherical integration and hyperbolic support remain future work.
 
 If you want the user-facing guide to the full validation stack (Levels 1–5), start
 with `docs/validation.md`.
@@ -54,10 +54,12 @@ Notes:
   validated `Point` coordinates; exact-coordinate input, if added in the future,
   should be an explicit documented API rather than incidental generic support.
 
-## Level 3 topology validation (`Triangulation::is_valid_topology()`)
+## Level 3 Intrinsic PL Topology validation (`Triangulation::is_valid_topology()`)
 
-`Triangulation::is_valid_topology()` validates *topology-only* invariants (Level 3). It
-intentionally does **not** validate lower layers (elements or TDS structure).
+`Triangulation::is_valid_topology()` validates embedding-independent PL-topology
+invariants (Level 3). It intentionally does **not** validate lower layers
+(elements or combinatorial TDS consistency), nor does it certify Level 4
+embedding validity or Level 5 geometric predicates.
 
 For cumulative validation, use `Triangulation::validate()` (Levels 1–3) or
 `DelaunayTriangulation::validate()` (Levels 1–5).
@@ -239,7 +241,8 @@ internal implementation flexibility:
 - Concrete implementations:
   - `EuclideanModel`: identity operations (no wrapping or lifting)
   - `ToroidalModel`: domain wrapping and lattice-offset lifting
-  - `SphericalModel`: unit-sphere projection for finite nonzero coordinates
+  - `SphericalModel`: unit-sphere projection for finite nonzero
+    `GlobalTopology` coordinate arrays
   - `HyperbolicModel`: scaffold for hyperbolic model operations (future work)
 - Accessed internally via `GlobalTopology::model()` adapter method
 
@@ -247,11 +250,17 @@ This separation allows core triangulation and builder code to delegate topology-
 behavior to model implementations without branching on the `GlobalTopology` enum throughout
 the codebase.
 
-**Space helper types** (in `src/topology/spaces/`):
+**Topology helpers and coordinate backends** (in `src/topology/spaces/`):
 
-- `EuclideanSpace`, `ToroidalSpace`, `SphericalSpace`: `f64`-oriented helper types
+- `EuclideanSpace`, `ToroidalSpace`: `f64`-oriented `TopologicalSpace` helper types
 - Not directly used by scalar-generic core algorithms
 - Provide utilities for specific topology computations
+- Spherical Delaunay construction uses `SphericalPoint<D>` and `SphericalMetric<D>`
+  as the coordinate/metric backend: `D` is the intrinsic dimension of `S^D`, and
+  points carry `D + 1` ambient coordinates in `R^(D+1)`. `SphericalModel`
+  remains internal metadata/model plumbing for `GlobalTopology::Spherical`, so
+  its `D` is the coordinate-array length seen by `GlobalTopologyModel<D>` rather
+  than the spherical Delaunay intrinsic dimension.
 
 ### Toroidal topology support
 
@@ -285,10 +294,13 @@ For more examples, see the toroidal section in the main `README.md`.
 
 ### Future work
 
-Spherical topology is defined in metadata/behavior-model layers and now
-canonicalizes finite nonzero coordinates onto the unit sphere. Spherical
-construction/validation beyond that projection and hyperbolic integration
-remain future work.
+Spherical topology is defined in metadata/behavior-model layers and
+canonicalizes finite nonzero coordinates onto the unit sphere. The bounded
+`SphericalDelaunayBuilder` prototype constructs `S^2`/`S^3` Delaunay simplices from
+ambient `R^3`/`R^4` points by convex-hull duality, while keeping Level 3
+PL-topology validation separate from spherical Level 4/5 geometry. Full
+spherical integration across 2D-5D and hyperbolic integration remain future
+work.
 
 ## Triangulation editing (`src/delaunay/`)
 

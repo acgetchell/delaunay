@@ -53,7 +53,7 @@ The useful updates ported in this pass are:
   docs, and agent guidance all use the same baseline so the `la-stack` 0.4.3
   dependency update in #424 has no MSRV conflict.
 - The local `cargo-nextest` pin and CI workflow environment variables now use
-  0.9.138, matching the current reviewed release. `cargo-llvm-cov` stays on 0.8.7,
+  0.9.140, matching the current reviewed release. `cargo-llvm-cov` stays on 0.8.7,
   which is still shared across the repositories.
 - CI command-runner, Markdown, and spelling tool pins now track the newer
   current reviewed versions:
@@ -217,14 +217,17 @@ The useful updates ported in this pass are:
   UI exposes a separate duplicate-code metric, treat it the same way.
 - CI and local setup pins should track the same supported tool versions when
   practical. The current workflow pins align coverage and test tooling on
-  `cargo-llvm-cov` 0.8.7 and `cargo-nextest` 0.9.138. CI, Codecov, and local
-  setup install the same `cargo-nextest` pin with the sibling repositories'
+  `cargo-llvm-cov` 0.8.7 and `cargo-nextest` 0.9.140, and paper tooling on
+  `tectonic` 0.16.9 and `tex-fmt` 0.5.7. CI, Codecov, papers, and local setup
+  install the same Cargo-tool pins with the sibling repositories'
   `taiki-e/cache-cargo-install-action`/`cargo install --locked` pattern before
-  nextest-backed recipes run. Pinned Rust CLI tools are installed through Cargo
-  rather than Homebrew so local setup cannot drift from CI pins. The CI build
-  matrix runs `just ci` on Linux, macOS, and Windows after syncing the locked uv
-  dev group and installing the pinned Cargo tools. All uv-backed workflows use
-  uv 0.11.26 to match the local Python tooling bootstrap.
+  the corresponding recipes run. Pinned Rust CLI tools are installed through
+  Cargo rather than Homebrew so local setup cannot drift from CI pins. The CI
+  build matrix runs `just ci` on Linux, macOS, and Windows after syncing the
+  locked uv dev group and installing the pinned Cargo tools. The papers workflow
+  separately installs `chktex` from the system package manager because it is TeX
+  distribution tooling rather than a Rust CLI. All uv-backed workflows use uv
+  0.11.26 to match the local Python tooling bootstrap.
 - `.codecov.yml` now ratchets Delaunay's coverage policy above the older
   causal-triangulations baseline without copying la-stack's near-total
   threshold. Project coverage targets the current 90% line with only 1%

@@ -31,8 +31,8 @@ fn main() -> DelaunayResult<()> {
     let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     // Optional verification (see docs/validation.md for when to use each):
-    assert!(dt.as_triangulation().validate_embedding().is_ok()); // Levels 1-4 (valid affine realization)
-    assert!(dt.is_valid_delaunay().is_ok()); // Level 5 only (Delaunay property)
+    assert!(dt.as_triangulation().validate_embedding().is_ok()); // Levels 1-4 (Embedding Validity)
+    assert!(dt.is_valid_delaunay().is_ok()); // Level 5 only (Geometric Predicates: Delaunay)
     Ok(())
 }
 ```
@@ -41,8 +41,8 @@ fn main() -> DelaunayResult<()> {
 
 Two knobs are commonly used for insertion-time safety vs performance:
 
-- `TopologyGuarantee`: what Level 3 topology invariants are enforced.
-- `ValidationPolicy`: when Level 3 topology validation runs automatically during incremental insertion.
+- `TopologyGuarantee`: what Level 3 Intrinsic PL Topology invariants are enforced.
+- `ValidationPolicy`: when Level 3 Intrinsic PL Topology validation runs automatically during incremental insertion.
 
 Use the `try_set_*` policy setters when changing both axes programmatically; they
 return a typed error for incoherent combinations such as
@@ -438,7 +438,7 @@ For guidance on retry/skip behavior and choosing `RobustKernel`, see
 Vertex deletion is supported and preserves Levels 1–3. It uses an inverse k=1 fast path when
 possible and fan retriangulation otherwise, then runs flip-based Delaunay repair when the active
 `DelaunayRepairPolicy` allows it. If automatic repair is disabled, deletion still runs Level 4
-embedding validation and Level 5 Delaunay validation, rolling back on any violation. If post-deletion repair, validation, or
+Embedding Validity and the Level 5 Delaunay predicate, rolling back on any violation. If post-deletion repair, validation, or
 orientation canonicalization fails, the operation rolls back to the pre-deletion triangulation.
 
 ```rust
@@ -489,7 +489,7 @@ The Pachner Move API exposes explicit local bistellar moves. These operations do
 
 After using flips, you typically:
 
-1. validate topology (Level 3), and
+1. validate Intrinsic PL Topology (Level 3), and
 2. optionally repair / verify the Delaunay property.
 
 See [`api_design.md`](api_design.md) for the full construction vs local move API design.

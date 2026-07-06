@@ -8,16 +8,17 @@
 //!   [`Vertex::vertex_report`](crate::prelude::Vertex::vertex_report) and
 //!   [`Simplex::is_valid`](crate::prelude::tds::Simplex::is_valid) /
 //!   [`Simplex::simplex_report`](crate::prelude::tds::Simplex::simplex_report).
-//! - **Level 2** structural validation remains implemented by
+//! - **Level 2** Combinatorial Consistency remains implemented by
 //!   [`Tds`](crate::prelude::tds::Tds).
-//! - **Level 3** topological validation is orchestrated here for
+//! - **Level 3** Intrinsic PL Topology validation is orchestrated here for
 //!   [`Triangulation`](crate::Triangulation).
-//! - **Level 4** valid-affine-realization validation is implemented by
+//! - **Level 4** Embedding Validity validation is implemented by
 //!   [`Triangulation::validate_embedding`](crate::Triangulation::validate_embedding).
 //!
-//! Delaunay-specific Level 5 validation lives in [`crate::validation`]. Keeping
-//! the module boundary at the generic triangulation layer avoids one file per
-//! validation level while still making the layering explicit.
+//! Implemented Level 5 Geometric Predicate validation for Delaunay lives in
+//! [`crate::validation`]. Keeping the module boundary at the generic
+//! triangulation layer avoids one file per validation level while still making
+//! the layering explicit.
 //!
 //! # Validation Hierarchy
 //!
@@ -33,7 +34,7 @@
 //! - **Checks**: Basic data integrity (coordinate validity, UUID presence, proper initialization)
 //! - **Cost**: O(1) per element
 //!
-//! ## Level 2: TDS Structural Validity
+//! ## Level 2: Combinatorial Consistency
 //!
 //! - **Method**: [`Tds::is_valid()`](crate::prelude::tds::Tds::is_valid)
 //! - **Checks**:
@@ -44,9 +45,9 @@
 //! - **Cost**: O(N×D²) where N = simplices, D = dimension
 //!
 //! Use [`Tds::validate()`](crate::prelude::tds::Tds::validate) for cumulative
-//! Levels 1–2 (element + structural) validation.
+//! Levels 1–2 (Element Validity + Combinatorial Consistency) validation.
 //!
-//! ## Level 3: Manifold Topology
+//! ## Level 3: Intrinsic PL Topology
 //!
 //! - **Method**: [`Triangulation::is_valid_topology()`](crate::prelude::triangulation::Triangulation::is_valid_topology)
 //! - **Checks**:
@@ -60,7 +61,7 @@
 //! Use [`Triangulation::validate()`](crate::prelude::triangulation::Triangulation::validate)
 //! for cumulative Levels 1–3.
 //!
-//! ## Level 4: Valid Affine Realization
+//! ## Level 4: Embedding Validity
 //!
 //! - **Method**: [`Triangulation::validate_embedding`](crate::prelude::triangulation::Triangulation::validate_embedding)
 //! - **Checks**: Nondegenerate maximal simplices and no intersections outside shared faces
@@ -69,10 +70,10 @@
 //! Use [`Triangulation::validate_embedding`](crate::prelude::triangulation::Triangulation::validate_embedding)
 //! for cumulative Levels 1–4.
 //!
-//! ## Level 5: Delaunay Property
+//! ## Level 5: Geometric Predicates
 //!
 //! - **Method**: [`DelaunayTriangulation::is_valid_delaunay()`](crate::DelaunayTriangulation::is_valid_delaunay)
-//! - **Checks**: Empty circumsphere property (no vertex inside any simplex's circumsphere)
+//! - **Checks**: implemented Delaunay predicates, including the empty circumsphere property
 //! - **Cost**: O(N×V) where N = simplices, V = vertices
 //!
 //! Use [`DelaunayTriangulation::validate()`](crate::DelaunayTriangulation::validate)
@@ -81,7 +82,7 @@
 //! ## Topology guarantees
 //!
 //! [`TopologyGuarantee`](crate::prelude::validation::TopologyGuarantee) selects
-//! which **manifoldness** invariants are checked by Level 3 topology validation.
+//! which **manifoldness** invariants are checked by Level 3 Intrinsic PL Topology validation.
 //! Whether those checks run automatically after insertion is controlled by
 //! [`ValidationPolicy`](crate::prelude::validation::ValidationPolicy).
 //!
@@ -164,9 +165,9 @@ pub(crate) fn insertion_error_to_invariant_error(
     }
 }
 
-/// Errors that can occur during triangulation topology validation (Level 3).
+/// Errors that can occur during Level 3 Intrinsic PL Topology validation.
 ///
-/// This type represents **only** Level 3 (topology) errors. It does not contain
+/// This type represents **only** Level 3 Intrinsic PL Topology errors. It does not contain
 /// TDS-level (Levels 1–2) errors. Cumulative validators that can return errors
 /// from any level use [`InvariantError`] instead.
 ///
@@ -339,7 +340,7 @@ pub enum TriangulationValidationError {
 
     /// Vertex is not incident to any simplex.
     ///
-    /// An isolated vertex violates manifold invariants at the topology (Level 3) layer
+    /// An isolated vertex violates manifold invariants at the Level 3 Intrinsic PL Topology layer
     /// and may indicate a failed insertion or an insertion that was partially rolled back.
     #[error(
         "Isolated vertex: vertex {vertex_uuid} (key {vertex_key:?}) is not incident to any simplex"
@@ -785,7 +786,7 @@ pub(crate) enum InsertionValidationWork {
 }
 
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
-    /// Fast-fail Level 2 structural validation.
+    /// Fast-fail Level 2 Combinatorial Consistency validation.
     ///
     /// This checks the triangulation data structure's key mappings, incidence
     /// bookkeeping, duplicate-simplex invariant, facet sharing, neighbor
@@ -793,30 +794,30 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// storage owner.
     ///
     /// Use [`Triangulation::validate_structure`](Self::validate_structure) for
-    /// cumulative Levels 1-2 element plus structure validation, or
+    /// cumulative Levels 1-2 Element Validity plus Combinatorial Consistency validation, or
     /// [`Triangulation::validate`](Self::validate) for cumulative Levels 1-3.
     ///
     /// # Errors
     ///
-    /// Returns the first [`TdsError`] encountered by the structural validator.
+    /// Returns the first [`TdsError`] encountered by the combinatorial validator.
     pub fn is_valid_structure(&self) -> Result<(), TdsError> {
         self.tds.is_valid()
     }
 
-    /// Cumulative Levels 1-2 validation for the triangulation structure.
+    /// Cumulative Levels 1-2 validation for Element Validity and Combinatorial Consistency.
     ///
     /// This validates all stored vertices and simplices first, then runs
     /// [`Triangulation::is_valid_structure`](Self::is_valid_structure).
     ///
     /// # Errors
     ///
-    /// Returns the first [`TdsError`] encountered by element or structural
+    /// Returns the first [`TdsError`] encountered by element or combinatorial
     /// validation.
     pub fn validate_structure(&self) -> Result<(), TdsError> {
         self.tds.validate()
     }
 
-    /// Returns the first actionable Level 2 structural diagnostic, if any.
+    /// Returns the first actionable Level 2 Combinatorial Consistency diagnostic, if any.
     #[must_use]
     pub fn structure_diagnostic(&self) -> Option<InvariantViolation> {
         self.tds.structure_diagnostic()
@@ -903,7 +904,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// [`Triangulation::validate_vertex_links`](Self::validate_vertex_links) for
     /// the canonical vertex-link PL-manifold certification, or
     /// [`Triangulation::is_valid_topology`](Self::is_valid_topology) for the
-    /// configured full Level 3 topology policy.
+    /// configured full Level 3 Intrinsic PL Topology policy.
     ///
     /// # Errors
     ///
@@ -1060,7 +1061,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         validate_vertex_links_in_index(&facet_to_simplices, self.global_topology)
     }
 
-    /// Returns the topology guarantee used for Level 3 topology validation.
+    /// Returns the topology guarantee used for Level 3 Intrinsic PL Topology validation.
     #[inline]
     #[must_use]
     pub const fn topology_guarantee(&self) -> TopologyGuarantee {
@@ -1090,8 +1091,8 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Errors
     ///
     /// Returns [`InvariantError::Tds`] if lower-level structure is invalid while
-    /// checking topology, or [`InvariantError::Triangulation`] when Level 3
-    /// topology violates the requested metadata, for example when Euclidean
+    /// checking Intrinsic PL Topology, or [`InvariantError::Triangulation`] when Level 3
+    /// Intrinsic PL Topology violates the requested metadata, for example when Euclidean
     /// boundary facets are relabeled as closed spherical or toroidal topology.
     /// The previous topology metadata is restored before the error is returned.
     ///
@@ -1219,8 +1220,8 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
 
     /// Validates that every vertex is incident to at least one simplex.
     ///
-    /// Isolated vertices are allowed at the TDS (structural) layer, but they violate the
-    /// manifold invariants checked at the topology (Level 3) layer.
+    /// Isolated vertices are allowed at the TDS combinatorial layer, but they violate the
+    /// manifold invariants checked at the Level 3 Intrinsic PL Topology layer.
     pub(crate) fn validate_no_isolated_vertices(&self) -> Result<(), TriangulationValidationError> {
         if self.tds.number_of_vertices() == 0 {
             return Ok(());
@@ -1326,7 +1327,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         }
     }
 
-    /// Tries to set the topology guarantee used for Level 3 topology validation.
+    /// Tries to set the topology guarantee used for Level 3 Intrinsic PL Topology validation.
     ///
     /// # Errors
     ///
@@ -1357,7 +1358,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         Ok(())
     }
 
-    /// Sets the topology guarantee used for Level 3 topology validation.
+    /// Sets the topology guarantee used for Level 3 Intrinsic PL Topology validation.
     ///
     /// Prefer [`try_set_topology_guarantee`](Self::try_set_topology_guarantee) when callers need
     /// typed feedback for rejected combinations. This compatibility setter leaves the existing
@@ -1501,7 +1502,7 @@ where
     /// let dt: DelaunayTriangulation<_, (), (), 4> =
     ///     DelaunayTriangulationBuilder::new(&vertices_4d).build()?;
     ///
-    /// // Level 3: topology validation (manifold-with-boundary + Euler characteristic)
+    /// // Level 3: Intrinsic PL Topology (manifold-with-boundary + Euler characteristic)
     /// assert!(dt.as_triangulation().is_valid_topology().is_ok());
     /// # Ok(())
     /// # }
@@ -1514,7 +1515,7 @@ where
         Ok(())
     }
 
-    /// Returns the first actionable Level 3 topology diagnostic, if any.
+    /// Returns the first actionable Level 3 Intrinsic PL Topology diagnostic, if any.
     ///
     /// This is the repair/retry-oriented counterpart to
     /// [`is_valid_topology`](Self::is_valid_topology). It preserves the
@@ -1547,7 +1548,7 @@ where
             .and_then(|report| report.violations.into_iter().next())
     }
 
-    /// Generate a Level 3 topology report.
+    /// Generate a Level 3 Intrinsic PL Topology report.
     ///
     /// This report checks topology-layer invariants only. It assumes the TDS
     /// structure is already valid. Use [`validation_report`](Self::validation_report)
@@ -1733,8 +1734,8 @@ where
     ///
     /// Returns an [`InvariantError`] if:
     /// - Any vertex/simplex is invalid (Level 1).
-    /// - The TDS structural invariants fail (Level 2).
-    /// - Topology validation fails (Level 3).
+    /// - Level 2 Combinatorial Consistency fails.
+    /// - Level 3 Intrinsic PL Topology validation fails.
     ///
     /// # Examples
     ///
@@ -1759,7 +1760,7 @@ where
     /// let dt: DelaunayTriangulation<_, (), (), 4> =
     ///     DelaunayTriangulationBuilder::new(&vertices_4d).build()?;
     ///
-    /// // Levels 1–3: elements + TDS structure + topology
+    /// // Levels 1–3: Element Validity + Combinatorial Consistency + Intrinsic PL Topology
     /// assert!(dt.as_triangulation().validate().is_ok());
     /// # Ok(())
     /// # }
@@ -1836,7 +1837,7 @@ where
             }
         }
 
-        // Level 3: topology.
+        // Level 3: Intrinsic PL Topology.
         if let Err(report) = self.topology_report() {
             violations.extend(report.violations);
         }

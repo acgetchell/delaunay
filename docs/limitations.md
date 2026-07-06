@@ -78,9 +78,15 @@ Toroidal support has two modes:
   release validation.
 
 Spherical topologies provide public metadata and behavior-model support for
-projecting finite nonzero coordinates onto the unit sphere, but they do not yet
-provide full construction or validation semantics for sphere-constrained point
-sets. Hyperbolic topologies remain public metadata and behavior-model scaffolds.
+projecting finite nonzero coordinates onto the unit sphere. The bounded
+`SphericalDelaunayBuilder` prototype additionally supports `S^2` and `S^3`
+construction from points in `R^3`/`R^4` by ambient convex-hull duality. Its
+validation surface keeps Level 3 Intrinsic PL Topology separate from spherical
+Level 4 Embedding Validity and spherical Level 5 empty-cap / hull-facet predicates. Full
+2D-5D spherical integration, richer spherical embedding diagnostics, and
+integration with the ordinary mutable triangulation/editing surface remain
+tracked by issue #414. Hyperbolic topologies remain public metadata and
+behavior-model scaffolds.
 
 Manual topological editing APIs are intentionally low level. After bistellar
 flips or direct TDS-oriented work, callers should run repair and validation
@@ -179,6 +185,7 @@ These are not currently implemented:
   detached Pachner proposals, but parallel execution still requires a dedicated
   synchronization and transaction design.
 - Massively parallel, GPU, or out-of-core construction.
-- Full spherical or hyperbolic triangulation semantics.
+- Full spherical integration beyond the bounded `S^2`/`S^3` prototype, or
+  hyperbolic triangulation semantics.
 
 The roadmap for active follow-up work is in [`roadmap.md`](roadmap.md).

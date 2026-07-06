@@ -124,19 +124,27 @@ When in doubt, favor the invariant over the convenient edit.
 
 The library exposes five validation levels, each a superset of the last:
 
-1. **Level 1 - elements**: individual simplices, vertices, and facets are
-   internally consistent.
-2. **Level 2 - structure**: adjacency pointers and neighbor links form a valid
-   incidence graph.
-3. **Level 3 - topology**: PL-manifold-with-boundary, Euler characteristic, and
-   ridge-link consistency.
-4. **Level 4 - embedding**: maximal simplices are nondegenerate and intersect
-   only in shared faces in the active affine chart.
-5. **Level 5 - Delaunay property**: every facet is locally Delaunay.
+1. **Level 1 - Element Validity**: individual simplices, vertices, facets,
+   coordinates, and canonical local data are internally consistent.
+2. **Level 2 - Combinatorial Consistency**: adjacency pointers, incidence
+   relations, neighbor links, simplex/ridge connectivity, and TDS integrity are
+   coherent.
+3. **Level 3 - Intrinsic PL Topology**: the abstract simplicial complex has the
+   requested PL topology, including manifold/pseudomanifold conditions, links,
+   Euler characteristic, orientability, and connected components.
+4. **Level 4 - Embedding Validity**: the complex is faithfully realized in the
+   chosen ambient model, including Euclidean affine charts, toroidal periodic
+   charts, spherical `S^d` embeddings, and embedding-specific constraints.
+5. **Level 5 - Geometric Predicates**: the embedding satisfies the selected
+   geometric predicate family, currently Euclidean/toroidal/spherical Delaunay
+   checks and eventually regular, weighted, constrained, Gabriel, alpha, or
+   related predicates.
 
-Level 4 uses orientation and exact barycentric geometry. Level 5 uses
-Delaunay predicates. Levels 1-3 are pure graph/topology checks. Validation code
-belongs at the lowest layer that owns the invariant.
+Level 4 uses orientation and exact barycentric geometry for affine-chart
+embedding, with backend-specific realization checks for non-Euclidean models.
+Level 5 uses geometry-specific predicates. Levels 1-3 are embedding-independent
+graph/topology checks. Validation code belongs at the lowest layer that owns the
+invariant.
 Each layer should expose the standard validation surface. Use plain
 `is_valid()` when the owner already names the invariant scope (`Vertex`,
 `Simplex`, and `Tds`); use `is_valid_*` when higher-level owners expose

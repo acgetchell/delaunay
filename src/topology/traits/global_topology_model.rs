@@ -10,7 +10,8 @@
 //!
 //! - [`EuclideanModel`]: Identity operations (no wrapping or lifting)
 //! - [`ToroidalModel`]: Domain wrapping and lattice-offset lifting for periodic boundaries
-//! - [`SphericalModel`]: Unit-sphere projection for finite nonzero coordinates
+//! - [`SphericalModel`]: Unit-sphere projection for finite nonzero
+//!   `GlobalTopology` coordinate arrays
 //! - [`HyperbolicModel`]: Scaffold for future hyperbolic projection
 //!
 //! The [`GlobalTopologyModelAdapter`] enum provides dynamic dispatch over these models and is
@@ -321,12 +322,19 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
     }
 }
 
-/// Spherical behavior model for unit-sphere projection.
+/// Spherical behavior model for [`GlobalTopology`] metadata.
 ///
 /// This model backs [`GlobalTopology::Spherical`] canonicalization by projecting
-/// finite nonzero coordinates onto the unit sphere. Non-finite coordinates and
-/// zero-length vectors are reported as typed [`GlobalTopologyModelError`]
-/// values instead of producing `NaN` coordinates.
+/// finite nonzero coordinate arrays onto the unit sphere. It is metadata/model
+/// plumbing for the existing `GlobalTopologyModel<D>` trait, where `D` is the
+/// coordinate-array length accepted by the trait methods. Spherical Delaunay
+/// construction uses
+/// [`crate::topology::spaces::spherical::SphericalPoint`] and
+/// [`crate::topology::spaces::spherical::SphericalMetric`] instead, where `D`
+/// is the intrinsic dimension of `S^D` and coordinates live in `R^(D+1)`.
+///
+/// Non-finite coordinates and zero-length vectors are reported as typed
+/// [`GlobalTopologyModelError`] values instead of producing `NaN` coordinates.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SphericalModel;
 

@@ -34,8 +34,9 @@ into architecture docs; link to the command guide instead.
   utilities.
 - `src/io/` owns downstream-facing export data models for notebooks,
   visualization, analysis, and interchange. It does not own TDS hydration.
-- `src/topology/` owns topology-space models, Euler characteristic helpers,
-  manifold validation, ridge queries, and PL-manifold reasoning.
+- `src/topology/` owns topology metadata/models, topology-space helpers,
+  spherical coordinate backends, Euler characteristic helpers, manifold
+  validation, ridge queries, and PL-manifold reasoning.
 - `src/lib.rs` wires public modules, root re-exports, focused preludes, and the
   crate-level documentation map.
 - `docs/dev/README.md` indexes the operational rules for agents. Keep
@@ -48,10 +49,11 @@ into architecture docs; link to the command guide instead.
 - `edge.rs` and `facet.rs` stay in `src/core/` because they are direct TDS
   traversal primitives. Ridge query/view types belong in `src/topology/`
   because ridge shape and link semantics depend on dimension and topology.
-- Generic Level 4 embedding validation belongs in `src/core/embedding.rs`;
-  Delaunay Level 5 public validation APIs belong in `src/delaunay/validation.rs`,
-  with TDS-level Delaunay-property scan helpers under `src/delaunay/`; generic
-  Level 1-3 validation belongs in the core/topology layers.
+- Generic Level 4 Embedding Validity belongs in `src/core/embedding.rs`;
+  implemented Level 5 Geometric Predicate APIs for Delaunay belong in
+  `src/delaunay/validation.rs`, with TDS-level Delaunay-property scan helpers
+  under `src/delaunay/`; generic Level 1-3 validation belongs in the
+  core/topology layers.
 - Focused preludes should stay narrow and workflow-specific. Use
   `delaunay::prelude::pachner::*` for local move workflows, and import
   primitive bistellar flips directly from `delaunay::flips` only when testing,

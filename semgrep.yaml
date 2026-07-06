@@ -1918,9 +1918,9 @@ rules:
     metadata:
       category: maintainability
       rationale: >-
-        The validation stack now separates Level 4 embedding checks from Level 5
-        Delaunay predicates. Public docs and citation prose should not keep the
-        old four-level hierarchy wording.
+        The validation stack now separates Level 4 Embedding Validity from
+        Level 5 Geometric Predicates. Public docs and citation prose should not
+        keep the old four-level hierarchy wording.
     paths:
       include:
         - "/README.md"

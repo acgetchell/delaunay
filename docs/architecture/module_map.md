@@ -20,7 +20,7 @@ ordering, see [`module_patterns.md`](module_patterns.md).
   maintenance.
 - `tds/snapshot.rs` - persistence boundary from raw codec records into
   validated UUID snapshots before hydration allocates fresh slotmap keys.
-- `tds/validation.rs` - Level 2 structural validation and adjacency checks.
+- `tds/validation.rs` - Level 2 Combinatorial Consistency validation and adjacency checks.
 - `triangulation.rs` - generic triangulation layer with kernel.
 - `construction.rs` - generic construction helpers and initial-simplex setup.
 - `insertion.rs` - generic transactional insertion, duplicate detection, and
@@ -111,8 +111,11 @@ coordinate model/API rather than loosening ordinary `f64` APIs.
 - `repair.rs` - Delaunay repair policies, rebuild config, and repair outcomes.
 - `serialization.rs` - conversion to/from `Tds` with topology metadata reset
   rules.
-- `validation.rs` - Level 5 Delaunay validation errors and construction validation
-  cadence helpers.
+- `spherical.rs` - bounded `S^2`/`S^3` spherical construction,
+  embedding-validation, and empty-cap Delaunay backend using the topology
+  space coordinate/metric backend.
+- `validation.rs` - implemented Level 5 Geometric Predicate APIs for Delaunay
+  validation errors and construction validation cadence helpers.
 - `property_validation.rs` - TDS-level Delaunay empty-circumsphere scans and
   repair-oriented violation reports used by Level 5 validation APIs.
 
@@ -145,8 +148,10 @@ slotmap handles.
   classification over declared global topology.
 - `ridge.rs` - ridge candidates, borrowed ridge queries/views, lifted
   ridge-link views, and ridge-star map builders.
-- `spaces/euclidean.rs`, `spaces/spherical.rs`, and `spaces/toroidal.rs` -
-  concrete topology-space helper implementations.
+- `spaces/euclidean.rs` and `spaces/toroidal.rs` - concrete
+  `TopologicalSpace` helper implementations.
+- `spaces/spherical.rs` - spherical coordinate and metric backend for points on
+  `S^D` embedded in `R^(D+1)`.
 - `traits/topological_space.rs` - public `GlobalTopology<D>` metadata enum and
   `TopologyKind`.
 - `traits/global_topology_model.rs` - internal scalar-generic

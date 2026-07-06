@@ -62,7 +62,10 @@ use delaunay::prelude::construction::{
     InvalidPositiveScalar as ConstructionInvalidPositiveScalar, RandomPointGenerationError,
     SimplexValidationError,
     SpatialIndexConstructionFailure as ConstructionSpatialIndexConstructionFailure,
-    TopologyGuarantee, ToroidalDomain as ConstructionToroidalDomain, Vertex, VertexValidationError,
+    SphericalDelaunayBuilder, SphericalDelaunayConstructionError, SphericalDelaunayTriangulation,
+    SphericalDelaunayValidationError, SphericalSimplex, SphericalSimplexError,
+    SphericalValidationLayer, TopologyGuarantee, ToroidalDomain as ConstructionToroidalDomain,
+    Vertex, VertexValidationError,
     try_vertices_from_points as construction_try_vertices_from_points, vertex,
 };
 use delaunay::prelude::delaunayize::{
@@ -168,8 +171,9 @@ use delaunay::prelude::tds::{
     VertexKey,
 };
 use delaunay::prelude::topology::spaces::{
-    GlobalTopology, GlobalTopologyModelError, LiftedLinkEdge, LiftedVertexId, SphericalSpace,
-    TopologicalSpace, TopologyKind, ToroidalConstructionMode, ToroidalDomain, ToroidalDomainError,
+    GlobalTopology, GlobalTopologyModelError, LiftedLinkEdge, LiftedVertexId, SphericalMetric,
+    SphericalPoint, SphericalPointError, TopologyKind, ToroidalConstructionMode, ToroidalDomain,
+    ToroidalDomainError,
 };
 use delaunay::prelude::topology::validation::{
     GlobalTopology as TopologyValidationGlobalTopology, ManifoldError, RidgeCandidate,
@@ -202,6 +206,8 @@ use delaunay::prelude::validation::{
     DelaunayViolationReport as FocusedDelaunayViolationReport,
     ManifoldError as FocusedValidationManifoldError,
     PeriodicDomainPeriodError as FocusedPeriodicDomainPeriodError,
+    SphericalDelaunayValidationError as FocusedSphericalDelaunayValidationError,
+    SphericalValidationLayer as FocusedSphericalValidationLayer,
     TopologyGuarantee as FocusedValidationTopologyGuarantee,
     TriangulationValidationReport as FocusedValidationReport, ValidationCadence,
     ValidationConfigurationError as FocusedValidationConfigurationError,
@@ -846,6 +852,41 @@ fn construction_prelude_covers_vertex_macro() -> Result<(), PreludeExportTestErr
         })
     );
     Ok(())
+}
+
+#[test]
+fn construction_prelude_covers_spherical_delaunay_exports() {
+    let simplex = SphericalSimplex::<2>::try_new(vec![0, 1, 2], 4)
+        .expect("valid spherical simplex should construct");
+    assert_eq!(simplex.vertex_indices(), &[0, 1, 2]);
+    assert_matches!(
+        SphericalSimplex::<2>::try_new(vec![0, 1], 4),
+        Err(SphericalSimplexError::InvalidArity {
+            dimension: 2,
+            expected: 3,
+            actual: 2,
+        })
+    );
+
+    let points = [
+        [1.0, 1.0, 1.0],
+        [1.0, -1.0, -1.0],
+        [-1.0, 1.0, -1.0],
+        [-1.0, -1.0, 1.0],
+    ];
+    let triangulation: SphericalDelaunayTriangulation<2> =
+        SphericalDelaunayBuilder::<2>::try_new(points)
+            .expect("tetrahedron points should canonicalize")
+            .build()
+            .expect("tetrahedron hull should construct");
+    assert_eq!(triangulation.number_of_simplices(), 4);
+
+    assert_eq!(
+        SphericalValidationLayer::Delaunay.to_string(),
+        "Level 5 Geometric Predicates"
+    );
+    let _construction_error_size = size_of::<SphericalDelaunayConstructionError>();
+    let _validation_error_size = size_of::<SphericalDelaunayValidationError>();
 }
 
 #[test]
@@ -1850,6 +1891,12 @@ fn validation_prelude_covers_configuration_error() {
         root_period_error,
         RootPeriodicDomainPeriodError::NonFinitePeriod { axis: 1, .. }
     );
+
+    assert_eq!(
+        FocusedSphericalValidationLayer::Embedding.to_string(),
+        "Level 4 Embedding Validity"
+    );
+    let _spherical_validation_error_size = size_of::<FocusedSphericalDelaunayValidationError>();
 }
 
 #[test]
@@ -2139,20 +2186,27 @@ fn topology_spaces_prelude_covers_toroidal_domain_api() -> Result<(), PreludeExp
 }
 
 #[test]
-fn topology_spaces_prelude_covers_spherical_space_api() {
-    let space = SphericalSpace::<3>::new();
-    assert_eq!(space.kind(), TopologyKind::Spherical);
-    assert!(!space.allows_boundary());
-
-    let mut coords = [3.0_f64, 4.0, 0.0];
-    space.canonicalize_point(&mut coords);
-    assert_relative_eq!(coords[0], 0.6);
-    assert_relative_eq!(coords[1], 0.8);
-    assert_relative_eq!(coords[2], 0.0);
-
+fn topology_spaces_prelude_covers_spherical_backend_api() {
     let zero_norm = GlobalTopologyModelError::ZeroSphericalPointNorm;
     assert!(zero_norm.to_string().contains("unit sphere"));
-    assert_send_sync_unpin::<SphericalSpace<3>>();
+    let metric = SphericalMetric::<2>::unit();
+    let x = SphericalPoint::<2>::try_new([1.0, 0.0, 0.0])
+        .expect("unit x-axis point should canonicalize");
+    let y = SphericalPoint::<2>::try_new([0.0, 1.0, 0.0])
+        .expect("unit y-axis point should canonicalize");
+    assert_relative_eq!(
+        metric
+            .try_distance(&x, &y)
+            .expect("matching metric and point radii should produce a distance"),
+        std::f64::consts::FRAC_PI_2,
+        epsilon = 1.0e-12
+    );
+    assert_matches!(
+        SphericalMetric::<2>::try_new(0.0),
+        Err(SphericalPointError::InvalidRadius { radius }) if radius == 0.0
+    );
+    assert_send_sync_unpin::<SphericalMetric<3>>();
+    assert_send_sync_unpin::<SphericalPoint<3>>();
 }
 
 #[test]

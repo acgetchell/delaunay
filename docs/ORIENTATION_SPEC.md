@@ -147,7 +147,7 @@ facet-parity constraints. If it finds contradictory constraints, it returns
 `TdsError::InconsistentDataStructure`; otherwise it swaps vertex slots `0` and
 `1` in every simplex assigned `true`.
 
-`Tds::is_valid()` includes coherent orientation as a Level 2 structural check
+`Tds::is_valid()` includes coherent orientation as a Level 2 Combinatorial Consistency check
 after simplex vertex keys, duplicate simplices, facet sharing, and neighbor consistency
 have been validated. The validation report records it as
 `InvariantKind::CoherentOrientation`.
@@ -202,8 +202,8 @@ drive repair, but replacement-simplex orientation itself uses `robust_orientatio
   and then enforces the Delaunay property.
 - `.try_toroidal([..])` builds an image-point triangulation and then runs
   orientation normalization, lifted geometric orientation validation, final
-  Levels 1-3 topology validation, Level 4 embedding validation in periodic
-  covering-space charts, and final Level 5 Delaunay validation before returning
+  Levels 1-3 topology validation, Level 4 Embedding Validity in periodic
+  covering-space charts, and final Level 5 Delaunay-predicate validation before returning
   the quotient triangulation.
 
 ## Degenerate Simplices

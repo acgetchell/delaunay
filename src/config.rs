@@ -721,8 +721,50 @@ fn explicit_builder_failure<const N: usize>(
             case,
             message: "expected the explicit validation case to fail, but it passed".to_owned(),
         }),
-        Err(error) => Ok(error.to_string()),
+        Err(error) => Ok(stable_validation_demo_diagnostic(&error.to_string())),
     }
+}
+
+/// Remove run-specific identifiers from validation-demo diagnostics so paper
+/// artifacts are reproducible while preserving the diagnostic shape.
+fn stable_validation_demo_diagnostic(diagnostic: &str) -> String {
+    let bytes = diagnostic.as_bytes();
+    let mut normalized = String::with_capacity(diagnostic.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if is_uuid_at(bytes, index) {
+            normalized.push_str("<uuid>");
+            index += 36;
+            continue;
+        }
+        if let Some(character) = diagnostic[index..].chars().next() {
+            normalized.push(character);
+            index += character.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    normalized
+}
+
+/// Detect an ASCII UUID literal at a byte offset in a diagnostic string.
+fn is_uuid_at(bytes: &[u8], start: usize) -> bool {
+    if start + 36 > bytes.len() {
+        return false;
+    }
+    for offset in 0..36 {
+        let byte = bytes[start + offset];
+        if matches!(offset, 8 | 13 | 18 | 23) {
+            if byte != b'-' {
+                return false;
+            }
+        } else if !byte.is_ascii_hexdigit() {
+            return false;
+        }
+    }
+    true
 }
 
 /// Convert finite 2D coordinates into vertices for explicit-builder demos.
@@ -2400,5 +2442,18 @@ mod tests {
                 .all(|case| case.status == "failed_as_expected")
         );
         assert_eq!(export.cases[3].layer, "Valid affine realization");
+    }
+
+    #[test]
+    fn validation_demo_export_is_reproducible_across_runs() {
+        let first = build_validation_demo_export().expect("first validation demo should build");
+        let second = build_validation_demo_export().expect("second validation demo should build");
+
+        let first_json =
+            serde_json::to_value(&first).expect("first validation demo should serialize");
+        let second_json =
+            serde_json::to_value(&second).expect("second validation demo should serialize");
+
+        assert_eq!(first_json, second_json);
     }
 }

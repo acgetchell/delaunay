@@ -503,34 +503,30 @@ impl<const D: usize> GlobalTopology<D> {
     }
 }
 
-/// Trait for topological spaces that triangulations can inhabit.
+/// Trait for fixed-coordinate topology-space helpers.
 ///
-/// This trait abstracts over different geometric spaces (Euclidean, spherical,
-/// toroidal, hyperbolic) to enable topology-aware triangulation algorithms.
+/// This trait abstracts topology-specific operations whose coordinate arity
+/// matches the triangulation dimension `D`. The current concrete helper
+/// implementations are Euclidean and toroidal. Spherical Delaunay construction
+/// uses [`crate::topology::spaces::spherical::SphericalPoint`] and
+/// [`crate::topology::spaces::spherical::SphericalMetric`] instead because
+/// points on `S^D` live in ambient `R^(D+1)`.
 ///
 /// The dimension is specified via the associated constant `DIM`, which must
 /// match the dimension of the associated `Tds<U, V, D>`. This ensures
 /// type safety and prevents dimension mismatches.
 ///
-/// # Future Use
-///
-/// This is currently unused but provides the interface for future support
-/// of non-Euclidean triangulations. Implementations will handle topology-specific
-/// operations like point canonicalization and boundary conditions.
-///
-/// When implemented, the topological space will be stored in
-/// `Triangulation<K, U, V, D>` and its `DIM` must equal `D`.
-///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::topology::spaces::{TopologicalSpace, TopologyKind};
+/// use delaunay::prelude::topology::spaces::{
+///     EuclideanSpace, TopologicalSpace, TopologyKind,
+/// };
 ///
-/// // Future: EuclideanSpace will implement this trait
-/// // let space = EuclideanSpace::<3>::new();
-/// // assert_eq!(EuclideanSpace::<3>::DIM, 3);
-/// // assert_eq!(space.kind(), TopologyKind::Euclidean);
-/// // assert!(space.allows_boundary());
+/// let space = EuclideanSpace::<3>::new();
+/// assert_eq!(EuclideanSpace::<3>::DIM, 3);
+/// assert_eq!(space.kind(), TopologyKind::Euclidean);
+/// assert!(space.allows_boundary());
 /// ```
 pub trait TopologicalSpace {
     /// The dimension of this topological space.
@@ -576,7 +572,8 @@ pub trait TopologicalSpace {
     /// # Returns
     ///
     /// - `true` for Euclidean spaces (convex hull boundary allowed)
-    /// - `false` for closed manifolds like spherical or toroidal spaces
+    /// - `false` for closed spaces such as toroidal quotient models and
+    ///   `GlobalTopology::Spherical`
     ///
     /// # Examples
     ///
@@ -618,17 +615,24 @@ pub trait TopologicalSpace {
 
     /// Canonicalizes a point to conform to the topology's constraints.
     ///
-    /// Different topologies have different canonicalization rules:
+    /// Current helper implementations have these canonicalization rules:
     /// - **Euclidean**: No modification (identity operation)
     /// - **Toroidal**: Wraps coordinates into fundamental domain `[0, L)`
-    /// - **Spherical**: Projects finite nonzero coordinate vectors onto the unit sphere
-    /// - **Hyperbolic**: Currently a scaffolded identity operation
     ///
     /// The coordinate slice length must match `Self::DIM`.
     /// This helper is infallible; implementations without an error channel may
     /// leave inputs unchanged when no valid canonical representative exists.
     /// Fallible construction paths surface those cases through
     /// [`crate::topology::traits::GlobalTopologyModelError`].
+    ///
+    /// Spherical `GlobalTopology` metadata still has a separate behavior model
+    /// for fixed-size coordinate arrays. For spherical Delaunay construction,
+    /// use
+    /// [`crate::topology::spaces::spherical::SphericalPoint`] and
+    /// [`crate::topology::spaces::spherical::SphericalMetric`] instead. Those
+    /// types treat `D` as the intrinsic dimension of `S^D` and require
+    /// `D + 1` ambient coordinates, while this trait method only sees a
+    /// `Self::DIM` coordinate slice.
     ///
     /// # Arguments
     ///

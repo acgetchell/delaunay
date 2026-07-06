@@ -56,6 +56,15 @@ delaunay/
 │   ├── validation.md
 │   └── workflows.md
 ├── examples/
+├── notebooks/
+│   ├── 00_quickstart.ipynb
+│   └── 01_validation.ipynb
+├── papers/
+│   ├── generated/
+│   ├── README.md
+│   ├── validation.bib
+│   ├── validation.pdf
+│   └── validation.tex
 ├── scripts/
 │   ├── ci/
 │   ├── tests/
@@ -64,6 +73,7 @@ delaunay/
 │   ├── benchmark_utils.py
 │   ├── hardware_utils.py
 │   ├── notebook_check.py
+│   ├── paper_check.py
 │   ├── postprocess_changelog.py
 │   ├── subprocess_utils.py
 │   └── tag_release.py
@@ -118,13 +128,16 @@ find . -type f \( -name "*.rs" -o -name "*.md" -o -name "*.toml" -o -name "*.yml
   and performance-result documentation. Timing-based measurements belong here,
   not in unit tests.
 - `examples/` contains user-facing API demos and workflow examples.
+- `notebooks/` contains reproducible visualization and analysis notebooks.
+- `papers/` contains publication-facing TeX/BibTeX sources, tracked reviewer
+  PDFs, and notebook-generated figure assets.
 - `docs/` contains user documentation, contributor guidance, architecture
   references, archived design notes, and templates.
 - `docs/dev/` contains operational rules for agents and contributors, indexed
   by [`../dev/README.md`](../dev/README.md).
 - `docs/architecture/` contains focused architecture references.
 - `scripts/` contains typed Python utilities for changelog, benchmark,
-  hardware, SARIF, subprocess, and release workflows.
+  hardware, paper/PDF, SARIF, subprocess, and release workflows.
 - `.github/` contains issue templates, workflow definitions, and
   repository-integrated automation.
 
