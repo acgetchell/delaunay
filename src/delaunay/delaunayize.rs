@@ -89,6 +89,7 @@ use thiserror::Error;
 /// - `topology_max_iterations`: 64
 /// - `topology_max_simplices_removed`: 10,000
 /// - `fallback_rebuild`: false
+/// - `delaunay_max_flips`: `None`
 ///
 /// # Examples
 ///
@@ -748,7 +749,7 @@ where
 {
     if let Some(max_flips) = config.delaunay_max_flips {
         dt.repair_delaunay_with_flips_advanced(
-            DelaunayRepairHeuristicConfig::default().with_max_flips(max_flips),
+            DelaunayRepairHeuristicConfig::default().with_delaunay_max_flips(max_flips),
         )
         .map(|outcome| outcome.stats)
     } else {

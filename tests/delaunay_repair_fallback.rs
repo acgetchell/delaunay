@@ -81,7 +81,7 @@ fn repair_fallback_produces_valid_triangulation() {
     }
     assert!(flipped, "fixture should contain a flippable interior facet");
 
-    let config = DelaunayRepairHeuristicConfig::default().with_max_flips(0);
+    let config = DelaunayRepairHeuristicConfig::default().with_delaunay_max_flips(0);
     let outcome = dt
         .repair_delaunay_with_flips_advanced(config)
         .expect("heuristic rebuild fallback should repair the non-Delaunay fixture");

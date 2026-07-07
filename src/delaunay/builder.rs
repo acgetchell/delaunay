@@ -747,6 +747,8 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
         }
     }
 
+    /// Creates a default-kernel builder from explicit vertex and simplex indices.
+    ///
     /// This is not an unchecked topology wrapper. The deferred
     /// [`build`](Self::build) or [`build_with_kernel`](Self::build_with_kernel)
     /// call accepts only Euclidean explicit connectivity and validates the
@@ -1840,32 +1842,43 @@ where
             || options == ConstructionOptions::default().without_final_delaunay_enforcement()
     }
 
-    /// Proves explicit simplex topology once so insertion can use the prechecked TDS path.
-    fn validate_explicit_simplices_for_prechecked_insert(
-        simplices: &[Simplex<V, D>],
+    /// Proves explicit simplex topology once before taking the prechecked TDS insertion path.
+    ///
+    /// The public constructor has already rejected empty input, wrong arity,
+    /// out-of-bounds vertex indices, and repeated vertex indices within a
+    /// simplex. This helper checks the cross-simplex topology that only becomes
+    /// visible after raw indices are mapped to canonical [`VertexKey`] values.
+    fn validate_explicit_topology(
+        simplices: ValidatedExplicitSimplices<'_>,
+        index_to_key: &[VertexKey],
     ) -> Result<(), TdsConstructionError> {
-        Self::validate_explicit_no_duplicate_simplices(simplices)?;
-        Self::validate_explicit_facet_sharing(simplices)?;
+        let simplices = simplices.as_slice();
+        Self::reject_duplicate_explicit_simplices(simplices, index_to_key)?;
+        Self::reject_overshared_explicit_facets(simplices, index_to_key)?;
         Ok(())
     }
 
     /// Rejects duplicate explicit maximal simplices before the insertion loop.
-    fn validate_explicit_no_duplicate_simplices(
-        simplices: &[Simplex<V, D>],
+    ///
+    /// The duplicate check uses sorted [`VertexKey`] identities so callers cannot
+    /// bypass the explicit-construction invariant by permuting the same input
+    /// simplex indices.
+    fn reject_duplicate_explicit_simplices(
+        simplices: &[Vec<usize>],
+        index_to_key: &[VertexKey],
     ) -> Result<(), TdsConstructionError> {
         let mut seen: FastHashMap<SimplexVertexKeyBuffer, usize> = FastHashMap::default();
 
-        for (simplex_index, simplex) in simplices.iter().enumerate() {
-            let identity = Self::explicit_simplex_identity(simplex);
+        for (simplex_index, simplex_spec) in simplices.iter().enumerate() {
+            let identity = Self::explicit_simplex_identity(simplex_spec, index_to_key);
             match seen.entry(identity) {
                 Entry::Occupied(entry) => {
                     let existing_index = *entry.get();
-                    let identity = entry.key();
                     return Err(TdsConstructionError::ValidationError(
-                        TdsError::DuplicateSimplices {
-                            message: format!(
-                                "Found duplicate explicit simplex at input indices {existing_index} and {simplex_index} with vertex keys {identity:?}"
-                            ),
+                        TdsError::DuplicateExplicitSimplices {
+                            existing_simplex_index: existing_index,
+                            duplicate_simplex_index: simplex_index,
+                            vertex_indices: Self::explicit_simplex_input_indices(simplex_spec),
                         },
                     ));
                 }
@@ -1879,26 +1892,35 @@ where
     }
 
     /// Rejects explicit facets that would exceed PL-manifold multiplicity.
-    fn validate_explicit_facet_sharing(
-        simplices: &[Simplex<V, D>],
+    ///
+    /// This protects the public explicit-import path from committing topology
+    /// that later Level 3 validation must reject after neighbor assignment.
+    fn reject_overshared_explicit_facets(
+        simplices: &[Vec<usize>],
+        index_to_key: &[VertexKey],
     ) -> Result<(), TdsConstructionError> {
         let mut facet_incident_counts: FastHashMap<SimplexVertexKeyBuffer, usize> =
             FastHashMap::default();
 
-        for simplex in simplices {
+        for (simplex_index, simplex_spec) in simplices.iter().enumerate() {
             for facet_index in 0..=D {
-                let facet_identity = Self::explicit_facet_identity(simplex, facet_index);
+                let facet_identity =
+                    Self::explicit_facet_identity(simplex_spec, index_to_key, facet_index);
                 match facet_incident_counts.entry(facet_identity) {
                     Entry::Occupied(mut entry) => {
                         let incident_count = *entry.get();
                         if incident_count >= 2 {
                             return Err(TdsConstructionError::ValidationError(
-                                TdsError::FacetSharingViolation {
+                                TdsError::ExplicitFacetSharingViolation {
                                     facet_key: facet_key_from_vertices(entry.key().as_slice()),
+                                    facet_vertex_indices: Self::explicit_facet_input_indices(
+                                        simplex_spec,
+                                        facet_index,
+                                    ),
                                     existing_incident_count: incident_count,
                                     attempted_incident_count: incident_count + 1,
                                     max_incident_count: 2,
-                                    candidate_simplex_uuid: simplex.uuid(),
+                                    candidate_simplex_index: simplex_index,
                                     candidate_facet_index: facet_index,
                                 },
                             ));
@@ -1915,24 +1937,58 @@ where
         Ok(())
     }
 
-    /// Builds a canonical simplex identity from vertex keys for duplicate detection.
-    fn explicit_simplex_identity(simplex: &Simplex<V, D>) -> SimplexVertexKeyBuffer {
-        let mut identity: SimplexVertexKeyBuffer = simplex.vertices().iter().copied().collect();
+    /// Builds a canonical simplex identity from prevalidated explicit vertex indices.
+    fn explicit_simplex_identity(
+        simplex_spec: &[usize],
+        index_to_key: &[VertexKey],
+    ) -> SimplexVertexKeyBuffer {
+        let mut identity = Self::explicit_simplex_vertex_keys(simplex_spec, index_to_key);
         identity.as_mut_slice().sort_unstable();
         identity
     }
 
-    /// Builds a canonical facet identity for one explicit simplex facet.
+    /// Builds a canonical input-index identity from prevalidated explicit vertex indices.
+    fn explicit_simplex_input_indices(simplex_spec: &[usize]) -> Vec<usize> {
+        let mut identity = simplex_spec.to_vec();
+        identity.sort_unstable();
+        identity
+    }
+
+    /// Builds a canonical facet identity for one prevalidated explicit simplex facet.
     fn explicit_facet_identity(
-        simplex: &Simplex<V, D>,
+        simplex_spec: &[usize],
+        index_to_key: &[VertexKey],
         facet_index: usize,
     ) -> SimplexVertexKeyBuffer {
         let mut identity = SimplexVertexKeyBuffer::new();
-        identity.extend(simplex.vertices().iter().enumerate().filter_map(
-            |(vertex_index, &vertex_key)| (vertex_index != facet_index).then_some(vertex_key),
+        identity.extend(simplex_spec.iter().enumerate().filter_map(
+            |(local_vertex_index, &input_vertex_index)| {
+                (local_vertex_index != facet_index).then_some(index_to_key[input_vertex_index])
+            },
         ));
         identity.as_mut_slice().sort_unstable();
         identity
+    }
+
+    /// Builds a canonical input-index identity for one prevalidated explicit simplex facet.
+    fn explicit_facet_input_indices(simplex_spec: &[usize], facet_index: usize) -> Vec<usize> {
+        let mut identity: Vec<usize> = simplex_spec
+            .iter()
+            .enumerate()
+            .filter_map(|(local_vertex_index, &input_vertex_index)| {
+                (local_vertex_index != facet_index).then_some(input_vertex_index)
+            })
+            .collect();
+        identity.sort_unstable();
+        identity
+    }
+
+    /// Maps prevalidated explicit vertex indices into TDS keys without an intermediate `Vec`.
+    fn explicit_simplex_vertex_keys(
+        simplex_spec: &[usize],
+        index_to_key: &[VertexKey],
+    ) -> SimplexVertexKeyBuffer {
+        simplex_spec.iter().map(|&vi| index_to_key[vi]).collect()
     }
 
     /// Builds a triangulation from explicit vertex and simplex specifications.
@@ -1978,7 +2034,7 @@ where
         Self::reject_explicit_non_euclidean_topology(global_topology)?;
 
         let vertex_count = vertices.len();
-        let simplices = simplices.as_slice();
+        let simplex_specs = simplices.as_slice();
 
         // --- Build TDS ---
         let mut tds: Tds<U, V, D> = Tds::empty();
@@ -1994,29 +2050,22 @@ where
             index_to_key.push(vk);
         }
 
-        // Assemble simplices once with stack-backed vertex buffers, then prove
-        // duplicate/facet topology before using the prechecked TDS insertion path.
-        let mut explicit_simplices = Vec::with_capacity(simplices.len());
-        for (simplex_idx, simplex_spec) in simplices.iter().enumerate() {
-            let vertex_keys: SimplexVertexKeyBuffer =
-                simplex_spec.iter().map(|&vi| index_to_key[vi]).collect();
+        Self::validate_explicit_topology(simplices, &index_to_key).map_err(|source| {
+            ExplicitConstructionError::TdsAssembly {
+                source: Box::new(source),
+            }
+        })?;
+
+        // Construct each simplex only at insertion time after the topology
+        // precheck has proved duplicate and facet-sharing constraints.
+        for (simplex_idx, simplex_spec) in simplex_specs.iter().enumerate() {
+            let vertex_keys = Self::explicit_simplex_vertex_keys(simplex_spec, &index_to_key);
             let simplex = Simplex::try_new(vertex_keys).map_err(|e| {
                 ExplicitConstructionError::SimplexCreation {
                     simplex_index: simplex_idx,
                     source: e,
                 }
             })?;
-            explicit_simplices.push(simplex);
-        }
-
-        Self::validate_explicit_simplices_for_prechecked_insert(&explicit_simplices).map_err(
-            |source| ExplicitConstructionError::TdsAssembly {
-                source: Box::new(source),
-            },
-        )?;
-
-        // Insert simplices.
-        for simplex in explicit_simplices {
             tds.insert_simplex_with_mapping_prechecked_topology(simplex)
                 .map_err(|source| ExplicitConstructionError::TdsAssembly {
                     source: Box::new(source),

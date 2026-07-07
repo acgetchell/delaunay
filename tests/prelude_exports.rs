@@ -116,7 +116,7 @@ use delaunay::prelude::geometry::{
 use delaunay::prelude::insertion::{
     InitialSimplexConstructionError, InitialSimplexUnexpectedInsertionStage, InsertionError,
     InsertionErrorKind as FocusedInsertionErrorKind, InsertionTopologyValidationContext,
-    NeighborRebuildError,
+    NeighborRebuildError, TdsValidationFailure,
 };
 use delaunay::prelude::ordering::{
     HilbertBitDepth, HilbertError, HilbertQuantizedBatch, MAX_HILBERT_BITS, hilbert_index_in_range,
@@ -1296,6 +1296,7 @@ fn assert_misc_bench_prelude_exports() {
     assert_insertion_prelude_empty_tds_exports();
     assert_send_sync_unpin::<TdsMutationError>();
     assert_send_sync_unpin::<NeighborRebuildError>();
+    assert_send_sync_unpin::<TdsValidationFailure>();
     assert_send_sync_unpin::<ConstructionSkipSample>();
     assert_send_sync_unpin::<ConstructionSlowInsertionSample>();
     assert_send_sync_unpin::<DelaunayError>();
@@ -1733,7 +1734,80 @@ fn generator_prelude_covers_validated_coordinate_ranges() -> Result<(), PreludeE
 }
 
 #[test]
-fn construction_prelude_covers_typed_explicit_errors() {
+fn construction_prelude_covers_explicit_tds_preflight_errors() {
+    let duplicate_vertices = vec![
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
+    ];
+    let duplicate_simplices = vec![vec![0, 1, 2], vec![0, 2, 1]];
+    let duplicate_error = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(
+        &duplicate_vertices,
+        &duplicate_simplices,
+    )
+    .expect("explicit duplicate specs should parse")
+    .build()
+    .expect_err("duplicate explicit topology should fail TDS assembly");
+    let DelaunayTriangulationConstructionError::ExplicitConstruction(
+        ExplicitConstructionError::TdsAssembly {
+            source: duplicate_source,
+        },
+    ) = duplicate_error
+    else {
+        panic!("expected explicit TDS assembly error");
+    };
+    let TdsConstructionError::ValidationError(explicit_duplicate) = *duplicate_source else {
+        panic!("expected TDS validation source");
+    };
+    assert_matches!(
+        explicit_duplicate,
+        TdsError::DuplicateExplicitSimplices {
+            existing_simplex_index: 0,
+            duplicate_simplex_index: 1,
+            vertex_indices,
+            ..
+        } if vertex_indices == [0, 1, 2]
+    );
+
+    let overshared_vertices = vec![
+        vertex!([0.0_f64, 0.0]).unwrap(),
+        vertex!([1.0, 0.0]).unwrap(),
+        vertex!([0.0, 1.0]).unwrap(),
+        vertex!([1.0, 1.0]).unwrap(),
+        vertex!([0.5, -1.0]).unwrap(),
+    ];
+    let overshared_simplices = vec![vec![0, 1, 2], vec![0, 1, 3], vec![0, 1, 4]];
+    let overshared_error = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(
+        &overshared_vertices,
+        &overshared_simplices,
+    )
+    .expect("explicit overshared-facet specs should parse")
+    .build()
+    .expect_err("overshared explicit topology should fail TDS assembly");
+    let DelaunayTriangulationConstructionError::ExplicitConstruction(
+        ExplicitConstructionError::TdsAssembly {
+            source: overshared_source,
+        },
+    ) = overshared_error
+    else {
+        panic!("expected explicit TDS assembly error");
+    };
+    let TdsConstructionError::ValidationError(explicit_facet_sharing) = *overshared_source else {
+        panic!("expected TDS validation source");
+    };
+    assert_matches!(
+        explicit_facet_sharing,
+        TdsError::ExplicitFacetSharingViolation {
+            facet_vertex_indices,
+            attempted_incident_count: 3,
+            candidate_simplex_index: 2,
+            ..
+        } if facet_vertex_indices == [0, 1]
+    );
+}
+
+#[test]
+fn construction_prelude_covers_typed_explicit_error_wrappers() {
     let explicit_construction = ExplicitConstructionError::StructuralValidation {
         source: Box::new(TdsError::FacetSharingViolation {
             facet_key: 42,
@@ -2365,11 +2439,14 @@ fn assert_repair_heuristic_config_fluent_setters() {
     let heuristic_config = DelaunayRepairHeuristicConfig::default()
         .with_shuffle_seed(7)
         .with_perturbation_seed(11)
-        .with_max_flips(100);
+        .with_delaunay_max_flips(100);
     assert_eq!(heuristic_config.shuffle_seed, Some(7));
     assert_eq!(heuristic_config.perturbation_seed, Some(11));
     assert_eq!(heuristic_config.max_flips, Some(100));
-    assert_eq!(heuristic_config.without_max_flips().max_flips, None);
+    assert_eq!(
+        heuristic_config.without_delaunay_max_flips().max_flips,
+        None
+    );
 }
 
 fn assert_delaunayize_config_fluent_setters() {

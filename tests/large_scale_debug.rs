@@ -1525,7 +1525,7 @@ where
         let t_repair = Instant::now();
         let repair_config = repair_max_flips
             .map_or_else(DelaunayRepairHeuristicConfig::default, |max_flips| {
-                DelaunayRepairHeuristicConfig::default().with_max_flips(max_flips)
+                DelaunayRepairHeuristicConfig::default().with_delaunay_max_flips(max_flips)
             });
         match dt.repair_delaunay_with_flips_advanced(repair_config) {
             Ok(outcome) => {

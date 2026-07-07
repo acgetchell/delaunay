@@ -68,6 +68,13 @@ const MINIMAL_K2_ROUNDTRIP_POINTS_3D: &[[f64; 3]] = &[
     [0.20, 0.20, -0.85],
 ];
 
+const MINIMAL_K1_ROUNDTRIP_POINTS_3D: &[[f64; 3]] = &[
+    [0.0, 0.0, 0.0],
+    [1.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0],
+    [0.0, 0.0, 1.0],
+];
+
 /// Verifies the stable and adversarial 2D public flip fixture workflows.
 #[test]
 fn flip_fixtures_cover_2d_workflows() {
@@ -78,7 +85,18 @@ fn flip_fixtures_cover_2d_workflows() {
     );
 }
 
+/// Verifies a minimal 3D public k=1 fixture workflow in the default suite.
+#[test]
+fn flip_fixtures_cover_minimal_3d_k1_roundtrip() {
+    verify_3d_fixture_move(
+        MINIMAL_K1_ROUNDTRIP_POINTS_3D,
+        CandidateFilter::Any,
+        FlipMoveKind::K1,
+    );
+}
+
 /// Verifies the stable 3D public k=1 fixture workflow.
+#[cfg(feature = "slow-tests")]
 #[test]
 fn flip_fixtures_cover_stable_3d_k1_roundtrip() {
     verify_3d_fixture_move(STABLE_POINTS_3D, CandidateFilter::Any, FlipMoveKind::K1);
