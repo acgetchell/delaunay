@@ -170,7 +170,7 @@ impl DelaunayRepairPolicy {
 /// let config = DelaunayRepairHeuristicConfig::default()
 ///     .with_shuffle_seed(7)
 ///     .with_perturbation_seed(11)
-///     .with_max_flips(100);
+///     .with_delaunay_max_flips(100);
 /// assert_eq!(config.shuffle_seed, Some(7));
 /// assert_eq!(config.perturbation_seed, Some(11));
 /// assert_eq!(config.max_flips, Some(100));
@@ -227,23 +227,27 @@ impl DelaunayRepairHeuristicConfig {
         self
     }
 
-    /// Sets the optional per-attempt flip budget cap.
+    /// Sets the optional per-attempt flip budget cap for Delaunay repair.
+    ///
+    /// The cap applies to each primary, robust, or heuristic Delaunay-repair
+    /// attempt. Use [`Self::without_delaunay_max_flips`] to return to the
+    /// dimension-dependent internal budget.
     ///
     /// # Examples
     ///
     /// ```rust
     /// use delaunay::prelude::repair::DelaunayRepairHeuristicConfig;
     ///
-    /// let config = DelaunayRepairHeuristicConfig::default().with_max_flips(100);
+    /// let config = DelaunayRepairHeuristicConfig::default().with_delaunay_max_flips(100);
     /// assert_eq!(config.max_flips, Some(100));
     /// ```
     #[must_use]
-    pub const fn with_max_flips(mut self, max_flips: usize) -> Self {
+    pub const fn with_delaunay_max_flips(mut self, max_flips: usize) -> Self {
         self.max_flips = Some(max_flips);
         self
     }
 
-    /// Clears the per-attempt flip budget cap.
+    /// Clears the per-attempt flip budget cap for Delaunay repair.
     ///
     /// # Examples
     ///
@@ -251,12 +255,12 @@ impl DelaunayRepairHeuristicConfig {
     /// use delaunay::prelude::repair::DelaunayRepairHeuristicConfig;
     ///
     /// let config = DelaunayRepairHeuristicConfig::default()
-    ///     .with_max_flips(100)
-    ///     .without_max_flips();
+    ///     .with_delaunay_max_flips(100)
+    ///     .without_delaunay_max_flips();
     /// assert_eq!(config.max_flips, None);
     /// ```
     #[must_use]
-    pub const fn without_max_flips(mut self) -> Self {
+    pub const fn without_delaunay_max_flips(mut self) -> Self {
         self.max_flips = None;
         self
     }
@@ -1401,7 +1405,7 @@ mod tests {
             DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Sub-case 1: Already Delaunay — max_flips=0 should succeed (no flips needed).
-        let config = DelaunayRepairHeuristicConfig::default().with_max_flips(0);
+        let config = DelaunayRepairHeuristicConfig::default().with_delaunay_max_flips(0);
         let outcome = dt.repair_delaunay_with_flips_advanced(config).unwrap();
         assert_eq!(outcome.stats.flips_performed, 0);
         assert!(
@@ -1426,7 +1430,7 @@ mod tests {
             DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         let _guard = ForceRepairNonconvergentGuard::enable();
-        let config = DelaunayRepairHeuristicConfig::default().with_max_flips(0);
+        let config = DelaunayRepairHeuristicConfig::default().with_delaunay_max_flips(0);
         // The primary repair is forced to fail; the robust fallback should succeed
         // because the triangulation is actually Delaunay.
         let outcome = dt.repair_delaunay_with_flips_advanced(config).unwrap();
@@ -1473,7 +1477,7 @@ mod tests {
         assert!(robust_dt.verify_via_flip_predicates().is_err());
 
         // max_flips=0 should fail (flips are needed but budget is zero).
-        let config_zero = DelaunayRepairHeuristicConfig::default().with_max_flips(0);
+        let config_zero = DelaunayRepairHeuristicConfig::default().with_delaunay_max_flips(0);
         // The advanced path tries primary (fails at budget=0), then robust fallback.
         // The robust fallback also respects the budget, so it should also fail at 0,
         // then the heuristic rebuild fires. The key assertion: it should not silently
@@ -1489,7 +1493,7 @@ mod tests {
         }
 
         // Now retry with a generous budget — should succeed.
-        let config_generous = DelaunayRepairHeuristicConfig::default().with_max_flips(100);
+        let config_generous = DelaunayRepairHeuristicConfig::default().with_delaunay_max_flips(100);
         // Reconstruct dt from the same raw TDS in case the previous attempt mutated it.
         let tds2 = non_delaunay_quad_tds();
         let mut dt2: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
@@ -1677,7 +1681,7 @@ mod tests {
     fn heuristic_config_resolves_missing_seeds_deterministically() {
         let config = DelaunayRepairHeuristicConfig::default()
             .with_perturbation_seed(11)
-            .with_max_flips(7);
+            .with_delaunay_max_flips(7);
 
         let seeds = config.resolve_seeds(5);
 
@@ -1690,7 +1694,7 @@ mod tests {
         let config = DelaunayRepairHeuristicConfig::default()
             .with_shuffle_seed(0)
             .with_perturbation_seed(0)
-            .without_max_flips();
+            .without_delaunay_max_flips();
 
         let seeds = config.resolve_seeds(0);
 

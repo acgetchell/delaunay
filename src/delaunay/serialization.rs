@@ -160,7 +160,10 @@ mod tests {
     }
 
     #[test]
-    fn serialize_delaunay_triangulation_does_not_require_kernel_or_datatype_bounds() {
+    fn serialize_internal_delaunay_fixture_does_not_require_kernel_or_datatype_bounds() {
+        // No public constructor can express this fixture: the test intentionally
+        // uses non-`Kernel`, non-`DataType` parameters to prove the Serialize impl
+        // only depends on the serialized TDS payload bounds.
         let dt: DelaunayTriangulation<NotAKernel, SerializeOnlyPayload, SerializeOnlyPayload, 2> =
             DelaunayTriangulation {
                 tri: Triangulation {

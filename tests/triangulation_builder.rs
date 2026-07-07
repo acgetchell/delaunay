@@ -5,7 +5,6 @@
 
 #![forbid(unsafe_code)]
 
-use delaunay::vertex;
 use std::assert_matches;
 use std::collections::HashMap;
 use std::f64::consts::TAU;
@@ -21,6 +20,7 @@ use delaunay::prelude::tds::{InvariantError, TdsConstructionError, TdsError, Ver
 use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
 use delaunay::prelude::topology::validation::{TopologyClassification, euler_characteristic};
 use delaunay::prelude::validation::{TriangulationValidationError, ValidationPolicy};
+use delaunay::vertex;
 
 // =============================================================================
 // Euclidean path
@@ -1380,11 +1380,15 @@ fn test_explicit_error_variant_non_manifold_facet() {
 
     assert_matches!(
         source.as_ref(),
-        TdsConstructionError::ValidationError(TdsError::FacetSharingViolation {
+        TdsConstructionError::ValidationError(TdsError::ExplicitFacetSharingViolation {
+            facet_vertex_indices,
+            existing_incident_count: 2,
             attempted_incident_count: 3,
             max_incident_count: 2,
+            candidate_simplex_index: 2,
+            candidate_facet_index: 2,
             ..
-        })
+        }) if facet_vertex_indices == &[0, 1]
     );
 }
 
@@ -1498,7 +1502,7 @@ fn test_explicit_error_variant_duplicate_simplices_structural_validation() {
         vertex!([1.0, 0.0]).unwrap(),
         vertex!([0.0, 1.0]).unwrap(),
     ];
-    let simplices = vec![vec![0, 1, 2], vec![0, 1, 2]];
+    let simplices = vec![vec![0, 1, 2], vec![0, 2, 1]];
 
     let err = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .unwrap()
@@ -1514,7 +1518,12 @@ fn test_explicit_error_variant_duplicate_simplices_structural_validation() {
 
     assert_matches!(
         source.as_ref(),
-        TdsConstructionError::ValidationError(TdsError::DuplicateSimplices { .. })
+        TdsConstructionError::ValidationError(TdsError::DuplicateExplicitSimplices {
+            existing_simplex_index: 0,
+            duplicate_simplex_index: 1,
+            vertex_indices,
+            ..
+        }) if vertex_indices == &[0, 1, 2]
     );
 }
 

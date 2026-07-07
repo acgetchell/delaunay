@@ -608,6 +608,19 @@ pub enum TdsError {
         /// Description of the duplicate simplex validation failure.
         message: String,
     },
+    /// Explicit input contains duplicate maximal simplices.
+    #[error(
+        "Duplicate explicit simplices at input indices {existing_simplex_index} and {duplicate_simplex_index} with input vertex indices {vertex_indices:?}"
+    )]
+    #[non_exhaustive]
+    DuplicateExplicitSimplices {
+        /// Index of the first simplex specification with this canonical vertex set.
+        existing_simplex_index: usize,
+        /// Index of the duplicate simplex specification.
+        duplicate_simplex_index: usize,
+        /// Canonical sorted input vertex-index identity shared by both simplex specifications.
+        vertex_indices: Vec<usize>,
+    },
     /// A simplex insertion or validation pass found a facet incident to too many simplices.
     ///
     /// During insertion preflight, the `candidate_*` fields identify the simplex that
@@ -629,6 +642,27 @@ pub enum TdsError {
         /// UUID of the candidate or offending simplex.
         candidate_simplex_uuid: Uuid,
         /// Facet index on the candidate or offending simplex.
+        candidate_facet_index: usize,
+    },
+    /// Explicit input contains a facet incident to too many maximal simplices.
+    #[error(
+        "Explicit facet {facet_key} with input vertex indices {facet_vertex_indices:?} exceeds incident-simplex limit: input simplex {candidate_simplex_index} would make {attempted_incident_count} incident simplices, max {max_incident_count}; candidate facet {candidate_facet_index}; existing incident simplices {existing_incident_count}"
+    )]
+    #[non_exhaustive]
+    ExplicitFacetSharingViolation {
+        /// Canonical key of the over-shared facet.
+        facet_key: u64,
+        /// Canonical sorted input vertex indices defining the over-shared facet.
+        facet_vertex_indices: Vec<usize>,
+        /// Number of pre-existing explicit simplices already incident to the facet.
+        existing_incident_count: usize,
+        /// Number of incident simplices that would exist after the candidate input simplex.
+        attempted_incident_count: usize,
+        /// Maximum allowed number of incident simplices for a PL-manifold facet.
+        max_incident_count: usize,
+        /// Input index of the simplex that would exceed facet multiplicity.
+        candidate_simplex_index: usize,
+        /// Facet index on the candidate input simplex.
         candidate_facet_index: usize,
     },
     /// Failed to create a simplex during triangulation.
@@ -823,8 +857,11 @@ impl From<&TdsError> for TdsErrorKind {
             TdsError::InvalidSimplex { .. } => Self::InvalidSimplex,
             TdsError::InvalidNeighbors { .. } => Self::InvalidNeighbors,
             TdsError::OrientationViolation { .. } => Self::OrientationViolation,
-            TdsError::DuplicateSimplices { .. } => Self::DuplicateSimplices,
-            TdsError::FacetSharingViolation { .. } => Self::FacetSharingViolation,
+            TdsError::DuplicateSimplices { .. } | TdsError::DuplicateExplicitSimplices { .. } => {
+                Self::DuplicateSimplices
+            }
+            TdsError::FacetSharingViolation { .. }
+            | TdsError::ExplicitFacetSharingViolation { .. } => Self::FacetSharingViolation,
             TdsError::FailedToCreateSimplex { .. } => Self::FailedToCreateSimplex,
             TdsError::NotNeighbors { .. } => Self::NotNeighbors,
             TdsError::MappingInconsistency { .. } => Self::MappingInconsistency,
@@ -1336,6 +1373,30 @@ mod tests {
                 message: "dangling neighbor".to_string(),
             },
             TdsErrorKind::InconsistentDataStructure,
+        );
+    }
+
+    #[test]
+    fn tds_error_kind_from_error_preserves_explicit_operation_variants() {
+        assert_tds_error_kind(
+            &TdsError::DuplicateExplicitSimplices {
+                existing_simplex_index: 0,
+                duplicate_simplex_index: 1,
+                vertex_indices: vec![3],
+            },
+            TdsErrorKind::DuplicateSimplices,
+        );
+        assert_tds_error_kind(
+            &TdsError::ExplicitFacetSharingViolation {
+                facet_key: 42,
+                facet_vertex_indices: vec![0, 1],
+                existing_incident_count: 2,
+                attempted_incident_count: 3,
+                max_incident_count: 2,
+                candidate_simplex_index: 2,
+                candidate_facet_index: 1,
+            },
+            TdsErrorKind::FacetSharingViolation,
         );
     }
 

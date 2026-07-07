@@ -252,13 +252,16 @@ struct GenerateConfig<const D: usize> {
 impl<const D: usize> GenerateConfig<D> {
     /// Validate dimension-dependent generation limits.
     fn try_new(args: GenerateArgs) -> Result<Self, CliError> {
-        let vertices = NonZeroUsize::new(args.vertices)
-            .filter(|vertices| vertices.get() > D)
-            .ok_or(CliError::TooFewVertices {
+        let minimum = D + 1;
+        let vertices = validated_nonzero_count(
+            args.vertices,
+            |vertices| vertices.get() >= minimum,
+            || CliError::TooFewVertices {
                 dimension: D,
                 vertices: args.vertices,
-                minimum: D + 1,
-            })?;
+                minimum,
+            },
+        )?;
 
         Ok(Self {
             kind: args.kind,
@@ -1067,13 +1070,15 @@ impl PachnerStressConfig {
     /// Build a validated stress configuration from command-line values.
     fn try_new(input: PachnerStressConfigInput) -> Result<Self, PachnerStressError> {
         let minimum_vertices = input.dimension.value() + 1;
-        let vertex_count = NonZeroUsize::new(input.vertex_count)
-            .filter(|vertex_count| vertex_count.get() >= minimum_vertices)
-            .ok_or(PachnerStressError::TooFewVertices {
+        let vertex_count = validated_nonzero_count(
+            input.vertex_count,
+            |vertex_count| vertex_count.get() >= minimum_vertices,
+            || PachnerStressError::TooFewVertices {
                 dimension: input.dimension.value(),
                 vertices: input.vertex_count,
                 minimum: minimum_vertices,
-            })?;
+            },
+        )?;
         let validate_every = input.validate_every.min(input.move_attempts);
         let growth_slack =
             (vertex_count.get() / DEFAULT_VERTEX_GROWTH_DIVISOR).max(input.dimension.value() + 1);
@@ -2213,6 +2218,21 @@ fn positive_nonzero(
     value: usize,
 ) -> Result<NonZeroUsize, PachnerStressError> {
     NonZeroUsize::new(value).ok_or(PachnerStressError::NonPositive { argument, value })
+}
+
+/// Parses a raw count once while preserving the caller's typed threshold error.
+///
+/// CLI commands use this so zero and below-minimum counts report the same
+/// domain-specific "too few vertices" diagnostic instead of leaking
+/// `NonZeroUsize` parsing as a separate user-facing error class.
+fn validated_nonzero_count<E>(
+    value: usize,
+    is_valid: impl FnOnce(NonZeroUsize) -> bool,
+    error: impl FnOnce() -> E,
+) -> Result<NonZeroUsize, E> {
+    NonZeroUsize::new(value)
+        .filter(|count| is_valid(*count))
+        .ok_or_else(error)
 }
 
 #[cfg(test)]
