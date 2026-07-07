@@ -176,32 +176,14 @@ release builds only.
 
 ### Pachner Stress Diagnostics and Benchmarks
 
-These variables configure `benches/pachner_stress.rs` and run in release builds.
-Use them with `just bench-pachner-stress*` or direct Criterion runs that enable
-`--features pachner-stress`. The `just pachner-stress*` recipes now run the opt-in
-`delaunay pachner-stress` CLI and take command-line arguments instead of these
-benchmark environment variables.
+`benches/pachner_stress.rs` now benchmarks stable 4D move fixtures and
+forward/inverse round trips. Use `just bench-pachner-stress*` for Criterion
+timing, or run `delaunay pachner-stress` / `just pachner-stress*` for direct
+3D/4D diagnostic workloads with explicit command-line arguments.
 
 | Variable | Activation | Description |
 |---|---|---|
-| `DELAUNAY_PACHNER_STRESS_REPORT` | presence | `[release]` Print parseable source, progress, and final metric telemetry for Monte Carlo runs |
-| `DELAUNAY_PACHNER_STRESS_VERTICES` | **value** (integer) | `[release]` Shared initial vertex count override |
-| `DELAUNAY_PACHNER_STRESS_VERTICES_{D}D` | **value** (integer) | `[release]` Per-dimension vertex count override, e.g. `_3D` or `_4D` |
-| `DELAUNAY_PACHNER_STRESS_ATTEMPTS` | **value** (integer) | `[release]` Shared attempted-move count per Criterion sample |
-| `DELAUNAY_PACHNER_STRESS_ATTEMPTS_{D}D` | **value** (integer) | `[release]` Per-dimension attempted-move count per Criterion sample |
-| `DELAUNAY_PACHNER_STRESS_VALIDATE_EVERY` | **value** (integer) | `[release]` Shared periodic topology/embedding validation cadence |
-| `DELAUNAY_PACHNER_STRESS_VALIDATE_EVERY_{D}D` | **value** (integer) | `[release]` Per-dimension validation cadence |
-| `DELAUNAY_PACHNER_STRESS_KEY_REFRESH_EVERY` | **value** (integer) | `[release]` Shared cached-key refresh cadence |
-| `DELAUNAY_PACHNER_STRESS_KEY_REFRESH_EVERY_{D}D` | **value** (integer) | `[release]` Per-dimension cached-key refresh cadence |
-| `DELAUNAY_PACHNER_STRESS_SEED` | **value** (integer) | `[release]` Shared Monte Carlo RNG seed |
-| `DELAUNAY_PACHNER_STRESS_SEED_{D}D` | **value** (integer) | `[release]` Per-dimension Monte Carlo RNG seed |
-
-`notebooks/02_pachner_stress_cli.ipynb` runs the `delaunay pachner-stress` CLI
-from first-cell variables instead of notebook-specific environment variables.
-Set the first-cell scalar dimension, vertex count, attempted move count,
-validation cadence, cached-key refresh cadence, retries, seed, timeout, and
-output location. Use `RUN_COUNT` with scalar step values for small sweeps.
-`DELAUNAY_BINARY` may still point the notebook at a prebuilt CLI binary.
+| `MOVES_PER_SAMPLE` | **value** (integer) | `[release]` Number of independent fixture clones per Pachner stress Criterion sample |
 
 ## Miscellaneous
 

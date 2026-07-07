@@ -342,8 +342,8 @@ After applying flips, you should:
 1. Manually verify the Delaunay property if needed:
 
    ```rust
-   assert!(dt.as_triangulation().validate_embedding().is_ok()); // Check Level 4 (valid affine realization)
-   assert!(dt.is_valid_delaunay().is_ok()); // Check Level 5 (Delaunay property)
+   assert!(dt.as_triangulation().validate_embedding().is_ok()); // Check Level 4 (Embedding Validity)
+   assert!(dt.is_valid_delaunay().is_ok()); // Check Level 5 (Geometric Predicates: Delaunay)
    ```
 
 2. Consider running a repair pass if you need the Delaunay property again (requires `K: ExactPredicates`):
@@ -393,14 +393,15 @@ Both APIs work with the same validation framework but have different guarantees:
 
 ### Builder API Guarantees
 
-- ✅ Maintains **structural invariants** (Level 1-2)
-- ✅ Maintains **manifold topology** (Level 3, controlled by `TopologyGuarantee`)
-- ✅ Designed to maintain **valid affine realization** (Level 4) and **Delaunay property** (Level 5)
+- ✅ Maintains **Element Validity** and **Combinatorial Consistency** (Levels 1-2)
+- ✅ Maintains **Intrinsic PL Topology** (Level 3, controlled by `TopologyGuarantee`)
+- ✅ Designed to maintain **Embedding Validity** (Level 4) and the implemented
+  **Geometric Predicates** for Delaunay (Level 5)
 - ✅ Fails gracefully if invariants cannot be maintained
 
 ### Pachner Move API Guarantees
 
-- ✅ Maintains **structural invariants** (Level 1-2)
+- ✅ Maintains **Element Validity** and **Combinatorial Consistency** (Levels 1-2)
 - ✅ Checks **geometric degeneracy** (prevents degenerate flips)
 - ⚠️ Does **not** automatically maintain Delaunay property
 - ⚠️ User is responsible for property preservation
@@ -410,16 +411,16 @@ Both APIs work with the same validation framework but have different guarantees:
 Use the appropriate validation level for your needs:
 
 ```rust
-// Level 2: Structural only (fast)
+// Level 2: Combinatorial Consistency only (fast)
 assert!(dt.is_valid_structure().is_ok());
 
-// Level 3: + Manifold topology
+// Level 3: + Intrinsic PL Topology
 assert!(dt.as_triangulation().is_valid_topology().is_ok());
 
-// Level 4: + valid affine realization
+// Level 4: + Embedding Validity
 assert!(dt.as_triangulation().validate_embedding().is_ok());
 
-// Level 5: + Delaunay property (most comprehensive)
+// Level 5: + Geometric Predicates (Delaunay today)
 assert!(dt.is_valid_delaunay().is_ok());
 
 // Full diagnostic report

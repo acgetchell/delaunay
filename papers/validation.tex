@@ -1,0 +1,195 @@
+% Keep nonacm until this draft is actually submitted to ACM/TOMS.
+\documentclass[manuscript,nonacm]{acmart}
+
+\setcopyright{none}
+\settopmatter{printacmref=false}
+\acmJournal{TOMS}
+
+\title{Validation Architecture in delaunay}
+
+\author{Adam Getchell}
+\email{adam@adamgetchell.org}
+\orcid{0000-0002-0797-0021}
+\affiliation{%
+  \institution{The George Washington University}
+  \city{Washington}
+  \state{DC}
+  \country{USA}
+}
+
+% Keep this explicit so CI rebuilds do not rewrite the reviewer-copy date.
+\date{July 6, 2026}
+
+% Authorship note:
+% This source is intentionally an author-facing outline. Agents may maintain
+% TeX structure, build tooling, citation plumbing, figures, and TODO prompts,
+% but Adam writes the substantive paper prose.
+\newcommand{\AuthorTodo}[1]{\textbf{Author TODO.} #1}
+
+\begin{abstract}
+  \AuthorTodo{Write the abstract in your own words.}
+\end{abstract}
+
+\keywords{TODO author-supplied keywords}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+
+\begin{itemize}
+  \item \AuthorTodo{State the problem and motivation.}
+  \item \AuthorTodo{Explain why validation architecture matters for a
+    scientific computational-geometry library.}
+  \item \AuthorTodo{Summarize the central contribution in your own words.}
+  \item \AuthorTodo{Preview the paper structure.}
+\end{itemize}
+
+\section{Background and Definitions}
+
+\begin{itemize}
+  \item \AuthorTodo{Define the triangulation, simplex, ridge, facet, and
+    embedding terms used throughout the paper.}
+  \item \AuthorTodo{Introduce PL-manifold terminology and the link condition.}
+  \item \AuthorTodo{Introduce Euclidean, toroidal, and spherical embedding
+    models.}
+  \item \AuthorTodo{Introduce Delaunay and future geometric-predicate
+    terminology.}
+\end{itemize}
+
+\section{Validation Hierarchy}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[
+    width=0.95\linewidth
+  ]{generated/validation_hierarchy.png}
+  \caption{\AuthorTodo{Describe the validation hierarchy figure.}}
+  \label{fig:validation-hierarchy}
+  \Description{Author TODO accessible description of the validation
+  hierarchy figure.}
+\end{figure}
+
+\subsection{Level 1: Element Validity}
+
+\begin{itemize}
+  \item \AuthorTodo{Describe what individual vertices, simplices, facets, and
+    coordinates must prove locally.}
+  \item \AuthorTodo{Explain what this level deliberately does not check.}
+\end{itemize}
+
+\subsection{Level 2: Combinatorial Consistency}
+
+\begin{itemize}
+  \item \AuthorTodo{Describe adjacency, incidence, neighbor symmetry, and TDS
+    integrity.}
+  \item \AuthorTodo{Explain the separation from topology and geometry.}
+\end{itemize}
+
+\subsection{Level 3: Intrinsic PL Topology}
+
+\begin{itemize}
+  \item \AuthorTodo{State the PL-manifold and boundary conditions.}
+  \item \AuthorTodo{Discuss pseudomanifold and strict PL-manifold policy
+    choices.}
+  \item \AuthorTodo{Explain why this layer is independent of Euclidean,
+    toroidal, and spherical embeddings.}
+\end{itemize}
+
+\subsection{Level 4: Embedding Validity}
+
+\begin{itemize}
+  \item \AuthorTodo{Describe faithful realization in the active ambient
+    model.}
+  \item \AuthorTodo{Compare Euclidean affine charts, toroidal periodic charts,
+    and spherical embeddings.}
+  \item \AuthorTodo{Explain why embedding validity is a precondition for
+    geometric predicates.}
+\end{itemize}
+
+\subsection{Level 5: Geometric Predicates}
+
+\begin{itemize}
+  \item \AuthorTodo{Describe Delaunay as the first implemented predicate
+    family.}
+  \item \AuthorTodo{Explain how Euclidean, toroidal, and spherical Delaunay
+    predicates differ.}
+  \item \AuthorTodo{Leave room for regular, weighted, constrained, Gabriel,
+    alpha, and future predicate families.}
+\end{itemize}
+
+\section{Implementation Architecture}
+
+\begin{itemize}
+  \item \AuthorTodo{Map the five validation levels onto the Rust API surface.}
+  \item \AuthorTodo{Describe the role of fast-fail checks, diagnostics,
+    reports, and cumulative validation.}
+  \item \AuthorTodo{Explain construction-time validation policy choices such
+    as \texttt{ExplicitOnly} and \texttt{OnSuspicion}.}
+  \item \AuthorTodo{Describe how spherical topology fits as a
+    coordinate/metric backend rather than a new simplex dimension.}
+\end{itemize}
+
+\section{Diagnostics and Reproducible Figures}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[
+    width=\linewidth
+  ]{generated/validation_model_failures.png}
+  \caption{\AuthorTodo{Describe the generated validation-failure examples.}}
+  \label{fig:validation-failures}
+  \Description{Author TODO accessible description of the validation-failure
+  figure.}
+\end{figure}
+
+\begin{itemize}
+  \item \AuthorTodo{Explain how the validation notebook generates paper
+    figures.}
+  \item \AuthorTodo{Describe representative diagnostics without duplicating API
+    documentation.}
+  \item \AuthorTodo{Connect figure generation to the reproducibility story.}
+\end{itemize}
+
+\section{Related Work}
+
+\begin{itemize}
+  \item \AuthorTodo{Place PL topology references and Pachner/Lickorish
+    results.}
+  \item \AuthorTodo{Place Euclidean robust-predicate and Delaunay references.}
+  \item \AuthorTodo{Place spherical Delaunay and Riemannian-manifold
+    references.}
+  \item \AuthorTodo{Clarify which claims are architectural observations rather
+    than literature claims.}
+\end{itemize}
+
+\section{Discussion and Future Work}
+
+\begin{itemize}
+  \item \AuthorTodo{Discuss extensibility to additional embedding models and
+    predicate families.}
+  \item \AuthorTodo{Discuss limitations of the current implementation.}
+  \item \AuthorTodo{Identify open validation and benchmarking questions.}
+\end{itemize}
+
+\section{Conclusion}
+
+\begin{itemize}
+  \item \AuthorTodo{Write the conclusion in your own words.}
+\end{itemize}
+
+\begin{acks}
+  The author thanks Steven Carlip for discussions and guidance over
+  the years on Causal Dynamical Triangulation, which motivated this work,
+  and for encouragement and questions on this library, which
+  motivated this paper.
+\end{acks}
+
+% Keep the reference list available in outline drafts so citation keys remain
+% build-tested even before their final in-text placement is written
+% by the author.
+\nocite{*}
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{validation}
+
+\end{document}

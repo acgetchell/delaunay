@@ -251,6 +251,8 @@ mod cli_tests {
             "pachner-stress",
             "--dimension",
             "3d",
+            "--mode",
+            "round-trip",
             "--vertices",
             "5",
             "--attempts",
@@ -278,12 +280,16 @@ mod cli_tests {
         let json = file_json(&summary_path);
         assert_eq!(json["dimension"], 3);
         assert_eq!(json["label"], "3d");
+        assert_eq!(json["mode"], "round-trip");
+        assert_eq!(json["validation_scope"], "topology");
         assert_eq!(json["configured_vertices"], 5);
         assert_eq!(json["attempts"], 1);
         assert_eq!(json["validate_every"], 1);
         assert_eq!(json["key_refresh_every"], 1);
         assert_eq!(json["retry_attempts"], 4);
         assert_eq!(json["seed"], 7);
+        assert_eq!(json["source"]["mode"], "round-trip");
+        assert_eq!(json["source"]["validation_scope"], "topology");
         assert_eq!(json["report"]["attempts"], 1);
 
         let progress = fs::read_to_string(progress_path).expect("progress CSV should be readable");
@@ -295,17 +301,98 @@ mod cli_tests {
         );
         assert_eq!(
             rows[0],
-            "dimension,label,sequence,step,attempts,accepted,rejected,candidate_misses,\
-             proposal_rejections,validations,validation_nanos,acceptance_rate,vertices,simplices,rss_kib"
+            "dimension,label,mode,validation_scope,sequence,step,attempts,accepted,rejected,candidate_misses,\
+             proposal_rejections,validations,validation_nanos,acceptance_rate,vertices,simplices"
         );
         let fields: Vec<_> = rows[1].split(',').collect();
-        assert_eq!(fields.len(), 15);
+        assert_eq!(fields.len(), 16);
         assert_eq!(fields[0], "3");
         assert_eq!(fields[1], "3d");
-        assert_eq!(fields[2], "1");
-        assert_eq!(fields[3], "1");
+        assert_eq!(fields[2], "round-trip");
+        assert_eq!(fields[3], "topology");
         assert_eq!(fields[4], "1");
-        assert_eq!(fields[9], "1");
+        assert_eq!(fields[5], "1");
+        assert_eq!(fields[6], "1");
+        assert_eq!(fields[11], "1");
+    }
+
+    #[test]
+    fn pachner_stress_accepts_small_random_walk_summary_run() {
+        let summary_path = target_json_path("pachner-stress-random-walk-summary");
+        let output = run_cli(&[
+            "pachner-stress",
+            "--dimension",
+            "3d",
+            "--mode",
+            "random-walk",
+            "--vertices",
+            "5",
+            "--attempts",
+            "2",
+            "--validate-every",
+            "1",
+            "--key-refresh-every",
+            "1",
+            "--retry-attempts",
+            "4",
+            "--seed",
+            "7",
+            "--quiet",
+            "--summary-json",
+            summary_path.to_str().expect("target path should be UTF-8"),
+        ]);
+        assert_success(&output);
+        assert!(
+            output.stdout.is_empty(),
+            "--quiet should suppress Pachner stress telemetry"
+        );
+
+        let json = file_json(&summary_path);
+        assert_eq!(json["dimension"], 3);
+        assert_eq!(json["label"], "3d");
+        assert_eq!(json["mode"], "random-walk");
+        assert_eq!(json["validation_scope"], "topology");
+        assert_eq!(json["configured_vertices"], 5);
+        assert_eq!(json["attempts"], 2);
+        assert_eq!(json["validate_every"], 1);
+        assert_eq!(json["source"]["mode"], "random-walk");
+        assert_eq!(json["source"]["validation_scope"], "topology");
+        assert_eq!(json["report"]["attempts"], 2);
+        assert_eq!(json["report"]["validations"], 2);
+    }
+
+    #[test]
+    fn pachner_stress_emits_setup_stage_telemetry() {
+        let output = run_cli(&[
+            "pachner-stress",
+            "--dimension",
+            "3d",
+            "--mode",
+            "round-trip",
+            "--vertices",
+            "5",
+            "--attempts",
+            "1",
+            "--validate-every",
+            "1",
+            "--key-refresh-every",
+            "1",
+            "--retry-attempts",
+            "4",
+            "--seed",
+            "7",
+        ]);
+        assert_success(&output);
+
+        let stdout = output_text(&output.stdout);
+        assert!(stdout.contains("pachner_stress_stage"));
+        assert!(stdout.contains("validation_scope=topology"));
+        assert!(stdout.contains("stage=generate_points_start"));
+        assert!(stdout.contains("stage=construction_start"));
+        assert!(stdout.contains("stage=initial_topology_validation_done"));
+        assert!(stdout.contains("pachner_stress_source"));
+        assert!(stdout.contains("pachner_stress_progress"));
+        assert!(stdout.contains("pachner_stress_metric"));
     }
 
     #[test]
@@ -358,10 +445,13 @@ mod cli_tests {
     #[test]
     fn pachner_stress_rejects_zero_validated_arguments() {
         for (argument, expected) in [
-            ("--attempts", "attempts must be positive"),
-            ("--validate-every", "validate_every must be positive"),
-            ("--key-refresh-every", "key_refresh_every must be positive"),
-            ("--retry-attempts", "retry_attempts must be positive"),
+            ("--attempts", "--attempts must be positive"),
+            ("--validate-every", "--validate-every must be positive"),
+            (
+                "--key-refresh-every",
+                "--key-refresh-every must be positive",
+            ),
+            ("--retry-attempts", "--retry-attempts must be positive"),
         ] {
             let output = run_cli(&["pachner-stress", argument, "0", "--quiet"]);
             assert_exit_code(&output, 1);

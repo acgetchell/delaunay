@@ -1,0 +1,117 @@
+name: Papers
+
+permissions:
+  contents: read
+
+concurrency:
+  group: >
+    papers-${{ github.workflow }}-${{
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.number ||
+      github.ref
+    }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/papers.yml"
+      - "justfile"
+      - "notebooks/01_validation.ipynb"
+      - "papers/**"
+      - "pyproject.toml"
+      - "scripts/paper_check.py"
+      - "scripts/paper_pdf_normalize.py"
+      - "scripts/paper_source_date.py"
+      - "scripts/tests/test_paper_check.py"
+      - "scripts/tests/test_paper_pdf_normalize.py"
+      - "scripts/tests/test_paper_source_date.py"
+      - "uv.lock"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/papers.yml"
+      - "justfile"
+      - "notebooks/01_validation.ipynb"
+      - "papers/**"
+      - "pyproject.toml"
+      - "scripts/paper_check.py"
+      - "scripts/paper_pdf_normalize.py"
+      - "scripts/paper_source_date.py"
+      - "scripts/tests/test_paper_check.py"
+      - "scripts/tests/test_paper_pdf_normalize.py"
+      - "scripts/tests/test_paper_source_date.py"
+      - "uv.lock"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  JUST_VERSION: "1.55.1"
+  TECTONIC_VERSION: "0.16.9"
+  TEX_FMT_VERSION: "0.5.7"
+  UV_VERSION: "0.11.26"
+
+jobs:
+  papers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          cache: true
+          cache-bin: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version-file: ".python-version"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Sync Python tooling
+        run: uv sync --locked --group dev --group notebooks
+
+      - name: Install paper system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes chktex libicu-dev libpng-dev pkg-config
+
+      - name: Install just
+        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
+        with:
+          tool: just@${{ env.JUST_VERSION }}
+
+      - name: Install Tectonic
+        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
+        with:
+          tool: tectonic@${{ env.TECTONIC_VERSION }}
+
+      - name: Install tex-fmt
+        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
+        with:
+          tool: tex-fmt@${{ env.TEX_FMT_VERSION }}
+
+      - name: Build papers
+        run: just papers
+
+      - name: Verify paper artifacts are current
+        run: |
+          if [[ -n "$(git status --porcelain -- papers/validation.pdf papers/generated)" ]]; then
+            git status --short -- papers/validation.pdf papers/generated
+            echo "::error::Paper artifacts changed after 'just papers'."
+            echo "Run 'just papers' and commit the regenerated PDF/PNG outputs."
+            exit 1
+          fi

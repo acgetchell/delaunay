@@ -1,7 +1,7 @@
 //! Unified Pachner move workflow API.
 //!
-//! This module is the Monte-Carlo-oriented layer above the explicit bistellar
-//! flip primitives in [`crate::flips`]. It lets callers choose a local
+//! This module is the local editing layer above the explicit bistellar flip
+//! primitives in [`crate::flips`]. It lets callers choose a local
 //! [`PachnerMove`](crate::pachner::PachnerMove) request first, parse it into a
 //! provenanced [`PachnerProposal`](crate::pachner::PachnerProposal), and then
 //! attempt the proposal through a fluent terminal method while preserving the
@@ -14,12 +14,22 @@
 #![forbid(unsafe_code)]
 
 use crate::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer, SmallBuffer};
+use crate::core::algorithms::flips::{
+    apply_bistellar_flip_dynamic_raw, apply_bistellar_flip_k1_inverse_raw,
+    apply_bistellar_flip_k1_raw, apply_bistellar_flip_raw, build_k2_flip_context,
+    build_k2_flip_context_from_edge, build_k3_flip_context, build_k3_flip_context_from_triangle,
+};
+use crate::core::rollback::TriangulationRollbackTransaction;
+use crate::core::traits::data_type::DataType;
+use crate::core::triangulation::Triangulation;
 use crate::core::vertex::Vertex;
 use crate::flips::{
     BistellarFlipKind, BistellarFlips, FlipDirection, FlipError, FlipFeasibility, FlipInfo,
     RidgeHandle, TriangleHandle,
 };
+use crate::geometry::kernel::Kernel;
 use crate::tds::{EdgeKey, FacetHandle, SimplexKey, TopologyOwner, TopologyOwnerId, VertexKey};
+use crate::triangulation::DelaunayTriangulation;
 
 /// Raw Pachner move request for explicit triangulation editing.
 ///
@@ -322,7 +332,9 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     ///
     /// This checks owner identity and topology generation before returning the
     /// deterministic pre-mutation flip conditions proven when the proposal was
-    /// parsed, while preserving the proposal for a later mutation attempt.
+    /// parsed. The returned feasibility report is borrowed from the proposal;
+    /// clone it explicitly when a detached before/after comparison must outlive
+    /// proposal consumption.
     ///
     /// # Errors
     ///
@@ -362,11 +374,11 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     /// # }
     /// ```
     #[inline]
-    pub fn can_attempt_on<T>(&self, moves: &T) -> Result<PachnerMoveFeasibility<D>, FlipError>
+    pub fn can_attempt_on<T>(&self, moves: &T) -> Result<&PachnerMoveFeasibility<D>, FlipError>
     where
         T: BistellarFlips<D, VertexData = U> + TopologyOwner + ?Sized,
     {
-        can_attempt_pachner_proposal(moves, self)
+        can_attempt_proposal(moves, self)
     }
 
     /// Attempts this provenanced proposal on a topology owner.
@@ -419,7 +431,65 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     where
         T: BistellarFlips<D, VertexData = U> + TopologyOwner + ?Sized,
     {
-        attempt_pachner_proposal(moves, self)
+        attempt_proposal(moves, self)
+    }
+
+    /// Attempts this provenanced proposal while preserving topology-scope invariants only.
+    ///
+    /// This terminal method is intended for diagnostics and benchmarks that
+    /// deliberately validate Levels 1-3 without paying the Level 4 embedding
+    /// overlap scan after every move. It still checks proposal provenance,
+    /// revalidates the local bistellar move, and canonicalizes positive simplex
+    /// orientation before committing. Use [`attempt_on`](Self::attempt_on) for
+    /// ordinary editing workflows that must preserve embedded-geometry validity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FlipError::WrongTopologyOwner`] when this proposal was parsed
+    /// by another topology owner, [`FlipError::StaleTopologyProposal`] when it
+    /// was parsed before the current structural generation, or another
+    /// [`FlipError`] from the selected topology-scope flip primitive. On error,
+    /// the attempted mutation is rolled back.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee,
+    /// };
+    /// use delaunay::prelude::pachner::{
+    ///     BistellarFlipKind, FlipDirection, PachnerMove, PachnerMoves, vertex,
+    /// };
+    ///
+    /// # fn main() -> DelaunayResult<()> {
+    /// let vertices = vec![vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .topology_guarantee(TopologyGuarantee::PLManifold)
+    ///     .build()?;
+    /// let Some((simplex_key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    ///
+    /// let result = dt
+    ///     .propose_pachner(PachnerMove::K1Insert {
+    ///         simplex_key,
+    ///         vertex: vertex![0.25, 0.25]?,
+    ///     })?
+    ///     .attempt_topology_on(&mut dt)?;
+    ///
+    /// assert_eq!(result.kind, BistellarFlipKind::k1(2));
+    /// assert_eq!(result.direction, FlipDirection::Forward);
+    /// assert!(dt.as_triangulation().validate().is_ok());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    #[doc(hidden)]
+    pub fn attempt_topology_on<T>(self, moves: &mut T) -> Result<PachnerMoveResult<D>, FlipError>
+    where
+        T: TopologyPachnerMoves<D, VertexData = U> + ?Sized,
+    {
+        attempt_topology_proposal(moves, self)
     }
 }
 
@@ -597,7 +667,7 @@ impl<const D: usize> From<FlipFeasibility<D>> for PachnerMoveFeasibility<D> {
     }
 }
 
-/// Unified Pachner move proposal parser for Monte-Carlo-style workflows.
+/// Unified Pachner move proposal parser for local editing workflows.
 ///
 /// This extension trait is implemented for every type that implements
 /// [`BistellarFlips`] and [`TopologyOwner`]. It parses raw detached
@@ -651,12 +721,82 @@ pub trait PachnerMoves<const D: usize>: BistellarFlips<D> + TopologyOwner {
     ) -> Result<PachnerProposal<Self::VertexData, D>, FlipError>;
 }
 
+/// Topology-scope Pachner execution that skips Level 4 embedding validation.
+///
+/// This trait backs [`PachnerProposal::attempt_topology_on`]. It is intentionally
+/// separate from [`BistellarFlips`], whose mutating methods preserve embedded
+/// geometry after every committed move. Use this trait only for diagnostics,
+/// stress tests, or benchmark workloads that validate embedding separately.
+#[doc(hidden)]
+pub trait TopologyPachnerMoves<const D: usize>: TopologyOwner {
+    /// User data type stored on vertices inserted through k=1 moves.
+    type VertexData;
+
+    /// Apply a forward k=1 move without Level 4 embedding validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FlipError`] if the move is not locally admissible, cannot be
+    /// applied atomically, or fails topology-scope postcondition repair.
+    fn flip_k1_insert_topology(
+        &mut self,
+        simplex_key: SimplexKey,
+        vertex: Vertex<Self::VertexData, D>,
+    ) -> Result<FlipInfo<D>, FlipError>;
+
+    /// Apply an inverse k=1 move without Level 4 embedding validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FlipError`] if the move is not locally admissible, cannot be
+    /// applied atomically, or fails topology-scope postcondition repair.
+    fn flip_k1_remove_topology(&mut self, vertex_key: VertexKey) -> Result<FlipInfo<D>, FlipError>;
+
+    /// Apply a forward k=2 move without Level 4 embedding validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FlipError`] if the move is not locally admissible, cannot be
+    /// applied atomically, or fails topology-scope postcondition repair.
+    fn flip_k2_topology(&mut self, facet: FacetHandle) -> Result<FlipInfo<D>, FlipError>;
+
+    /// Apply an inverse k=2 move without Level 4 embedding validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FlipError`] if the move is not locally admissible, cannot be
+    /// applied atomically, or fails topology-scope postcondition repair.
+    fn flip_k2_inverse_from_edge_topology(
+        &mut self,
+        edge: EdgeKey,
+    ) -> Result<FlipInfo<D>, FlipError>;
+
+    /// Apply a forward k=3 move without Level 4 embedding validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FlipError`] if the move is not locally admissible, cannot be
+    /// applied atomically, or fails topology-scope postcondition repair.
+    fn flip_k3_topology(&mut self, ridge: RidgeHandle) -> Result<FlipInfo<D>, FlipError>;
+
+    /// Apply an inverse k=3 move without Level 4 embedding validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FlipError`] if the move is not locally admissible, cannot be
+    /// applied atomically, or fails topology-scope postcondition repair.
+    fn flip_k3_inverse_from_triangle_topology(
+        &mut self,
+        triangle: TriangleHandle,
+    ) -> Result<FlipInfo<D>, FlipError>;
+}
+
 /// Validates raw Pachner request topology before it is stamped as a proposal.
 ///
 /// This keeps proposal parsing and mutation dispatch on the same primitive flip
 /// predicates so public Pachner APIs agree on accepted and rejected local
 /// configurations.
-fn validate_pachner_request<const D: usize, T>(
+fn validate_request<const D: usize, T>(
     moves: &T,
     pachner_move: &PachnerMove<T::VertexData, D>,
 ) -> Result<FlipFeasibility<D>, FlipError>
@@ -680,7 +820,7 @@ where
 ///
 /// This protects public Pachner APIs from interpreting runtime-local keys after
 /// they cross topology owners or outlive a structural mutation.
-fn validate_pachner_proposal_provenance<const D: usize, T, U>(
+fn validate_proposal_provenance<const D: usize, T, U>(
     owner: &T,
     proposal: &PachnerProposal<U, D>,
 ) -> Result<(), FlipError>
@@ -707,14 +847,14 @@ where
 }
 
 /// Attempts a provenanced proposal after checking it still belongs to `moves`.
-fn attempt_pachner_proposal<const D: usize, T>(
+fn attempt_proposal<const D: usize, T>(
     moves: &mut T,
     proposal: PachnerProposal<T::VertexData, D>,
 ) -> Result<PachnerMoveResult<D>, FlipError>
 where
     T: BistellarFlips<D> + TopologyOwner + ?Sized,
 {
-    validate_pachner_proposal_provenance(moves, &proposal)?;
+    validate_proposal_provenance(moves, &proposal)?;
     let info = match proposal.into_request() {
         PachnerMove::K1Insert {
             simplex_key,
@@ -729,16 +869,41 @@ where
     Ok(info.into())
 }
 
+/// Attempts a provenanced proposal through the topology-scope executor.
+fn attempt_topology_proposal<const D: usize, T>(
+    moves: &mut T,
+    proposal: PachnerProposal<T::VertexData, D>,
+) -> Result<PachnerMoveResult<D>, FlipError>
+where
+    T: TopologyPachnerMoves<D> + ?Sized,
+{
+    validate_proposal_provenance(moves, &proposal)?;
+    let info = match proposal.into_request() {
+        PachnerMove::K1Insert {
+            simplex_key,
+            vertex,
+        } => moves.flip_k1_insert_topology(simplex_key, vertex)?,
+        PachnerMove::K1Remove { vertex_key } => moves.flip_k1_remove_topology(vertex_key)?,
+        PachnerMove::K2 { facet } => moves.flip_k2_topology(facet)?,
+        PachnerMove::K2Inverse { edge } => moves.flip_k2_inverse_from_edge_topology(edge)?,
+        PachnerMove::K3 { ridge } => moves.flip_k3_topology(ridge)?,
+        PachnerMove::K3Inverse { triangle } => {
+            moves.flip_k3_inverse_from_triangle_topology(triangle)?
+        }
+    };
+    Ok(info.into())
+}
+
 /// Returns the stored feasibility proof after checking it still belongs to `moves`.
-fn can_attempt_pachner_proposal<const D: usize, T>(
+fn can_attempt_proposal<'proposal, const D: usize, T>(
     moves: &T,
-    proposal: &PachnerProposal<T::VertexData, D>,
-) -> Result<PachnerMoveFeasibility<D>, FlipError>
+    proposal: &'proposal PachnerProposal<T::VertexData, D>,
+) -> Result<&'proposal PachnerMoveFeasibility<D>, FlipError>
 where
     T: BistellarFlips<D> + TopologyOwner + ?Sized,
 {
-    validate_pachner_proposal_provenance(moves, proposal)?;
-    Ok(proposal.feasibility.clone())
+    validate_proposal_provenance(moves, proposal)?;
+    Ok(&proposal.feasibility)
 }
 
 impl<const D: usize, T> PachnerMoves<D> for T
@@ -750,7 +915,7 @@ where
         &self,
         pachner_move: PachnerMove<Self::VertexData, D>,
     ) -> Result<PachnerProposal<Self::VertexData, D>, FlipError> {
-        let feasibility = validate_pachner_request(self, &pachner_move)?.into();
+        let feasibility = validate_request(self, &pachner_move)?.into();
         Ok(PachnerProposal::from_validated(
             self.topology_owner_id(),
             self.topology_generation(),
@@ -760,10 +925,233 @@ where
     }
 }
 
+/// Apply one topology-scope flip transaction and roll back on any failure.
+fn apply_topology_flip<K, U, V, const D: usize>(
+    tri: &mut Triangulation<K, U, V, D>,
+    apply: impl FnOnce(&mut Triangulation<K, U, V, D>) -> Result<FlipInfo<D>, FlipError>,
+) -> Result<FlipInfo<D>, FlipError>
+where
+    K: Kernel<D, Scalar = f64>,
+    U: DataType,
+    V: DataType,
+{
+    let mut transaction = TriangulationRollbackTransaction::begin(tri);
+    let result = apply(transaction.triangulation_mut());
+    let info = match result {
+        Ok(info) => info,
+        Err(error) => {
+            transaction.rollback();
+            return Err(error);
+        }
+    };
+
+    if let Err(error) =
+        normalize_topology_flip_orientation(transaction.triangulation_mut(), &info.new_simplices)
+    {
+        transaction.rollback();
+        return Err(error);
+    }
+
+    transaction.commit();
+    Ok(info)
+}
+
+/// Canonicalize the replacement side of a topology-scope flip.
+fn normalize_topology_flip_orientation<K, U, V, const D: usize>(
+    tri: &mut Triangulation<K, U, V, D>,
+    new_simplices: &SimplexKeyBuffer,
+) -> Result<(), FlipError>
+where
+    K: Kernel<D, Scalar = f64>,
+    U: DataType,
+    V: DataType,
+{
+    for _ in 0..3 {
+        tri.canonicalize_positive_orientation_for_simplices(new_simplices)
+            .map_err(|source| FlipError::PostconditionRepair {
+                source: Box::new(source),
+            })?;
+        tri.tds.normalize_coherent_orientation().map_err(|source| {
+            FlipError::PostconditionRepair {
+                source: Box::new(source.into()),
+            }
+        })?;
+        if tri
+            .validate_geometric_simplex_orientation_for_simplices(new_simplices)
+            .is_ok()
+        {
+            return Ok(());
+        }
+    }
+
+    let simplex_vertices = new_simplices
+        .iter()
+        .find_map(|&simplex_key| tri.tds.simplex(simplex_key))
+        .map_or_else(Vec::new, |simplex| simplex.vertices().to_vec());
+    Err(FlipError::NegativeOrientation { simplex_vertices })
+}
+
+impl<K, U, V, const D: usize> TopologyPachnerMoves<D> for Triangulation<K, U, V, D>
+where
+    K: Kernel<D, Scalar = f64>,
+    U: DataType,
+    V: DataType,
+{
+    type VertexData = U;
+
+    fn flip_k1_insert_topology(
+        &mut self,
+        simplex_key: SimplexKey,
+        vertex: Vertex<U, D>,
+    ) -> Result<FlipInfo<D>, FlipError> {
+        apply_topology_flip(self, |tri| {
+            apply_bistellar_flip_k1_raw(&mut tri.tds, simplex_key, vertex)
+        })
+    }
+
+    fn flip_k1_remove_topology(&mut self, vertex_key: VertexKey) -> Result<FlipInfo<D>, FlipError> {
+        apply_topology_flip(self, |tri| {
+            apply_bistellar_flip_k1_inverse_raw(&mut tri.tds, vertex_key)
+        })
+    }
+
+    fn flip_k2_topology(&mut self, facet: FacetHandle) -> Result<FlipInfo<D>, FlipError> {
+        apply_topology_flip(self, |tri| {
+            let context = build_k2_flip_context(&tri.tds, facet)?;
+            apply_bistellar_flip_raw::<U, V, D, 2>(&mut tri.tds, &context)
+        })
+    }
+
+    fn flip_k2_inverse_from_edge_topology(
+        &mut self,
+        edge: EdgeKey,
+    ) -> Result<FlipInfo<D>, FlipError> {
+        apply_topology_flip(self, |tri| {
+            let context = build_k2_flip_context_from_edge(&tri.tds, edge)?;
+            apply_bistellar_flip_dynamic_raw(&mut tri.tds, D, &context)
+        })
+    }
+
+    fn flip_k3_topology(&mut self, ridge: RidgeHandle) -> Result<FlipInfo<D>, FlipError> {
+        apply_topology_flip(self, |tri| {
+            let context = build_k3_flip_context(&tri.tds, ridge)?;
+            apply_bistellar_flip_raw::<U, V, D, 3>(&mut tri.tds, &context)
+        })
+    }
+
+    fn flip_k3_inverse_from_triangle_topology(
+        &mut self,
+        triangle: TriangleHandle,
+    ) -> Result<FlipInfo<D>, FlipError> {
+        if D < 4 {
+            return Err(FlipError::UnsupportedDimension { dimension: D });
+        }
+
+        apply_topology_flip(self, |tri| {
+            let context = build_k3_flip_context_from_triangle(&tri.tds, triangle)?;
+            apply_bistellar_flip_dynamic_raw(&mut tri.tds, D - 1, &context)
+        })
+    }
+}
+
+impl<K, U, V, const D: usize> TopologyPachnerMoves<D> for DelaunayTriangulation<K, U, V, D>
+where
+    K: Kernel<D, Scalar = f64>,
+    U: DataType,
+    V: DataType,
+{
+    type VertexData = U;
+
+    fn flip_k1_insert_topology(
+        &mut self,
+        simplex_key: SimplexKey,
+        vertex: Vertex<U, D>,
+    ) -> Result<FlipInfo<D>, FlipError> {
+        let result = self.tri.flip_k1_insert_topology(simplex_key, vertex);
+        if result.is_ok() {
+            self.invalidate_repair_caches();
+        }
+        result
+    }
+
+    fn flip_k1_remove_topology(&mut self, vertex_key: VertexKey) -> Result<FlipInfo<D>, FlipError> {
+        let result = self.tri.flip_k1_remove_topology(vertex_key);
+        if result.is_ok() {
+            self.invalidate_repair_caches();
+        }
+        result
+    }
+
+    fn flip_k2_topology(&mut self, facet: FacetHandle) -> Result<FlipInfo<D>, FlipError> {
+        let result = self.tri.flip_k2_topology(facet);
+        if result.is_ok() {
+            self.invalidate_locate_hint_cache();
+        }
+        result
+    }
+
+    fn flip_k2_inverse_from_edge_topology(
+        &mut self,
+        edge: EdgeKey,
+    ) -> Result<FlipInfo<D>, FlipError> {
+        let result = self.tri.flip_k2_inverse_from_edge_topology(edge);
+        if result.is_ok() {
+            self.invalidate_locate_hint_cache();
+        }
+        result
+    }
+
+    fn flip_k3_topology(&mut self, ridge: RidgeHandle) -> Result<FlipInfo<D>, FlipError> {
+        let result = self.tri.flip_k3_topology(ridge);
+        if result.is_ok() {
+            self.invalidate_locate_hint_cache();
+        }
+        result
+    }
+
+    fn flip_k3_inverse_from_triangle_topology(
+        &mut self,
+        triangle: TriangleHandle,
+    ) -> Result<FlipInfo<D>, FlipError> {
+        let result = self.tri.flip_k3_inverse_from_triangle_topology(triangle);
+        if result.is_ok() {
+            self.invalidate_locate_hint_cache();
+        }
+        result
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::assert_matches;
+
     use slotmap::KeyData;
+
+    use super::*;
+    use crate::{
+        DelaunayTriangulationBuilder, TopologyGuarantee, geometry::kernel::AdaptiveKernel, vertex,
+    };
+
+    type Dt2 = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2>;
+
+    fn triangle_dt() -> Dt2 {
+        let vertices: Vec<Vertex<(), 2>> = vec![
+            vertex![0.0, 0.0].expect("test vertex should be valid"),
+            vertex![1.0, 0.0].expect("test vertex should be valid"),
+            vertex![0.0, 1.0].expect("test vertex should be valid"),
+        ];
+        DelaunayTriangulationBuilder::new(&vertices)
+            .topology_guarantee(TopologyGuarantee::PLManifold)
+            .build()
+            .expect("minimal 2D simplex should build")
+    }
+
+    fn first_simplex_key(dt: &Dt2) -> SimplexKey {
+        dt.simplices()
+            .next()
+            .map(|(simplex_key, _)| simplex_key)
+            .expect("minimal triangulation should contain a simplex")
+    }
 
     #[test]
     fn pachner_move_result_roundtrips_through_flip_info() {
@@ -803,5 +1191,69 @@ mod tests {
         assert_eq!(info.removed_face_vertices, result.removed_face_vertices);
         assert_eq!(info.inserted_face_vertices, result.inserted_face_vertices);
         assert_eq!(PachnerMoveResult::from(info), result);
+    }
+
+    #[test]
+    fn attempt_topology_on_commits_topology_scope_k1_insert() {
+        let mut dt = triangle_dt();
+        let simplex_key = first_simplex_key(&dt);
+        let previous_generation = dt.topology_generation();
+
+        let result = dt
+            .propose_pachner(PachnerMove::K1Insert {
+                simplex_key,
+                vertex: vertex![0.25, 0.25].expect("inserted vertex should be valid"),
+            })
+            .expect("k=1 insert proposal should be valid")
+            .attempt_topology_on(&mut dt)
+            .expect("topology-scope k=1 insert should commit");
+
+        assert_eq!(result.kind, BistellarFlipKind::k1(2));
+        assert_eq!(result.direction, FlipDirection::Forward);
+        assert_eq!(result.inserted_face_vertices.len(), 1);
+        assert_eq!(dt.number_of_vertices(), 4);
+        assert!(dt.topology_generation() > previous_generation);
+        dt.as_triangulation()
+            .validate()
+            .expect("topology-scope Pachner move should preserve Levels 1-3");
+    }
+
+    #[test]
+    fn attempt_topology_on_rejects_stale_proposal_before_mutation() {
+        let mut dt = triangle_dt();
+        let simplex_key = first_simplex_key(&dt);
+        let proposal = dt
+            .propose_pachner(PachnerMove::K1Insert {
+                simplex_key,
+                vertex: vertex![0.25, 0.25].expect("inserted vertex should be valid"),
+            })
+            .expect("k=1 insert proposal should be valid");
+        let proposal_generation = proposal.topology_generation();
+
+        let committed = proposal
+            .clone()
+            .attempt_topology_on(&mut dt)
+            .expect("first topology-scope k=1 insert should commit");
+        assert_eq!(committed.kind, BistellarFlipKind::k1(2));
+        assert_eq!(committed.direction, FlipDirection::Forward);
+        let vertex_count_after_commit = dt.number_of_vertices();
+        let current_generation = dt.topology_generation();
+
+        let err = proposal
+            .attempt_topology_on(&mut dt)
+            .expect_err("reusing a stale topology proposal should fail");
+
+        assert_matches!(
+            err,
+            FlipError::StaleTopologyProposal {
+                proposal_generation: observed_proposal_generation,
+                current_generation: observed_current_generation,
+            } if observed_proposal_generation == proposal_generation
+                && observed_current_generation == current_generation
+        );
+        assert_eq!(dt.number_of_vertices(), vertex_count_after_commit);
+        dt.as_triangulation()
+            .validate()
+            .expect("rejected stale proposal should preserve Levels 1-3");
     }
 }

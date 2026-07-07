@@ -1918,9 +1918,9 @@ rules:
     metadata:
       category: maintainability
       rationale: >-
-        The validation stack now separates Level 4 embedding checks from Level 5
-        Delaunay predicates. Public docs and citation prose should not keep the
-        old four-level hierarchy wording.
+        The validation stack now separates Level 4 Embedding Validity from
+        Level 5 Geometric Predicates. Public docs and citation prose should not
+        keep the old four-level hierarchy wording.
     paths:
       include:
         - "/README.md"
@@ -1932,7 +1932,7 @@ rules:
         - "/docs/archive/**"
     pattern-regex: >-
       (?i)(?:\b4-level validation hierarchy\b|\bfour levels of validation\b|\blevel 4:\s*delaunay
-      property\b|\bdelaunay property\s*\(level 4\)|\bdelaunay level 4 validation\b)
+      property\b|\bdelaunay property\s*\(level 4\)|\bdelaunay level 4 validation\b|\brepair\s*/\s*verify\b[^\n]*\bdelaunay property\b)
 
   - id: delaunay.github-actions.external-action-sha-pinned
     languages:

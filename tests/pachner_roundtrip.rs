@@ -327,7 +327,8 @@ fn pachner_feasibility_agrees_with_successful_2d_k2_attempt() {
         .expect("2D k=2 proposal parsing should accept selected fixture facet");
     let feasibility = proposal
         .can_attempt_on(&dt)
-        .expect("2D k=2 feasibility should accept selected fixture facet");
+        .expect("2D k=2 feasibility should accept selected fixture facet")
+        .clone();
     assert_pachner_feasibility_contract(
         &feasibility,
         BistellarFlipKind::k2(2),
@@ -433,7 +434,8 @@ fn pachner_feasibility_agrees_with_toroidal_2d_k1_insert() {
         .expect("toroidal k=1 proposal parsing should accept a simplex centroid");
     let feasibility = proposal
         .can_attempt_on(&dt)
-        .expect("toroidal k=1 feasibility should accept a simplex centroid");
+        .expect("toroidal k=1 feasibility should accept a simplex centroid")
+        .clone();
     assert_pachner_feasibility_contract(
         &feasibility,
         BistellarFlipKind::k1(2),
@@ -837,7 +839,8 @@ fn assert_public_k1_insert_feasibility_smoke<const D: usize>() {
         .unwrap_or_else(|err| panic!("{D}D public k=1 proposal should succeed: {err:?}"));
     let feasibility = proposal
         .can_attempt_on(&dt)
-        .unwrap_or_else(|err| panic!("{D}D public k=1 feasibility should succeed: {err:?}"));
+        .unwrap_or_else(|err| panic!("{D}D public k=1 feasibility should succeed: {err:?}"))
+        .clone();
     assert_pachner_feasibility_contract(
         &feasibility,
         BistellarFlipKind::k1(D),
@@ -872,9 +875,9 @@ fn assert_public_k1_insert_feasibility_smoke<const D: usize>() {
     let remove_feasibility = remove_proposal
         .can_attempt_on(&trial)
         .unwrap_or_else(|err| panic!("{D}D public Pachner k=1 remove should succeed: {err:?}"));
-    assert_flip_and_pachner_feasibility_match(&primitive_remove_feasibility, &remove_feasibility);
+    assert_flip_and_pachner_feasibility_match(&primitive_remove_feasibility, remove_feasibility);
     assert_pachner_feasibility_contract(
-        &remove_feasibility,
+        remove_feasibility,
         BistellarFlipKind::k1(D).inverse(),
         FlipDirection::Inverse,
     );

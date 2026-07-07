@@ -24,6 +24,18 @@
 .virtual_documents/
 *.nbconvert.ipynb
 
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.blg
+*.cut
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
+
 # Python packaging artifacts
 *.egg-info/
 .ruff_cache/

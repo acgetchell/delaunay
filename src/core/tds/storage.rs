@@ -80,8 +80,8 @@
 //! The incremental insertion algorithm attempts to maintain the Delaunay property during
 //! construction, but rare violations can remain. Structural invariants are enforced
 //! **reactively** through validation methods. For a definitive Delaunay check, run
-//! Level 4 embedding validation via `Triangulation::validate_embedding()` and
-//! Level 5 Delaunay validation via `DelaunayTriangulation::is_valid_delaunay()` /
+//! Level 4 Embedding Validity via `Triangulation::validate_embedding()` and
+//! Level 5 Geometric Predicates via `DelaunayTriangulation::is_valid_delaunay()` /
 //! `DelaunayTriangulation::validate()`.
 //!
 //! # Validation
@@ -92,7 +92,7 @@
 //!
 //! 1. **Level 1: Element Validity** - [`Simplex::is_valid()`], [`Vertex::is_valid()`]
 //!    - Basic data integrity (coordinates, UUIDs, initialization)
-//! 2. **Level 2: TDS Structural Validity** - [`Tds::is_valid()`] ← **This module**
+//! 2. **Level 2: Combinatorial Consistency** - [`Tds::is_valid()`] ← **This module**
 //!    - UUID ↔ Key mapping consistency
 //!    - Simplices reference only valid vertex keys (no stale/missing vertex keys)
 //!    - `Vertex::incident_simplex`, when present, must point at an existing simplex that contains the vertex
@@ -101,18 +101,18 @@
 //!    - Coherent orientation (adjacent simplices induce opposite facet orientations)
 //!    - Facet sharing invariant (≤2 simplices per facet)
 //!    - Neighbor consistency
-//! 3. **Level 3: Manifold Topology** - [`Triangulation::is_valid_topology()`]
+//! 3. **Level 3: Intrinsic PL Topology** - [`Triangulation::is_valid_topology()`]
 //!    - Builds on Level 2, and rejects isolated vertices (every vertex must be incident to ≥ 1 simplex)
 //!    - Adds manifold-with-boundary + Euler characteristic
-//! 4. **Level 4: Valid Affine Realization** - [`Triangulation::validate_embedding()`](crate::Triangulation::validate_embedding)
+//! 4. **Level 4: Embedding Validity** - [`Triangulation::validate_embedding()`](crate::Triangulation::validate_embedding)
 //!    - Nondegenerate embedded simplices and no intersections outside shared faces
-//! 5. **Level 5: Delaunay Property** - [`DelaunayTriangulation::is_valid_delaunay()`]
-//!    - Empty circumsphere property
+//! 5. **Level 5: Geometric Predicates** - [`DelaunayTriangulation::is_valid_delaunay()`]
+//!    - Implemented Delaunay predicates, including the empty circumsphere property
 //!
 //! ## TDS Validation Methods
 //!
-//! - [`is_valid()`](Tds::is_valid) - Level 2 only (structural); returns first error, stops early
-//! - [`validate()`](Tds::validate) - Levels 1–2 (elements + structural); returns first error, stops early
+//! - [`is_valid()`](Tds::is_valid) - Level 2 Combinatorial Consistency only; returns first error, stops early
+//! - [`validate()`](Tds::validate) - Levels 1–2 (Element Validity + Combinatorial Consistency); returns first error, stops early
 //!
 //! For cumulative diagnostics across the full stack (Levels 1–5), use
 //! [`DelaunayTriangulation::validation_report()`].
@@ -152,13 +152,13 @@
 //! ];
 //! let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 //!
-//! // Level 2: structural only (fast)
+//! // Level 2: Combinatorial Consistency only (fast)
 //! assert!(dt.is_valid_structure().is_ok());
 //!
-//! // Levels 1–2: elements + structural
+//! // Levels 1–2: Element Validity + Combinatorial Consistency
 //! assert!(dt.validate_structure().is_ok());
 //!
-//! // Full report across Levels 1–4
+//! // Full report across Levels 1–5
 //! match dt.validation_report() {
 //!     Ok(()) => println!("✓ All invariants satisfied"),
 //!     Err(report) => {
@@ -1494,8 +1494,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// An empty triangulation (no simplices) is trivially connected.
     ///
-    /// Connectivity is a **topology-layer** (Level 3) invariant: it is not checked
-    /// by [`Tds::is_valid`] (Level 2), but it *is* checked by [`Triangulation::is_valid_topology`].
+    /// Connectivity is a **Level 3 Intrinsic PL Topology** invariant: it is not checked
+    /// by [`Tds::is_valid`] (Level 2 Combinatorial Consistency), but it *is* checked by [`Triangulation::is_valid_topology`].
     /// This method exposes the underlying BFS so that diagnostic code and the
     /// `Triangulation`-layer check can both reuse the same primitive without going
     /// through a full `Triangulation` wrapper.

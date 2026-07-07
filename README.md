@@ -42,8 +42,8 @@ Rust crate providing D-dimensional [Delaunay triangulations] and [convex hulls][
 topologies. Uses [exact predicates] and [Simulation of Simplicity] for robustness and degeneracy
 handling, and [Hilbert curve]s for deterministic insertion ordering and efficient spatial indexing.
 Provides an explicit [5-level validation hierarchy][Validation Guide] on individual elements,
-triangulation data structure validity, manifold topology, valid affine realization in the active
-chart, and Delaunay property adherence. Allows for the complete set of [Pachner moves] up to D=5
+combinatorial consistency, intrinsic PL topology, embedding validity in the active
+model, and geometric predicates such as Delaunay. Allows for the complete set of [Pachner moves] up to D=5
 using bistellar flips, vertex insertion and deletion, and the conversion of non-Delaunay
 triangulations into Delaunay triangulations via bounded flip/rebuilds. Auxiliary data may be stored
 directly in vertices and simplices with external [secondary maps][Secondary maps] provided for
@@ -54,11 +54,12 @@ Use this crate when you want:
 
 - Delaunay triangulations or convex hulls in 2D through 5D.
 - Exact predicates and deterministic SoS handling for degenerate inputs.
-- Valid Euclidean and toroidal affine-realization validation independent of Delaunay predicates.
+- Embedding Validity validation for Euclidean and toroidal models independent of Delaunay predicates.
 - PL-manifold checks and explicit topology guarantees.
 - PL-manifold-aware editing via bistellar flips and bounded Delaunay repair.
 - Typed construction, insertion, validation, topology, and repair diagnostics.
-- Validation reports that separate element, structure, topology, embedding, and Delaunay failures.
+- Validation reports that separate element, combinatorial, intrinsic topology, embedding, and
+  geometric-predicate failures.
 
 This is not a replacement for full meshing packages such as [CGAL], TetGen, or Gmsh when you need
 constrained Delaunay triangulations, direct Voronoi extraction, out-of-core meshing, GPU/parallel
@@ -91,6 +92,9 @@ meshing, or production-scale dynamic remeshing.
 - [x] Optional Cargo feature gates for allocation counting, diagnostics, benchmark logging, and slow
   correctness tests.
 - [x] PL-manifold validation by default, with pseudomanifold checks available as an explicit opt-out.
+- [x] Prototype spherical `S^2`/`S^3` construction through `SphericalDelaunayBuilder`, with
+  Level 3 Intrinsic PL Topology, spherical Level 4 Embedding Validity, and spherical Level 5
+  empty-cap predicate checks.
 - [x] Safe Rust: `#![forbid(unsafe_code)]`.
 - [x] Serialization/deserialization through [JSON].
 - [x] Topology-aware simplex barycenters for local-editing workflows, including periodic image-point
@@ -161,8 +165,8 @@ hull JSON, and writes the transparent hero preview under `target/notebooks/00_qu
 The notebook and `just run` recipes enable the Cargo `cli` feature, which pulls in the binary and
 notebook-support dependencies; ordinary library builds do not need them.
 For validation-layer failure visuals, open
-[`notebooks/01_validation_check_visualization.ipynb`](notebooks/01_validation_check_visualization.ipynb);
-it runs `delaunay validation-demo` and renders the generated artifact into a 3-column table.
+[`notebooks/01_validation.ipynb`](notebooks/01_validation.ipynb);
+it runs `delaunay validation-demo` and renders generated validation figures for docs and papers.
 
 For headless CI or batch execution, use:
 
@@ -192,8 +196,9 @@ fast f64 filters when the sign is provable, exact arithmetic fallback when it is
 SoS resolution for degenerate configurations.
 
 The validation contract is computational and finite-dimensional. The crate checks that constructed or
-edited triangulations satisfy implemented element, topology, and Delaunay invariants; it does not claim
-to solve meshing constraints or certify unsupported geometric models.
+edited triangulations satisfy implemented element, combinatorial, intrinsic topology, embedding, and
+geometric-predicate invariants; it does not claim to solve meshing constraints or certify unsupported
+geometric models.
 
 For the detailed contract, see [REFERENCES.md](REFERENCES.md), [`docs/invariants.md`](docs/invariants.md),
 and [`docs/numerical_robustness_guide.md`](docs/numerical_robustness_guide.md).
@@ -202,26 +207,31 @@ and [`docs/numerical_robustness_guide.md`](docs/numerical_robustness_guide.md).
 
 | Level | Validates | Primary API |
 |---|---|---|
-| 1 | Vertex, simplex, and facet element invariants | `vertex.is_valid()` / `simplex.is_valid()` |
-| 2 | TDS keys, incidences, and neighbor links | `dt.validate_structure()` / `dt.structure_report()` |
-| 3 | Manifold topology, ridge links, and Euler consistency | `dt.as_triangulation().is_valid_topology()` / `dt.as_triangulation().topology_report()` |
-| 4 | Valid affine realization | `dt.as_triangulation().is_valid_embedding()` / `dt.as_triangulation().embedding_report()` |
-| 5 | Delaunay property via local predicates | `dt.is_valid_delaunay()` / `dt.delaunay_report()` |
+| 1 | Element Validity: vertex, simplex, facet, coordinate, and local-object invariants | `is_valid()` / element reports |
+| 2 | Combinatorial Consistency: TDS incidences, neighbors, and simplex/ridge connectivity | `validate_structure()` / `structure_report()` |
+| 3 | Intrinsic PL Topology: manifold/pseudomanifold links, components, and Euler consistency | `is_valid_topology()` / `topology_report()` |
+| 4 | Embedding Validity: faithful realization in the active Euclidean, toroidal, or spherical model | `is_valid_embedding()` / `embedding_report()` |
+| 5 | Geometric Predicates: Delaunay and future geometry-specific predicate families | `is_valid_delaunay()` / `delaunay_report()` |
 | 1-5 | Cumulative diagnostics | `dt.validate()` / `dt.validation_report()` |
 
-`TopologyGuarantee` controls which Level 3 topology invariants are enforced. `ValidationPolicy`
-controls when Level 3 checks run during incremental insertion. Level 4 valid-affine-realization
-validation is topology-aware for Euclidean and toroidal affine charts and runs before Level 5
-Delaunay predicate validation. Use `dt.as_triangulation().validate_embedding()` when you want
-cumulative Levels 1-4 validation. `dt.as_triangulation().embedding_report()` returns simplex keys,
-simplex UUIDs, and offending vertex keys/UUIDs for Level 4 repair planning. The default is
+`TopologyGuarantee` controls which Level 3 Intrinsic PL Topology invariants are enforced. `ValidationPolicy`
+controls when Level 3 checks run during incremental insertion. Level 4 Embedding Validity is
+backend-specific: Euclidean and toroidal paths validate affine charts, while the spherical prototype
+validates simplices on `S^D \subset R^(D+1)`. Level 5 geometric predicates are likewise
+backend-specific: Euclidean/toroidal Delaunay paths use empty-circumsphere predicates, while the
+spherical prototype uses the empty-cap / ambient-hull-facet predicate. Use
+`dt.as_triangulation().validate_embedding()` when you want
+cumulative Levels 1-4 validation for ordinary triangulations. `dt.as_triangulation().embedding_report()`
+returns simplex keys, simplex UUIDs, and offending vertex keys/UUIDs for Level 4 repair planning. The default is
 PL-manifold topology with explicit full-validation
 checkpoints. Layer-local APIs use `is_valid()` for unambiguous element/TDS owners, `is_valid_*`
 for higher-level fast-fail checks, and `*_diagnostic` / `*_report` for diagnostics; cumulative
 APIs use `validate()` / `validation_report()`.
 
 For generated failure pictures, public test anchors, and diagnostics for each layer, run
-[`notebooks/01_validation_check_visualization.ipynb`](notebooks/01_validation_check_visualization.ipynb).
+[`notebooks/01_validation.ipynb`](notebooks/01_validation.ipynb). For the paper-facing mathematical
+exposition, see [`papers/validation.tex`](papers/validation.tex) and the compiled reviewer copy at
+[`papers/validation.pdf`](papers/validation.pdf).
 
 ## 🗺️ Documentation Map
 
@@ -238,8 +248,9 @@ For generated failure pictures, public test anchors, and diagnostics for each la
 - [Property Testing Summary](docs/property_testing_summary.md) - Property-test layout and coverage summary.
 - [Releasing](docs/RELEASING.md) - Changelog, benchmark, and publish workflow.
 - [Roadmap](docs/roadmap.md) - Current release sequence and deferred feature tracks.
-- [Topology](docs/topology.md) - Level 3 topology validation and global topology models.
+- [Topology](docs/topology.md) - Level 3 Intrinsic PL Topology validation and global topology models.
 - [Validation Guide](docs/validation.md) - Validation hierarchy and policy configuration.
+- [Validation Paper](papers/validation.pdf) - Reviewer-facing PDF for the validation architecture.
 - [Workflows](docs/workflows.md) - Practical recipes for construction, repair, toroidal domains, payloads, and flips.
 
 ## 🧩 Ecosystem
@@ -249,8 +260,6 @@ For generated failure pictures, public test anchors, and diagnostics for each la
 - [`la-stack`](https://crates.io/crates/la-stack) - stack-allocated linear algebra and exact determinant support.
 - [`causal-triangulations`](https://crates.io/crates/causal-triangulations) - downstream CDT research crate built on
   Delaunay-backed geometry primitives.
-- [`markov-chain-monte-carlo`](https://crates.io/crates/markov-chain-monte-carlo) - composable MCMC traits used by the
-  broader simulation ecosystem.
 
 Within this crate, `src/core/` owns the topology data structures, `src/geometry/` owns predicates and
 geometric helpers, `src/delaunay/` owns user-facing construction/query/repair APIs, and `src/topology/`
@@ -297,8 +306,8 @@ Toroidal support has two modes:
   in 2D and compact 3D, while 4D/5D fail fast pending scalable quotient work.
 
 Not implemented today: constrained Delaunay triangulations, Voronoi diagram extraction, built-in
-visualization, massively parallel/GPU construction, out-of-core meshing, and full spherical or
-hyperbolic triangulation semantics.
+visualization, massively parallel/GPU construction, out-of-core meshing, full spherical integration
+beyond the bounded `S^2`/`S^3` prototype, and hyperbolic triangulation semantics.
 
 See [`docs/limitations.md`](docs/limitations.md) for operational limits and [`docs/roadmap.md`](docs/roadmap.md)
 for the v0.8.0 paper-facing API/topology push and later feature tracks.

@@ -13,7 +13,7 @@ predicates fast across 2D-5D.
 | `circumsphere_containment.rs` | Compare circumsphere predicate methods | 2D-5D fixed, 3D random, edge cases | ~5 min | Predicate tuning, summaries |
 | `cold_path_predicates.rs` | Track hot/cold predicate paths | 2D-5D hot queries, near-boundary cases | ~2-5 min | Predicate optimization work |
 | `delaunay_repair.rs` | Flip-based Delaunay repair plus transaction-pressure cases | 2D-5D repair-convergent fixtures | ~2-5 min | Repair tuning |
-| `pachner_stress.rs` | Unified Pachner move API stress | Accepted 4D microcases plus 3D/4D Monte Carlo sequences | Manual | Monte-Carlo move workflow tuning |
+| `pachner_stress.rs` | Unified Pachner move API stress | Accepted 4D microcases plus forward/inverse round trips | Manual | Pachner move workflow tuning |
 | `pl_manifold_repair.rs` | Over-shared facet and targeted topology repair | 2D/3D synthetic repair fixtures | <1 min | PL-manifold repair tuning |
 | `profiling_suite.rs` | Large-scale construction, memory, query, validation profiling | 2D/3D 10k, 4D 3k, 5D 1k | ~2-3 hr | Manual/monthly |
 | `delete_vertex.rs` | Vertex deletion and rollback cost | 2D-5D fixed cases | ~1-5 min | Vertex deletion |
@@ -142,7 +142,7 @@ cargo bench --profile perf --bench ci_performance_suite
 
 `ci_performance_suite.rs` is the stable public workflow contract. It covers:
 
-- construction via `DelaunayTriangulation::builder(...).construction_options(...).build()`
+- construction via `DelaunayTriangulationBuilder::new(...).construction_options(...).build()`
 - adversarial construction
 - convex hull extraction
 - boundary facet traversal
@@ -197,59 +197,40 @@ just bench-pachner-stress
 `pachner_stress.rs` contains two Criterion layers:
 
 - accepted-move microcases for the unified 4D Pachner API facade
-- Monte Carlo stress timing cases for 3D and 4D long-run topology stability
+- forward/inverse round-trip cases for the same 4D move supports
 
-The `just pachner-stress*` recipes run one exact CLI diagnostic chain at the
+The `just pachner-stress*` recipes run one direct CLI diagnostic workload at the
 default issue-scale target: 10,000 vertices in 3D and 1,000 vertices in 4D, with
-100,000 attempted random Pachner moves and topology validation every 1,000
-attempts. They write progress CSV and summary JSON under `target/pachner_stress/`
-and also emit parseable stdout telemetry: one `pachner_stress_source` line for
-the prepared triangulation, `pachner_stress_progress` lines after each successful
-validation cadence, and a final `pachner_stress_metric` line with
-accepted/rejected attempts, proposal diagnostics, validation time, final simplex
-count, and RSS memory counters.
+100,000 attempted Pachner steps and topology validation every 1,000 attempts.
+The default `round-trip` mode commits a forward move and its inverse when a
+candidate is locally valid. The `random-walk` mode commits accepted moves over
+an evolving triangulation. Both modes write progress CSV and summary JSON under
+`target/pachner_stress/` and also emit parseable stdout telemetry: one
+`pachner_stress_source` line for the prepared triangulation,
+`pachner_stress_progress` lines after each validation cadence, and a final
+`pachner_stress_metric` line with accepted/rejected attempts, proposal
+diagnostics, validation time, and final topology size.
 
 Use `just bench-pachner-stress*` for Criterion timing evidence. Criterion
-requires at least 10 samples, so a default dimension-specific timing recipe
-measures at least ten 100K-move sequences.
+requires at least 10 samples. The benchmark recipe measures stable accepted
+move fixtures and corresponding forward/inverse round trips.
 
 The stress cases validate topology plus the Level 4 embedding invariant that
 arbitrary Pachner moves are expected to preserve; Level 5 Delaunay validity is
-not a postcondition of random topology edits. The move stream runs through the
-`markov-chain-monte-carlo` delayed proposal API with a flat target, so
-successfully planned Pachner proposals commit with 100% acceptance while invalid
-local candidates are recorded as no-proposal self-loops. Validation failures
-include recent MCMC trace rows so long chains can be diagnosed by step, outcome,
-and topology size.
+not a postcondition of arbitrary topology edits. Invalid local candidates are
+counted as candidate misses or proposal rejections, while successfully planned
+Pachner proposals commit directly.
 
 Useful overrides:
 
 ```bash
-just pachner-stress-4d 10000 250 1000 target/pachner_stress/4d
-
-DELAUNAY_PACHNER_STRESS_REPORT=1 \
-DELAUNAY_PACHNER_STRESS_ATTEMPTS=10000 \
-DELAUNAY_PACHNER_STRESS_VERTICES_4D=250 \
-cargo bench --profile perf --features pachner-stress --bench pachner_stress -- "monte_carlo/4d" --noplot
+just pachner-stress-4d 10000 250 1000 target/pachner_stress/4d random-walk
+just bench-pachner-stress 25
 ```
 
-Supported override families are `DELAUNAY_PACHNER_STRESS_VERTICES`,
-`DELAUNAY_PACHNER_STRESS_ATTEMPTS`,
-`DELAUNAY_PACHNER_STRESS_VALIDATE_EVERY`,
-`DELAUNAY_PACHNER_STRESS_KEY_REFRESH_EVERY`, and
-`DELAUNAY_PACHNER_STRESS_SEED`. Append `_3D` or `_4D` for a
-dimension-specific value. Use `MONTE_CARLO_SAMPLE_SIZE` to change Criterion's
-sample count; the benchmark enforces Criterion's minimum of 10 samples.
-
-`notebooks/02_pachner_stress_cli.ipynb` is the analysis front end for this
-telemetry. It runs the `delaunay pachner-stress` CLI from scalar first-cell
-controls, captures stdout/stderr logs plus CLI CSV/JSON under
-`target/notebooks/02_pachner_stress_cli/runs/`, normalizes telemetry into
-Polars-backed Parquet tables under
-`target/notebooks/02_pachner_stress_cli/tables/`, and renders summary figures
-under `target/notebooks/02_pachner_stress_cli/figures/`. Set `RUN_FRESH = False`
-in the first cell to reuse existing artifacts for the configured cases instead
-of launching a new CLI run during exploratory analysis.
+The benchmark accepts `MOVES_PER_SAMPLE` for local fixture batch size. The
+`just bench-pachner-stress*` recipes accept a Criterion sample count and enforce
+Criterion's minimum of 10 samples.
 
 ## Circumsphere Containment
 

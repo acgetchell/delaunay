@@ -23,6 +23,7 @@ Agents must run appropriate checks after modifying code.
 - [YAML Checks](#yaml-checks)
 - [Shell Script Validation](#shell-script-validation)
 - [JSON Validation](#json-validation)
+- [Paper Build](#paper-build)
 - [CITATION.cff Validation](#citationcff-validation)
 - [GitHub Actions Validation](#github-actions-validation)
 - [Recommended Command Matrix](#recommended-command-matrix)
@@ -70,6 +71,7 @@ changed surface.
 | Markdown documentation (`*.md`) | `just markdown-check` | `just markdown-ci` |
 | Python under `scripts/` | Targeted pytest or `just test-python`; add `just python-check` for logic/style | `just python-check` and `just test-python` |
 | Jupyter notebooks (`notebooks/**/*.ipynb`) | `just notebook-lint` | `just notebook-check` |
+| Paper sources and figures (`papers/**/*`, paper notebooks) | `just paper-check` | `just papers` |
 | Configuration only (JSON, TOML, YAML, CFF, workflows) | Matching config validator | `just lint-config` |
 | Rust unit tests only (`#[cfg(test)]` in `src/**`) | Targeted `cargo test --lib <filter>` or `just test-unit` | `just test-unit` |
 | Rust doctests only (`///` examples or crate docs) | Targeted `cargo test --doc --release <filter>` or `just test-doc` | `just test-doc` |
@@ -290,13 +292,19 @@ Workspace-wide benchmark recipes (`just bench`, `just bench-smoke`,
 `--features bench` so feature-gated benchmark fixtures and benchmark-only
 dependencies are compiled.
 
-Use `just pachner-stress [attempts] [validate_every]` for the full manual 3D+4D
-Pachner Monte Carlo diagnostic run through the opt-in `delaunay` CLI. The
-dimension-specific `just pachner-stress-3d` and `just pachner-stress-4d`
-recipes default to 100,000 attempted moves, write progress CSV plus summary JSON
-under `target/pachner_stress/`, and keep parseable stdout report/progress lines
-so long chains can be diagnosed without making the workflow part of routine CI.
-Use `just bench-pachner-stress*` when Criterion timing statistics are needed.
+Use `just pachner-stress [attempts] [validate_every] [mode]` for the manual 3D+4D
+direct Pachner diagnostic run through the opt-in `delaunay` CLI. The
+dimension-specific `just pachner-stress-3d` and `just pachner-stress-4d` recipes
+default to 100 attempted moves with progress every 10 attempts, write progress
+CSV plus summary JSON under `target/pachner_stress/`, and keep parseable stdout
+stage/report/progress lines so long workloads can be diagnosed without making
+the workflow part of routine CI. These direct stress recipes currently validate
+topology scope only (Levels 1-3); the large Level 4 embedding overlap scan is
+deferred to the dedicated embedding-validation work. The CLI supports
+`round-trip` and `random-walk` modes; `round-trip` is the default. Pass explicit
+`attempts`, `vertices`, and `validate_every` arguments for soak runs. Use
+`just bench-pachner-stress*` when Criterion timing statistics for stable 4D move
+and inverse fixtures are needed.
 
 Some repair benchmarks need feature-gated fixtures that deliberately construct
 invalid-but-structurally-coherent topology. Run those harnesses with
@@ -495,25 +503,44 @@ restoring tracked `.ipynb` files under `notebooks/` from the Git index, removes
 explicit source when needed, for example `just notebook-reset-from-git HEAD`, to
 restore notebooks from a committed tree instead of the current index.
 
-The Pachner stress notebook drives the opt-in `delaunay pachner-stress` CLI with
-a tiny smoke configuration by default, so it does not launch a long benchmark
-during `notebook-check`. To collect fresh telemetry and plots, edit the scalar
-run controls in the first cell and run:
+These recipes keep the CI shape stable as notebooks are added or split.
+
+---
+
+## Paper Build
+
+Publication-facing TeX lives under `papers/`. The source `.tex` file and the
+compiled reviewer `.pdf` live side by side, while LaTeX auxiliary files are
+ignored and build under `target/papers/`.
+
+Commands:
 
 ```bash
-just notebook notebooks/02_pachner_stress_cli.ipynb
+just paper-figures
+just paper-tex-lint
+just paper-build
+just paper-pdf-check
+just paper-check
+just papers
 ```
 
-It writes per-run CSV/JSON artifacts and raw stdout/stderr logs, normalizes
-analysis tables to Parquet with Polars, and reads those Parquet tables through
-`pl.scan_parquet` for displays and plots under
-`target/notebooks/02_pachner_stress_cli/`. The first cell controls scalar
-dimension, vertex count, attempted move count, validation cadence, cached-key
-refresh cadence, retries, seed, timeout, output location, and whether to reuse
-existing artifacts. Use `RUN_COUNT` with scalar step values for small sweeps.
-`DELAUNAY_BINARY` may still point the notebook at a prebuilt CLI binary.
+`just paper-figures` executes `notebooks/01_validation.ipynb` with
+`DELAUNAY_VALIDATION_PAPER_FIGURE_DIR=papers/generated`, refreshing the PNG
+figures included by `papers/validation.tex`. Ordinary notebook validation does
+not refresh tracked paper figures. `just paper-tex-lint` runs `tex-fmt --check`
+and `chktex` over `papers/*.tex`. `just paper-build` compiles
+`papers/validation.tex` with Tectonic in `target/papers/validation/` and copies
+the reading copy to `papers/validation.pdf`. `just paper-pdf-check` uses the
+uv-managed `paper-pdf-check` helper to verify the PDF opens, has pages, includes
+expected title/reference text, and does not contain the literal `\today`.
+`just paper-check` lints, builds, and sanity-checks a paper without refreshing
+figures. `just papers` runs the full figure, lint, build, and PDF-check path.
 
-These recipes keep the CI shape stable as notebooks are added or split.
+Tectonic and `tex-fmt` are pinned Cargo-installed tools. `chktex` comes from a
+TeX distribution or system package manager. Building Tectonic from Cargo also
+requires `pkg-config` to resolve ICU (`icu-uc`). `just setup-tools` checks that
+dependency and auto-detects common Homebrew ICU pkg-config directories before it
+asks for a manual `PKG_CONFIG_PATH`.
 
 ---
 

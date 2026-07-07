@@ -14,9 +14,11 @@ export PATH := cargo_home + "/bin" + path_separator + env_var("PATH")
 cargo_llvm_cov_version := "0.8.7"
 dprint_version := "0.55.1"
 just_version := "1.55.1"
-nextest_version := "0.9.138"
+nextest_version := "0.9.140"
 rumdl_version := "0.2.28"
 taplo_version := "0.10.0"
+tectonic_version := "0.16.9"
+tex_fmt_version := "0.5.7"
 typos_version := "1.48.0"
 zizmor_version := "1.26.1"
 
@@ -83,6 +85,40 @@ _ensure-jq:
     #!/usr/bin/env bash
     set -euo pipefail
     command -v jq >/dev/null || { echo "❌ 'jq' not found. Install jq and ensure it is on PATH."; exit 1; }
+
+_ensure-chktex:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v chktex >/dev/null || {
+        echo "❌ 'chktex' not found. Install a TeX distribution or package manager copy of chktex and ensure it is on PATH."
+        exit 1
+    }
+
+_ensure-tectonic:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    installed_version=""
+    if command -v tectonic >/dev/null; then
+        installed_version="$(tectonic --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    fi
+    if [[ "$installed_version" != "{{ tectonic_version }}" ]]; then
+        echo "❌ 'tectonic' {{ tectonic_version }} not found. See 'just setup-tools' or install:"
+        echo "   cargo install --locked tectonic --version {{ tectonic_version }}"
+        exit 1
+    fi
+
+_ensure-tex-fmt:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    installed_version=""
+    if command -v tex-fmt >/dev/null; then
+        installed_version="$(tex-fmt --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    fi
+    if [[ "$installed_version" != "{{ tex_fmt_version }}" ]]; then
+        echo "❌ 'tex-fmt' {{ tex_fmt_version }} not found. See 'just setup-tools' or install:"
+        echo "   cargo install --locked tex-fmt --version {{ tex_fmt_version }}"
+        exit 1
+    fi
 
 _ensure-nextest:
     #!/usr/bin/env bash
@@ -218,34 +254,33 @@ bench-smoke:
 run *args:
     cargo run --profile perf --features cli --bin delaunay -- {{ args }}
 
-# Run one 3D and one 4D Pachner Monte Carlo stress chain with reports enabled.
-pachner-stress attempts="100000" validate_every="1000":
-    just _pachner-stress-dim 3d 10000 "{{ attempts }}" "{{ validate_every }}" target/pachner_stress/3d
-    just _pachner-stress-dim 4d 1000 "{{ attempts }}" "{{ validate_every }}" target/pachner_stress/4d
+# Run one 3D and one 4D direct Pachner stress workload with topology-scope reports enabled.
+pachner-stress attempts="100" validate_every="10" mode="round-trip":
+    just _pachner-stress-dim 3d 9000 "{{ attempts }}" "{{ validate_every }}" target/pachner_stress/3d "{{ mode }}"
+    just _pachner-stress-dim 4d 1000 "{{ attempts }}" "{{ validate_every }}" target/pachner_stress/4d "{{ mode }}"
 
-# Run one 3D Pachner Monte Carlo stress chain with reports enabled.
-pachner-stress-3d attempts="100000" vertices="10000" validate_every="1000" output_dir="target/pachner_stress/3d":
-    just _pachner-stress-dim 3d "{{ vertices }}" "{{ attempts }}" "{{ validate_every }}" "{{ output_dir }}"
+# Run one 3D direct Pachner stress workload with topology-scope reports enabled.
+pachner-stress-3d attempts="100" vertices="9000" validate_every="10" output_dir="target/pachner_stress/3d" mode="round-trip":
+    just _pachner-stress-dim 3d "{{ vertices }}" "{{ attempts }}" "{{ validate_every }}" "{{ output_dir }}" "{{ mode }}"
 
-# Run one 4D Pachner Monte Carlo stress chain with reports enabled.
-pachner-stress-4d attempts="100000" vertices="1000" validate_every="1000" output_dir="target/pachner_stress/4d":
-    just _pachner-stress-dim 4d "{{ vertices }}" "{{ attempts }}" "{{ validate_every }}" "{{ output_dir }}"
+# Run one 4D direct Pachner stress workload with topology-scope reports enabled.
+pachner-stress-4d attempts="100" vertices="1000" validate_every="10" output_dir="target/pachner_stress/4d" mode="round-trip":
+    just _pachner-stress-dim 4d "{{ vertices }}" "{{ attempts }}" "{{ validate_every }}" "{{ output_dir }}" "{{ mode }}"
 
-# Run Criterion's Pachner Monte Carlo stress benchmark for statistical timing.
-bench-pachner-stress attempts="100000" validate_every="1000" samples="10":
-    just _bench-pachner-stress-dim 3d 10000 "{{ attempts }}" "{{ validate_every }}" "{{ samples }}"
-    just _bench-pachner-stress-dim 4d 1000 "{{ attempts }}" "{{ validate_every }}" "{{ samples }}"
+# Run Criterion's Pachner move and round-trip stress benchmark.
+bench-pachner-stress samples="10":
+    just _bench-pachner-stress "{{ samples }}"
 
-# Run Criterion's 3D Pachner Monte Carlo stress benchmark for statistical timing.
-bench-pachner-stress-3d attempts="100000" vertices="10000" validate_every="1000" samples="10":
-    just _bench-pachner-stress-dim 3d "{{ vertices }}" "{{ attempts }}" "{{ validate_every }}" "{{ samples }}"
+# Alias for the dimension-agnostic Pachner stress benchmark.
+bench-pachner-stress-3d samples="10":
+    just _bench-pachner-stress "{{ samples }}"
 
-# Run Criterion's 4D Pachner Monte Carlo stress benchmark for statistical timing.
-bench-pachner-stress-4d attempts="100000" vertices="1000" validate_every="1000" samples="10":
-    just _bench-pachner-stress-dim 4d "{{ vertices }}" "{{ attempts }}" "{{ validate_every }}" "{{ samples }}"
+# Alias for the dimension-agnostic Pachner stress benchmark.
+bench-pachner-stress-4d samples="10":
+    just _bench-pachner-stress "{{ samples }}"
 
 [private]
-_pachner-stress-dim label vertices attempts validate_every output_dir:
+_pachner-stress-dim label vertices attempts validate_every output_dir mode:
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -254,6 +289,7 @@ _pachner-stress-dim label vertices attempts validate_every output_dir:
     attempts="{{ attempts }}"
     validate_every="{{ validate_every }}"
     output_dir="{{ output_dir }}"
+    mode="{{ mode }}"
 
     require_positive_integer() {
         local name="$1"
@@ -267,13 +303,22 @@ _pachner-stress-dim label vertices attempts validate_every output_dir:
     require_positive_integer "vertices" "$vertices"
     require_positive_integer "attempts" "$attempts"
     require_positive_integer "validate_every" "$validate_every"
+    case "$mode" in
+        round-trip|random-walk) ;;
+        *)
+            echo "ERROR: unsupported Pachner stress mode: $mode" >&2
+            exit 2
+            ;;
+    esac
 
     mkdir -p "$output_dir"
 
-    echo "Pachner stress ${label}: ${vertices} vertices, ${attempts} attempted moves."
+    echo "Pachner stress ${label}/${mode}: ${vertices} vertices, ${attempts} attempted moves."
+    echo "Validation scope: topology (Levels 1-3; Level 4 embedding overlap scan deferred to #483)."
     cargo run --profile perf --features cli --bin delaunay -- \
         pachner-stress \
         --dimension "$label" \
+        --mode "$mode" \
         --vertices "$vertices" \
         --attempts "$attempts" \
         --validate-every "$validate_every" \
@@ -281,14 +326,10 @@ _pachner-stress-dim label vertices attempts validate_every output_dir:
         --summary-json "$output_dir/summary.json"
 
 [private]
-_bench-pachner-stress-dim label vertices attempts validate_every samples:
+_bench-pachner-stress samples:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    label="{{ label }}"
-    vertices="{{ vertices }}"
-    attempts="{{ attempts }}"
-    validate_every="{{ validate_every }}"
     samples="{{ samples }}"
 
     require_positive_integer() {
@@ -300,9 +341,6 @@ _bench-pachner-stress-dim label vertices attempts validate_every samples:
         fi
     }
 
-    require_positive_integer "vertices" "$vertices"
-    require_positive_integer "attempts" "$attempts"
-    require_positive_integer "validate_every" "$validate_every"
     require_positive_integer "samples" "$samples"
 
     if (( samples < 10 )); then
@@ -310,29 +348,9 @@ _bench-pachner-stress-dim label vertices attempts validate_every samples:
         exit 2
     fi
 
-    case "$label" in
-        3d)
-            suffix="3D"
-            filter="monte_carlo/3d"
-            ;;
-        4d)
-            suffix="4D"
-            filter="monte_carlo/4d"
-            ;;
-        *)
-            echo "ERROR: unsupported Pachner stress dimension: $label" >&2
-            exit 2
-            ;;
-    esac
-
-    echo "Pachner stress ${suffix}: ${vertices} vertices, ${attempts} attempted moves per Criterion sample."
-    env \
-        DELAUNAY_PACHNER_STRESS_REPORT=1 \
-        "DELAUNAY_PACHNER_STRESS_VERTICES_${suffix}=$vertices" \
-        "DELAUNAY_PACHNER_STRESS_ATTEMPTS_${suffix}=$attempts" \
-        "DELAUNAY_PACHNER_STRESS_VALIDATE_EVERY_${suffix}=$validate_every" \
-        "MONTE_CARLO_SAMPLE_SIZE=$samples" \
-        cargo bench --profile perf --features bench --bench pachner_stress -- "$filter" --noplot
+    echo "Pachner stress Criterion fixture benchmark: ${samples} samples."
+    env CRIT_SAMPLE_SIZE="$samples" \
+        cargo bench --profile perf --features bench --bench pachner_stress -- --noplot
 
 # Compile benchmarks and release integration tests without running.
 bench-test-compile: bench-compile test-integration-compile
@@ -504,12 +522,12 @@ help-workflows:
     @echo "  just bench-smoke        # Smoke-test benchmark harnesses (minimal samples)"
     @echo "  just bench              # Run all benchmarks with perf profile (ThinLTO)"
     @echo "  just bench-ci           # CI regression benchmarks with perf profile (~5-10 min)"
-    @echo "  just pachner-stress     # 3D+4D Pachner MCMC CLI stress with CSV/JSON artifacts"
-    @echo "  just pachner-stress-3d [attempts] [vertices] [validate_every] [output_dir]"
-    @echo "                          # 3D Pachner MCMC stress (defaults: 100K, 10K vertices)"
-    @echo "  just pachner-stress-4d [attempts] [vertices] [validate_every] [output_dir]"
-    @echo "                          # 4D Pachner MCMC stress (defaults: 100K, 1K vertices)"
-    @echo "  just bench-pachner-stress # Criterion timing for Pachner MCMC stress"
+    @echo "  just pachner-stress     # 3D+4D direct Pachner stress with CSV/JSON artifacts"
+    @echo "  just pachner-stress-3d [attempts] [vertices] [validate_every] [output_dir] [mode]"
+    @echo "                          # 3D Pachner stress (defaults: 100K, 10K vertices, round-trip)"
+    @echo "  just pachner-stress-4d [attempts] [vertices] [validate_every] [output_dir] [mode]"
+    @echo "                          # 4D Pachner stress (defaults: 100K, 1K vertices, round-trip)"
+    @echo "  just bench-pachner-stress # Criterion timing for Pachner move/round-trip stress"
     @echo "  just perf-large-scale-smoke [max_secs] # Quick pre-push 2D-5D wall-clock guard (default 60s)"
     @echo "  just perf-no-regressions [threshold] # Fast pre-PR 2D-5D regression guard (default 7.5%)"
     @echo "  just perf-baseline [ref] # Persist/update default local baseline (default: main)"
@@ -728,6 +746,87 @@ notebook-output-check: _ensure-uv
 notebook-setup: _ensure-uv
     uv sync --group notebooks
 
+# Refresh tracked paper figures from reproducible notebooks.
+paper-figures: _ensure-uv
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p papers/generated
+    DELAUNAY_VALIDATION_PAPER_FIGURE_DIR="papers/generated" just notebook-execute notebooks/01_validation.ipynb target/papers/notebooks
+
+# Format publication-facing TeX sources.
+paper-tex-fmt: _ensure-tex-fmt
+    tex-fmt papers/*.tex
+
+# Check publication-facing TeX formatting and lint diagnostics.
+paper-tex-lint: _ensure-chktex _ensure-tex-fmt
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tex-fmt --check papers/*.tex
+    # 24 conflicts with tex-fmt's indented figure labels.
+    chktex -q -n 1 -n 8 -n 24 -n 46 papers/*.tex
+
+# Compile one paper with Tectonic and copy the reviewer PDF beside its TeX source.
+paper-build paper="validation": _ensure-tectonic _ensure-uv
+    #!/usr/bin/env bash
+    set -euo pipefail
+    paper={{ quote(paper) }}
+    case "$paper" in
+        ""|*[!A-Za-z0-9_-]*)
+            echo "❌ Invalid paper name: $paper"
+            echo "   Use only ASCII letters, digits, underscores, and hyphens."
+            exit 1
+            ;;
+    esac
+    paper_source="papers/${paper}.tex"
+    paper_pdf="papers/${paper}.pdf"
+    build_dir="target/papers/${paper}"
+    if [ ! -f "$paper_source" ]; then
+        echo "❌ Paper source not found: $paper_source"
+        exit 1
+    fi
+    rm -rf "$build_dir"
+    mkdir -p "$build_dir"
+    source_date_epoch="$(uv run paper-source-date-epoch "$paper_source")"
+    export SOURCE_DATE_EPOCH="$source_date_epoch"
+    tectonic --keep-intermediates --keep-logs --outdir "$build_dir" "$paper_source"
+    uv run paper-pdf-normalize "$build_dir/${paper}.pdf" --tex "$paper_source"
+    cp "$build_dir/${paper}.pdf" "$paper_pdf"
+    echo "📄 Paper PDF written: $paper_pdf"
+
+# Check the compiled reviewer PDF for basic readability.
+paper-pdf-check paper="validation": _ensure-uv
+    #!/usr/bin/env bash
+    set -euo pipefail
+    paper={{ quote(paper) }}
+    case "$paper" in
+        ""|*[!A-Za-z0-9_-]*)
+            echo "❌ Invalid paper name: $paper"
+            echo "   Use only ASCII letters, digits, underscores, and hyphens."
+            exit 1
+            ;;
+    esac
+    uv run paper-pdf-check "papers/${paper}.pdf" \
+        --min-pages 1 \
+        --require-text "Validation Architecture in delaunay" \
+        --require-text "REFERENCES" \
+        --forbid-text "\\today" \
+        --forbid-text "Manuscript submitted to ACM"
+
+paper-check paper="validation": paper-tex-lint
+    #!/usr/bin/env bash
+    set -euo pipefail
+    paper={{ quote(paper) }}
+    just paper-build "$paper"
+    just paper-pdf-check "$paper"
+    echo "✅ Paper '${paper}' compiled and checked successfully."
+
+# Refresh notebook-owned paper figures, lint TeX, compile, and sanity-check PDFs.
+papers: paper-figures paper-check
+    @echo "📚 Paper workflow complete!"
+
+paper-clean:
+    rm -rf target/papers
+
 # Generate a same-machine dev-mode baseline for a GitHub ref.
 perf-baseline ref="main": _ensure-uv
     #!/usr/bin/env bash
@@ -769,10 +868,10 @@ perf-help:
     @echo "  just bench                 # Full benchmark suite with perf profile"
     @echo "  just bench-ci              # CI benchmark suite with perf profile"
     @echo "  just bench-allocations     # Allocation-contract microbenchmarks"
-    @echo "  just pachner-stress        # 3D+4D Pachner MCMC CLI stress with CSV/JSON artifacts"
-    @echo "  just pachner-stress-3d     # 3D Pachner MCMC CLI stress (100K moves, 10K vertices)"
-    @echo "  just pachner-stress-4d     # 4D Pachner MCMC CLI stress (100K moves, 1K vertices)"
-    @echo "  just bench-pachner-stress  # Criterion timing for Pachner MCMC stress"
+    @echo "  just pachner-stress        # 3D+4D direct Pachner CLI stress with CSV/JSON artifacts"
+    @echo "  just pachner-stress-3d     # 3D Pachner CLI stress (100 moves, 9K vertices)"
+    @echo "  just pachner-stress-4d     # 4D Pachner CLI stress (100 moves, 1K vertices)"
+    @echo "  just bench-pachner-stress  # Criterion timing for Pachner move/round-trip stress"
     @echo "  just perf-no-regressions   # Fast pre-PR 2D-5D regression guard"
     @echo "  just bench-smoke           # Smoke-test benchmark harnesses"
     @echo ""
@@ -791,8 +890,8 @@ perf-help:
     @echo "  just perf-baseline-to /tmp/delaunay-main-baseline"
     @echo "                              # Generate scratch main baseline without overwriting baseline-artifact"
     @echo "  CRIT_SAMPLE_SIZE=100 just bench  # Custom sample size"
-    @echo "  just pachner-stress-4d 100000 1000 1000 target/pachner_stress/4d"
-    @echo "                              # 4D long-run Pachner diagnostics with CSV/JSON artifacts"
+    @echo "  just pachner-stress-4d 100000 1000 1000 target/pachner_stress/4d random-walk"
+    @echo "                              # 4D random-walk Pachner diagnostics with CSV/JSON artifacts"
     @echo "  just bench-ci              # Final optimized CI-suite benchmark run"
     @echo "  just profile v0.7.5        # v0.7.5 code on its declared Rust toolchain"
     @echo "  just profile 1.96.0        # Current tree on Rust 1.96.0"
@@ -1123,7 +1222,7 @@ setup-tools:
     have() { command -v "$1" >/dev/null 2>&1; }
 
     echo "This recipe installs pinned Rust CLI tools through cargo."
-    echo "External prerequisites that must already be on PATH: uv, jq, rustup, cargo."
+    echo "External prerequisites that must already be on PATH: uv, jq, rustup, cargo, chktex, pkg-config, and ICU development files."
     echo ""
 
     echo "Ensuring uv-managed Python tooling..."
@@ -1140,6 +1239,31 @@ setup-tools:
         exit 1
     fi
     rustup component add clippy rustfmt rust-docs rust-src
+    echo ""
+
+    echo "Ensuring paper native build dependencies..."
+    if ! have pkg-config; then
+        echo "❌ 'pkg-config' not found. Install pkg-config before building Tectonic from Cargo."
+        exit 1
+    fi
+    if ! pkg-config --exists icu-uc; then
+        shopt -s nullglob
+        for candidate in \
+            /opt/homebrew/opt/icu4c*/lib/pkgconfig \
+            /usr/local/opt/icu4c*/lib/pkgconfig; do
+            if [ -d "$candidate" ]; then
+                export PKG_CONFIG_PATH="$candidate${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+                break
+            fi
+        done
+        shopt -u nullglob
+    fi
+    if ! pkg-config --exists icu-uc; then
+        echo "❌ 'icu-uc' was not found by pkg-config."
+        echo "   Install ICU development files, or set PKG_CONFIG_PATH to the directory containing icu-uc.pc."
+        exit 1
+    fi
+    echo "  ✓ pkg-config can resolve icu-uc"
     echo ""
 
     echo "Ensuring cargo tools..."
@@ -1181,6 +1305,28 @@ setup-tools:
         cargo install --locked dprint --version {{ dprint_version }}
     else
         echo "  ✓ dprint {{ dprint_version }}"
+    fi
+
+    installed_tectonic_version=""
+    if command -v tectonic >/dev/null; then
+        installed_tectonic_version="$(tectonic --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    fi
+    if [[ "$installed_tectonic_version" != "{{ tectonic_version }}" ]]; then
+        echo "  ⏳ Installing tectonic {{ tectonic_version }} (cargo)..."
+        cargo install --locked tectonic --version {{ tectonic_version }}
+    else
+        echo "  ✓ tectonic {{ tectonic_version }}"
+    fi
+
+    installed_tex_fmt_version=""
+    if command -v tex-fmt >/dev/null; then
+        installed_tex_fmt_version="$(tex-fmt --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    fi
+    if [[ "$installed_tex_fmt_version" != "{{ tex_fmt_version }}" ]]; then
+        echo "  ⏳ Installing tex-fmt {{ tex_fmt_version }} (cargo)..."
+        cargo install --locked tex-fmt --version {{ tex_fmt_version }}
+    else
+        echo "  ✓ tex-fmt {{ tex_fmt_version }}"
     fi
 
     installed_rumdl_version=""
@@ -1256,7 +1402,7 @@ setup-tools:
     echo "Verifying required commands are available..."
     missing=0
 
-    cmds=(uv jq taplo dprint rumdl git-cliff typos zizmor)
+    cmds=(uv jq pkg-config taplo dprint tectonic tex-fmt rumdl git-cliff typos zizmor chktex)
     cmds+=(cargo-nextest cargo-llvm-cov)
 
     for cmd in "${cmds[@]}"; do

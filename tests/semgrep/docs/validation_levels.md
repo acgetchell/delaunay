@@ -15,11 +15,14 @@ The Delaunay property (Level 4) is checked here.
 // ruleid: delaunay.docs.no-stale-four-level-validation-hierarchy
 Delaunay Level 4 validation belongs in the Delaunay module.
 
+// ruleid: delaunay.docs.no-stale-four-level-validation-hierarchy
+After using flips, optionally repair / verify the Delaunay property.
+
 // ok: delaunay.docs.no-stale-four-level-validation-hierarchy
 The crate provides a 5-level validation hierarchy.
 
 // ok: delaunay.docs.no-stale-four-level-validation-hierarchy
-Level 5: Delaunay Property
+Level 5: Geometric Predicates
 
 // ruleid: delaunay.rust.no-tds-accessor-in-markdown-examples
 let storage = dt.tds();

@@ -64,7 +64,7 @@
 //! | Construction telemetry diagnostics | `use delaunay::prelude::diagnostics::*` |
 //! | Validation policies, errors, reports, PL-manifold link errors, and Level 5 diagnostics | `use delaunay::prelude::validation::*` |
 //! | Topology validation, Euler characteristic, ridge queries | `use delaunay::prelude::topology::validation::*` |
-//! | Topological spaces, topology traits, lifted toroidal IDs | `use delaunay::prelude::topology::spaces::*` |
+//! | Topological spaces, topology traits, spherical point/metric backends, lifted toroidal IDs | `use delaunay::prelude::topology::spaces::*` |
 //! | Low-level TDS simplices, facets, keys | `use delaunay::prelude::tds::*` |
 //! | Collection types (`FastHashMap`, etc.) | `use delaunay::prelude::collections::*` |
 //! | Broad convenience import for exploratory code | `use delaunay::prelude::*` |
@@ -113,16 +113,16 @@
 //! ];
 //! let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 //!
-//! // Levels 1–2: elements + structural
+//! // Levels 1–2: Element Validity + Combinatorial Consistency
 //! assert!(dt.validate_structure().is_ok());
 //!
-//! // Levels 1–3: elements + structural + topology
+//! // Levels 1–3: + Intrinsic PL Topology
 //! assert!(dt.as_triangulation().validate().is_ok());
 //!
-//! // Levels 1–4: elements + structural + topology + valid affine realization
+//! // Levels 1–4: elements + combinatorics + topology + embedding validity
 //! assert!(dt.as_triangulation().validate_embedding().is_ok());
 //!
-//! // Level 5 only: Delaunay property (assumes Levels 1–4)
+//! // Level 5 only: Geometric Predicates (Delaunay today; assumes Levels 1–4)
 //! assert!(dt.is_valid_delaunay().is_ok());
 //!
 //! // Levels 1–5: full cumulative validation
@@ -209,8 +209,8 @@
 //!   [`Tds::validate`](crate::tds::Tds::validate) (Levels 1–2).
 //!
 //! - [`Tds`](crate::tds::Tds) (Triangulation Data Structure)
-//!   stores the **combinatorial / structural** representation.
-//!   Level 2 (structural) validation checks invariants such as:
+//!   stores the **combinatorial** representation.
+//!   Level 2 (Combinatorial Consistency) validation checks invariants such as:
 //!   - **Vertex mappings** – every vertex UUID has a corresponding key and vice versa.
 //!   - **Simplex mappings** – every simplex UUID has a corresponding key and vice versa.
 //!   - **No duplicate simplices** – no two maximal simplices share the same vertex set.
@@ -220,12 +220,12 @@
 //!
 //!   These checks are surfaced via [`Tds::is_valid`](crate::tds::Tds::is_valid)
 //!   (structural only) and [`Tds::validate`](crate::tds::Tds::validate)
-//!   (Levels 1–2, elements + structural). For cumulative diagnostics across the full stack,
+//!   (Levels 1–2, elements + combinatorics). For cumulative diagnostics across the full stack,
 //!   use [`DelaunayTriangulation::validation_report`](crate::DelaunayTriangulation::validation_report).
 //!
 //! - [`Triangulation`] builds on the TDS and validates
-//!   **manifold topology**.
-//!   Level 3 (topology) validation is performed by
+//!   **intrinsic PL topology**.
+//!   Level 3 (Intrinsic PL Topology) validation is performed by
 //!   [`Triangulation::is_valid_topology`](crate::Triangulation::is_valid_topology) (Level 3 only) and
 //!   [`Triangulation::validate`](crate::Triangulation::validate) (Levels 1–3), which:
 //!   - Strengthens facet incidence to the **manifold facet property**:
@@ -233,16 +233,16 @@
 //!     boundary; two-sided facets are interior.
 //!   - Checks the **Euler characteristic** of the triangulation (using the topology module).
 //!
-//! - [`Triangulation`] also validates the **valid affine realization** of the
-//!   abstract complex in the active affine chart. Level 4 validation is performed by
+//! - [`Triangulation`] also validates the **embedding validity** of the abstract
+//!   complex in the active ambient model. Level 4 validation is performed by
 //!   [`Triangulation::is_valid_embedding`](crate::Triangulation::is_valid_embedding) (Level 4 only) and
 //!   [`Triangulation::validate_embedding`](crate::Triangulation::validate_embedding) (Levels 1–4).
 //!   Euclidean topology is checked directly in its ambient chart; toroidal
 //!   topology is checked in periodic covering-space charts.
 //!
-//! - [`DelaunayTriangulation`] builds on
-//!   `Triangulation` and validates the **geometric** Delaunay condition.
-//!   Level 5 (Delaunay property) validation is performed by
+//! - [`DelaunayTriangulation`] builds on `Triangulation` and validates the
+//!   implemented **geometric predicate** family for Delaunay triangulations.
+//!   Level 5 (Geometric Predicates) validation is performed by
 //!   [`DelaunayTriangulation::is_valid_delaunay`](crate::DelaunayTriangulation::is_valid_delaunay) (Level 5 only) and
 //!   [`DelaunayTriangulation::validate`](crate::DelaunayTriangulation::validate) (Levels 1–5).
 //!   Batch construction normally runs final Delaunay validation before returning;
@@ -257,7 +257,8 @@
 //! ## Validation
 //!
 //! The crate exposes five validation levels
-//! (element → structural → topology → valid affine realization → Delaunay). The
+//! (Element Validity → Combinatorial Consistency → Intrinsic PL Topology →
+//! Embedding Validity → Geometric Predicates). The
 //! canonical guide (when to use each level, complexity, examples, troubleshooting) lives in
 //! `docs/validation.md`:
 //! <https://github.com/acgetchell/delaunay/blob/main/docs/validation.md>
@@ -266,14 +267,15 @@
 //! - Level 1 (elements / `Vertex` + `Simplex`): `Vertex::is_valid()` /
 //!   `Simplex::is_valid()` for fast checks, or `vertex_report()` /
 //!   `simplex_report()` for element-local diagnostics.
-//! - Level 2 (structural / `Tds`): `dt.is_valid_structure()` for a quick check, or
+//! - Level 2 (Combinatorial Consistency / `Tds`): `dt.is_valid_structure()` for a quick check, or
 //!   `dt.validate_structure()` for Levels 1–2.
-//! - Level 3 (topology / `Triangulation`): `dt.as_triangulation().is_valid_topology()` for topology-only checks, or
+//! - Level 3 (Intrinsic PL Topology / `Triangulation`):
+//!   `dt.as_triangulation().is_valid_topology()` for topology-only checks, or
 //!   `dt.as_triangulation().validate()` for Levels 1–3.
-//! - Level 4 (valid affine realization / `Triangulation`): `dt.as_triangulation().validate_embedding()`
+//! - Level 4 (Embedding Validity / `Triangulation`): `dt.as_triangulation().validate_embedding()`
 //!   for cumulative embedded-geometry checks, or `dt.as_triangulation().embedding_report()` for layer-local diagnostics.
-//! - Level 5 (Delaunay / `DelaunayTriangulation`): `dt.is_valid_delaunay()` for the Delaunay
-//!   property, or `dt.delaunay_report()` for layer-local diagnostics.
+//! - Level 5 (Geometric Predicates / `DelaunayTriangulation`): `dt.is_valid_delaunay()` for the
+//!   implemented Delaunay predicate family, or `dt.delaunay_report()` for layer-local diagnostics.
 //! - Cumulative Delaunay validation: `dt.validate()` for Levels 1–5, or
 //!   `dt.validation_report()` for full diagnostics.
 //!
@@ -291,7 +293,7 @@
 //!
 //! This automatic pass runs Level 3 (`Triangulation::is_valid_topology()`), changed-simplex
 //! Level 4 nondegeneracy checks, and changed-vs-current Level 4 pairwise checks. It does
-//! **not** run Level 5 Delaunay validation, and old-vs-old Level 4 rescans remain an explicit
+//! **not** run Level 5 geometric-predicate validation, and old-vs-old Level 4 rescans remain an explicit
 //! `Triangulation::validate_embedding()` checkpoint.
 //!
 //! ```rust
@@ -316,18 +318,18 @@
 //! // Do incremental work...
 //! dt.insert_vertex(vertex![0.2, 0.2, 0.2]?)?;
 //!
-//! // ...then explicitly validate the topology layer when you need a certificate.
+//! // ...then explicitly validate the Intrinsic PL Topology layer when you need a certificate.
 //! assert!(dt.as_triangulation().validate().is_ok());
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! ### Choosing Level 3 topology guarantee (`TopologyGuarantee`)
+//! ### Choosing Level 3 Intrinsic PL Topology guarantee (`TopologyGuarantee`)
 //!
 //! This section specifies *what* invariants are enforced. The formal topological
 //! definitions and rationale live in `docs/invariants.md`.
 //!
-//! Level 3 topology validation is parameterized by
+//! Level 3 Intrinsic PL Topology validation is parameterized by
 //! [`TopologyGuarantee`](crate::prelude::construction::TopologyGuarantee). This is separate from
 //! `ValidationPolicy`: it controls *what* invariants Level 3 enforces, not *when* automatic
 //! validation runs.
@@ -736,7 +738,7 @@ pub mod builder;
 /// Batch construction options, errors, statistics, and policy helpers.
 #[path = "delaunay/construction.rs"]
 pub mod construction;
-/// TDS-level implementation helpers for Level 5 Delaunay-property scans.
+/// TDS-level implementation helpers for Delaunay's Level 5 Geometric Predicate scans.
 #[path = "delaunay/property_validation.rs"]
 mod delaunay_property_validation;
 /// Read-only Delaunay query, traversal, and accessor methods.
@@ -762,7 +764,7 @@ pub mod flips;
 pub(crate) mod insertion;
 #[path = "delaunay/locality.rs"]
 pub(crate) mod locality;
-/// Unified Pachner move workflow API for Monte-Carlo-style editing.
+/// Unified Pachner move workflow API for local topology editing.
 #[path = "delaunay/pachner.rs"]
 pub mod pachner;
 /// Repair policies and outcomes for Delaunay triangulations.
@@ -771,6 +773,9 @@ pub mod repair;
 /// Serialization support for Delaunay triangulations.
 #[path = "delaunay/serialization.rs"]
 pub(crate) mod serialization;
+/// Prototype spherical Delaunay construction via the spherical topology backend.
+#[path = "delaunay/spherical.rs"]
+pub mod spherical;
 /// Delaunay triangulation layer with incremental insertion.
 #[path = "delaunay/triangulation.rs"]
 pub(crate) mod triangulation;
@@ -845,8 +850,16 @@ pub use crate::repair::{
     DelaunayCheckPolicy, DelaunayRepairHeuristicConfig, DelaunayRepairHeuristicSeeds,
     DelaunayRepairOperation, DelaunayRepairOutcome, DelaunayRepairPolicy,
 };
+pub use crate::spherical::{
+    SphericalDelaunayBuilder, SphericalDelaunayConstructionError, SphericalDelaunayTriangulation,
+    SphericalDelaunayValidationError, SphericalSimplex, SphericalSimplexError,
+    SphericalValidationLayer,
+};
 pub use crate::tds::{
     InvariantError, InvariantKind, InvariantViolation, TriangulationValidationReport,
+};
+pub use crate::topology::spaces::spherical::{
+    SphericalMetric, SphericalPoint, SphericalPointError,
 };
 pub use crate::triangulation::*;
 pub use crate::validation::{
@@ -970,11 +983,11 @@ pub mod topology {
     /// Ridge candidates, borrowed ridge queries, and lifted ridge-link views.
     pub mod ridge;
 
-    /// Concrete topological space implementations.
+    /// Concrete topology helper and coordinate backend implementations.
     ///
-    /// This module contains the currently exposed Euclidean, spherical, and
-    /// toroidal space models that implement the topology traits used by
-    /// construction policy and topology validation APIs.
+    /// This module contains the Euclidean and toroidal topology-space helpers,
+    /// plus the spherical coordinate/metric backend for points on `S^D`
+    /// embedded in `R^(D+1)`.
     pub mod spaces {
         /// Euclidean space topology
         pub mod euclidean;
@@ -984,7 +997,7 @@ pub mod topology {
         pub mod toroidal;
 
         pub use euclidean::EuclideanSpace;
-        pub use spherical::SphericalSpace;
+        pub use spherical::{SphericalMetric, SphericalPoint, SphericalPointError};
         pub use toroidal::{LiftedLinkEdge, LiftedVertexId, ToroidalSpace};
     }
 
@@ -1204,7 +1217,10 @@ pub mod prelude {
         FinalDelaunayValidationContext, FinalTopologyValidationContext, InitialSimplexStrategy,
         InsertionOrderStrategy, InsertionResult, PeriodicDomainPeriodError, PlManifoldRepairError,
         PlManifoldRepairStage, PlManifoldRepairStats, RepairDecision, RepairSkipReason,
-        RetryPolicy, TopologicalOperation, TopologyGuarantee, Triangulation,
+        RetryPolicy, SphericalDelaunayBuilder, SphericalDelaunayConstructionError,
+        SphericalDelaunayTriangulation, SphericalDelaunayValidationError, SphericalMetric,
+        SphericalPoint, SphericalPointError, SphericalSimplex, SphericalSimplexError,
+        SphericalValidationLayer, TopologicalOperation, TopologyGuarantee, Triangulation,
         TriangulationConstructionError, TriangulationEmbeddingIntersectionDetail,
         TriangulationEmbeddingSimplexDetail, TriangulationEmbeddingSimplexPairDetail,
         TriangulationEmbeddingValidationError, TriangulationEmbeddingValidationErrorKind,
@@ -1338,6 +1354,11 @@ pub mod prelude {
         pub use crate::geometry::traits::coordinate::CoordinateValidationError;
         pub use crate::geometry::util::{InvalidPositiveScalar, RandomPointGenerationError};
         pub use crate::repair::DelaunayRepairPolicy;
+        pub use crate::spherical::{
+            SphericalDelaunayBuilder, SphericalDelaunayConstructionError,
+            SphericalDelaunayTriangulation, SphericalDelaunayValidationError, SphericalSimplex,
+            SphericalSimplexError, SphericalValidationLayer,
+        };
         pub use crate::tds::{
             SimplexValidationError, SimplexValidationReport, Vertex, VertexValidationError,
             VertexValidationReport,
@@ -1427,7 +1448,7 @@ pub mod prelude {
         };
     }
 
-    /// Unified Pachner move workflow for Monte-Carlo-style local edits.
+    /// Unified Pachner move workflow for local bistellar edits.
     ///
     /// This focused prelude exports the unified request/proposal/result/dispatch
     /// API, the handles and handle-construction errors needed to construct
@@ -1641,7 +1662,8 @@ pub mod prelude {
         pub use crate::validation::*;
         pub use crate::{
             DelaunayTriangulationValidationError, DelaunayVerificationError,
-            DelaunayVerificationErrorKind, PeriodicDomainPeriodError, TopologyGuarantee,
+            DelaunayVerificationErrorKind, PeriodicDomainPeriodError,
+            SphericalDelaunayValidationError, SphericalValidationLayer, TopologyGuarantee,
             TriangulationEmbeddingIntersectionDetail, TriangulationEmbeddingSimplexDetail,
             TriangulationEmbeddingSimplexPairDetail, TriangulationEmbeddingValidationError,
             TriangulationEmbeddingValidationErrorKind, TriangulationEmbeddingValidationReport,
