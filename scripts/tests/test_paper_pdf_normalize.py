@@ -1,14 +1,11 @@
 """Tests for deterministic paper PDF metadata normalization."""
 
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
-from paper_pdf_normalize import PdfNormalizationError, XmpIdentityKind, main, normalize_pdf_bytes, stable_trailer_id, stable_uuid
+from paper_pdf_normalize import PdfNormalizationError, XmpIdentityKind, main, normalize_pdf, normalize_pdf_bytes, stable_trailer_id, stable_uuid
 from paper_source_date import read_paper_source_date
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def volatile_pdf_payload(tex: Path) -> bytes:
@@ -69,6 +66,19 @@ def test_normalize_pdf_bytes_is_deterministic(tmp_path: Path) -> None:
     assert first == second
 
 
+def test_normalize_pdf_bytes_is_independent_of_tex_path_spelling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    absolute_tex = write_tex(tmp_path)
+    absolute_date = read_paper_source_date(absolute_tex)
+    absolute_normalized, absolute_count = normalize_pdf_bytes(volatile_pdf_payload(absolute_tex), tex=absolute_tex, paper_date=absolute_date)
+    monkeypatch.chdir(tmp_path)
+    relative_tex = Path("validation.tex")
+    relative_date = read_paper_source_date(relative_tex)
+    relative_normalized, relative_count = normalize_pdf_bytes(volatile_pdf_payload(relative_tex), tex=relative_tex, paper_date=relative_date)
+
+    assert absolute_count == relative_count == 7
+    assert absolute_normalized == relative_normalized
+
+
 def test_normalize_pdf_bytes_rejects_missing_metadata(tmp_path: Path) -> None:
     tex = write_tex(tmp_path)
     paper_date = read_paper_source_date(tex)
@@ -94,11 +104,32 @@ def test_main_normalizes_pdf_in_place(tmp_path: Path, capsys: pytest.CaptureFixt
 def test_main_reports_normalization_error(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     tex = write_tex(tmp_path)
     pdf = tmp_path / "validation.pdf"
-    pdf.write_bytes(b"%PDF-1.7\n")
+    original_payload = b"%PDF-1.7\n"
+    pdf.write_bytes(original_payload)
 
     result = main([str(pdf), "--tex", str(tex)])
 
     captured = capsys.readouterr()
     assert result == 1
+    assert pdf.read_bytes() == original_payload
     assert "paper-pdf-normalize:" in captured.err
     assert captured.out == ""
+
+
+def test_normalize_pdf_preserves_existing_pdf_when_atomic_replace_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tex = write_tex(tmp_path)
+    pdf = tmp_path / "validation.pdf"
+    original_payload = volatile_pdf_payload(tex)
+    pdf.write_bytes(original_payload)
+
+    def fail_replace(_source: Path, _destination: Path) -> None:
+        msg = "replace failed"
+        raise OSError(msg)
+
+    monkeypatch.setattr(type(pdf), "replace", fail_replace)
+
+    with pytest.raises(PdfNormalizationError, match="failed to write normalized PDF"):
+        normalize_pdf(pdf, tex=tex)
+
+    assert pdf.read_bytes() == original_payload
+    assert not list(tmp_path.glob(f".{pdf.name}.*.tmp"))

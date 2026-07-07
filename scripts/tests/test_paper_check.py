@@ -1,11 +1,11 @@
 """Tests for the paper PDF sanity checker."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from pypdf.errors import PyPdfError
 
-from paper_check import PdfCheckOptions, PdfInspectionError, check_pdf, main
+from paper_check import PdfCheckOptions, PdfInspectionError, PositivePageCount, check_pdf, main
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -63,6 +63,11 @@ def write_pdf_stub(tmp_path: Path) -> Path:
     return path
 
 
+def min_pages(value: int) -> PositivePageCount:
+    """Return a validated PDF page-count threshold."""
+    return PositivePageCount.from_raw(value)
+
+
 def test_check_pdf_accepts_required_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pdf = write_pdf_stub(tmp_path)
 
@@ -74,7 +79,7 @@ def test_check_pdf_accepts_required_text(tmp_path: Path, monkeypatch: pytest.Mon
     inspection = check_pdf(
         PdfCheckOptions(
             pdf=pdf,
-            min_pages=1,
+            min_pages=min_pages(1),
             required_text=("Validation Architecture in delaunay",),
             forbidden_text=(r"\today",),
         )
@@ -95,7 +100,7 @@ def test_check_pdf_rejects_missing_required_text(tmp_path: Path, monkeypatch: py
         check_pdf(
             PdfCheckOptions(
                 pdf=pdf,
-                min_pages=1,
+                min_pages=min_pages(1),
                 required_text=("Validation Architecture in delaunay",),
                 forbidden_text=(),
             )
@@ -108,7 +113,7 @@ def test_check_pdf_rejects_short_pdf(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr("paper_check.PdfReader", FakeReader)
 
     with pytest.raises(PdfInspectionError, match="expected at least 2 page"):
-        check_pdf(PdfCheckOptions(pdf=pdf, min_pages=2, required_text=(), forbidden_text=()))
+        check_pdf(PdfCheckOptions(pdf=pdf, min_pages=min_pages(2), required_text=(), forbidden_text=()))
 
 
 def test_check_pdf_rejects_forbidden_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -123,7 +128,7 @@ def test_check_pdf_rejects_forbidden_text(tmp_path: Path, monkeypatch: pytest.Mo
         check_pdf(
             PdfCheckOptions(
                 pdf=pdf,
-                min_pages=1,
+                min_pages=min_pages(1),
                 required_text=("Validation Architecture in delaunay",),
                 forbidden_text=(r"\today",),
             )
@@ -139,7 +144,7 @@ def test_check_pdf_rejects_encrypted_pdf(tmp_path: Path, monkeypatch: pytest.Mon
     monkeypatch.setattr("paper_check.PdfReader", fake_reader)
 
     with pytest.raises(PdfInspectionError, match="encrypted PDFs"):
-        check_pdf(PdfCheckOptions(pdf=pdf, min_pages=1, required_text=(), forbidden_text=()))
+        check_pdf(PdfCheckOptions(pdf=pdf, min_pages=min_pages(1), required_text=(), forbidden_text=()))
 
 
 def test_check_pdf_wraps_pypdf_reader_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -148,7 +153,7 @@ def test_check_pdf_wraps_pypdf_reader_errors(tmp_path: Path, monkeypatch: pytest
     monkeypatch.setattr("paper_check.PdfReader", raise_pypdf_error)
 
     with pytest.raises(PdfInspectionError, match="failed to read PDF"):
-        check_pdf(PdfCheckOptions(pdf=pdf, min_pages=1, required_text=(), forbidden_text=()))
+        check_pdf(PdfCheckOptions(pdf=pdf, min_pages=min_pages(1), required_text=(), forbidden_text=()))
 
 
 def test_check_pdf_wraps_pypdf_text_extraction_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -157,7 +162,7 @@ def test_check_pdf_wraps_pypdf_text_extraction_errors(tmp_path: Path, monkeypatc
     monkeypatch.setattr("paper_check.PdfReader", FakeReaderWithBrokenPage)
 
     with pytest.raises(PdfInspectionError, match="failed to extract text from page 1"):
-        check_pdf(PdfCheckOptions(pdf=pdf, min_pages=1, required_text=(), forbidden_text=()))
+        check_pdf(PdfCheckOptions(pdf=pdf, min_pages=min_pages(1), required_text=(), forbidden_text=()))
 
 
 def test_main_reports_success_to_stdout(capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -186,6 +191,25 @@ def test_main_rejects_invalid_min_pages(capsys: pytest.CaptureFixture[str], tmp_
     assert error.value.code == 2
     assert "expected a positive integer" in captured.err
     assert captured.out == ""
+
+
+def test_positive_page_count_rejects_direct_non_positive_values() -> None:
+    with pytest.raises(PdfInspectionError, match="expected a positive integer"):
+        PositivePageCount.from_raw(0)
+
+
+def test_positive_page_count_rejects_bool_value() -> None:
+    truthy_value = True
+
+    with pytest.raises(PdfInspectionError, match="expected a positive integer"):
+        PositivePageCount.from_raw(cast("int", truthy_value))
+
+
+def test_check_options_reject_raw_min_pages(tmp_path: Path) -> None:
+    pdf = write_pdf_stub(tmp_path)
+
+    with pytest.raises(PdfInspectionError, match="min_pages must be a PositivePageCount"):
+        PdfCheckOptions(pdf=pdf, min_pages=cast("PositivePageCount", 0), required_text=(), forbidden_text=())
 
 
 def test_main_reports_missing_pdf(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:

@@ -324,7 +324,6 @@ dependencies = [
  "clap",
  "criterion",
  "la-stack",
- "markov-chain-monte-carlo",
  "num-traits",
  "ordered-float",
  "pastey",
@@ -507,15 +506,6 @@ name = "log"
 version = "0.4.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
-
-[[package]]
-name = "markov-chain-monte-carlo"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d00d59c60c04dd1225aa5758207755b2bc673472241c356dc52dc77f1636bed6"
-dependencies = [
- "rand 0.10.2",
-]
 
 [[package]]
 name = "matchers"

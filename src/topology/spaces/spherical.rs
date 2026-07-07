@@ -38,6 +38,18 @@ impl<const D: usize> SphericalPoint<D> {
     ///
     /// Returns [`SphericalPointError`] when the coordinate count is not `D + 1`,
     /// any coordinate is non-finite, or the input vector has zero norm.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::topology::spaces::SphericalPoint;
+    ///
+    /// let point = SphericalPoint::<2>::try_new([3.0, 4.0, 0.0])?;
+    ///
+    /// assert_eq!(point.ambient_dimension(), 3);
+    /// assert!((point.coords()[0] - 0.6).abs() < 1e-12);
+    /// # Ok::<(), delaunay::prelude::topology::spaces::SphericalPointError>(())
+    /// ```
     pub fn try_new<const N: usize>(coords: [f64; N]) -> Result<Self, SphericalPointError> {
         Self::try_new_with_radius(coords, 1.0)
     }
@@ -49,6 +61,18 @@ impl<const D: usize> SphericalPoint<D> {
     /// Returns [`SphericalPointError`] when `radius` is not finite and positive,
     /// the coordinate count is not `D + 1`, any coordinate is non-finite, or the
     /// input vector has zero norm.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::topology::spaces::SphericalPoint;
+    ///
+    /// let point = SphericalPoint::<2>::try_new_with_radius([0.0, 3.0, 4.0], 2.0)?;
+    ///
+    /// assert_eq!(point.radius(), 2.0);
+    /// assert!((point.squared_norm() - 4.0).abs() < 1e-12);
+    /// # Ok::<(), delaunay::prelude::topology::spaces::SphericalPointError>(())
+    /// ```
     pub fn try_new_with_radius<const N: usize>(
         coords: [f64; N],
         radius: f64,
@@ -62,6 +86,18 @@ impl<const D: usize> SphericalPoint<D> {
     ///
     /// Returns [`SphericalPointError`] when the slice cannot be normalized into
     /// a point on `S^D`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::topology::spaces::SphericalPoint;
+    ///
+    /// let raw = vec![0.0, 0.0, 2.0];
+    /// let point = SphericalPoint::<2>::try_from_slice(&raw)?;
+    ///
+    /// assert_eq!(point.coords(), &[0.0, 0.0, 1.0]);
+    /// # Ok::<(), delaunay::prelude::topology::spaces::SphericalPointError>(())
+    /// ```
     pub fn try_from_slice(coords: &[f64]) -> Result<Self, SphericalPointError> {
         Self::try_from_slice_with_radius(coords, 1.0)
     }
@@ -72,11 +108,23 @@ impl<const D: usize> SphericalPoint<D> {
     ///
     /// Returns [`SphericalPointError`] when `radius` is not finite and positive
     /// or when the slice cannot be normalized into a point on `S^D`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::topology::spaces::SphericalPoint;
+    ///
+    /// let raw = [1.0, 0.0, 0.0];
+    /// let point = SphericalPoint::<2>::try_from_slice_with_radius(&raw, 3.0)?;
+    ///
+    /// assert_eq!(point.coords(), &[3.0, 0.0, 0.0]);
+    /// # Ok::<(), delaunay::prelude::topology::spaces::SphericalPointError>(())
+    /// ```
     pub fn try_from_slice_with_radius(
         coords: &[f64],
         radius: f64,
     ) -> Result<Self, SphericalPointError> {
-        validate_spherical_radius(radius)?;
+        validate_radius(radius)?;
         let expected = Self::ambient_dimension_for_intrinsic();
         if coords.len() != expected {
             return Err(SphericalPointError::InvalidAmbientCoordinateCount {
@@ -87,7 +135,7 @@ impl<const D: usize> SphericalPoint<D> {
         }
 
         let mut normalized = coords.to_vec();
-        normalize_sphere_coordinates(&mut normalized, radius)?;
+        normalize_coordinates(&mut normalized, radius)?;
         Ok(Self {
             coords: normalized,
             radius,
@@ -95,36 +143,99 @@ impl<const D: usize> SphericalPoint<D> {
     }
 
     /// Returns the intrinsic sphere dimension `D`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::topology::spaces::SphericalPoint;
+    ///
+    /// let point = SphericalPoint::<3>::try_new([1.0, 0.0, 0.0, 0.0])?;
+    ///
+    /// assert_eq!(point.intrinsic_dimension(), 3);
+    /// # Ok::<(), delaunay::prelude::topology::spaces::SphericalPointError>(())
+    /// ```
     #[must_use]
     pub const fn intrinsic_dimension(&self) -> usize {
         D
     }
 
     /// Returns the ambient coordinate dimension `D + 1`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::topology::spaces::SphericalPoint;
+    ///
+    /// let point = SphericalPoint::<2>::try_new([1.0, 0.0, 0.0])?;
+    ///
+    /// assert_eq!(point.ambient_dimension(), 3);
+    /// # Ok::<(), delaunay::prelude::topology::spaces::SphericalPointError>(())
+    /// ```
     #[must_use]
     pub const fn ambient_dimension(&self) -> usize {
         Self::ambient_dimension_for_intrinsic()
     }
 
     /// Returns the ambient coordinate dimension for this intrinsic `D`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::topology::spaces::SphericalPoint;
+    ///
+    /// assert_eq!(SphericalPoint::<4>::ambient_dimension_for_intrinsic(), 5);
+    /// ```
     #[must_use]
     pub const fn ambient_dimension_for_intrinsic() -> usize {
         D + 1
     }
 
     /// Returns the radius this point was normalized to.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::topology::spaces::SphericalPoint;
+    ///
+    /// let point = SphericalPoint::<2>::try_new_with_radius([1.0, 0.0, 0.0], 2.5)?;
+    ///
+    /// assert_eq!(point.radius(), 2.5);
+    /// # Ok::<(), delaunay::prelude::topology::spaces::SphericalPointError>(())
+    /// ```
     #[must_use]
     pub const fn radius(&self) -> f64 {
         self.radius
     }
 
     /// Returns the normalized ambient coordinates.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::topology::spaces::SphericalPoint;
+    ///
+    /// let point = SphericalPoint::<2>::try_new([0.0, 0.0, 8.0])?;
+    ///
+    /// assert_eq!(point.coords(), &[0.0, 0.0, 1.0]);
+    /// # Ok::<(), delaunay::prelude::topology::spaces::SphericalPointError>(())
+    /// ```
     #[must_use]
     pub fn coords(&self) -> &[f64] {
         &self.coords
     }
 
     /// Returns the squared Euclidean norm of the stored ambient coordinates.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::topology::spaces::SphericalPoint;
+    ///
+    /// let point = SphericalPoint::<2>::try_new_with_radius([0.0, 1.0, 0.0], 4.0)?;
+    ///
+    /// assert!((point.squared_norm() - 16.0).abs() < 1e-12);
+    /// # Ok::<(), delaunay::prelude::topology::spaces::SphericalPointError>(())
+    /// ```
     #[must_use]
     pub fn squared_norm(&self) -> f64 {
         squared_norm_slice(&self.coords)
@@ -155,6 +266,17 @@ pub struct SphericalMetric<const D: usize> {
 
 impl<const D: usize> SphericalMetric<D> {
     /// Creates a unit-radius spherical metric.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::topology::spaces::SphericalMetric;
+    ///
+    /// let metric = SphericalMetric::<2>::unit();
+    ///
+    /// assert_eq!(metric.radius(), 1.0);
+    /// assert_eq!(metric.ambient_dimension(), 3);
+    /// ```
     #[must_use]
     pub const fn unit() -> Self {
         Self { radius: 1.0 }
@@ -166,18 +288,46 @@ impl<const D: usize> SphericalMetric<D> {
     ///
     /// Returns [`SphericalPointError::InvalidRadius`] when `radius` is not
     /// finite and positive.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::topology::spaces::SphericalMetric;
+    ///
+    /// let metric = SphericalMetric::<3>::try_new(2.0)?;
+    ///
+    /// assert_eq!(metric.radius(), 2.0);
+    /// # Ok::<(), delaunay::prelude::topology::spaces::SphericalPointError>(())
+    /// ```
     pub fn try_new(radius: f64) -> Result<Self, SphericalPointError> {
-        validate_spherical_radius(radius)?;
+        validate_radius(radius)?;
         Ok(Self { radius })
     }
 
     /// Returns the sphere radius.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::topology::spaces::SphericalMetric;
+    ///
+    /// assert_eq!(SphericalMetric::<2>::try_new(1.5)?.radius(), 1.5);
+    /// # Ok::<(), delaunay::prelude::topology::spaces::SphericalPointError>(())
+    /// ```
     #[must_use]
     pub const fn radius(self) -> f64 {
         self.radius
     }
 
     /// Returns the ambient coordinate dimension `D + 1`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::topology::spaces::SphericalMetric;
+    ///
+    /// assert_eq!(SphericalMetric::<3>::unit().ambient_dimension(), 4);
+    /// ```
     #[must_use]
     pub const fn ambient_dimension(self) -> usize {
         D + 1
@@ -189,6 +339,18 @@ impl<const D: usize> SphericalMetric<D> {
     ///
     /// Returns [`SphericalPointError`] when the coordinates cannot represent a
     /// finite nonzero point in `R^(D+1)`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::topology::spaces::SphericalMetric;
+    ///
+    /// let metric = SphericalMetric::<2>::try_new(2.0)?;
+    /// let point = metric.canonicalize([0.0, 0.0, 5.0])?;
+    ///
+    /// assert_eq!(point.coords(), &[0.0, 0.0, 2.0]);
+    /// # Ok::<(), delaunay::prelude::topology::spaces::SphericalPointError>(())
+    /// ```
     pub fn canonicalize<const N: usize>(
         self,
         coords: [f64; N],
@@ -202,6 +364,19 @@ impl<const D: usize> SphericalMetric<D> {
     ///
     /// Returns [`SphericalPointError`] when the slice cannot represent a finite
     /// nonzero point in `R^(D+1)`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::topology::spaces::SphericalMetric;
+    ///
+    /// let metric = SphericalMetric::<2>::unit();
+    /// let raw = [3.0, 4.0, 0.0];
+    /// let point = metric.canonicalize_slice(&raw)?;
+    ///
+    /// assert!((point.coords()[1] - 0.8).abs() < 1e-12);
+    /// # Ok::<(), delaunay::prelude::topology::spaces::SphericalPointError>(())
+    /// ```
     pub fn canonicalize_slice(
         self,
         coords: &[f64],
@@ -217,7 +392,24 @@ impl<const D: usize> SphericalMetric<D> {
     /// # Errors
     ///
     /// Returns [`SphericalPointError::MismatchedRadius`] when either point was
-    /// canonicalized for a different radius than this metric.
+    /// canonicalized for a different radius than this metric. Returns
+    /// [`SphericalPointError::NonFiniteDistance`] when the arc length is not
+    /// representable as a finite `f64`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::f64::consts::FRAC_PI_2;
+    ///
+    /// use delaunay::prelude::topology::spaces::{SphericalMetric, SphericalPoint};
+    ///
+    /// let metric = SphericalMetric::<2>::unit();
+    /// let x = SphericalPoint::<2>::try_new([1.0, 0.0, 0.0])?;
+    /// let y = SphericalPoint::<2>::try_new([0.0, 1.0, 0.0])?;
+    ///
+    /// assert!((metric.try_distance(&x, &y)? - FRAC_PI_2).abs() < 1e-12);
+    /// # Ok::<(), delaunay::prelude::topology::spaces::SphericalPointError>(())
+    /// ```
     pub fn try_distance(
         self,
         a: &SphericalPoint<D>,
@@ -231,14 +423,20 @@ impl<const D: usize> SphericalMetric<D> {
                 });
             }
         }
-        let dot = a
+        let inverse_radius = 1.0 / self.radius;
+        let cosine = a
             .coords()
             .iter()
             .zip(b.coords().iter())
-            .fold(0.0, |acc, (&left, &right)| left.mul_add(right, acc));
-        let denom = self.radius * self.radius;
-        let cosine = (dot / denom).clamp(-1.0, 1.0);
-        Ok(self.radius * cosine.acos())
+            .fold(0.0, |acc, (&left, &right)| {
+                (left * inverse_radius).mul_add(right * inverse_radius, acc)
+            });
+        let distance = self.radius * cosine.clamp(-1.0, 1.0).acos();
+        if distance.is_finite() {
+            Ok(distance)
+        } else {
+            Err(SphericalPointError::NonFiniteDistance { distance })
+        }
     }
 }
 
@@ -292,6 +490,13 @@ pub enum SphericalPointError {
         /// Actual radius.
         actual: f64,
     },
+
+    /// The requested geodesic distance is not representable as a finite `f64`.
+    #[error("spherical geodesic distance is not finite: {distance:?}")]
+    NonFiniteDistance {
+        /// Non-finite computed distance.
+        distance: f64,
+    },
 }
 
 /// Converts validated spherical coordinates into an ambient fixed-size array.
@@ -300,7 +505,7 @@ pub enum SphericalPointError {
 /// stable const generics cannot expose `[f64; D + 1]` directly. This helper is
 /// the checked bridge back to fixed-size arrays for ambient predicates and
 /// convex-hull construction.
-pub(crate) fn spherical_array_from_slice<const A: usize>(
+pub(crate) fn ambient_array_from_slice<const A: usize>(
     coords: &[f64],
 ) -> Result<[f64; A], SphericalPointError> {
     if coords.len() != A {
@@ -319,7 +524,7 @@ pub(crate) fn spherical_array_from_slice<const A: usize>(
 ///
 /// Public point and metric constructors rely on this helper to keep every
 /// stored sphere radius finite and strictly positive.
-fn validate_spherical_radius(radius: f64) -> Result<(), SphericalPointError> {
+fn validate_radius(radius: f64) -> Result<(), SphericalPointError> {
     if radius.is_finite() && radius > 0.0 {
         return Ok(());
     }
@@ -332,10 +537,7 @@ fn validate_spherical_radius(radius: f64) -> Result<(), SphericalPointError> {
 /// metric backend. It classifies user-visible normalization failures while
 /// scaling by the largest coordinate magnitude so finite vectors can be
 /// projected without avoidable overflow or underflow.
-fn normalize_sphere_coordinates(
-    coords: &mut [f64],
-    radius: f64,
-) -> Result<(), SphericalPointError> {
+fn normalize_coordinates(coords: &mut [f64], radius: f64) -> Result<(), SphericalPointError> {
     let mut max_abs = 0.0_f64;
     for (axis, coord) in coords.iter().copied().enumerate() {
         if !coord.is_finite() {
@@ -386,7 +588,7 @@ fn squared_norm_slice(coords: &[f64]) -> f64 {
 /// [`SphericalMetric`] directly so the intrinsic dimension `D` and ambient
 /// dimension `D + 1` stay explicit.
 pub(crate) fn normalize_unit_sphere_coordinates(coords: &mut [f64]) -> bool {
-    normalize_sphere_coordinates(coords, 1.0).is_ok()
+    normalize_coordinates(coords, 1.0).is_ok()
 }
 
 #[cfg(test)]
@@ -427,6 +629,58 @@ mod tests {
         assert_relative_eq!(coords[1], -FRAC_1_SQRT_2);
         assert_relative_eq!(coords[2], 0.0);
         assert_unit_norm(coords);
+    }
+
+    #[test]
+    fn spherical_distance_uses_scaled_coordinates_for_large_radius() {
+        let radius = f64::MAX / 4.0;
+        let metric = SphericalMetric::<2>::try_new(radius)
+            .expect("large finite radius should define a metric");
+        let x = SphericalPoint::<2>::try_new_with_radius([1.0, 0.0, 0.0], radius)
+            .expect("axis point should normalize onto large radius");
+        let diagonal = SphericalPoint::<2>::try_new_with_radius([1.0, 1.0, 0.0], radius)
+            .expect("diagonal point should normalize onto large radius");
+
+        let distance = metric
+            .try_distance(&x, &diagonal)
+            .expect("large-radius dot product should avoid overflow");
+
+        assert_relative_eq!(distance / radius, std::f64::consts::FRAC_PI_4);
+    }
+
+    #[test]
+    fn spherical_distance_rejects_unrepresentable_arc_length() {
+        let metric = SphericalMetric::<2>::try_new(f64::MAX)
+            .expect("maximum finite radius should define a metric");
+        let x = SphericalPoint::<2>::try_new_with_radius([1.0, 0.0, 0.0], f64::MAX)
+            .expect("axis point should normalize onto maximum radius");
+        let opposite = SphericalPoint::<2>::try_new_with_radius([-1.0, 0.0, 0.0], f64::MAX)
+            .expect("opposite point should normalize onto maximum radius");
+
+        assert!(matches!(
+            metric.try_distance(&x, &opposite),
+            Err(SphericalPointError::NonFiniteDistance { distance }) if distance.is_infinite()
+        ));
+    }
+
+    #[test]
+    fn ambient_array_from_slice_checks_fixed_ambient_arity() {
+        let coords = ambient_array_from_slice::<3>(&[1.0, 2.0, 3.0])
+            .expect("matching ambient arity should copy into a fixed array");
+        assert_relative_eq!(coords[0], 1.0);
+        assert_relative_eq!(coords[1], 2.0);
+        assert_relative_eq!(coords[2], 3.0);
+
+        let err = ambient_array_from_slice::<3>(&[1.0, 2.0])
+            .expect_err("wrong ambient arity should remain typed");
+        assert_eq!(
+            err,
+            SphericalPointError::InvalidAmbientCoordinateCount {
+                dimension: 2,
+                expected: 3,
+                actual: 2,
+            }
+        );
     }
 
     #[test]

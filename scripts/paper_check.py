@@ -5,7 +5,7 @@ import argparse
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from pypdf import PdfReader
 from pypdf.errors import PyPdfError
@@ -27,26 +27,51 @@ class PdfInspection:
 
 
 @dataclass(frozen=True, slots=True)
+class PositivePageCount:
+    """Validated positive page-count threshold for PDF sanity checks."""
+
+    value: int
+
+    def __post_init__(self) -> None:
+        """Reject non-positive page-count thresholds."""
+        if type(self.value) is not int or self.value <= 0:
+            msg = f"expected a positive integer, got {self.value!r}"
+            raise PdfInspectionError(msg)
+
+    @classmethod
+    def from_raw(cls, value: int) -> Self:
+        """Parse a raw integer into a positive page-count threshold."""
+        return cls(value)
+
+
+@dataclass(frozen=True, slots=True)
 class PdfCheckOptions:
     """Command-line options for PDF sanity checks."""
 
     pdf: Path
-    min_pages: int
+    min_pages: PositivePageCount
     required_text: tuple[str, ...]
     forbidden_text: tuple[str, ...]
 
+    def __post_init__(self) -> None:
+        """Reject options that bypass the positive page-count parser."""
+        if not isinstance(self.min_pages, PositivePageCount):
+            msg = "min_pages must be a PositivePageCount"
+            raise PdfInspectionError(msg)
 
-def parse_positive_int(value: str) -> int:
+
+def parse_positive_page_count(value: str) -> PositivePageCount:
     """Parse a positive integer command-line argument."""
     try:
         parsed = int(value)
     except ValueError as error:
         msg = f"expected a positive integer, got {value!r}"
         raise argparse.ArgumentTypeError(msg) from error
-    if parsed <= 0:
+    try:
+        return PositivePageCount.from_raw(parsed)
+    except PdfInspectionError as error:
         msg = f"expected a positive integer, got {value!r}"
-        raise argparse.ArgumentTypeError(msg)
-    return parsed
+        raise argparse.ArgumentTypeError(msg) from error
 
 
 def inspect_pdf(pdf: Path) -> PdfInspection:
@@ -79,8 +104,8 @@ def check_pdf(options: PdfCheckOptions) -> PdfInspection:
     inspection = inspect_pdf(options.pdf)
     failures: list[str] = []
 
-    if inspection.page_count < options.min_pages:
-        failures.append(f"expected at least {options.min_pages} page(s), found {inspection.page_count}")
+    if inspection.page_count < options.min_pages.value:
+        failures.append(f"expected at least {options.min_pages.value} page(s), found {inspection.page_count}")
 
     failures.extend(f"missing required text: {required!r}" for required in options.required_text if required not in inspection.text)
     failures.extend(f"found forbidden text: {forbidden!r}" for forbidden in options.forbidden_text if forbidden in inspection.text)
@@ -96,7 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the paper PDF sanity-check command-line parser."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("pdf", type=Path, help="PDF reviewer copy to inspect")
-    parser.add_argument("--min-pages", type=parse_positive_int, default=1, help="minimum acceptable page count")
+    parser.add_argument("--min-pages", type=parse_positive_page_count, default=PositivePageCount.from_raw(1), help="minimum acceptable page count")
     parser.add_argument("--require-text", action="append", default=None, help="text that must appear in extracted PDF text")
     parser.add_argument("--forbid-text", action="append", default=None, help="text that must not appear in extracted PDF text")
     return parser

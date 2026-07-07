@@ -8,6 +8,7 @@ repository.
 ## Contents
 
 - [Documentation Ownership](#documentation-ownership)
+- [Academic Paper Authorship](#academic-paper-authorship)
 - [Scientific Notation](#scientific-notation)
 - [References](#references)
 - [Changelog Maintenance](#changelog-maintenance)
@@ -38,6 +39,16 @@ repository.
 - `docs/archive/` stores historical plans, completed changelog series, and old
   design notes. Do not update archived docs as active guidance unless an
   explicit archive-maintenance task asks for it.
+
+## Academic Paper Authorship
+
+Paper prose under `papers/` is author-owned. Agents must not add substantive
+publication prose there. They may maintain outlines, TODO scaffolds, TeX/build
+tooling, figures, citations, and review comments.
+
+Keep paper drafts visibly marked as outlines or TODO scaffolds until the
+maintainer supplies prose. Treat formal AI-use disclosure as a separate
+venue/submission matter, not as a repository guidance claim.
 
 ## Scientific Notation
 

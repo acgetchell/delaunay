@@ -254,34 +254,33 @@ bench-smoke:
 run *args:
     cargo run --profile perf --features cli --bin delaunay -- {{ args }}
 
-# Run one 3D and one 4D Pachner Monte Carlo stress chain with reports enabled.
-pachner-stress attempts="100000" validate_every="1000":
-    just _pachner-stress-dim 3d 10000 "{{ attempts }}" "{{ validate_every }}" target/pachner_stress/3d
-    just _pachner-stress-dim 4d 1000 "{{ attempts }}" "{{ validate_every }}" target/pachner_stress/4d
+# Run one 3D and one 4D direct Pachner stress workload with topology-scope reports enabled.
+pachner-stress attempts="100" validate_every="10" mode="round-trip":
+    just _pachner-stress-dim 3d 9000 "{{ attempts }}" "{{ validate_every }}" target/pachner_stress/3d "{{ mode }}"
+    just _pachner-stress-dim 4d 1000 "{{ attempts }}" "{{ validate_every }}" target/pachner_stress/4d "{{ mode }}"
 
-# Run one 3D Pachner Monte Carlo stress chain with reports enabled.
-pachner-stress-3d attempts="100000" vertices="10000" validate_every="1000" output_dir="target/pachner_stress/3d":
-    just _pachner-stress-dim 3d "{{ vertices }}" "{{ attempts }}" "{{ validate_every }}" "{{ output_dir }}"
+# Run one 3D direct Pachner stress workload with topology-scope reports enabled.
+pachner-stress-3d attempts="100" vertices="9000" validate_every="10" output_dir="target/pachner_stress/3d" mode="round-trip":
+    just _pachner-stress-dim 3d "{{ vertices }}" "{{ attempts }}" "{{ validate_every }}" "{{ output_dir }}" "{{ mode }}"
 
-# Run one 4D Pachner Monte Carlo stress chain with reports enabled.
-pachner-stress-4d attempts="100000" vertices="1000" validate_every="1000" output_dir="target/pachner_stress/4d":
-    just _pachner-stress-dim 4d "{{ vertices }}" "{{ attempts }}" "{{ validate_every }}" "{{ output_dir }}"
+# Run one 4D direct Pachner stress workload with topology-scope reports enabled.
+pachner-stress-4d attempts="100" vertices="1000" validate_every="10" output_dir="target/pachner_stress/4d" mode="round-trip":
+    just _pachner-stress-dim 4d "{{ vertices }}" "{{ attempts }}" "{{ validate_every }}" "{{ output_dir }}" "{{ mode }}"
 
-# Run Criterion's Pachner Monte Carlo stress benchmark for statistical timing.
-bench-pachner-stress attempts="100000" validate_every="1000" samples="10":
-    just _bench-pachner-stress-dim 3d 10000 "{{ attempts }}" "{{ validate_every }}" "{{ samples }}"
-    just _bench-pachner-stress-dim 4d 1000 "{{ attempts }}" "{{ validate_every }}" "{{ samples }}"
+# Run Criterion's Pachner move and round-trip stress benchmark.
+bench-pachner-stress samples="10":
+    just _bench-pachner-stress "{{ samples }}"
 
-# Run Criterion's 3D Pachner Monte Carlo stress benchmark for statistical timing.
-bench-pachner-stress-3d attempts="100000" vertices="10000" validate_every="1000" samples="10":
-    just _bench-pachner-stress-dim 3d "{{ vertices }}" "{{ attempts }}" "{{ validate_every }}" "{{ samples }}"
+# Alias for the dimension-agnostic Pachner stress benchmark.
+bench-pachner-stress-3d samples="10":
+    just _bench-pachner-stress "{{ samples }}"
 
-# Run Criterion's 4D Pachner Monte Carlo stress benchmark for statistical timing.
-bench-pachner-stress-4d attempts="100000" vertices="1000" validate_every="1000" samples="10":
-    just _bench-pachner-stress-dim 4d "{{ vertices }}" "{{ attempts }}" "{{ validate_every }}" "{{ samples }}"
+# Alias for the dimension-agnostic Pachner stress benchmark.
+bench-pachner-stress-4d samples="10":
+    just _bench-pachner-stress "{{ samples }}"
 
 [private]
-_pachner-stress-dim label vertices attempts validate_every output_dir:
+_pachner-stress-dim label vertices attempts validate_every output_dir mode:
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -290,6 +289,7 @@ _pachner-stress-dim label vertices attempts validate_every output_dir:
     attempts="{{ attempts }}"
     validate_every="{{ validate_every }}"
     output_dir="{{ output_dir }}"
+    mode="{{ mode }}"
 
     require_positive_integer() {
         local name="$1"
@@ -303,13 +303,22 @@ _pachner-stress-dim label vertices attempts validate_every output_dir:
     require_positive_integer "vertices" "$vertices"
     require_positive_integer "attempts" "$attempts"
     require_positive_integer "validate_every" "$validate_every"
+    case "$mode" in
+        round-trip|random-walk) ;;
+        *)
+            echo "ERROR: unsupported Pachner stress mode: $mode" >&2
+            exit 2
+            ;;
+    esac
 
     mkdir -p "$output_dir"
 
-    echo "Pachner stress ${label}: ${vertices} vertices, ${attempts} attempted moves."
+    echo "Pachner stress ${label}/${mode}: ${vertices} vertices, ${attempts} attempted moves."
+    echo "Validation scope: topology (Levels 1-3; Level 4 embedding overlap scan deferred to #483)."
     cargo run --profile perf --features cli --bin delaunay -- \
         pachner-stress \
         --dimension "$label" \
+        --mode "$mode" \
         --vertices "$vertices" \
         --attempts "$attempts" \
         --validate-every "$validate_every" \
@@ -317,14 +326,10 @@ _pachner-stress-dim label vertices attempts validate_every output_dir:
         --summary-json "$output_dir/summary.json"
 
 [private]
-_bench-pachner-stress-dim label vertices attempts validate_every samples:
+_bench-pachner-stress samples:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    label="{{ label }}"
-    vertices="{{ vertices }}"
-    attempts="{{ attempts }}"
-    validate_every="{{ validate_every }}"
     samples="{{ samples }}"
 
     require_positive_integer() {
@@ -336,9 +341,6 @@ _bench-pachner-stress-dim label vertices attempts validate_every samples:
         fi
     }
 
-    require_positive_integer "vertices" "$vertices"
-    require_positive_integer "attempts" "$attempts"
-    require_positive_integer "validate_every" "$validate_every"
     require_positive_integer "samples" "$samples"
 
     if (( samples < 10 )); then
@@ -346,29 +348,9 @@ _bench-pachner-stress-dim label vertices attempts validate_every samples:
         exit 2
     fi
 
-    case "$label" in
-        3d)
-            suffix="3D"
-            filter="monte_carlo/3d"
-            ;;
-        4d)
-            suffix="4D"
-            filter="monte_carlo/4d"
-            ;;
-        *)
-            echo "ERROR: unsupported Pachner stress dimension: $label" >&2
-            exit 2
-            ;;
-    esac
-
-    echo "Pachner stress ${suffix}: ${vertices} vertices, ${attempts} attempted moves per Criterion sample."
-    env \
-        DELAUNAY_PACHNER_STRESS_REPORT=1 \
-        "DELAUNAY_PACHNER_STRESS_VERTICES_${suffix}=$vertices" \
-        "DELAUNAY_PACHNER_STRESS_ATTEMPTS_${suffix}=$attempts" \
-        "DELAUNAY_PACHNER_STRESS_VALIDATE_EVERY_${suffix}=$validate_every" \
-        "MONTE_CARLO_SAMPLE_SIZE=$samples" \
-        cargo bench --profile perf --features bench --bench pachner_stress -- "$filter" --noplot
+    echo "Pachner stress Criterion fixture benchmark: ${samples} samples."
+    env CRIT_SAMPLE_SIZE="$samples" \
+        cargo bench --profile perf --features bench --bench pachner_stress -- --noplot
 
 # Compile benchmarks and release integration tests without running.
 bench-test-compile: bench-compile test-integration-compile
@@ -540,12 +522,12 @@ help-workflows:
     @echo "  just bench-smoke        # Smoke-test benchmark harnesses (minimal samples)"
     @echo "  just bench              # Run all benchmarks with perf profile (ThinLTO)"
     @echo "  just bench-ci           # CI regression benchmarks with perf profile (~5-10 min)"
-    @echo "  just pachner-stress     # 3D+4D Pachner MCMC CLI stress with CSV/JSON artifacts"
-    @echo "  just pachner-stress-3d [attempts] [vertices] [validate_every] [output_dir]"
-    @echo "                          # 3D Pachner MCMC stress (defaults: 100K, 10K vertices)"
-    @echo "  just pachner-stress-4d [attempts] [vertices] [validate_every] [output_dir]"
-    @echo "                          # 4D Pachner MCMC stress (defaults: 100K, 1K vertices)"
-    @echo "  just bench-pachner-stress # Criterion timing for Pachner MCMC stress"
+    @echo "  just pachner-stress     # 3D+4D direct Pachner stress with CSV/JSON artifacts"
+    @echo "  just pachner-stress-3d [attempts] [vertices] [validate_every] [output_dir] [mode]"
+    @echo "                          # 3D Pachner stress (defaults: 100K, 10K vertices, round-trip)"
+    @echo "  just pachner-stress-4d [attempts] [vertices] [validate_every] [output_dir] [mode]"
+    @echo "                          # 4D Pachner stress (defaults: 100K, 1K vertices, round-trip)"
+    @echo "  just bench-pachner-stress # Criterion timing for Pachner move/round-trip stress"
     @echo "  just perf-large-scale-smoke [max_secs] # Quick pre-push 2D-5D wall-clock guard (default 60s)"
     @echo "  just perf-no-regressions [threshold] # Fast pre-PR 2D-5D regression guard (default 7.5%)"
     @echo "  just perf-baseline [ref] # Persist/update default local baseline (default: main)"
@@ -886,10 +868,10 @@ perf-help:
     @echo "  just bench                 # Full benchmark suite with perf profile"
     @echo "  just bench-ci              # CI benchmark suite with perf profile"
     @echo "  just bench-allocations     # Allocation-contract microbenchmarks"
-    @echo "  just pachner-stress        # 3D+4D Pachner MCMC CLI stress with CSV/JSON artifacts"
-    @echo "  just pachner-stress-3d     # 3D Pachner MCMC CLI stress (100K moves, 10K vertices)"
-    @echo "  just pachner-stress-4d     # 4D Pachner MCMC CLI stress (100K moves, 1K vertices)"
-    @echo "  just bench-pachner-stress  # Criterion timing for Pachner MCMC stress"
+    @echo "  just pachner-stress        # 3D+4D direct Pachner CLI stress with CSV/JSON artifacts"
+    @echo "  just pachner-stress-3d     # 3D Pachner CLI stress (100 moves, 9K vertices)"
+    @echo "  just pachner-stress-4d     # 4D Pachner CLI stress (100 moves, 1K vertices)"
+    @echo "  just bench-pachner-stress  # Criterion timing for Pachner move/round-trip stress"
     @echo "  just perf-no-regressions   # Fast pre-PR 2D-5D regression guard"
     @echo "  just bench-smoke           # Smoke-test benchmark harnesses"
     @echo ""
@@ -908,8 +890,8 @@ perf-help:
     @echo "  just perf-baseline-to /tmp/delaunay-main-baseline"
     @echo "                              # Generate scratch main baseline without overwriting baseline-artifact"
     @echo "  CRIT_SAMPLE_SIZE=100 just bench  # Custom sample size"
-    @echo "  just pachner-stress-4d 100000 1000 1000 target/pachner_stress/4d"
-    @echo "                              # 4D long-run Pachner diagnostics with CSV/JSON artifacts"
+    @echo "  just pachner-stress-4d 100000 1000 1000 target/pachner_stress/4d random-walk"
+    @echo "                              # 4D random-walk Pachner diagnostics with CSV/JSON artifacts"
     @echo "  just bench-ci              # Final optimized CI-suite benchmark run"
     @echo "  just profile v0.7.5        # v0.7.5 code on its declared Rust toolchain"
     @echo "  just profile 1.96.0        # Current tree on Rust 1.96.0"

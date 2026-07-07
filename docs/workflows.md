@@ -485,12 +485,12 @@ TDS before using them.
 ## Pachner Move API: minimal local move example
 
 The Pachner Move API exposes explicit local bistellar moves. These operations do **not** automatically restore
-(or preserve) the Delaunay property.
+(or preserve) Level 5 Geometric Predicates such as Delaunay.
 
 After using flips, you typically:
 
 1. validate Intrinsic PL Topology (Level 3), and
-2. optionally repair / verify the Delaunay property.
+2. optionally repair / verify Level 5 Geometric Predicates.
 
 See [`api_design.md`](api_design.md) for the full construction vs local move API design.
 

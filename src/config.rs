@@ -8,7 +8,7 @@
 //! library API while still using the same typed validation boundaries.
 
 use std::{
-    fmt::{self, Display, Write as _},
+    fmt::{self, Display},
     fs::{self, File},
     io::{self, BufWriter, Write},
     num::{NonZeroUsize, TryFromIntError},
@@ -19,7 +19,7 @@ use std::{
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use delaunay::{
-    DelaunayTriangulation, InvariantError, TriangulationEmbeddingValidationError,
+    DelaunayTriangulation, InvariantError,
     prelude::{
         construction::{
             ConstructionOptions, DelaunayTriangulationBuilder,
@@ -34,7 +34,7 @@ use delaunay::{
         },
         pachner::{
             EdgeKey, FacetHandle, FlipError, PachnerMove, PachnerMoveResult, PachnerMoves,
-            PachnerProposal, RidgeHandle, SimplexKey, TriangleHandle, VertexKey,
+            RidgeHandle, SimplexKey, TriangleHandle, TriangleHandleError, VertexKey,
         },
         query::{ConvexHull, ConvexHullConstructionError, QueryError},
         tds::{FacetError, TdsError},
@@ -42,16 +42,8 @@ use delaunay::{
     },
     try_vertices_from_points,
 };
-use markov_chain_monte_carlo::{
-    McmcError, TraceError,
-    prelude::delayed::{
-        Chain, ChainId, DelayedProposal, DelayedStep, DelayedStepError, Target, Trace,
-        TraceRecorder, TraceStepOutcome,
-    },
-};
 use rand::{Rng, RngExt, SeedableRng, rngs::StdRng};
 use serde::Serialize;
-use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, get_current_pid};
 use uuid::Uuid;
 
 type PachnerStressTriangulation<const D: usize> = Triangulation<RobustKernel<f64>, (), (), D>;
@@ -62,6 +54,7 @@ const DEFAULT_ATTEMPTS: usize = 100_000;
 const DEFAULT_KEY_REFRESH_EVERY: usize = 256;
 const DEFAULT_RETRY_ATTEMPTS: usize = 24;
 const DEFAULT_VALIDATE_EVERY: usize = 1_000;
+const PACHNER_STRESS_VALIDATION_SCOPE_LABEL: &str = "topology";
 const DEFAULT_VERTEX_GROWTH_DIVISOR: usize = 10;
 const DEFAULT_VERTEX_SHRINK_DIVISOR: usize = 20;
 const DEFAULT_GENERATE_DIMENSION: usize = 3;
@@ -71,7 +64,6 @@ const CONVEX_HULL_EXPORT_SCHEMA: &str = "delaunay.convex_hull";
 const CONVEX_HULL_EXPORT_SCHEMA_VERSION: u32 = 1;
 const VALIDATION_DEMO_EXPORT_SCHEMA: &str = "delaunay.validation_demo";
 const VALIDATION_DEMO_EXPORT_SCHEMA_VERSION: u32 = 1;
-const TRACE_TAIL: usize = 32;
 
 /// Top-level command-line parser for the opt-in binary.
 #[derive(Debug, Parser)]
@@ -159,7 +151,7 @@ enum DelaunayCommandArgs {
     Generate(GenerateArgs),
     /// Emit deterministic validation-level failure examples for notebooks.
     ValidationDemo(ValidationDemoArgs),
-    /// Run one MCMC-backed Pachner move stress chain.
+    /// Run a direct Pachner move stress workload.
     PachnerStress(PachnerStressArgs),
 }
 
@@ -307,6 +299,9 @@ struct PachnerStressArgs {
     /// Stress dimension.
     #[arg(long, value_enum, default_value = "3d")]
     dimension: PachnerStressDimension,
+    /// Stress workload to execute.
+    #[arg(long, value_enum, default_value = "round-trip")]
+    mode: PachnerStressMode,
     /// Initial vertex count. Defaults to 10000 in 3D and 1000 in 4D.
     #[arg(long)]
     vertices: Option<usize>,
@@ -339,25 +334,27 @@ struct PachnerStressArgs {
 impl PachnerStressArgs {
     /// Convert raw stress-test options into invariant-bearing run settings.
     fn into_validated(self) -> Result<DelaunayCommand, CliError> {
-        let config = PachnerStressConfig::try_new(
-            self.dimension,
-            self.vertices
+        let config = PachnerStressConfig::try_new(PachnerStressConfigInput {
+            mode: self.mode,
+            dimension: self.dimension,
+            vertex_count: self
+                .vertices
                 .unwrap_or_else(|| self.dimension.default_vertices()),
-            positive_nonzero(PachnerStressCountArgument::Attempts, self.attempts)?,
-            positive_nonzero(
+            move_attempts: positive_nonzero(PachnerStressCountArgument::Attempts, self.attempts)?,
+            validate_every: positive_nonzero(
                 PachnerStressCountArgument::ValidateEvery,
                 self.validate_every,
             )?,
-            positive_nonzero(
+            key_refresh_every: positive_nonzero(
                 PachnerStressCountArgument::KeyRefreshEvery,
                 self.key_refresh_every,
             )?,
-            positive_nonzero(
+            retry_attempts: positive_nonzero(
                 PachnerStressCountArgument::RetryAttempts,
                 self.retry_attempts,
             )?,
-            self.seed.unwrap_or_else(|| self.dimension.default_seed()),
-        )?;
+            seed: self.seed.unwrap_or_else(|| self.dimension.default_seed()),
+        })?;
         let artifacts =
             PachnerStressArtifacts::try_new(self.progress_csv, self.summary_json, !self.quiet)?;
         Ok(DelaunayCommand::PachnerStress { config, artifacts })
@@ -937,6 +934,35 @@ impl PachnerStressDimension {
     }
 }
 
+/// Pachner stress workload selected by the CLI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum PachnerStressMode {
+    /// Apply a forward move and immediately apply its inverse witness.
+    #[value(name = "round-trip")]
+    RoundTrip,
+    /// Apply accepted valid moves over an evolving triangulation.
+    #[value(name = "random-walk")]
+    RandomWalk,
+}
+
+impl PachnerStressMode {
+    /// Return the label used in telemetry and artifacts.
+    const fn label(self) -> &'static str {
+        match self {
+            Self::RoundTrip => "round-trip",
+            Self::RandomWalk => "random-walk",
+        }
+    }
+
+    /// Return the expected mutation attempts for one configured step.
+    const fn expected_moves_per_step(self) -> usize {
+        match self {
+            Self::RoundTrip => 2,
+            Self::RandomWalk => 1,
+        }
+    }
+}
+
 /// Positive count arguments validated by the Pachner stress diagnostic.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -951,13 +977,54 @@ pub enum PachnerStressCountArgument {
     RetryAttempts,
 }
 
+/// Stress move context for an inserted-face arity diagnostic.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum PachnerStressInsertedFaceContext {
+    /// Any forward move whose inserted face should determine an inverse move.
+    ForwardMove,
+    /// The edge witness expected after a k=2 forward move.
+    K2Move,
+}
+
+impl Display for PachnerStressInsertedFaceContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let label = match self {
+            Self::ForwardMove => "forward Pachner move",
+            Self::K2Move => "k=2",
+        };
+        f.write_str(label)
+    }
+}
+
+/// Expected inserted-face arity for a stress move witness.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum PachnerStressInsertedFaceArity {
+    /// A forward move must insert a vertex, edge, or triangle for supported inverses.
+    InvertibleForwardMove,
+    /// A k=2 forward move must insert an edge.
+    Edge,
+}
+
+impl Display for PachnerStressInsertedFaceArity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let label = match self {
+            Self::InvertibleForwardMove => "1, 2, or 3",
+            Self::Edge => "2",
+        };
+        f.write_str(label)
+    }
+}
+
 impl PachnerStressCountArgument {
+    /// Return the CLI flag spelling used in user-facing diagnostics.
     const fn as_str(self) -> &'static str {
         match self {
-            Self::Attempts => "attempts",
-            Self::ValidateEvery => "validate_every",
-            Self::KeyRefreshEvery => "key_refresh_every",
-            Self::RetryAttempts => "retry_attempts",
+            Self::Attempts => "--attempts",
+            Self::ValidateEvery => "--validate-every",
+            Self::KeyRefreshEvery => "--key-refresh-every",
+            Self::RetryAttempts => "--retry-attempts",
         }
     }
 }
@@ -968,11 +1035,11 @@ impl Display for PachnerStressCountArgument {
     }
 }
 
-/// Configuration for one exact Pachner stress chain.
+/// Configuration for one exact Pachner stress workload.
 #[derive(Clone, Copy, Debug)]
 struct PachnerStressConfig {
+    mode: PachnerStressMode,
     dimension: PachnerStressDimension,
-    label: &'static str,
     vertex_count: usize,
     move_attempts: NonZeroUsize,
     validate_every: NonZeroUsize,
@@ -983,47 +1050,53 @@ struct PachnerStressConfig {
     seed: u64,
 }
 
+/// Validated constructor input for one Pachner stress workload.
+#[derive(Clone, Copy, Debug)]
+struct PachnerStressConfigInput {
+    mode: PachnerStressMode,
+    dimension: PachnerStressDimension,
+    vertex_count: usize,
+    move_attempts: NonZeroUsize,
+    validate_every: NonZeroUsize,
+    key_refresh_every: NonZeroUsize,
+    retry_attempts: NonZeroUsize,
+    seed: u64,
+}
+
 impl PachnerStressConfig {
     /// Build a validated stress configuration from command-line values.
-    fn try_new(
-        dimension: PachnerStressDimension,
-        vertex_count: usize,
-        move_attempts: NonZeroUsize,
-        validate_every: NonZeroUsize,
-        key_refresh_every: NonZeroUsize,
-        retry_attempts: NonZeroUsize,
-        seed: u64,
-    ) -> Result<Self, PachnerStressError> {
-        let minimum_vertices = dimension.value() + 1;
-        if vertex_count < minimum_vertices {
+    fn try_new(input: PachnerStressConfigInput) -> Result<Self, PachnerStressError> {
+        let minimum_vertices = input.dimension.value() + 1;
+        if input.vertex_count < minimum_vertices {
             return Err(PachnerStressError::TooFewVertices {
-                dimension: dimension.value(),
-                vertices: vertex_count,
+                dimension: input.dimension.value(),
+                vertices: input.vertex_count,
                 minimum: minimum_vertices,
             });
         }
-        let validate_every = validate_every.min(move_attempts);
+        let validate_every = input.validate_every.min(input.move_attempts);
         let growth_slack =
-            (vertex_count / DEFAULT_VERTEX_GROWTH_DIVISOR).max(dimension.value() + 1);
-        let shrink_slack = vertex_count / DEFAULT_VERTEX_SHRINK_DIVISOR;
+            (input.vertex_count / DEFAULT_VERTEX_GROWTH_DIVISOR).max(input.dimension.value() + 1);
+        let shrink_slack = input.vertex_count / DEFAULT_VERTEX_SHRINK_DIVISOR;
 
         Ok(Self {
-            dimension,
-            label: dimension.label(),
-            vertex_count,
-            move_attempts,
+            mode: input.mode,
+            dimension: input.dimension,
+            vertex_count: input.vertex_count,
+            move_attempts: input.move_attempts,
             validate_every,
-            key_refresh_every,
-            retry_attempts,
-            min_vertex_count: vertex_count
+            key_refresh_every: input.key_refresh_every,
+            retry_attempts: input.retry_attempts,
+            min_vertex_count: input
+                .vertex_count
                 .saturating_sub(shrink_slack)
-                .max(dimension.value() + 1),
-            max_vertex_count: vertex_count.saturating_add(growth_slack),
-            seed,
+                .max(input.dimension.value() + 1),
+            max_vertex_count: input.vertex_count.saturating_add(growth_slack),
+            seed: input.seed,
         })
     }
 
-    /// Positive number of attempted moves in this exact chain.
+    /// Positive number of attempted moves in this exact workload.
     const fn move_attempts(self) -> NonZeroUsize {
         self.move_attempts
     }
@@ -1041,6 +1114,11 @@ impl PachnerStressConfig {
     /// Retry attempts for randomized Delaunay construction.
     const fn retry_attempts(self) -> NonZeroUsize {
         self.retry_attempts
+    }
+
+    /// Stable dimension label written to telemetry and artifacts.
+    const fn label(self) -> &'static str {
+        self.dimension.label()
     }
 }
 
@@ -1075,17 +1153,19 @@ impl PachnerStressArtifacts {
     }
 }
 
-/// Initial triangulation metadata emitted before the chain starts.
+/// Initial triangulation metadata emitted before the stress workload starts.
 #[derive(Clone, Copy, Debug, Serialize)]
 struct PachnerStressSource {
     dimension: usize,
     label: &'static str,
+    mode: &'static str,
+    validation_scope: &'static str,
     vertices: usize,
     simplices: usize,
     seed: u64,
 }
 
-/// Final aggregate metrics for one exact Pachner stress chain.
+/// Final aggregate metrics for one exact Pachner stress workload.
 #[derive(Clone, Copy, Debug, Serialize)]
 struct PachnerStressReport {
     sequence: usize,
@@ -1100,9 +1180,6 @@ struct PachnerStressReport {
     attempts_per_second: u128,
     final_vertices: usize,
     final_simplices: usize,
-    start_rss_kib: u64,
-    max_rss_kib: u64,
-    final_rss_kib: u64,
 }
 
 /// JSON summary written by the diagnostic CLI.
@@ -1110,6 +1187,8 @@ struct PachnerStressReport {
 struct PachnerStressSummary {
     dimension: usize,
     label: &'static str,
+    mode: &'static str,
+    validation_scope: &'static str,
     configured_vertices: usize,
     attempts: usize,
     validate_every: usize,
@@ -1137,10 +1216,27 @@ struct PachnerStressProgress {
     acceptance_rate: f64,
     vertices: usize,
     simplices: usize,
-    rss_kib: u64,
 }
 
-/// Report sink that mirrors causal-triangulations' binary-to-notebook boundary.
+/// Mutable counters accumulated by one stress workload.
+#[derive(Clone, Copy, Debug, Default)]
+struct PachnerStressCounters {
+    accepted: usize,
+    candidate_misses: usize,
+    proposal_rejections: usize,
+    validations: usize,
+    validation_nanos: u128,
+}
+
+impl PachnerStressCounters {
+    /// Count steps that did not produce an accepted move.
+    const fn rejected(self) -> usize {
+        self.candidate_misses
+            .saturating_add(self.proposal_rejections)
+    }
+}
+
+/// Report sink for scriptable Pachner stress artifacts.
 struct PachnerStressReporter {
     stdout: bool,
     progress_writer: Option<BufWriter<File>>,
@@ -1167,9 +1263,47 @@ impl PachnerStressReporter {
             let mut handle = stdout.lock();
             writeln!(
                 handle,
-                "pachner_stress_source dimension={} label={} vertices={} simplices={} seed={}",
-                source.dimension, source.label, source.vertices, source.simplices, source.seed
+                "pachner_stress_source dimension={} label={} mode={} validation_scope={} vertices={} simplices={} seed={}",
+                source.dimension,
+                source.label,
+                source.mode,
+                source.validation_scope,
+                source.vertices,
+                source.simplices,
+                source.seed
             )?;
+            handle.flush()?;
+        }
+        Ok(())
+    }
+
+    /// Emit a coarse-grained stage checkpoint for long-running setup phases.
+    fn emit_stage(
+        &self,
+        config: PachnerStressConfig,
+        stage: &'static str,
+        vertices: Option<usize>,
+        simplices: Option<usize>,
+    ) -> Result<(), PachnerStressError> {
+        if self.stdout {
+            let stdout = io::stdout();
+            let mut handle = stdout.lock();
+            write!(
+                handle,
+                "pachner_stress_stage dimension={} label={} mode={} validation_scope={} stage={stage}",
+                config.dimension.value(),
+                config.label(),
+                config.mode.label(),
+                PACHNER_STRESS_VALIDATION_SCOPE_LABEL
+            )?;
+            if let Some(vertices) = vertices {
+                write!(handle, " vertices={vertices}")?;
+            }
+            if let Some(simplices) = simplices {
+                write!(handle, " simplices={simplices}")?;
+            }
+            writeln!(handle)?;
+            handle.flush()?;
         }
         Ok(())
     }
@@ -1185,11 +1319,13 @@ impl PachnerStressReporter {
             let mut handle = stdout.lock();
             writeln!(
                 handle,
-                "pachner_stress_progress dimension={} label={} sequence={} step={} attempts={} accepted={} \
+                "pachner_stress_progress dimension={} label={} mode={} validation_scope={} sequence={} step={} attempts={} accepted={} \
                  rejected={} candidate_misses={} proposal_rejections={} validations={} \
-                 validation_nanos={} acceptance_rate={:.6} vertices={} simplices={} rss_kib={}",
+                 validation_nanos={} acceptance_rate={:.6} vertices={} simplices={}",
                 config.dimension.value(),
-                config.label,
+                config.label(),
+                config.mode.label(),
+                PACHNER_STRESS_VALIDATION_SCOPE_LABEL,
                 progress.sequence,
                 progress.step,
                 progress.attempts,
@@ -1201,16 +1337,18 @@ impl PachnerStressReporter {
                 progress.validation_nanos,
                 progress.acceptance_rate,
                 progress.vertices,
-                progress.simplices,
-                progress.rss_kib
+                progress.simplices
             )?;
+            handle.flush()?;
         }
         if let Some(writer) = &mut self.progress_writer {
             writeln!(
                 writer,
-                "{},{},{},{},{},{},{},{},{},{},{},{:.6},{},{},{}",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{:.6},{},{}",
                 config.dimension.value(),
-                config.label,
+                config.label(),
+                config.mode.label(),
+                PACHNER_STRESS_VALIDATION_SCOPE_LABEL,
                 progress.sequence,
                 progress.step,
                 progress.attempts,
@@ -1222,9 +1360,9 @@ impl PachnerStressReporter {
                 progress.validation_nanos,
                 progress.acceptance_rate,
                 progress.vertices,
-                progress.simplices,
-                progress.rss_kib
+                progress.simplices
             )?;
+            writer.flush()?;
         }
         Ok(())
     }
@@ -1240,12 +1378,13 @@ impl PachnerStressReporter {
             let mut handle = stdout.lock();
             writeln!(
                 handle,
-                "pachner_stress_metric dimension={} label={} sequence={} attempts={} accepted={} rejected={} \
+                "pachner_stress_metric dimension={} label={} mode={} validation_scope={} sequence={} attempts={} accepted={} rejected={} \
                  candidate_misses={} proposal_rejections={} validations={} validation_nanos={} \
-                 elapsed_nanos={} attempts_per_second={} final_vertices={} final_simplices={} \
-                 start_rss_kib={} max_rss_kib={} final_rss_kib={}",
+                 elapsed_nanos={} attempts_per_second={} final_vertices={} final_simplices={}",
                 config.dimension.value(),
-                config.label,
+                config.label(),
+                config.mode.label(),
+                PACHNER_STRESS_VALIDATION_SCOPE_LABEL,
                 report.sequence,
                 report.attempts,
                 report.accepted,
@@ -1257,11 +1396,9 @@ impl PachnerStressReporter {
                 report.elapsed_nanos,
                 report.attempts_per_second,
                 report.final_vertices,
-                report.final_simplices,
-                report.start_rss_kib,
-                report.max_rss_kib,
-                report.final_rss_kib
+                report.final_simplices
             )?;
+            handle.flush()?;
         }
         Ok(())
     }
@@ -1358,149 +1495,7 @@ fn random_cached<T: Copy>(values: &[T], rng: &mut (impl Rng + ?Sized)) -> Option
     Some(values[index])
 }
 
-/// Flat diagnostic target: successful planned Pachner moves accept with probability one.
-struct FlatPachnerTarget;
-
-impl<const D: usize> Target<PachnerStressTriangulation<D>> for FlatPachnerTarget {
-    fn log_prob(&self, _state: &PachnerStressTriangulation<D>) -> f64 {
-        0.0
-    }
-}
-
-/// Delayed-proposal plan carrying the parsed Pachner proposal.
-#[derive(Clone, Debug)]
-struct PachnerChainPlan<const D: usize> {
-    proposal: PachnerProposal<(), D>,
-}
-
-/// Step metadata retained for invariant-failure diagnostics.
-#[derive(Clone, Debug)]
-enum PachnerStepInfo<const D: usize> {
-    Proposed {
-        request: PachnerMove<(), D>,
-    },
-    CandidateMiss,
-    ProposalRejected {
-        request: PachnerMove<(), D>,
-        rejection: FlipError,
-    },
-}
-
-/// Delayed-proposal kernel that plans local Pachner edits against the live state.
-struct PachnerProposalKernel<const D: usize> {
-    config: PachnerStressConfig,
-    sampler: MoveSampler,
-    proposed_steps: usize,
-    candidate_misses: usize,
-    proposal_rejections: usize,
-    last_request: Option<PachnerMove<(), D>>,
-    last_result: Option<PachnerMoveResult<D>>,
-    last_no_plan_info: Option<PachnerStepInfo<D>>,
-}
-
-impl<const D: usize> PachnerProposalKernel<D> {
-    /// Create a proposal kernel with an initial live-key cache.
-    fn try_new(
-        dt: &PachnerStressTriangulation<D>,
-        config: PachnerStressConfig,
-    ) -> Result<Self, PachnerStressError> {
-        Ok(Self {
-            config,
-            sampler: MoveSampler::try_from_triangulation(dt)?,
-            proposed_steps: 0,
-            candidate_misses: 0,
-            proposal_rejections: 0,
-            last_request: None,
-            last_result: None,
-            last_no_plan_info: None,
-        })
-    }
-
-    /// Refresh cached keys on the configured cadence.
-    fn maybe_refresh(
-        &mut self,
-        dt: &PachnerStressTriangulation<D>,
-    ) -> Result<(), PachnerStressError> {
-        if self
-            .proposed_steps
-            .is_multiple_of(self.config.key_refresh_every().get())
-        {
-            self.sampler.refresh(dt)?;
-        }
-        Ok(())
-    }
-}
-
-impl<const D: usize> DelayedProposal<PachnerStressTriangulation<D>> for PachnerProposalKernel<D> {
-    type Plan = PachnerChainPlan<D>;
-    type Info = PachnerStepInfo<D>;
-    type Error = PachnerStressError;
-
-    fn propose_plan<R: Rng + ?Sized>(
-        &mut self,
-        state: &PachnerStressTriangulation<D>,
-        rng: &mut R,
-    ) -> Result<Option<Self::Plan>, Self::Error> {
-        self.proposed_steps = self.proposed_steps.saturating_add(1);
-        self.maybe_refresh(state)?;
-        self.last_result = None;
-
-        let Some(request) = random_pachner_move(state, &self.sampler, rng, self.config) else {
-            self.candidate_misses = self.candidate_misses.saturating_add(1);
-            self.last_request = None;
-            self.last_no_plan_info = Some(PachnerStepInfo::CandidateMiss);
-            return Ok(None);
-        };
-
-        self.last_request = Some(request);
-        match state.propose_pachner(request) {
-            Ok(proposal) => {
-                self.last_no_plan_info = None;
-                Ok(Some(PachnerChainPlan { proposal }))
-            }
-            Err(error) => {
-                self.proposal_rejections = self.proposal_rejections.saturating_add(1);
-                self.last_no_plan_info = Some(PachnerStepInfo::ProposalRejected {
-                    request,
-                    rejection: error,
-                });
-                Ok(None)
-            }
-        }
-    }
-
-    fn no_plan_info(&mut self) -> Option<Self::Info> {
-        self.last_no_plan_info.take()
-    }
-
-    fn proposed_log_prob<T: Target<PachnerStressTriangulation<D>>>(
-        &self,
-        state: &PachnerStressTriangulation<D>,
-        _plan: &Self::Plan,
-        target: &T,
-    ) -> Result<f64, Self::Error> {
-        Ok(target.log_prob(state))
-    }
-
-    fn info(&self, plan: &Self::Plan) -> Self::Info {
-        PachnerStepInfo::Proposed {
-            request: *plan.proposal.request(),
-        }
-    }
-
-    fn commit<R: Rng + ?Sized>(
-        &mut self,
-        state: &mut PachnerStressTriangulation<D>,
-        plan: Self::Plan,
-        _rng: &mut R,
-    ) -> Result<(), Self::Error> {
-        let result = plan.proposal.attempt_on(state)?;
-        self.last_result = Some(result);
-        Ok(())
-    }
-}
-
-/// Dispatch one exact diagnostic chain by runtime dimension.
+/// Dispatch one exact diagnostic workload by runtime dimension.
 fn run_pachner_stress(
     config: PachnerStressConfig,
     artifacts: &PachnerStressArtifacts,
@@ -1511,16 +1506,18 @@ fn run_pachner_stress(
     }
 }
 
-/// Run one exact chain and write requested artifacts.
+/// Run one exact workload and write requested artifacts.
 fn run_pachner_stress_dimension<const D: usize>(
     config: PachnerStressConfig,
     artifacts: &PachnerStressArtifacts,
 ) -> Result<PachnerStressSummary, PachnerStressError> {
     let mut reporter = PachnerStressReporter::try_new(artifacts)?;
-    let tri = build_pachner_stress_dt::<D>(config)?;
+    let mut tri = build_pachner_stress_dt::<D>(config, &reporter)?;
     let source = PachnerStressSource {
         dimension: D,
-        label: config.label,
+        label: config.label(),
+        mode: config.mode.label(),
+        validation_scope: PACHNER_STRESS_VALIDATION_SCOPE_LABEL,
         vertices: tri.number_of_vertices(),
         simplices: tri.number_of_simplices(),
         seed: config.seed,
@@ -1528,18 +1525,38 @@ fn run_pachner_stress_dimension<const D: usize>(
     reporter.emit_source(source)?;
 
     let start = Instant::now();
-    let mut report = run_pachner_stress_sequence(tri, config, 1, Some(&mut reporter))?;
+    let counters = match config.mode {
+        PachnerStressMode::RoundTrip => {
+            run_pachner_round_trip_sequence(&mut tri, config, 1, Some(&mut reporter))?
+        }
+        PachnerStressMode::RandomWalk => {
+            run_pachner_random_walk_sequence(&mut tri, config, 1, Some(&mut reporter))?
+        }
+    };
     let elapsed = start.elapsed();
-    report.elapsed_nanos = elapsed.as_nanos();
-    let attempts = u128::try_from(report.attempts)?;
-    report.attempts_per_second =
-        attempts.saturating_mul(1_000_000_000) / report.elapsed_nanos.max(1);
+    let attempts = u128::try_from(config.move_attempts().get())?;
+    let report = PachnerStressReport {
+        sequence: 1,
+        attempts: config.move_attempts().get(),
+        accepted: counters.accepted,
+        rejected: counters.rejected(),
+        candidate_misses: counters.candidate_misses,
+        proposal_rejections: counters.proposal_rejections,
+        validations: counters.validations,
+        validation_nanos: counters.validation_nanos,
+        elapsed_nanos: elapsed.as_nanos(),
+        attempts_per_second: attempts.saturating_mul(1_000_000_000) / elapsed.as_nanos().max(1),
+        final_vertices: tri.number_of_vertices(),
+        final_simplices: tri.number_of_simplices(),
+    };
     reporter.emit_report(config, report)?;
     reporter.finish()?;
 
     let summary = PachnerStressSummary {
         dimension: D,
-        label: config.label,
+        label: config.label(),
+        mode: config.mode.label(),
+        validation_scope: PACHNER_STRESS_VALIDATION_SCOPE_LABEL,
         configured_vertices: config.vertex_count,
         attempts: config.move_attempts().get(),
         validate_every: config.validate_every().get(),
@@ -1557,156 +1574,195 @@ fn run_pachner_stress_dimension<const D: usize>(
     Ok(summary)
 }
 
-/// Builds the initial randomized triangulation for one Monte Carlo stress case.
+/// Build the initial randomized triangulation for one stress workload.
 fn build_pachner_stress_dt<const D: usize>(
     config: PachnerStressConfig,
+    reporter: &PachnerStressReporter,
 ) -> Result<PachnerStressTriangulation<D>, PachnerStressError> {
+    reporter.emit_stage(
+        config,
+        "generate_points_start",
+        Some(config.vertex_count),
+        None,
+    )?;
     let points = generate_random_points_in_range_seeded::<D>(
         config.vertex_count,
         stress_bounds()?,
         config.seed,
     )?;
+    reporter.emit_stage(config, "convert_vertices_start", Some(points.len()), None)?;
     let vertices = try_vertices_from_points(&points)?;
     let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
         attempts: config.retry_attempts(),
         base_seed: Some(config.seed ^ 0xC0DE_0253_C0DE_0253),
     });
 
+    reporter.emit_stage(config, "construction_start", Some(vertices.len()), None)?;
     let dt = DelaunayTriangulationBuilder::new(&vertices)
         .topology_guarantee(TopologyGuarantee::PLManifold)
         .construction_options(options)
         .build_with_kernel(&RobustKernel::new())?;
     let tri = dt.into_triangulation();
-    validate_stress_state(&tri, || {
+    reporter.emit_stage(
+        config,
+        "initial_topology_validation_start",
+        Some(tri.number_of_vertices()),
+        Some(tri.number_of_simplices()),
+    )?;
+    validate_stress_topology_state(&tri, || {
         format!(
-            "initial Pachner stress state dimension={D} label={} seed={}",
-            config.label, config.seed
+            "initial Pachner stress state dimension={D} label={} mode={} seed={}",
+            config.label(),
+            config.mode.label(),
+            config.seed
         )
     })?;
+    reporter.emit_stage(
+        config,
+        "initial_topology_validation_done",
+        Some(tri.number_of_vertices()),
+        Some(tri.number_of_simplices()),
+    )?;
     Ok(tri)
 }
 
-/// Executes one long randomized Pachner sequence and validates periodically.
-fn run_pachner_stress_sequence<const D: usize>(
-    dt: PachnerStressTriangulation<D>,
+/// Execute forward/inverse Pachner pairs and validate periodically.
+fn run_pachner_round_trip_sequence<const D: usize>(
+    dt: &mut PachnerStressTriangulation<D>,
     config: PachnerStressConfig,
     sequence: usize,
     mut reporter: Option<&mut PachnerStressReporter>,
-) -> Result<PachnerStressReport, PachnerStressError> {
-    let mut rng = StdRng::seed_from_u64(config.seed ^ 0x0253_0253_0253_0253);
-    let target = FlatPachnerTarget;
-    let mut chain = Chain::new(dt, &target)?;
-    let mut proposal = PachnerProposalKernel::try_new(chain.state(), config)?;
-    let mut recorder = TraceRecorder::new(
-        ChainId::new(0),
-        [
-            "vertices",
-            "simplices",
-            "candidate_misses",
-            "proposal_rejections",
-        ],
-    )?;
-    let start_rss_kib = memory_usage_kib()?;
-    let mut max_rss_kib = start_rss_kib;
-    let mut validations = 0;
-    let mut validation_nanos = 0;
-    let mut last_step = None;
+) -> Result<PachnerStressCounters, PachnerStressError> {
+    let mut rng = StdRng::seed_from_u64(config.seed ^ 0x0253_0253_5252_2525);
+    let mut sampler = MoveSampler::try_from_triangulation(dt)?;
+    let mut counters = PachnerStressCounters::default();
 
     for step in 1..=config.move_attempts().get() {
-        let mcmc_step = chain
-            .step_delayed(&target, &mut proposal, &mut rng)
-            .map_err(|source| PachnerStressError::DelayedStep {
-                step,
-                source: Box::new(source),
-            })?;
-        record_stress_step(&mut recorder, &chain, &proposal, &mcmc_step)?;
-        last_step = Some(mcmc_step);
-
-        if step.is_multiple_of(config.validate_every().get()) {
-            validate_step(
-                config,
-                step,
-                &chain,
-                &proposal,
-                last_step.as_ref(),
-                recorder.trace(),
-                &mut validations,
-                &mut validation_nanos,
-                &mut max_rss_kib,
-                &mut reporter,
-                sequence,
-            )?;
-            proposal.sampler.refresh(chain.state())?;
+        if step > 1 && step.is_multiple_of(config.key_refresh_every().get()) {
+            sampler.refresh(dt)?;
         }
-    }
+        let Some(request) = random_round_trip_move(dt, &sampler, &mut rng) else {
+            counters.candidate_misses = counters.candidate_misses.saturating_add(1);
+            maybe_validate_stress_step(dt, config, step, &mut counters, &mut reporter, sequence)?;
+            continue;
+        };
 
-    if !config
-        .move_attempts()
-        .get()
-        .is_multiple_of(config.validate_every().get())
-    {
-        validate_step(
-            config,
-            config.move_attempts().get(),
-            &chain,
-            &proposal,
-            last_step.as_ref(),
-            recorder.trace(),
-            &mut validations,
-            &mut validation_nanos,
-            &mut max_rss_kib,
-            &mut reporter,
-            sequence,
-        )?;
-    }
+        match dt.propose_pachner(request) {
+            Ok(proposal) => {
+                let Ok(forward) = proposal.attempt_topology_on(dt) else {
+                    counters.proposal_rejections = counters.proposal_rejections.saturating_add(1);
+                    maybe_validate_stress_step(
+                        dt,
+                        config,
+                        step,
+                        &mut counters,
+                        &mut reporter,
+                        sequence,
+                    )?;
+                    continue;
+                };
+                counters.accepted = counters.accepted.saturating_add(1);
+                let inverse = inverse_move_from_forward_result(dt, &forward)?;
+                let _inverse_result = dt.propose_pachner(inverse)?.attempt_topology_on(dt)?;
+                counters.accepted = counters.accepted.saturating_add(1);
+            }
+            Err(_) => {
+                counters.proposal_rejections = counters.proposal_rejections.saturating_add(1);
+            }
+        }
 
-    let final_rss_kib = memory_usage_kib()?;
-    max_rss_kib = max_rss_kib.max(final_rss_kib);
-    Ok(PachnerStressReport {
-        sequence,
-        attempts: config.move_attempts().get(),
-        accepted: chain.accepted(),
-        rejected: chain.rejected(),
-        candidate_misses: proposal.candidate_misses,
-        proposal_rejections: proposal.proposal_rejections,
-        validations,
-        validation_nanos,
-        elapsed_nanos: 0,
-        attempts_per_second: 0,
-        final_vertices: chain.state().number_of_vertices(),
-        final_simplices: chain.state().number_of_simplices(),
-        start_rss_kib,
-        max_rss_kib,
-        final_rss_kib,
-    })
+        maybe_validate_stress_step(dt, config, step, &mut counters, &mut reporter, sequence)?;
+    }
+    validate_final_stress_step(dt, config, &mut counters, &mut reporter, sequence)?;
+    Ok(counters)
+}
+
+/// Execute valid random Pachner moves over an evolving triangulation.
+fn run_pachner_random_walk_sequence<const D: usize>(
+    dt: &mut PachnerStressTriangulation<D>,
+    config: PachnerStressConfig,
+    sequence: usize,
+    mut reporter: Option<&mut PachnerStressReporter>,
+) -> Result<PachnerStressCounters, PachnerStressError> {
+    let mut rng = StdRng::seed_from_u64(config.seed ^ 0x0253_0253_0253_0253);
+    let mut sampler = MoveSampler::try_from_triangulation(dt)?;
+    let mut counters = PachnerStressCounters::default();
+
+    for step in 1..=config.move_attempts().get() {
+        if step > 1 && step.is_multiple_of(config.key_refresh_every().get()) {
+            sampler.refresh(dt)?;
+        }
+        let Some(request) = random_pachner_move(dt, &sampler, &mut rng, config) else {
+            counters.candidate_misses = counters.candidate_misses.saturating_add(1);
+            maybe_validate_stress_step(dt, config, step, &mut counters, &mut reporter, sequence)?;
+            continue;
+        };
+
+        match dt.propose_pachner(request) {
+            Ok(proposal) => match proposal.attempt_topology_on(dt) {
+                Ok(_) => {
+                    counters.accepted = counters.accepted.saturating_add(1);
+                }
+                Err(_) => {
+                    counters.proposal_rejections = counters.proposal_rejections.saturating_add(1);
+                }
+            },
+            Err(_) => {
+                counters.proposal_rejections = counters.proposal_rejections.saturating_add(1);
+            }
+        }
+
+        maybe_validate_stress_step(dt, config, step, &mut counters, &mut reporter, sequence)?;
+    }
+    validate_final_stress_step(dt, config, &mut counters, &mut reporter, sequence)?;
+    Ok(counters)
+}
+
+/// Validate when a configured cadence boundary is reached.
+fn maybe_validate_stress_step<const D: usize>(
+    dt: &PachnerStressTriangulation<D>,
+    config: PachnerStressConfig,
+    step: usize,
+    counters: &mut PachnerStressCounters,
+    reporter: &mut Option<&mut PachnerStressReporter>,
+    sequence: usize,
+) -> Result<(), PachnerStressError> {
+    if step.is_multiple_of(config.validate_every().get()) {
+        validate_stress_step(dt, config, step, counters, reporter, sequence)?;
+    }
+    Ok(())
+}
+
+/// Ensure the final state is checked even when the cadence did not divide attempts.
+fn validate_final_stress_step<const D: usize>(
+    dt: &PachnerStressTriangulation<D>,
+    config: PachnerStressConfig,
+    counters: &mut PachnerStressCounters,
+    reporter: &mut Option<&mut PachnerStressReporter>,
+    sequence: usize,
+) -> Result<(), PachnerStressError> {
+    let final_step = config.move_attempts().get();
+    if !final_step.is_multiple_of(config.validate_every().get()) {
+        validate_stress_step(dt, config, final_step, counters, reporter, sequence)?;
+    }
+    Ok(())
 }
 
 /// Validate one cadence boundary and emit progress.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "stress diagnostics keep all live chain state visible at the validation boundary"
-)]
-fn validate_step<const D: usize>(
+fn validate_stress_step<const D: usize>(
+    dt: &PachnerStressTriangulation<D>,
     config: PachnerStressConfig,
     step: usize,
-    chain: &Chain<PachnerStressTriangulation<D>>,
-    proposal: &PachnerProposalKernel<D>,
-    last_step: Option<&DelayedStep<PachnerStepInfo<D>>>,
-    trace: &Trace,
-    validations: &mut usize,
-    validation_nanos: &mut u128,
-    max_rss_kib: &mut u64,
+    counters: &mut PachnerStressCounters,
     reporter: &mut Option<&mut PachnerStressReporter>,
     sequence: usize,
 ) -> Result<(), PachnerStressError> {
     let validation_start = Instant::now();
-    validate_stress_state(chain.state(), || {
-        stress_validation_context(config, step, chain, proposal, last_step, trace)
-    })?;
-    *validation_nanos += validation_start.elapsed().as_nanos();
-    *validations += 1;
-    let rss_kib = memory_usage_kib()?;
-    *max_rss_kib = (*max_rss_kib).max(rss_kib);
+    validate_stress_topology_state(dt, || stress_validation_context(config, step, *counters))?;
+    counters.validation_nanos = counters
+        .validation_nanos
+        .saturating_add(validation_start.elapsed().as_nanos());
+    counters.validations = counters.validations.saturating_add(1);
     if let Some(reporter) = reporter.as_mut() {
         reporter.emit_progress(
             config,
@@ -1714,29 +1770,28 @@ fn validate_step<const D: usize>(
                 sequence,
                 step,
                 attempts: config.move_attempts().get(),
-                accepted: chain.accepted(),
-                rejected: chain.rejected(),
-                candidate_misses: proposal.candidate_misses,
-                proposal_rejections: proposal.proposal_rejections,
-                validations: *validations,
-                validation_nanos: *validation_nanos,
-                acceptance_rate: chain_acceptance_rate(chain)?,
-                vertices: chain.state().number_of_vertices(),
-                simplices: chain.state().number_of_simplices(),
-                rss_kib,
+                accepted: counters.accepted,
+                rejected: counters.rejected(),
+                candidate_misses: counters.candidate_misses,
+                proposal_rejections: counters.proposal_rejections,
+                validations: counters.validations,
+                validation_nanos: counters.validation_nanos,
+                acceptance_rate: stress_acceptance_rate(config, *counters)?,
+                vertices: dt.number_of_vertices(),
+                simplices: dt.number_of_simplices(),
             },
         )?;
     }
     Ok(())
 }
 
-/// Return the coordinate range used for Monte Carlo point clouds.
+/// Return the coordinate range used for stress point clouds.
 fn stress_bounds() -> Result<CoordinateRange<f64>, CoordinateRangeError<f64>> {
     CoordinateRange::try_new(0.0_f64, 1.0)
 }
 
-/// Validate the invariants Pachner moves are expected to preserve.
-fn validate_stress_state<const D: usize>(
+/// Validate the intrinsic topology invariants Pachner moves are expected to preserve.
+fn validate_stress_topology_state<const D: usize>(
     dt: &PachnerStressTriangulation<D>,
     context: impl FnOnce() -> String,
 ) -> Result<(), PachnerStressError> {
@@ -1746,152 +1801,68 @@ fn validate_stress_state<const D: usize>(
             source: Box::new(source),
         });
     }
-    if let Err(source) = dt.is_valid_embedding() {
-        return Err(PachnerStressError::EmbeddingValidation {
-            context: context(),
-            source: Box::new(source),
-        });
-    }
     Ok(())
 }
 
-/// Return current process memory usage in KiB.
-fn memory_usage_kib() -> Result<u64, PachnerStressError> {
-    let pid = get_current_pid()
-        .map_err(|source| PachnerStressError::CurrentProcess { message: source })?;
-    let mut system = System::new_with_specifics(
-        RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing().with_memory()),
-    );
-    system.refresh_processes_specifics(
-        ProcessesToUpdate::Some(&[pid]),
-        true,
-        ProcessRefreshKind::nothing().with_memory(),
-    );
-    Ok(system
-        .process(pid)
-        .map_or(0, |process| process.memory() / 1024))
-}
-
-/// Convert bounded diagnostic counters into trace-observable values.
+/// Convert bounded diagnostic counters into f64 telemetry values.
 fn trace_value(value: usize) -> Result<f64, TryFromIntError> {
     u32::try_from(value).map(f64::from)
 }
 
-/// Compute the accepted-step ratio from chain counters without scanning trace rows.
-fn chain_acceptance_rate<S>(chain: &Chain<S>) -> Result<f64, PachnerStressError> {
-    let total = trace_value(chain.total_steps())?;
+/// Compute accepted mutation ratio from flat stress counters.
+fn stress_acceptance_rate(
+    config: PachnerStressConfig,
+    counters: PachnerStressCounters,
+) -> Result<f64, PachnerStressError> {
+    let expected = config
+        .move_attempts()
+        .get()
+        .saturating_mul(config.mode.expected_moves_per_step());
+    let total = trace_value(expected)?;
     if total == 0.0 {
         Ok(0.0)
     } else {
-        Ok(trace_value(chain.accepted())? / total)
+        Ok(trace_value(counters.accepted)? / total)
     }
 }
 
-/// Numeric observables recorded for each completed MCMC step.
-fn stress_observables<const D: usize>(
-    dt: &PachnerStressTriangulation<D>,
-    proposal: &PachnerProposalKernel<D>,
-) -> Result<[f64; 4], PachnerStressError> {
-    Ok([
-        trace_value(dt.number_of_vertices())?,
-        trace_value(dt.number_of_simplices())?,
-        trace_value(proposal.candidate_misses)?,
-        trace_value(proposal.proposal_rejections)?,
-    ])
-}
-
-/// Record a completed MCMC step in the shared trace format.
-fn record_stress_step<const D: usize>(
-    recorder: &mut TraceRecorder,
-    chain: &Chain<PachnerStressTriangulation<D>>,
-    proposal: &PachnerProposalKernel<D>,
-    step: &DelayedStep<PachnerStepInfo<D>>,
-) -> Result<(), PachnerStressError> {
-    recorder.record(
-        chain,
-        TraceStepOutcome::from(step),
-        stress_observables(chain.state(), proposal)?,
-    )?;
-    Ok(())
-}
-
-/// Format the short proposal metadata attached to the last delayed step.
-fn describe_step_info<const D: usize>(info: &PachnerStepInfo<D>) -> String {
-    match info {
-        PachnerStepInfo::Proposed { request } => format!("proposed request={request:?}"),
-        PachnerStepInfo::CandidateMiss => String::from("candidate_miss"),
-        PachnerStepInfo::ProposalRejected { request, rejection } => {
-            format!("proposal_rejected request={request:?} rejection={rejection}")
-        }
-    }
-}
-
-/// Format the tail of the MCMC trace for invariant-failure diagnostics.
-fn trace_tail(trace: &Trace) -> String {
-    let records = trace.records();
-    let start = records.len().saturating_sub(TRACE_TAIL);
-    let mut output = String::new();
-    for record in &records[start..] {
-        let values = record.observable_values();
-        let vertices = values.first().copied().unwrap_or_default();
-        let simplices = values.get(1).copied().unwrap_or_default();
-        let candidate_misses = values.get(2).copied().unwrap_or_default();
-        let proposal_rejections = values.get(3).copied().unwrap_or_default();
-        let outcome = record.outcome();
-        let _ = write!(
-            &mut output,
-            "step={} accepted={} proposed={} vertices={} simplices={} \
-             candidate_misses={} proposal_rejections={}; ",
-            record.step(),
-            outcome.is_accepted(),
-            outcome.had_proposal(),
-            vertices,
-            simplices,
-            candidate_misses,
-            proposal_rejections
-        );
-    }
-    output
-}
-
-/// Build a diagnostic validation context from chain and trace state.
-fn stress_validation_context<const D: usize>(
+/// Build a compact diagnostic validation context from flat stress counters.
+fn stress_validation_context(
     config: PachnerStressConfig,
     step: usize,
-    chain: &Chain<PachnerStressTriangulation<D>>,
-    proposal: &PachnerProposalKernel<D>,
-    last_step: Option<&DelayedStep<PachnerStepInfo<D>>>,
-    trace: &Trace,
+    counters: PachnerStressCounters,
 ) -> String {
-    let chain_id = ChainId::new(0);
-    let mut context = format!(
-        "Pachner stress validation dimension={D} label={} step={} attempts={} accepted={} \
-         rejected={} candidate_misses={} proposal_rejections={} acceptance_rate={:.6} \
-         last_request={:?} last_result={:?}",
-        config.label,
+    format!(
+        "Pachner stress validation label={} mode={} step={} attempts={} accepted={} \
+         rejected={} candidate_misses={} proposal_rejections={}",
+        config.label(),
+        config.mode.label(),
         step,
         config.move_attempts().get(),
-        chain.accepted(),
-        chain.rejected(),
-        proposal.candidate_misses,
-        proposal.proposal_rejections,
-        trace.acceptance_rate(chain_id),
-        proposal.last_request,
-        proposal.last_result
-    );
-    if let Some(step) = last_step {
-        let info = step
-            .info
-            .as_ref()
-            .map_or_else(|| String::from("none"), describe_step_info);
-        let _ = write!(
-            &mut context,
-            " last_step_outcome={:?} last_step_info={} last_log_alpha={:?}",
-            step.outcome, info, step.log_alpha
-        );
+        counters.accepted,
+        counters.rejected(),
+        counters.candidate_misses,
+        counters.proposal_rejections
+    )
+}
+
+/// Choose a forward move whose inverse can be derived from its result.
+fn random_round_trip_move<const D: usize>(
+    dt: &PachnerStressTriangulation<D>,
+    sampler: &MoveSampler,
+    rng: &mut (impl Rng + ?Sized),
+) -> Option<PachnerMove<(), D>> {
+    let move_kind_count = if D >= 4 { 3 } else { 2 };
+    match rng.random_range(0..move_kind_count) {
+        0 => random_k1_insert(dt, sampler, rng),
+        1 => sampler
+            .random_facet(rng)
+            .map(|facet| PachnerMove::K2 { facet }),
+        2 => sampler
+            .random_ridge(rng)
+            .map(|ridge| PachnerMove::K3 { ridge }),
+        _ => None,
     }
-    let _ = write!(&mut context, " trace_tail=[{}]", trace_tail(trace));
-    context
 }
 
 /// Choose one raw Pachner request from the current cached topology frontier.
@@ -1929,7 +1900,7 @@ fn random_pachner_move<const D: usize>(
     }
 }
 
-/// Choose a random simplex and inserts a vertex at its centroid.
+/// Choose a random simplex and insert a vertex at its centroid.
 fn random_k1_insert<const D: usize>(
     dt: &PachnerStressTriangulation<D>,
     sampler: &MoveSampler,
@@ -1955,6 +1926,52 @@ fn random_k3_inverse<const D: usize>(
     let [a, b, c] = three_distinct_indices(rng, vertices.len())?;
     let triangle = TriangleHandle::try_new(vertices[a], vertices[b], vertices[c]).ok()?;
     Some(PachnerMove::K3Inverse { triangle })
+}
+
+/// Build the inverse request from the inserted face reported by a forward move.
+fn inverse_move_from_forward_result<const D: usize>(
+    dt: &PachnerStressTriangulation<D>,
+    result: &PachnerMoveResult<D>,
+) -> Result<PachnerMove<(), D>, PachnerStressError> {
+    match result.inserted_face_vertices.as_slice() {
+        [vertex_key] => Ok(PachnerMove::K1Remove {
+            vertex_key: *vertex_key,
+        }),
+        vertices @ [_, _] => Ok(PachnerMove::K2Inverse {
+            edge: inserted_edge(dt, vertices)?,
+        }),
+        [a, b, c] => Ok(PachnerMove::K3Inverse {
+            triangle: TriangleHandle::try_new(*a, *b, *c)?,
+        }),
+        vertices => Err(PachnerStressError::InsertedFaceArity {
+            context: PachnerStressInsertedFaceContext::ForwardMove,
+            expected: PachnerStressInsertedFaceArity::InvertibleForwardMove,
+            actual: vertices.len(),
+        }),
+    }
+}
+
+/// Convert a reported inserted edge face into the live edge handle expected by k=2 inverse.
+fn inserted_edge<const D: usize>(
+    dt: &PachnerStressTriangulation<D>,
+    vertices: &[VertexKey],
+) -> Result<EdgeKey, PachnerStressError> {
+    let [a, b] = vertices else {
+        return Err(PachnerStressError::InsertedFaceArity {
+            context: PachnerStressInsertedFaceContext::K2Move,
+            expected: PachnerStressInsertedFaceArity::Edge,
+            actual: vertices.len(),
+        });
+    };
+    dt.edges()
+        .find(|edge| {
+            let (first, second) = edge.endpoints();
+            (first == *a && second == *b) || (first == *b && second == *a)
+        })
+        .ok_or(PachnerStressError::InsertedEdgeMissing {
+            left: *a,
+            right: *b,
+        })
 }
 
 /// Compute a live simplex centroid when the cached key still exists.
@@ -2012,9 +2029,10 @@ fn create_progress_writer(path: &Path) -> Result<BufWriter<File>, PachnerStressE
     let mut writer = BufWriter::new(File::create(path)?);
     writeln!(
         writer,
-        "dimension,label,sequence,step,attempts,accepted,rejected,candidate_misses,\
-         proposal_rejections,validations,validation_nanos,acceptance_rate,vertices,simplices,rss_kib"
+        "dimension,label,mode,validation_scope,sequence,step,attempts,accepted,rejected,candidate_misses,\
+         proposal_rejections,validations,validation_nanos,acceptance_rate,vertices,simplices"
     )?;
+    writer.flush()?;
     Ok(writer)
 }
 
@@ -2122,21 +2140,11 @@ pub enum PachnerStressError {
     /// Topology validation failed.
     #[error("{context}: topology validation failed: {source}")]
     TopologyValidation {
-        /// Diagnostic chain context.
+        /// Diagnostic workload context.
         context: String,
         /// Underlying invariant error.
         #[source]
         source: Box<InvariantError>,
-    },
-
-    /// Embedding validation failed.
-    #[error("{context}: embedding validation failed: {source}")]
-    EmbeddingValidation {
-        /// Diagnostic chain context.
-        context: String,
-        /// Underlying invariant error.
-        #[source]
-        source: Box<TriangulationEmbeddingValidationError>,
     },
 
     /// Public facet query failed.
@@ -2145,32 +2153,6 @@ pub enum PachnerStressError {
         /// Underlying facet query error.
         #[from]
         source: FacetError,
-    },
-
-    /// Initial MCMC chain setup failed.
-    #[error("failed to create Pachner stress MCMC chain: {source}")]
-    Mcmc {
-        /// Underlying MCMC error.
-        #[from]
-        source: McmcError,
-    },
-
-    /// MCMC trace setup or recording failed.
-    #[error("failed to record Pachner stress MCMC trace: {source}")]
-    Trace {
-        /// Underlying trace error.
-        #[from]
-        source: TraceError,
-    },
-
-    /// One delayed MCMC step failed exceptionally.
-    #[error("Pachner stress MCMC step {step} failed: {source}")]
-    DelayedStep {
-        /// One-based attempted move step.
-        step: usize,
-        /// Underlying delayed-step error.
-        #[source]
-        source: Box<DelayedStepError<Self>>,
     },
 
     /// A committed Pachner proposal failed.
@@ -2189,11 +2171,32 @@ pub enum PachnerStressError {
         source: TryFromIntError,
     },
 
-    /// The current process could not be identified for RSS telemetry.
-    #[error("failed to query current process for RSS telemetry: {message}")]
-    CurrentProcess {
-        /// Platform-specific process lookup message.
-        message: &'static str,
+    /// A forward move reported an inserted face arity this stress mode cannot invert.
+    #[error("{context} inserted face should have {expected} vertices, got {actual}")]
+    InsertedFaceArity {
+        /// Move whose inserted-face result could not be interpreted.
+        context: PachnerStressInsertedFaceContext,
+        /// Expected inserted-face arity.
+        expected: PachnerStressInsertedFaceArity,
+        /// Actual inserted-face arity.
+        actual: usize,
+    },
+
+    /// A k=2 forward move reported an inserted edge that is not live afterward.
+    #[error("inserted k=2 edge {left:?}-{right:?} is missing")]
+    InsertedEdgeMissing {
+        /// First reported endpoint.
+        left: VertexKey,
+        /// Second reported endpoint.
+        right: VertexKey,
+    },
+
+    /// Triangle handle construction failed for an inverse k=3 move.
+    #[error("failed to build inverse k=3 triangle handle: {source}")]
+    TriangleHandle {
+        /// Underlying triangle-handle error.
+        #[from]
+        source: TriangleHandleError,
     },
 
     /// Two requested artifacts target the same path.
@@ -2215,16 +2218,20 @@ fn positive_nonzero(
 #[cfg(test)]
 mod tests {
     use std::{
+        fs,
         num::NonZeroUsize,
         path::{Path, PathBuf},
+        time::{SystemTime, UNIX_EPOCH},
     };
 
     use clap::Parser;
 
     use super::{
         DelaunayCliArgs, DelaunayCommand, GenerateCommand, GenerateConfig, GenerateDistribution,
-        PachnerStressArtifacts, PachnerStressConfig, PachnerStressCountArgument,
-        PachnerStressDimension, PachnerStressError, build_validation_demo_export, positive_nonzero,
+        PachnerStressArtifacts, PachnerStressConfig, PachnerStressConfigInput,
+        PachnerStressCountArgument, PachnerStressDimension, PachnerStressError,
+        PachnerStressInsertedFaceArity, PachnerStressInsertedFaceContext, PachnerStressMode,
+        build_validation_demo_export, create_progress_writer, positive_nonzero,
     };
 
     fn assert_empty_path_rejected_by_clap(args: &[&str], argument: &str) {
@@ -2245,6 +2252,16 @@ mod tests {
             DelaunayCommand::Generate(GenerateCommand::D3(config)) => config,
             other => panic!("expected 3D generate command, got {other:?}"),
         }
+    }
+
+    fn target_artifact_path(label: &str, extension: &str) -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after UNIX epoch")
+            .as_nanos();
+        PathBuf::from("target")
+            .join("config-tests")
+            .join(format!("{label}-{stamp}.{extension}"))
     }
 
     #[test]
@@ -2305,7 +2322,7 @@ mod tests {
         match error {
             PachnerStressError::NonPositive { argument, value } => {
                 assert_eq!(argument, PachnerStressCountArgument::ValidateEvery);
-                assert_eq!(argument.to_string(), "validate_every");
+                assert_eq!(argument.to_string(), "--validate-every");
                 assert_eq!(value, 0);
             }
             other => panic!("expected NonPositive error, got {other:?}"),
@@ -2313,16 +2330,29 @@ mod tests {
     }
 
     #[test]
-    fn pachner_current_process_error_preserves_static_message() {
-        let error = PachnerStressError::CurrentProcess {
-            message: "pid unavailable",
+    fn pachner_inserted_face_arity_errors_preserve_typed_context() {
+        let error = PachnerStressError::InsertedFaceArity {
+            context: PachnerStressInsertedFaceContext::ForwardMove,
+            expected: PachnerStressInsertedFaceArity::InvertibleForwardMove,
+            actual: 4,
         };
 
         match error {
-            PachnerStressError::CurrentProcess { message } => {
-                assert_eq!(message, "pid unavailable");
+            PachnerStressError::InsertedFaceArity {
+                context,
+                expected,
+                actual,
+            } => {
+                assert_eq!(context, PachnerStressInsertedFaceContext::ForwardMove);
+                assert_eq!(
+                    expected,
+                    PachnerStressInsertedFaceArity::InvertibleForwardMove
+                );
+                assert_eq!(context.to_string(), "forward Pachner move");
+                assert_eq!(expected.to_string(), "1, 2, or 3");
+                assert_eq!(actual, 4);
             }
-            other => panic!("expected CurrentProcess error, got {other:?}"),
+            other => panic!("expected InsertedFaceArity error, got {other:?}"),
         }
     }
 
@@ -2341,16 +2371,39 @@ mod tests {
     }
 
     #[test]
+    fn pachner_progress_writer_flushes_header_on_create() {
+        let path = target_artifact_path("pachner-progress-header", "csv");
+        let writer = create_progress_writer(&path)
+            .expect("progress writer should create parent directories and header");
+        let visible_len = fs::metadata(&path)
+            .expect("progress CSV should exist while writer is alive")
+            .len();
+        assert!(
+            visible_len > 0,
+            "progress CSV header should be visible before the run finishes"
+        );
+        drop(writer);
+
+        let header = fs::read_to_string(path).expect("progress CSV header should be readable");
+        assert_eq!(
+            header,
+            "dimension,label,mode,validation_scope,sequence,step,attempts,accepted,rejected,candidate_misses,\
+             proposal_rejections,validations,validation_nanos,acceptance_rate,vertices,simplices\n"
+        );
+    }
+
+    #[test]
     fn pachner_stress_clamps_validate_every_to_move_attempts() {
-        let config = PachnerStressConfig::try_new(
-            PachnerStressDimension::Three,
-            5,
-            NonZeroUsize::new(2).expect("literal is nonzero"),
-            NonZeroUsize::new(100).expect("literal is nonzero"),
-            NonZeroUsize::new(7).expect("literal is nonzero"),
-            NonZeroUsize::new(4).expect("literal is nonzero"),
-            42,
-        )
+        let config = PachnerStressConfig::try_new(PachnerStressConfigInput {
+            mode: PachnerStressMode::RoundTrip,
+            dimension: PachnerStressDimension::Three,
+            vertex_count: 5,
+            move_attempts: NonZeroUsize::new(2).expect("literal is nonzero"),
+            validate_every: NonZeroUsize::new(100).expect("literal is nonzero"),
+            key_refresh_every: NonZeroUsize::new(7).expect("literal is nonzero"),
+            retry_attempts: NonZeroUsize::new(4).expect("literal is nonzero"),
+            seed: 42,
+        })
         .expect("valid 3D Pachner stress config should build");
 
         assert_eq!(config.move_attempts().get(), 2);

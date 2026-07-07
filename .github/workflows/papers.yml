@@ -23,7 +23,11 @@ on:
       - "papers/**"
       - "pyproject.toml"
       - "scripts/paper_check.py"
+      - "scripts/paper_pdf_normalize.py"
+      - "scripts/paper_source_date.py"
       - "scripts/tests/test_paper_check.py"
+      - "scripts/tests/test_paper_pdf_normalize.py"
+      - "scripts/tests/test_paper_source_date.py"
       - "uv.lock"
   pull_request:
     branches:
@@ -35,7 +39,11 @@ on:
       - "papers/**"
       - "pyproject.toml"
       - "scripts/paper_check.py"
+      - "scripts/paper_pdf_normalize.py"
+      - "scripts/paper_source_date.py"
       - "scripts/tests/test_paper_check.py"
+      - "scripts/tests/test_paper_pdf_normalize.py"
+      - "scripts/tests/test_paper_source_date.py"
       - "uv.lock"
   workflow_dispatch:
 
@@ -79,7 +87,7 @@ jobs:
       - name: Install paper system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes chktex libicu-dev pkg-config
+          sudo apt-get install --yes chktex libicu-dev libpng-dev pkg-config
 
       - name: Install just
         uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
@@ -98,3 +106,12 @@ jobs:
 
       - name: Build papers
         run: just papers
+
+      - name: Verify paper artifacts are current
+        run: |
+          if [[ -n "$(git status --porcelain -- papers/validation.pdf papers/generated)" ]]; then
+            git status --short -- papers/validation.pdf papers/generated
+            echo "::error::Paper artifacts changed after 'just papers'."
+            echo "Run 'just papers' and commit the regenerated PDF/PNG outputs."
+            exit 1
+          fi

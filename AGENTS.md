@@ -62,6 +62,9 @@ for the files they will touch.
   focused surfaces changed.
 - **Do not edit generated changelogs manually.** Changelog and documentation
   maintenance rules live in `docs/dev/docs.md`.
+- **Treat paper prose as author-owned.** Agents must not add substantive
+  publication prose to `papers/`; local paper maintenance rules live in
+  `docs/dev/docs.md`.
 - **Keep README and citation prose mirrored.** The first paragraph under
   `README.md`'s Introduction is mirrored by the `abstract` field in
   `CITATION.cff`; update both together. The invariant is checked by

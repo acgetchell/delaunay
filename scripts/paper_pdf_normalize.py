@@ -5,7 +5,9 @@ import argparse
 import hashlib
 import re
 import sys
+import tempfile
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -38,15 +40,20 @@ class PdfNormalization:
     replacements: int
 
 
+def stable_paper_identity(tex: Path) -> str:
+    """Return a path-spelling-independent identity for paper metadata."""
+    return f"papers/{tex.name}"
+
+
 def stable_uuid(tex: Path, paper_date: PaperSourceDate, kind: XmpIdentityKind) -> str:
     """Return a stable UUID string for XMP identity fields."""
-    name = f"{tex.as_posix()}:{paper_date.raw}:{kind.value}"
+    name = f"{stable_paper_identity(tex)}:{paper_date.raw}:{kind.value}"
     return str(uuid.uuid5(uuid.NAMESPACE_URL, name))
 
 
 def stable_trailer_id(tex: Path, paper_date: PaperSourceDate) -> bytes:
     """Return the deterministic 16-byte trailer ID as lowercase hex."""
-    source = f"{tex.as_posix()}:{paper_date.raw}:trailer-id".encode()
+    source = f"{stable_paper_identity(tex)}:{paper_date.raw}:trailer-id".encode()
     return hashlib.sha256(source).hexdigest()[:32].encode()
 
 
@@ -119,6 +126,22 @@ def normalize_pdf_bytes(payload: bytes, *, tex: Path, paper_date: PaperSourceDat
     return normalized, replacements
 
 
+def write_bytes_atomically(destination: Path, payload: bytes) -> None:
+    """Write bytes through a same-directory temporary file and atomic replace."""
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile("wb", dir=destination.parent, prefix=f".{destination.name}.", suffix=".tmp", delete=False) as handle:
+            temp_path = Path(handle.name)
+            handle.write(payload)
+            handle.flush()
+        temp_path.replace(destination)
+    except OSError:
+        if temp_path is not None:
+            with suppress(OSError):
+                temp_path.unlink(missing_ok=True)
+        raise
+
+
 def normalize_pdf(pdf: Path, *, tex: Path) -> PdfNormalization:
     """Normalize a PDF in place and return normalization facts."""
     try:
@@ -130,7 +153,7 @@ def normalize_pdf(pdf: Path, *, tex: Path) -> PdfNormalization:
 
     normalized, replacements = normalize_pdf_bytes(payload, tex=tex, paper_date=paper_date)
     try:
-        pdf.write_bytes(normalized)
+        write_bytes_atomically(pdf, normalized)
     except OSError as error:
         msg = f"failed to write normalized PDF {pdf}: {error}"
         raise PdfNormalizationError(msg) from error

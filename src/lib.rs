@@ -64,7 +64,7 @@
 //! | Construction telemetry diagnostics | `use delaunay::prelude::diagnostics::*` |
 //! | Validation policies, errors, reports, PL-manifold link errors, and Level 5 diagnostics | `use delaunay::prelude::validation::*` |
 //! | Topology validation, Euler characteristic, ridge queries | `use delaunay::prelude::topology::validation::*` |
-//! | Topological spaces, topology traits, lifted toroidal IDs | `use delaunay::prelude::topology::spaces::*` |
+//! | Topological spaces, topology traits, spherical point/metric backends, lifted toroidal IDs | `use delaunay::prelude::topology::spaces::*` |
 //! | Low-level TDS simplices, facets, keys | `use delaunay::prelude::tds::*` |
 //! | Collection types (`FastHashMap`, etc.) | `use delaunay::prelude::collections::*` |
 //! | Broad convenience import for exploratory code | `use delaunay::prelude::*` |
@@ -764,7 +764,7 @@ pub mod flips;
 pub(crate) mod insertion;
 #[path = "delaunay/locality.rs"]
 pub(crate) mod locality;
-/// Unified Pachner move workflow API for Monte-Carlo-style editing.
+/// Unified Pachner move workflow API for local topology editing.
 #[path = "delaunay/pachner.rs"]
 pub mod pachner;
 /// Repair policies and outcomes for Delaunay triangulations.
@@ -1448,7 +1448,7 @@ pub mod prelude {
         };
     }
 
-    /// Unified Pachner move workflow for Monte-Carlo-style local edits.
+    /// Unified Pachner move workflow for local bistellar edits.
     ///
     /// This focused prelude exports the unified request/proposal/result/dispatch
     /// API, the handles and handle-construction errors needed to construct

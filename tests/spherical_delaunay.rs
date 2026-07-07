@@ -6,8 +6,8 @@ use std::{
 };
 
 use delaunay::prelude::construction::{
-    SphericalDelaunayBuilder, SphericalDelaunayConstructionError, SphericalDelaunayValidationError,
-    SphericalSimplex, SphericalSimplexError,
+    ConstructionOptions, SphericalDelaunayBuilder, SphericalDelaunayConstructionError,
+    SphericalDelaunayValidationError, SphericalSimplex, SphericalSimplexError,
 };
 use delaunay::prelude::topology::spaces::{SphericalMetric, SphericalPoint, SphericalPointError};
 
@@ -24,6 +24,7 @@ fn spherical_metric_normalizes_and_uses_geodesic_distance() {
     let point = metric
         .canonicalize([3.0, 4.0, 0.0])
         .expect("finite nonzero coordinates should canonicalize");
+    assert_eq!(point.intrinsic_dimension(), 2);
     assert_eq!(point.ambient_dimension(), 3);
     assert_close(point.squared_norm(), 1.0, 1.0e-12);
     assert_close(point.coords()[0], 0.6, 1.0e-12);
@@ -40,6 +41,26 @@ fn spherical_metric_normalizes_and_uses_geodesic_distance() {
         FRAC_PI_2,
         1.0e-12,
     );
+}
+
+#[test]
+fn spherical_metric_slice_constructors_preserve_radius_metadata() {
+    let metric =
+        SphericalMetric::<2>::try_new(2.0).expect("positive finite radius should define a metric");
+    assert_close(metric.radius(), 2.0, 0.0);
+    assert_eq!(metric.ambient_dimension(), 3);
+
+    let point = SphericalPoint::<2>::try_from_slice(&[3.0, 0.0, 4.0])
+        .expect("unit point should canonicalize from a slice");
+    assert_eq!(point.intrinsic_dimension(), 2);
+    assert_close(point.radius(), 1.0, 0.0);
+    assert_close(point.squared_norm(), 1.0, 1.0e-12);
+
+    let radius_two = metric
+        .canonicalize_slice(&[0.0, 6.0, 8.0])
+        .expect("metric should canonicalize a raw slice onto its radius");
+    assert_close(radius_two.radius(), 2.0, 0.0);
+    assert_close(radius_two.squared_norm(), 4.0, 1.0e-12);
 }
 
 #[test]
@@ -76,18 +97,53 @@ fn spherical_s2_tetrahedron_hull_facets_are_triangles() {
     assert_eq!(triangulation.ambient_dimension(), 3);
     assert_eq!(triangulation.number_of_vertices(), 4);
     assert_eq!(triangulation.number_of_simplices(), 4);
+    assert_close(triangulation.radius(), 1.0, 0.0);
+    assert_eq!(triangulation.points().len(), 4);
     for simplex in triangulation.simplices() {
+        assert_eq!(simplex.dimension(), 2);
         assert_eq!(simplex.vertex_indices().len(), 3);
     }
     triangulation
         .validate_topology()
         .expect("tetrahedron boundary should satisfy Level 3 topology");
     triangulation
+        .is_valid_topology()
+        .expect("Level 3 wrapper should validate spherical topology");
+    triangulation
         .validate_embedding()
         .expect("tetrahedron facets should satisfy spherical Level 4 embedding");
     triangulation
+        .is_valid_embedding()
+        .expect("Level 4 wrapper should validate spherical embedding");
+    triangulation
         .validate_delaunay()
         .expect("tetrahedron facets should satisfy spherical Level 5 Delaunay");
+    triangulation
+        .is_valid_delaunay()
+        .expect("Level 5 wrapper should validate spherical Delaunay");
+}
+
+#[test]
+fn spherical_builder_from_points_accepts_options() {
+    let points = vec![
+        SphericalPoint::<2>::try_new([1.0, 1.0, 1.0]).expect("finite point"),
+        SphericalPoint::<2>::try_new([1.0, -1.0, -1.0]).expect("finite point"),
+        SphericalPoint::<2>::try_new([-1.0, 1.0, -1.0]).expect("finite point"),
+        SphericalPoint::<2>::try_new([-1.0, -1.0, 1.0]).expect("finite point"),
+    ];
+
+    let triangulation = SphericalDelaunayBuilder::<2>::try_from_points(points)
+        .expect("matching radii should create a spherical builder")
+        .construction_options(ConstructionOptions::default())
+        .build()
+        .expect("tetrahedron boundary should build from normalized points");
+
+    assert_eq!(triangulation.dimension(), 2);
+    assert_eq!(triangulation.number_of_vertices(), 4);
+    assert_eq!(triangulation.number_of_simplices(), 4);
+    triangulation
+        .validate()
+        .expect("builder-from-points path should preserve spherical validation");
 }
 
 #[test]
@@ -241,6 +297,15 @@ fn spherical_simplex_rejects_invalid_public_inputs() {
 
 #[test]
 fn spherical_builder_reports_typed_boundary_errors() {
+    let invalid_radius = SphericalDelaunayBuilder::<2>::try_new_with_radius([[1.0, 0.0, 0.0]], 0.0)
+        .expect_err("builder radius must be finite and positive");
+    assert_matches!(
+        invalid_radius,
+        SphericalDelaunayConstructionError::Metric {
+            source: SphericalPointError::InvalidRadius { radius },
+        } if radius == 0.0
+    );
+
     let malformed = [[1.0, 0.0]];
     let err = SphericalDelaunayBuilder::<2>::try_new(malformed)
         .expect_err("malformed ambient coordinate arity should fail before build");
@@ -268,6 +333,21 @@ fn spherical_builder_reports_typed_boundary_errors() {
             minimum: 4,
             actual: 3,
         }
+    );
+
+    let one_hemisphere = [
+        [1.0, 0.0, 1.0],
+        [0.0, 1.0, 1.0],
+        [-1.0, 0.0, 1.0],
+        [0.0, -1.0, 2.0],
+    ];
+    let err = SphericalDelaunayBuilder::<2>::try_new(one_hemisphere)
+        .expect("finite nonzero points should canonicalize before hull coverage checks")
+        .build()
+        .expect_err("points confined to one open hemisphere cannot enclose the origin");
+    assert_matches!(
+        err,
+        SphericalDelaunayConstructionError::OriginOutsideConvexHull
     );
 }
 
@@ -306,6 +386,17 @@ fn spherical_distance_between_vertices_reports_index_errors() {
     let err = triangulation
         .distance_between_vertices(0, 4)
         .expect_err("missing vertex indices should be reported as typed errors");
+    assert_matches!(
+        err,
+        SphericalDelaunayValidationError::VertexIndexOutOfBounds {
+            vertex_index: 4,
+            vertex_count: 4,
+        }
+    );
+
+    let err = triangulation
+        .distance_between_vertices(4, 0)
+        .expect_err("missing left vertex index should be reported before distance computation");
     assert_matches!(
         err,
         SphericalDelaunayValidationError::VertexIndexOutOfBounds {

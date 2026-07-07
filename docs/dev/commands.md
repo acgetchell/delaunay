@@ -292,13 +292,19 @@ Workspace-wide benchmark recipes (`just bench`, `just bench-smoke`,
 `--features bench` so feature-gated benchmark fixtures and benchmark-only
 dependencies are compiled.
 
-Use `just pachner-stress [attempts] [validate_every]` for the full manual 3D+4D
-Pachner Monte Carlo diagnostic run through the opt-in `delaunay` CLI. The
-dimension-specific `just pachner-stress-3d` and `just pachner-stress-4d`
-recipes default to 100,000 attempted moves, write progress CSV plus summary JSON
-under `target/pachner_stress/`, and keep parseable stdout report/progress lines
-so long chains can be diagnosed without making the workflow part of routine CI.
-Use `just bench-pachner-stress*` when Criterion timing statistics are needed.
+Use `just pachner-stress [attempts] [validate_every] [mode]` for the manual 3D+4D
+direct Pachner diagnostic run through the opt-in `delaunay` CLI. The
+dimension-specific `just pachner-stress-3d` and `just pachner-stress-4d` recipes
+default to 100 attempted moves with progress every 10 attempts, write progress
+CSV plus summary JSON under `target/pachner_stress/`, and keep parseable stdout
+stage/report/progress lines so long workloads can be diagnosed without making
+the workflow part of routine CI. These direct stress recipes currently validate
+topology scope only (Levels 1-3); the large Level 4 embedding overlap scan is
+deferred to the dedicated embedding-validation work. The CLI supports
+`round-trip` and `random-walk` modes; `round-trip` is the default. Pass explicit
+`attempts`, `vertices`, and `validate_every` arguments for soak runs. Use
+`just bench-pachner-stress*` when Criterion timing statistics for stable 4D move
+and inverse fixtures are needed.
 
 Some repair benchmarks need feature-gated fixtures that deliberately construct
 invalid-but-structurally-coherent topology. Run those harnesses with
@@ -496,24 +502,6 @@ restoring tracked `.ipynb` files under `notebooks/` from the Git index, removes
 `target/notebooks/`, and deletes Jupyter checkpoint directories. Pass an
 explicit source when needed, for example `just notebook-reset-from-git HEAD`, to
 restore notebooks from a committed tree instead of the current index.
-
-The Pachner stress notebook drives the opt-in `delaunay pachner-stress` CLI with
-a tiny smoke configuration by default, so it does not launch a long benchmark
-during `notebook-check`. To collect fresh telemetry and plots, edit the scalar
-run controls in the first cell and run:
-
-```bash
-just notebook notebooks/02_pachner_stress_cli.ipynb
-```
-
-It writes per-run CSV/JSON artifacts and raw stdout/stderr logs, normalizes
-analysis tables to Parquet with Polars, and reads those Parquet tables through
-`pl.scan_parquet` for displays and plots under
-`target/notebooks/02_pachner_stress_cli/`. The first cell controls scalar
-dimension, vertex count, attempted move count, validation cadence, cached-key
-refresh cadence, retries, seed, timeout, output location, and whether to reuse
-existing artifacts. Use `RUN_COUNT` with scalar step values for small sweeps.
-`DELAUNAY_BINARY` may still point the notebook at a prebuilt CLI binary.
 
 These recipes keep the CI shape stable as notebooks are added or split.
 

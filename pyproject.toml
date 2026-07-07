@@ -182,6 +182,8 @@ known-first-party = [
     "hardware_utils",
     "notebook_check",
     "paper_check",
+    "paper_pdf_normalize",
+    "paper_source_date",
     "postprocess_changelog",
     "subprocess_utils",
     "tag_release",

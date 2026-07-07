@@ -260,8 +260,6 @@ exposition, see [`papers/validation.tex`](papers/validation.tex) and the compile
 - [`la-stack`](https://crates.io/crates/la-stack) - stack-allocated linear algebra and exact determinant support.
 - [`causal-triangulations`](https://crates.io/crates/causal-triangulations) - downstream CDT research crate built on
   Delaunay-backed geometry primitives.
-- [`markov-chain-monte-carlo`](https://crates.io/crates/markov-chain-monte-carlo) - composable MCMC traits used by the
-  broader simulation ecosystem.
 
 Within this crate, `src/core/` owns the topology data structures, `src/geometry/` owns predicates and
 geometric helpers, `src/delaunay/` owns user-facing construction/query/repair APIs, and `src/topology/`

@@ -20,162 +20,175 @@
 % Keep this explicit so CI rebuilds do not rewrite the reviewer-copy date.
 \date{July 6, 2026}
 
+% Authorship note:
+% This source is intentionally an author-facing outline. Agents may maintain
+% TeX structure, build tooling, citation plumbing, figures, and TODO prompts,
+% but Adam writes the substantive paper prose.
+\newcommand{\AuthorTodo}[1]{\textbf{Author TODO.} #1}
+
 \begin{abstract}
-  The validation architecture in \texttt{delaunay} separates local object
-  validity, combinatorial consistency, intrinsic piecewise-linear topology,
-  embedding validity, and geometric predicates. This separation is useful both
-  mathematically and in software: PL-manifoldness remains an intrinsic property
-  of the abstract simplicial complex, while Euclidean, toroidal, spherical, and
-  future embedding models specialize only the extrinsic realization and
-  geometric predicate layers.
+  \AuthorTodo{Write the abstract in your own words.}
 \end{abstract}
 
-\keywords{Delaunay triangulation, validation, piecewise-linear
-topology, computational geometry, Rust}
+\keywords{TODO author-supplied keywords}
 
 \begin{document}
 \maketitle
 
-\section{Validation Architecture}
+\section{Introduction}
 
-The central design principle is that validation layers answer different
-questions. The first three layers are independent of the embedding, while the
-last two are embedding-dependent. This decomposition lets the same triangulation
-data structure and bistellar move machinery serve Euclidean, toroidal, and
-spherical workflows without redefining PL topology for each ambient model.
+\begin{itemize}
+  \item \AuthorTodo{State the problem and motivation.}
+  \item \AuthorTodo{Explain why validation architecture matters for a
+    scientific computational-geometry library.}
+  \item \AuthorTodo{Summarize the central contribution in your own words.}
+  \item \AuthorTodo{Preview the paper structure.}
+\end{itemize}
+
+\section{Background and Definitions}
+
+\begin{itemize}
+  \item \AuthorTodo{Define the triangulation, simplex, ridge, facet, and
+    embedding terms used throughout the paper.}
+  \item \AuthorTodo{Introduce PL-manifold terminology and the link condition.}
+  \item \AuthorTodo{Introduce Euclidean, toroidal, and spherical embedding
+    models.}
+  \item \AuthorTodo{Introduce Delaunay and future geometric-predicate
+    terminology.}
+\end{itemize}
+
+\section{Validation Hierarchy}
 
 \begin{figure}[htbp]
   \centering
   \includegraphics[
     width=0.95\linewidth
   ]{generated/validation_hierarchy.png}
-  \caption{The five validation levels in \texttt{delaunay}. Levels
-    1--3 are intrinsic to the finite simplicial complex; Levels 4--5
-  depend on the selected embedding and geometric predicate family.}
+  \caption{\AuthorTodo{Describe the validation hierarchy figure.}}
   \label{fig:validation-hierarchy}
-  \Description{A five-level validation hierarchy separating element
-    validity, combinatorial consistency, intrinsic PL topology,
-  embedding validity, and geometric predicates.}
+  \Description{Author TODO accessible description of the validation
+  hierarchy figure.}
 \end{figure}
 
-\subsection{Element Validity}
+\subsection{Level 1: Element Validity}
 
-Element Validity asks whether individual objects are internally well-formed.
-For vertices this includes finite coordinates, a non-nil UUID, and the expected
-dimension. For simplices this includes exactly \(d+1\) distinct vertex
-references, valid local identity, and any owner-local orientation convention.
-This layer is deliberately local: it does not decide whether two simplices fit
-together, whether the complex is a manifold, or whether the coordinates realize
-the complex without overlap.
+\begin{itemize}
+  \item \AuthorTodo{Describe what individual vertices, simplices, facets, and
+    coordinates must prove locally.}
+  \item \AuthorTodo{Explain what this level deliberately does not check.}
+\end{itemize}
 
-\subsection{Combinatorial Consistency}
+\subsection{Level 2: Combinatorial Consistency}
 
-Combinatorial Consistency asks whether the triangulation data structure
-represents a coherent abstract simplicial complex. This includes key/UUID
-mappings, simplex incidence, reciprocal neighbor references, bounded facet
-multiplicity, ridge connectivity, and coherent combinatorial orientation. These
-checks still do not depend on a metric or embedding. A complex can pass this
-layer and still fail to be a PL manifold or fail to embed faithfully.
+\begin{itemize}
+  \item \AuthorTodo{Describe adjacency, incidence, neighbor symmetry, and TDS
+    integrity.}
+  \item \AuthorTodo{Explain the separation from topology and geometry.}
+\end{itemize}
 
-\subsection{Intrinsic PL Topology}
+\subsection{Level 3: Intrinsic PL Topology}
 
-Intrinsic PL Topology asks whether the abstract complex has the requested PL
-topological type. For a \(k\)-simplex \(\sigma\) in a \(d\)-dimensional
-PL-manifold with boundary, the link condition is
-\[
-  \mathrm{lk}(\sigma) \cong
-  \begin{cases}
-    S^{d-k-1}, & \sigma \text{ is interior},\\
-    B^{d-k-1}, & \sigma \text{ is boundary}.
-  \end{cases}
-\]
-The implementation enforces this through facet-degree checks, boundary closure,
-ridge-link and vertex-link certification as configured by
-\texttt{TopologyGuarantee}, connected components, isolated-vertex rejection, and
-Euler characteristic checks. These invariants are the PL-topology layer of the
-library, in the same spirit as the intrinsic bistellar-equivalence theory
-underlying Pachner moves~\cite{pachner1991,lickorish_simplicial_1999}.
+\begin{itemize}
+  \item \AuthorTodo{State the PL-manifold and boundary conditions.}
+  \item \AuthorTodo{Discuss pseudomanifold and strict PL-manifold policy
+    choices.}
+  \item \AuthorTodo{Explain why this layer is independent of Euclidean,
+    toroidal, and spherical embeddings.}
+\end{itemize}
 
-This layer is intrinsic. It is unchanged by replacing a Euclidean embedding
-with a toroidal or spherical one. In particular, spherical support does not
-require a new definition of PL-manifoldness; it requires spherical embedding and
-spherical Delaunay predicates in the later layers.
+\subsection{Level 4: Embedding Validity}
 
-\subsection{Embedding Validity}
+\begin{itemize}
+  \item \AuthorTodo{Describe faithful realization in the active ambient
+    model.}
+  \item \AuthorTodo{Compare Euclidean affine charts, toroidal periodic charts,
+    and spherical embeddings.}
+  \item \AuthorTodo{Explain why embedding validity is a precondition for
+    geometric predicates.}
+\end{itemize}
 
-Embedding Validity asks whether the abstract complex is faithfully realized in
-the selected ambient model. In Euclidean affine charts this requires
-nondegenerate maximal simplices and no intersections except along shared faces.
-Toroidal embeddings apply the same idea in periodic covering-space charts.
-Spherical embeddings instead require vertices to lie on
-\(S^d \subset \mathbb{R}^{d+1}\) and require spherical cells to be
-nondegenerate on that embedded sphere.
+\subsection{Level 5: Geometric Predicates}
 
-This layer is separate from Delaunay-ness. A triangulation can be a valid
-embedding without being Delaunay, and a Delaunay predicate is not meaningful on
-a folded or self-intersecting embedding.
+\begin{itemize}
+  \item \AuthorTodo{Describe Delaunay as the first implemented predicate
+    family.}
+  \item \AuthorTodo{Explain how Euclidean, toroidal, and spherical Delaunay
+    predicates differ.}
+  \item \AuthorTodo{Leave room for regular, weighted, constrained, Gabriel,
+    alpha, and future predicate families.}
+\end{itemize}
 
-\subsection{Geometric Predicates}
+\section{Implementation Architecture}
 
-Geometric Predicates ask whether a valid embedding satisfies a selected
-geometry-specific condition. The implemented predicate family today is
-Delaunay. In Euclidean and toroidal affine charts this is the empty circumsphere
-condition, implemented with robust geometric predicates in the style of
-Shewchuk~\cite{shewchuk1997} and classical Delaunay triangulation theory.
-Intrinsic Delaunay constructions on Riemannian manifolds provide the broader
-geometric setting for this separation~\cite{leibon_delaunay_2000}.
-For spherical \(d\)-D Delaunay triangulations, input points are normalized in
-\(\mathbb{R}^{d+1}\), the construction uses the ambient convex hull, and
-spherical cells correspond to outward hull
-facets~\cite{edelsbrunner2001,caroli2010}. The intrinsic dimension
-remains \(d\); the extra coordinate belongs to
-the spherical embedding backend, not to the abstract simplex dimension.
+\begin{itemize}
+  \item \AuthorTodo{Map the five validation levels onto the Rust API surface.}
+  \item \AuthorTodo{Describe the role of fast-fail checks, diagnostics,
+    reports, and cumulative validation.}
+  \item \AuthorTodo{Explain construction-time validation policy choices such
+    as \texttt{ExplicitOnly} and \texttt{OnSuspicion}.}
+  \item \AuthorTodo{Describe how spherical topology fits as a
+    coordinate/metric backend rather than a new simplex dimension.}
+\end{itemize}
 
-Future predicate families, such as regular triangulations, weighted Delaunay,
-Gabriel graphs, alpha complexes, constrained Delaunay variants, or hyperbolic
-predicates, should specialize this layer without changing the first three
-layers.
-
-\subsection{Diagnostics and Failure Examples}
-
-The developer-facing API exposes layer-local fast-fail checks and aggregate
-reports. Figure~\ref{fig:validation-failures} is generated by the validation
-notebook from the same command-line artifact used in tests, so the figure tracks
-the public diagnostics instead of hand-drawn examples.
+\section{Diagnostics and Reproducible Figures}
 
 \begin{figure}[htbp]
   \centering
   \includegraphics[
     width=\linewidth
   ]{generated/validation_model_failures.png}
-  \caption{Generated validation failures by layer, refreshed from the
-  validation notebook and command-line diagnostic artifact.}
+  \caption{\AuthorTodo{Describe the generated validation-failure examples.}}
   \label{fig:validation-failures}
-  \Description{A generated grid of representative validation failures
-  showing which layer reports each diagnostic.}
+  \Description{Author TODO accessible description of the validation-failure
+  figure.}
 \end{figure}
 
-\subsection{Extensibility}
+\begin{itemize}
+  \item \AuthorTodo{Explain how the validation notebook generates paper
+    figures.}
+  \item \AuthorTodo{Describe representative diagnostics without duplicating API
+    documentation.}
+  \item \AuthorTodo{Connect figure generation to the reproducibility story.}
+\end{itemize}
 
-The decomposition can be summarized as
-\[
-  \text{PL topology}
-  \perp
-  \text{embedding topology}
-  \perp
-  \text{geometric predicates}.
-\]
-This is the useful software boundary. Bistellar moves operate on the abstract
-simplicial complex and preserve PL topology when their local preconditions are
-met. Embedding backends then decide whether the edited complex is faithfully
-realized, and predicate backends decide whether the realized complex is
-Delaunay or satisfies another geometric condition.
+\section{Related Work}
+
+\begin{itemize}
+  \item \AuthorTodo{Place PL topology references and Pachner/Lickorish
+    results.}
+  \item \AuthorTodo{Place Euclidean robust-predicate and Delaunay references.}
+  \item \AuthorTodo{Place spherical Delaunay and Riemannian-manifold
+    references.}
+  \item \AuthorTodo{Clarify which claims are architectural observations rather
+    than literature claims.}
+\end{itemize}
+
+\section{Discussion and Future Work}
+
+\begin{itemize}
+  \item \AuthorTodo{Discuss extensibility to additional embedding models and
+    predicate families.}
+  \item \AuthorTodo{Discuss limitations of the current implementation.}
+  \item \AuthorTodo{Identify open validation and benchmarking questions.}
+\end{itemize}
+
+\section{Conclusion}
+
+\begin{itemize}
+  \item \AuthorTodo{Write the conclusion in your own words.}
+\end{itemize}
 
 \begin{acks}
-  The author thanks Steven Carlip for discussions and guidance that informed
-  this work.
+  The author thanks Steven Carlip for discussions and guidance over
+  the years on Causal Dynamical Triangulation, which motivated this work,
+  and for encouragement and questions on this library, which
+  motivated this paper.
 \end{acks}
 
+% Keep the reference list available in outline drafts so citation keys remain
+% build-tested even before their final in-text placement is written
+% by the author.
+\nocite{*}
 \bibliographystyle{ACM-Reference-Format}
 \bibliography{validation}
 

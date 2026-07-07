@@ -29,8 +29,10 @@
 
 use std::fmt;
 
+use thiserror::Error;
+
 use crate::builder::DelaunayTriangulationBuilder;
-use crate::collections::FastHashMap;
+use crate::collections::{FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::construction::{
     ConstructionOptions, DelaunayTriangulationConstructionError, InitialSimplexStrategy,
 };
@@ -49,11 +51,10 @@ use crate::topology::manifold::{
     validate_ridge_links, validate_vertex_links_from_validated_facet_map,
 };
 use crate::topology::spaces::spherical::{
-    SphericalMetric, SphericalPoint, SphericalPointError, spherical_array_from_slice,
+    SphericalMetric, SphericalPoint, SphericalPointError, ambient_array_from_slice,
 };
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyError};
 use crate::{DelaunayTriangulation, TopologyGuarantee, TriangulationValidationError, vertex};
-use thiserror::Error;
 
 /// Default tracking issue for full spherical triangulation support.
 const SPHERICAL_ROADMAP_ISSUE: u32 = 414;
@@ -86,6 +87,17 @@ impl<const D: usize> SphericalSimplex<D> {
     ///
     /// Returns [`SphericalSimplexError`] when `vertices` is not a valid simplex
     /// over a point set of size `vertex_count`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::SphericalSimplex;
+    ///
+    /// let simplex = SphericalSimplex::<2>::try_new(vec![0, 1, 2], 4)?;
+    ///
+    /// assert_eq!(simplex.vertex_indices(), &[0, 1, 2]);
+    /// # Ok::<(), delaunay::prelude::construction::SphericalSimplexError>(())
+    /// ```
     pub fn try_new(
         vertices: Vec<usize>,
         vertex_count: usize,
@@ -117,12 +129,34 @@ impl<const D: usize> SphericalSimplex<D> {
     }
 
     /// Returns the vertex indices that span this spherical simplex.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::SphericalSimplex;
+    ///
+    /// let simplex = SphericalSimplex::<2>::try_new(vec![0, 1, 2], 4)?;
+    ///
+    /// assert_eq!(simplex.vertex_indices(), &[0, 1, 2]);
+    /// # Ok::<(), delaunay::prelude::construction::SphericalSimplexError>(())
+    /// ```
     #[must_use]
     pub fn vertex_indices(&self) -> &[usize] {
         &self.vertices
     }
 
     /// Returns the intrinsic dimension of this simplex.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::SphericalSimplex;
+    ///
+    /// let simplex = SphericalSimplex::<3>::try_new(vec![0, 1, 2, 3], 5)?;
+    ///
+    /// assert_eq!(simplex.dimension(), 3);
+    /// # Ok::<(), delaunay::prelude::construction::SphericalSimplexError>(())
+    /// ```
     #[must_use]
     pub const fn dimension(&self) -> usize {
         D
@@ -181,42 +215,169 @@ pub struct SphericalDelaunayTriangulation<const D: usize> {
 
 impl<const D: usize> SphericalDelaunayTriangulation<D> {
     /// Returns the normalized spherical input points.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     SphericalDelaunayBuilder, SphericalDelaunayConstructionError,
+    ///     SphericalDelaunayTriangulation,
+    /// };
+    ///
+    /// # fn sample() -> Result<SphericalDelaunayTriangulation<2>, SphericalDelaunayConstructionError> {
+    /// #     SphericalDelaunayBuilder::<2>::try_new([
+    /// #         [1.0, 1.0, 1.0],
+    /// #         [1.0, -1.0, -1.0],
+    /// #         [-1.0, 1.0, -1.0],
+    /// #         [-1.0, -1.0, 1.0],
+    /// #     ])?.build()
+    /// # }
+    /// let triangulation = sample()?;
+    ///
+    /// assert_eq!(triangulation.points().len(), 4);
+    /// # Ok::<(), SphericalDelaunayConstructionError>(())
+    /// ```
     #[must_use]
     pub fn points(&self) -> &[SphericalPoint<D>] {
         &self.points
     }
 
     /// Returns the intrinsic spherical Delaunay simplices.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     SphericalDelaunayBuilder, SphericalDelaunayConstructionError,
+    ///     SphericalDelaunayTriangulation,
+    /// };
+    ///
+    /// # fn sample() -> Result<SphericalDelaunayTriangulation<2>, SphericalDelaunayConstructionError> {
+    /// #     SphericalDelaunayBuilder::<2>::try_new([
+    /// #         [1.0, 1.0, 1.0],
+    /// #         [1.0, -1.0, -1.0],
+    /// #         [-1.0, 1.0, -1.0],
+    /// #         [-1.0, -1.0, 1.0],
+    /// #     ])?.build()
+    /// # }
+    /// let triangulation = sample()?;
+    ///
+    /// assert_eq!(triangulation.simplices().len(), 4);
+    /// # Ok::<(), SphericalDelaunayConstructionError>(())
+    /// ```
     #[must_use]
     pub fn simplices(&self) -> &[SphericalSimplex<D>] {
         &self.simplices
     }
 
     /// Returns the sphere radius used for normalization and distance.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{SphericalDelaunayBuilder, SphericalDelaunayConstructionError};
+    ///
+    /// let triangulation = SphericalDelaunayBuilder::<2>::try_new_with_radius(
+    ///     [
+    ///         [1.0, 1.0, 1.0],
+    ///         [1.0, -1.0, -1.0],
+    ///         [-1.0, 1.0, -1.0],
+    ///         [-1.0, -1.0, 1.0],
+    ///     ],
+    ///     2.0,
+    /// )?.build()?;
+    ///
+    /// assert_eq!(triangulation.radius(), 2.0);
+    /// # Ok::<(), SphericalDelaunayConstructionError>(())
+    /// ```
     #[must_use]
     pub const fn radius(&self) -> f64 {
         self.radius
     }
 
     /// Returns the intrinsic sphere dimension.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{SphericalDelaunayBuilder, SphericalDelaunayConstructionError};
+    ///
+    /// let triangulation = SphericalDelaunayBuilder::<2>::try_new([
+    ///     [1.0, 1.0, 1.0],
+    ///     [1.0, -1.0, -1.0],
+    ///     [-1.0, 1.0, -1.0],
+    ///     [-1.0, -1.0, 1.0],
+    /// ])?.build()?;
+    ///
+    /// assert_eq!(triangulation.dimension(), 2);
+    /// # Ok::<(), SphericalDelaunayConstructionError>(())
+    /// ```
     #[must_use]
     pub const fn dimension(&self) -> usize {
         D
     }
 
     /// Returns the ambient coordinate dimension `D + 1`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{SphericalDelaunayBuilder, SphericalDelaunayConstructionError};
+    ///
+    /// let triangulation = SphericalDelaunayBuilder::<2>::try_new([
+    ///     [1.0, 1.0, 1.0],
+    ///     [1.0, -1.0, -1.0],
+    ///     [-1.0, 1.0, -1.0],
+    ///     [-1.0, -1.0, 1.0],
+    /// ])?.build()?;
+    ///
+    /// assert_eq!(triangulation.ambient_dimension(), 3);
+    /// # Ok::<(), SphericalDelaunayConstructionError>(())
+    /// ```
     #[must_use]
     pub const fn ambient_dimension(&self) -> usize {
         D + 1
     }
 
     /// Returns the number of spherical vertices.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{SphericalDelaunayBuilder, SphericalDelaunayConstructionError};
+    ///
+    /// let triangulation = SphericalDelaunayBuilder::<2>::try_new([
+    ///     [1.0, 1.0, 1.0],
+    ///     [1.0, -1.0, -1.0],
+    ///     [-1.0, 1.0, -1.0],
+    ///     [-1.0, -1.0, 1.0],
+    /// ])?.build()?;
+    ///
+    /// assert_eq!(triangulation.number_of_vertices(), 4);
+    /// # Ok::<(), SphericalDelaunayConstructionError>(())
+    /// ```
     #[must_use]
     pub const fn number_of_vertices(&self) -> usize {
         self.points.len()
     }
 
     /// Returns the number of spherical simplices.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{SphericalDelaunayBuilder, SphericalDelaunayConstructionError};
+    ///
+    /// let triangulation = SphericalDelaunayBuilder::<2>::try_new([
+    ///     [1.0, 1.0, 1.0],
+    ///     [1.0, -1.0, -1.0],
+    ///     [-1.0, 1.0, -1.0],
+    ///     [-1.0, -1.0, 1.0],
+    /// ])?.build()?;
+    ///
+    /// assert_eq!(triangulation.number_of_simplices(), 4);
+    /// # Ok::<(), SphericalDelaunayConstructionError>(())
+    /// ```
     #[must_use]
     pub const fn number_of_simplices(&self) -> usize {
         self.simplices.len()
@@ -229,8 +390,29 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
     /// Returns [`SphericalDelaunayValidationError::VertexIndexOutOfBounds`] if
     /// either index is outside the point set. A
     /// [`SphericalDelaunayValidationError::Metric`] error is possible only if
-    /// the stored radius invariant has been violated internally; triangulations
-    /// produced by the public builders carry a finite positive radius.
+    /// the stored radius invariant has been violated internally. A
+    /// [`SphericalDelaunayValidationError::GeodesicDistance`] error indicates
+    /// that one of the stored points no longer matches the triangulation's
+    /// sphere radius.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{SphericalDelaunayBuilder, SphericalDelaunayConstructionError};
+    ///
+    /// let triangulation = SphericalDelaunayBuilder::<2>::try_new([
+    ///     [1.0, 1.0, 1.0],
+    ///     [1.0, -1.0, -1.0],
+    ///     [-1.0, 1.0, -1.0],
+    ///     [-1.0, -1.0, 1.0],
+    /// ])?.build()?;
+    ///
+    /// std::assert_matches!(
+    ///     triangulation.distance_between_vertices(0, 1),
+    ///     Ok(distance) if distance > 0.0
+    /// );
+    /// # Ok::<(), SphericalDelaunayConstructionError>(())
+    /// ```
     pub fn distance_between_vertices(
         &self,
         left: usize,
@@ -251,7 +433,13 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
         SphericalMetric::<D>::try_new(self.radius)
             .map_err(|source| SphericalDelaunayValidationError::Metric { source })?
             .try_distance(left_point, right_point)
-            .map_err(|source| SphericalDelaunayValidationError::Metric { source })
+            .map_err(
+                |source| SphericalDelaunayValidationError::GeodesicDistance {
+                    left,
+                    right,
+                    source,
+                },
+            )
     }
 
     /// Validates supported spherical prototype invariants.
@@ -263,7 +451,113 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
     ///
     /// Returns [`SphericalDelaunayValidationError`] for point normalization,
     /// simplex-shape, closed-adjacency, or ambient hull-support failures.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{SphericalDelaunayBuilder, SphericalDelaunayConstructionError};
+    ///
+    /// let triangulation = SphericalDelaunayBuilder::<2>::try_new([
+    ///     [1.0, 1.0, 1.0],
+    ///     [1.0, -1.0, -1.0],
+    ///     [-1.0, 1.0, -1.0],
+    ///     [-1.0, -1.0, 1.0],
+    /// ])?.build()?;
+    ///
+    /// std::assert_matches!(triangulation.validate(), Ok(()));
+    /// # Ok::<(), SphericalDelaunayConstructionError>(())
+    /// ```
     pub fn validate(&self) -> Result<(), SphericalDelaunayValidationError> {
+        self.validate_delaunay()
+    }
+
+    /// Checks the supported Levels 1-3 spherical prototype invariants.
+    ///
+    /// This fast-fail wrapper matches the crate-wide validation naming surface
+    /// and delegates to [`validate_topology`](Self::validate_topology).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SphericalDelaunayValidationError`] when points are not on the
+    /// configured sphere, simplices are malformed, or intrinsic PL topology
+    /// checks fail.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{SphericalDelaunayBuilder, SphericalDelaunayConstructionError};
+    ///
+    /// let triangulation = SphericalDelaunayBuilder::<2>::try_new([
+    ///     [1.0, 1.0, 1.0],
+    ///     [1.0, -1.0, -1.0],
+    ///     [-1.0, 1.0, -1.0],
+    ///     [-1.0, -1.0, 1.0],
+    /// ])?.build()?;
+    ///
+    /// std::assert_matches!(triangulation.is_valid_topology(), Ok(()));
+    /// # Ok::<(), SphericalDelaunayConstructionError>(())
+    /// ```
+    pub fn is_valid_topology(&self) -> Result<(), SphericalDelaunayValidationError> {
+        self.validate_topology()
+    }
+
+    /// Checks the prototype Level 4 spherical embedding.
+    ///
+    /// This fast-fail wrapper matches the crate-wide validation naming surface
+    /// and delegates to [`validate_embedding`](Self::validate_embedding).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SphericalDelaunayValidationError`] when lower validation
+    /// layers fail, the intrinsic dimension is outside the prototype support
+    /// envelope, or a simplex is geometrically degenerate.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{SphericalDelaunayBuilder, SphericalDelaunayConstructionError};
+    ///
+    /// let triangulation = SphericalDelaunayBuilder::<2>::try_new([
+    ///     [1.0, 1.0, 1.0],
+    ///     [1.0, -1.0, -1.0],
+    ///     [-1.0, 1.0, -1.0],
+    ///     [-1.0, -1.0, 1.0],
+    /// ])?.build()?;
+    ///
+    /// std::assert_matches!(triangulation.is_valid_embedding(), Ok(()));
+    /// # Ok::<(), SphericalDelaunayConstructionError>(())
+    /// ```
+    pub fn is_valid_embedding(&self) -> Result<(), SphericalDelaunayValidationError> {
+        self.validate_embedding()
+    }
+
+    /// Checks the prototype Level 5 spherical Delaunay predicate.
+    ///
+    /// This fast-fail wrapper matches the crate-wide validation naming surface
+    /// and delegates to [`validate_delaunay`](Self::validate_delaunay).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SphericalDelaunayValidationError`] when lower validation
+    /// layers fail, the intrinsic dimension is outside the prototype support
+    /// envelope, or a simplex is not an ambient supporting hull facet.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{SphericalDelaunayBuilder, SphericalDelaunayConstructionError};
+    ///
+    /// let triangulation = SphericalDelaunayBuilder::<2>::try_new([
+    ///     [1.0, 1.0, 1.0],
+    ///     [1.0, -1.0, -1.0],
+    ///     [-1.0, 1.0, -1.0],
+    ///     [-1.0, -1.0, 1.0],
+    /// ])?.build()?;
+    ///
+    /// std::assert_matches!(triangulation.is_valid_delaunay(), Ok(()));
+    /// # Ok::<(), SphericalDelaunayConstructionError>(())
+    /// ```
+    pub fn is_valid_delaunay(&self) -> Result<(), SphericalDelaunayValidationError> {
         self.validate_delaunay()
     }
 
@@ -274,12 +568,29 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
     /// Returns [`SphericalDelaunayValidationError`] when points are not on the
     /// configured sphere, simplices are malformed, or a codimension-1 face is
     /// not incident to exactly two simplices.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{SphericalDelaunayBuilder, SphericalDelaunayConstructionError};
+    ///
+    /// let triangulation = SphericalDelaunayBuilder::<2>::try_new([
+    ///     [1.0, 1.0, 1.0],
+    ///     [1.0, -1.0, -1.0],
+    ///     [-1.0, 1.0, -1.0],
+    ///     [-1.0, -1.0, 1.0],
+    /// ])?.build()?;
+    ///
+    /// std::assert_matches!(triangulation.validate_topology(), Ok(()));
+    /// # Ok::<(), SphericalDelaunayConstructionError>(())
+    /// ```
     pub fn validate_topology(&self) -> Result<(), SphericalDelaunayValidationError> {
+        SphericalMetric::<D>::try_new(self.radius)
+            .map_err(|source| SphericalDelaunayValidationError::Metric { source })?;
         if self.simplices.is_empty() {
             return Err(SphericalDelaunayValidationError::NoSimplices);
         }
 
-        let tolerance = (self.radius * 1.0e-12).max(1.0e-12);
         for (point_index, point) in self.points.iter().enumerate() {
             if point.coords().len() != D + 1 {
                 return Err(
@@ -290,12 +601,12 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
                     },
                 );
             }
-            let norm = point.squared_norm().sqrt();
-            if (norm - self.radius).abs() > tolerance {
+            let norm_over_radius = scaled_norm_over_radius(point.coords(), self.radius);
+            if (norm_over_radius - 1.0).abs() > 1.0e-12 {
                 return Err(SphericalDelaunayValidationError::PointNotOnSphere {
                     point_index,
                     radius: self.radius,
-                    norm,
+                    norm: scaled_euclidean_norm(point.coords()),
                 });
             }
         }
@@ -408,14 +719,13 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
                 })?;
         }
 
-        tds.assign_neighbors()
-            .map_err(spherical_intrinsic_tds_error)?;
+        tds.assign_neighbors().map_err(intrinsic_tds_error)?;
         tds.assign_incident_simplices().map_err(|source| {
             SphericalDelaunayValidationError::AbstractTopologyMutation { source }
         })?;
 
         if !tds.is_connected() {
-            return Err(spherical_intrinsic_topology_error(
+            return Err(intrinsic_topology_error(
                 TriangulationValidationError::Disconnected {
                     simplex_count: tds.number_of_simplices(),
                 },
@@ -424,33 +734,33 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
 
         let facet_to_simplices = tds
             .build_facet_to_simplices_map()
-            .map_err(spherical_intrinsic_tds_error)?;
+            .map_err(intrinsic_tds_error)?;
         let facet_to_simplices = ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices)
-            .map_err(spherical_intrinsic_manifold_error)?;
+            .map_err(intrinsic_manifold_error)?;
         validate_closed_boundary_from_validated_facet_map(
             &tds,
             facet_to_simplices,
             GlobalTopology::Spherical,
         )
-        .map_err(spherical_intrinsic_manifold_error)?;
-        validate_ridge_links(&tds).map_err(spherical_intrinsic_manifold_error)?;
+        .map_err(intrinsic_manifold_error)?;
+        validate_ridge_links(&tds).map_err(intrinsic_manifold_error)?;
         validate_vertex_links_from_validated_facet_map(
             &tds,
             facet_to_simplices,
             GlobalTopology::Spherical,
         )
-        .map_err(spherical_intrinsic_manifold_error)?;
+        .map_err(intrinsic_manifold_error)?;
 
         let topology_result = validate_triangulation_euler_from_validated_facet_map(
             &tds,
             facet_to_simplices,
             GlobalTopology::Spherical,
         )
-        .map_err(spherical_intrinsic_topology_support_error)?;
+        .map_err(intrinsic_topology_support_error)?;
         if let Some(expected) = topology_result.expected
             && topology_result.chi != expected
         {
-            return Err(spherical_intrinsic_topology_error(
+            return Err(intrinsic_topology_error(
                 TriangulationValidationError::EulerCharacteristicMismatch {
                     computed: topology_result.chi,
                     expected,
@@ -475,6 +785,22 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
     /// Returns [`SphericalDelaunayValidationError`] when lower validation
     /// layers fail, the intrinsic dimension is outside the prototype support
     /// envelope, or a stored simplex is geometrically degenerate.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{SphericalDelaunayBuilder, SphericalDelaunayConstructionError};
+    ///
+    /// let triangulation = SphericalDelaunayBuilder::<2>::try_new([
+    ///     [1.0, 1.0, 1.0],
+    ///     [1.0, -1.0, -1.0],
+    ///     [-1.0, 1.0, -1.0],
+    ///     [-1.0, -1.0, 1.0],
+    /// ])?.build()?;
+    ///
+    /// std::assert_matches!(triangulation.validate_embedding(), Ok(()));
+    /// # Ok::<(), SphericalDelaunayConstructionError>(())
+    /// ```
     pub fn validate_embedding(&self) -> Result<(), SphericalDelaunayValidationError> {
         self.validate_topology()?;
         match D {
@@ -501,6 +827,22 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
     /// Returns [`SphericalDelaunayValidationError`] when lower validation
     /// layers fail, the intrinsic dimension is outside the prototype support
     /// envelope, or a simplex is not an ambient supporting hull facet.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{SphericalDelaunayBuilder, SphericalDelaunayConstructionError};
+    ///
+    /// let triangulation = SphericalDelaunayBuilder::<2>::try_new([
+    ///     [1.0, 1.0, 1.0],
+    ///     [1.0, -1.0, -1.0],
+    ///     [-1.0, 1.0, -1.0],
+    ///     [-1.0, -1.0, 1.0],
+    /// ])?.build()?;
+    ///
+    /// std::assert_matches!(triangulation.validate_delaunay(), Ok(()));
+    /// # Ok::<(), SphericalDelaunayConstructionError>(())
+    /// ```
     pub fn validate_delaunay(&self) -> Result<(), SphericalDelaunayValidationError> {
         self.validate_embedding()?;
         match D {
@@ -522,31 +864,11 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
     fn validate_embedding_with_ambient<const A: usize>(
         &self,
     ) -> Result<(), SphericalDelaunayValidationError> {
-        if A != D + 1 {
-            return Err(SphericalDelaunayValidationError::AmbientDimensionMismatch {
-                dimension: D,
-                expected: D + 1,
-                actual: A,
-            });
-        }
+        Self::validate_ambient_dimension::<A>()?;
 
-        let origin = Point::<A>::try_new([0.0; A]).map_err(|source| {
-            SphericalDelaunayValidationError::AmbientPointValidation {
-                point_index: None,
-                source,
-            }
-        })?;
+        let origin = Self::ambient_origin::<A>()?;
         for (simplex_index, simplex) in self.simplices.iter().enumerate() {
-            let origin_side =
-                self.simplex_orientation_with_point::<A>(simplex_index, simplex, origin, None)?;
-            if origin_side == Orientation::DEGENERATE {
-                return Err(
-                    SphericalDelaunayValidationError::SimplexHyperplaneContainsOrigin {
-                        simplex_index,
-                        simplex_vertices: simplex.vertex_indices().to_vec(),
-                    },
-                );
-            }
+            self.simplex_origin_side::<A>(simplex_index, simplex, origin)?;
         }
         Ok(())
     }
@@ -558,31 +880,11 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
     fn validate_delaunay_with_ambient<const A: usize>(
         &self,
     ) -> Result<(), SphericalDelaunayValidationError> {
-        if A != D + 1 {
-            return Err(SphericalDelaunayValidationError::AmbientDimensionMismatch {
-                dimension: D,
-                expected: D + 1,
-                actual: A,
-            });
-        }
+        Self::validate_ambient_dimension::<A>()?;
 
-        let origin = Point::<A>::try_new([0.0; A]).map_err(|source| {
-            SphericalDelaunayValidationError::AmbientPointValidation {
-                point_index: None,
-                source,
-            }
-        })?;
+        let origin = Self::ambient_origin::<A>()?;
         for (simplex_index, simplex) in self.simplices.iter().enumerate() {
-            let origin_side =
-                self.simplex_orientation_with_point::<A>(simplex_index, simplex, origin, None)?;
-            if origin_side == Orientation::DEGENERATE {
-                return Err(
-                    SphericalDelaunayValidationError::SimplexHyperplaneContainsOrigin {
-                        simplex_index,
-                        simplex_vertices: simplex.vertex_indices().to_vec(),
-                    },
-                );
-            }
+            let origin_side = self.simplex_origin_side::<A>(simplex_index, simplex, origin)?;
 
             for point_index in 0..self.points.len() {
                 if simplex.vertex_indices().contains(&point_index) {
@@ -609,6 +911,49 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
         Ok(())
     }
 
+    /// Validates that a const-generic ambient dimension matches `S^D`.
+    const fn validate_ambient_dimension<const A: usize>()
+    -> Result<(), SphericalDelaunayValidationError> {
+        if A != D + 1 {
+            return Err(SphericalDelaunayValidationError::AmbientDimensionMismatch {
+                dimension: D,
+                expected: D + 1,
+                actual: A,
+            });
+        }
+        Ok(())
+    }
+
+    /// Returns the ambient origin used as the sphere center.
+    fn ambient_origin<const A: usize>() -> Result<Point<A>, SphericalDelaunayValidationError> {
+        Point::<A>::try_new([0.0; A]).map_err(|source| {
+            SphericalDelaunayValidationError::AmbientPointValidation {
+                point_index: None,
+                source,
+            }
+        })
+    }
+
+    /// Computes which side of a simplex hyperplane contains the sphere center.
+    fn simplex_origin_side<const A: usize>(
+        &self,
+        simplex_index: usize,
+        simplex: &SphericalSimplex<D>,
+        origin: Point<A>,
+    ) -> Result<Orientation, SphericalDelaunayValidationError> {
+        let origin_side =
+            self.simplex_orientation_with_point::<A>(simplex_index, simplex, origin, None)?;
+        if origin_side == Orientation::DEGENERATE {
+            return Err(
+                SphericalDelaunayValidationError::SimplexHyperplaneContainsOrigin {
+                    simplex_index,
+                    simplex_vertices: simplex.vertex_indices().to_vec(),
+                },
+            );
+        }
+        Ok(origin_side)
+    }
+
     /// Converts a normalized spherical point into an ambient [`Point`].
     fn ambient_point<const A: usize>(
         &self,
@@ -620,7 +965,7 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
                 vertex_count: self.points.len(),
             },
         )?;
-        let coords = spherical_array_from_slice::<A>(point.coords()).map_err(|source| {
+        let coords = ambient_array_from_slice::<A>(point.coords()).map_err(|source| {
             SphericalDelaunayValidationError::AmbientCoordinateArray {
                 point_index,
                 source,
@@ -646,7 +991,8 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
         extra_point: Point<A>,
         extra_point_index: Option<usize>,
     ) -> Result<Orientation, SphericalDelaunayValidationError> {
-        let mut simplex_points = Vec::with_capacity(A + 1);
+        let mut simplex_points: SmallBuffer<Point<A>, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(A + 1);
         for &point_index in simplex.vertex_indices() {
             simplex_points.push(self.ambient_point::<A>(point_index)?);
         }
@@ -701,6 +1047,22 @@ impl<const D: usize> SphericalDelaunayBuilder<D> {
     ///
     /// Returns [`SphericalDelaunayConstructionError`] when any point cannot be
     /// normalized as a point on `S^D`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{SphericalDelaunayBuilder, SphericalDelaunayConstructionError};
+    ///
+    /// let triangulation = SphericalDelaunayBuilder::<2>::try_new([
+    ///     [1.0, 1.0, 1.0],
+    ///     [1.0, -1.0, -1.0],
+    ///     [-1.0, 1.0, -1.0],
+    ///     [-1.0, -1.0, 1.0],
+    /// ])?.build()?;
+    ///
+    /// assert_eq!(triangulation.ambient_dimension(), 3);
+    /// # Ok::<(), SphericalDelaunayConstructionError>(())
+    /// ```
     pub fn try_new<I, P>(points: I) -> Result<Self, SphericalDelaunayConstructionError>
     where
         I: IntoIterator<Item = P>,
@@ -715,6 +1077,25 @@ impl<const D: usize> SphericalDelaunayBuilder<D> {
     ///
     /// Returns [`SphericalDelaunayConstructionError`] when `radius` is invalid
     /// or any point cannot be normalized as a point on `S^D`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{SphericalDelaunayBuilder, SphericalDelaunayConstructionError};
+    ///
+    /// let triangulation = SphericalDelaunayBuilder::<2>::try_new_with_radius(
+    ///     [
+    ///         [1.0, 1.0, 1.0],
+    ///         [1.0, -1.0, -1.0],
+    ///         [-1.0, 1.0, -1.0],
+    ///         [-1.0, -1.0, 1.0],
+    ///     ],
+    ///     2.0,
+    /// )?.build()?;
+    ///
+    /// assert_eq!(triangulation.radius(), 2.0);
+    /// # Ok::<(), SphericalDelaunayConstructionError>(())
+    /// ```
     pub fn try_new_with_radius<I, P>(
         points: I,
         radius: f64,
@@ -751,6 +1132,38 @@ impl<const D: usize> SphericalDelaunayBuilder<D> {
     ///
     /// Returns [`SphericalDelaunayConstructionError::Point`] when points carry
     /// inconsistent radii.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     SphericalDelaunayBuilder, SphericalDelaunayConstructionError,
+    /// };
+    /// use delaunay::prelude::topology::spaces::SphericalPoint;
+    ///
+    /// let raw = [
+    ///     [1.0, 1.0, 1.0],
+    ///     [1.0, -1.0, -1.0],
+    ///     [-1.0, 1.0, -1.0],
+    ///     [-1.0, -1.0, 1.0],
+    /// ];
+    /// let points = raw
+    ///     .into_iter()
+    ///     .enumerate()
+    ///     .map(|(point_index, coords)| {
+    ///         SphericalPoint::<2>::try_new(coords).map_err(|source| {
+    ///             SphericalDelaunayConstructionError::Point {
+    ///                 point_index,
+    ///                 source,
+    ///             }
+    ///         })
+    ///     })
+    ///     .collect::<Result<Vec<_>, _>>()?;
+    /// let triangulation = SphericalDelaunayBuilder::<2>::try_from_points(points)?.build()?;
+    ///
+    /// assert_eq!(triangulation.number_of_vertices(), 4);
+    /// # Ok::<(), SphericalDelaunayConstructionError>(())
+    /// ```
     pub fn try_from_points(
         points: Vec<SphericalPoint<D>>,
     ) -> Result<Self, SphericalDelaunayConstructionError> {
@@ -778,6 +1191,26 @@ impl<const D: usize> SphericalDelaunayBuilder<D> {
     /// Final Euclidean Delaunay enforcement is disabled internally because all
     /// spherical inputs are cospherical in the ambient space; the options still
     /// control insertion order, deduplication, and retry behavior.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     ConstructionOptions, SphericalDelaunayBuilder, SphericalDelaunayConstructionError,
+    /// };
+    ///
+    /// let triangulation = SphericalDelaunayBuilder::<2>::try_new([
+    ///     [1.0, 1.0, 1.0],
+    ///     [1.0, -1.0, -1.0],
+    ///     [-1.0, 1.0, -1.0],
+    ///     [-1.0, -1.0, 1.0],
+    /// ])?
+    /// .construction_options(ConstructionOptions::default())
+    /// .build()?;
+    ///
+    /// assert_eq!(triangulation.number_of_simplices(), 4);
+    /// # Ok::<(), SphericalDelaunayConstructionError>(())
+    /// ```
     #[must_use]
     pub const fn construction_options(mut self, options: ConstructionOptions) -> Self {
         self.construction_options = options;
@@ -793,6 +1226,22 @@ impl<const D: usize> SphericalDelaunayBuilder<D> {
     /// construction fails, the normalized points do not enclose the origin, or
     /// the constructed simplices fail spherical Level 3, Level 4, or Level 5
     /// validation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{SphericalDelaunayBuilder, SphericalDelaunayConstructionError};
+    ///
+    /// let triangulation = SphericalDelaunayBuilder::<2>::try_new([
+    ///     [1.0, 1.0, 1.0],
+    ///     [1.0, -1.0, -1.0],
+    ///     [-1.0, 1.0, -1.0],
+    ///     [-1.0, -1.0, 1.0],
+    /// ])?.build()?;
+    ///
+    /// std::assert_matches!(triangulation.validate_delaunay(), Ok(()));
+    /// # Ok::<(), SphericalDelaunayConstructionError>(())
+    /// ```
     pub fn build(
         self,
     ) -> Result<SphericalDelaunayTriangulation<D>, SphericalDelaunayConstructionError> {
@@ -928,7 +1377,7 @@ impl<const D: usize> SphericalDelaunayBuilder<D> {
             .iter()
             .enumerate()
             .map(|(point_index, point)| {
-                let coords = spherical_array_from_slice::<A>(point.coords()).map_err(|source| {
+                let coords = ambient_array_from_slice::<A>(point.coords()).map_err(|source| {
                     SphericalDelaunayConstructionError::AmbientCoordinateArray {
                         point_index,
                         source,
@@ -961,27 +1410,61 @@ fn synthetic_topology_coordinates<const D: usize>(
     Ok(coords)
 }
 
+/// Computes `||coords|| / radius` without squaring very large radii.
+fn scaled_norm_over_radius(coords: &[f64], radius: f64) -> f64 {
+    let max_abs = coords
+        .iter()
+        .fold(0.0_f64, |max_abs, &coord| max_abs.max(coord.abs()));
+    if max_abs == 0.0 {
+        return 0.0;
+    }
+    let scaled_norm = coords
+        .iter()
+        .fold(0.0, |acc, &coord| {
+            let scaled = coord / max_abs;
+            scaled.mul_add(scaled, acc)
+        })
+        .sqrt();
+    (max_abs / radius) * scaled_norm
+}
+
+/// Computes a best-effort Euclidean norm for validation diagnostics.
+fn scaled_euclidean_norm(coords: &[f64]) -> f64 {
+    let max_abs = coords
+        .iter()
+        .fold(0.0_f64, |max_abs, &coord| max_abs.max(coord.abs()));
+    if max_abs == 0.0 {
+        return 0.0;
+    }
+    let scaled_norm = coords
+        .iter()
+        .fold(0.0, |acc, &coord| {
+            let scaled = coord / max_abs;
+            scaled.mul_add(scaled, acc)
+        })
+        .sqrt();
+    max_abs * scaled_norm
+}
+
 /// Wraps TDS invariant failures from the synthetic topology bridge.
-fn spherical_intrinsic_tds_error(source: TdsError) -> SphericalDelaunayValidationError {
-    spherical_intrinsic_error(InvariantError::Tds(source))
+fn intrinsic_tds_error(source: TdsError) -> SphericalDelaunayValidationError {
+    intrinsic_error(InvariantError::Tds(source))
 }
 
 /// Wraps manifold invariant failures from the synthetic topology bridge.
-fn spherical_intrinsic_manifold_error(source: ManifoldError) -> SphericalDelaunayValidationError {
-    spherical_intrinsic_error(InvariantError::from(source))
+fn intrinsic_manifold_error(source: ManifoldError) -> SphericalDelaunayValidationError {
+    intrinsic_error(InvariantError::from(source))
 }
 
 /// Wraps generic triangulation invariant failures as spherical Level 3 errors.
-fn spherical_intrinsic_topology_error(
+fn intrinsic_topology_error(
     source: TriangulationValidationError,
 ) -> SphericalDelaunayValidationError {
-    spherical_intrinsic_error(InvariantError::Triangulation(source))
+    intrinsic_error(InvariantError::Triangulation(source))
 }
 
 /// Converts topology-support helper failures into the shared invariant tree.
-fn spherical_intrinsic_topology_support_error(
-    source: TopologyError,
-) -> SphericalDelaunayValidationError {
+fn intrinsic_topology_support_error(source: TopologyError) -> SphericalDelaunayValidationError {
     let invariant = match source {
         TopologyError::FacetMapBuild { source }
         | TopologyError::BoundaryFacetEnumeration { source }
@@ -989,11 +1472,11 @@ fn spherical_intrinsic_topology_support_error(
         TopologyError::BoundaryFacetSimplexAccess { source } => InvariantError::Tds(source.into()),
         TopologyError::BoundaryClassification { source } => InvariantError::from(*source),
     };
-    spherical_intrinsic_error(invariant)
+    intrinsic_error(invariant)
 }
 
 /// Boxes the shared invariant tree so spherical validation errors stay compact.
-fn spherical_intrinsic_error(source: InvariantError) -> SphericalDelaunayValidationError {
+fn intrinsic_error(source: InvariantError) -> SphericalDelaunayValidationError {
     SphericalDelaunayValidationError::IntrinsicTopology {
         source: Box::new(source),
     }
@@ -1223,6 +1706,18 @@ pub enum SphericalDelaunayValidationError {
     #[error("spherical metric configuration failed: {source}")]
     Metric {
         /// Underlying metric configuration error.
+        #[source]
+        source: SphericalPointError,
+    },
+
+    /// Geodesic distance computation failed between stored vertices.
+    #[error("geodesic distance between spherical vertices {left} and {right} failed: {source}")]
+    GeodesicDistance {
+        /// Left vertex index.
+        left: usize,
+        /// Right vertex index.
+        right: usize,
+        /// Underlying distance error.
         #[source]
         source: SphericalPointError,
     },
@@ -1457,6 +1952,226 @@ mod tests {
     fn spherical_triangle(vertices: [usize; 3], vertex_count: usize) -> SphericalSimplex<2> {
         SphericalSimplex::<2>::try_new(vertices.to_vec(), vertex_count)
             .expect("fixture simplex should be well-formed")
+    }
+
+    fn tetrahedron_boundary_points() -> Vec<SphericalPoint<2>> {
+        tetrahedron_boundary_points_with_radius(1.0)
+    }
+
+    fn tetrahedron_boundary_points_with_radius(radius: f64) -> Vec<SphericalPoint<2>> {
+        vec![
+            SphericalPoint::<2>::try_new_with_radius([1.0, 1.0, 1.0], radius)
+                .expect("finite point"),
+            SphericalPoint::<2>::try_new_with_radius([1.0, -1.0, -1.0], radius)
+                .expect("finite point"),
+            SphericalPoint::<2>::try_new_with_radius([-1.0, 1.0, -1.0], radius)
+                .expect("finite point"),
+            SphericalPoint::<2>::try_new_with_radius([-1.0, -1.0, 1.0], radius)
+                .expect("finite point"),
+        ]
+    }
+
+    fn tetrahedron_boundary_simplices(vertex_count: usize) -> Vec<SphericalSimplex<2>> {
+        vec![
+            spherical_triangle([0, 1, 2], vertex_count),
+            spherical_triangle([0, 1, 3], vertex_count),
+            spherical_triangle([0, 2, 3], vertex_count),
+            spherical_triangle([1, 2, 3], vertex_count),
+        ]
+    }
+
+    #[test]
+    fn level3_rejects_empty_spherical_complex() {
+        let triangulation = SphericalDelaunayTriangulation::<2> {
+            points: tetrahedron_boundary_points(),
+            simplices: Vec::new(),
+            radius: 1.0,
+        };
+
+        assert_matches!(
+            triangulation.validate_topology(),
+            Err(SphericalDelaunayValidationError::NoSimplices)
+        );
+    }
+
+    #[test]
+    fn level3_rejects_duplicate_spherical_simplices() {
+        let points = tetrahedron_boundary_points();
+        let vertex_count = points.len();
+        let triangulation = SphericalDelaunayTriangulation::<2> {
+            points,
+            simplices: vec![
+                spherical_triangle([0, 1, 2], vertex_count),
+                spherical_triangle([2, 1, 0], vertex_count),
+            ],
+            radius: 1.0,
+        };
+
+        assert_matches!(
+            triangulation.validate_topology(),
+            Err(SphericalDelaunayValidationError::DuplicateSimplex {
+                simplex_index: 1,
+                previous_simplex_index: 0,
+                simplex_vertices,
+            }) if simplex_vertices == vec![0, 1, 2]
+        );
+    }
+
+    #[test]
+    fn level3_rejects_malformed_stored_spherical_simplex() {
+        let points = tetrahedron_boundary_points();
+        let triangulation = SphericalDelaunayTriangulation::<2> {
+            points,
+            simplices: vec![SphericalSimplex {
+                vertices: vec![0, 1, 4],
+            }],
+            radius: 1.0,
+        };
+
+        assert_matches!(
+            triangulation.validate_topology(),
+            Err(SphericalDelaunayValidationError::InvalidSimplex {
+                simplex_index: 0,
+                source: SphericalSimplexError::VertexIndexOutOfBounds {
+                    vertex_index: 4,
+                    vertex_count: 4,
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn level3_rejects_open_spherical_facet_incidence() {
+        let points = tetrahedron_boundary_points();
+        let vertex_count = points.len();
+        let triangulation = SphericalDelaunayTriangulation::<2> {
+            points,
+            simplices: vec![spherical_triangle([0, 1, 2], vertex_count)],
+            radius: 1.0,
+        };
+
+        assert_matches!(
+            triangulation.validate_topology(),
+            Err(SphericalDelaunayValidationError::InvalidFacetIncidence {
+                incident_count: 1,
+                ..
+            })
+        );
+    }
+
+    #[test]
+    fn level3_rejects_unused_spherical_vertices() {
+        let mut points = tetrahedron_boundary_points();
+        points.push(SphericalPoint::<2>::try_new([1.0, 0.0, 0.0]).expect("finite point"));
+        let vertex_count = points.len();
+        let triangulation = SphericalDelaunayTriangulation::<2> {
+            points,
+            simplices: tetrahedron_boundary_simplices(vertex_count),
+            radius: 1.0,
+        };
+
+        assert_matches!(
+            triangulation.validate_topology(),
+            Err(SphericalDelaunayValidationError::UnusedVertex { vertex_index: 4 })
+        );
+    }
+
+    #[test]
+    fn level3_rejects_points_not_on_configured_radius() {
+        let points = tetrahedron_boundary_points();
+        let vertex_count = points.len();
+        let triangulation = SphericalDelaunayTriangulation::<2> {
+            points,
+            simplices: tetrahedron_boundary_simplices(vertex_count),
+            radius: 2.0,
+        };
+
+        assert_matches!(
+            triangulation.validate_topology(),
+            Err(SphericalDelaunayValidationError::PointNotOnSphere {
+                point_index: 0,
+                radius,
+                norm,
+            }) if radius.to_bits() == 2.0_f64.to_bits() && (norm - 1.0).abs() < 1.0e-12
+        );
+    }
+
+    #[test]
+    fn distance_reports_typed_geodesic_failure() {
+        let unit =
+            SphericalPoint::<2>::try_new([1.0, 0.0, 0.0]).expect("unit point should normalize");
+        let radius_two = SphericalPoint::<2>::try_new_with_radius([0.0, 1.0, 0.0], 2.0)
+            .expect("radius-two point should normalize");
+        let triangulation = SphericalDelaunayTriangulation::<2> {
+            points: vec![unit, radius_two],
+            simplices: Vec::new(),
+            radius: 1.0,
+        };
+
+        assert_matches!(
+            triangulation.distance_between_vertices(0, 1),
+            Err(SphericalDelaunayValidationError::GeodesicDistance {
+                left: 0,
+                right: 1,
+                source: SphericalPointError::MismatchedRadius { expected, actual },
+            }) if expected.to_bits() == 1.0_f64.to_bits()
+                && actual.to_bits() == 2.0_f64.to_bits()
+        );
+    }
+
+    #[test]
+    fn level3_accepts_large_radius_without_norm_overflow() {
+        let radius = f64::MAX / 4.0;
+        let points = tetrahedron_boundary_points_with_radius(radius);
+        let vertex_count = points.len();
+        let triangulation = SphericalDelaunayTriangulation::<2> {
+            points,
+            simplices: tetrahedron_boundary_simplices(vertex_count),
+            radius,
+        };
+
+        triangulation
+            .validate_topology()
+            .expect("scaled norm check should avoid squaring large finite radii");
+    }
+
+    #[test]
+    fn level4_rejects_s4_after_intrinsic_topology_passes() {
+        let points = vec![
+            SphericalPoint::<4>::try_new([1.0, 0.0, 0.0, 0.0, 0.0]).expect("finite point"),
+            SphericalPoint::<4>::try_new([0.0, 1.0, 0.0, 0.0, 0.0]).expect("finite point"),
+            SphericalPoint::<4>::try_new([0.0, 0.0, 1.0, 0.0, 0.0]).expect("finite point"),
+            SphericalPoint::<4>::try_new([0.0, 0.0, 0.0, 1.0, 0.0]).expect("finite point"),
+            SphericalPoint::<4>::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).expect("finite point"),
+            SphericalPoint::<4>::try_new([-1.0, -1.0, -1.0, -1.0, -1.0]).expect("finite point"),
+        ];
+        let vertex_count = points.len();
+        let simplices = (0..vertex_count)
+            .map(|omitted| {
+                let vertices = (0..vertex_count)
+                    .filter(|&vertex_index| vertex_index != omitted)
+                    .collect();
+                SphericalSimplex::<4>::try_new(vertices, vertex_count)
+                    .expect("boundary simplex should be well formed")
+            })
+            .collect();
+        let triangulation = SphericalDelaunayTriangulation::<4> {
+            points,
+            simplices,
+            radius: 1.0,
+        };
+
+        triangulation
+            .validate_topology()
+            .expect("5-simplex boundary is intrinsically S4");
+        assert_matches!(
+            triangulation.validate_embedding(),
+            Err(SphericalDelaunayValidationError::UnsupportedLayer {
+                layer: SphericalValidationLayer::Embedding,
+                dimension: 4,
+                tracking_issue: SPHERICAL_ROADMAP_ISSUE,
+            })
+        );
     }
 
     #[test]

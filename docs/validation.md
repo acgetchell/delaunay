@@ -89,9 +89,14 @@ global Level 3 intrinsic-topology pass plus changed-scope Level 4 embedding guar
 controlled by a `ValidationPolicy` on the triangulation.
 
 This is a performance vs certainty knob: Level 3 (`Triangulation::is_valid_topology()`) and full
-pairwise Level 4 (`Triangulation::is_valid_embedding()`) are relatively expensive, so the default
-behavior is to run automatic global topology and changed-scope embedding checks only when
-something looks “off”.
+pairwise Level 4 (`Triangulation::is_valid_embedding()`) are relatively expensive. The default depends
+on the topology guarantee chosen for the incremental construction path:
+
+- `TopologyGuarantee::PLManifold` starts with `ValidationPolicy::ExplicitOnly`, so normal insertions
+  preserve local invariants and callers request global Level 3 / Level 4 checks explicitly.
+- `TopologyGuarantee::Pseudomanifold` starts with `ValidationPolicy::OnSuspicion`, so automatic
+  global topology and changed-scope embedding checks run only when an insertion reports a suspicious
+  local condition.
 
 ### What is validated automatically?
 
