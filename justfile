@@ -10,6 +10,8 @@ home_dir := env_var_or_default("HOME", env_var_or_default("USERPROFILE", ""))
 cargo_home := env_var_or_default("CARGO_HOME", home_dir + "/.cargo")
 path_separator := if os_family() == "windows" { ";" } else { ":" }
 export PATH := cargo_home + "/bin" + path_separator + env_var("PATH")
+binary_extension := if os_family() == "windows" { ".exe" } else { "" }
+perf_delaunay_binary := "target/perf/delaunay" + binary_extension
 
 cargo_llvm_cov_version := "0.8.7"
 dprint_version := "0.55.1"
@@ -747,12 +749,16 @@ notebook-output-check: _ensure-uv
 notebook-setup: _ensure-uv
     uv sync --group notebooks
 
+# Build the CLI used by paper notebooks before nbconvert starts its execution timer.
+paper-cli:
+    cargo build --profile perf --features cli --bin delaunay
+
 # Refresh tracked paper figures from reproducible notebooks.
-paper-figures: _ensure-uv
+paper-figures: _ensure-uv paper-cli
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p papers/generated
-    DELAUNAY_VALIDATION_PAPER_FIGURE_DIR="papers/generated" just notebook-execute notebooks/01_validation.ipynb target/papers/notebooks
+    DELAUNAY_BINARY="{{ perf_delaunay_binary }}" DELAUNAY_VALIDATION_PAPER_FIGURE_DIR="papers/generated" just notebook-execute notebooks/01_validation.ipynb target/papers/notebooks
 
 # Format publication-facing TeX sources.
 paper-tex-fmt: _ensure-tex-fmt

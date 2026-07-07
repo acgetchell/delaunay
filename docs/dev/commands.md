@@ -516,6 +516,7 @@ ignored and build under `target/papers/`.
 Commands:
 
 ```bash
+just paper-cli
 just paper-figures
 just paper-tex-lint
 just paper-build
@@ -524,8 +525,11 @@ just paper-check
 just papers
 ```
 
-`just paper-figures` executes `notebooks/01_validation.ipynb` with
-`DELAUNAY_VALIDATION_PAPER_FIGURE_DIR=papers/generated`, refreshing the PNG
+`just paper-cli` builds the local `delaunay` binary used by paper notebooks
+before nbconvert starts its execution timeout. `just paper-figures` executes
+`notebooks/01_validation.ipynb` with
+`DELAUNAY_VALIDATION_PAPER_FIGURE_DIR=papers/generated` and
+`DELAUNAY_BINARY` pointing at the perf-profile CLI binary, refreshing the PNG
 figures included by `papers/validation.tex`. Ordinary notebook validation does
 not refresh tracked paper figures. `just paper-tex-lint` runs `tex-fmt --check`
 and `chktex` over `papers/*.tex`. `just paper-build` compiles
