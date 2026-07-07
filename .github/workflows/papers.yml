@@ -84,17 +84,29 @@ jobs:
       - name: Sync Python tooling
         run: uv sync --locked --group dev --group notebooks
 
+      - name: Cache Homebrew downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/Library/Caches/Homebrew
+          key: homebrew-papers-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/workflows/papers.yml') }}
+          restore-keys: homebrew-papers-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Install paper system dependencies
         run: |
           brew update
-          brew install libpng pkgconf
+          brew install fontconfig freetype graphite2 harfbuzz icu4c libpng pkgconf zlib
+          icu_pkg_config="$(brew --prefix icu4c)/lib/pkgconfig"
+          zlib_pkg_config="$(brew --prefix zlib)/lib/pkgconfig"
+          export PKG_CONFIG_PATH="$icu_pkg_config:$zlib_pkg_config${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+          echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH" >> "$GITHUB_ENV"
           if ! command -v tlmgr >/dev/null; then
             brew install --cask basictex
           fi
           export PATH="/Library/TeX/texbin:$PATH"
           echo "/Library/TeX/texbin" >> "$GITHUB_PATH"
           if ! command -v chktex >/dev/null; then
-            sudo tlmgr install chktex
+            sudo "$(command -v tlmgr)" update --self
+            sudo "$(command -v tlmgr)" install chktex
           fi
 
       - name: Install just
