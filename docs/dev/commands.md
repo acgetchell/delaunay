@@ -538,9 +538,11 @@ figures. `just papers` runs the full figure, lint, build, and PDF-check path.
 
 Tectonic and `tex-fmt` are pinned Cargo-installed tools. `chktex` comes from a
 TeX distribution or system package manager. Building Tectonic from Cargo also
-requires `pkg-config` to resolve ICU (`icu-uc`). `just setup-tools` checks that
-dependency and auto-detects common Homebrew ICU pkg-config directories before it
-asks for a manual `PKG_CONFIG_PATH`.
+requires `pkg-config` and development headers for its native bridge libraries,
+including fontconfig, FreeType, Graphite2, HarfBuzz, ICU, libpng, and zlib.
+`just setup-tools` checks ICU locally and auto-detects common Homebrew ICU
+pkg-config directories before it asks for a manual `PKG_CONFIG_PATH`; the Linux
+paper CI job installs the full native package set explicitly.
 
 ---
 

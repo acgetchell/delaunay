@@ -239,6 +239,7 @@ bench-ci:
 
 # Compile benchmark harnesses without running them.
 bench-compile:
+    @echo "Compiling benchmark harnesses without running them; this can take several minutes on Windows/MSVC."
     cargo bench --workspace --no-run --features bench
 
 # Generate performance summary with fresh perf-profile benchmark runs (for releases)

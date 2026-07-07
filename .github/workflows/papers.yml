@@ -87,7 +87,16 @@ jobs:
       - name: Install paper system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes chktex libicu-dev libpng-dev pkg-config
+          sudo apt-get install --yes \
+            chktex \
+            libfontconfig1-dev \
+            libfreetype6-dev \
+            libgraphite2-dev \
+            libharfbuzz-dev \
+            libicu-dev \
+            libpng-dev \
+            pkg-config \
+            zlib1g-dev
 
       - name: Install just
         uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
