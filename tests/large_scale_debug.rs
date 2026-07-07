@@ -99,8 +99,6 @@
 
 #![forbid(unsafe_code)]
 
-use delaunay::geometry::kernel::{ExactPredicates, Kernel, RobustKernel};
-use delaunay::geometry::util::safe_usize_to_scalar;
 use delaunay::prelude::construction::{
     ConstructionOptions, ConstructionStatistics, DelaunayRepairPolicy, DelaunayTriangulation,
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionErrorWithStatistics,
@@ -110,7 +108,9 @@ use delaunay::prelude::diagnostics::ConstructionTelemetry;
 use delaunay::prelude::generators::{
     generate_random_points_in_ball_seeded, generate_random_points_in_range_seeded,
 };
-use delaunay::prelude::geometry::CoordinateRange;
+use delaunay::prelude::geometry::{
+    CoordinateRange, ExactPredicates, Kernel, RobustKernel, safe_usize_to_scalar,
+};
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::insertion::InsertionResult;
 use delaunay::prelude::insertion::{InsertionOutcome, InsertionStatistics};
@@ -1523,8 +1523,10 @@ where
         println!();
         println!("Running final flip-based repair (advanced)...");
         let t_repair = Instant::now();
-        let mut repair_config = DelaunayRepairHeuristicConfig::default();
-        repair_config.max_flips = repair_max_flips;
+        let repair_config = repair_max_flips
+            .map_or_else(DelaunayRepairHeuristicConfig::default, |max_flips| {
+                DelaunayRepairHeuristicConfig::default().with_max_flips(max_flips)
+            });
         match dt.repair_delaunay_with_flips_advanced(repair_config) {
             Ok(outcome) => {
                 println!(
@@ -1835,30 +1837,22 @@ fn regression_issue_230_4d_100_orientation() {
     );
 }
 
-#[test]
-#[cfg(feature = "slow-tests")]
-fn debug_large_scale_2d() {
-    let outcome = debug_large_case::<2>("2D", 40_000);
-    assert_matches!(outcome, DebugOutcome::Success, "{outcome}");
+macro_rules! gen_debug_large_scale_tests {
+    ($($name:ident: $dim:literal, $label:literal, $count:literal;)*) => {
+        $(
+            #[test]
+            #[cfg(feature = "slow-tests")]
+            fn $name() {
+                let outcome = debug_large_case::<$dim>($label, $count);
+                assert_matches!(outcome, DebugOutcome::Success, "{outcome}");
+            }
+        )*
+    };
 }
 
-#[test]
-#[cfg(feature = "slow-tests")]
-fn debug_large_scale_3d() {
-    let outcome = debug_large_case::<3>("3D", 7_500);
-    assert_matches!(outcome, DebugOutcome::Success, "{outcome}");
-}
-
-#[test]
-#[cfg(feature = "slow-tests")]
-fn debug_large_scale_4d() {
-    let outcome = debug_large_case::<4>("4D", 900);
-    assert_matches!(outcome, DebugOutcome::Success, "{outcome}");
-}
-
-#[test]
-#[cfg(feature = "slow-tests")]
-fn debug_large_scale_5d() {
-    let outcome = debug_large_case::<5>("5D", 150);
-    assert_matches!(outcome, DebugOutcome::Success, "{outcome}");
+gen_debug_large_scale_tests! {
+    debug_large_scale_2d: 2, "2D", 40_000;
+    debug_large_scale_3d: 3, "3D", 7_500;
+    debug_large_scale_4d: 4, "4D", 900;
+    debug_large_scale_5d: 5, "5D", 150;
 }

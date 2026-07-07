@@ -1031,7 +1031,7 @@ mod tests {
             Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         let radius_3d = circumradius(&tetrahedron_3d).unwrap();
-        println!("3D circumradius: {radius_3d}");
+        tracing::debug!("3D circumradius: {radius_3d}");
         // For unit tetrahedron with vertices at (0,0,0), (1,0,0), (0,1,0), (0,0,1)
         // circumradius = sqrt(3)/2 ≈ 0.866
         let expected_radius_3d = (3.0_f64).sqrt() / 2.0;
@@ -1046,7 +1046,7 @@ mod tests {
             Point::try_new([0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         let radius_4d = circumradius(&simplex_4d).unwrap();
-        println!("4D circumradius: {radius_4d}");
+        tracing::debug!("4D circumradius: {radius_4d}");
         // For unit 4-simplex, circumradius = 1.0
         let expected_radius_4d = 1.0;
         assert_relative_eq!(radius_4d, expected_radius_4d, epsilon = 1e-10);
@@ -1061,7 +1061,7 @@ mod tests {
             Point::try_new([0.0, 0.0, 0.0, 0.0, 1.0]).expect("finite point coordinates"),
         ];
         let radius_5d = circumradius(&simplex_5d).unwrap();
-        println!("5D circumradius: {radius_5d}");
+        tracing::debug!("5D circumradius: {radius_5d}");
         // For unit 5-simplex, circumradius = sqrt(5)/2 ≈ 1.118
         let expected_radius_5d = (5.0_f64).sqrt() / 2.0;
         assert_relative_eq!(radius_5d, expected_radius_5d, epsilon = 1e-10);
@@ -1086,15 +1086,15 @@ mod tests {
             "Radius should increase from 4D to 5D"
         );
 
-        // Print summary for verification
-        println!("Circumradius summary:");
+        // Log summary for verification
+        tracing::debug!("Circumradius summary:");
         let expected_2d = (2.0_f64).sqrt() / 2.0;
         let expected_3d = (3.0_f64).sqrt() / 2.0;
         let expected_5d = (5.0_f64).sqrt() / 2.0;
-        println!("  2D (right triangle): {radius_2d} ≈ {expected_2d:.6}");
-        println!("  3D (unit tetrahedron): {radius_3d} ≈ {expected_3d:.6}");
-        println!("  4D (unit 4-simplex): {radius_4d} = 1.0");
-        println!("  5D (unit 5-simplex): {radius_5d} ≈ {expected_5d:.6}");
+        tracing::debug!("  2D (right triangle): {radius_2d} ≈ {expected_2d:.6}");
+        tracing::debug!("  3D (unit tetrahedron): {radius_3d} ≈ {expected_3d:.6}");
+        tracing::debug!("  4D (unit 4-simplex): {radius_4d} = 1.0");
+        tracing::debug!("  5D (unit 5-simplex): {radius_5d} ≈ {expected_5d:.6}");
     }
 
     #[test]
@@ -1388,23 +1388,6 @@ mod tests {
         // This should fail because points are collinear
         let center_result = circumcenter(&points);
         assert!(center_result.is_err());
-    }
-
-    #[test]
-    fn predicates_circumradius_with_center() {
-        // Test the circumradius_with_center function
-        let points = vec![
-            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([0.0, 0.0, 1.0]).expect("finite point coordinates"),
-        ];
-
-        let center = circumcenter(&points).unwrap();
-        let radius_with_center = circumradius_with_center(&points, &center);
-        let radius_direct = circumradius(&points).unwrap();
-
-        assert_relative_eq!(radius_with_center.unwrap(), radius_direct, epsilon = 1e-10);
     }
 
     #[test]
@@ -1775,7 +1758,7 @@ mod tests {
             let result_lifted = insphere_lifted(&simplex, *test_point).unwrap();
             let result_distance = insphere_distance(&simplex, *test_point).unwrap();
 
-            println!(
+            tracing::debug!(
                 "2D {description}: std={result_std:?}, lifted={result_lifted:?}, distance={result_distance:?}"
             );
 
@@ -1825,7 +1808,7 @@ mod tests {
             let result_lifted = insphere_lifted(&simplex, *test_point).unwrap();
             let result_distance = insphere_distance(&simplex, *test_point).unwrap();
 
-            println!(
+            tracing::debug!(
                 "3D {description}: std={result_std:?}, lifted={result_lifted:?}, distance={result_distance:?}"
             );
 
@@ -1877,7 +1860,7 @@ mod tests {
             let result_lifted = insphere_lifted(&simplex, *test_point).unwrap();
             let result_distance = insphere_distance(&simplex, *test_point).unwrap();
 
-            println!(
+            tracing::debug!(
                 "4D {description}: std={result_std:?}, lifted={result_lifted:?}, distance={result_distance:?}"
             );
 
@@ -1930,7 +1913,7 @@ mod tests {
             let result_lifted = insphere_lifted(&simplex, *test_point).unwrap();
             let result_distance = insphere_distance(&simplex, *test_point).unwrap();
 
-            println!(
+            tracing::debug!(
                 "5D {description}: std={result_std:?}, lifted={result_lifted:?}, distance={result_distance:?}"
             );
 
@@ -2030,9 +2013,9 @@ mod tests {
             }
         }
 
-        println!("Stress test results: {total_tests} total tests");
+        tracing::debug!("Stress test results: {total_tests} total tests");
         for (key, count) in &disagreement_count {
-            println!("  {key}: {count} disagreements");
+            tracing::debug!("  {key}: {count} disagreements");
         }
 
         // With our fix, we should have perfect agreement

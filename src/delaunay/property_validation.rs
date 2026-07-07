@@ -368,6 +368,12 @@ fn first_delaunay_violation_witness<U, V, const D: usize>(
 /// This performs the expensive geometric check but intentionally does **not** run
 /// `tds.is_valid()` up front. Callers that want cumulative validation should run
 /// lower-layer checks separately.
+///
+/// # Errors
+///
+/// Returns [`DelaunayValidationError`] when a simplex cannot be interpreted as
+/// a geometric simplex, a robust predicate fails, or a vertex lies inside a
+/// simplex circumsphere and therefore violates the Delaunay property.
 pub fn is_delaunay_property_only<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
 ) -> Result<(), DelaunayValidationError> {

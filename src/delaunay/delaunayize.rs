@@ -95,11 +95,16 @@ use thiserror::Error;
 /// ```rust
 /// use delaunay::prelude::delaunayize::DelaunayizeConfig;
 ///
-/// let config = DelaunayizeConfig::default();
-/// assert_eq!(config.topology_max_iterations, 64);
-/// assert_eq!(config.topology_max_simplices_removed, 10_000);
-/// assert!(!config.fallback_rebuild);
-/// assert!(config.delaunay_max_flips.is_none());
+/// let config = DelaunayizeConfig::default()
+///     .with_topology_max_iterations(32)
+///     .with_topology_max_simplices_removed(1_000)
+///     .with_fallback_rebuild(true)
+///     .with_delaunay_max_flips(500);
+///
+/// assert_eq!(config.topology_max_iterations, 32);
+/// assert_eq!(config.topology_max_simplices_removed, 1_000);
+/// assert!(config.fallback_rebuild);
+/// assert_eq!(config.delaunay_max_flips, Some(500));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DelaunayizeConfig {
@@ -131,6 +136,93 @@ impl Default for DelaunayizeConfig {
             fallback_rebuild: false,
             delaunay_max_flips: None,
         }
+    }
+}
+
+impl DelaunayizeConfig {
+    /// Sets the maximum number of PL-manifold topology-repair iterations.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::delaunayize::DelaunayizeConfig;
+    ///
+    /// let config = DelaunayizeConfig::default().with_topology_max_iterations(32);
+    /// assert_eq!(config.topology_max_iterations, 32);
+    /// ```
+    #[must_use]
+    pub const fn with_topology_max_iterations(mut self, max_iterations: usize) -> Self {
+        self.topology_max_iterations = max_iterations;
+        self
+    }
+
+    /// Sets the maximum number of simplices topology repair may remove.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::delaunayize::DelaunayizeConfig;
+    ///
+    /// let config = DelaunayizeConfig::default().with_topology_max_simplices_removed(1_000);
+    /// assert_eq!(config.topology_max_simplices_removed, 1_000);
+    /// ```
+    #[must_use]
+    pub const fn with_topology_max_simplices_removed(
+        mut self,
+        max_simplices_removed: usize,
+    ) -> Self {
+        self.topology_max_simplices_removed = max_simplices_removed;
+        self
+    }
+
+    /// Enables or disables fallback rebuild after failed topology or Delaunay repair.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::delaunayize::DelaunayizeConfig;
+    ///
+    /// let config = DelaunayizeConfig::default().with_fallback_rebuild(true);
+    /// assert!(config.fallback_rebuild);
+    /// ```
+    #[must_use]
+    pub const fn with_fallback_rebuild(mut self, fallback_rebuild: bool) -> Self {
+        self.fallback_rebuild = fallback_rebuild;
+        self
+    }
+
+    /// Sets the optional per-attempt flip budget for the Delaunay repair stage.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::delaunayize::DelaunayizeConfig;
+    ///
+    /// let config = DelaunayizeConfig::default().with_delaunay_max_flips(500);
+    /// assert_eq!(config.delaunay_max_flips, Some(500));
+    /// ```
+    #[must_use]
+    pub const fn with_delaunay_max_flips(mut self, max_flips: usize) -> Self {
+        self.delaunay_max_flips = Some(max_flips);
+        self
+    }
+
+    /// Clears the per-attempt flip budget so Delaunay repair uses its default bound.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::delaunayize::DelaunayizeConfig;
+    ///
+    /// let config = DelaunayizeConfig::default()
+    ///     .with_delaunay_max_flips(500)
+    ///     .without_delaunay_max_flips();
+    /// assert_eq!(config.delaunay_max_flips, None);
+    /// ```
+    #[must_use]
+    pub const fn without_delaunay_max_flips(mut self) -> Self {
+        self.delaunay_max_flips = None;
+        self
     }
 }
 
@@ -655,10 +747,9 @@ where
     V: DataType,
 {
     if let Some(max_flips) = config.delaunay_max_flips {
-        dt.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig {
-            max_flips: Some(max_flips),
-            ..DelaunayRepairHeuristicConfig::default()
-        })
+        dt.repair_delaunay_with_flips_advanced(
+            DelaunayRepairHeuristicConfig::default().with_max_flips(max_flips),
+        )
         .map(|outcome| outcome.stats)
     } else {
         dt.repair_delaunay_with_flips()
@@ -1267,11 +1358,9 @@ mod tests {
 
         let outcome = delaunayize_by_flips(
             &mut dt,
-            DelaunayizeConfig {
-                topology_max_simplices_removed: 0,
-                fallback_rebuild: true,
-                ..DelaunayizeConfig::default()
-            },
+            DelaunayizeConfig::default()
+                .with_topology_max_simplices_removed(0)
+                .with_fallback_rebuild(true),
         )
         .unwrap();
 
@@ -1297,12 +1386,10 @@ mod tests {
 
         let err = delaunayize_by_flips(
             &mut dt,
-            DelaunayizeConfig {
-                topology_max_iterations: 1,
-                topology_max_simplices_removed: usize::MAX,
-                fallback_rebuild: false,
-                ..DelaunayizeConfig::default()
-            },
+            DelaunayizeConfig::default()
+                .with_topology_max_iterations(1)
+                .with_topology_max_simplices_removed(usize::MAX)
+                .with_fallback_rebuild(false),
         )
         .unwrap_err();
 
@@ -1326,12 +1413,10 @@ mod tests {
 
         let err = delaunayize_by_flips(
             &mut dt,
-            DelaunayizeConfig {
-                topology_max_iterations: 1,
-                topology_max_simplices_removed: usize::MAX,
-                fallback_rebuild: false,
-                ..DelaunayizeConfig::default()
-            },
+            DelaunayizeConfig::default()
+                .with_topology_max_iterations(1)
+                .with_topology_max_simplices_removed(usize::MAX)
+                .with_fallback_rebuild(false),
         )
         .unwrap_err();
 
@@ -1784,10 +1869,7 @@ mod tests {
             DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Fallback should not be triggered on a valid triangulation.
-        let config = DelaunayizeConfig {
-            fallback_rebuild: true,
-            ..DelaunayizeConfig::default()
-        };
+        let config = DelaunayizeConfig::default().with_fallback_rebuild(true);
         let outcome = delaunayize_by_flips(&mut dt, config).unwrap();
         assert!(!outcome.used_fallback_rebuild);
     }
@@ -1800,11 +1882,9 @@ mod tests {
 
         let outcome = delaunayize_by_flips(
             &mut dt,
-            DelaunayizeConfig {
-                topology_max_simplices_removed: 0,
-                fallback_rebuild: true,
-                ..DelaunayizeConfig::default()
-            },
+            DelaunayizeConfig::default()
+                .with_topology_max_simplices_removed(0)
+                .with_fallback_rebuild(true),
         )
         .unwrap();
 
@@ -1825,12 +1905,10 @@ mod tests {
 
         let outcome = delaunayize_by_flips(
             &mut dt,
-            DelaunayizeConfig {
-                topology_max_iterations: 1,
-                topology_max_simplices_removed: 10_000,
-                fallback_rebuild: true,
-                ..DelaunayizeConfig::default()
-            },
+            DelaunayizeConfig::default()
+                .with_topology_max_iterations(1)
+                .with_topology_max_simplices_removed(10_000)
+                .with_fallback_rebuild(true),
         )
         .unwrap();
 
@@ -1853,10 +1931,7 @@ mod tests {
 
         let outcome = delaunayize_by_flips(
             &mut dt,
-            DelaunayizeConfig {
-                fallback_rebuild: true,
-                ..DelaunayizeConfig::default()
-            },
+            DelaunayizeConfig::default().with_fallback_rebuild(true),
         )
         .unwrap();
 
@@ -1885,10 +1960,7 @@ mod tests {
         let _guard = ForceDelaunayRepairFailureGuard::enable();
         let outcome = delaunayize_by_flips(
             &mut dt,
-            DelaunayizeConfig {
-                fallback_rebuild: true,
-                ..DelaunayizeConfig::default()
-            },
+            DelaunayizeConfig::default().with_fallback_rebuild(true),
         )
         .unwrap();
 

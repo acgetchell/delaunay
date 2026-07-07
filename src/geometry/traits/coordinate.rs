@@ -949,15 +949,10 @@ pub const F64_MANTISSA_DIGITS: u32 = f64::MANTISSA_DIGITS;
 /// This names the representation contract separately from geometric scalar
 /// arithmetic, so APIs that only store, copy, or serialize coordinates can use
 /// a narrower bound than the full [`Coordinate`] interface.
-pub trait CoordinateRepresentation:
-    Copy + Default + Debug + Serialize + DeserializeOwned + Sized
-{
-}
+pub trait CoordinateRepresentation: Copy + Default + Debug + Serialize + DeserializeOwned {}
 
-impl<T> CoordinateRepresentation for T where
-    T: Copy + Default + Debug + Serialize + DeserializeOwned + Sized
-{
-}
+impl<T> CoordinateRepresentation for T where T: Copy + Default + Debug + Serialize + DeserializeOwned
+{}
 
 /// Identity and ordering requirements for coordinate container types.
 ///

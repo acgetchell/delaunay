@@ -2067,9 +2067,15 @@ impl InsertionError {
             | TriangulationValidationError::VertexLinkNotManifold { .. }
             | TriangulationValidationError::OrientationPromotionNonConvergence { .. }
             | TriangulationValidationError::IsolatedVertex { .. } => true,
-            // All other variants (structural invariant violations, future additions)
-            // are conservatively treated as non-retryable.
-            _ => false,
+            // Structural invariant violations are not expected to be corrected by a
+            // coordinate perturbation retry.
+            TriangulationValidationError::BoundaryFacetInClosedTopology { .. }
+            | TriangulationValidationError::PeriodicIdentificationInNonPeriodicTopology {
+                ..
+            }
+            | TriangulationValidationError::RidgeNotFound { .. }
+            | TriangulationValidationError::EulerCharacteristicMismatch { .. }
+            | TriangulationValidationError::Disconnected { .. } => false,
         }
     }
 }

@@ -17,18 +17,16 @@
 use delaunay::vertex;
 use std::assert_matches;
 
-use delaunay::builder::DelaunayTriangulationBuilder;
 use delaunay::prelude::construction::{
-    DelaunayTriangulation, DelaunayTriangulationConstructionError, ExplicitConstructionError,
-    TopologyGuarantee,
+    DelaunayTriangulation, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+    ExplicitConstructionError, TopologyGuarantee,
 };
 use delaunay::prelude::geometry::AdaptiveKernel;
 use delaunay::prelude::tds::Tds;
-use delaunay::prelude::topology::validation::ManifoldError;
-use delaunay::topology::characteristics::euler;
-use delaunay::topology::traits::topological_space::{
+use delaunay::prelude::topology::spaces::{
     GlobalTopology, TopologyError, TopologyKind, ToroidalConstructionMode,
 };
+use delaunay::prelude::topology::validation::{ManifoldError, euler};
 
 // =============================================================================
 // DETERMINISTIC TESTS - KNOWN CONFIGURATIONS

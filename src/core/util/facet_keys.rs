@@ -464,7 +464,7 @@ mod tests {
         reason = "facet-key test keeps related canonicalization cases together"
     )]
     fn test_checked_facet_key_from_vertex_keys_comprehensive() {
-        println!("Testing checked_facet_key_from_vertex_keys comprehensively");
+        tracing::debug!("Testing checked_facet_key_from_vertex_keys comprehensively");
 
         // Create a triangulation
         let vertices = vec![
@@ -477,7 +477,7 @@ mod tests {
         let tds = dt.tds();
 
         // Test 1: Basic functionality - successful key derivation
-        println!("  Testing basic functionality...");
+        tracing::debug!("  Testing basic functionality...");
         let simplex = tds.simplices().map(|(_, simplex)| simplex).next().unwrap();
         let facet_vertex_keys: Vec<_> = simplex.vertices().iter().skip(1).copied().collect();
 
@@ -488,7 +488,7 @@ mod tests {
         );
 
         let facet_key = result.unwrap();
-        println!("    Derived facet key: {facet_key}");
+        tracing::debug!("    Derived facet key: {facet_key}");
 
         // Test deterministic behavior - same vertex keys produce same key
         let result2 = checked_facet_key_from_vertex_keys::<3>(&facet_vertex_keys);
@@ -515,11 +515,11 @@ mod tests {
                 facet_key, different_facet_key,
                 "Different vertex keys should produce different facet keys"
             );
-            println!("    Different facet key: {different_facet_key}");
+            tracing::debug!("    Different facet key: {different_facet_key}");
         }
 
         // Test 2: Error cases
-        println!("  Testing error handling...");
+        tracing::debug!("  Testing error handling...");
 
         // Wrong vertex key count
         let single_key: Vec<VertexKey> = vec![facet_vertex_keys[0]];
@@ -570,7 +570,7 @@ mod tests {
         }
 
         // Test 3: Consistency with TDS cache
-        println!("  Testing consistency with TDS...");
+        tracing::debug!("  Testing consistency with TDS...");
         let cache = tds
             .build_facet_to_simplices_map()
             .expect("Should build facet map in test");
@@ -599,9 +599,9 @@ mod tests {
             }
         }
 
-        println!("    Found {keys_found}/{keys_tested} derived keys in TDS cache");
+        tracing::debug!("    Found {keys_found}/{keys_tested} derived keys in TDS cache");
         assert!(keys_tested > 0, "Should have tested some keys");
-        println!("  ✓ All facet key derivation tests passed");
+        tracing::debug!("  ✓ All facet key derivation tests passed");
     }
 
     #[test]
@@ -625,7 +625,7 @@ mod tests {
         // Logging: demonstrate behavior for large out-of-bounds facet index
         let err_large =
             verify_facet_index_consistency(tds, simplex_key, simplex_key, 300).unwrap_err();
-        println!("    Large facet_idx=300 error: {err_large:?}");
+        tracing::debug!("    Large facet_idx=300 error: {err_large:?}");
         assert_matches!(err_large, FacetError::InvalidFacetIndexOverflow { .. });
 
         // False case: two disjoint triangles in the same TDS share no facet keys.
@@ -814,14 +814,14 @@ mod tests {
             let _ = usize_to_u8(i % 256, 300);
         }
         let duration = start.elapsed();
-        eprintln!("usize_to_u8 valid conversions: 1000 iters in {duration:?}");
+        tracing::debug!("usize_to_u8 valid conversions: 1000 iters in {duration:?}");
 
         let start = Instant::now();
         for i in 256..1256 {
             let _ = usize_to_u8(i, 100);
         }
         let duration = start.elapsed();
-        eprintln!("usize_to_u8 error conversions: 1000 iters in {duration:?}");
+        tracing::debug!("usize_to_u8 error conversions: 1000 iters in {duration:?}");
 
         // Sub-test: Memory efficiency (stack allocation only)
         let (result, _alloc_info) = measure_with_result(|| {

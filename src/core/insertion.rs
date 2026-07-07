@@ -63,6 +63,9 @@ const MAX_REPAIR_ITERATIONS: usize = 10;
 /// so 3 retries span 4 orders of magnitude (e.g. `1e-8` → `1e-5` × `local_scale` for f64).
 const DEFAULT_PERTURBATION_RETRIES: usize = 3;
 
+/// Headroom used when rebuilding the duplicate-coordinate grid for a larger tolerance.
+const DUPLICATE_INDEX_REBUILD_GROWTH_FACTOR: f64 = 2.0;
+
 /// Telemetry: counts how often the topology safety-net recovered from a Level 3 validation
 /// failure by retrying insertion with a star-split of the containing simplex.
 ///
@@ -942,13 +945,26 @@ where
             return;
         }
 
-        let Ok(mut rebuilt) = HashGridIndex::try_new(tolerance) else {
+        let rebuild_cell_size =
+            Self::duplicate_index_rebuild_cell_size(index.cell_size(), tolerance);
+        let Ok(mut rebuilt) = HashGridIndex::try_new(rebuild_cell_size) else {
             return;
         };
         for (vkey, vertex) in self.tds.vertices() {
             rebuilt.insert_vertex(vkey, vertex.point().coords());
         }
         *index = rebuilt;
+    }
+
+    /// Returns a rebuild cell size that preserves duplicate-candidate coverage
+    /// while amortizing small tolerance increases.
+    fn duplicate_index_rebuild_cell_size(current_cell_size: f64, tolerance: f64) -> f64 {
+        let grown = current_cell_size * DUPLICATE_INDEX_REBUILD_GROWTH_FACTOR;
+        if grown.is_finite() && grown > tolerance {
+            grown
+        } else {
+            tolerance
+        }
     }
 
     /// Compares a squared distance against the duplicate tolerance without
@@ -2835,22 +2851,28 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::algorithms::locate::InternalInconsistencySite;
-    use crate::core::collections::spatial_hash_grid::HashGridIndex;
-    use crate::core::simplex::Simplex;
-    use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
-    use crate::geometry::point::Point;
-    use crate::geometry::traits::coordinate::{
-        CoordinateConversionError, CoordinateConversionValue, DEFAULT_TOLERANCE_F64,
-        F64_MANTISSA_DIGITS,
+    use crate::{
+        core::{
+            algorithms::locate::InternalInconsistencySite,
+            collections::spatial_hash_grid::HashGridIndex, simplex::Simplex,
+        },
+        geometry::{
+            kernel::{AdaptiveKernel, FastKernel},
+            point::Point,
+            traits::coordinate::{
+                CoordinateConversionError, CoordinateConversionValue, DEFAULT_TOLERANCE_F64,
+                F64_MANTISSA_DIGITS,
+            },
+        },
+        triangulation::DelaunayTriangulation,
+        vertex,
     };
-    use crate::triangulation::DelaunayTriangulation;
-    use crate::vertex;
-    use std::assert_matches;
-
     use slotmap::KeyData;
-    use std::cell::Cell;
-    use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+    use std::{
+        assert_matches,
+        cell::Cell,
+        sync::atomic::{AtomicBool, Ordering as AtomicOrdering},
+    };
 
     static DUPLICATE_DETECTION_FORCE_ENABLED: AtomicBool = AtomicBool::new(false);
 
@@ -3324,11 +3346,29 @@ mod tests {
 
         tri.ensure_duplicate_index_cell_size(Some(&mut index), tolerance);
 
-        approx::assert_abs_diff_eq!(index.cell_size(), tolerance, epsilon = f64::EPSILON);
+        assert!(
+            index.cell_size() >= tolerance,
+            "rebuilt duplicate index must cover the requested tolerance"
+        );
         assert!(
             index.for_each_candidate_vertex_key(&candidate, |_| false),
             "rebuilt duplicate index should remain queryable"
         );
+    }
+
+    fn duplicate_index_rebuild_adds_headroom_for_small_growth<const D: usize>() {
+        let tri: Triangulation<FastKernel<f64>, (), (), D> =
+            Triangulation::new_empty(FastKernel::new());
+        let mut index: HashGridIndex<D> = HashGridIndex::try_new(1.0).unwrap();
+
+        tri.ensure_duplicate_index_cell_size(Some(&mut index), 1.1);
+        approx::assert_abs_diff_eq!(index.cell_size(), 2.0, epsilon = f64::EPSILON);
+
+        tri.ensure_duplicate_index_cell_size(Some(&mut index), 1.5);
+        approx::assert_abs_diff_eq!(index.cell_size(), 2.0, epsilon = f64::EPSILON);
+
+        tri.ensure_duplicate_index_cell_size(Some(&mut index), 5.0);
+        approx::assert_abs_diff_eq!(index.cell_size(), 5.0, epsilon = f64::EPSILON);
     }
 
     #[test]
@@ -3364,6 +3404,11 @@ mod tests {
                     #[test]
                     fn [<test_duplicate_index_rebuilds_when_tolerance_exceeds_cell_size_ $dim d>]() {
                         duplicate_index_rebuilds_when_tolerance_exceeds_cell_size::<$dim>();
+                    }
+
+                    #[test]
+                    fn [<test_duplicate_index_rebuild_adds_headroom_for_small_growth_ $dim d>]() {
+                        duplicate_index_rebuild_adds_headroom_for_small_growth::<$dim>();
                     }
                 )+
             }
@@ -4313,7 +4358,7 @@ mod tests {
                     // Insert an interior point.
                     let mut interior = [0.0; $dim];
                     for c in interior.iter_mut() {
-                        *c = 1.0 / (<f64 as std::convert::From<i32>>::from($dim + 1) * 2.0);
+                        *c = 1.0 / (f64::from($dim + 1_i32) * 2.0);
                     }
                     let interior_vertex = vertex!(interior).unwrap();
                     let (_, hint) = insert(&mut tri, interior_vertex, None, None).unwrap();

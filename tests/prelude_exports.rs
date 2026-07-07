@@ -153,9 +153,9 @@ use delaunay::prelude::query::{
 };
 use delaunay::prelude::repair::{
     DelaunayCheckPolicy, DelaunayRepairDiagnostics, DelaunayRepairError,
-    DelaunayRepairHeuristicRebuildFailure, DelaunayRepairHeuristicRebuildFailureKind,
-    DelaunayRepairHeuristicVertexContext, DelaunayRepairOperation,
-    DelaunayRepairOrientationCanonicalizationFailure,
+    DelaunayRepairHeuristicConfig, DelaunayRepairHeuristicRebuildFailure,
+    DelaunayRepairHeuristicRebuildFailureKind, DelaunayRepairHeuristicVertexContext,
+    DelaunayRepairOperation, DelaunayRepairOrientationCanonicalizationFailure,
     DelaunayRepairOrientationCanonicalizationFailureKind, DelaunayRepairOutcome,
     DelaunayRepairPostconditionFailure, DelaunayRepairStats, DelaunayRepairVerificationContext,
     DelaunayTriangulationValidationError, FlipEdgeAdjacencyError, FlipError, FlipFailureKind,
@@ -1662,12 +1662,12 @@ fn geometry_prelude_covers_simplex_embedding_validation() {
     let spanning_simplex =
         LabeledSimplexEmbedding::try_new([4_usize, 5, 6], [[0.0, 0.0], [1.0, 0.0], [0.0, 0.25]])
             .expect("valid labeled simplex embedding");
-    assert_matches!(
-        try_periodic_simplex_span(&spanning_simplex, &[1.0, 2.0]),
-        Ok(Some(PeriodicSimplexSpan { axis: 0, span, period }))
-            if abs_diff_eq!(span, 1.0, epsilon = f64::EPSILON)
-                && abs_diff_eq!(period, 1.0, epsilon = f64::EPSILON)
-    );
+    let span = try_periodic_simplex_span(&spanning_simplex, &[1.0, 2.0])
+        .expect("prelude re-exports periodic span validation")
+        .expect("spanning simplex crosses the first periodic domain");
+    assert_eq!(span.axis(), 0);
+    assert!(abs_diff_eq!(span.span(), 1.0, epsilon = f64::EPSILON));
+    assert!(abs_diff_eq!(span.period(), 1.0, epsilon = f64::EPSILON));
 
     let duplicate = LabeledSimplexEmbedding::<_, 2>::try_new(
         [7_usize, 7, 8],
@@ -1689,6 +1689,7 @@ fn geometry_prelude_covers_simplex_embedding_validation() {
     );
 
     let _labels: SimplexEmbeddingBuffer<usize> = [0, 1].into_iter().collect();
+    assert_send_sync_unpin::<PeriodicSimplexSpan>();
     assert_send_sync_unpin::<LabeledSimplexEmbeddingError>();
     assert_send_sync_unpin::<PeriodicSimplexSpanError>();
     assert_send_sync_unpin::<SimplexIntersectionFailure<usize>>();
@@ -2360,6 +2361,35 @@ fn construction_prelude_covers_random_point_generation_failure_variant()
     Ok(())
 }
 
+fn assert_repair_heuristic_config_fluent_setters() {
+    let heuristic_config = DelaunayRepairHeuristicConfig::default()
+        .with_shuffle_seed(7)
+        .with_perturbation_seed(11)
+        .with_max_flips(100);
+    assert_eq!(heuristic_config.shuffle_seed, Some(7));
+    assert_eq!(heuristic_config.perturbation_seed, Some(11));
+    assert_eq!(heuristic_config.max_flips, Some(100));
+    assert_eq!(heuristic_config.without_max_flips().max_flips, None);
+}
+
+fn assert_delaunayize_config_fluent_setters() {
+    let delaunayize_config = DelaunayizeConfig::default()
+        .with_topology_max_iterations(32)
+        .with_topology_max_simplices_removed(1_000)
+        .with_fallback_rebuild(true)
+        .with_delaunay_max_flips(500);
+    assert_eq!(delaunayize_config.topology_max_iterations, 32);
+    assert_eq!(delaunayize_config.topology_max_simplices_removed, 1_000);
+    assert!(delaunayize_config.fallback_rebuild);
+    assert_eq!(delaunayize_config.delaunay_max_flips, Some(500));
+    assert_eq!(
+        delaunayize_config
+            .without_delaunay_max_flips()
+            .delaunay_max_flips,
+        None
+    );
+}
+
 #[test]
 fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError> {
     let vertices: Vec<Vertex<(), 3>> = vec![
@@ -2380,6 +2410,7 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
         DelaunayRepairPolicy::default(),
         DelaunayRepairPolicy::EveryInsertion
     );
+    assert_repair_heuristic_config_fluent_setters();
     assert!(!DelaunayCheckPolicy::default().should_check(1));
     assert_eq!(RepairQueueOrder::Fifo, RepairQueueOrder::Fifo);
     let diagnostics = DelaunayRepairDiagnostics {
@@ -2455,6 +2486,8 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
     assert!(validation_error.to_string().contains("vertex removal"));
 
     dt.verify_via_flip_predicates()?;
+
+    assert_delaunayize_config_fluent_setters();
 
     let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
     assert!(!outcome.used_fallback_rebuild);

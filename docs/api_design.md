@@ -600,7 +600,8 @@ fn main() -> Result<(), ExampleError> {
 2. **Delaunay flip repair** — k=2/k=3 bistellar flips to restore the
    empty-circumsphere property.
 3. **Optional fallback rebuild** — rebuilds from the vertex set when both
-   repair passes fail (`DelaunayizeConfig { fallback_rebuild: true, .. }`).
+   repair passes fail
+   (`DelaunayizeConfig::default().with_fallback_rebuild(true)`).
    If a failed topology repair is recovered by fallback rebuild,
    `outcome.topology_repair.succeeded` remains `false`; use
    `outcome.used_fallback_rebuild` to distinguish successful rebuild recovery

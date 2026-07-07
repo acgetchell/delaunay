@@ -167,10 +167,13 @@ impl DelaunayRepairPolicy {
 /// ```rust
 /// use delaunay::prelude::repair::DelaunayRepairHeuristicConfig;
 ///
-/// let mut config = DelaunayRepairHeuristicConfig::default();
-/// config.shuffle_seed = Some(7);
-/// config.perturbation_seed = Some(11);
+/// let config = DelaunayRepairHeuristicConfig::default()
+///     .with_shuffle_seed(7)
+///     .with_perturbation_seed(11)
+///     .with_max_flips(100);
 /// assert_eq!(config.shuffle_seed, Some(7));
+/// assert_eq!(config.perturbation_seed, Some(11));
+/// assert_eq!(config.max_flips, Some(100));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
@@ -192,6 +195,72 @@ pub struct DelaunayRepairHeuristicConfig {
 }
 
 impl DelaunayRepairHeuristicConfig {
+    /// Sets the RNG seed used to shuffle vertex insertion order during heuristic rebuilds.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::repair::DelaunayRepairHeuristicConfig;
+    ///
+    /// let config = DelaunayRepairHeuristicConfig::default().with_shuffle_seed(7);
+    /// assert_eq!(config.shuffle_seed, Some(7));
+    /// ```
+    #[must_use]
+    pub const fn with_shuffle_seed(mut self, shuffle_seed: u64) -> Self {
+        self.shuffle_seed = Some(shuffle_seed);
+        self
+    }
+
+    /// Sets the seed used to vary deterministic perturbation during heuristic rebuilds.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::repair::DelaunayRepairHeuristicConfig;
+    ///
+    /// let config = DelaunayRepairHeuristicConfig::default().with_perturbation_seed(11);
+    /// assert_eq!(config.perturbation_seed, Some(11));
+    /// ```
+    #[must_use]
+    pub const fn with_perturbation_seed(mut self, perturbation_seed: u64) -> Self {
+        self.perturbation_seed = Some(perturbation_seed);
+        self
+    }
+
+    /// Sets the optional per-attempt flip budget cap.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::repair::DelaunayRepairHeuristicConfig;
+    ///
+    /// let config = DelaunayRepairHeuristicConfig::default().with_max_flips(100);
+    /// assert_eq!(config.max_flips, Some(100));
+    /// ```
+    #[must_use]
+    pub const fn with_max_flips(mut self, max_flips: usize) -> Self {
+        self.max_flips = Some(max_flips);
+        self
+    }
+
+    /// Clears the per-attempt flip budget cap.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::repair::DelaunayRepairHeuristicConfig;
+    ///
+    /// let config = DelaunayRepairHeuristicConfig::default()
+    ///     .with_max_flips(100)
+    ///     .without_max_flips();
+    /// assert_eq!(config.max_flips, None);
+    /// ```
+    #[must_use]
+    pub const fn without_max_flips(mut self) -> Self {
+        self.max_flips = None;
+        self
+    }
+
     /// Fills omitted seeds from a stable base so heuristic rebuilds are
     /// repeatable even when callers only configure one axis of randomness.
     pub(crate) fn resolve_seeds(self, base_seed: u64) -> DelaunayRepairHeuristicSeeds {
@@ -1332,10 +1401,7 @@ mod tests {
             DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         // Sub-case 1: Already Delaunay — max_flips=0 should succeed (no flips needed).
-        let config = DelaunayRepairHeuristicConfig {
-            max_flips: Some(0),
-            ..DelaunayRepairHeuristicConfig::default()
-        };
+        let config = DelaunayRepairHeuristicConfig::default().with_max_flips(0);
         let outcome = dt.repair_delaunay_with_flips_advanced(config).unwrap();
         assert_eq!(outcome.stats.flips_performed, 0);
         assert!(
@@ -1360,10 +1426,7 @@ mod tests {
             DelaunayTriangulation::builder(&vertices).build().unwrap();
 
         let _guard = ForceRepairNonconvergentGuard::enable();
-        let config = DelaunayRepairHeuristicConfig {
-            max_flips: Some(0),
-            ..DelaunayRepairHeuristicConfig::default()
-        };
+        let config = DelaunayRepairHeuristicConfig::default().with_max_flips(0);
         // The primary repair is forced to fail; the robust fallback should succeed
         // because the triangulation is actually Delaunay.
         let outcome = dt.repair_delaunay_with_flips_advanced(config).unwrap();
@@ -1410,10 +1473,7 @@ mod tests {
         assert!(robust_dt.verify_via_flip_predicates().is_err());
 
         // max_flips=0 should fail (flips are needed but budget is zero).
-        let config_zero = DelaunayRepairHeuristicConfig {
-            max_flips: Some(0),
-            ..DelaunayRepairHeuristicConfig::default()
-        };
+        let config_zero = DelaunayRepairHeuristicConfig::default().with_max_flips(0);
         // The advanced path tries primary (fails at budget=0), then robust fallback.
         // The robust fallback also respects the budget, so it should also fail at 0,
         // then the heuristic rebuild fires. The key assertion: it should not silently
@@ -1429,10 +1489,7 @@ mod tests {
         }
 
         // Now retry with a generous budget — should succeed.
-        let config_generous = DelaunayRepairHeuristicConfig {
-            max_flips: Some(100),
-            ..DelaunayRepairHeuristicConfig::default()
-        };
+        let config_generous = DelaunayRepairHeuristicConfig::default().with_max_flips(100);
         // Reconstruct dt from the same raw TDS in case the previous attempt mutated it.
         let tds2 = non_delaunay_quad_tds();
         let mut dt2: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
@@ -1618,11 +1675,9 @@ mod tests {
 
     #[test]
     fn heuristic_config_resolves_missing_seeds_deterministically() {
-        let config = DelaunayRepairHeuristicConfig {
-            shuffle_seed: None,
-            perturbation_seed: Some(11),
-            max_flips: Some(7),
-        };
+        let config = DelaunayRepairHeuristicConfig::default()
+            .with_perturbation_seed(11)
+            .with_max_flips(7);
 
         let seeds = config.resolve_seeds(5);
 
@@ -1632,11 +1687,10 @@ mod tests {
 
     #[test]
     fn heuristic_config_keeps_explicit_zero_seeds() {
-        let config = DelaunayRepairHeuristicConfig {
-            shuffle_seed: Some(0),
-            perturbation_seed: Some(0),
-            max_flips: None,
-        };
+        let config = DelaunayRepairHeuristicConfig::default()
+            .with_shuffle_seed(0)
+            .with_perturbation_seed(0)
+            .without_max_flips();
 
         let seeds = config.resolve_seeds(0);
 

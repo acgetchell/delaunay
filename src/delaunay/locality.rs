@@ -123,6 +123,13 @@ pub fn replace_simplices_and_record_removed(
 /// BFS conflict search from it gives a bounded local frontier without scanning the
 /// entire triangulation. If no circumsphere conflict is found, the terminal simplex
 /// itself is still a useful local seed.
+///
+/// # Errors
+///
+/// Returns [`ConflictError`] when the terminal simplex is live but the bounded
+/// conflict search cannot classify the local star, for example because a
+/// simplex has invalid arity, references missing vertices, or a geometric
+/// predicate cannot be evaluated.
 pub fn collect_local_exterior_conflict_seed_simplices<K, U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     kernel: &K,

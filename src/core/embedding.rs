@@ -1543,9 +1543,9 @@ fn validate_periodic_simplex_chart<const D: usize>(
                 simplex_key: simplex.key,
                 simplex_uuid: simplex.uuid,
                 detail: Box::new(simplex.detail()),
-                axis: span.axis,
-                span: span.span,
-                period: span.period,
+                axis: span.axis(),
+                span: span.span(),
+                period: span.period(),
             },
         );
     }

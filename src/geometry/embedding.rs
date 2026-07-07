@@ -378,11 +378,31 @@ pub enum SimplexIntersectionFailure<L> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PeriodicSimplexSpan {
     /// Periodic axis whose coordinate span reaches or exceeds the period.
-    pub axis: usize,
+    axis: usize,
     /// Coordinate span along [`axis`](Self::axis).
-    pub span: f64,
+    span: f64,
     /// Fundamental-domain period along [`axis`](Self::axis).
-    pub period: f64,
+    period: f64,
+}
+
+impl PeriodicSimplexSpan {
+    /// Periodic axis whose coordinate span reaches or exceeds the period.
+    #[must_use]
+    pub const fn axis(&self) -> usize {
+        self.axis
+    }
+
+    /// Coordinate span along [`axis`](Self::axis).
+    #[must_use]
+    pub const fn span(&self) -> f64 {
+        self.span
+    }
+
+    /// Fundamental-domain period along [`axis`](Self::axis).
+    #[must_use]
+    pub const fn period(&self) -> f64 {
+        self.period
+    }
 }
 
 /// Returns the closed coordinate range of a simplex along one axis.
@@ -500,7 +520,7 @@ pub fn axis_aligned_bounding_boxes_overlap<L1, L2, const D: usize>(
 /// )?;
 ///
 /// let span = try_periodic_simplex_span(&simplex, &[1.0, 2.0])?;
-/// assert_eq!(span.map(|witness| witness.axis), Some(0));
+/// assert_eq!(span.map(|witness| witness.axis()), Some(0));
 /// # Ok(())
 /// # }
 /// ```
@@ -1097,9 +1117,9 @@ mod tests {
         let span = try_periodic_simplex_span(&simplex, &[1.0, 1.0])
             .unwrap()
             .unwrap();
-        assert_eq!(span.axis, 0);
-        assert_abs_diff_eq!(span.span, 1.0, epsilon = f64::EPSILON);
-        assert_abs_diff_eq!(span.period, 1.0, epsilon = f64::EPSILON);
+        assert_eq!(span.axis(), 0);
+        assert_abs_diff_eq!(span.span(), 1.0, epsilon = f64::EPSILON);
+        assert_abs_diff_eq!(span.period(), 1.0, epsilon = f64::EPSILON);
     }
 
     #[test]

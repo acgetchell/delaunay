@@ -44,8 +44,9 @@ use criterion::{
     BatchSize, BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
 use delaunay::flips::{FacetHandle, RidgeHandle, SimplexKey};
+use delaunay::prelude::collections::FastHashMap;
 use delaunay::prelude::construction::{
-    ConstructionOptions, DelaunayTriangulation, RetryPolicy, Vertex,
+    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder, RetryPolicy, Vertex,
 };
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, Point};
@@ -89,8 +90,17 @@ const CANARY_COUNT_5D: usize = 25;
 const INSERT_BATCH_COUNT_2D_3D: usize = 10;
 const INSERT_BATCH_COUNT_4D: usize = 6;
 const INSERT_BATCH_COUNT_5D: usize = 4;
+const EXPLICIT_IMPORT_COUNT_2D: usize = 120;
+const EXPLICIT_IMPORT_COUNT_3D: usize = 30;
+const EXPLICIT_IMPORT_COUNT_4D: usize = 16;
+const EXPLICIT_IMPORT_COUNT_5D: usize = 10;
 type SeedSearchResult<const D: usize> = Option<(u64, Vec<Point<D>>, Vec<Vertex<(), D>>)>;
 type BenchTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
+
+struct ExplicitImportFixture<const D: usize> {
+    vertices: Vec<Vertex<(), D>>,
+    simplices: Vec<Vec<usize>>,
+}
 
 fn finite_point<const D: usize>(coords: [f64; D]) -> Point<D> {
     Point::try_new(coords).unwrap_or_else(|_| std::process::abort())
@@ -186,6 +196,16 @@ fn insert_benchmark_ids() -> String {
     .join(";")
 }
 
+fn explicit_import_benchmark_ids() -> String {
+    [
+        format!("explicit_import/import_2d/{EXPLICIT_IMPORT_COUNT_2D}"),
+        format!("explicit_import/import_3d/{EXPLICIT_IMPORT_COUNT_3D}"),
+        format!("explicit_import/import_4d/{EXPLICIT_IMPORT_COUNT_4D}"),
+        format!("explicit_import/import_5d/{EXPLICIT_IMPORT_COUNT_5D}"),
+    ]
+    .join(";")
+}
+
 fn api_benchmark_entries() -> Vec<ApiBenchmarkEntry> {
     vec![
         ApiBenchmarkEntry {
@@ -229,6 +249,13 @@ fn api_benchmark_entries() -> Vec<ApiBenchmarkEntry> {
             dimensions: "2,3,4,5",
             benchmark_ids: insert_benchmark_ids(),
             note: "insert_batches_into_calibrated_well_conditioned_and_adversarial_triangulations",
+        },
+        ApiBenchmarkEntry {
+            group: "explicit_import",
+            public_api: "DelaunayTriangulationBuilder::try_from_vertices_and_simplices(...).construction_options(without_final_delaunay_enforcement).build",
+            dimensions: "2,3,4,5",
+            benchmark_ids: explicit_import_benchmark_ids(),
+            note: "reimport_valid_levels_1_through_4_connectivity_from_public_vertex_and_simplex_iterators",
         },
         ApiBenchmarkEntry {
             group: "bistellar_flips",
@@ -395,6 +422,56 @@ fn prepare_adv_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangula
         .construction_options(options)
         .build()
         .or_abort()
+}
+
+/// Export a valid Delaunay triangulation through public iterators for explicit reimport.
+fn prepare_explicit_import_fixture<const D: usize>(
+    dim_seed: u64,
+    count: usize,
+) -> ExplicitImportFixture<D> {
+    let seed = dim_seed.wrapping_add(count as u64);
+    let points = generate_random_points_in_range_seeded::<D>(
+        count,
+        CoordinateRange::try_new(-100.0_f64, 100.0).or_abort(),
+        seed,
+    )
+    .or_abort();
+    let source_vertices = try_vertices_from_points(&points).or_abort();
+    let attempts = retry_attempts(8);
+    let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
+        attempts,
+        base_seed: Some(seed),
+    });
+    let dt: BenchTriangulation<D> = DelaunayTriangulation::builder(&source_vertices)
+        .construction_options(options)
+        .build()
+        .or_abort();
+    let mut key_to_index = FastHashMap::default();
+    let mut vertices = Vec::with_capacity(dt.number_of_vertices());
+
+    for (index, (vertex_key, vertex)) in dt.vertices().enumerate() {
+        key_to_index.insert(vertex_key, index);
+        vertices.push(*vertex);
+    }
+
+    let mut simplices = Vec::with_capacity(dt.number_of_simplices());
+    for (_, simplex) in dt.simplices() {
+        let mut spec = Vec::with_capacity(D + 1);
+        for vertex_key in simplex.vertices() {
+            let Some(&vertex_index) = key_to_index.get(vertex_key) else {
+                abort_benchmark(format_args!(
+                    "{D}D explicit import fixture simplex references an unknown vertex key"
+                ));
+            };
+            spec.push(vertex_index);
+        }
+        simplices.push(spec);
+    }
+
+    ExplicitImportFixture {
+        vertices,
+        simplices,
+    }
 }
 
 fn prepare_inserts<const D: usize>(
@@ -1262,6 +1339,38 @@ fn bench_insert_case<const D: usize>(
     );
 }
 
+fn bench_explicit_import_case<const D: usize>(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    fixture: &ExplicitImportFixture<D>,
+) {
+    group.throughput(Throughput::Elements(fixture.simplices.len() as u64));
+    group.bench_function(
+        BenchmarkId::new(
+            format!("import_{D}d"),
+            format!(
+                "vertices_{}_simplices_{}",
+                fixture.vertices.len(),
+                fixture.simplices.len()
+            ),
+        ),
+        |b| {
+            b.iter(|| {
+                let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(
+                    &fixture.vertices,
+                    &fixture.simplices,
+                )
+                .or_abort()
+                .construction_options(
+                    ConstructionOptions::default().without_final_delaunay_enforcement(),
+                )
+                .build()
+                .or_abort();
+                black_box(dt);
+            });
+        },
+    );
+}
+
 fn benchmark_boundary_facets(c: &mut Criterion) {
     print_manifest_once();
     if discover_seeds_enabled() {
@@ -1609,6 +1718,38 @@ fn benchmark_insert(c: &mut Criterion) {
     group.finish();
 }
 
+fn benchmark_explicit_import(c: &mut Criterion) {
+    print_manifest_once();
+    if discover_seeds_enabled() {
+        return;
+    }
+    let filters = criterion_filters();
+    let mut group = c.benchmark_group("explicit_import");
+    group.sample_size(10);
+
+    if benchmark_selected(&filters, "explicit_import/import_2d") {
+        let fixture_2d = prepare_explicit_import_fixture::<2>(42, EXPLICIT_IMPORT_COUNT_2D);
+        bench_explicit_import_case(&mut group, &fixture_2d);
+    }
+
+    if benchmark_selected(&filters, "explicit_import/import_3d") {
+        let fixture_3d = prepare_explicit_import_fixture::<3>(123, EXPLICIT_IMPORT_COUNT_3D);
+        bench_explicit_import_case(&mut group, &fixture_3d);
+    }
+
+    if benchmark_selected(&filters, "explicit_import/import_4d") {
+        let fixture_4d = prepare_explicit_import_fixture::<4>(456, EXPLICIT_IMPORT_COUNT_4D);
+        bench_explicit_import_case(&mut group, &fixture_4d);
+    }
+
+    if benchmark_selected(&filters, "explicit_import/import_5d") {
+        let fixture_5d = prepare_explicit_import_fixture::<5>(789, EXPLICIT_IMPORT_COUNT_5D);
+        bench_explicit_import_case(&mut group, &fixture_5d);
+    }
+
+    group.finish();
+}
+
 /// Registers the complete 2D-5D public bistellar flip benchmark matrix.
 fn benchmark_bistellar_flips(c: &mut Criterion) {
     print_manifest_once();
@@ -1778,6 +1919,7 @@ criterion_group!(
         benchmark_convex_hull_queries,
         benchmark_validation,
         benchmark_insert,
+        benchmark_explicit_import,
         benchmark_bistellar_flips
 );
 criterion_main!(benches);

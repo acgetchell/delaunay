@@ -35,7 +35,6 @@
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
 use ::uuid::Uuid;
-use delaunay::geometry::quality::QualityError;
 use delaunay::prelude::construction::{
     DelaunayTriangulation, DelaunayTriangulationBuilder, TopologyGuarantee,
 };

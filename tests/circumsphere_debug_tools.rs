@@ -13,12 +13,9 @@
 //! cargo test --test circumsphere_debug_tools test_all_debug -- --nocapture
 //! ```
 
-use delaunay::geometry::matrix::{Matrix, determinant};
-use delaunay::geometry::util::hypot;
 use delaunay::prelude::construction::Vertex;
 use delaunay::prelude::geometry::*;
 use delaunay::vertex;
-use serde::{Deserialize, Serialize};
 
 // Macro for standard test output formatting
 macro_rules! test_output {
@@ -194,25 +191,12 @@ fn test_2d_circumsphere() {
     test_output!("2D", &vertices, test_points);
 }
 
-/// Test a single 2D point against all circumsphere methods
-fn test_2d_point(
-    vertices: &[Vertex<i32, 2>],
-    coords: [f64; 2],
-    description: &str,
-    center: &[f64; 2],
-    radius: f64,
-) {
-    test_point_generic(vertices, coords, description, center, radius);
-}
-
 /// Generic function to test circumsphere methods for any dimension
 fn test_circumsphere_generic<const D: usize>(
     dimension_name: &str,
     vertices: &[Vertex<i32, D>],
     test_points: Vec<([f64; D], &str)>,
-) where
-    [f64; D]: Copy + Sized + Serialize + for<'de> Deserialize<'de>,
-{
+) {
     println!("Testing {dimension_name} circumsphere methods");
     println!("=============================================");
 
@@ -250,9 +234,7 @@ fn test_point_generic<const D: usize>(
     description: &str,
     center: &[f64; D],
     radius: f64,
-) where
-    [f64; D]: Copy + Sized + Serialize + for<'de> Deserialize<'de>,
-{
+) {
     let test_vertex: Vertex<i32, D> = vertex!(coords; data = 99).unwrap();
 
     let vertex_points: Vec<Point<D>> = vertices.iter().map(Point::from).collect();
@@ -309,17 +291,6 @@ fn test_3d_circumsphere() {
     test_output!("3D (tetrahedron)", &vertices, test_points);
 }
 
-/// Test a single 3D point against all circumsphere methods
-fn test_3d_point(
-    vertices: &[Vertex<i32, 3>],
-    coords: [f64; 3],
-    description: &str,
-    center: &[f64; 3],
-    radius: f64,
-) {
-    test_point_generic(vertices, coords, description, center, radius);
-}
-
 /// Test 4D circumsphere methods with a 4-simplex
 fn test_4d_circumsphere() {
     // Create a unit 4-simplex: vertices at origin and unit vectors along each axis
@@ -342,17 +313,6 @@ fn test_4d_circumsphere() {
     );
 
     test_output!("4D (4-simplex)", &vertices, test_points);
-}
-
-/// Test a single 4D point against all circumsphere methods
-fn test_4d_point(
-    vertices: &[Vertex<i32, 4>],
-    coords: [f64; 4],
-    description: &str,
-    center: &[f64; 4],
-    radius: f64,
-) {
-    test_point_generic(vertices, coords, description, center, radius);
 }
 
 /// Run all orientation tests for 2D, 3D, and 4D
@@ -1313,7 +1273,7 @@ fn test_single_2d_point() {
             println!();
 
             // Test a specific interesting point: (0.3, 0.3) - should be inside
-            test_2d_point(
+            test_point_generic(
                 &vertices,
                 [0.3, 0.3],
                 "test_point",
@@ -1356,7 +1316,7 @@ fn test_single_3d_point() {
             println!();
 
             // Test a specific interesting point: (0.4, 0.4, 0.4) - should be inside
-            test_3d_point(
+            test_point_generic(
                 &vertices,
                 [0.4, 0.4, 0.4],
                 "test_point",
@@ -1400,7 +1360,7 @@ fn test_single_4d_point() {
             println!();
 
             // Test a specific interesting point: (0.3, 0.3, 0.3, 0.3) - should be inside
-            test_4d_point(
+            test_point_generic(
                 &vertices,
                 [0.3, 0.3, 0.3, 0.3],
                 "test_point",

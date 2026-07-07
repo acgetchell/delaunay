@@ -1780,32 +1780,13 @@ mod tests {
         assert_eq!(points_5d.len(), 0);
     }
 
-    #[test]
-    fn test_generate_random_points_seeded_2d() {
-        // Test seeded 2D generation reproducibility
-        let seed = 42_u64;
-        let points1 = try_generate_random_points_seeded::<2>(50, (-5.0, 5.0), seed).unwrap();
-        let points2 = try_generate_random_points_seeded::<2>(50, (-5.0, 5.0), seed).unwrap();
-
-        assert_eq!(points1.len(), points2.len());
-
-        // Points should be identical with same seed
-        for (p1, p2) in points1.iter().zip(points2.iter()) {
-            let coords1 = *p1.coords();
-            let coords2 = *p2.coords();
-
-            for (c1, c2) in coords1.iter().zip(coords2.iter()) {
-                assert_relative_eq!(c1, c2, epsilon = 1e-15);
-            }
-        }
-    }
-
-    #[test]
-    fn test_generate_random_points_seeded_3d() {
-        // Test seeded 3D generation reproducibility
-        let seed = 123_u64;
-        let points1 = try_generate_random_points_seeded::<3>(40, (0.0, 10.0), seed).unwrap();
-        let points2 = try_generate_random_points_seeded::<3>(40, (0.0, 10.0), seed).unwrap();
+    fn assert_seeded_random_points_reproducible<const D: usize>(
+        count: usize,
+        range: (f64, f64),
+        seed: u64,
+    ) {
+        let points1 = try_generate_random_points_seeded::<D>(count, range, seed).unwrap();
+        let points2 = try_generate_random_points_seeded::<D>(count, range, seed).unwrap();
 
         assert_eq!(points1.len(), points2.len());
 
@@ -1819,42 +1800,22 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_generate_random_points_seeded_4d() {
-        // Test seeded 4D generation reproducibility
-        let seed = 789_u64;
-        let points1 = try_generate_random_points_seeded::<4>(30, (-2.5, 2.5), seed).unwrap();
-        let points2 = try_generate_random_points_seeded::<4>(30, (-2.5, 2.5), seed).unwrap();
-
-        assert_eq!(points1.len(), points2.len());
-
-        for (p1, p2) in points1.iter().zip(points2.iter()) {
-            let coords1 = *p1.coords();
-            let coords2 = *p2.coords();
-
-            for (c1, c2) in coords1.iter().zip(coords2.iter()) {
-                assert_relative_eq!(c1, c2, epsilon = 1e-15);
-            }
-        }
+    macro_rules! gen_seeded_random_points_tests {
+        ($($name:ident: $dim:literal, $count:literal, $range:expr, $seed:literal;)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    assert_seeded_random_points_reproducible::<$dim>($count, $range, $seed);
+                }
+            )*
+        };
     }
 
-    #[test]
-    fn test_generate_random_points_seeded_5d() {
-        // Test seeded 5D generation reproducibility
-        let seed = 456_u64;
-        let points1 = try_generate_random_points_seeded::<5>(20, (-1.0, 3.0), seed).unwrap();
-        let points2 = try_generate_random_points_seeded::<5>(20, (-1.0, 3.0), seed).unwrap();
-
-        assert_eq!(points1.len(), points2.len());
-
-        for (p1, p2) in points1.iter().zip(points2.iter()) {
-            let coords1 = *p1.coords();
-            let coords2 = *p2.coords();
-
-            for (c1, c2) in coords1.iter().zip(coords2.iter()) {
-                assert_relative_eq!(c1, c2, epsilon = 1e-15);
-            }
-        }
+    gen_seeded_random_points_tests! {
+        test_generate_random_points_seeded_2d: 2, 50, (-5.0, 5.0), 42;
+        test_generate_random_points_seeded_3d: 3, 40, (0.0, 10.0), 123;
+        test_generate_random_points_seeded_4d: 4, 30, (-2.5, 2.5), 789;
+        test_generate_random_points_seeded_5d: 5, 20, (-1.0, 3.0), 456;
     }
 
     #[test]

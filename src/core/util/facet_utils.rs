@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn test_facet_views_are_adjacent_comprehensive() {
         // Test 1: Adjacent facets in 3D (tetrahedra sharing a triangular face)
-        println!("Test 1: Adjacent facets in 3D");
+        tracing::debug!("Test 1: Adjacent facets in 3D");
 
         // Create two tetrahedra that share 3 vertices (forming a shared triangular face)
         let shared_vertices = vec![
@@ -382,10 +382,10 @@ mod tests {
             found_adjacent,
             "Facets representing the same shared triangle should be adjacent"
         );
-        println!("  ✓ Adjacent facets correctly identified");
+        tracing::debug!("  ✓ Adjacent facets correctly identified");
 
         // Test 2: Non-adjacent facets from the same tetrahedra
-        println!("Test 2: Non-adjacent facets from same tetrahedra");
+        tracing::debug!("Test 2: Non-adjacent facets from same tetrahedra");
 
         // Find two facets that are NOT adjacent
         let mut found_non_adjacent = false;
@@ -407,22 +407,22 @@ mod tests {
             found_non_adjacent,
             "Should be able to find non-adjacent facets"
         );
-        println!("  ✓ Non-adjacent facets correctly identified");
+        tracing::debug!("  ✓ Non-adjacent facets correctly identified");
 
         // Test 3: Same facet should be adjacent to itself
-        println!("Test 3: Facet adjacent to itself");
+        tracing::debug!("Test 3: Facet adjacent to itself");
 
         let facet_view1 = facet_view1_adj.unwrap();
         assert!(
             facet_views_are_adjacent(&facet_view1, &facet_view1),
             "A facet should be adjacent to itself"
         );
-        println!("  ✓ Self-adjacency works correctly");
+        tracing::debug!("  ✓ Self-adjacency works correctly");
     }
 
     #[test]
     fn test_facet_views_are_adjacent_2d_cases() {
-        println!("Test 2D facet adjacency");
+        tracing::debug!("Test 2D facet adjacency");
 
         // Create two 2D triangles that share an edge (2 vertices)
         let shared_edge = vec![
@@ -471,12 +471,12 @@ mod tests {
             "2D facets (edges) sharing vertices should be adjacent"
         );
 
-        println!("  ✓ 2D facet adjacency works correctly");
+        tracing::debug!("  ✓ 2D facet adjacency works correctly");
     }
 
     #[test]
     fn test_facet_views_are_adjacent_1d_cases() {
-        println!("Test 1D facet adjacency");
+        tracing::debug!("Test 1D facet adjacency");
 
         // In 1D, simplices are edges and facets are vertices (0D)
         // Two edges sharing a vertex have adjacent facets
@@ -527,12 +527,12 @@ mod tests {
             "1D facets with different vertices should not be adjacent"
         );
 
-        println!("  ✓ 1D facet adjacency works correctly");
+        tracing::debug!("  ✓ 1D facet adjacency works correctly");
     }
 
     #[test]
     fn test_facet_views_are_adjacent_edge_cases() {
-        println!("Test facet adjacency edge cases");
+        tracing::debug!("Test facet adjacency edge cases");
 
         // Test with minimal triangulation (single tetrahedron)
         let vertices = vec![
@@ -567,12 +567,12 @@ mod tests {
         assert!(!facet_views_are_adjacent(&facet1, &facet3));
         assert!(!facet_views_are_adjacent(&facet2, &facet3));
 
-        println!("  ✓ Single tetrahedron facet relationships correct");
+        tracing::debug!("  ✓ Single tetrahedron facet relationships correct");
     }
 
     #[test]
     fn test_facet_views_are_adjacent_performance() {
-        println!("Test facet adjacency performance");
+        tracing::debug!("Test facet adjacency performance");
 
         // Create a moderately complex case to test performance
         let vertices = vec![
@@ -599,19 +599,19 @@ mod tests {
         }
 
         let duration = start.elapsed();
-        println!("  ✓ {iterations} adjacency checks completed in {duration:?}");
+        tracing::debug!("  ✓ {iterations} adjacency checks completed in {duration:?}");
 
         // Performance info: each check is just UUID set comparison
         // Note: Timing can vary significantly based on build type and CI environment
         if duration.as_millis() > 500 {
-            println!("  ⚠️  Performance warning: adjacency checks took {duration:?}");
-            println!("     This may indicate debug build or slower CI environment");
+            tracing::warn!("  ⚠️  Performance warning: adjacency checks took {duration:?}");
+            tracing::warn!("     This may indicate debug build or slower CI environment");
         }
     }
 
     #[test]
     fn test_facet_views_are_adjacent_different_geometries() {
-        println!("Test facet adjacency with different geometries");
+        tracing::debug!("Test facet adjacency with different geometries");
 
         // Create vertices with different coordinates to ensure different UUIDs
         let vertices1 = vec![
@@ -645,12 +645,12 @@ mod tests {
             "Facets from different geometries should not be adjacent"
         );
 
-        println!("  ✓ Different geometries correctly distinguished");
+        tracing::debug!("  ✓ Different geometries correctly distinguished");
     }
 
     #[test]
     fn test_facet_views_are_adjacent_uuid_based_comparison() {
-        println!("Test that adjacency is purely UUID-based");
+        tracing::debug!("Test that adjacency is purely UUID-based");
 
         // Create identical geometry in separate TDS instances
         let vertices = vec![
@@ -683,7 +683,7 @@ mod tests {
             facet1_uuid_list.sort_unstable();
             let mut facet2_uuid_list: Vec<_> = facet2_vertex_uuids.iter().copied().collect();
             facet2_uuid_list.sort_unstable();
-            println!(
+            tracing::debug!(
                 "  ⚠️ UUID mismatch: facet1={facet1_uuid_list:?}, facet2={facet2_uuid_list:?}"
             );
         }
@@ -695,15 +695,19 @@ mod tests {
         );
 
         if uuids_are_same {
-            println!("  ✓ Identical coordinates produce identical UUIDs - facets are adjacent");
+            tracing::debug!(
+                "  ✓ Identical coordinates produce identical UUIDs - facets are adjacent"
+            );
         } else {
-            println!("  ✓ Different UUIDs for identical coordinates - facets are not adjacent");
+            tracing::debug!(
+                "  ✓ Different UUIDs for identical coordinates - facets are not adjacent"
+            );
         }
     }
 
     #[test]
     fn test_facet_views_are_adjacent_4d_cases() {
-        println!("Test 4D facet adjacency");
+        tracing::debug!("Test 4D facet adjacency");
 
         // Create two 4D simplices (5-vertices each) that share a 3D facet (4 vertices)
         let shared_tetrahedron = vec![
@@ -758,12 +762,12 @@ mod tests {
             "4D facets with different vertices should not be adjacent"
         );
 
-        println!("  ✓ 4D facet adjacency works correctly");
+        tracing::debug!("  ✓ 4D facet adjacency works correctly");
     }
 
     #[test]
     fn test_facet_views_are_adjacent_5d_cases() {
-        println!("Test 5D facet adjacency");
+        tracing::debug!("Test 5D facet adjacency");
 
         // Create two 5D simplices (6-vertices each) that share a 4D facet (5 vertices)
         let shared_4d_simplex = vec![
@@ -819,26 +823,6 @@ mod tests {
             "5D facets with different vertices should not be adjacent"
         );
 
-        println!("  ✓ 5D facet adjacency works correctly");
-    }
-
-    #[test]
-    fn test_facet_views_are_adjacent_multidimensional_summary() {
-        println!("Testing facet adjacency across all supported dimensions (1D-5D)");
-
-        // This test summarizes the multidimensional support
-        let dimensions_tested = vec![
-            ("1D", "edges", "vertices"),
-            ("2D", "triangles", "edges"),
-            ("3D", "tetrahedra", "triangles"),
-            ("4D", "4-simplices", "tetrahedra"),
-            ("5D", "5-simplices", "4-simplices"),
-        ];
-
-        for (dim, simplex_type, facet_type) in dimensions_tested {
-            println!("  ✓ {dim}: {simplex_type} with {facet_type} facets");
-        }
-
-        println!("  ✓ All dimensional cases covered comprehensively");
+        tracing::debug!("  ✓ 5D facet adjacency works correctly");
     }
 }

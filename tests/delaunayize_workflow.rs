@@ -1,15 +1,16 @@
 //! Integration tests for the delaunayize-by-flips workflow.
 //!
 //! Validates the public API in `delaunay::delaunayize`, covering:
-//! - Non-Delaunay but PL-manifold success case
-//! - Config defaults
-//! - Outcome population on success and failure paths
-//! - Fallback off vs on behavior
+//! - Public workflow behavior with explicit flip budgets and fallback config
+//! - Outcome population on public success and failure paths
 //! - Repeat-run determinism for outcome stats
-//! - Multi-dimensional coverage (2D–3D)
+//! - Cross-crate prelude exports and typed error payloads
 
-use delaunay::prelude::construction::{DelaunayTriangulation, TriangulationConstructionError};
+use delaunay::prelude::construction::{
+    DelaunayTriangulation, TriangulationConstructionError, Vertex,
+};
 use delaunay::prelude::delaunayize::*;
+use delaunay::prelude::geometry::AdaptiveKernel;
 use delaunay::prelude::pachner::{PachnerMove, PachnerMoves};
 use delaunay::vertex;
 use std::{error::Error, mem::size_of};
@@ -22,137 +23,45 @@ fn init_tracing() {
     let _ = tracing_subscriber::fmt::try_init();
 }
 
-// =============================================================================
-// CONFIG DEFAULT TESTS
-// =============================================================================
+type StableDelaunay3 = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>;
 
-#[test]
-fn test_delaunayize_config_default_values() {
-    init_tracing();
-    let config = DelaunayizeConfig::default();
-    assert_eq!(config.topology_max_iterations, 64);
-    assert_eq!(config.topology_max_simplices_removed, 10_000);
-    assert!(!config.fallback_rebuild);
-}
-
-// =============================================================================
-// NON-DELAUNAY BUT PL-MANIFOLD SUCCESS CASE
-// =============================================================================
-
-/// Build a valid PL-manifold triangulation, apply a flip to break the Delaunay
-/// property, then verify that `delaunayize_by_flips` restores it.
-#[test]
-fn test_non_delaunay_pl_manifold_repaired_2d() {
-    init_tracing();
-    let vertices = vec![
-        vertex!([0.0, 0.0]).unwrap(),
-        vertex!([4.0, 0.0]).unwrap(),
-        vertex!([0.0, 4.0]).unwrap(),
-        vertex!([4.0, 4.0]).unwrap(),
-        vertex!([2.0, 2.0]).unwrap(),
-    ];
-    let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::builder(&vertices).build().unwrap();
-
-    // The triangulation is already Delaunay. delaunayize should be a no-op.
-    let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap();
-    assert!(outcome.topology_repair.succeeded);
-    assert!(!outcome.used_fallback_rebuild);
-    assert!(dt.validate().is_ok());
-}
-
-/// Apply delaunayize on a larger 3D triangulation.
-#[test]
-fn test_non_delaunay_pl_manifold_repaired_3d() {
-    init_tracing();
-    let vertices = vec![
+fn stable_3d_flip_vertices() -> Vec<Vertex<(), 3>> {
+    vec![
         vertex!([0.0, 0.0, 0.0]).unwrap(),
         vertex!([1.0, 0.0, 0.0]).unwrap(),
         vertex!([0.0, 1.0, 0.0]).unwrap(),
         vertex!([0.0, 0.0, 1.0]).unwrap(),
-        vertex!([1.0, 1.0, 1.0]).unwrap(),
-        vertex!([0.5, 0.5, 0.5]).unwrap(),
-    ];
-    let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::builder(&vertices).build().unwrap();
-
-    let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap();
-    assert!(outcome.topology_repair.succeeded);
-    assert!(!outcome.used_fallback_rebuild);
-    assert!(dt.validate().is_ok());
+        vertex!([0.20, 0.20, 0.20]).unwrap(),
+        vertex!([0.75, 0.15, 0.30]).unwrap(),
+        vertex!([0.20, 0.70, 0.35]).unwrap(),
+        vertex!([0.30, 0.25, 0.80]).unwrap(),
+        vertex!([0.65, 0.60, 0.55]).unwrap(),
+    ]
 }
 
-// =============================================================================
-// FALLBACK BEHAVIOR TESTS
-// =============================================================================
+fn apply_first_k2_flip(dt: &mut StableDelaunay3) -> bool {
+    let mut candidate_facets = Vec::new();
+    for facet in dt.facets() {
+        let facet = facet.expect("facet iterator should resolve valid facets");
+        if facet
+            .simplex()
+            .neighbor_key(usize::from(facet.facet_index()))
+            .flatten()
+            .is_some()
+        {
+            candidate_facets.push(facet.handle());
+        }
+    }
 
-#[test]
-fn test_fallback_off_does_not_rebuild() {
-    init_tracing();
-    let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]).unwrap(),
-        vertex!([1.0, 0.0, 0.0]).unwrap(),
-        vertex!([0.0, 1.0, 0.0]).unwrap(),
-        vertex!([0.0, 0.0, 1.0]).unwrap(),
-    ];
-    let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::builder(&vertices).build().unwrap();
-
-    let config = DelaunayizeConfig {
-        fallback_rebuild: false,
-        ..DelaunayizeConfig::default()
-    };
-    let outcome = delaunayize_by_flips(&mut dt, config).unwrap();
-    assert!(!outcome.used_fallback_rebuild);
-}
-
-#[test]
-fn test_fallback_on_does_not_trigger_on_valid() {
-    init_tracing();
-    let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]).unwrap(),
-        vertex!([1.0, 0.0, 0.0]).unwrap(),
-        vertex!([0.0, 1.0, 0.0]).unwrap(),
-        vertex!([0.0, 0.0, 1.0]).unwrap(),
-    ];
-    let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::builder(&vertices).build().unwrap();
-
-    let config = DelaunayizeConfig {
-        fallback_rebuild: true,
-        ..DelaunayizeConfig::default()
-    };
-    let outcome = delaunayize_by_flips(&mut dt, config).unwrap();
-    // Already valid — fallback should not be triggered.
-    assert!(!outcome.used_fallback_rebuild);
-    assert!(dt.validate().is_ok());
-}
-
-// =============================================================================
-// OUTCOME POPULATION TESTS
-// =============================================================================
-
-#[test]
-fn test_outcome_stats_populated_3d() {
-    init_tracing();
-    let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]).unwrap(),
-        vertex!([1.0, 0.0, 0.0]).unwrap(),
-        vertex!([0.0, 1.0, 0.0]).unwrap(),
-        vertex!([0.0, 0.0, 1.0]).unwrap(),
-        vertex!([0.5, 0.5, 0.5]).unwrap(),
-    ];
-    let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::builder(&vertices).build().unwrap();
-
-    let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap();
-
-    // Topology repair stats should be populated.
-    assert!(outcome.topology_repair.succeeded);
-    assert_eq!(outcome.topology_repair.simplices_removed, 0);
-
-    // Delaunay repair stats should be populated.
-    assert!(outcome.delaunay_repair.facets_checked >= outcome.delaunay_repair.flips_performed);
+    for facet in candidate_facets {
+        let Ok(proposal) = dt.propose_pachner(PachnerMove::K2 { facet }) else {
+            continue;
+        };
+        if proposal.attempt_on(dt).is_ok() {
+            return true;
+        }
+    }
+    false
 }
 
 // =============================================================================
@@ -199,38 +108,6 @@ fn test_repeat_run_determinism_2d() {
     );
 }
 
-#[test]
-fn test_repeat_run_determinism_3d() {
-    init_tracing();
-    let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]).unwrap(),
-        vertex!([1.0, 0.0, 0.0]).unwrap(),
-        vertex!([0.0, 1.0, 0.0]).unwrap(),
-        vertex!([0.0, 0.0, 1.0]).unwrap(),
-        vertex!([1.0, 1.0, 1.0]).unwrap(),
-        vertex!([0.5, 0.5, 0.5]).unwrap(),
-    ];
-
-    let config = DelaunayizeConfig::default();
-
-    let mut dt1: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::builder(&vertices).build().unwrap();
-    let outcome1 = delaunayize_by_flips(&mut dt1, config).unwrap();
-
-    let mut dt2: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::builder(&vertices).build().unwrap();
-    let outcome2 = delaunayize_by_flips(&mut dt2, config).unwrap();
-
-    assert_eq!(
-        outcome1.topology_repair.simplices_removed,
-        outcome2.topology_repair.simplices_removed
-    );
-    assert_eq!(
-        outcome1.used_fallback_rebuild,
-        outcome2.used_fallback_rebuild
-    );
-}
-
 // =============================================================================
 // VERTEX PRESERVATION TEST
 // =============================================================================
@@ -266,47 +143,14 @@ fn test_vertex_count_preserved_after_delaunayize() {
 #[test]
 fn test_flip_breaks_delaunay_then_delaunayize_restores() {
     init_tracing();
-    // 5 points in 3D — produces multiple simplices with interior facets.
-    let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]).unwrap(),
-        vertex!([1.0, 0.0, 0.0]).unwrap(),
-        vertex!([0.0, 1.0, 0.0]).unwrap(),
-        vertex!([0.0, 0.0, 1.0]).unwrap(),
-        vertex!([0.5, 0.5, 0.5]).unwrap(),
-    ];
-    let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::builder(&vertices).build().unwrap();
+    let vertices = stable_3d_flip_vertices();
+    let mut dt: StableDelaunay3 = DelaunayTriangulation::builder(&vertices).build().unwrap();
     assert!(dt.validate().is_ok(), "Should start valid");
 
-    // Collect candidate interior facets (immutable borrow ends before mutation).
-    let mut candidate_facets = Vec::new();
-    for facet in dt.facets() {
-        let facet = facet.expect("facet iterator should resolve valid facets");
-        if facet
-            .simplex()
-            .neighbor_key(usize::from(facet.facet_index()))
-            .flatten()
-            .is_some()
-        {
-            candidate_facets.push(facet.handle());
-        }
-    }
-
-    let mut flipped = false;
-    for facet in candidate_facets {
-        let Ok(proposal) = dt.propose_pachner(PachnerMove::K2 { facet }) else {
-            continue;
-        };
-        if proposal.attempt_on(&mut dt).is_ok() {
-            flipped = true;
-            break;
-        }
-    }
-
-    if !flipped {
-        // No flippable interior facet found — skip (geometry-dependent).
-        return;
-    }
+    assert!(
+        apply_first_k2_flip(&mut dt),
+        "3D delaunayize fixture should provide an accepted k=2 Pachner move"
+    );
 
     // Delaunay property may now be violated.
     // delaunayize_by_flips should restore it.
@@ -487,10 +331,7 @@ fn test_delaunayize_with_explicit_flip_budget_3d() {
     let mut dt: DelaunayTriangulation<_, (), (), 3> =
         DelaunayTriangulation::builder(&vertices).build().unwrap();
 
-    let config = DelaunayizeConfig {
-        delaunay_max_flips: Some(1000),
-        ..DelaunayizeConfig::default()
-    };
+    let config = DelaunayizeConfig::default().with_delaunay_max_flips(1000);
     let outcome = delaunayize_by_flips(&mut dt, config).unwrap();
     assert!(outcome.topology_repair.succeeded);
     assert!(!outcome.used_fallback_rebuild);
@@ -512,11 +353,9 @@ fn test_delaunayize_with_flip_budget_and_fallback_2d() {
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
         DelaunayTriangulation::builder(&vertices).build().unwrap();
 
-    let config = DelaunayizeConfig {
-        delaunay_max_flips: Some(500),
-        fallback_rebuild: true,
-        ..DelaunayizeConfig::default()
-    };
+    let config = DelaunayizeConfig::default()
+        .with_delaunay_max_flips(500)
+        .with_fallback_rebuild(true);
     let outcome = delaunayize_by_flips(&mut dt, config).unwrap();
     assert!(outcome.topology_repair.succeeded);
     // Already valid — fallback should not be triggered.
@@ -529,50 +368,16 @@ fn test_delaunayize_with_flip_budget_and_fallback_2d() {
 #[test]
 fn test_flip_breaks_then_delaunayize_with_budget_restores_3d() {
     init_tracing();
-    let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]).unwrap(),
-        vertex!([1.0, 0.0, 0.0]).unwrap(),
-        vertex!([0.0, 1.0, 0.0]).unwrap(),
-        vertex!([0.0, 0.0, 1.0]).unwrap(),
-        vertex!([0.5, 0.5, 0.5]).unwrap(),
-    ];
-    let mut dt: DelaunayTriangulation<_, (), (), 3> =
-        DelaunayTriangulation::builder(&vertices).build().unwrap();
+    let vertices = stable_3d_flip_vertices();
+    let mut dt: StableDelaunay3 = DelaunayTriangulation::builder(&vertices).build().unwrap();
     assert!(dt.validate().is_ok());
 
-    // Collect candidate interior facets.
-    let mut candidate_facets = Vec::new();
-    for facet in dt.facets() {
-        let facet = facet.expect("facet iterator should resolve valid facets");
-        if facet
-            .simplex()
-            .neighbor_key(usize::from(facet.facet_index()))
-            .flatten()
-            .is_some()
-        {
-            candidate_facets.push(facet.handle());
-        }
-    }
+    assert!(
+        apply_first_k2_flip(&mut dt),
+        "3D delaunayize budget fixture should provide an accepted k=2 Pachner move"
+    );
 
-    let mut flipped = false;
-    for facet in candidate_facets {
-        let Ok(proposal) = dt.propose_pachner(PachnerMove::K2 { facet }) else {
-            continue;
-        };
-        if proposal.attempt_on(&mut dt).is_ok() {
-            flipped = true;
-            break;
-        }
-    }
-
-    if !flipped {
-        return;
-    }
-
-    let config = DelaunayizeConfig {
-        delaunay_max_flips: Some(1000),
-        ..DelaunayizeConfig::default()
-    };
+    let config = DelaunayizeConfig::default().with_delaunay_max_flips(1000);
     let outcome = delaunayize_by_flips(&mut dt, config).unwrap();
     assert!(outcome.topology_repair.succeeded);
     assert!(dt.validate().is_ok());

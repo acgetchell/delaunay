@@ -31,7 +31,6 @@
 //! local flip configurations (O(simplices)) instead of the naive O(simplices × vertices) brute-force.
 //! This provides ~40-100x speedup for property-based testing while remaining equally correct.
 
-use delaunay::geometry::kernel::{AdaptiveKernel, RobustKernel};
 use delaunay::prelude::construction::{
     ConstructionOptions, DedupPolicy, DelaunayRepairPolicy, DelaunayTriangulation,
     TopologyGuarantee, Vertex,

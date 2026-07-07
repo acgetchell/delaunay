@@ -510,12 +510,12 @@ mod tests {
     #[test]
     fn test_safe_usize_to_scalar_platform_independence() {
         // Test that the function behaves correctly on different platforms
-        println!(
+        tracing::debug!(
             "Testing on platform with usize size: {} bytes",
             std::mem::size_of::<usize>()
         );
-        println!("usize::MAX = {}", usize::MAX);
-        println!("2^53 = {}", 1_u64 << 53);
+        tracing::debug!("usize::MAX = {}", usize::MAX);
+        tracing::debug!("2^53 = {}", 1_u64 << 53);
 
         // Values that should work on any platform
         let universal_safe_values = [0, 1, 100, 10000];

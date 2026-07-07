@@ -84,6 +84,7 @@ type ReplacementPeriodicOffsets<const D: usize> =
 /// Bistellar flip kind descriptor.
 ///
 /// Access the move size with [`BistellarFlipKind::k`].
+/// Access the triangulation dimension with [`BistellarFlipKind::d`].
 ///
 /// # Examples
 ///
@@ -93,6 +94,7 @@ type ReplacementPeriodicOffsets<const D: usize> =
 /// let kind = BistellarFlipKind::k2(3);
 /// let inverse = kind.inverse();
 /// assert_eq!(kind.k(), 2);
+/// assert_eq!(kind.d(), 3);
 /// assert_eq!(inverse.k(), 3);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,7 +102,7 @@ pub struct BistellarFlipKind {
     /// Number of simplices being replaced on the current side (k).
     k: usize,
     /// Dimension of the triangulation (D).
-    pub d: usize,
+    d: usize,
 }
 /// Run a single flip-repair attempt using k=2 (and k=3 in 3D+).
 fn repair_delaunay_with_flips_k2_k3_attempt<K, U, V, const D: usize>(
@@ -2740,6 +2742,13 @@ impl BistellarFlipKind {
     pub const fn k(&self) -> usize {
         self.k
     }
+
+    /// Dimension of the triangulation (D).
+    #[must_use]
+    pub const fn d(&self) -> usize {
+        self.d
+    }
+
     /// Construct a k=1 flip kind for the given dimension.
     #[must_use]
     pub const fn k1(d: usize) -> Self {
@@ -14373,7 +14382,7 @@ mod tests {
         let info_back = apply_bistellar_flip_dynamic_raw(&mut tds, 4, &context_back).unwrap();
 
         assert_eq!(info_back.kind.k, 4);
-        assert_eq!(info_back.kind.d, 4);
+        assert_eq!(info_back.kind.d(), 4);
         assert_eq!(info_back.removed_simplices.len(), 4);
         assert_eq!(info_back.new_simplices.len(), 2);
         assert!(tds.is_valid().is_ok());
@@ -14410,7 +14419,7 @@ mod tests {
         let info_back = apply_bistellar_flip_k1_inverse_raw(&mut tds, new_key).unwrap();
 
         assert_eq!(info_back.kind.k, 5);
-        assert_eq!(info_back.kind.d, 4);
+        assert_eq!(info_back.kind.d(), 4);
         assert_eq!(info_back.removed_simplices.len(), 5);
         assert_eq!(info_back.new_simplices.len(), 1);
         assert!(tds.is_valid().is_ok());
@@ -14477,7 +14486,7 @@ mod tests {
         let info_back = apply_bistellar_flip_dynamic_raw(&mut tds, 4, &context_back).unwrap();
 
         assert_eq!(info_back.kind.k, 4);
-        assert_eq!(info_back.kind.d, 5);
+        assert_eq!(info_back.kind.d(), 5);
         assert_eq!(info_back.removed_simplices.len(), 4);
         assert_eq!(info_back.new_simplices.len(), 3);
         assert!(tds.is_valid().is_ok());
@@ -14529,7 +14538,7 @@ mod tests {
         let info_back = apply_bistellar_flip_dynamic_raw(&mut tds, 5, &context_back).unwrap();
 
         assert_eq!(info_back.kind.k, 5);
-        assert_eq!(info_back.kind.d, 5);
+        assert_eq!(info_back.kind.d(), 5);
         assert_eq!(info_back.removed_simplices.len(), 5);
         assert_eq!(info_back.new_simplices.len(), 2);
         assert!(tds.is_valid().is_ok());
@@ -14566,7 +14575,7 @@ mod tests {
         let info_back = apply_bistellar_flip_k1_inverse_raw(&mut tds, new_key).unwrap();
 
         assert_eq!(info_back.kind.k, 6);
-        assert_eq!(info_back.kind.d, 5);
+        assert_eq!(info_back.kind.d(), 5);
         assert_eq!(info_back.removed_simplices.len(), 6);
         assert_eq!(info_back.new_simplices.len(), 1);
         assert!(tds.is_valid().is_ok());
@@ -14594,14 +14603,14 @@ mod tests {
         let info = apply_bistellar_flip_k1_raw(&mut tds, simplex, new_vertex).unwrap();
 
         assert_eq!(info.kind.k, 1);
-        assert_eq!(info.kind.d, 2);
+        assert_eq!(info.kind.d(), 2);
         assert_eq!(tds.number_of_simplices(), 3);
 
         let new_key = tds.vertex_key_from_uuid(&new_uuid).unwrap();
         let info_back = apply_bistellar_flip_k1_inverse_raw(&mut tds, new_key).unwrap();
 
         assert_eq!(info_back.kind.k, 3);
-        assert_eq!(info_back.kind.d, 2);
+        assert_eq!(info_back.kind.d(), 2);
         assert_eq!(tds.number_of_simplices(), 1);
         assert_eq!(tds.number_of_vertices(), 3);
         assert!(tds.is_valid().is_ok());

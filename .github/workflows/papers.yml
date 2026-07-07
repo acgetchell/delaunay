@@ -52,11 +52,11 @@ env:
   JUST_VERSION: "1.55.1"
   TECTONIC_VERSION: "0.16.9"
   TEX_FMT_VERSION: "0.5.7"
-  UV_VERSION: "0.11.26"
+  UV_VERSION: "0.11.27"
 
 jobs:
   papers:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     timeout-minutes: 30
 
     steps:
@@ -86,17 +86,8 @@ jobs:
 
       - name: Install paper system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes \
-            chktex \
-            libfontconfig1-dev \
-            libfreetype6-dev \
-            libgraphite2-dev \
-            libharfbuzz-dev \
-            libicu-dev \
-            libpng-dev \
-            pkg-config \
-            zlib1g-dev
+          brew update
+          brew install chktex libpng pkgconf
 
       - name: Install just
         uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
