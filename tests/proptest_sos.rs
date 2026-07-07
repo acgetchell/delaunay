@@ -24,9 +24,8 @@
 
 #![forbid(unsafe_code)]
 
-use delaunay::geometry::point::Point;
 use delaunay::geometry::sos::{sos_insphere_sign, sos_orientation_sign};
-use delaunay::geometry::traits::coordinate::{CoordinateConversionError, DegenerateSimplexReason};
+use delaunay::prelude::geometry::{CoordinateConversionError, DegenerateSimplexReason, Point};
 use proptest::prelude::*;
 
 // =============================================================================

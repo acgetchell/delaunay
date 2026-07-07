@@ -410,6 +410,13 @@ mod cli_tests {
     }
 
     #[test]
+    fn generate_rejects_zero_vertices() {
+        let output = run_cli(&["generate", "--dimension", "3", "--vertices", "0"]);
+        assert_exit_code(&output, 1);
+        assert_stderr_contains(&output, "3D generation requires at least 4 vertices, got 0");
+    }
+
+    #[test]
     fn generate_rejects_empty_output_path_during_parsing() {
         let output = run_cli(&[
             "generate",
@@ -469,6 +476,13 @@ mod cli_tests {
         let output = run_cli(&["pachner-stress", "--dimension", "3d", "--vertices", "3"]);
         assert_exit_code(&output, 1);
         assert_stderr_contains(&output, "3D stress requires at least 4 vertices, got 3");
+    }
+
+    #[test]
+    fn pachner_stress_rejects_zero_vertices() {
+        let output = run_cli(&["pachner-stress", "--dimension", "3d", "--vertices", "0"]);
+        assert_exit_code(&output, 1);
+        assert_stderr_contains(&output, "3D stress requires at least 4 vertices, got 0");
     }
 
     #[test]

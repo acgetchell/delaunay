@@ -10,14 +10,13 @@
 //! - Different kernels (Fast vs Robust)
 
 use approx::assert_relative_eq;
-use delaunay::geometry::kernel::RobustKernel;
 use delaunay::prelude::algorithms::LocateResult;
 use delaunay::prelude::collections::MAX_PRACTICAL_DIMENSION_SIZE;
 use delaunay::prelude::construction::{
     ConstructionOptions, DedupPolicy, DelaunayTriangulation, DelaunayTriangulationBuilder,
     TopologyGuarantee, Vertex, vertex,
 };
-use delaunay::prelude::geometry::{AdaptiveKernel, Point};
+use delaunay::prelude::geometry::{AdaptiveKernel, Point, RobustKernel};
 use delaunay::prelude::tds::{
     Simplex, SimplexKey, SmallBuffer, VertexKey, facet_key_from_vertices,
 };

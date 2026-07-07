@@ -4,8 +4,7 @@
 //! - **In-domain**: the result always lies in `[0, L_i)` for every axis `i`.
 //! - **Idempotent**: applying canonicalization twice gives the same result as once.
 
-use delaunay::topology::spaces::ToroidalSpace;
-use delaunay::topology::traits::topological_space::TopologicalSpace;
+use delaunay::prelude::topology::spaces::{TopologicalSpace, ToroidalSpace};
 use proptest::prelude::*;
 
 // =============================================================================

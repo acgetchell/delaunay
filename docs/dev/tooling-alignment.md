@@ -228,7 +228,7 @@ The useful updates ported in this pass are:
   separately installs `chktex` from the system package manager because it is TeX
   distribution tooling rather than a Rust CLI, and installs the Linux native
   bridge-library headers required when compiling Tectonic from Cargo. All
-  uv-backed workflows use uv 0.11.26 to match the local Python tooling
+  uv-backed workflows use uv 0.11.27 to match the local Python tooling
   bootstrap.
 - `.codecov.yml` now ratchets Delaunay's coverage policy above the older
   causal-triangulations baseline without copying la-stack's near-total

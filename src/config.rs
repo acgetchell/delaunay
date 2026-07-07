@@ -243,7 +243,7 @@ enum GenerateCommand {
 #[derive(Debug)]
 struct GenerateConfig<const D: usize> {
     kind: GenerateKind,
-    vertices: usize,
+    vertices: NonZeroUsize,
     distribution: GenerateDistribution,
     seed: u64,
     output: Option<PathBuf>,
@@ -252,17 +252,17 @@ struct GenerateConfig<const D: usize> {
 impl<const D: usize> GenerateConfig<D> {
     /// Validate dimension-dependent generation limits.
     fn try_new(args: GenerateArgs) -> Result<Self, CliError> {
-        if args.vertices < D + 1 {
-            return Err(CliError::TooFewVertices {
+        let vertices = NonZeroUsize::new(args.vertices)
+            .filter(|vertices| vertices.get() > D)
+            .ok_or(CliError::TooFewVertices {
                 dimension: D,
                 vertices: args.vertices,
                 minimum: D + 1,
-            });
-        }
+            })?;
 
         Ok(Self {
             kind: args.kind,
-            vertices: args.vertices,
+            vertices,
             distribution: args.distribution,
             seed: args.seed,
             output: args.output,
@@ -468,18 +468,18 @@ fn run_validation_demo(config: &ValidationDemoConfig) -> Result<(), CliError> {
 
 /// Build a random PL-manifold Delaunay triangulation for CLI export.
 fn build_generated_delaunay<const D: usize>(
-    vertex_count: usize,
+    vertex_count: NonZeroUsize,
     seed: u64,
     distribution: GenerateDistribution,
 ) -> Result<DelaunayTriangulation<RobustKernel<f64>, (), (), D>, CliError> {
     let points = match distribution {
         GenerateDistribution::Cube => generate_random_points_in_range_seeded::<D>(
-            vertex_count,
+            vertex_count.get(),
             CoordinateRange::try_new(0.0_f64, 1.0)?,
             seed,
         )?,
         GenerateDistribution::Ball => {
-            generate_random_points_in_ball_seeded::<D>(vertex_count, 1.0, seed)?
+            generate_random_points_in_ball_seeded::<D>(vertex_count.get(), 1.0, seed)?
         }
     };
     let vertices = try_vertices_from_points(&points)?;
@@ -1040,7 +1040,7 @@ impl Display for PachnerStressCountArgument {
 struct PachnerStressConfig {
     mode: PachnerStressMode,
     dimension: PachnerStressDimension,
-    vertex_count: usize,
+    vertex_count: NonZeroUsize,
     move_attempts: NonZeroUsize,
     validate_every: NonZeroUsize,
     key_refresh_every: NonZeroUsize,
@@ -1067,31 +1067,31 @@ impl PachnerStressConfig {
     /// Build a validated stress configuration from command-line values.
     fn try_new(input: PachnerStressConfigInput) -> Result<Self, PachnerStressError> {
         let minimum_vertices = input.dimension.value() + 1;
-        if input.vertex_count < minimum_vertices {
-            return Err(PachnerStressError::TooFewVertices {
+        let vertex_count = NonZeroUsize::new(input.vertex_count)
+            .filter(|vertex_count| vertex_count.get() >= minimum_vertices)
+            .ok_or(PachnerStressError::TooFewVertices {
                 dimension: input.dimension.value(),
                 vertices: input.vertex_count,
                 minimum: minimum_vertices,
-            });
-        }
+            })?;
         let validate_every = input.validate_every.min(input.move_attempts);
         let growth_slack =
-            (input.vertex_count / DEFAULT_VERTEX_GROWTH_DIVISOR).max(input.dimension.value() + 1);
-        let shrink_slack = input.vertex_count / DEFAULT_VERTEX_SHRINK_DIVISOR;
+            (vertex_count.get() / DEFAULT_VERTEX_GROWTH_DIVISOR).max(input.dimension.value() + 1);
+        let shrink_slack = vertex_count.get() / DEFAULT_VERTEX_SHRINK_DIVISOR;
 
         Ok(Self {
             mode: input.mode,
             dimension: input.dimension,
-            vertex_count: input.vertex_count,
+            vertex_count,
             move_attempts: input.move_attempts,
             validate_every,
             key_refresh_every: input.key_refresh_every,
             retry_attempts: input.retry_attempts,
-            min_vertex_count: input
-                .vertex_count
+            min_vertex_count: vertex_count
+                .get()
                 .saturating_sub(shrink_slack)
                 .max(input.dimension.value() + 1),
-            max_vertex_count: input.vertex_count.saturating_add(growth_slack),
+            max_vertex_count: vertex_count.get().saturating_add(growth_slack),
             seed: input.seed,
         })
     }
@@ -1557,7 +1557,7 @@ fn run_pachner_stress_dimension<const D: usize>(
         label: config.label(),
         mode: config.mode.label(),
         validation_scope: PACHNER_STRESS_VALIDATION_SCOPE_LABEL,
-        configured_vertices: config.vertex_count,
+        configured_vertices: config.vertex_count.get(),
         attempts: config.move_attempts().get(),
         validate_every: config.validate_every().get(),
         key_refresh_every: config.key_refresh_every().get(),
@@ -1582,11 +1582,11 @@ fn build_pachner_stress_dt<const D: usize>(
     reporter.emit_stage(
         config,
         "generate_points_start",
-        Some(config.vertex_count),
+        Some(config.vertex_count.get()),
         None,
     )?;
     let points = generate_random_points_in_range_seeded::<D>(
-        config.vertex_count,
+        config.vertex_count.get(),
         stress_bounds()?,
         config.seed,
     )?;
@@ -2227,11 +2227,11 @@ mod tests {
     use clap::Parser;
 
     use super::{
-        DelaunayCliArgs, DelaunayCommand, GenerateCommand, GenerateConfig, GenerateDistribution,
-        PachnerStressArtifacts, PachnerStressConfig, PachnerStressConfigInput,
-        PachnerStressCountArgument, PachnerStressDimension, PachnerStressError,
-        PachnerStressInsertedFaceArity, PachnerStressInsertedFaceContext, PachnerStressMode,
-        build_validation_demo_export, create_progress_writer, positive_nonzero,
+        CliError, DelaunayCliArgs, DelaunayCommand, GenerateCommand, GenerateConfig,
+        GenerateDistribution, PachnerStressArtifacts, PachnerStressConfig,
+        PachnerStressConfigInput, PachnerStressCountArgument, PachnerStressDimension,
+        PachnerStressError, PachnerStressInsertedFaceArity, PachnerStressInsertedFaceContext,
+        PachnerStressMode, build_validation_demo_export, create_progress_writer, positive_nonzero,
     };
 
     fn assert_empty_path_rejected_by_clap(args: &[&str], argument: &str) {
@@ -2297,6 +2297,49 @@ mod tests {
     }
 
     #[test]
+    fn generate_config_carries_validated_nonzero_vertex_count() {
+        let config = validated_generate_3d(&[
+            "delaunay",
+            "generate",
+            "triangulation",
+            "--dimension",
+            "3",
+            "--vertices",
+            "4",
+        ]);
+
+        assert_eq!(config.vertices.get(), 4);
+    }
+
+    #[test]
+    fn generate_zero_vertices_preserves_typed_too_few_vertices_error() {
+        let error = DelaunayCliArgs::try_parse_from([
+            "delaunay",
+            "generate",
+            "triangulation",
+            "--dimension",
+            "3",
+            "--vertices",
+            "0",
+        ])
+        .expect("CLI arguments should parse")
+        .into_validated()
+        .expect_err("zero vertices should fail generate validation");
+
+        let CliError::TooFewVertices {
+            dimension,
+            vertices,
+            minimum,
+        } = error
+        else {
+            panic!("expected TooFewVertices error, got {error:?}");
+        };
+        assert_eq!(dimension, 3);
+        assert_eq!(vertices, 0);
+        assert_eq!(minimum, 4);
+    }
+
+    #[test]
     fn generate_rejects_unknown_distribution() {
         let error = DelaunayCliArgs::try_parse_from([
             "delaunay",
@@ -2319,14 +2362,39 @@ mod tests {
         let error = positive_nonzero(PachnerStressCountArgument::ValidateEvery, 0)
             .expect_err("zero should fail positive-count validation");
 
-        match error {
-            PachnerStressError::NonPositive { argument, value } => {
-                assert_eq!(argument, PachnerStressCountArgument::ValidateEvery);
-                assert_eq!(argument.to_string(), "--validate-every");
-                assert_eq!(value, 0);
-            }
-            other => panic!("expected NonPositive error, got {other:?}"),
-        }
+        let PachnerStressError::NonPositive { argument, value } = error else {
+            panic!("expected NonPositive error, got {error:?}");
+        };
+        assert_eq!(argument, PachnerStressCountArgument::ValidateEvery);
+        assert_eq!(argument.to_string(), "--validate-every");
+        assert_eq!(value, 0);
+    }
+
+    #[test]
+    fn pachner_zero_vertices_preserves_typed_too_few_vertices_error() {
+        let error = PachnerStressConfig::try_new(PachnerStressConfigInput {
+            mode: PachnerStressMode::RoundTrip,
+            dimension: PachnerStressDimension::Three,
+            vertex_count: 0,
+            move_attempts: NonZeroUsize::new(2).expect("literal is nonzero"),
+            validate_every: NonZeroUsize::new(1).expect("literal is nonzero"),
+            key_refresh_every: NonZeroUsize::new(7).expect("literal is nonzero"),
+            retry_attempts: NonZeroUsize::new(4).expect("literal is nonzero"),
+            seed: 42,
+        })
+        .expect_err("zero vertices should fail Pachner stress validation");
+
+        let PachnerStressError::TooFewVertices {
+            dimension,
+            vertices,
+            minimum,
+        } = error
+        else {
+            panic!("expected TooFewVertices error, got {error:?}");
+        };
+        assert_eq!(dimension, 3);
+        assert_eq!(vertices, 0);
+        assert_eq!(minimum, 4);
     }
 
     #[test]
@@ -2337,23 +2405,22 @@ mod tests {
             actual: 4,
         };
 
-        match error {
-            PachnerStressError::InsertedFaceArity {
-                context,
-                expected,
-                actual,
-            } => {
-                assert_eq!(context, PachnerStressInsertedFaceContext::ForwardMove);
-                assert_eq!(
-                    expected,
-                    PachnerStressInsertedFaceArity::InvertibleForwardMove
-                );
-                assert_eq!(context.to_string(), "forward Pachner move");
-                assert_eq!(expected.to_string(), "1, 2, or 3");
-                assert_eq!(actual, 4);
-            }
-            other => panic!("expected InsertedFaceArity error, got {other:?}"),
-        }
+        let PachnerStressError::InsertedFaceArity {
+            context,
+            expected,
+            actual,
+        } = error
+        else {
+            panic!("expected InsertedFaceArity error, got {error:?}");
+        };
+        assert_eq!(context, PachnerStressInsertedFaceContext::ForwardMove);
+        assert_eq!(
+            expected,
+            PachnerStressInsertedFaceArity::InvertibleForwardMove
+        );
+        assert_eq!(context.to_string(), "forward Pachner move");
+        assert_eq!(expected.to_string(), "1, 2, or 3");
+        assert_eq!(actual, 4);
     }
 
     #[test]
@@ -2362,12 +2429,10 @@ mod tests {
         let error = PachnerStressArtifacts::try_new(Some(path.clone()), Some(path), true)
             .expect_err("duplicate artifact paths should fail validation");
 
-        match error {
-            PachnerStressError::DuplicateArtifactPath { path } => {
-                assert_eq!(path, Path::new("target/notebooks/pachner/shared.csv"));
-            }
-            other => panic!("expected DuplicateArtifactPath error, got {other:?}"),
-        }
+        let PachnerStressError::DuplicateArtifactPath { path } = error else {
+            panic!("expected DuplicateArtifactPath error, got {error:?}");
+        };
+        assert_eq!(path, Path::new("target/notebooks/pachner/shared.csv"));
     }
 
     #[test]
@@ -2406,6 +2471,7 @@ mod tests {
         })
         .expect("valid 3D Pachner stress config should build");
 
+        assert_eq!(config.vertex_count.get(), 5);
         assert_eq!(config.move_attempts().get(), 2);
         assert_eq!(config.validate_every().get(), 2);
         assert_eq!(config.key_refresh_every().get(), 7);

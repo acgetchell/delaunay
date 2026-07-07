@@ -24,7 +24,7 @@ permissions:
   actions: read
 
 env:
-  UV_VERSION: "0.11.26"
+  UV_VERSION: "0.11.27"
 
 jobs:
   semgrep-sarif:

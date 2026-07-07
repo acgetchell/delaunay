@@ -8,7 +8,6 @@ use std::{
     error::Error as StdError,
 };
 
-use delaunay::geometry::CoordinateConversionError;
 use delaunay::prelude::construction::{
     DelaunayError, DelaunayResult, DelaunayTriangulationBuilder,
     DelaunayTriangulationConstructionError, TopologyGuarantee, Vertex, vertex,
@@ -19,6 +18,7 @@ use delaunay::prelude::export::{
     VertexRecord, VisualizationData, VisualizationDataValidationError, VisualizationExportError,
     VisualizationMetadata, VisualizationTopologyGuarantee, VisualizationTopologyKind,
 };
+use delaunay::prelude::geometry::CoordinateConversionError;
 use delaunay::prelude::topology::spaces::TopologyKind;
 use uuid::Uuid;
 

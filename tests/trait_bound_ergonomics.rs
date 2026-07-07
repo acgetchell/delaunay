@@ -10,14 +10,16 @@ use delaunay::prelude::algorithms::{
 };
 use delaunay::prelude::collections::SimplexKeyBuffer;
 use delaunay::prelude::construction::{GlobalTopology, TopologyGuarantee, TopologyKind};
-use delaunay::prelude::geometry::{Coordinate, CoordinateValidationError, FastKernel, Point};
-use delaunay::prelude::query::FacetIncidenceAnalysis;
+use delaunay::prelude::geometry::{
+    Coordinate, CoordinateValidationError, FastKernel, Point, surface_measure,
+};
+use delaunay::prelude::query::{FacetIncidenceAnalysis, QueryError, TopologyIndexBuildError};
 use delaunay::prelude::tds::{
-    InvariantError, SimplexKey, Tds, TdsError, Vertex, VertexKey, verify_facet_index_consistency,
+    FacetView, InvariantError, SimplexKey, Tds, TdsError, Vertex, VertexKey,
+    verify_facet_index_consistency,
 };
 use delaunay::prelude::topology::validation::validate_triangulation_euler;
 use delaunay::prelude::validation::DelaunayTriangulationValidationError;
-use delaunay::query::{QueryError, TopologyIndexBuildError};
 use uuid::Uuid;
 
 struct Payload;
@@ -301,4 +303,12 @@ fn facet_views_accept_non_datatype_payloads() {
     let tds: Tds<Payload, Payload, 2> = Tds::empty();
 
     assert!(tds.try_simplex_facets(SimplexKey::default()).is_err());
+}
+
+#[test]
+fn surface_measure_accepts_non_datatype_facet_views() {
+    let facets: [FacetView<'_, Payload, Payload, 2>; 0] = [];
+    let measure = surface_measure(&facets).unwrap();
+
+    assert!(measure.abs() <= f64::EPSILON);
 }

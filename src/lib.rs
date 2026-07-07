@@ -62,6 +62,7 @@
 //! | Delaunay repair and flip-based Level 5 validation | `use delaunay::prelude::repair::*` |
 //! | Delaunayize workflow (repair + flip) | `use delaunay::prelude::delaunayize::*` |
 //! | Construction telemetry diagnostics | `use delaunay::prelude::diagnostics::*` |
+//! | Export stable mesh and visualization primitives | `use delaunay::prelude::export::*` |
 //! | Validation policies, errors, reports, PL-manifold link errors, and Level 5 diagnostics | `use delaunay::prelude::validation::*` |
 //! | Topology validation, Euler characteristic, ridge queries | `use delaunay::prelude::topology::validation::*` |
 //! | Topological spaces, topology traits, spherical point/metric backends, lifted toroidal IDs | `use delaunay::prelude::topology::spaces::*` |
@@ -831,6 +832,7 @@ pub use crate::core::validation::{
     TopologyGuarantee, TriangulationValidationError, ValidationConfigurationError, ValidationPolicy,
 };
 #[cfg(feature = "diagnostics")]
+#[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
 pub use crate::delaunay_property_validation::debug_print_first_delaunay_violation;
 pub use crate::delaunay_property_validation::{
     DelaunayValidationError, DelaunayViolationDetail, DelaunayViolationReport,
@@ -1125,6 +1127,7 @@ pub mod tds {
 /// ```
 pub mod algorithms {
     #[cfg(feature = "diagnostics")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
     pub use crate::core::algorithms::locate::verify_conflict_region_completeness;
     pub use crate::core::algorithms::locate::{
         ConflictError, InternalInconsistencySite, LocateError, LocateFallback,

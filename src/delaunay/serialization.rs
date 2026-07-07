@@ -3,16 +3,15 @@
 #![forbid(unsafe_code)]
 
 use crate::core::tds::Tds;
-use crate::core::traits::data_type::DataType;
-use crate::geometry::kernel::{Kernel, RobustKernel};
+use crate::core::traits::data_type::DataSerialize;
+use crate::geometry::kernel::RobustKernel;
 use crate::triangulation::DelaunayTriangulation;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 impl<K, U, V, const D: usize> Serialize for DelaunayTriangulation<K, U, V, D>
 where
-    K: Kernel<D>,
-    U: DataType,
-    V: DataType,
+    U: DataSerialize,
+    V: DataSerialize,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -88,11 +87,20 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::operations::DelaunayInsertionState;
     use crate::core::simplex::Simplex;
     use crate::core::tds::TriangulationConstructionState;
+    use crate::core::triangulation::Triangulation;
+    use crate::core::validation::{TopologyGuarantee, ValidationPolicy};
     use crate::geometry::kernel::AdaptiveKernel;
+    use crate::topology::traits::topological_space::GlobalTopology;
     use crate::vertex;
     use std::sync::Once;
+
+    struct NotAKernel;
+
+    #[derive(Serialize)]
+    struct SerializeOnlyPayload(String);
 
     fn init_tracing() {
         static INIT: Once = Once::new();
@@ -149,6 +157,26 @@ mod tests {
             message.contains("Delaunay verification failed"),
             "serde error should preserve the Level 5 validation failure: {message}"
         );
+    }
+
+    #[test]
+    fn serialize_delaunay_triangulation_does_not_require_kernel_or_datatype_bounds() {
+        let dt: DelaunayTriangulation<NotAKernel, SerializeOnlyPayload, SerializeOnlyPayload, 2> =
+            DelaunayTriangulation {
+                tri: Triangulation {
+                    kernel: NotAKernel,
+                    tds: Tds::empty(),
+                    global_topology: GlobalTopology::DEFAULT,
+                    validation_policy: ValidationPolicy::default(),
+                    topology_guarantee: TopologyGuarantee::DEFAULT,
+                },
+                insertion_state: DelaunayInsertionState::new(),
+                spatial_index: None,
+            };
+
+        let json = serde_json::to_string(&dt).unwrap();
+
+        assert!(!json.is_empty());
     }
 
     #[test]

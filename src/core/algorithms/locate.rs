@@ -2333,11 +2333,11 @@ mod tests {
             .map(|&vkey| *dt.tds().vertex(vkey).unwrap().point())
             .collect();
 
-        println!("Simplex vertices: {simplex_points:?}");
+        tracing::debug!("Simplex vertices: {simplex_points:?}");
 
         // Test orientation of full simplex
         let simplex_orientation = kernel.orientation(&simplex_points).unwrap();
-        println!("Simplex orientation: {simplex_orientation}");
+        tracing::debug!("Simplex orientation: {simplex_orientation}");
 
         // Test query point inside
         let query_inside = Point::try_new([0.3, 0.3]).expect("finite point coordinates");
@@ -2348,7 +2348,9 @@ mod tests {
                 is_point_outside_facet(dt.tds(), &kernel, simplex_key, facet_idx, &query_inside);
             let is_outside = result.unwrap();
 
-            println!("Facet {facet_idx} (opposite to vertex {facet_idx}): is_outside={is_outside}");
+            tracing::debug!(
+                "Facet {facet_idx} (opposite to vertex {facet_idx}): is_outside={is_outside}"
+            );
 
             // Point inside should NOT be outside any facet
             assert!(
@@ -2366,7 +2368,7 @@ mod tests {
                 is_point_outside_facet(dt.tds(), &kernel, simplex_key, facet_idx, &query_outside);
             let is_outside = result.unwrap();
 
-            println!("Outside point - Facet {facet_idx}: is_outside={is_outside}");
+            tracing::debug!("Outside point - Facet {facet_idx}: is_outside={is_outside}");
 
             if is_outside {
                 found_outside_facet = true;

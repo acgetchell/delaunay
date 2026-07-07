@@ -240,12 +240,10 @@ fn custom_config_2d() -> Result<(), DelaunayizeRepairExampleError> {
     let mut dt: DelaunayTriangulation<_, (), (), 2> =
         DelaunayTriangulationBuilder::new(&vertices).build()?;
 
-    let config = DelaunayizeConfig {
-        topology_max_iterations: 10,
-        topology_max_simplices_removed: 100,
-        fallback_rebuild: true,
-        delaunay_max_flips: None,
-    };
+    let config = DelaunayizeConfig::default()
+        .with_topology_max_iterations(10)
+        .with_topology_max_simplices_removed(100)
+        .with_fallback_rebuild(true);
 
     println!(
         "  Config: max_iterations={}, max_simplices_removed={}, fallback={}",

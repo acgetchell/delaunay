@@ -1483,7 +1483,35 @@ fn is_geometric_flip_error(error: &FlipError) -> bool {
             SimplexValidationError::DegenerateSimplex
                 | SimplexValidationError::CoordinateConversion { .. }
         ),
-        _ => false,
+        FlipError::WrongTopologyOwner { .. }
+        | FlipError::StaleTopologyProposal { .. }
+        | FlipError::UnsupportedDimension { .. }
+        | FlipError::BoundaryFacet { .. }
+        | FlipError::MissingSimplex { .. }
+        | FlipError::DanglingVertexIncidence { .. }
+        | FlipError::MissingVertex { .. }
+        | FlipError::MissingNeighbor { .. }
+        | FlipError::DanglingRidgeNeighbor { .. }
+        | FlipError::InvalidFacetAdjacency { .. }
+        | FlipError::InvalidFacetIndex { .. }
+        | FlipError::InvalidRidgeIndex { .. }
+        | FlipError::InvalidRidgeAdjacency { .. }
+        | FlipError::InvalidRidgeMultiplicity { .. }
+        | FlipError::InvalidEdgeMultiplicity { .. }
+        | FlipError::InvalidTriangleMultiplicity { .. }
+        | FlipError::InvalidEdgeAdjacency { .. }
+        | FlipError::InvalidTriangleAdjacency { .. }
+        | FlipError::InvalidVertexMultiplicity { .. }
+        | FlipError::InvalidVertexAdjacency { .. }
+        | FlipError::InvalidFlipContext { .. }
+        | FlipError::DuplicateSimplex
+        | FlipError::NonManifoldFacet
+        | FlipError::InsertedSimplexAlreadyExists { .. }
+        | FlipError::FacetIteration { .. }
+        | FlipError::PostconditionRepair { .. }
+        | FlipError::EmbeddingValidation { .. }
+        | FlipError::NeighborWiring { .. }
+        | FlipError::TdsMutation { .. } => false,
     }
 }
 
@@ -2725,6 +2753,24 @@ fn push_unique_index(indices: &mut Vec<usize>, idx: usize) {
     }
 }
 
+/// Orders finite farthest-point candidates deterministically without hiding
+/// unordered comparisons behind a catch-all branch.
+fn farthest_candidate_replaces_best<const D: usize>(
+    coords_f64: &[[f64; D]],
+    candidate_idx: usize,
+    best_idx: usize,
+    candidate_distance: f64,
+    best_distance: f64,
+) -> bool {
+    match candidate_distance.partial_cmp(&best_distance) {
+        Some(Ordering::Greater) => true,
+        Some(Ordering::Equal) => {
+            coords_f64[candidate_idx].partial_cmp(&coords_f64[best_idx]) == Some(Ordering::Less)
+        }
+        Some(Ordering::Less) | None => false,
+    }
+}
+
 /// Computes the bounded candidate-pool size for max-volume simplex search.
 const INITIAL_SIMPLEX_MAX_VOLUME_CANDIDATE_CAP: usize = 18;
 
@@ -2780,7 +2826,7 @@ fn append_axis_extrema<const D: usize>(coords_f64: &[[f64; D]], candidates: &mut
                 {
                     min_idx = idx;
                 }
-                _ => {}
+                Some(Ordering::Equal | Ordering::Greater) | None => {}
             }
             match coord.partial_cmp(&max_coord) {
                 Some(Ordering::Greater) => max_idx = idx,
@@ -2790,7 +2836,7 @@ fn append_axis_extrema<const D: usize>(coords_f64: &[[f64; D]], candidates: &mut
                 {
                     max_idx = idx;
                 }
-                _ => {}
+                Some(Ordering::Less | Ordering::Equal) | None => {}
             }
         }
         push_unique_index(candidates, min_idx);
@@ -2836,12 +2882,8 @@ fn extend_candidate_pool_by_farthest_points<const D: usize>(
             if !dist.is_finite() {
                 continue;
             }
-            let replace = best_idx.is_none_or(|best_idx_val| match dist.partial_cmp(&best_dist) {
-                Some(Ordering::Greater) => true,
-                Some(Ordering::Equal) => {
-                    coords_f64[idx].partial_cmp(&coords_f64[best_idx_val]) == Some(Ordering::Less)
-                }
-                _ => false,
+            let replace = best_idx.is_none_or(|best_idx_val| {
+                farthest_candidate_replaces_best(coords_f64, idx, best_idx_val, dist, best_dist)
             });
             if replace {
                 best_idx = Some(idx);
@@ -2926,12 +2968,8 @@ fn select_balanced_simplex_indices<U, const D: usize>(
             if !dist.is_finite() {
                 continue;
             }
-            let replace = best_idx.is_none_or(|best_idx_val| match dist.partial_cmp(&best_dist) {
-                Some(Ordering::Greater) => true,
-                Some(Ordering::Equal) => {
-                    coords_f64[i].partial_cmp(&coords_f64[best_idx_val]) == Some(Ordering::Less)
-                }
-                _ => false,
+            let replace = best_idx.is_none_or(|best_idx_val| {
+                farthest_candidate_replaces_best(&coords_f64, i, best_idx_val, dist, best_dist)
             });
             if replace {
                 best_idx = Some(i);

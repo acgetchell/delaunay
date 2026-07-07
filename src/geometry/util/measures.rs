@@ -11,7 +11,6 @@ use super::circumsphere::{
 use super::conversions::{ValueConversionError, safe_coords_to_f64, safe_usize_to_scalar};
 use super::norms::hypot;
 use crate::core::facet::FacetView;
-use crate::core::traits::data_type::DataType;
 use crate::geometry::matrix::{DEFAULT_SINGULAR_TOL, Matrix, matrix_get, matrix_set};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateConversionValue;
@@ -818,11 +817,7 @@ fn facet_measure_gram_matrix<const D: usize>(
 /// ```
 pub fn surface_measure<U, V, const D: usize>(
     facets: &[FacetView<'_, U, V, D>],
-) -> Result<f64, SurfaceMeasureError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<f64, SurfaceMeasureError> {
     let mut total_measure = 0.0;
 
     for facet in facets {
@@ -839,16 +834,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vertex;
-    use std::assert_matches;
-
-    use crate::core::traits::facet_incidence_analysis::FacetIncidenceAnalysis;
-    use crate::core::vertex::Vertex;
-    use crate::geometry::matrix::LaError;
-    use crate::geometry::point::Point;
-    use crate::geometry::traits::coordinate::InvalidCoordinateValue;
-    use crate::triangulation::DelaunayTriangulation;
+    use crate::{
+        core::{traits::facet_incidence_analysis::FacetIncidenceAnalysis, vertex::Vertex},
+        geometry::{matrix::LaError, point::Point, traits::coordinate::InvalidCoordinateValue},
+        triangulation::DelaunayTriangulation,
+        vertex,
+    };
     use approx::assert_relative_eq;
+    use std::assert_matches;
 
     #[test]
     fn surface_measure_error_display_names_variants() {
