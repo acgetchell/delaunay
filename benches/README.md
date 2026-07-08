@@ -112,7 +112,7 @@ allocation checks, or targeted diagnostics.
 |----------|---------|
 | Final local invariant validation gate | `just ci` |
 | Quick local large-scale wall-clock guard | `just perf-large-scale-smoke` |
-| Fast local PR performance guard with temporary same-machine baseline | `just perf-no-regressions` |
+| Fast local PR performance guard with cached same-machine main baseline | `just perf-no-regressions` |
 | Compare current branch against a local release/ref baseline | `just perf-vs-ref v0.7.8` |
 | Full CI benchmark suite only | `just bench-ci` |
 | Run curated release-signal Criterion measurements | `just bench-latest` |
@@ -191,12 +191,14 @@ for performance-sensitive changes and PR-ready work:
 just perf-no-regressions
 ```
 
-The recipe first generates a temporary same-machine dev-mode baseline for the
-current GitHub `main` ref, then runs `ci_performance_suite` for the current
-checkout with the shared dev-mode Criterion settings
+The recipe resolves the current GitHub `main` ref, reuses or refreshes a
+cached same-machine dev-mode baseline under
+`baseline-artifacts/perf-no-regressions/`, then runs `ci_performance_suite` for
+the current checkout with the shared dev-mode Criterion settings
 (`--sample-size 10 --measurement-time 2 --warm-up-time 1 --noplot`) and compares
-the two at the default 7.5% threshold. The temporary baseline checkout and
-artifact directory are removed after the comparison.
+the two at the default 7.5% threshold. The cache is keyed by the resolved
+`main` commit and local Rust compiler, so repeated checks do not rerun the
+baseline unless `main`, the compiler, or the benchmark contract changes.
 
 To compare the current branch against a specific release or ref, use
 `just perf-vs-ref`:

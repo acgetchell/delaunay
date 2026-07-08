@@ -265,15 +265,10 @@ def test_render_criterion_comparison_report_includes_release_workflow_footer(tmp
             "- **Target**: test-target",
         ],
     )
+    write_named_estimate(tmp_path, ("validation", "validate_3d", "750"), "new", 1_000_000.0)
+    write_named_estimate(tmp_path, ("validation", "validate_3d", "750"), "last", 2_000_000.0)
     comparisons = collect_criterion_comparisons(tmp_path / "criterion", "last")
-    if not comparisons:
-        comparisons = [
-            benchmark_utils.CriterionComparison(
-                benchmark_id="validation/validate_3d/750",
-                baseline_ns=2_000_000.0,
-                current_ns=1_000_000.0,
-            )
-        ]
+    assert [comparison.benchmark_id for comparison in comparisons] == ["validation/validate_3d/750"]
 
     report = render_criterion_comparison_report(
         tmp_path,
@@ -418,6 +413,52 @@ def test_safe_extract_tar_rejects_path_traversal(tmp_path: Path) -> None:
         _safe_extract_tar(archive, tmp_path / "extract")
 
     assert not (tmp_path / "escape.txt").exists()
+
+
+def test_prepare_github_release_assets_copies_current_and_baseline_samples(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GitHub Release asset reports should compare extracted raw Criterion samples."""
+    archives: dict[str, Path] = {}
+
+    def write_asset(tag: str, point_ns: float) -> None:
+        root = tmp_path / f"{tag}-asset-root"
+        write_named_estimate(root, ("validation", "validate_3d", "750"), "new", point_ns)
+        archive = tmp_path / f"delaunay-{tag}-criterion-baseline.tar.gz"
+        with tarfile.open(archive, "w:gz") as tar:
+            tar.add(root / "criterion", arcname="criterion")
+        archives[tag] = archive
+
+    write_asset("v0.8.0", 1_000_000.0)
+    write_asset("v0.7.8", 2_000_000.0)
+
+    def fake_download_release_baseline(*, tag: str, download_dir: Path, repo_root: Path) -> Path:
+        del download_dir, repo_root
+        return archives[tag]
+
+    monkeypatch.setattr(benchmark_utils, "_download_release_baseline", fake_download_release_baseline)
+
+    target_worktree = tmp_path / "worktree"
+    scratch = tmp_path / "scratch"
+    benchmark_utils._prepare_github_release_assets(
+        config=ReleaseReportConfig(
+            repo_root=tmp_path,
+            current_tag="v0.8.0",
+            baseline_tag="v0.7.8",
+            worktree_ref="v0.8.0",
+            apply_current_diff=False,
+            baseline_source="github-assets",
+        ),
+        target_worktree=target_worktree,
+        tmp_dir=scratch,
+    )
+
+    comparisons = collect_criterion_comparisons(target_worktree / "target" / "criterion", "v0.7.8")
+
+    assert [comparison.benchmark_id for comparison in comparisons] == ["validation/validate_3d/750"]
+    assert comparisons[0].current_ns == pytest.approx(1_000_000.0)
+    assert comparisons[0].baseline_ns == pytest.approx(2_000_000.0)
 
 
 def test_generate_performance_worktree_report_uses_temp_worktrees_and_saved_baseline(

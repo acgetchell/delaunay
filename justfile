@@ -903,8 +903,7 @@ perf-compare file threshold="7.5": _ensure-uv
 performance-local: _ensure-uv
     uv run benchmark-utils performance-local
 
-# Compare stored GitHub Release benchmark assets without local cargo runs.
-performance-github-assets current_tag="" baseline_tag="": _ensure-uv
+_performance-tag-pair-state current_tag baseline_tag:
     #!/usr/bin/env bash
     set -euo pipefail
     current_tag="{{ current_tag }}"
@@ -912,8 +911,25 @@ performance-github-assets current_tag="" baseline_tag="": _ensure-uv
     if [[ -n "$current_tag" || -n "$baseline_tag" ]]; then
         if [[ -z "$current_tag" || -z "$baseline_tag" ]]; then
             echo "current_tag and baseline_tag must be provided together" >&2
-            exit 2
+            echo "invalid"
+        else
+            echo "explicit"
         fi
+    else
+        echo "inferred"
+    fi
+
+# Compare stored GitHub Release benchmark assets without local cargo runs.
+performance-github-assets current_tag="" baseline_tag="": _ensure-uv
+    #!/usr/bin/env bash
+    set -euo pipefail
+    current_tag="{{ current_tag }}"
+    baseline_tag="{{ baseline_tag }}"
+    tag_pair_state="$(just --quiet _performance-tag-pair-state "$current_tag" "$baseline_tag")"
+    if [[ "$tag_pair_state" == "invalid" ]]; then
+        exit 2
+    fi
+    if [[ "$tag_pair_state" == "explicit" ]]; then
         uv run benchmark-utils performance-github-assets "$current_tag" "$baseline_tag"
     else
         uv run benchmark-utils performance-github-assets
@@ -925,11 +941,11 @@ performance-release current_tag="" baseline_tag="": _ensure-uv
     set -euo pipefail
     current_tag="{{ current_tag }}"
     baseline_tag="{{ baseline_tag }}"
-    if [[ -n "$current_tag" || -n "$baseline_tag" ]]; then
-        if [[ -z "$current_tag" || -z "$baseline_tag" ]]; then
-            echo "current_tag and baseline_tag must be provided together" >&2
-            exit 2
-        fi
+    tag_pair_state="$(just --quiet _performance-tag-pair-state "$current_tag" "$baseline_tag")"
+    if [[ "$tag_pair_state" == "invalid" ]]; then
+        exit 2
+    fi
+    if [[ "$tag_pair_state" == "explicit" ]]; then
         uv run benchmark-utils performance-release "$current_tag" "$baseline_tag"
     else
         uv run benchmark-utils performance-release
