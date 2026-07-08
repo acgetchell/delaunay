@@ -234,7 +234,9 @@ This runs:
 For performance-sensitive code changes, follow
 [`perf-tuning.md`](perf-tuning.md): benchmark before editing, add a benchmark
 when none covers the hot path, benchmark after editing, and preserve
-correctness invariants throughout.
+scientific invariants throughout. Benchmark output is only evidence when the
+measured workflow maintains its triangulation, predicate, topology, and
+diagnostic invariants.
 
 `just ci` is the comprehensive error-catching validation path used by GitHub
 Actions. It is a flat union of leaf validators rather than a nested call to
@@ -270,6 +272,14 @@ profile:
 ```bash
 just bench
 just bench-ci
+just bench-latest
+just bench-latest-vs-last
+just bench-compare
+just bench-save-baseline v0.7.8
+just bench-save-last
+just performance-local
+just performance-github-assets
+just performance-release
 just perf-baseline
 just perf-compare
 just perf-vs-ref
@@ -327,6 +337,41 @@ Use `just bench-perf-summary` from the release PR branch after version and
 documentation updates. It runs fresh perf-profile summary benchmarks, records
 the current Criterion construction metadata and generated simplex counts, and
 regenerates `benches/PERFORMANCE_RESULTS.md`.
+
+Use `just bench-latest` when you need the curated release-signal Criterion
+suite for local saved-baseline comparisons. It runs
+`ci_performance_suite`, `circumsphere_containment`, `cold_path_predicates`,
+`topology_guarantee_construction`, and `locate`, leaving `target/criterion/new`
+data suitable for `just bench-compare`. Save the previous release signal as
+`last` with `just bench-save-last` from the baseline checkout, or save an
+explicit baseline name with `just bench-save-baseline <tag>`. Use
+`just performance-local` when you want the tool to manage isolated
+baseline/current worktrees.
+
+```bash
+# In the baseline checkout, usually the previous release:
+just bench-save-last
+
+# In the current checkout:
+just bench-latest-vs-last
+just bench-compare v0.7.8
+```
+
+Use lower-level `uv run benchmark-utils bench-compare --scope all-benches` only
+when you explicitly want an exploratory report over every Criterion result
+already present under `target/criterion/`.
+
+Use `just performance-local` for an isolated temp-worktree comparison of the
+current package version against the latest stable published release. It writes
+`target/bench-reports/performance.md` and runs local benchmarks. Use
+`just performance-github-assets` when you want to compare stored GitHub Release
+benchmark assets without local Cargo benchmark runs. Use
+`just performance-release` in release PRs to promote one curated comparison into
+`docs/PERFORMANCE.md`, archiving the previous curated report under
+`docs/archive/performance/`. The GitHub-asset and release-promotion recipes also
+accept explicit `<current-tag> <baseline-tag>` pairs for repair paths.
+Temp-worktree release commands apply tracked checkout changes by default;
+untracked files must be added to git before they affect the generated report.
 
 Before pushing Rust or benchmark changes, run:
 

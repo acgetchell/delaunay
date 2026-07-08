@@ -267,7 +267,13 @@ owns topology spaces and validation.
 
 ## 📈 Benchmarking
 
-Correctness validation and performance measurement are separate workflows. For ordinary local validation:
+Benchmarking follows the same invariant-first model as the rest of the crate:
+first confirm the measured workflow maintains the scientific invariants, then
+compare same-machine performance, then publish curated release evidence. A fast
+run that violates triangulation, predicate, topology, or diagnostic invariants
+is a failed run, not a performance improvement.
+
+For ordinary local validation:
 
 ```bash
 just check
