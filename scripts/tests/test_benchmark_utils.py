@@ -16,15 +16,17 @@ import os
 import re
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
 
+import benchmark_utils
 from benchmark_models import (
     BenchmarkData,
     CircumspherePerformanceData,
@@ -47,24 +49,37 @@ from benchmark_utils import (
     CiPerformanceMetric,
     CiPerformanceResult,
     CriterionParser,
+    CriterionReportRequest,
+    CriterionReportSettings,
     LocalRefBaselineCacheOptions,
     LocalRefBaselineCacheResult,
     LocalRefBaselineGenerator,
     PerformanceComparator,
+    PerformanceRequestOptions,
     PerformanceSummaryGenerator,
     ProjectRootNotFoundError,
+    ReleaseReportConfig,
     WorkflowHelper,
     _expand_ci_benchmark_id_pattern,
     _load_ci_performance_metrics,
     _parse_ci_performance_metrics,
+    _safe_extract_tar,
     _write_ci_performance_metrics,
+    collect_criterion_comparisons,
     compare_with_cached_ref_baseline,
     configure_logging,
     create_argument_parser,
     ensure_cached_ref_baseline,
     execute_command,
     find_project_root,
+    generate_performance_worktree_report,
     main,
+    normalize_release_tag,
+    parse_performance_report_id,
+    promote_performance_report,
+    render_criterion_comparison_report,
+    resolve_performance_request,
+    write_criterion_comparison_report,
 )
 
 THRESHOLD_PERCENT = f"{DEFAULT_REGRESSION_THRESHOLD:.1f}%"
@@ -105,6 +120,45 @@ def write_estimate(target_dir: Path, path_parts, mean_ns) -> None:
         },
     }
     (estimates_dir / "estimates.json").write_text(json.dumps(estimates), encoding="utf-8")
+
+
+def write_named_estimate(target_dir: Path, path_parts, sample: str, point_ns: float, stat: str = "median") -> None:
+    """Write a minimal named Criterion sample estimates.json fixture."""
+    estimates_dir = target_dir / "criterion" / Path(*path_parts) / sample
+    estimates_dir.mkdir(parents=True)
+    estimates = {
+        stat: {
+            "point_estimate": point_ns,
+            "confidence_interval": {
+                "lower_bound": point_ns * 0.9,
+                "upper_bound": point_ns * 1.1,
+            },
+        },
+    }
+    (estimates_dir / "estimates.json").write_text(json.dumps(estimates), encoding="utf-8")
+
+
+def delaunay_report(version: str, baseline: str) -> str:
+    """Return a minimal Delaunay benchmark performance report."""
+    return (
+        "# Benchmark Performance\n\n"
+        f"**delaunay** v{version} · `abc1234` (release/test) · 2026-07-07 12:00:00 UTC\n"
+        "**Statistic**: median\n"
+        "**Suite**: release-signal\n"
+        "**Scope**: release-signal\n\n"
+        "## Benchmark Results\n\n"
+        f"Comparison against baseline **{baseline}**:\n\n"
+        "Negative change = faster. Speedup > 1.00x = improvement.\n\n"
+        "### validation\n\n"
+        "| Benchmark | Baseline | Latest | Change | Speedup |\n"
+        "|-----------|---------:|-------:|-------:|--------:|\n"
+        "| validate_3d/750 | 2.0 ms | 1.0 ms | -50.0% | 2.00x |\n"
+    )
+
+
+def normalized_delaunay_report(version: str, baseline: str) -> str:
+    """Return a report after standard workflow footer normalization."""
+    return benchmark_utils._normalize_how_to_update(delaunay_report(version, baseline))
 
 
 def write_ci_performance_manifest(target_dir: Path, benchmark_ids: list[str]) -> None:
@@ -165,6 +219,310 @@ def compute_average_time_change(current_results, baseline_results) -> float:
     avg_log = sum(math.log(ratio) for ratio in ratios) / len(ratios)
     avg_ratio = math.exp(avg_log)
     return (avg_ratio - 1.0) * 100.0
+
+
+def test_collect_criterion_comparisons_filters_release_signal_scope(tmp_path: Path) -> None:
+    """Saved Criterion baseline comparison should include curated release-signal groups."""
+    write_named_estimate(tmp_path, ("validation", "validate_3d", "750"), "new", 1_000_000.0)
+    write_named_estimate(tmp_path, ("validation", "validate_3d", "750"), "last", 2_000_000.0)
+    write_named_estimate(tmp_path, ("profiling_manual", "large_scale"), "new", 10_000_000.0)
+    write_named_estimate(tmp_path, ("profiling_manual", "large_scale"), "last", 20_000_000.0)
+
+    comparisons = collect_criterion_comparisons(tmp_path / "criterion", "last")
+
+    assert [comparison.benchmark_id for comparison in comparisons] == ["validation/validate_3d/750"]
+    comparison = comparisons[0]
+    assert comparison.percent_change == pytest.approx(-50.0)
+    assert comparison.speedup == pytest.approx(2.0)
+
+
+@pytest.mark.parametrize("point_estimate", [float("nan"), float("inf"), 0.0, -1.0])
+def test_collect_criterion_comparisons_rejects_invalid_point_estimates(tmp_path: Path, point_estimate: float) -> None:
+    """Saved Criterion baseline comparison should fail on non-physical timings."""
+    write_named_estimate(tmp_path, ("validation", "validate_3d", "750"), "new", point_estimate)
+    write_named_estimate(tmp_path, ("validation", "validate_3d", "750"), "last", 2_000_000.0)
+
+    with pytest.raises(ValueError, match="positive finite"):
+        collect_criterion_comparisons(tmp_path / "criterion", "last")
+
+
+def test_render_criterion_comparison_report_includes_release_workflow_footer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Markdown report should advertise the la-stack-compatible command surface."""
+    (tmp_path / "Cargo.toml").write_text('[package]\nversion = "0.8.0"\n', encoding=UTF8)
+    monkeypatch.setattr(benchmark_utils, "_get_git_info", lambda _root: ("abc1234", "main"))
+    monkeypatch.setattr(
+        benchmark_utils,
+        "_benchmark_report_environment_lines",
+        lambda _root: [
+            "## Environment",
+            "",
+            "- **Cargo profile**: `perf`",
+            "- **Raw Criterion data**: `target/criterion/`",
+            "- **OS**: test-os",
+            "- **CPU**: test-cpu (8 cores, 8 threads)",
+            "- **Memory**: test-memory",
+            "- **Rust**: rustc test",
+            "- **Target**: test-target",
+        ],
+    )
+    write_named_estimate(tmp_path, ("validation", "validate_3d", "750"), "new", 1_000_000.0)
+    write_named_estimate(tmp_path, ("validation", "validate_3d", "750"), "last", 2_000_000.0)
+    comparisons = collect_criterion_comparisons(tmp_path / "criterion", "last")
+    assert [comparison.benchmark_id for comparison in comparisons] == ["validation/validate_3d/750"]
+
+    report = render_criterion_comparison_report(
+        tmp_path,
+        comparisons,
+        CriterionReportSettings(
+            baseline_name="last",
+            stat="median",
+            suite="release-signal",
+            scope="release-signal",
+        ),
+    )
+
+    assert "**delaunay** v0.8.0" in report
+    assert "- **Raw Criterion data**: `target/criterion/`" in report
+    assert "- **Rust**: rustc test" in report
+    assert "| validate_3d/750 | 2.00 ms | 1.00 ms | **-50.0%** | 2.00x |" in report
+    assert "just performance-local" in report
+    assert "just performance-github-assets" in report
+    assert "just performance-release <current-tag> <previous-tag>" in report
+
+
+def test_write_criterion_comparison_report_reports_no_baseline(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Missing saved Criterion baselines should fail with an actionable hint."""
+    (tmp_path / "Cargo.toml").write_text('[package]\nversion = "0.8.0"\n', encoding=UTF8)
+    write_named_estimate(tmp_path, ("validation", "validate_3d", "750"), "new", 1_000_000.0)
+    output = tmp_path / "target" / "bench-reports" / "performance.md"
+
+    success = write_criterion_comparison_report(
+        tmp_path,
+        CriterionReportRequest(
+            baseline_name="last",
+            output=output,
+            criterion_dir=tmp_path / "criterion",
+        ),
+    )
+
+    assert not success
+    assert not output.exists()
+    captured = capsys.readouterr()
+    assert "No comparison data found for baseline 'last'" in captured.err
+    assert "just bench-save-baseline last" in captured.err
+
+
+def test_normalize_release_tag_accepts_bare_and_prefixed_semver() -> None:
+    assert normalize_release_tag("0.8.0") == "v0.8.0"
+    assert normalize_release_tag("v0.8.0") == "v0.8.0"
+    assert normalize_release_tag("v1.2.3-rc.1+build.7") == "v1.2.3-rc.1+build.7"
+
+
+def test_normalize_release_tag_rejects_saved_baseline_names() -> None:
+    with pytest.raises(ValueError, match="semver tag"):
+        normalize_release_tag("last")
+
+
+def test_parse_performance_report_id_reads_current_and_baseline_tags() -> None:
+    report_id = parse_performance_report_id(delaunay_report("0.8.0", "v0.7.8"))
+
+    assert report_id.current_tag == "v0.8.0"
+    assert report_id.baseline_tag == "v0.7.8"
+    assert report_id.archive_name == "v0.8.0-vs-v0.7.8.md"
+
+
+def test_resolve_performance_request_current_vs_latest_uses_package_version_and_latest_release(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """performance-local should compare the package version against latest published stable release."""
+    (tmp_path / "Cargo.toml").write_text('[package]\nversion = "0.8.0"\n', encoding=UTF8)
+
+    def fake_run_safe(command: str, args: list[str], cwd: Path | None = None, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        assert command == "gh"
+        assert args[:2] == ["release", "list"]
+        assert cwd == tmp_path
+        return completed_process(
+            "["
+            '{"tagName":"v0.7.7","isDraft":false,"isPrerelease":false,"publishedAt":"2026-01-01T00:00:00Z"},'
+            '{"tagName":"v0.7.8","isDraft":false,"isPrerelease":false,"publishedAt":"2026-02-01T00:00:00Z"},'
+            '{"tagName":"v0.8.0-rc.1","isDraft":false,"isPrerelease":true,"publishedAt":"2026-03-01T00:00:00Z"}'
+            "]"
+        )
+
+    monkeypatch.setattr(benchmark_utils, "run_safe_command", fake_run_safe)
+
+    request = resolve_performance_request(
+        PerformanceRequestOptions(
+            current_tag=None,
+            baseline_tag=None,
+            published_latest=False,
+            infer_release=False,
+            current_vs_latest=True,
+            worktree_ref="HEAD",
+            repo_root=tmp_path,
+        )
+    )
+
+    assert request.current_tag == "v0.8.0"
+    assert request.baseline_tag == "v0.7.8"
+    assert request.tags_to_fetch == ("v0.7.8",)
+
+
+def test_promote_performance_report_archives_previous_and_updates_index(tmp_path: Path) -> None:
+    source = tmp_path / "target" / "bench-reports" / "performance.md"
+    current = tmp_path / "docs" / "PERFORMANCE.md"
+    archive_dir = tmp_path / "docs" / "archive" / "performance"
+
+    source.parent.mkdir(parents=True)
+    current.parent.mkdir(parents=True)
+    archive_dir.mkdir(parents=True)
+    source.write_text(delaunay_report("0.8.0", "v0.7.8"), encoding=UTF8)
+    current.write_text(delaunay_report("0.7.8", "v0.7.7"), encoding=UTF8)
+    (archive_dir / "v0.7.6-vs-v0.7.5.md").write_text(delaunay_report("0.7.6", "v0.7.5"), encoding=UTF8)
+
+    promoted = promote_performance_report(
+        source=source,
+        current=current,
+        archive_dir=archive_dir,
+        expected_current_tag="v0.8.0",
+        expected_baseline_tag="v0.7.8",
+    )
+
+    assert promoted.archive_name == "v0.8.0-vs-v0.7.8.md"
+    assert current.read_text(encoding=UTF8) == normalized_delaunay_report("0.8.0", "v0.7.8")
+    assert (archive_dir / "v0.7.8-vs-v0.7.7.md").read_text(encoding=UTF8) == normalized_delaunay_report("0.7.8", "v0.7.7")
+    assert (archive_dir / "README.md").read_text(encoding=UTF8) == (
+        "# Archived Performance Reports\n\n"
+        "Older release-to-release benchmark comparisons are archived here.\n"
+        "`docs/PERFORMANCE.md` contains the latest curated comparison.\n\n"
+        "- [v0.7.6-vs-v0.7.5](v0.7.6-vs-v0.7.5.md)\n"
+        "- [v0.7.8-vs-v0.7.7](v0.7.8-vs-v0.7.7.md)\n"
+    )
+
+
+def test_safe_extract_tar_rejects_path_traversal(tmp_path: Path) -> None:
+    archive = tmp_path / "unsafe.tar.gz"
+    payload = b"escape\n"
+    info = tarfile.TarInfo("../escape.txt")
+    info.size = len(payload)
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.addfile(info, BytesIO(payload))
+
+    with pytest.raises(ValueError, match="refusing to extract unsafe archive member"):
+        _safe_extract_tar(archive, tmp_path / "extract")
+
+    assert not (tmp_path / "escape.txt").exists()
+
+
+def test_prepare_github_release_assets_copies_current_and_baseline_samples(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GitHub Release asset reports should compare extracted raw Criterion samples."""
+    archives: dict[str, Path] = {}
+
+    def write_asset(tag: str, point_ns: float) -> None:
+        root = tmp_path / f"{tag}-asset-root"
+        write_named_estimate(root, ("validation", "validate_3d", "750"), "new", point_ns)
+        archive = tmp_path / f"delaunay-{tag}-criterion-baseline.tar.gz"
+        with tarfile.open(archive, "w:gz") as tar:
+            tar.add(root / "criterion", arcname="criterion")
+        archives[tag] = archive
+
+    write_asset("v0.8.0", 1_000_000.0)
+    write_asset("v0.7.8", 2_000_000.0)
+
+    def fake_download_release_baseline(*, tag: str, download_dir: Path, repo_root: Path) -> Path:
+        del download_dir, repo_root
+        return archives[tag]
+
+    monkeypatch.setattr(benchmark_utils, "_download_release_baseline", fake_download_release_baseline)
+
+    target_worktree = tmp_path / "worktree"
+    scratch = tmp_path / "scratch"
+    benchmark_utils._prepare_github_release_assets(
+        config=ReleaseReportConfig(
+            repo_root=tmp_path,
+            current_tag="v0.8.0",
+            baseline_tag="v0.7.8",
+            worktree_ref="v0.8.0",
+            apply_current_diff=False,
+            baseline_source="github-assets",
+        ),
+        target_worktree=target_worktree,
+        tmp_dir=scratch,
+    )
+
+    comparisons = collect_criterion_comparisons(target_worktree / "target" / "criterion", "v0.7.8")
+
+    assert [comparison.benchmark_id for comparison in comparisons] == ["validation/validate_3d/750"]
+    assert comparisons[0].current_ns == pytest.approx(1_000_000.0)
+    assert comparisons[0].baseline_ns == pytest.approx(2_000_000.0)
+
+
+def test_generate_performance_worktree_report_uses_temp_worktrees_and_saved_baseline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Local release report generation should isolate baseline and current benchmark runs."""
+    output = tmp_path / "target" / "bench-reports" / "performance.md"
+    calls: list[tuple[str, tuple[str, ...], Path | None]] = []
+
+    def write_manifest(worktree: Path) -> None:
+        worktree.mkdir(parents=True, exist_ok=True)
+        (worktree / "Cargo.toml").write_text(
+            '[package]\nversion = "0.8.0"\n\n[[bench]]\nname = "ci_performance_suite"\n',
+            encoding=UTF8,
+        )
+
+    def fake_run_git(args: list[str], cwd: Path | None = None, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(("git", tuple(args), cwd))
+        if args[:3] == ["worktree", "add", "--detach"]:
+            write_manifest(Path(args[3]))
+        if args == ["diff", "--binary", "HEAD"]:
+            return completed_process("")
+        return completed_process()
+
+    def fake_run_git_with_input(args: list[str], input_data: str, cwd: Path | None = None, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(("git-stdin", tuple(args), cwd))
+        return completed_process()
+
+    def fake_run_safe(command: str, args: list[str], cwd: Path | None = None, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append((command, tuple(args), cwd))
+        if command == "cargo" and "--save-baseline" in args:
+            assert cwd is not None
+            write_named_estimate(cwd / "target", ("validation", "validate_3d", "750"), "v0.7.8", 2_000_000.0)
+        if command == "cargo" and "--save-baseline" not in args:
+            assert cwd is not None
+            write_named_estimate(cwd / "target", ("validation", "validate_3d", "750"), "new", 1_000_000.0)
+        if command == "uv":
+            report = Path(args[args.index("--output") + 1])
+            report.write_text(delaunay_report("0.8.0", "v0.7.8"), encoding=UTF8)
+        return completed_process()
+
+    monkeypatch.setattr(benchmark_utils, "run_git_command", fake_run_git)
+    monkeypatch.setattr(benchmark_utils, "run_git_command_with_input", fake_run_git_with_input)
+    monkeypatch.setattr(benchmark_utils, "run_safe_command", fake_run_safe)
+
+    report_id = generate_performance_worktree_report(
+        output=output,
+        config=ReleaseReportConfig(
+            repo_root=tmp_path,
+            current_tag="v0.8.0",
+            baseline_tag="v0.7.8",
+            worktree_ref="HEAD",
+            apply_current_diff=True,
+        ),
+    )
+
+    assert report_id.archive_name == "v0.8.0-vs-v0.7.8.md"
+    assert output.read_text(encoding=UTF8) == normalized_delaunay_report("0.8.0", "v0.7.8")
+    assert any(kind == "git" and args[:3] == ("worktree", "add", "--detach") and args[4] == "HEAD" for kind, args, _ in calls)
+    assert any(kind == "git" and args[:3] == ("worktree", "add", "--detach") and args[4] == "v0.7.8" for kind, args, _ in calls)
+    assert any(kind == "cargo" and "--save-baseline" in args for kind, args, _ in calls)
+    assert any(kind == "cargo" and "--save-baseline" not in args for kind, args, _ in calls)
+    assert any(kind == "uv" and args[:3] == ("run", "benchmark-utils", "bench-compare") for kind, args, _ in calls)
 
 
 @pytest.fixture
@@ -2928,6 +3286,80 @@ class TestTimeoutHandling:
         assert args.command == "generate-summary"
         assert args.run_benchmarks
         assert args.strict
+
+    def test_parser_accepts_release_performance_commands(self) -> None:
+        """Test that release-performance commands expose the documented options."""
+        parser = create_argument_parser()
+
+        bench_args = parser.parse_args(
+            [
+                "bench-compare",
+                "v0.7.8",
+                "--suite",
+                "query",
+                "--scope",
+                "all-benches",
+                "--stat",
+                "mean",
+                "--output",
+                "target/bench-reports/query.md",
+            ],
+        )
+        local_args = parser.parse_args(
+            [
+                "performance-local",
+                "--output",
+                "target/bench-reports/local.md",
+                "--worktree-ref",
+                "feature/ref",
+                "--no-apply-current-diff",
+            ],
+        )
+        assets_args = parser.parse_args(
+            [
+                "performance-github-assets",
+                "v0.8.0",
+                "v0.7.8",
+                "--output",
+                "target/bench-reports/assets.md",
+                "--worktree-ref",
+                "v0.8.0",
+            ],
+        )
+        release_args = parser.parse_args(
+            [
+                "performance-release",
+                "v0.8.0",
+                "v0.7.8",
+                "--current",
+                "docs/PERFORMANCE.md",
+                "--archive-dir",
+                "docs/archive/performance",
+                "--no-apply-current-diff",
+            ],
+        )
+
+        assert bench_args.command == "bench-compare"
+        assert bench_args.baseline == "v0.7.8"
+        assert bench_args.suite == "query"
+        assert bench_args.scope == "all-benches"
+        assert bench_args.stat == "mean"
+        assert bench_args.output == Path("target/bench-reports/query.md")
+        assert local_args.command == "performance-local"
+        assert local_args.output == Path("target/bench-reports/local.md")
+        assert local_args.worktree_ref == "feature/ref"
+        assert local_args.no_apply_current_diff
+        assert assets_args.command == "performance-github-assets"
+        assert assets_args.current_tag == "v0.8.0"
+        assert assets_args.baseline_tag == "v0.7.8"
+        assert assets_args.output == Path("target/bench-reports/assets.md")
+        assert assets_args.worktree_ref == "v0.8.0"
+        assert release_args.command == "performance-release"
+        assert release_args.current_tag == "v0.8.0"
+        assert release_args.baseline_tag == "v0.7.8"
+        assert release_args.current == Path("docs/PERFORMANCE.md")
+        assert release_args.archive_dir == Path("docs/archive/performance")
+        assert release_args.no_apply_current_diff
 
     @patch("benchmark_utils.PerformanceSummaryGenerator")
     def test_execute_command_passes_strict_summary_generation(self, mock_generator_class) -> None:

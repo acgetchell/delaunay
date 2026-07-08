@@ -24,7 +24,7 @@ env:
 jobs:
   release-baseline:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -66,6 +66,9 @@ jobs:
             --strict \
             --profile perf \
             --output release-benchmark-artifacts/PERFORMANCE_RESULTS.md
+          cargo bench --profile perf --bench cold_path_predicates
+          cargo bench --profile perf --bench topology_guarantee_construction
+          cargo bench --profile perf --bench locate
           uv run benchmark-utils write-baseline \
             --ref "$RELEASE_TAG" \
             --output release-benchmark-artifacts/baseline_results.txt
@@ -147,6 +150,6 @@ jobs:
             echo ""
             echo "- \`PERFORMANCE_RESULTS.md\`"
             echo "- \`baseline_results.txt\`"
-            echo "- raw Criterion data under \`criterion/\`"
+            echo "- raw release-signal Criterion data under \`criterion/\`"
             echo "- \`metadata.json\`"
           } >> "$GITHUB_STEP_SUMMARY"

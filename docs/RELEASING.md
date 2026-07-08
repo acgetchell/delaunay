@@ -116,7 +116,25 @@ Review generated benchmark docs before committing them. Confirm the file shows
 `Version $VERSION Results`, `Current Criterion Run Information`, and
 `Simplices Generated`, and does not retain `Historical Version Comparison`,
 `Circumsphere Predicate Analysis`, `Method Disagreements`, or
-`Baseline Artifact Information`.
+`Baseline Artifact Information`. Treat benchmark output as release evidence only
+when the underlying harnesses maintain their scientific invariants; a faster
+invariant-violating run is release-blocking, not a publishable improvement.
+
+When the release PR needs a curated release-to-release comparison in active
+docs, run the temp-worktree promotion workflow after the version bump:
+
+```bash
+just performance-release
+```
+
+This compares the current package version against the previous stable published
+release, writes the curated report to `docs/PERFORMANCE.md`, and archives the
+previous curated report under `docs/archive/performance/`. To repair a specific
+pair, pass both tags explicitly:
+
+```bash
+just performance-release "$TAG" "vX.Y.Z"
+```
 
 For manual investigation only, `DELAUNAY_BENCH_EXPORT_METRICS=1` can print the
 construction vertex/simplex metric lines without Criterion sampling. Prefer
@@ -228,12 +246,14 @@ gh release create "$TAG" --notes-from-tag
 ```
 
 Publishing the release triggers `.github/workflows/release-benchmarks.yml`, which
-runs fresh perf-profile `ci_performance_suite` and circumsphere benchmarks on
-`ubuntu-latest`, packages `baseline_results.txt`, `PERFORMANCE_RESULTS.md`, raw
-Criterion data, and metadata, then attaches
+runs fresh perf-profile release-signal benchmarks on `ubuntu-latest`, packages
+`baseline_results.txt`, `PERFORMANCE_RESULTS.md`, raw Criterion data, and
+metadata, then attaches
 `delaunay-$TAG-criterion-baseline.tar.gz` to the GitHub Release. That release
 asset is for GitHub Actions CI comparisons; keep local same-machine timing
 baselines under the ignored `baseline-artifact/` or `baseline-artifacts/` paths.
+Use `just performance-github-assets "$TAG" "vX.Y.Z"` to compare two stored
+release assets without local benchmark runs.
 
 7. Confirm release benchmark assets
 

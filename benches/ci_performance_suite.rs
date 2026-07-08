@@ -241,7 +241,7 @@ fn api_benchmark_entries() -> Vec<ApiBenchmarkEntry> {
             public_api: "DelaunayTriangulation::validate",
             dimensions: "3,4,5",
             benchmark_ids: validation_benchmark_ids(),
-            note: "levels_1_through_4_on_well_conditioned_and_adversarial_inputs",
+            note: "cumulative_levels_1_through_5_on_well_conditioned_and_adversarial_inputs",
         },
         ApiBenchmarkEntry {
             group: "incremental_insert",

@@ -183,8 +183,10 @@ enforce that contract.
 - Pre-1.0 breaking changes are allowed when correctness, orthogonality, or
   performance require them, but they must be intentional and documented through
   the commit/changelog workflow.
-- Performance is subordinate to correctness. Use the benchmark-before/after
-  workflow in `docs/dev/perf-tuning.md` for performance-sensitive changes.
+- Performance is subordinate to scientific invariants. Use the
+  benchmark-before/after workflow in `docs/dev/perf-tuning.md` for
+  performance-sensitive changes, and treat timings from invariant-violating
+  runs as invalid evidence.
 - Tests should verify mathematical, geometric, and topological invariants.
   Dimension-generic tests should cover 2D through 5D whenever feasible.
 

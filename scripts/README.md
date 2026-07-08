@@ -62,18 +62,32 @@ notebook artifacts and Jupyter checkpoints.
 uv run benchmark-utils generate-baseline
 uv run benchmark-utils write-baseline --ref vX.Y.Z --output baseline_results.txt
 uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
+uv run benchmark-utils bench-compare last
 uv run benchmark-utils generate-summary --run-benchmarks --profile perf
+uv run benchmark-utils performance-local
+uv run benchmark-utils performance-github-assets
+uv run benchmark-utils performance-release
 ```
 
 `benchmark-utils` handles Criterion baseline generation and packaging,
-comparison, and release performance summaries. Published releases package
-`baseline_results.txt` with raw Criterion data as a GitHub Release asset for
-Ubuntu GitHub Actions comparisons. Local timing records should stay in the
-ignored `baseline-artifact/` or `baseline-artifacts/` directories. The default
-comparison report for release baselines is
-`benches/main_vs_release_compare_results.txt`; the ref-comparison guard writes
-`benches/worktree_vs_<ref>_compare_results.txt` and fails only on total
-matched-time regressions or execution errors.
+comparison, saved Criterion baseline reports, and release performance summaries.
+It formats and compares benchmark evidence; the harnesses being run are
+responsible for failing before timings are published when scientific invariants
+are violated.
+Published releases package `baseline_results.txt` with raw Criterion data as a
+GitHub Release asset for Ubuntu GitHub Actions comparisons. Local timing records
+should stay in the ignored `baseline-artifact/` or `baseline-artifacts/`
+directories. `bench-compare` renders `target/bench-reports/performance.md` from
+existing Criterion `new` data and a saved baseline such as `last`.
+`performance-local` and `performance-github-assets` generate isolated
+release-to-release reports under `target/bench-reports/`, while
+`performance-release` promotes the curated report into `docs/PERFORMANCE.md`
+and archives the previous one. These release reports are evidence, not routine
+pre-`just ci` checks; temp-worktree generation applies tracked checkout changes
+but ignores untracked files. The default comparison report for release
+baselines is `benches/main_vs_release_compare_results.txt`; the ref-comparison
+guard writes `benches/worktree_vs_<ref>_compare_results.txt` and fails only on
+total matched-time regressions or execution errors.
 
 ### Hardware utilities
 

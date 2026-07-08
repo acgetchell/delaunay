@@ -31,7 +31,7 @@ The preferred loop is:
 2. Run the benchmark before editing and record representative results.
 3. Make the smallest invariant-preserving change.
 4. Rerun the same benchmark and compare the same named cases.
-5. Run the appropriate correctness validator before handoff.
+5. Run the appropriate invariant validator before handoff.
 
 ## Benchmark Before Editing
 
@@ -91,10 +91,10 @@ change summary.
 
 ## Performance Scope
 
-Performance is a design goal but is strictly subordinate to numerical
-correctness, topological correctness, API stability, composability, and
-clarity. Never trade correctness or diagnostics for speed; if performance and
-correctness appear to conflict, re-scope the problem.
+Performance is a design goal but is strictly subordinate to scientific
+invariants: numerical correctness, topological correctness, API stability,
+composability, and clarity. Never trade invariants or diagnostics for speed; if
+performance and invariants appear to conflict, re-scope the problem.
 
 In scope:
 
@@ -124,7 +124,7 @@ Within scope, prefer:
 
 ## Invariant-Preserving Changes
 
-Performance fixes must preserve the crate's correctness model.
+Performance fixes must preserve the crate's scientific invariant model.
 
 Prefer optimizations that make existing evidence explicit:
 
@@ -163,11 +163,15 @@ before and after medians or the reported percentage change. For example:
 
 ## Validation
 
-Benchmarks are not correctness validation.
+Benchmarks are not the only invariant oracle, but they must not publish
+performance evidence for invariant-violating results.
 
 While iterating, run focused tests that cover the invariant the optimization
 relies on. Add a regression test when the optimization depends on internal
-evidence that could be lost later, such as a local repair seed scope.
+evidence that could be lost later, such as a local repair seed scope. Benchmark
+harnesses should assert known-answer checks or validation results around the
+measured workflow; keep those checks outside the Criterion-measured closure
+unless validation itself is the behavior being measured.
 
 For final handoff after Rust code changes, run:
 
@@ -186,5 +190,5 @@ Performance-change summaries should include:
 - invariant-preserving mechanism
 - benchmark command
 - before/after results for representative 2D-5D cases when applicable
-- correctness validation command and result
+- invariant validation command and result
 - any benchmark gaps or dimensions intentionally not covered

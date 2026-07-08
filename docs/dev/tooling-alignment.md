@@ -254,6 +254,18 @@ The useful updates ported in this pass are:
   `baseline-artifact/` and `baseline-artifacts/` paths, while
   `.github/workflows/generate-baseline.yml` remains manual-only for
   compatibility with ad-hoc CI-runner artifact comparisons.
+- The release-performance command surface now matches `la-stack` at the
+  high-level workflow boundary: `bench-latest`, `bench-latest-vs-last`,
+  `bench-compare`, `bench-save-baseline`, `bench-save-last`,
+  `performance-local`, `performance-github-assets`, and `performance-release`.
+  Delaunay keeps its own release-signal suite behind those names:
+  `ci_performance_suite`, `circumsphere_containment`, `cold_path_predicates`,
+  `topology_guarantee_construction`, and `locate`. Text `baseline_results.txt`
+  files remain the CI regression format, while Criterion saved baselines and
+  `target/bench-reports/*.md` reports own local and curated release comparison
+  evidence. The release asset workflow packages raw Criterion data for the
+  release-signal set so `performance-github-assets` can compare stored releases
+  without local benchmark runs.
 
 ## CI Shape Evaluation
 

@@ -239,6 +239,57 @@ bench-allocations:
 bench-ci:
     cargo bench --profile perf --bench ci_performance_suite
 
+# Run the curated release-signal benchmark set and leave Criterion `new` output.
+bench-latest:
+    cargo bench --profile perf --bench ci_performance_suite
+    cargo bench --profile perf --bench circumsphere_containment
+    cargo bench --profile perf --bench cold_path_predicates
+    cargo bench --profile perf --bench topology_guarantee_construction
+    cargo bench --profile perf --bench locate
+
+# Render a Markdown comparison against a saved Criterion baseline.
+bench-compare baseline="last" suite="release-signal": _ensure-uv
+    uv run benchmark-utils bench-compare "{{ baseline }}" --suite "{{ suite }}"
+
+# Run latest measurements and render the latest-vs-last performance report.
+bench-latest-vs-last baseline="last": bench-latest
+    just bench-compare "{{ baseline }}"
+
+# Save a Criterion baseline for a Delaunay benchmark suite.
+bench-save-baseline tag suite="release-signal":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tag="{{ tag }}"
+    suite="{{ suite }}"
+    case "$suite" in
+        release-signal)
+            targets=(ci_performance_suite circumsphere_containment cold_path_predicates topology_guarantee_construction locate)
+            ;;
+        ci)
+            targets=(ci_performance_suite)
+            ;;
+        query)
+            targets=(circumsphere_containment locate)
+            ;;
+        predicates)
+            targets=(circumsphere_containment cold_path_predicates)
+            ;;
+        topology)
+            targets=(topology_guarantee_construction)
+            ;;
+        *)
+            echo "unknown benchmark suite: $suite" >&2
+            exit 2
+            ;;
+    esac
+    for target in "${targets[@]}"; do
+        cargo bench --profile perf --bench "$target" -- --save-baseline "$tag"
+    done
+
+# Save a full Criterion baseline for the previous release signal.
+bench-save-last:
+    just bench-save-baseline last
+
 # Compile benchmark harnesses without running them.
 bench-compile:
     @echo "Compiling benchmark harnesses without running them; this can take several minutes on Windows/MSVC."
@@ -848,8 +899,68 @@ perf-baseline-to out ref="main": _ensure-uv
 perf-compare file threshold="7.5": _ensure-uv
     uv run benchmark-utils compare --baseline "{{ file }}" --threshold {{ threshold }} --dev
 
+# Compare the current tree against the latest published release in temp worktrees.
+performance-local: _ensure-uv
+    uv run benchmark-utils performance-local
+
+_performance-tag-pair-state current_tag baseline_tag:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    current_tag="{{ current_tag }}"
+    baseline_tag="{{ baseline_tag }}"
+    if [[ -n "$current_tag" || -n "$baseline_tag" ]]; then
+        if [[ -z "$current_tag" || -z "$baseline_tag" ]]; then
+            echo "current_tag and baseline_tag must be provided together" >&2
+            echo "invalid"
+        else
+            echo "explicit"
+        fi
+    else
+        echo "inferred"
+    fi
+
+# Compare stored GitHub Release benchmark assets without local cargo runs.
+performance-github-assets current_tag="" baseline_tag="": _ensure-uv
+    #!/usr/bin/env bash
+    set -euo pipefail
+    current_tag="{{ current_tag }}"
+    baseline_tag="{{ baseline_tag }}"
+    tag_pair_state="$(just --quiet _performance-tag-pair-state "$current_tag" "$baseline_tag")"
+    if [[ "$tag_pair_state" == "invalid" ]]; then
+        exit 2
+    fi
+    if [[ "$tag_pair_state" == "explicit" ]]; then
+        uv run benchmark-utils performance-github-assets "$current_tag" "$baseline_tag"
+    else
+        uv run benchmark-utils performance-github-assets
+    fi
+
+# Generate local release-signal measurements in temp worktrees, then promote/archive docs.
+performance-release current_tag="" baseline_tag="": _ensure-uv
+    #!/usr/bin/env bash
+    set -euo pipefail
+    current_tag="{{ current_tag }}"
+    baseline_tag="{{ baseline_tag }}"
+    tag_pair_state="$(just --quiet _performance-tag-pair-state "$current_tag" "$baseline_tag")"
+    if [[ "$tag_pair_state" == "invalid" ]]; then
+        exit 2
+    fi
+    if [[ "$tag_pair_state" == "explicit" ]]; then
+        uv run benchmark-utils performance-release "$current_tag" "$baseline_tag"
+    else
+        uv run benchmark-utils performance-release
+    fi
+
 perf-help:
     @echo "Performance Analysis Commands:"
+    @echo "  just bench-latest          # Run curated release-signal Criterion benchmarks"
+    @echo "  just bench-latest-vs-last  # Run latest and compare against saved 'last'"
+    @echo "  just bench-compare [base]  # Render a Markdown report from saved Criterion baselines"
+    @echo "  just bench-save-baseline <tag> # Save release-signal Criterion baseline"
+    @echo "  just bench-save-last       # Save release-signal Criterion baseline as 'last'"
+    @echo "  just performance-local     # Compare current tree against latest release locally"
+    @echo "  just performance-github-assets # Compare stored GitHub Release benchmark assets"
+    @echo "  just performance-release   # Promote release-to-release performance docs"
     @echo "  just perf-large-scale-smoke # Quick pre-push 2D-5D wall-clock smoke guard"
     @echo "  just perf-no-regressions   # Fast pre-PR guard with a cached same-machine main baseline"
     @echo "  just perf-vs-ref <ref> [threshold] # Compare current tree vs a cached same-machine ref baseline"
