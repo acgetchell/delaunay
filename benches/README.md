@@ -236,7 +236,7 @@ just bench-save-last
 
 # In the current checkout:
 just bench-latest-vs-last
-just bench-compare v0.7.8
+just bench-compare last
 ```
 
 `just bench-latest` runs Delaunay's curated release-signal set:

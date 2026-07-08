@@ -354,8 +354,11 @@ just bench-save-last
 
 # In the current checkout:
 just bench-latest-vs-last
-just bench-compare v0.7.8
+just bench-compare last
 ```
+
+If you saved the baseline with an explicit release tag instead, pass that tag
+to the report step, for example `just bench-compare v0.7.8`.
 
 Use lower-level `uv run benchmark-utils bench-compare --scope all-benches` only
 when you explicitly want an exploratory report over every Criterion result

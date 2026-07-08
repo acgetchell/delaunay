@@ -2531,10 +2531,14 @@ def _criterion_numeric_field(obj: Mapping[str, object], field: str, estimates_js
         msg = f"field {field!r} for stat {stat!r} in {estimates_json} is not numeric: {value!r}"
         raise TypeError(msg)
     try:
-        return float(value)
+        numeric = float(value)
     except ValueError as exc:
         msg = f"field {field!r} for stat {stat!r} in {estimates_json} is not numeric: {value!r}"
         raise ValueError(msg) from exc
+    if not math.isfinite(numeric) or numeric <= 0.0:
+        msg = f"field {field!r} for stat {stat!r} in {estimates_json} must be a positive finite number: {value!r}"
+        raise ValueError(msg)
+    return numeric
 
 
 def _read_criterion_point_estimate(estimates_json: Path, stat: str) -> float:

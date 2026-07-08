@@ -236,6 +236,16 @@ def test_collect_criterion_comparisons_filters_release_signal_scope(tmp_path: Pa
     assert comparison.speedup == pytest.approx(2.0)
 
 
+@pytest.mark.parametrize("point_estimate", [float("nan"), float("inf"), 0.0, -1.0])
+def test_collect_criterion_comparisons_rejects_invalid_point_estimates(tmp_path: Path, point_estimate: float) -> None:
+    """Saved Criterion baseline comparison should fail on non-physical timings."""
+    write_named_estimate(tmp_path, ("validation", "validate_3d", "750"), "new", point_estimate)
+    write_named_estimate(tmp_path, ("validation", "validate_3d", "750"), "last", 2_000_000.0)
+
+    with pytest.raises(ValueError, match="positive finite"):
+        collect_criterion_comparisons(tmp_path / "criterion", "last")
+
+
 def test_render_criterion_comparison_report_includes_release_workflow_footer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The Markdown report should advertise the la-stack-compatible command surface."""
     (tmp_path / "Cargo.toml").write_text('[package]\nversion = "0.8.0"\n', encoding=UTF8)
@@ -3235,6 +3245,80 @@ class TestTimeoutHandling:
         assert args.command == "generate-summary"
         assert args.run_benchmarks
         assert args.strict
+
+    def test_parser_accepts_release_performance_commands(self) -> None:
+        """Test that release-performance commands expose the documented options."""
+        parser = create_argument_parser()
+
+        bench_args = parser.parse_args(
+            [
+                "bench-compare",
+                "v0.7.8",
+                "--suite",
+                "query",
+                "--scope",
+                "all-benches",
+                "--stat",
+                "mean",
+                "--output",
+                "target/bench-reports/query.md",
+            ],
+        )
+        local_args = parser.parse_args(
+            [
+                "performance-local",
+                "--output",
+                "target/bench-reports/local.md",
+                "--worktree-ref",
+                "feature/ref",
+                "--no-apply-current-diff",
+            ],
+        )
+        assets_args = parser.parse_args(
+            [
+                "performance-github-assets",
+                "v0.8.0",
+                "v0.7.8",
+                "--output",
+                "target/bench-reports/assets.md",
+                "--worktree-ref",
+                "v0.8.0",
+            ],
+        )
+        release_args = parser.parse_args(
+            [
+                "performance-release",
+                "v0.8.0",
+                "v0.7.8",
+                "--current",
+                "docs/PERFORMANCE.md",
+                "--archive-dir",
+                "docs/archive/performance",
+                "--no-apply-current-diff",
+            ],
+        )
+
+        assert bench_args.command == "bench-compare"
+        assert bench_args.baseline == "v0.7.8"
+        assert bench_args.suite == "query"
+        assert bench_args.scope == "all-benches"
+        assert bench_args.stat == "mean"
+        assert bench_args.output == Path("target/bench-reports/query.md")
+        assert local_args.command == "performance-local"
+        assert local_args.output == Path("target/bench-reports/local.md")
+        assert local_args.worktree_ref == "feature/ref"
+        assert local_args.no_apply_current_diff
+        assert assets_args.command == "performance-github-assets"
+        assert assets_args.current_tag == "v0.8.0"
+        assert assets_args.baseline_tag == "v0.7.8"
+        assert assets_args.output == Path("target/bench-reports/assets.md")
+        assert assets_args.worktree_ref == "v0.8.0"
+        assert release_args.command == "performance-release"
+        assert release_args.current_tag == "v0.8.0"
+        assert release_args.baseline_tag == "v0.7.8"
+        assert release_args.current == Path("docs/PERFORMANCE.md")
+        assert release_args.archive_dir == Path("docs/archive/performance")
+        assert release_args.no_apply_current_diff
 
     @patch("benchmark_utils.PerformanceSummaryGenerator")
     def test_execute_command_passes_strict_summary_generation(self, mock_generator_class) -> None:
