@@ -176,7 +176,7 @@ unless validation itself is the behavior being measured.
 For final handoff after Rust code changes, run:
 
 ```bash
-PATH=/opt/homebrew/bin:$PATH just ci
+just ci
 ```
 
 For documentation-only, configuration-only, or Python-only changes, follow the

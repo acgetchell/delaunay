@@ -987,7 +987,7 @@ pub enum InvariantKind {
     Connectedness,
     /// Triangulation/topology invariants (manifold-with-boundary, Euler characteristic).
     Topology,
-    /// Realized Euclidean geometry (nondegenerate simplices, no illegal overlap).
+    /// Realized geometry (nondegenerate simplices, no illegal overlap).
     Realization,
     /// Delaunay empty-circumsphere property.
     DelaunayProperty,
@@ -1020,7 +1020,7 @@ pub enum InvariantError {
     #[error(transparent)]
     Triangulation(#[from] TriangulationValidationError),
 
-    /// Level 4 (realized Euclidean geometry).
+    /// Level 4 (realized geometry).
     #[error(transparent)]
     Realization(#[from] TriangulationRealizationValidationError),
 

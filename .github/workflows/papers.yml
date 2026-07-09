@@ -52,7 +52,7 @@ env:
   JUST_VERSION: "1.55.1"
   TECTONIC_VERSION: "0.16.9"
   TEX_FMT_VERSION: "0.5.7"
-  UV_VERSION: "0.11.27"
+  UV_VERSION: "0.11.28"
 
 jobs:
   papers:

@@ -5989,8 +5989,7 @@ def _write_optional_report(output_path: Path | None, report_text: str) -> None:
     if output_path is None:
         return
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(report_text, encoding="utf-8")
+    _write_text_atomic(output_path, report_text)
 
 
 def _baseline_fetch_options_from_args(args: argparse.Namespace) -> BaselineFetchOptions:

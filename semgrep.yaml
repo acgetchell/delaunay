@@ -173,7 +173,7 @@ rules:
         - "/src/core/simplex.rs"
         - "/src/core/tds/validation.rs"
         - "/src/core/validation.rs"
-        - "/src/core/embedding.rs"
+        - "/src/core/realization.rs"
         - "/src/delaunay/validation.rs"
         - "/tests/semgrep/src/project_rules/**/*.rs"
     pattern-regex: >-
@@ -480,7 +480,7 @@ rules:
     paths:
       include:
         - "/src/core/validation.rs"
-        - "/src/core/embedding.rs"
+        - "/src/core/realization.rs"
         - "/src/delaunay/validation.rs"
         - "/tests/semgrep/src/project_rules/**/*.rs"
     pattern-regex: >-

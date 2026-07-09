@@ -788,7 +788,7 @@ where
     /// # Errors
     ///
     /// Returns a [`DelaunayTriangulationValidationError`] if lower-layer validation fails, if
-    /// Euclidean realized-geometry validation fails, or if the Delaunay property check (Level 5)
+    /// Level 4 realized-geometry validation fails, or if the Delaunay property check (Level 5)
     /// fails.
     ///
     /// # Examples

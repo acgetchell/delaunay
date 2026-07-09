@@ -61,7 +61,7 @@ The useful updates ported in this pass are:
   Delaunay on the sibling repository's current Markdown linter release after
   local `just check` exposed the older 0.2.10 pin as stale.
 - uv-managed Python support-tool pins now use exact reviewed versions for the
-  shared dev tools: `ruff` 0.15.20, `semgrep` 1.168.0, and `ty` 0.0.55.
+  shared dev tools: `ruff` 0.15.20, `semgrep` 1.168.0, and `ty` 0.0.56.
   Semgrep is intentionally ahead of the older sibling baseline so its transitive
   dependency graph stays on the current reviewed toolchain baseline. Delaunay
   previously used lower-bound specifiers for those tools, which allowed local
@@ -228,7 +228,7 @@ The useful updates ported in this pass are:
   runs on macOS, installs `chktex` from the TeX distribution when the runner
   does not already provide it, and installs the native bridge-library packages
   required when compiling Tectonic from Cargo. All uv-backed workflows use uv
-  0.11.27 to match the local Python tooling bootstrap.
+  0.11.28 to match the local Python tooling bootstrap.
 - `.codecov.yml` now ratchets Delaunay's coverage policy above the older
   causal-triangulations baseline without copying la-stack's near-total
   threshold. Project coverage targets the current 90% line with only 1%

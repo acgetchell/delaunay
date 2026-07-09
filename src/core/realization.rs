@@ -1057,7 +1057,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///
     /// Returns [`TriangulationRealizationValidationError`] if lower-layer
     /// validation fails, the topology cannot currently be realized-validated,
-    /// or realized Euclidean geometry is invalid.
+    /// or realized geometry is invalid.
     ///
     /// # Examples
     ///
