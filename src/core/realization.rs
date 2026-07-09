@@ -1,9 +1,9 @@
-//! Embedded-geometry validation for generic triangulations.
+//! Realized-geometry validation for generic triangulations.
 //!
 //! This module owns Level 4 validation for generic [`Triangulation`](crate::Triangulation):
 //! after the TDS and topology layers have certified a valid oriented simplicial
-//! complex, the embedding layer verifies that maximal simplices are nondegenerate
-//! and intersect only in their shared faces in the topology's active affine chart.
+//! complex, the realization layer verifies that maximal simplices are nondegenerate
+//! and intersect only in their shared faces in the topology's active coordinate chart.
 
 #![forbid(unsafe_code)]
 
@@ -18,14 +18,14 @@ use crate::core::tds::{InvariantError, InvariantKind, SimplexKey, Tds, TdsError,
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::validation::TriangulationValidationError;
-use crate::geometry::embedding::{
-    LabeledSimplexEmbedding, LabeledSimplexEmbeddingError, PeriodicSimplexSpanError,
-    SimplexIntersectionFailure, axis_aligned_bounding_boxes_overlap, coordinate_range_for_axis,
-    try_periodic_simplex_span, validate_simplex_embeddings_intersect_only_in_shared_faces,
-};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
+use crate::geometry::realization::{
+    LabeledSimplexRealization, LabeledSimplexRealizationError, PeriodicSimplexSpanError,
+    SimplexIntersectionFailure, axis_aligned_bounding_boxes_overlap, coordinate_range_for_axis,
+    try_periodic_simplex_span, validate_simplex_realizations_intersect_only_in_shared_faces,
+};
 use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::{
     CoordinateConversionError, CoordinateValidationError, InvalidCoordinateValue,
@@ -38,9 +38,9 @@ use num_traits::ToPrimitive;
 use thiserror::Error;
 use uuid::Uuid;
 
-/// Key- and UUID-based snapshot of one embedded simplex.
+/// Key- and UUID-based snapshot of one realized simplex.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TriangulationEmbeddingSimplexDetail {
+pub struct TriangulationRealizationSimplexDetail {
     /// Simplex key at validation time.
     pub key: SimplexKey,
     /// Simplex UUID at validation time.
@@ -51,22 +51,22 @@ pub struct TriangulationEmbeddingSimplexDetail {
     pub vertex_uuids: SimplexVertexUuidBuffer,
 }
 
-/// Key- and UUID-based snapshot of one embedded simplex pair.
+/// Key- and UUID-based snapshot of one realized simplex pair.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TriangulationEmbeddingSimplexPairDetail {
+pub struct TriangulationRealizationSimplexPairDetail {
     /// First simplex in the pair.
-    pub first_simplex: TriangulationEmbeddingSimplexDetail,
+    pub first_simplex: TriangulationRealizationSimplexDetail,
     /// Second simplex in the pair.
-    pub second_simplex: TriangulationEmbeddingSimplexDetail,
+    pub second_simplex: TriangulationRealizationSimplexDetail,
 }
 
-/// Detailed witness for an illegal embedded-simplex intersection.
+/// Detailed witness for an illegal realized-simplex intersection.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TriangulationEmbeddingIntersectionDetail {
+pub struct TriangulationRealizationIntersectionDetail {
     /// First simplex in the violating pair.
-    pub first_simplex: TriangulationEmbeddingSimplexDetail,
+    pub first_simplex: TriangulationRealizationSimplexDetail,
     /// Second simplex in the violating pair.
-    pub second_simplex: TriangulationEmbeddingSimplexDetail,
+    pub second_simplex: TriangulationRealizationSimplexDetail,
     /// Vertices shared by both simplices.
     pub shared_vertices: SimplexVertexKeyBuffer,
     /// UUIDs of vertices shared by both simplices.
@@ -81,7 +81,7 @@ pub struct TriangulationEmbeddingIntersectionDetail {
     pub second_only_witness_vertex_uuids: SimplexVertexUuidBuffer,
 }
 
-/// Invalid periodic-domain period observed during Level 4 embedding validation.
+/// Invalid periodic-domain period observed during Level 4 realization validation.
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum PeriodicDomainPeriodError {
@@ -116,15 +116,15 @@ impl From<PeriodicSimplexSpanError> for PeriodicDomainPeriodError {
     }
 }
 
-/// Errors returned by embedded-geometry validation (Level 4).
+/// Errors returned by realized-geometry validation (Level 4).
 ///
 /// This error type is independent of the Delaunay empty-circumsphere predicate:
-/// it certifies that the generic triangulation has a valid affine realization
-/// in the topology's supported affine chart before any Delaunay-specific
+/// it certifies that the generic triangulation has a valid realization
+/// in the topology's supported coordinate chart before any Delaunay-specific
 /// predicate is evaluated.
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
-pub enum TriangulationEmbeddingValidationError {
+pub enum TriangulationRealizationValidationError {
     /// Lower-layer element or TDS structural validation failed (Levels 1-2).
     #[error(transparent)]
     Tds(Box<TdsError>),
@@ -133,9 +133,9 @@ pub enum TriangulationEmbeddingValidationError {
     #[error(transparent)]
     Triangulation(Box<TriangulationValidationError>),
 
-    /// Embedded-overlap validation is not yet defined for this topology model.
+    /// Realized-overlap validation is not yet defined for this topology model.
     #[error(
-        "embedded validation is unsupported for {topology:?} topology in dimension {dimension}"
+        "realization validation is unsupported for {topology:?} topology in dimension {dimension}"
     )]
     UnsupportedTopology {
         /// Topology kind configured on the triangulation.
@@ -144,7 +144,7 @@ pub enum TriangulationEmbeddingValidationError {
         dimension: usize,
     },
 
-    /// Topology-specific coordinate lifting failed while preparing an embedded simplex.
+    /// Topology-specific coordinate lifting failed while preparing a realized simplex.
     #[error(
         "topology-specific lifting failed for simplex {simplex_uuid} (key {simplex_key:?}), vertex {vertex_key:?}: {source}"
     )]
@@ -162,24 +162,24 @@ pub enum TriangulationEmbeddingValidationError {
         source: GlobalTopologyModelError,
     },
 
-    /// A simplex embedding reused a vertex label.
+    /// A simplex realization reused a vertex label.
     #[error(
-        "simplex {simplex_uuid} (key {simplex_key:?}) has duplicate embedding label {vertex_key:?} ({vertex_uuid}) at indices {first_index} and {duplicate_index}"
+        "simplex {simplex_uuid} (key {simplex_key:?}) has duplicate realization label {vertex_key:?} ({vertex_uuid}) at indices {first_index} and {duplicate_index}"
     )]
-    DuplicateSimplexEmbeddingLabel {
+    DuplicateSimplexRealizationLabel {
         /// Key of the simplex with duplicate labels.
         simplex_key: SimplexKey,
         /// UUID of the simplex with duplicate labels.
         simplex_uuid: Uuid,
         /// Vertex-level diagnostic details for the malformed simplex.
-        detail: Box<TriangulationEmbeddingSimplexDetail>,
+        detail: Box<TriangulationRealizationSimplexDetail>,
         /// Duplicated vertex key.
         vertex_key: VertexKey,
         /// UUID of the duplicated vertex.
         vertex_uuid: Uuid,
-        /// First embedding slot containing the label.
+        /// First realization slot containing the label.
         first_index: usize,
-        /// Later embedding slot containing the same label.
+        /// Later realization slot containing the same label.
         duplicate_index: usize,
     },
 
@@ -191,7 +191,7 @@ pub enum TriangulationEmbeddingValidationError {
         /// UUID of the degenerate simplex.
         simplex_uuid: Uuid,
         /// Vertex-level diagnostic details for the degenerate simplex.
-        detail: Box<TriangulationEmbeddingSimplexDetail>,
+        detail: Box<TriangulationRealizationSimplexDetail>,
         /// Const-generic coordinate dimension.
         dimension: usize,
     },
@@ -224,7 +224,7 @@ pub enum TriangulationEmbeddingValidationError {
         /// UUID of the simplex whose orientation predicate failed.
         simplex_uuid: Uuid,
         /// Vertex-level diagnostic details for the simplex.
-        detail: Box<TriangulationEmbeddingSimplexDetail>,
+        detail: Box<TriangulationRealizationSimplexDetail>,
         /// Underlying coordinate conversion failure from the predicate boundary.
         #[source]
         source: CoordinateConversionError,
@@ -240,7 +240,7 @@ pub enum TriangulationEmbeddingValidationError {
         /// UUID of the simplex whose basis was singular.
         simplex_uuid: Uuid,
         /// Vertex-level diagnostic details for the singular simplex.
-        detail: Box<TriangulationEmbeddingSimplexDetail>,
+        detail: Box<TriangulationRealizationSimplexDetail>,
         /// Const-generic coordinate dimension.
         dimension: usize,
     },
@@ -259,13 +259,13 @@ pub enum TriangulationEmbeddingValidationError {
         /// UUID of the second offending simplex.
         second_simplex_uuid: Uuid,
         /// Vertex-level diagnostic details for the illegal intersection.
-        detail: Box<TriangulationEmbeddingIntersectionDetail>,
+        detail: Box<TriangulationRealizationIntersectionDetail>,
     },
 
     /// A lifted periodic simplex spans at least one full period along an axis.
     ///
     /// Such a simplex cannot be certified as injective in one affine covering
-    /// chart, so the quotient embedding is invalid before pairwise overlap
+    /// chart, so the quotient realization is invalid before pairwise overlap
     /// checks run.
     #[error(
         "simplex {simplex_uuid} (key {simplex_key:?}) spans {span} along periodic axis {axis}, but the period is {period}"
@@ -276,7 +276,7 @@ pub enum TriangulationEmbeddingValidationError {
         /// UUID of the offending simplex.
         simplex_uuid: Uuid,
         /// Vertex-level diagnostic details for the offending simplex.
-        detail: Box<TriangulationEmbeddingSimplexDetail>,
+        detail: Box<TriangulationRealizationSimplexDetail>,
         /// Periodic axis whose lifted span is too wide.
         axis: usize,
         /// Lifted coordinate span along `axis`.
@@ -285,7 +285,7 @@ pub enum TriangulationEmbeddingValidationError {
         period: f64,
     },
 
-    /// A periodic domain period was invalid while checking embedded geometry.
+    /// A periodic domain period was invalid while checking realized geometry.
     #[error(
         "invalid periodic domain period while validating simplex {simplex_uuid} (key {simplex_key:?}): {source}"
     )]
@@ -295,7 +295,7 @@ pub enum TriangulationEmbeddingValidationError {
         /// UUID of the simplex being checked.
         simplex_uuid: Uuid,
         /// Vertex-level diagnostic details for the simplex being checked.
-        detail: Box<TriangulationEmbeddingSimplexDetail>,
+        detail: Box<TriangulationRealizationSimplexDetail>,
         /// Underlying invalid-period error.
         #[source]
         source: PeriodicDomainPeriodError,
@@ -315,7 +315,7 @@ pub enum TriangulationEmbeddingValidationError {
         /// UUID of the second simplex in the pair.
         second_simplex_uuid: Uuid,
         /// Vertex-level diagnostic details for the pair.
-        detail: Box<TriangulationEmbeddingSimplexPairDetail>,
+        detail: Box<TriangulationRealizationSimplexPairDetail>,
         /// Periodic axis whose shift range overflowed.
         axis: usize,
         /// Lower floating-point shift bound before integer conversion.
@@ -325,9 +325,9 @@ pub enum TriangulationEmbeddingValidationError {
     },
 
     /// A higher validation layer unexpectedly surfaced while running Level 4 validation.
-    #[error("unexpected {kind:?} validation error while validating Level 4 embedding: {source}")]
+    #[error("unexpected {kind:?} validation error while validating Level 4 realization: {source}")]
     UnexpectedValidationLayer {
-        /// Validation layer that leaked into the embedding boundary.
+        /// Validation layer that leaked into the realization boundary.
         kind: InvariantKind,
         /// Original typed validation error.
         #[source]
@@ -335,32 +335,32 @@ pub enum TriangulationEmbeddingValidationError {
     },
 }
 
-impl From<TdsError> for TriangulationEmbeddingValidationError {
+impl From<TdsError> for TriangulationRealizationValidationError {
     fn from(source: TdsError) -> Self {
         Self::Tds(Box::new(source))
     }
 }
 
-impl From<TriangulationValidationError> for TriangulationEmbeddingValidationError {
+impl From<TriangulationValidationError> for TriangulationRealizationValidationError {
     fn from(source: TriangulationValidationError) -> Self {
         Self::Triangulation(Box::new(source))
     }
 }
 
-/// Discriminant for compact Level 4 embedded-geometry validation summaries.
+/// Discriminant for compact Level 4 realized-geometry validation summaries.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub enum TriangulationEmbeddingValidationErrorKind {
+pub enum TriangulationRealizationValidationErrorKind {
     /// Lower-layer TDS validation failed.
     Tds,
     /// Lower-layer topology validation failed.
     Triangulation,
-    /// The topology is not currently supported by embedded validation.
+    /// The topology is not currently supported by realization validation.
     UnsupportedTopology,
     /// Topology-specific coordinate lifting failed.
     TopologyLifting,
-    /// A simplex embedding reused a vertex label.
-    DuplicateSimplexEmbeddingLabel,
+    /// A simplex realization reused a vertex label.
+    DuplicateSimplexRealizationLabel,
     /// A simplex has zero D-volume.
     DegenerateSimplex,
     /// Coordinate validation failed at the predicate boundary.
@@ -377,66 +377,72 @@ pub enum TriangulationEmbeddingValidationErrorKind {
     InvalidPeriodicDomainPeriod,
     /// Periodic translate enumeration exceeded supported shift bounds.
     PeriodicTranslateRangeOverflow,
-    /// A higher validation layer unexpectedly surfaced during embedding validation.
+    /// A higher validation layer unexpectedly surfaced during realization validation.
     UnexpectedValidationLayer,
 }
 
-impl From<&TriangulationEmbeddingValidationError> for TriangulationEmbeddingValidationErrorKind {
-    fn from(source: &TriangulationEmbeddingValidationError) -> Self {
+impl From<&TriangulationRealizationValidationError>
+    for TriangulationRealizationValidationErrorKind
+{
+    fn from(source: &TriangulationRealizationValidationError) -> Self {
         match source {
-            TriangulationEmbeddingValidationError::Tds(_) => Self::Tds,
-            TriangulationEmbeddingValidationError::Triangulation(_) => Self::Triangulation,
-            TriangulationEmbeddingValidationError::UnsupportedTopology { .. } => {
+            TriangulationRealizationValidationError::Tds(_) => Self::Tds,
+            TriangulationRealizationValidationError::Triangulation(_) => Self::Triangulation,
+            TriangulationRealizationValidationError::UnsupportedTopology { .. } => {
                 Self::UnsupportedTopology
             }
-            TriangulationEmbeddingValidationError::TopologyLifting { .. } => Self::TopologyLifting,
-            TriangulationEmbeddingValidationError::DuplicateSimplexEmbeddingLabel { .. } => {
-                Self::DuplicateSimplexEmbeddingLabel
+            TriangulationRealizationValidationError::TopologyLifting { .. } => {
+                Self::TopologyLifting
             }
-            TriangulationEmbeddingValidationError::DegenerateSimplex { .. } => {
+            TriangulationRealizationValidationError::DuplicateSimplexRealizationLabel {
+                ..
+            } => Self::DuplicateSimplexRealizationLabel,
+            TriangulationRealizationValidationError::DegenerateSimplex { .. } => {
                 Self::DegenerateSimplex
             }
-            TriangulationEmbeddingValidationError::CoordinateValidation { .. } => {
+            TriangulationRealizationValidationError::CoordinateValidation { .. } => {
                 Self::CoordinateValidation
             }
-            TriangulationEmbeddingValidationError::PredicateFailed { .. } => Self::PredicateFailed,
-            TriangulationEmbeddingValidationError::SingularBarycentricBasis { .. } => {
+            TriangulationRealizationValidationError::PredicateFailed { .. } => {
+                Self::PredicateFailed
+            }
+            TriangulationRealizationValidationError::SingularBarycentricBasis { .. } => {
                 Self::SingularBarycentricBasis
             }
-            TriangulationEmbeddingValidationError::SimplexIntersectionOutsideSharedFace {
+            TriangulationRealizationValidationError::SimplexIntersectionOutsideSharedFace {
                 ..
             } => Self::SimplexIntersectionOutsideSharedFace,
-            TriangulationEmbeddingValidationError::PeriodicSimplexSpansDomain { .. } => {
+            TriangulationRealizationValidationError::PeriodicSimplexSpansDomain { .. } => {
                 Self::PeriodicSimplexSpansDomain
             }
-            TriangulationEmbeddingValidationError::InvalidPeriodicDomainPeriod { .. } => {
+            TriangulationRealizationValidationError::InvalidPeriodicDomainPeriod { .. } => {
                 Self::InvalidPeriodicDomainPeriod
             }
-            TriangulationEmbeddingValidationError::PeriodicTranslateRangeOverflow { .. } => {
+            TriangulationRealizationValidationError::PeriodicTranslateRangeOverflow { .. } => {
                 Self::PeriodicTranslateRangeOverflow
             }
-            TriangulationEmbeddingValidationError::UnexpectedValidationLayer { .. } => {
+            TriangulationRealizationValidationError::UnexpectedValidationLayer { .. } => {
                 Self::UnexpectedValidationLayer
             }
         }
     }
 }
 
-/// Structured Level 4 embedding validation report.
+/// Structured Level 4 realization validation report.
 ///
 /// This report is the diagnostic counterpart to
-/// [`Triangulation::is_valid_embedding`]. The fast-fail method returns the
-/// first invalid embedding condition, while this report records every
+/// [`Triangulation::is_valid_realization`]. The fast-fail method returns the
+/// first invalid realization condition, while this report records every
 /// simplex-level failure and every pairwise overlap failure that can be checked
 /// after invalid simplices are excluded from pairwise intersection work.
 #[derive(Clone, Debug, PartialEq)]
 #[must_use]
-pub struct TriangulationEmbeddingValidationReport {
+pub struct TriangulationRealizationValidationReport {
     /// Number of vertices in the triangulation when the report was generated.
     pub number_of_vertices: usize,
     /// Number of simplices in the triangulation when the report was generated.
     pub number_of_simplices: usize,
-    /// Number of simplex embeddings prepared for Level 4 validation.
+    /// Number of simplex realizations prepared for Level 4 validation.
     pub checked_simplices: usize,
     /// Number of candidate simplex pairs examined by the overlap broad phase.
     ///
@@ -444,12 +450,12 @@ pub struct TriangulationEmbeddingValidationReport {
     /// after the sweep-and-prune broad phase; for periodic charts it counts all
     /// non-degenerate pairs (exhaustive enumeration).
     pub checked_simplex_pairs: usize,
-    /// Ordered list of Level 4 embedding violations.
-    pub violations: Vec<TriangulationEmbeddingValidationError>,
+    /// Ordered list of Level 4 realization violations.
+    pub violations: Vec<TriangulationRealizationValidationError>,
 }
 
-impl TriangulationEmbeddingValidationReport {
-    /// Returns `true` when no Level 4 embedding violations were found.
+impl TriangulationRealizationValidationReport {
+    /// Returns `true` when no Level 4 realization violations were found.
     ///
     /// # Examples
     ///
@@ -467,7 +473,7 @@ impl TriangulationEmbeddingValidationReport {
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// std::assert_matches!(
-    ///     dt.as_triangulation().embedding_report(),
+    ///     dt.as_triangulation().realization_report(),
     ///     Ok(report) if report.is_valid()
     /// );
     /// # Ok(())
@@ -480,25 +486,25 @@ impl TriangulationEmbeddingValidationReport {
 }
 
 #[derive(Debug)]
-struct EmbeddedSimplex<const D: usize> {
+struct RealizedSimplex<const D: usize> {
     key: SimplexKey,
     uuid: Uuid,
     vertex_keys: SimplexVertexKeyBuffer,
     vertex_uuids: SimplexVertexUuidBuffer,
-    embedding: LabeledSimplexEmbedding<VertexKey, D>,
+    realization: LabeledSimplexRealization<VertexKey, D>,
 }
 
 type PeriodicShiftRangeBuffer = SmallBuffer<(i32, i32), MAX_PRACTICAL_DIMENSION_SIZE>;
 
-impl<const D: usize> EmbeddedSimplex<D> {
-    /// Builds the lifted, labeled embedding for one TDS simplex while preserving
+impl<const D: usize> RealizedSimplex<D> {
+    /// Builds the lifted, labeled realization for one TDS simplex while preserving
     /// simplex and vertex identities for later diagnostics.
     fn try_from_simplex<U, V>(
         tds: &Tds<U, V, D>,
         topology_model: &impl GlobalTopologyModel<D>,
         simplex_key: SimplexKey,
         simplex: &Simplex<V, D>,
-    ) -> Result<Self, TriangulationEmbeddingValidationError> {
+    ) -> Result<Self, TriangulationRealizationValidationError> {
         let mut vertices = SimplexVertexKeyBuffer::with_capacity(simplex.number_of_vertices());
         let mut vertex_uuids = SimplexVertexUuidBuffer::with_capacity(simplex.number_of_vertices());
         let mut coords = SmallBuffer::<[f64; D], MAX_PRACTICAL_DIMENSION_SIZE>::with_capacity(
@@ -513,7 +519,7 @@ impl<const D: usize> EmbeddedSimplex<D> {
                 expected: simplex.number_of_vertices(),
                 actual: offsets.len(),
                 context: format!(
-                    "simplex {:?} (key {simplex_key:?}) periodic offset count vs vertex count during embedding validation",
+                    "simplex {:?} (key {simplex_key:?}) periodic offset count vs vertex count during realization validation",
                     simplex.uuid(),
                 ),
             }
@@ -526,7 +532,7 @@ impl<const D: usize> EmbeddedSimplex<D> {
                 .ok_or_else(|| TdsError::VertexNotFound {
                     vertex_key,
                     context: format!(
-                        "embedded validation for simplex {:?} (key {simplex_key:?})",
+                        "realization validation for simplex {:?} (key {simplex_key:?})",
                         simplex.uuid()
                     ),
                 })?;
@@ -536,7 +542,7 @@ impl<const D: usize> EmbeddedSimplex<D> {
             let lifted_coords = topology_model
                 .lift_for_orientation(*vertex.point().coords(), periodic_offset)
                 .map_err(
-                    |source| TriangulationEmbeddingValidationError::TopologyLifting {
+                    |source| TriangulationRealizationValidationError::TopologyLifting {
                         simplex_key,
                         simplex_uuid: simplex.uuid(),
                         vertex_key,
@@ -547,10 +553,10 @@ impl<const D: usize> EmbeddedSimplex<D> {
             coords.push(lifted_coords);
         }
 
-        let embedding =
-            LabeledSimplexEmbedding::try_new(vertices.iter().copied(), coords.iter().copied())
+        let realization =
+            LabeledSimplexRealization::try_new(vertices.iter().copied(), coords.iter().copied())
                 .map_err(|source| {
-                    labeled_simplex_error_to_embedding_error(
+                    labeled_simplex_error_to_realization_error(
                         source,
                         simplex_key,
                         simplex,
@@ -564,21 +570,21 @@ impl<const D: usize> EmbeddedSimplex<D> {
             uuid: simplex.uuid(),
             vertex_keys: vertices,
             vertex_uuids,
-            embedding,
+            realization,
         })
     }
 
-    /// Rehydrates one embedded vertex coordinate as a validated point for exact predicates.
+    /// Rehydrates one realized vertex coordinate as a validated point for exact predicates.
     fn point_at(
         &self,
         vertex_index: usize,
-    ) -> Result<Point<D>, TriangulationEmbeddingValidationError> {
-        self.embedding.point_at(vertex_index).ok_or_else(|| {
+    ) -> Result<Point<D>, TriangulationRealizationValidationError> {
+        self.realization.point_at(vertex_index).ok_or_else(|| {
             TdsError::DimensionMismatch {
-                expected: self.embedding.labels().len(),
+                expected: self.realization.labels().len(),
                 actual: vertex_index.saturating_add(1),
                 context: format!(
-                    "embedded simplex {:?} (key {:?}) point index during Level 4 validation",
+                    "realized simplex {:?} (key {:?}) point index during Level 4 validation",
                     self.uuid, self.key,
                 ),
             }
@@ -586,7 +592,7 @@ impl<const D: usize> EmbeddedSimplex<D> {
         })
     }
 
-    /// Finds a labeled vertex in this embedded simplex and validates its point coordinates.
+    /// Finds a labeled vertex in this realized simplex and validates its point coordinates.
     ///
     /// The full-facet shortcut uses keys rather than coordinate indices so its
     /// orientation predicates stay tied to the same vertex identities reported
@@ -594,16 +600,16 @@ impl<const D: usize> EmbeddedSimplex<D> {
     fn point_for_key(
         &self,
         vertex_key: VertexKey,
-    ) -> Result<Point<D>, TriangulationEmbeddingValidationError> {
+    ) -> Result<Point<D>, TriangulationRealizationValidationError> {
         let vertex_index = self
-            .embedding
+            .realization
             .labels()
             .iter()
             .position(|candidate| *candidate == vertex_key)
             .ok_or_else(|| TdsError::VertexNotFound {
                 vertex_key,
                 context: format!(
-                    "embedded simplex {:?} (key {:?}) facet-side validation",
+                    "realized simplex {:?} (key {:?}) facet-side validation",
                     self.uuid, self.key,
                 ),
             })?;
@@ -623,8 +629,8 @@ impl<const D: usize> EmbeddedSimplex<D> {
     }
 
     /// Builds the public simplex detail payload reused by Level 4 error variants.
-    fn detail(&self) -> TriangulationEmbeddingSimplexDetail {
-        TriangulationEmbeddingSimplexDetail {
+    fn detail(&self) -> TriangulationRealizationSimplexDetail {
+        TriangulationRealizationSimplexDetail {
             key: self.key,
             uuid: self.uuid,
             vertices: self.vertex_keys.clone(),
@@ -636,34 +642,34 @@ impl<const D: usize> EmbeddedSimplex<D> {
 /// Converts labeled simplex construction failures into Level 4 diagnostics
 /// that preserve the owning simplex and vertex identities callers need for
 /// repair planning.
-fn labeled_simplex_error_to_embedding_error<V, const D: usize>(
-    source: LabeledSimplexEmbeddingError,
+fn labeled_simplex_error_to_realization_error<V, const D: usize>(
+    source: LabeledSimplexRealizationError,
     simplex_key: SimplexKey,
     simplex: &Simplex<V, D>,
     vertex_keys: &SimplexVertexKeyBuffer,
     vertex_uuids: &SimplexVertexUuidBuffer,
-) -> TriangulationEmbeddingValidationError {
+) -> TriangulationRealizationValidationError {
     let (expected, actual) = match source {
-        LabeledSimplexEmbeddingError::LabelCoordinateLengthMismatch {
+        LabeledSimplexRealizationError::LabelCoordinateLengthMismatch {
             label_count,
             coordinate_count,
         } => (label_count, coordinate_count),
-        LabeledSimplexEmbeddingError::InvalidArity { expected, actual } => (expected, actual),
-        LabeledSimplexEmbeddingError::DuplicateLabel {
+        LabeledSimplexRealizationError::InvalidArity { expected, actual } => (expected, actual),
+        LabeledSimplexRealizationError::DuplicateLabel {
             first_index,
             duplicate_index,
         } => {
-            return duplicate_simplex_embedding_label_error(
+            return duplicate_simplex_realization_label_error(
                 simplex_key,
                 simplex.uuid(),
                 vertex_keys,
                 vertex_uuids,
                 first_index,
                 duplicate_index,
-                "duplicate embedding label during embedding validation",
+                "duplicate realization label during realization validation",
             );
         }
-        LabeledSimplexEmbeddingError::NonFiniteCoordinate {
+        LabeledSimplexRealizationError::NonFiniteCoordinate {
             vertex_index,
             coordinate_index,
             coordinate_value,
@@ -673,7 +679,7 @@ fn labeled_simplex_error_to_embedding_error<V, const D: usize>(
                     expected: vertex_keys.len(),
                     actual: vertex_index.saturating_add(1),
                     context: format!(
-                        "simplex {:?} (key {simplex_key:?}) finite-coordinate diagnostic vertex index during embedding validation",
+                        "simplex {:?} (key {simplex_key:?}) finite-coordinate diagnostic vertex index during realization validation",
                         simplex.uuid(),
                     ),
                 }
@@ -684,13 +690,13 @@ fn labeled_simplex_error_to_embedding_error<V, const D: usize>(
                     expected: vertex_uuids.len(),
                     actual: vertex_index.saturating_add(1),
                     context: format!(
-                        "simplex {:?} (key {simplex_key:?}) finite-coordinate diagnostic vertex UUID index during embedding validation",
+                        "simplex {:?} (key {simplex_key:?}) finite-coordinate diagnostic vertex UUID index during realization validation",
                         simplex.uuid(),
                     ),
                 }
                 .into();
             };
-            return TriangulationEmbeddingValidationError::CoordinateValidation {
+            return TriangulationRealizationValidationError::CoordinateValidation {
                 simplex_key,
                 simplex_uuid: simplex.uuid(),
                 vertex_key,
@@ -702,11 +708,11 @@ fn labeled_simplex_error_to_embedding_error<V, const D: usize>(
                 },
             };
         }
-        LabeledSimplexEmbeddingError::InvalidPeriodicDomainPeriod { source } => {
-            return TriangulationEmbeddingValidationError::InvalidPeriodicDomainPeriod {
+        LabeledSimplexRealizationError::InvalidPeriodicDomainPeriod { source } => {
+            return TriangulationRealizationValidationError::InvalidPeriodicDomainPeriod {
                 simplex_key,
                 simplex_uuid: simplex.uuid(),
-                detail: Box::new(TriangulationEmbeddingSimplexDetail {
+                detail: Box::new(TriangulationRealizationSimplexDetail {
                     key: simplex_key,
                     uuid: simplex.uuid(),
                     vertices: vertex_keys.clone(),
@@ -721,15 +727,15 @@ fn labeled_simplex_error_to_embedding_error<V, const D: usize>(
         expected,
         actual,
         context: format!(
-            "simplex {:?} (key {simplex_key:?}) arity during embedding validation",
+            "simplex {:?} (key {simplex_key:?}) arity during realization validation",
             simplex.uuid(),
         ),
     }
     .into()
 }
 
-/// Preserves duplicate embedding labels as structured Level 4 diagnostics.
-fn duplicate_simplex_embedding_label_error(
+/// Preserves duplicate realization labels as structured Level 4 diagnostics.
+fn duplicate_simplex_realization_label_error(
     simplex_key: SimplexKey,
     simplex_uuid: Uuid,
     vertex_keys: &SimplexVertexKeyBuffer,
@@ -737,7 +743,7 @@ fn duplicate_simplex_embedding_label_error(
     first_index: usize,
     duplicate_index: usize,
     context: &'static str,
-) -> TriangulationEmbeddingValidationError {
+) -> TriangulationRealizationValidationError {
     let Some(&vertex_key) = vertex_keys.get(first_index) else {
         return TdsError::DimensionMismatch {
             expected: vertex_keys.len(),
@@ -757,10 +763,10 @@ fn duplicate_simplex_embedding_label_error(
         .into();
     };
 
-    TriangulationEmbeddingValidationError::DuplicateSimplexEmbeddingLabel {
+    TriangulationRealizationValidationError::DuplicateSimplexRealizationLabel {
         simplex_key,
         simplex_uuid,
-        detail: Box::new(TriangulationEmbeddingSimplexDetail {
+        detail: Box::new(TriangulationRealizationSimplexDetail {
             key: simplex_key,
             uuid: simplex_uuid,
             vertices: vertex_keys.clone(),
@@ -773,33 +779,33 @@ fn duplicate_simplex_embedding_label_error(
     }
 }
 
-/// Converts translated embedded-simplex construction failures into the same
-/// key- and UUID-rich public diagnostics as the primary embedding path.
-fn labeled_simplex_error_to_embedded_simplex_error<const D: usize>(
-    source: LabeledSimplexEmbeddingError,
-    simplex: &EmbeddedSimplex<D>,
-) -> TriangulationEmbeddingValidationError {
+/// Converts translated realized-simplex construction failures into the same
+/// key- and UUID-rich public diagnostics as the primary realization path.
+fn labeled_simplex_error_to_realized_simplex_error<const D: usize>(
+    source: LabeledSimplexRealizationError,
+    simplex: &RealizedSimplex<D>,
+) -> TriangulationRealizationValidationError {
     let (expected, actual) = match source {
-        LabeledSimplexEmbeddingError::LabelCoordinateLengthMismatch {
+        LabeledSimplexRealizationError::LabelCoordinateLengthMismatch {
             label_count,
             coordinate_count,
         } => (label_count, coordinate_count),
-        LabeledSimplexEmbeddingError::InvalidArity { expected, actual } => (expected, actual),
-        LabeledSimplexEmbeddingError::DuplicateLabel {
+        LabeledSimplexRealizationError::InvalidArity { expected, actual } => (expected, actual),
+        LabeledSimplexRealizationError::DuplicateLabel {
             first_index,
             duplicate_index,
         } => {
-            return duplicate_simplex_embedding_label_error(
+            return duplicate_simplex_realization_label_error(
                 simplex.key,
                 simplex.uuid,
                 &simplex.vertex_keys,
                 &simplex.vertex_uuids,
                 first_index,
                 duplicate_index,
-                "duplicate translated embedding label during embedding validation",
+                "duplicate translated realization label during realization validation",
             );
         }
-        LabeledSimplexEmbeddingError::NonFiniteCoordinate {
+        LabeledSimplexRealizationError::NonFiniteCoordinate {
             vertex_index,
             coordinate_index,
             coordinate_value,
@@ -809,7 +815,7 @@ fn labeled_simplex_error_to_embedded_simplex_error<const D: usize>(
                     expected: simplex.vertex_keys.len(),
                     actual: vertex_index.saturating_add(1),
                     context: format!(
-                        "simplex {:?} (key {:?}) finite-coordinate translated diagnostic vertex index during embedding validation",
+                        "simplex {:?} (key {:?}) finite-coordinate translated diagnostic vertex index during realization validation",
                         simplex.uuid, simplex.key,
                     ),
                 }
@@ -820,13 +826,13 @@ fn labeled_simplex_error_to_embedded_simplex_error<const D: usize>(
                     expected: simplex.vertex_uuids.len(),
                     actual: vertex_index.saturating_add(1),
                     context: format!(
-                        "simplex {:?} (key {:?}) finite-coordinate translated diagnostic vertex UUID index during embedding validation",
+                        "simplex {:?} (key {:?}) finite-coordinate translated diagnostic vertex UUID index during realization validation",
                         simplex.uuid, simplex.key,
                     ),
                 }
                 .into();
             };
-            return TriangulationEmbeddingValidationError::CoordinateValidation {
+            return TriangulationRealizationValidationError::CoordinateValidation {
                 simplex_key: simplex.key,
                 simplex_uuid: simplex.uuid,
                 vertex_key,
@@ -838,8 +844,8 @@ fn labeled_simplex_error_to_embedded_simplex_error<const D: usize>(
                 },
             };
         }
-        LabeledSimplexEmbeddingError::InvalidPeriodicDomainPeriod { source } => {
-            return TriangulationEmbeddingValidationError::InvalidPeriodicDomainPeriod {
+        LabeledSimplexRealizationError::InvalidPeriodicDomainPeriod { source } => {
+            return TriangulationRealizationValidationError::InvalidPeriodicDomainPeriod {
                 simplex_key: simplex.key,
                 simplex_uuid: simplex.uuid,
                 detail: Box::new(simplex.detail()),
@@ -852,7 +858,7 @@ fn labeled_simplex_error_to_embedded_simplex_error<const D: usize>(
         expected,
         actual,
         context: format!(
-            "simplex {:?} (key {:?}) arity during translated embedding validation",
+            "simplex {:?} (key {:?}) arity during translated realization validation",
             simplex.uuid, simplex.key,
         ),
     }
@@ -860,21 +866,21 @@ fn labeled_simplex_error_to_embedded_simplex_error<const D: usize>(
 }
 
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
-    /// Validates embedded geometry only (Level 4).
+    /// Validates realized geometry only (Level 4).
     ///
     /// This method assumes lower layers have already passed validation. Use
-    /// [`validate_embedding`](Self::validate_embedding) for cumulative Levels
+    /// [`validate_realization`](Self::validate_realization) for cumulative Levels
     /// 1-4 validation.
     ///
     /// Euclidean topology is validated in its ordinary affine chart. Toroidal
     /// topology is validated in the stored periodic covering-space charts and
     /// across periodic translates. Spherical and hyperbolic topology currently
-    /// return [`TriangulationEmbeddingValidationError::UnsupportedTopology`]
-    /// until their model-specific affine/projective chart validators are added.
+    /// return [`TriangulationRealizationValidationError::UnsupportedTopology`]
+    /// until their model-specific realization validators are added.
     ///
     /// # Errors
     ///
-    /// Returns [`TriangulationEmbeddingValidationError`] if the topology model is
+    /// Returns [`TriangulationRealizationValidationError`] if the topology model is
     /// unsupported, a simplex is geometrically degenerate, a periodic simplex is
     /// not contained in a single covering chart, or two maximal simplices
     /// intersect outside their shared face.
@@ -894,27 +900,27 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
-    /// assert!(dt.as_triangulation().is_valid_embedding().is_ok());
+    /// assert!(dt.as_triangulation().is_valid_realization().is_ok());
     /// # Ok(())
     /// # }
     /// ```
-    pub fn is_valid_embedding(&self) -> Result<(), TriangulationEmbeddingValidationError> {
-        if let Some(first_violation) = self.embedding_diagnostic()? {
+    pub fn is_valid_realization(&self) -> Result<(), TriangulationRealizationValidationError> {
+        if let Some(first_violation) = self.realization_diagnostic()? {
             return Err(first_violation);
         }
         Ok(())
     }
 
-    /// Returns the first actionable Level 4 embedding diagnostic, if any.
+    /// Returns the first actionable Level 4 realization diagnostic, if any.
     ///
     /// This is the repair/retry-oriented counterpart to
-    /// [`is_valid_embedding`](Self::is_valid_embedding). It returns at most one
+    /// [`is_valid_realization`](Self::is_valid_realization). It returns at most one
     /// Level 4 violation with simplex keys, simplex UUIDs, and offending vertex
     /// keys/UUIDs where applicable.
     ///
     /// # Errors
     ///
-    /// Returns [`TriangulationEmbeddingValidationError`] when simplex embedding
+    /// Returns [`TriangulationRealizationValidationError`] when simplex realization
     /// preparation cannot continue because lower-layer TDS data are missing or
     /// malformed.
     ///
@@ -933,27 +939,29 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
-    /// std::assert_matches!(dt.as_triangulation().embedding_diagnostic(), Ok(None));
+    /// std::assert_matches!(dt.as_triangulation().realization_diagnostic(), Ok(None));
     /// # Ok(())
     /// # }
     /// ```
-    pub fn embedding_diagnostic(
+    pub fn realization_diagnostic(
         &self,
-    ) -> Result<Option<TriangulationEmbeddingValidationError>, TriangulationEmbeddingValidationError>
-    {
-        self.first_embedding_violation()
+    ) -> Result<
+        Option<TriangulationRealizationValidationError>,
+        TriangulationRealizationValidationError,
+    > {
+        self.first_realization_violation()
     }
 
-    /// Builds a Level 4 embedding report with key- and UUID-based violation details.
+    /// Builds a Level 4 realization report with key- and UUID-based violation details.
     ///
-    /// This method checks embedded geometry only. It does not run lower-layer
+    /// This method checks realized geometry only. It does not run lower-layer
     /// TDS/topology validation and does not evaluate the Level 5 Delaunay
-    /// property. Use [`validate_embedding`](Self::validate_embedding) for
+    /// property. Use [`validate_realization`](Self::validate_realization) for
     /// cumulative Levels 1-4 validation when pass/fail behavior is enough.
     ///
     /// # Errors
     ///
-    /// Returns [`TriangulationEmbeddingValidationError`] when simplex embedding
+    /// Returns [`TriangulationRealizationValidationError`] when simplex realization
     /// preparation cannot continue because lower-layer TDS data are missing or
     /// malformed. Ordinary Level 4 violations are returned inside the report.
     ///
@@ -973,17 +981,18 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
     /// std::assert_matches!(
-    ///     dt.as_triangulation().embedding_report(),
+    ///     dt.as_triangulation().realization_report(),
     ///     Ok(report) if report.is_valid()
     /// );
     /// # Ok(())
     /// # }
     /// ```
-    pub fn embedding_report(
+    pub fn realization_report(
         &self,
-    ) -> Result<TriangulationEmbeddingValidationReport, TriangulationEmbeddingValidationError> {
+    ) -> Result<TriangulationRealizationValidationReport, TriangulationRealizationValidationError>
+    {
         let topology_model = self.global_topology.model();
-        let mut report = TriangulationEmbeddingValidationReport {
+        let mut report = TriangulationRealizationValidationReport {
             number_of_vertices: self.tds.number_of_vertices(),
             number_of_simplices: self.tds.number_of_simplices(),
             checked_simplices: 0,
@@ -991,17 +1000,17 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             violations: Vec::new(),
         };
 
-        if !topology_model.supports_affine_embedding_validation() {
-            report
-                .violations
-                .push(TriangulationEmbeddingValidationError::UnsupportedTopology {
+        if !topology_model.supports_affine_chart_realization_validation() {
+            report.violations.push(
+                TriangulationRealizationValidationError::UnsupportedTopology {
                     topology: self.global_topology.kind(),
                     dimension: D,
-                });
+                },
+            );
             return Ok(report);
         }
 
-        let simplices = self.collect_embedded_simplices()?;
+        let simplices = self.collect_realized_simplices()?;
         report.checked_simplices = simplices.len();
         let periodic_domain = topology_model.periodic_domain();
         let periodic_periods = periodic_domain.map(|domain| *domain.periods());
@@ -1042,13 +1051,13 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///
     /// This validates:
     /// - **Levels 1-3** via [`Triangulation::validate`](Self::validate)
-    /// - **Level 4** via [`Triangulation::is_valid_embedding`](Self::is_valid_embedding)
+    /// - **Level 4** via [`Triangulation::is_valid_realization`](Self::is_valid_realization)
     ///
     /// # Errors
     ///
-    /// Returns [`TriangulationEmbeddingValidationError`] if lower-layer
-    /// validation fails, the topology cannot currently be embedded-validated,
-    /// or embedded Euclidean geometry is invalid.
+    /// Returns [`TriangulationRealizationValidationError`] if lower-layer
+    /// validation fails, the topology cannot currently be realized-validated,
+    /// or realized Euclidean geometry is invalid.
     ///
     /// # Examples
     ///
@@ -1065,11 +1074,11 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
     ///
-    /// assert!(dt.as_triangulation().validate_embedding().is_ok());
+    /// assert!(dt.as_triangulation().validate_realization().is_ok());
     /// # Ok(())
     /// # }
     /// ```
-    pub fn validate_embedding(&self) -> Result<(), TriangulationEmbeddingValidationError>
+    pub fn validate_realization(&self) -> Result<(), TriangulationRealizationValidationError>
     where
         K: Kernel<D, Scalar = f64>,
         U: DataType,
@@ -1078,29 +1087,29 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         self.validate().map_err(|error| match error {
             InvariantError::Tds(source) => source.into(),
             InvariantError::Triangulation(source) => source.into(),
-            InvariantError::Embedding(source) => source,
+            InvariantError::Realization(source) => source,
             source @ InvariantError::Delaunay(_) => {
-                TriangulationEmbeddingValidationError::UnexpectedValidationLayer {
+                TriangulationRealizationValidationError::UnexpectedValidationLayer {
                     kind: InvariantKind::DelaunayProperty,
                     source: Box::new(source),
                 }
             }
         })?;
-        self.is_valid_embedding()
+        self.is_valid_realization()
     }
 
     /// Validates the Level 4 nondegeneracy invariant for a local simplex set.
     ///
     /// This intentionally does not perform pairwise overlap checks; insertion
     /// uses it as a cheap mutation-time guard so zero-volume simplices fail
-    /// inside the existing rollback transaction. Full embedding validation
-    /// remains the responsibility of [`is_valid_embedding`](Self::is_valid_embedding).
-    pub(crate) fn validate_local_embedding_nondegeneracy(
+    /// inside the existing rollback transaction. Full realization validation
+    /// remains the responsibility of [`is_valid_realization`](Self::is_valid_realization).
+    pub(crate) fn validate_local_realization_nondegeneracy(
         &self,
         simplices: &[SimplexKey],
-    ) -> Result<(), TriangulationEmbeddingValidationError> {
+    ) -> Result<(), TriangulationRealizationValidationError> {
         let topology_model = self.global_topology.model();
-        if !topology_model.supports_affine_embedding_validation() {
+        if !topology_model.supports_affine_chart_realization_validation() {
             return Ok(());
         }
 
@@ -1111,45 +1120,47 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
                     .simplex(simplex_key)
                     .ok_or_else(|| TdsError::SimplexNotFound {
                         simplex_key,
-                        context: "local embedding nondegeneracy validation".to_string(),
+                        context: "local realization nondegeneracy validation".to_string(),
                     })?;
-            let embedded = EmbeddedSimplex::try_from_simplex(
+            let realized = RealizedSimplex::try_from_simplex(
                 &self.tds,
                 &topology_model,
                 simplex_key,
                 simplex,
             )?;
-            validate_simplex_nondegenerate(&embedded)?;
+            validate_simplex_nondegenerate(&realized)?;
             if let Some(domain) = periodic_domain {
-                validate_periodic_simplex_chart(&embedded, domain.periods())?;
+                validate_periodic_simplex_chart(&realized, domain.periods())?;
             }
         }
 
         Ok(())
     }
 
-    /// Validates the Level 4 embedding invariant for a changed simplex scope.
+    /// Validates the Level 4 realization invariant for a changed simplex scope.
     ///
     /// Insertion and repair already assume the pre-existing triangulation was
-    /// embedding-valid before the local mutation. Under that precondition, only
+    /// realization-valid before the local mutation. Under that precondition, only
     /// the changed simplices can introduce a new nondegenerate-simplex or
     /// pairwise-intersection violation, so this checks each scoped simplex
     /// against every candidate it can intersect instead of rescanning all old
     /// simplex pairs.
-    pub(crate) fn validate_embedding_for_simplices(
+    pub(crate) fn validate_realization_for_simplices(
         &self,
         local_simplices: &[SimplexKey],
-    ) -> Result<(), TriangulationEmbeddingValidationError> {
+    ) -> Result<(), TriangulationRealizationValidationError> {
         if local_simplices.is_empty() {
             return Ok(());
         }
 
         let topology_model = self.global_topology.model();
-        if !topology_model.supports_affine_embedding_validation() {
-            return Err(TriangulationEmbeddingValidationError::UnsupportedTopology {
-                topology: self.global_topology.kind(),
-                dimension: D,
-            });
+        if !topology_model.supports_affine_chart_realization_validation() {
+            return Err(
+                TriangulationRealizationValidationError::UnsupportedTopology {
+                    topology: self.global_topology.kind(),
+                    dimension: D,
+                },
+            );
         }
 
         let mut local_simplex_keys = FastHashSet::default();
@@ -1158,14 +1169,14 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             if !self.tds.contains_simplex(simplex_key) {
                 return Err(TdsError::SimplexNotFound {
                     simplex_key,
-                    context: "scoped embedding validation".to_string(),
+                    context: "scoped realization validation".to_string(),
                 }
                 .into());
             }
             local_simplex_keys.insert(simplex_key);
         }
 
-        let simplices = self.collect_embedded_simplices()?;
+        let simplices = self.collect_realized_simplices()?;
         let periodic_domain = topology_model.periodic_domain();
         let periodic_periods = periodic_domain.map(|domain| *domain.periods());
 
@@ -1181,7 +1192,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
 
         let empty_skip = FastHashSet::default();
         let (_, violation) =
-            for_each_scoped_candidate_simplex_pair::<D, TriangulationEmbeddingValidationError>(
+            for_each_scoped_candidate_simplex_pair::<D, TriangulationRealizationValidationError>(
                 &simplices,
                 &empty_skip,
                 &local_simplex_keys,
@@ -1203,27 +1214,29 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         Ok(())
     }
 
-    /// Collects all simplex embeddings after applying the topology model's active chart.
-    fn collect_embedded_simplices(
+    /// Collects all simplex realizations after applying the topology model's active chart.
+    fn collect_realized_simplices(
         &self,
-    ) -> Result<Vec<EmbeddedSimplex<D>>, TriangulationEmbeddingValidationError> {
+    ) -> Result<Vec<RealizedSimplex<D>>, TriangulationRealizationValidationError> {
         let topology_model = self.global_topology.model();
         self.tds
             .simplices()
             .map(|(simplex_key, simplex)| {
-                EmbeddedSimplex::try_from_simplex(&self.tds, &topology_model, simplex_key, simplex)
+                RealizedSimplex::try_from_simplex(&self.tds, &topology_model, simplex_key, simplex)
             })
             .collect()
     }
 
-    fn first_embedding_violation(
+    fn first_realization_violation(
         &self,
-    ) -> Result<Option<TriangulationEmbeddingValidationError>, TriangulationEmbeddingValidationError>
-    {
+    ) -> Result<
+        Option<TriangulationRealizationValidationError>,
+        TriangulationRealizationValidationError,
+    > {
         let topology_model = self.global_topology.model();
-        if !topology_model.supports_affine_embedding_validation() {
+        if !topology_model.supports_affine_chart_realization_validation() {
             return Ok(Some(
-                TriangulationEmbeddingValidationError::UnsupportedTopology {
+                TriangulationRealizationValidationError::UnsupportedTopology {
                     topology: self.global_topology.kind(),
                     dimension: D,
                 },
@@ -1234,26 +1247,26 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         let periodic_periods = periodic_domain.map(|domain| *domain.periods());
         let mut simplices = Vec::with_capacity(self.tds.number_of_simplices());
         for (simplex_key, simplex) in self.tds.simplices() {
-            let embedded = EmbeddedSimplex::try_from_simplex(
+            let realized = RealizedSimplex::try_from_simplex(
                 &self.tds,
                 &topology_model,
                 simplex_key,
                 simplex,
             )?;
-            if let Err(error) = validate_simplex_nondegenerate(&embedded) {
+            if let Err(error) = validate_simplex_nondegenerate(&realized) {
                 return Ok(Some(error));
             }
             if let Some(domain) = periodic_domain
-                && let Err(error) = validate_periodic_simplex_chart(&embedded, domain.periods())
+                && let Err(error) = validate_periodic_simplex_chart(&realized, domain.periods())
             {
                 return Ok(Some(error));
             }
-            simplices.push(embedded);
+            simplices.push(realized);
         }
 
         let empty_skip: FastHashSet<SimplexKey> = FastHashSet::default();
         let (_, violation) =
-            for_each_candidate_simplex_pair::<D, TriangulationEmbeddingValidationError>(
+            for_each_candidate_simplex_pair::<D, TriangulationRealizationValidationError>(
                 &simplices,
                 &empty_skip,
                 periodic_periods,
@@ -1273,10 +1286,10 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
 
 /// Dispatches pairwise overlap validation through Euclidean or periodic chart logic.
 fn validate_topology_aware_simplex_pair<const D: usize>(
-    first: &EmbeddedSimplex<D>,
-    second: &EmbeddedSimplex<D>,
+    first: &RealizedSimplex<D>,
+    second: &RealizedSimplex<D>,
     periodic_periods: Option<[f64; D]>,
-) -> Result<(), TriangulationEmbeddingValidationError> {
+) -> Result<(), TriangulationRealizationValidationError> {
     let Some(periods) = periodic_periods else {
         if bounding_boxes_overlap(first, second) {
             if try_validate_full_facet_pair(first, second)? {
@@ -1298,11 +1311,11 @@ fn validate_topology_aware_simplex_pair<const D: usize>(
 /// exactly the shared facet iff the two opposite vertices lie on opposite sides
 /// of the shared facet. This avoids the more expensive barycentric intersection
 /// solver for the common adjacent-pair case while preserving the same Level 4
-/// error shape for invalid same-side embeddings.
+/// error shape for invalid same-side realizations.
 fn try_validate_full_facet_pair<const D: usize>(
-    first: &EmbeddedSimplex<D>,
-    second: &EmbeddedSimplex<D>,
-) -> Result<bool, TriangulationEmbeddingValidationError> {
+    first: &RealizedSimplex<D>,
+    second: &RealizedSimplex<D>,
+) -> Result<bool, TriangulationRealizationValidationError> {
     let mut shared = SimplexVertexKeyBuffer::new();
     let mut first_only = SimplexVertexKeyBuffer::new();
     let mut second_only = SimplexVertexKeyBuffer::new();
@@ -1340,7 +1353,7 @@ fn try_validate_full_facet_pair<const D: usize>(
             second_only,
         )),
         (Orientation::DEGENERATE, _) => {
-            Err(TriangulationEmbeddingValidationError::DegenerateSimplex {
+            Err(TriangulationRealizationValidationError::DegenerateSimplex {
                 simplex_key: first.key,
                 simplex_uuid: first.uuid,
                 detail: Box::new(first.detail()),
@@ -1348,7 +1361,7 @@ fn try_validate_full_facet_pair<const D: usize>(
             })
         }
         (_, Orientation::DEGENERATE) => {
-            Err(TriangulationEmbeddingValidationError::DegenerateSimplex {
+            Err(TriangulationRealizationValidationError::DegenerateSimplex {
                 simplex_key: second.key,
                 simplex_uuid: second.uuid,
                 detail: Box::new(second.detail()),
@@ -1364,10 +1377,10 @@ fn try_validate_full_facet_pair<const D: usize>(
 /// vertex, so the sign can be compared between adjacent simplices without
 /// constructing a barycentric intersection system.
 fn orientation_against_shared_facet<const D: usize>(
-    simplex: &EmbeddedSimplex<D>,
+    simplex: &RealizedSimplex<D>,
     shared: &SimplexVertexKeyBuffer,
     opposite: VertexKey,
-) -> Result<Orientation, TriangulationEmbeddingValidationError> {
+) -> Result<Orientation, TriangulationRealizationValidationError> {
     let mut points = SmallBuffer::<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>::with_capacity(D + 1);
     for &vertex_key in shared {
         points.push(simplex.point_for_key(vertex_key)?);
@@ -1375,7 +1388,7 @@ fn orientation_against_shared_facet<const D: usize>(
     points.push(simplex.point_for_key(opposite)?);
 
     robust_orientation(&points).map_err(|source| {
-        TriangulationEmbeddingValidationError::PredicateFailed {
+        TriangulationRealizationValidationError::PredicateFailed {
             simplex_key: simplex.key,
             simplex_uuid: simplex.uuid,
             detail: Box::new(simplex.detail()),
@@ -1386,27 +1399,27 @@ fn orientation_against_shared_facet<const D: usize>(
 
 /// Builds the standard Level 4 overlap diagnostic for a failed facet-side test.
 ///
-/// Keeping the same [`TriangulationEmbeddingValidationError`] variant as the
+/// Keeping the same [`TriangulationRealizationValidationError`] variant as the
 /// barycentric path lets repair/report callers consume one error contract
 /// regardless of which validator found the illegal intersection.
 fn shared_facet_same_side_intersection<const D: usize>(
-    first: &EmbeddedSimplex<D>,
-    second: &EmbeddedSimplex<D>,
+    first: &RealizedSimplex<D>,
+    second: &RealizedSimplex<D>,
     shared_vertices: SimplexVertexKeyBuffer,
     first_only_witness_vertices: SimplexVertexKeyBuffer,
     second_only_witness_vertices: SimplexVertexKeyBuffer,
-) -> TriangulationEmbeddingValidationError {
+) -> TriangulationRealizationValidationError {
     let shared_vertex_uuids = first.vertex_uuids_for_keys(&shared_vertices);
     let first_only_witness_vertex_uuids = first.vertex_uuids_for_keys(&first_only_witness_vertices);
     let second_only_witness_vertex_uuids =
         second.vertex_uuids_for_keys(&second_only_witness_vertices);
 
-    TriangulationEmbeddingValidationError::SimplexIntersectionOutsideSharedFace {
+    TriangulationRealizationValidationError::SimplexIntersectionOutsideSharedFace {
         first_simplex_key: first.key,
         first_simplex_uuid: first.uuid,
         second_simplex_key: second.key,
         second_simplex_uuid: second.uuid,
-        detail: Box::new(TriangulationEmbeddingIntersectionDetail {
+        detail: Box::new(TriangulationRealizationIntersectionDetail {
             first_simplex: first.detail(),
             second_simplex: second.detail(),
             shared_vertices,
@@ -1421,13 +1434,13 @@ fn shared_facet_same_side_intersection<const D: usize>(
 
 /// Recursively checks every periodic translate that can overlap two simplex boxes.
 fn validate_periodic_translates<const D: usize>(
-    first: &EmbeddedSimplex<D>,
-    second: &EmbeddedSimplex<D>,
+    first: &RealizedSimplex<D>,
+    second: &RealizedSimplex<D>,
     periods: &[f64; D],
     shift_ranges: &[(i32, i32)],
     axis: usize,
     shift: &mut [i32; D],
-) -> Result<(), TriangulationEmbeddingValidationError> {
+) -> Result<(), TriangulationRealizationValidationError> {
     if axis == D {
         let translated = translated_simplex(second, periods, shift)?;
         if bounding_boxes_overlap(first, &translated) {
@@ -1446,15 +1459,15 @@ fn validate_periodic_translates<const D: usize>(
 
 /// Computes the finite integer shift range needed to test possible periodic overlaps.
 fn periodic_shift_ranges<const D: usize>(
-    first: &EmbeddedSimplex<D>,
-    second: &EmbeddedSimplex<D>,
+    first: &RealizedSimplex<D>,
+    second: &RealizedSimplex<D>,
     periods: &[f64; D],
-) -> Result<PeriodicShiftRangeBuffer, TriangulationEmbeddingValidationError> {
+) -> Result<PeriodicShiftRangeBuffer, TriangulationRealizationValidationError> {
     (0..D)
         .map(|axis| {
-            let (first_min, first_max) = coordinate_range_for_axis(&first.embedding, axis)
+            let (first_min, first_max) = coordinate_range_for_axis(&first.realization, axis)
                 .expect("axis generated from 0..D must be valid");
-            let (second_min, second_max) = coordinate_range_for_axis(&second.embedding, axis)
+            let (second_min, second_max) = coordinate_range_for_axis(&second.realization, axis)
                 .expect("axis generated from 0..D must be valid");
             let period = periods[axis];
             let lower_bound = ((first_min - second_max) / period).floor();
@@ -1484,18 +1497,18 @@ fn periodic_shift_ranges<const D: usize>(
 
 /// Builds the shared diagnostic for periodic shift bounds that cannot fit in `i32`.
 fn periodic_translate_range_overflow<const D: usize>(
-    first: &EmbeddedSimplex<D>,
-    second: &EmbeddedSimplex<D>,
+    first: &RealizedSimplex<D>,
+    second: &RealizedSimplex<D>,
     axis: usize,
     lower_bound: f64,
     upper_bound: f64,
-) -> TriangulationEmbeddingValidationError {
-    TriangulationEmbeddingValidationError::PeriodicTranslateRangeOverflow {
+) -> TriangulationRealizationValidationError {
+    TriangulationRealizationValidationError::PeriodicTranslateRangeOverflow {
         first_simplex_key: first.key,
         first_simplex_uuid: first.uuid,
         second_simplex_key: second.key,
         second_simplex_uuid: second.uuid,
-        detail: Box::new(TriangulationEmbeddingSimplexPairDetail {
+        detail: Box::new(TriangulationRealizationSimplexPairDetail {
             first_simplex: first.detail(),
             second_simplex: second.detail(),
         }),
@@ -1505,32 +1518,32 @@ fn periodic_translate_range_overflow<const D: usize>(
     }
 }
 
-/// Translates one embedded simplex into a neighboring periodic chart.
+/// Translates one realized simplex into a neighboring periodic chart.
 fn translated_simplex<const D: usize>(
-    simplex: &EmbeddedSimplex<D>,
+    simplex: &RealizedSimplex<D>,
     periods: &[f64; D],
     shift: &[i32; D],
-) -> Result<EmbeddedSimplex<D>, TriangulationEmbeddingValidationError> {
-    let embedding = simplex
-        .embedding
+) -> Result<RealizedSimplex<D>, TriangulationRealizationValidationError> {
+    let realization = simplex
+        .realization
         .try_translated(periods, shift)
-        .map_err(|source| labeled_simplex_error_to_embedded_simplex_error(source, simplex))?;
-    Ok(EmbeddedSimplex {
+        .map_err(|source| labeled_simplex_error_to_realized_simplex_error(source, simplex))?;
+    Ok(RealizedSimplex {
         key: simplex.key,
         uuid: simplex.uuid,
         vertex_keys: simplex.vertex_keys.clone(),
         vertex_uuids: simplex.vertex_uuids.clone(),
-        embedding,
+        realization,
     })
 }
 
 /// Rejects a periodic simplex whose lifted vertices cannot fit in one chart.
 fn validate_periodic_simplex_chart<const D: usize>(
-    simplex: &EmbeddedSimplex<D>,
+    simplex: &RealizedSimplex<D>,
     periods: &[f64; D],
-) -> Result<(), TriangulationEmbeddingValidationError> {
-    let span = try_periodic_simplex_span(&simplex.embedding, periods).map_err(|source| {
-        TriangulationEmbeddingValidationError::InvalidPeriodicDomainPeriod {
+) -> Result<(), TriangulationRealizationValidationError> {
+    let span = try_periodic_simplex_span(&simplex.realization, periods).map_err(|source| {
+        TriangulationRealizationValidationError::InvalidPeriodicDomainPeriod {
             simplex_key: simplex.key,
             simplex_uuid: simplex.uuid,
             detail: Box::new(simplex.detail()),
@@ -1539,7 +1552,7 @@ fn validate_periodic_simplex_chart<const D: usize>(
     })?;
     if let Some(span) = span {
         return Err(
-            TriangulationEmbeddingValidationError::PeriodicSimplexSpansDomain {
+            TriangulationRealizationValidationError::PeriodicSimplexSpansDomain {
                 simplex_key: simplex.key,
                 simplex_uuid: simplex.uuid,
                 detail: Box::new(simplex.detail()),
@@ -1554,24 +1567,24 @@ fn validate_periodic_simplex_chart<const D: usize>(
 
 /// Rejects zero-volume simplices before pairwise overlap validation runs.
 fn validate_simplex_nondegenerate<const D: usize>(
-    simplex: &EmbeddedSimplex<D>,
-) -> Result<(), TriangulationEmbeddingValidationError> {
+    simplex: &RealizedSimplex<D>,
+) -> Result<(), TriangulationRealizationValidationError> {
     let points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
-        (0..simplex.embedding.labels().len())
+        (0..simplex.realization.labels().len())
             .map(|index| simplex.point_at(index))
             .collect::<Result<_, _>>()?;
 
     match robust_orientation(&points) {
         Ok(Orientation::POSITIVE | Orientation::NEGATIVE) => Ok(()),
         Ok(Orientation::DEGENERATE) => {
-            Err(TriangulationEmbeddingValidationError::DegenerateSimplex {
+            Err(TriangulationRealizationValidationError::DegenerateSimplex {
                 simplex_key: simplex.key,
                 simplex_uuid: simplex.uuid,
                 detail: Box::new(simplex.detail()),
                 dimension: D,
             })
         }
-        Err(source) => Err(TriangulationEmbeddingValidationError::PredicateFailed {
+        Err(source) => Err(TriangulationRealizationValidationError::PredicateFailed {
             simplex_key: simplex.key,
             simplex_uuid: simplex.uuid,
             detail: Box::new(simplex.detail()),
@@ -1582,24 +1595,24 @@ fn validate_simplex_nondegenerate<const D: usize>(
 
 /// Applies the cheap bounding-box prefilter before exact intersection work.
 fn bounding_boxes_overlap<const D: usize>(
-    first: &EmbeddedSimplex<D>,
-    second: &EmbeddedSimplex<D>,
+    first: &RealizedSimplex<D>,
+    second: &RealizedSimplex<D>,
 ) -> bool {
-    axis_aligned_bounding_boxes_overlap(&first.embedding, &second.embedding)
+    axis_aligned_bounding_boxes_overlap(&first.realization, &second.realization)
 }
 
 /// Converts pure simplex-intersection failures into triangulation-level diagnostics.
 fn validate_simplex_pair_intersection<const D: usize>(
-    first: &EmbeddedSimplex<D>,
-    second: &EmbeddedSimplex<D>,
-) -> Result<(), TriangulationEmbeddingValidationError> {
-    match validate_simplex_embeddings_intersect_only_in_shared_faces(
-        &first.embedding,
-        &second.embedding,
+    first: &RealizedSimplex<D>,
+    second: &RealizedSimplex<D>,
+) -> Result<(), TriangulationRealizationValidationError> {
+    match validate_simplex_realizations_intersect_only_in_shared_faces(
+        &first.realization,
+        &second.realization,
     ) {
         Ok(()) => Ok(()),
         Err(SimplexIntersectionFailure::SingularBarycentricBasis) => Err(
-            TriangulationEmbeddingValidationError::SingularBarycentricBasis {
+            TriangulationRealizationValidationError::SingularBarycentricBasis {
                 simplex_key: first.key,
                 simplex_uuid: first.uuid,
                 detail: Box::new(first.detail()),
@@ -1613,12 +1626,12 @@ fn validate_simplex_pair_intersection<const D: usize>(
             let second_only_witness_vertex_uuids =
                 second.vertex_uuids_for_keys(&witness.second_only_witness);
             Err(
-                TriangulationEmbeddingValidationError::SimplexIntersectionOutsideSharedFace {
+                TriangulationRealizationValidationError::SimplexIntersectionOutsideSharedFace {
                     first_simplex_key: first.key,
                     first_simplex_uuid: first.uuid,
                     second_simplex_key: second.key,
                     second_simplex_uuid: second.uuid,
-                    detail: Box::new(TriangulationEmbeddingIntersectionDetail {
+                    detail: Box::new(TriangulationRealizationIntersectionDetail {
                         first_simplex: first.detail(),
                         second_simplex: second.detail(),
                         shared_vertices: witness.shared,
@@ -1634,11 +1647,11 @@ fn validate_simplex_pair_intersection<const D: usize>(
     }
 }
 
-/// Axis-aligned bounding box for one embedded simplex, tagged with its index
+/// Axis-aligned bounding box for one realized simplex, tagged with its index
 /// in the validated simplex list.
 #[derive(Clone, Copy, Debug)]
 struct SimplexBoundingBox<const D: usize> {
-    /// Index of the owning simplex in the embedded-simplex slice.
+    /// Index of the owning simplex in the realized-simplex slice.
     simplex_index: usize,
     /// Per-axis lower bounds of the simplex vertices.
     min: [f64; D],
@@ -1647,11 +1660,11 @@ struct SimplexBoundingBox<const D: usize> {
 }
 
 impl<const D: usize> SimplexBoundingBox<D> {
-    /// Computes the bounding box of an embedded simplex from its lifted coordinates.
-    fn from_embedded(simplex_index: usize, simplex: &EmbeddedSimplex<D>) -> Self {
+    /// Computes the bounding box of a realized simplex from its lifted coordinates.
+    fn from_realized(simplex_index: usize, simplex: &RealizedSimplex<D>) -> Self {
         let mut min = [f64::INFINITY; D];
         let mut max = [f64::NEG_INFINITY; D];
-        for coords in simplex.embedding.coordinates() {
+        for coords in simplex.realization.coordinates() {
             for (axis, &value) in coords.iter().enumerate() {
                 min[axis] = min[axis].min(value);
                 max[axis] = max[axis].max(value);
@@ -1693,7 +1706,7 @@ fn widest_extent_axis<const D: usize>(boxes: &[SimplexBoundingBox<D>]) -> usize 
         .map_or(0, |(axis, _)| axis)
 }
 
-/// Visits candidate overlapping simplex pairs for Level 4 embedding validation.
+/// Visits candidate overlapping simplex pairs for Level 4 realization validation.
 ///
 /// The all-pairs intersection test is `O(S^2)` in the number of simplices,
 /// which dominates validation on large triangulations. For the Euclidean
@@ -1737,12 +1750,12 @@ fn widest_extent_axis<const D: usize>(boxes: &[SimplexBoundingBox<D>]) -> usize 
 /// - Ericson, *Real-Time Collision Detection* (2005), ch. 7 (sweep-and-prune)
 ///   and ch. 4-5 (AABB separating-axis test).
 ///
-/// See `REFERENCES.md`, "Embedded-Geometry Overlap Detection (Level 4 Validation)".
+/// See `REFERENCES.md`, "Realized-Simplex Overlap Detection (Level 4 Validation)".
 fn for_each_candidate_simplex_pair<const D: usize, B>(
-    simplices: &[EmbeddedSimplex<D>],
+    simplices: &[RealizedSimplex<D>],
     skip: &FastHashSet<SimplexKey>,
     periodic_periods: Option<[f64; D]>,
-    on_pair: impl FnMut(&EmbeddedSimplex<D>, &EmbeddedSimplex<D>) -> ControlFlow<B>,
+    on_pair: impl FnMut(&RealizedSimplex<D>, &RealizedSimplex<D>) -> ControlFlow<B>,
 ) -> (usize, Option<B>) {
     // Lifted-chart AABBs cannot express wrap-around overlaps, and a degenerate
     // 0-dimensional chart has no sweep axis, so both fall back to exhaustive
@@ -1755,11 +1768,11 @@ fn for_each_candidate_simplex_pair<const D: usize, B>(
 
 /// Visits candidate pairs where at least one simplex belongs to a changed scope.
 fn for_each_scoped_candidate_simplex_pair<const D: usize, B>(
-    simplices: &[EmbeddedSimplex<D>],
+    simplices: &[RealizedSimplex<D>],
     skip: &FastHashSet<SimplexKey>,
     scope: &FastHashSet<SimplexKey>,
     periodic_periods: Option<[f64; D]>,
-    mut on_pair: impl FnMut(&EmbeddedSimplex<D>, &EmbeddedSimplex<D>) -> ControlFlow<B>,
+    mut on_pair: impl FnMut(&RealizedSimplex<D>, &RealizedSimplex<D>) -> ControlFlow<B>,
 ) -> (usize, Option<B>) {
     if scope.is_empty() {
         return for_each_candidate_simplex_pair(simplices, skip, periodic_periods, on_pair);
@@ -1778,9 +1791,9 @@ fn for_each_scoped_candidate_simplex_pair<const D: usize, B>(
 
 /// Exhaustive `O(S^2)` pairwise enumeration over non-skipped simplices.
 fn exhaustive_candidate_simplex_pairs<const D: usize, B>(
-    simplices: &[EmbeddedSimplex<D>],
+    simplices: &[RealizedSimplex<D>],
     skip: &FastHashSet<SimplexKey>,
-    mut on_pair: impl FnMut(&EmbeddedSimplex<D>, &EmbeddedSimplex<D>) -> ControlFlow<B>,
+    mut on_pair: impl FnMut(&RealizedSimplex<D>, &RealizedSimplex<D>) -> ControlFlow<B>,
 ) -> (usize, Option<B>) {
     let mut examined = 0_usize;
     for (first_index, first_simplex) in simplices.iter().enumerate() {
@@ -1808,10 +1821,10 @@ fn exhaustive_candidate_simplex_pairs<const D: usize, B>(
 /// mutation only needs changed-vs-all pairs. This keeps automatic insertion
 /// validation proportional to the changed scope instead of all old pairs.
 fn scoped_exhaustive_candidate_simplex_pairs<const D: usize, B>(
-    simplices: &[EmbeddedSimplex<D>],
+    simplices: &[RealizedSimplex<D>],
     skip: &FastHashSet<SimplexKey>,
     scope: &FastHashSet<SimplexKey>,
-    mut on_pair: impl FnMut(&EmbeddedSimplex<D>, &EmbeddedSimplex<D>) -> ControlFlow<B>,
+    mut on_pair: impl FnMut(&RealizedSimplex<D>, &RealizedSimplex<D>) -> ControlFlow<B>,
 ) -> (usize, Option<B>) {
     let mut examined = 0_usize;
     for (local_index, local_simplex) in simplices.iter().enumerate() {
@@ -1845,15 +1858,15 @@ fn scoped_exhaustive_candidate_simplex_pairs<const D: usize, B>(
 /// See [`for_each_candidate_simplex_pair`] for the completeness argument and
 /// references.
 fn sweep_and_prune_candidate_simplex_pairs<const D: usize, B>(
-    simplices: &[EmbeddedSimplex<D>],
+    simplices: &[RealizedSimplex<D>],
     skip: &FastHashSet<SimplexKey>,
-    mut on_pair: impl FnMut(&EmbeddedSimplex<D>, &EmbeddedSimplex<D>) -> ControlFlow<B>,
+    mut on_pair: impl FnMut(&RealizedSimplex<D>, &RealizedSimplex<D>) -> ControlFlow<B>,
 ) -> (usize, Option<B>) {
     let mut boxes: Vec<SimplexBoundingBox<D>> = simplices
         .iter()
         .enumerate()
         .filter(|(_, simplex)| !skip.contains(&simplex.key))
-        .map(|(index, simplex)| SimplexBoundingBox::from_embedded(index, simplex))
+        .map(|(index, simplex)| SimplexBoundingBox::from_realized(index, simplex))
         .collect();
     if boxes.len() < 2 {
         return (0, None);
@@ -1973,11 +1986,11 @@ mod tests {
         }
         let simplex = (0..=D).collect();
         let tri = tri_from_tds(tds_from_vertices_and_simplices(&coords, &[simplex]));
-        assert!(tri.is_valid_embedding().is_ok());
+        assert!(tri.is_valid_realization().is_ok());
     }
 
     #[test]
-    fn is_valid_embedding_accepts_single_simplex_dimensions_two_through_five() {
+    fn is_valid_realization_accepts_single_simplex_dimensions_two_through_five() {
         assert_single_simplex_embeds::<2>();
         assert_single_simplex_embeds::<3>();
         assert_single_simplex_embeds::<4>();
@@ -1985,7 +1998,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_embedding_accepts_builder_constructed_triangulation() {
+    fn validate_realization_accepts_builder_constructed_triangulation() {
         let vertices = vec![
             test_vertex([0.0, 0.0, 0.0]),
             test_vertex([1.0, 0.0, 0.0]),
@@ -1997,11 +2010,11 @@ mod tests {
             .build()
             .unwrap();
 
-        assert!(dt.as_triangulation().validate_embedding().is_ok());
+        assert!(dt.as_triangulation().validate_realization().is_ok());
     }
 
     #[test]
-    fn is_valid_embedding_accepts_two_tetrahedra_sharing_a_facet() {
+    fn is_valid_realization_accepts_two_tetrahedra_sharing_a_facet() {
         let coords = [
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
@@ -2012,11 +2025,11 @@ mod tests {
         let tds = tds_from_vertices_and_simplices(&coords, &[vec![0, 1, 2, 3], vec![0, 2, 1, 4]]);
         let tri = tri_from_tds(tds);
 
-        assert!(tri.is_valid_embedding().is_ok());
+        assert!(tri.is_valid_realization().is_ok());
     }
 
     #[test]
-    fn is_valid_embedding_rejects_full_facet_same_side_overlap() {
+    fn is_valid_realization_rejects_full_facet_same_side_overlap() {
         let coords = [
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
@@ -2027,11 +2040,11 @@ mod tests {
         let tds = tds_from_vertices_and_simplices(&coords, &[vec![0, 1, 2, 3], vec![0, 2, 1, 4]]);
         let tri = tri_from_tds(tds);
 
-        let err = tri.is_valid_embedding().unwrap_err();
+        let err = tri.is_valid_realization().unwrap_err();
 
         assert_matches!(
             err,
-            TriangulationEmbeddingValidationError::SimplexIntersectionOutsideSharedFace {
+            TriangulationRealizationValidationError::SimplexIntersectionOutsideSharedFace {
                 detail,
                 ..
             } if detail.shared_vertices.len() == 3
@@ -2044,17 +2057,17 @@ mod tests {
     }
 
     #[test]
-    fn validate_embedding_rejects_degenerate_simplex() {
+    fn validate_realization_rejects_degenerate_simplex() {
         let coords = [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]];
         let tds = tds_from_vertices_and_simplices(&coords, &[vec![0, 1, 2]]);
         let tri = tri_from_tds(tds);
 
         let diagnostic = tri
-            .embedding_diagnostic()
+            .realization_diagnostic()
             .unwrap()
             .expect("degenerate simplex should produce a diagnostic");
         let report_first = tri
-            .embedding_report()
+            .realization_report()
             .unwrap()
             .violations
             .into_iter()
@@ -2062,16 +2075,16 @@ mod tests {
             .expect("degenerate simplex should be the first report violation");
         assert_eq!(diagnostic, report_first);
 
-        let err = tri.is_valid_embedding().unwrap_err();
+        let err = tri.is_valid_realization().unwrap_err();
         assert_eq!(err, diagnostic);
         assert_matches!(
             err,
-            TriangulationEmbeddingValidationError::DegenerateSimplex { dimension: 2, .. }
+            TriangulationRealizationValidationError::DegenerateSimplex { dimension: 2, .. }
         );
     }
 
     #[test]
-    fn is_valid_embedding_preserves_duplicate_label_detail() {
+    fn is_valid_realization_preserves_duplicate_label_detail() {
         let coords = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]];
         let (mut tds, simplex_keys) =
             tds_from_vertices_and_simplices_with_keys(&coords, &[vec![0, 1, 2]]);
@@ -2099,11 +2112,11 @@ mod tests {
         }
         let tri = tri_from_tds(tds);
 
-        let err = tri.is_valid_embedding().unwrap_err();
+        let err = tri.is_valid_realization().unwrap_err();
 
         assert_matches!(
             err,
-            TriangulationEmbeddingValidationError::DuplicateSimplexEmbeddingLabel {
+            TriangulationRealizationValidationError::DuplicateSimplexRealizationLabel {
                 simplex_key: observed_simplex_key,
                 vertex_key,
                 vertex_uuid,
@@ -2120,19 +2133,19 @@ mod tests {
     }
 
     #[test]
-    fn embedding_report_includes_degenerate_simplex_vertices() {
+    fn realization_report_includes_degenerate_simplex_vertices() {
         let coords = [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]];
         let tds = tds_from_vertices_and_simplices(&coords, &[vec![0, 1, 2]]);
         let tri = tri_from_tds(tds);
 
         let report = tri
-            .embedding_report()
-            .expect("embedding report should be generated");
+            .realization_report()
+            .expect("realization report should be generated");
         assert!(!report.is_valid());
         assert_eq!(report.checked_simplices, 1);
         assert_matches!(
             &report.violations[..],
-            [TriangulationEmbeddingValidationError::DegenerateSimplex {
+            [TriangulationRealizationValidationError::DegenerateSimplex {
                 detail,
                 dimension: 2,
                 ..
@@ -2141,7 +2154,7 @@ mod tests {
     }
 
     #[test]
-    fn is_valid_embedding_rejects_nonadjacent_edge_crossing() {
+    fn is_valid_realization_rejects_nonadjacent_edge_crossing() {
         let coords = [[0.0, 0.0], [2.0, 0.0], [0.0, 2.0], [2.0, 2.0], [1.0, -1.0]];
         let tds = tds_from_vertices_and_simplices(
             &coords,
@@ -2149,15 +2162,15 @@ mod tests {
         );
         let tri = tri_from_tds(tds);
 
-        let err = tri.is_valid_embedding().unwrap_err();
+        let err = tri.is_valid_realization().unwrap_err();
         assert_matches!(
             err,
-            TriangulationEmbeddingValidationError::SimplexIntersectionOutsideSharedFace { .. }
+            TriangulationRealizationValidationError::SimplexIntersectionOutsideSharedFace { .. }
         );
     }
 
     #[test]
-    fn is_valid_embedding_sweep_and_prune_detects_interposed_overlap() {
+    fn is_valid_realization_sweep_and_prune_detects_interposed_overlap() {
         // Regression guard for the sweep-and-prune broad phase: triangles A and
         // B genuinely overlap (no shared vertices), but triangle C sits between
         // them in the sweep-axis ordering while overlapping neither. A naive
@@ -2181,15 +2194,15 @@ mod tests {
         );
         let tri = tri_from_tds(tds);
 
-        let err = tri.is_valid_embedding().unwrap_err();
+        let err = tri.is_valid_realization().unwrap_err();
         assert_matches!(
             err,
-            TriangulationEmbeddingValidationError::SimplexIntersectionOutsideSharedFace { .. }
+            TriangulationRealizationValidationError::SimplexIntersectionOutsideSharedFace { .. }
         );
     }
 
     #[test]
-    fn embedding_report_includes_intersection_witness_vertices() {
+    fn realization_report_includes_intersection_witness_vertices() {
         let coords = [[0.0, 0.0], [2.0, 0.0], [0.0, 2.0], [2.0, 2.0], [1.0, -1.0]];
         let tds = tds_from_vertices_and_simplices(
             &coords,
@@ -2198,8 +2211,8 @@ mod tests {
         let tri = tri_from_tds(tds);
 
         let report = tri
-            .embedding_report()
-            .expect("embedding report should be generated");
+            .realization_report()
+            .expect("realization report should be generated");
         let intersection =
             report
                 .violations
@@ -2207,7 +2220,7 @@ mod tests {
                 .find(|violation| {
                     matches!(
                     violation,
-                    TriangulationEmbeddingValidationError::SimplexIntersectionOutsideSharedFace {
+                    TriangulationRealizationValidationError::SimplexIntersectionOutsideSharedFace {
                         ..
                     }
                 )
@@ -2216,7 +2229,7 @@ mod tests {
 
         assert_matches!(
             intersection,
-            TriangulationEmbeddingValidationError::SimplexIntersectionOutsideSharedFace {
+            TriangulationRealizationValidationError::SimplexIntersectionOutsideSharedFace {
                 detail,
                 ..
             } if detail.first_simplex.vertices.len() == 3
@@ -2233,7 +2246,7 @@ mod tests {
     }
 
     #[test]
-    fn is_valid_embedding_accepts_lifted_toroidal_simplex_chart() {
+    fn is_valid_realization_accepts_lifted_toroidal_simplex_chart() {
         let coords = [[0.9, 0.1], [0.1, 0.1], [0.9, 0.3]];
         let (mut tds, simplex_keys) =
             tds_from_vertices_and_simplices_with_keys(&coords, &[vec![0, 1, 2]]);
@@ -2247,19 +2260,19 @@ mod tests {
                 .unwrap(),
         );
 
-        assert!(tri.is_valid_embedding().is_ok());
+        assert!(tri.is_valid_realization().is_ok());
     }
 
     #[test]
-    fn is_valid_embedding_rejects_unsupported_spherical_topology() {
+    fn is_valid_realization_rejects_unsupported_spherical_topology() {
         let coords = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]];
         let tds = tds_from_vertices_and_simplices(&coords, &[vec![0, 1, 2]]);
         let tri = tri_from_tds_with_topology(tds, GlobalTopology::Spherical);
 
-        let err = tri.is_valid_embedding().unwrap_err();
+        let err = tri.is_valid_realization().unwrap_err();
         assert_matches!(
             err,
-            TriangulationEmbeddingValidationError::UnsupportedTopology {
+            TriangulationRealizationValidationError::UnsupportedTopology {
                 topology: TopologyKind::Spherical,
                 dimension: 2,
             }
@@ -2267,7 +2280,7 @@ mod tests {
     }
 
     #[test]
-    fn is_valid_embedding_rejects_periodic_simplex_spanning_domain() {
+    fn is_valid_realization_rejects_periodic_simplex_spanning_domain() {
         let coords = [[0.0, 0.0], [1.0, 0.0], [0.0, 0.25]];
         let tds = tds_from_vertices_and_simplices(&coords, &[vec![0, 1, 2]]);
         let tri = tri_from_tds_with_topology(
@@ -2276,9 +2289,9 @@ mod tests {
                 .unwrap(),
         );
 
-        let err = tri.is_valid_embedding().unwrap_err();
+        let err = tri.is_valid_realization().unwrap_err();
         let (span, period) = match err {
-            TriangulationEmbeddingValidationError::PeriodicSimplexSpansDomain {
+            TriangulationRealizationValidationError::PeriodicSimplexSpansDomain {
                 axis: 0,
                 span,
                 period,
@@ -2291,7 +2304,7 @@ mod tests {
     }
 
     #[test]
-    fn is_valid_embedding_rejects_periodic_translate_overlap() {
+    fn is_valid_realization_rejects_periodic_translate_overlap() {
         let coords = [
             [0.0, 0.0],
             [0.2, 0.0],
@@ -2312,19 +2325,19 @@ mod tests {
                 .unwrap(),
         );
 
-        let err = tri.is_valid_embedding().unwrap_err();
+        let err = tri.is_valid_realization().unwrap_err();
         assert_matches!(
             err,
-            TriangulationEmbeddingValidationError::SimplexIntersectionOutsideSharedFace { .. }
+            TriangulationRealizationValidationError::SimplexIntersectionOutsideSharedFace { .. }
         );
     }
 
     #[test]
-    fn embedding_error_kind_covers_variants() {
-        let source = TriangulationEmbeddingValidationError::DegenerateSimplex {
+    fn realization_error_kind_covers_variants() {
+        let source = TriangulationRealizationValidationError::DegenerateSimplex {
             simplex_key: SimplexKey::default(),
             simplex_uuid: Uuid::nil(),
-            detail: Box::new(TriangulationEmbeddingSimplexDetail {
+            detail: Box::new(TriangulationRealizationSimplexDetail {
                 key: SimplexKey::default(),
                 uuid: Uuid::nil(),
                 vertices: SimplexVertexKeyBuffer::new(),
@@ -2334,15 +2347,15 @@ mod tests {
         };
 
         assert_eq!(
-            TriangulationEmbeddingValidationErrorKind::from(&source),
-            TriangulationEmbeddingValidationErrorKind::DegenerateSimplex,
+            TriangulationRealizationValidationErrorKind::from(&source),
+            TriangulationRealizationValidationErrorKind::DegenerateSimplex,
         );
 
         let duplicate_label_source =
-            TriangulationEmbeddingValidationError::DuplicateSimplexEmbeddingLabel {
+            TriangulationRealizationValidationError::DuplicateSimplexRealizationLabel {
                 simplex_key: SimplexKey::default(),
                 simplex_uuid: Uuid::nil(),
-                detail: Box::new(TriangulationEmbeddingSimplexDetail {
+                detail: Box::new(TriangulationRealizationSimplexDetail {
                     key: SimplexKey::default(),
                     uuid: Uuid::nil(),
                     vertices: SimplexVertexKeyBuffer::new(),
@@ -2355,15 +2368,15 @@ mod tests {
             };
 
         assert_eq!(
-            TriangulationEmbeddingValidationErrorKind::from(&duplicate_label_source),
-            TriangulationEmbeddingValidationErrorKind::DuplicateSimplexEmbeddingLabel,
+            TriangulationRealizationValidationErrorKind::from(&duplicate_label_source),
+            TriangulationRealizationValidationErrorKind::DuplicateSimplexRealizationLabel,
         );
 
         let invalid_period_source =
-            TriangulationEmbeddingValidationError::InvalidPeriodicDomainPeriod {
+            TriangulationRealizationValidationError::InvalidPeriodicDomainPeriod {
                 simplex_key: SimplexKey::default(),
                 simplex_uuid: Uuid::nil(),
-                detail: Box::new(TriangulationEmbeddingSimplexDetail {
+                detail: Box::new(TriangulationRealizationSimplexDetail {
                     key: SimplexKey::default(),
                     uuid: Uuid::nil(),
                     vertices: SimplexVertexKeyBuffer::new(),
@@ -2376,28 +2389,29 @@ mod tests {
             };
 
         assert_eq!(
-            TriangulationEmbeddingValidationErrorKind::from(&invalid_period_source),
-            TriangulationEmbeddingValidationErrorKind::InvalidPeriodicDomainPeriod,
+            TriangulationRealizationValidationErrorKind::from(&invalid_period_source),
+            TriangulationRealizationValidationErrorKind::InvalidPeriodicDomainPeriod,
         );
 
-        let unexpected_source = TriangulationEmbeddingValidationError::UnexpectedValidationLayer {
-            kind: InvariantKind::DelaunayProperty,
-            source: Box::new(InvariantError::Delaunay(
-                DelaunayTriangulationValidationError::VerificationFailed {
-                    source: Box::new(DelaunayVerificationError::from(
-                        DelaunayValidationError::TriangulationState {
-                            source: TdsError::InconsistentDataStructure {
-                                message: "synthetic higher-layer failure".to_string(),
+        let unexpected_source =
+            TriangulationRealizationValidationError::UnexpectedValidationLayer {
+                kind: InvariantKind::DelaunayProperty,
+                source: Box::new(InvariantError::Delaunay(
+                    DelaunayTriangulationValidationError::VerificationFailed {
+                        source: Box::new(DelaunayVerificationError::from(
+                            DelaunayValidationError::TriangulationState {
+                                source: TdsError::InconsistentDataStructure {
+                                    message: "synthetic higher-layer failure".to_string(),
+                                },
                             },
-                        },
-                    )),
-                },
-            )),
-        };
+                        )),
+                    },
+                )),
+            };
 
         assert_eq!(
-            TriangulationEmbeddingValidationErrorKind::from(&unexpected_source),
-            TriangulationEmbeddingValidationErrorKind::UnexpectedValidationLayer,
+            TriangulationRealizationValidationErrorKind::from(&unexpected_source),
+            TriangulationRealizationValidationErrorKind::UnexpectedValidationLayer,
         );
     }
 }

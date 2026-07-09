@@ -5,7 +5,7 @@
 use crate::core::tds::Tds;
 use std::ptr;
 
-/// Owner abstraction for rollback guards that snapshot an embedded canonical [`Tds`].
+/// Owner abstraction for rollback guards that snapshot a canonical [`Tds`].
 pub(crate) trait TdsRollbackOwner<U, V, const D: usize> {
     /// Returns the canonical [`Tds`] that a rollback transaction snapshots.
     fn rollback_tds(&self) -> &Tds<U, V, D>;

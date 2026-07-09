@@ -412,7 +412,7 @@ struct PositiveScalar(f64);
 impl PositiveScalar {
     /// Parses a raw scalar into a finite positive scalar proof.
     ///
-    /// The returned [`InvalidPositiveScalar`] is embedded directly in public
+    /// The returned [`InvalidPositiveScalar`] is realized directly in public
     /// [`RandomPointGenerationError`] variants by the caller.
     fn try_new(value: f64) -> Result<Self, InvalidPositiveScalar> {
         if !value.is_finite() {

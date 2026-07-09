@@ -644,12 +644,12 @@ fn validation_demo_level_3() -> Result<ValidationDemoCase, CliError> {
     })
 }
 
-/// Generate the Level 4 invalid affine realization failure example.
+/// Generate the Level 4 invalid Euclidean realization failure example.
 fn validation_demo_level_4() -> Result<ValidationDemoCase, CliError> {
     let coordinates = [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]];
     let simplices = vec![vec![0, 1, 2]];
     let diagnostic = explicit_builder_failure(
-        "Level 4 invalid affine realization",
+        "Level 4 invalid Euclidean realization",
         coordinates,
         &simplices,
     )?;
@@ -659,13 +659,13 @@ fn validation_demo_level_4() -> Result<ValidationDemoCase, CliError> {
 
     Ok(ValidationDemoCase {
         level: 4,
-        layer: "Valid affine realization",
+        layer: "Valid realization",
         title: "Degenerate realized simplex",
         status: "failed_as_expected",
-        public_check: "Triangulation::validate_embedding",
+        public_check: "Triangulation::validate_realization",
         public_reference: "tests/triangulation_builder.rs::test_explicit_error_variant_geometric_nondegeneracy",
         input_summary: "One triangle whose three vertices are collinear",
-        explanation: "The coordinate realization is not a valid affine realization because the abstract 2-simplex collapses to zero area.",
+        explanation: "The Euclidean coordinate realization is invalid because the abstract 2-simplex collapses to zero area.",
         diagnostic,
         visual,
     })
@@ -2580,7 +2580,7 @@ mod tests {
                 .iter()
                 .all(|case| case.status == "failed_as_expected")
         );
-        assert_eq!(export.cases[3].layer, "Valid affine realization");
+        assert_eq!(export.cases[3].layer, "Valid realization");
     }
 
     #[test]

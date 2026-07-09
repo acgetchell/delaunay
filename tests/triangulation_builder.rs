@@ -700,10 +700,10 @@ fn test_builder_toroidal_large_dimension_fails_before_expansion_math() {
 }
 
 /// Explicit 7-vertex torus (Heawood triangulation) with `GlobalTopology::Toroidal`
-/// is rejected until explicit non-Euclidean construction has quotient embedding validation.
+/// is rejected until explicit non-Euclidean construction has quotient realization validation.
 ///
 /// The 14-triangle closed mesh has χ = 0 (torus), but explicit quotient
-/// connectivity cannot yet be validated against a faithful quotient embedding.
+/// connectivity cannot yet be validated against a faithful quotient realization.
 #[test]
 fn test_explicit_toroidal_heawood_torus_rejected() {
     // Regular heptagon: 7 well-separated points, no 3 collinear.
@@ -729,7 +729,7 @@ fn test_explicit_toroidal_heawood_torus_rejected() {
         .unwrap()
         .global_topology(topology)
         .build()
-        .expect_err("explicit toroidal connectivity requires a quotient embedding validator");
+        .expect_err("explicit toroidal connectivity requires a quotient realization validator");
 
     match err {
         DelaunayTriangulationConstructionError::ExplicitConstruction(

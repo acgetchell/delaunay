@@ -30,7 +30,7 @@
 //!
 //! The triangulation data structure represents a finite simplicial complex where:
 //!
-//! - **0-simplices**: Individual vertices embedded in D-dimensional Euclidean space
+//! - **0-simplices**: Individual vertices realized in D-dimensional Euclidean space
 //! - **1-simplices**: Edges connecting two vertices (inferred from maximal simplices)
 //! - **2-simplices**: Triangular faces with three vertices (inferred from maximal simplices)
 //! - **...**
@@ -80,7 +80,7 @@
 //! The incremental insertion algorithm attempts to maintain the Delaunay property during
 //! construction, but rare violations can remain. Structural invariants are enforced
 //! **reactively** through validation methods. For a definitive Delaunay check, run
-//! Level 4 Embedding Validity via `Triangulation::validate_embedding()` and
+//! Level 4 Valid Realization via `Triangulation::validate_realization()` and
 //! Level 5 Geometric Predicates via `DelaunayTriangulation::is_valid_delaunay()` /
 //! `DelaunayTriangulation::validate()`.
 //!
@@ -104,8 +104,8 @@
 //! 3. **Level 3: Intrinsic PL Topology** - [`Triangulation::is_valid_topology()`]
 //!    - Builds on Level 2, and rejects isolated vertices (every vertex must be incident to ≥ 1 simplex)
 //!    - Adds manifold-with-boundary + Euler characteristic
-//! 4. **Level 4: Embedding Validity** - [`Triangulation::validate_embedding()`](crate::Triangulation::validate_embedding)
-//!    - Nondegenerate embedded simplices and no intersections outside shared faces
+//! 4. **Level 4: Valid Realization** - [`Triangulation::validate_realization()`](crate::Triangulation::validate_realization)
+//!    - Nondegenerate realized simplices and no intersections outside shared faces
 //! 5. **Level 5: Geometric Predicates** - [`DelaunayTriangulation::is_valid_delaunay()`]
 //!    - Implemented Delaunay predicates, including the empty circumsphere property
 //!

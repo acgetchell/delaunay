@@ -309,8 +309,8 @@ default to 100 attempted moves with progress every 10 attempts, write progress
 CSV plus summary JSON under `target/pachner_stress/`, and keep parseable stdout
 stage/report/progress lines so long workloads can be diagnosed without making
 the workflow part of routine CI. These direct stress recipes currently validate
-topology scope only (Levels 1-3); the large Level 4 embedding overlap scan is
-deferred to the dedicated embedding-validation work. The CLI supports
+topology scope only (Levels 1-3); the large Level 4 realization overlap scan is
+deferred to the dedicated realization-validation work. The CLI supports
 `round-trip` and `random-walk` modes; `round-trip` is the default. Pass explicit
 `attempts`, `vertices`, and `validate_every` arguments for soak runs. Use
 `just bench-pachner-stress*` when Criterion timing statistics for stable 4D move

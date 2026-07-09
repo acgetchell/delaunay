@@ -42,7 +42,7 @@ Rust crate providing D-dimensional [Delaunay triangulations] and [convex hulls][
 topologies. Uses [exact predicates] and [Simulation of Simplicity] for robustness and degeneracy
 handling, and [Hilbert curve]s for deterministic insertion ordering and efficient spatial indexing.
 Provides an explicit [5-level validation hierarchy][Validation Guide] on individual elements,
-combinatorial consistency, intrinsic PL topology, embedding validity in the active
+combinatorial consistency, intrinsic PL topology, valid realization in the active
 model, and geometric predicates such as Delaunay. Allows for the complete set of [Pachner moves] up to D=5
 using bistellar flips, vertex insertion and deletion, and the conversion of non-Delaunay
 triangulations into Delaunay triangulations via bounded flip/rebuilds. Auxiliary data may be stored
@@ -54,11 +54,11 @@ Use this crate when you want:
 
 - Delaunay triangulations or convex hulls in 2D through 5D.
 - Exact predicates and deterministic SoS handling for degenerate inputs.
-- Embedding Validity validation for Euclidean and toroidal models independent of Delaunay predicates.
+- Valid-realization checks for Euclidean, toroidal, and spherical models independent of Delaunay predicates.
 - PL-manifold checks and explicit topology guarantees.
 - PL-manifold-aware editing via bistellar flips and bounded Delaunay repair.
 - Typed construction, insertion, validation, topology, and repair diagnostics.
-- Validation reports that separate element, combinatorial, intrinsic topology, embedding, and
+- Validation reports that separate element, combinatorial, intrinsic topology, realization, and
   geometric-predicate failures.
 
 This is not a replacement for full meshing packages such as [CGAL], TetGen, or Gmsh when you need
@@ -93,7 +93,7 @@ meshing, or production-scale dynamic remeshing.
   correctness tests.
 - [x] PL-manifold validation by default, with pseudomanifold checks available as an explicit opt-out.
 - [x] Prototype spherical `S^2`/`S^3` construction through `SphericalDelaunayBuilder`, with
-  Level 3 Intrinsic PL Topology, spherical Level 4 Embedding Validity, and spherical Level 5
+  Level 3 Intrinsic PL Topology, spherical Level 4 realization checks, and spherical Level 5
   empty-cap predicate checks.
 - [x] Safe Rust: `#![forbid(unsafe_code)]`.
 - [x] Serialization/deserialization through [JSON].
@@ -190,18 +190,29 @@ just notebook-clear-outputs-all
 
 ## 🧪 Scientific Basis
 
-The crate models triangulations as oriented simplicial complexes with separate combinatorial and
-geometric checks. Robustness comes from the same layered predicate strategy used throughout the code:
-fast f64 filters when the sign is provable, exact arithmetic fallback when it is not, and deterministic
-SoS resolution for degenerate configurations.
+The crate treats a finite point-set triangulation as an oriented abstract simplicial complex plus a
+coordinate realization in a supported geometric model. Levels 1-3 certify element validity,
+combinatorial consistency, and intrinsic PL topology without depending on coordinates. Level 4
+certifies geometric validity: every maximal simplex must be nondegenerate and realized simplices may
+intersect only in their shared abstract faces. Level 5
+certifies geometric optimality or predicate satisfaction, currently the Delaunay empty-circumsphere
+property.
 
-The validation contract is computational and finite-dimensional. The crate checks that constructed or
-edited triangulations satisfy implemented element, combinatorial, intrinsic topology, embedding, and
-geometric-predicate invariants; it does not claim to solve meshing constraints or certify unsupported
-geometric models.
+Correctness evidence comes from the invariant model, exact predicate fallbacks, deterministic
+Simulation of Simplicity, validation reports, property tests, regression tests, and public examples.
+Performance evidence is separate: Hilbert ordering, allocation-conscious data structures,
+validation-level benchmarks, math-kernel benchmarks, and release-to-release Criterion reports
+characterize cost and observability, but they do not replace correctness checks.
 
-For the detailed contract, see [REFERENCES.md](REFERENCES.md), [`docs/invariants.md`](docs/invariants.md),
-and [`docs/numerical_robustness_guide.md`](docs/numerical_robustness_guide.md).
+The crate guarantees the implemented finite-dimensional Delaunay, topology, and validation contracts
+for the documented coordinate models and dimensions. It does not replace constrained meshing
+packages, prove arbitrary abstract PL-manifolds realizable from coordinates, or certify unsupported
+spherical/hyperbolic workflows.
+
+For the detailed contract, see [`docs/validation.md`](docs/validation.md),
+[`docs/invariants.md`](docs/invariants.md), [`docs/topology.md`](docs/topology.md),
+[`docs/numerical_robustness_guide.md`](docs/numerical_robustness_guide.md),
+[`docs/limitations.md`](docs/limitations.md), and [`benches/README.md`](benches/README.md).
 
 ## ✅ Validation Model
 
@@ -210,18 +221,19 @@ and [`docs/numerical_robustness_guide.md`](docs/numerical_robustness_guide.md).
 | 1 | Element Validity: vertex, simplex, facet, coordinate, and local-object invariants | `is_valid()` / element reports |
 | 2 | Combinatorial Consistency: TDS incidences, neighbors, and simplex/ridge connectivity | `validate_structure()` / `structure_report()` |
 | 3 | Intrinsic PL Topology: manifold/pseudomanifold links, components, and Euler consistency | `is_valid_topology()` / `topology_report()` |
-| 4 | Embedding Validity: faithful realization in the active Euclidean, toroidal, or spherical model | `is_valid_embedding()` / `embedding_report()` |
-| 5 | Geometric Predicates: Delaunay and future geometry-specific predicate families | `is_valid_delaunay()` / `delaunay_report()` |
+| 4 | Valid Realization: nondegenerate realized simplices with only shared-face intersections | `is_valid_realization()` / `realization_report()` |
+| 5 | Geometric Predicates: Delaunay and future geometry-specific optimality predicates | `is_valid_delaunay()` / `delaunay_report()` |
 | 1-5 | Cumulative diagnostics | `dt.validate()` / `dt.validation_report()` |
 
 `TopologyGuarantee` controls which Level 3 Intrinsic PL Topology invariants are enforced. `ValidationPolicy`
-controls when Level 3 checks run during incremental insertion. Level 4 Embedding Validity is
-backend-specific: Euclidean and toroidal paths validate affine charts, while the spherical prototype
-validates simplices on `S^D \subset R^(D+1)`. Level 5 geometric predicates are likewise
+controls when Level 3 checks run during incremental insertion. Level 4 realization validation is
+backend-specific: Euclidean and toroidal paths validate affine-chart realizations, with toroidal
+checks lifted to periodic covering-space charts, while the spherical prototype validates simplices on
+`S^D \subset R^(D+1)`. Level 5 geometric predicates are likewise
 backend-specific: Euclidean/toroidal Delaunay paths use empty-circumsphere predicates, while the
 spherical prototype uses the empty-cap / ambient-hull-facet predicate. Use
-`dt.as_triangulation().validate_embedding()` when you want
-cumulative Levels 1-4 validation for ordinary triangulations. `dt.as_triangulation().embedding_report()`
+`dt.as_triangulation().validate_realization()` when you want
+cumulative Levels 1-4 validation for ordinary triangulations. `dt.as_triangulation().realization_report()`
 returns simplex keys, simplex UUIDs, and offending vertex keys/UUIDs for Level 4 repair planning. The default is
 PL-manifold topology with explicit full-validation
 checkpoints. Layer-local APIs use `is_valid()` for unambiguous element/TDS owners, `is_valid_*`

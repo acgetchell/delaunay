@@ -295,7 +295,7 @@ pub enum FacetError {
 ///
 /// This provides a more readable and maintainable alternative to raw tuples throughout
 /// the codebase. Facet handles are used to reference facets without storing full vertex data.
-/// They are storage-local runtime handles: the embedded [`SimplexKey`] is regenerated when a
+/// They are storage-local runtime handles: the realized [`SimplexKey`] is regenerated when a
 /// [`Tds`] is hydrated from a snapshot and must not be persisted as durable topology identity.
 ///
 /// # Components

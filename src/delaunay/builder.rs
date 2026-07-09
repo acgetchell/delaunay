@@ -486,10 +486,10 @@ pub enum ExplicitConstructionError {
         #[source]
         source: Box<TdsError>,
     },
-    /// Level 4 embedding validation failed before returning the wrapper.
-    #[error("Embedding validation failed during explicit construction: {source}")]
-    EmbeddingValidation {
-        /// Underlying cumulative embedding validation error.
+    /// Level 4 realization validation failed before returning the wrapper.
+    #[error("Realization validation failed during explicit construction: {source}")]
+    RealizationValidation {
+        /// Underlying cumulative realization validation error.
         #[source]
         source: Box<DelaunayTriangulationValidationError>,
     },
@@ -502,7 +502,7 @@ pub enum ExplicitConstructionError {
     },
     /// Explicit quotient connectivity is not supported for the requested topology.
     #[error(
-        "Explicit non-Euclidean connectivity is not supported for {topology:?}; quotient embedding validation is required"
+        "Explicit non-Euclidean connectivity is not supported for {topology:?}; quotient realization validation is required"
     )]
     UnsupportedExplicitTopology {
         /// Requested global topology metadata.
@@ -1427,7 +1427,7 @@ where
     ///   geometric degeneracy, etc.).
     /// - Explicit-simplex construction is requested with unsupported
     ///   [`ConstructionOptions`], non-Euclidean topology, invalid topology or
-    ///   embedding, or a failed Level 5 Delaunay check when final enforcement is
+    ///   realization, or a failed Level 5 Delaunay check when final enforcement is
     ///   enabled.
     ///
     /// # Examples
@@ -1999,14 +1999,14 @@ where
     /// [`ConstructionOptions::without_final_delaunay_enforcement`] is used, the
     /// explicit connectivity is returned after Levels 1–4 validation without
     /// Delaunay repair or proof. Non-Euclidean explicit connectivity is rejected
-    /// because it requires quotient embedding validation before the public
+    /// because it requires quotient realization validation before the public
     /// `DelaunayTriangulation` wrapper can accept it.
     ///
     /// # Algorithm
     ///
     /// 1. Receive prevalidated simplex specs: each simplex has D+1 in-bounds,
     ///    unique vertex indices.
-    /// 2. Reject non-Euclidean explicit connectivity until quotient embedding
+    /// 2. Reject non-Euclidean explicit connectivity until quotient realization
     ///    validation exists.
     /// 3. Build a `Tds`: insert all vertices, then insert simplices from the specifications.
     /// 4. Compute adjacency via `assign_neighbors()`.
@@ -2164,12 +2164,12 @@ where
         }
 
         if !enforce_final_delaunay {
-            let proof = candidate.validate_embedding_only().map_err(|source| {
-                ExplicitConstructionError::EmbeddingValidation {
+            let proof = candidate.validate_realization_only().map_err(|source| {
+                ExplicitConstructionError::RealizationValidation {
                     source: Box::new(source),
                 }
             })?;
-            return Ok(candidate.into_embedding_validated_delaunay(proof));
+            return Ok(candidate.into_realization_validated_delaunay(proof));
         }
 
         let proof = Self::enforce_explicit_delaunay_property(&candidate)?;
@@ -2181,7 +2181,7 @@ where
     /// The public return type is `DelaunayTriangulation`, so Euclidean explicit
     /// connectivity must prove the empty-circumsphere property before it crosses
     /// this API boundary. Explicit non-Euclidean topology is rejected earlier in
-    /// `build_explicit` until quotient embedding validation exists for explicit
+    /// `build_explicit` until quotient realization validation exists for explicit
     /// connectivity.
     fn enforce_explicit_delaunay_property<K>(
         candidate: &DelaunayTriangulationCandidate<K, U, V, D>,
@@ -2197,7 +2197,7 @@ where
         })
     }
 
-    /// Rejects explicit quotient connectivity until embedding validation supports it.
+    /// Rejects explicit quotient connectivity until realization validation supports it.
     fn reject_explicit_non_euclidean_topology(
         global_topology: GlobalTopology<D>,
     ) -> Result<(), DelaunayTriangulationConstructionError> {

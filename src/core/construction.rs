@@ -13,7 +13,7 @@ use crate::core::algorithms::incremental_insertion::{
 };
 use crate::core::algorithms::locate::{ConflictError, LocateError};
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
-use crate::core::embedding::TriangulationEmbeddingValidationError;
+use crate::core::realization::TriangulationRealizationValidationError;
 use crate::core::simplex::{Simplex, SimplexValidationError};
 use crate::core::tds::{
     InvariantError, SimplexKey, Tds, TdsConstructionError, TdsError, VertexKey,
@@ -509,12 +509,12 @@ pub enum TriangulationConstructionError {
         source: DelaunayTriangulationValidationError,
     },
 
-    /// Level 4 embedding validation failed during incremental construction.
-    #[error("Embedding validation failed during insertion: {source}")]
-    InsertionEmbeddingValidation {
-        /// Underlying embedding validation error.
+    /// Level 4 realization validation failed during incremental construction.
+    #[error("Realization validation failed during insertion: {source}")]
+    InsertionRealizationValidation {
+        /// Underlying realization validation error.
         #[source]
-        source: TriangulationEmbeddingValidationError,
+        source: TriangulationRealizationValidationError,
     },
 
     /// Level 3 topology validation failed during incremental construction.

@@ -1,7 +1,7 @@
 //! Euclidean space topology implementation.
 //!
 //! This module provides topological analysis for triangulations
-//! embedded in flat Euclidean space.
+//! realized in flat Euclidean space.
 
 #![forbid(unsafe_code)]
 

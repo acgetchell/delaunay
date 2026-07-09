@@ -1,7 +1,7 @@
 //! Prototype spherical Delaunay construction via ambient convex-hull duality.
 //!
 //! This module treats `D` as the intrinsic manifold dimension. Spherical points
-//! live on `S^D`, embedded in `R^(D+1)`, and construction uses an ambient
+//! live on `S^D`, realized in `R^(D+1)`, and construction uses an ambient
 //! Euclidean convex hull only as the duality engine. The returned simplices are
 //! intrinsic `D`-simplices on the sphere, not ambient `(D + 1)`-simplices.
 //!
@@ -179,7 +179,7 @@ impl<const D: usize> SphericalSimplex<D> {
 ///
 /// This type stores normalized spherical points and hull-derived intrinsic
 /// simplices. Its validation surface follows the crate-wide layer model:
-/// Level 3 is intrinsic PL topology, Level 4 is spherical embedding in
+/// Level 3 is intrinsic PL topology, Level 4 is spherical realization in
 /// `S^D \subset R^(D+1)`, and Level 5 is the spherical Delaunay predicate via
 /// ambient convex-hull support.
 ///
@@ -202,7 +202,7 @@ impl<const D: usize> SphericalSimplex<D> {
 ///     .simplices()
 ///     .iter()
 ///     .all(|simplex| simplex.vertex_indices().len() == 3));
-/// assert!(triangulation.validate_embedding().is_ok());
+/// assert!(triangulation.validate_realization().is_ok());
 /// assert!(triangulation.validate_delaunay().is_ok());
 /// # Ok::<(), delaunay::prelude::construction::SphericalDelaunayConstructionError>(())
 /// ```
@@ -501,10 +501,10 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
         self.validate_topology()
     }
 
-    /// Checks the prototype Level 4 spherical embedding.
+    /// Checks the prototype Level 4 spherical realization.
     ///
     /// This fast-fail wrapper matches the crate-wide validation naming surface
-    /// and delegates to [`validate_embedding`](Self::validate_embedding).
+    /// and delegates to [`validate_realization`](Self::validate_realization).
     ///
     /// # Errors
     ///
@@ -524,11 +524,11 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
     ///     [-1.0, -1.0, 1.0],
     /// ])?.build()?;
     ///
-    /// std::assert_matches!(triangulation.is_valid_embedding(), Ok(()));
+    /// std::assert_matches!(triangulation.is_valid_realization(), Ok(()));
     /// # Ok::<(), SphericalDelaunayConstructionError>(())
     /// ```
-    pub fn is_valid_embedding(&self) -> Result<(), SphericalDelaunayValidationError> {
-        self.validate_embedding()
+    pub fn is_valid_realization(&self) -> Result<(), SphericalDelaunayValidationError> {
+        self.validate_realization()
     }
 
     /// Checks the prototype Level 5 spherical Delaunay predicate.
@@ -663,7 +663,7 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
     /// Validates intrinsic PL topology through the crate's topology validators.
     ///
     /// Spherical coordinates live in `R^(D+1)`, but Level 3 is intentionally
-    /// embedding-independent. This bridge therefore builds a temporary abstract
+    /// realization-independent. This bridge therefore builds a temporary abstract
     /// TDS with synthetic finite coordinates, then runs the same combinatorial
     /// connectedness, closed-boundary, link, and Euler checks used by ordinary
     /// triangulations without invoking Euclidean orientation validation.
@@ -772,10 +772,10 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
         Ok(())
     }
 
-    /// Validates the prototype Level 4 spherical embedding.
+    /// Validates the prototype Level 4 spherical realization.
     ///
     /// The intrinsic PL topology is still checked by
-    /// [`validate_topology`](Self::validate_topology). The spherical embedding
+    /// [`validate_topology`](Self::validate_topology). The spherical realization
     /// layer then checks that each maximal simplex is a nondegenerate geodesic
     /// simplex on `S^D` by requiring the ambient hyperplane through its
     /// vertices not to contain the sphere center.
@@ -798,16 +798,16 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
     ///     [-1.0, -1.0, 1.0],
     /// ])?.build()?;
     ///
-    /// std::assert_matches!(triangulation.validate_embedding(), Ok(()));
+    /// std::assert_matches!(triangulation.validate_realization(), Ok(()));
     /// # Ok::<(), SphericalDelaunayConstructionError>(())
     /// ```
-    pub fn validate_embedding(&self) -> Result<(), SphericalDelaunayValidationError> {
+    pub fn validate_realization(&self) -> Result<(), SphericalDelaunayValidationError> {
         self.validate_topology()?;
         match D {
-            2 => self.validate_embedding_with_ambient::<3>(),
-            3 => self.validate_embedding_with_ambient::<4>(),
+            2 => self.validate_realization_with_ambient::<3>(),
+            3 => self.validate_realization_with_ambient::<4>(),
             _ => Err(SphericalDelaunayValidationError::UnsupportedLayer {
-                layer: SphericalValidationLayer::Embedding,
+                layer: SphericalValidationLayer::Realization,
                 dimension: D,
                 tracking_issue: SPHERICAL_ROADMAP_ISSUE,
             }),
@@ -844,7 +844,7 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
     /// # Ok::<(), SphericalDelaunayConstructionError>(())
     /// ```
     pub fn validate_delaunay(&self) -> Result<(), SphericalDelaunayValidationError> {
-        self.validate_embedding()?;
+        self.validate_realization()?;
         match D {
             2 => self.validate_delaunay_with_ambient::<3>(),
             3 => self.validate_delaunay_with_ambient::<4>(),
@@ -858,10 +858,10 @@ impl<const D: usize> SphericalDelaunayTriangulation<D> {
 
     /// Validates each simplex as nondegenerate for Level 4.
     ///
-    /// This helper backs the public spherical embedding contract: every simplex
+    /// This helper backs the public spherical realization contract: every simplex
     /// must determine an ambient hyperplane that separates the simplex from the
     /// sphere center.
-    fn validate_embedding_with_ambient<const A: usize>(
+    fn validate_realization_with_ambient<const A: usize>(
         &self,
     ) -> Result<(), SphericalDelaunayValidationError> {
         Self::validate_ambient_dimension::<A>()?;
@@ -1355,8 +1355,8 @@ impl<const D: usize> SphericalDelaunayBuilder<D> {
                 source: Box::new(source),
             }
         })?;
-        spherical.validate_embedding().map_err(|source| {
-            SphericalDelaunayConstructionError::EmbeddingValidation {
+        spherical.validate_realization().map_err(|source| {
+            SphericalDelaunayConstructionError::RealizationValidation {
                 source: Box::new(source),
             }
         })?;
@@ -1396,7 +1396,7 @@ impl<const D: usize> SphericalDelaunayBuilder<D> {
 
 /// Builds finite, distinct coordinates for the temporary abstract topology TDS.
 ///
-/// These coordinates have no embedding meaning. They only let the existing TDS
+/// These coordinates have no realization meaning. They only let the existing TDS
 /// element constructors carry vertex identities through intrinsic PL topology
 /// validators that operate on the abstract simplicial complex.
 fn synthetic_topology_coordinates<const D: usize>(
@@ -1662,9 +1662,9 @@ pub enum SphericalDelaunayConstructionError {
         source: Box<SphericalDelaunayValidationError>,
     },
 
-    /// Level 4 spherical embedding validation failed after construction.
-    #[error("spherical embedding validation failed after construction: {source}")]
-    EmbeddingValidation {
+    /// Level 4 spherical realization validation failed after construction.
+    #[error("spherical realization validation failed after construction: {source}")]
+    RealizationValidation {
         /// Underlying validation error.
         #[source]
         source: Box<SphericalDelaunayValidationError>,
@@ -1683,8 +1683,8 @@ pub enum SphericalDelaunayConstructionError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SphericalValidationLayer {
-    /// Level 4 curved embedding validation.
-    Embedding,
+    /// Level 4 curved realization validation.
+    Realization,
     /// Level 5 spherical Delaunay predicate validation.
     Delaunay,
 }
@@ -1692,7 +1692,7 @@ pub enum SphericalValidationLayer {
 impl fmt::Display for SphericalValidationLayer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Embedding => f.write_str("Level 4 Embedding Validity"),
+            Self::Realization => f.write_str("Level 4 Spherical Realization"),
             Self::Delaunay => f.write_str("Level 5 Geometric Predicates"),
         }
     }
@@ -2165,9 +2165,9 @@ mod tests {
             .validate_topology()
             .expect("5-simplex boundary is intrinsically S4");
         assert_matches!(
-            triangulation.validate_embedding(),
+            triangulation.validate_realization(),
             Err(SphericalDelaunayValidationError::UnsupportedLayer {
-                layer: SphericalValidationLayer::Embedding,
+                layer: SphericalValidationLayer::Realization,
                 dimension: 4,
                 tracking_issue: SPHERICAL_ROADMAP_ISSUE,
             })
@@ -2201,8 +2201,8 @@ mod tests {
             .validate_topology()
             .expect("flipped fixture remains a closed PL sphere");
         triangulation
-            .validate_embedding()
-            .expect("flipped fixture remains a spherical embedding");
+            .validate_realization()
+            .expect("flipped fixture remains a spherical realization");
         assert_matches!(
             triangulation.validate_delaunay(),
             Err(SphericalDelaunayValidationError::NonSupportingSimplex { .. })
@@ -2233,7 +2233,7 @@ mod tests {
             .validate_topology()
             .expect("fixture is combinatorially a closed sphere");
         assert_matches!(
-            triangulation.validate_embedding(),
+            triangulation.validate_realization(),
             Err(
                 SphericalDelaunayValidationError::SimplexHyperplaneContainsOrigin {
                     simplex_index: 0,

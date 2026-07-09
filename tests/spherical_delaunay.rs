@@ -110,11 +110,11 @@ fn spherical_s2_tetrahedron_hull_facets_are_triangles() {
         .is_valid_topology()
         .expect("Level 3 wrapper should validate spherical topology");
     triangulation
-        .validate_embedding()
-        .expect("tetrahedron facets should satisfy spherical Level 4 embedding");
+        .validate_realization()
+        .expect("tetrahedron facets should satisfy spherical Level 4 realization");
     triangulation
-        .is_valid_embedding()
-        .expect("Level 4 wrapper should validate spherical embedding");
+        .is_valid_realization()
+        .expect("Level 4 wrapper should validate spherical realization");
     triangulation
         .validate_delaunay()
         .expect("tetrahedron facets should satisfy spherical Level 5 Delaunay");

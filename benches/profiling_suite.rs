@@ -1072,11 +1072,11 @@ macro_rules! benchmark_validation_components_dimension {
                 });
             });
 
-            group.bench_function("validate_embedding", |b| {
+            group.bench_function("validate_realization", |b| {
                 b.iter(|| {
-                    if let Err(error) = black_box(dt.as_triangulation().validate_embedding()) {
+                    if let Err(error) = black_box(dt.as_triangulation().validate_realization()) {
                         abort_benchmark(format_args!(
-                            "embedding validation should pass for benchmark triangulation: {error}"
+                            "realization validation should pass for benchmark triangulation: {error}"
                         ));
                     }
                 });

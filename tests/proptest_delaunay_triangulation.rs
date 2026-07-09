@@ -350,7 +350,7 @@ fn has_no_cospherical_5_tuples_3d(vertices: &[Vertex<(), 3>]) -> bool {
 
 /// Assert the layered validation contract we rely on in these properties:
 /// - Levels 1–3 only (elements + structure + topology)
-/// - Levels 4–5 (embedding + Delaunay empty-circumsphere) are intentionally NOT asserted here
+/// - Levels 4–5 (realization + Delaunay empty-circumsphere) are intentionally NOT asserted here
 macro_rules! prop_assert_levels_1_to_3_valid {
     ($dim:expr, $dt:expr, $context:expr) => {{
         let validation = ($dt).as_triangulation().validate();

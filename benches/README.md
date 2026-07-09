@@ -288,7 +288,7 @@ cargo bench --profile perf --bench ci_performance_suite
 - convex hull extraction
 - boundary facet traversal
 - cumulative validation Levels 1-5, including Level 1-2 TDS structure, Level 3
-  topology, Level 4 embedding, and Level 5 Delaunay predicate checks
+  topology, Level 4 realization, and Level 5 Delaunay predicate checks
 - incremental vertex insertion into prepared triangulations
 - explicit 2D-5D bistellar flip roundtrips
 
@@ -357,7 +357,7 @@ Use `just bench-pachner-stress*` for Criterion timing evidence. Criterion
 requires at least 10 samples. The benchmark recipe measures stable accepted
 move fixtures and corresponding forward/inverse round trips.
 
-The stress cases validate topology plus the Level 4 embedding invariant that
+The stress cases validate topology plus the Level 4 realization invariant that
 arbitrary Pachner moves are expected to preserve; Level 5 Delaunay validity is
 not a postcondition of arbitrary topology edits. Invalid local candidates are
 counted as candidate misses or proposal rejections, while successfully planned

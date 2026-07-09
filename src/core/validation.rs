@@ -12,8 +12,8 @@
 //!   [`Tds`](crate::prelude::tds::Tds).
 //! - **Level 3** Intrinsic PL Topology validation is orchestrated here for
 //!   [`Triangulation`](crate::Triangulation).
-//! - **Level 4** Embedding Validity validation is implemented by
-//!   [`Triangulation::validate_embedding`](crate::Triangulation::validate_embedding).
+//! - **Level 4** Valid Realization validation is implemented by
+//!   [`Triangulation::validate_realization`](crate::Triangulation::validate_realization).
 //!
 //! Implemented Level 5 Geometric Predicate validation for Delaunay lives in
 //! [`crate::validation`]. Keeping the module boundary at the generic
@@ -61,13 +61,13 @@
 //! Use [`Triangulation::validate()`](crate::prelude::triangulation::Triangulation::validate)
 //! for cumulative Levels 1–3.
 //!
-//! ## Level 4: Embedding Validity
+//! ## Level 4: Valid Realization
 //!
-//! - **Method**: [`Triangulation::validate_embedding`](crate::prelude::triangulation::Triangulation::validate_embedding)
+//! - **Method**: [`Triangulation::validate_realization`](crate::prelude::triangulation::Triangulation::validate_realization)
 //! - **Checks**: Nondegenerate maximal simplices and no intersections outside shared faces
 //! - **Cost**: O(N²) worst case, dominated by pairwise simplex-intersection checks
 //!
-//! Use [`Triangulation::validate_embedding`](crate::prelude::triangulation::Triangulation::validate_embedding)
+//! Use [`Triangulation::validate_realization`](crate::prelude::triangulation::Triangulation::validate_realization)
 //! for cumulative Levels 1–4.
 //!
 //! ## Level 5: Geometric Predicates
@@ -145,7 +145,7 @@ use uuid::Uuid;
 ///
 /// - `TopologyValidation(source)` → `InvariantError::Tds(source)` (Level 1–2 preserved)
 /// - `TopologyValidationFailed { source }` → `InvariantError::Triangulation(source)` (Level 3 preserved)
-/// - `EmbeddingValidationFailed { source }` → `InvariantError::Embedding(source)` (Level 4 preserved)
+/// - `RealizationValidationFailed { source }` → `InvariantError::Realization(source)` (Level 4 preserved)
 /// - `DelaunayValidationFailed { source }` → `InvariantError::Delaunay(source)` (Level 5 preserved)
 /// - All other variants → `InvariantError::Tds(InconsistentDataStructure { .. })` with `context`
 pub(crate) fn insertion_error_to_invariant_error(
@@ -157,7 +157,9 @@ pub(crate) fn insertion_error_to_invariant_error(
         InsertionError::TopologyValidationFailed { source, .. } => {
             InvariantError::Triangulation(source)
         }
-        InsertionError::EmbeddingValidationFailed { source } => InvariantError::Embedding(source),
+        InsertionError::RealizationValidationFailed { source } => {
+            InvariantError::Realization(source)
+        }
         InsertionError::DelaunayValidationFailed { source } => InvariantError::Delaunay(source),
         other => InvariantError::Tds(TdsError::InconsistentDataStructure {
             message: format!("{context}: {other}"),
@@ -506,7 +508,7 @@ pub enum ValidationPolicy {
     /// full validation checkpoints are owned by the caller.
     Never,
 
-    /// Do not run policy-triggered global topology/changed-scope embedding validation during insertion.
+    /// Do not run policy-triggered global topology/changed-scope realization validation during insertion.
     ///
     /// Mandatory local topology checks required by the active [`TopologyGuarantee`] still run
     /// during insertion, but suspicion-triggered global Level 3/changed-scope Level 4 validation is disabled.
@@ -1553,7 +1555,7 @@ where
     /// This report checks topology-layer invariants only. It assumes the TDS
     /// structure is already valid. Use [`validation_report`](Self::validation_report)
     /// for cumulative Levels 1-3 diagnostics, and
-    /// [`embedding_report`](Self::embedding_report) for Level 4 embedded-geometry
+    /// [`realization_report`](Self::realization_report) for Level 4 realized-geometry
     /// diagnostics.
     ///
     /// # Errors
@@ -1860,7 +1862,7 @@ where
     ///
     /// - `InvariantError::Tds(e)` → `InsertionError::TopologyValidation(e)`
     /// - `InvariantError::Triangulation(e)` → `InsertionError::TopologyValidationFailed { source: e }`
-    /// - `InvariantError::Embedding(e)` → `InsertionError::EmbeddingValidationFailed { source: e }`
+    /// - `InvariantError::Realization(e)` → `InsertionError::RealizationValidationFailed { source: e }`
     /// - `InvariantError::Delaunay(e)` → `InsertionError::DelaunayValidationFailed { source: e }`
     pub(crate) fn invariant_error_to_insertion_error(err: InvariantError) -> InsertionError {
         match err {
@@ -1869,9 +1871,11 @@ where
                 context: InsertionTopologyValidationContext::InvariantConversion,
                 source: tri_err,
             },
-            InvariantError::Embedding(embedding_err) => InsertionError::EmbeddingValidationFailed {
-                source: embedding_err,
-            },
+            InvariantError::Realization(realization_err) => {
+                InsertionError::RealizationValidationFailed {
+                    source: realization_err,
+                }
+            }
             InvariantError::Delaunay(dt_err) => {
                 InsertionError::DelaunayValidationFailed { source: dt_err }
             }
@@ -1912,8 +1916,8 @@ where
         // checks so topology diagnostics still surface first.
         self.validate_geometric_simplex_orientation()?;
         let simplex_keys: SimplexKeyBuffer = self.tds.simplex_keys().collect();
-        self.validate_local_embedding_nondegeneracy(&simplex_keys)
-            .map_err(InvariantError::Embedding)?;
+        self.validate_local_realization_nondegeneracy(&simplex_keys)
+            .map_err(InvariantError::Realization)?;
 
         Ok(())
     }
@@ -2046,8 +2050,8 @@ where
         }
 
         self.validate_geometric_simplex_orientation_for_simplices(simplices)?;
-        self.validate_local_embedding_nondegeneracy(simplices)
-            .map_err(InvariantError::Embedding)?;
+        self.validate_local_realization_nondegeneracy(simplices)
+            .map_err(InvariantError::Realization)?;
 
         Ok(())
     }
@@ -2092,10 +2096,10 @@ where
             InsertionValidationWork::FullValidation => {
                 self.validate()?;
                 match local_simplices {
-                    Some([]) | None => self.is_valid_embedding(),
-                    Some(simplices) => self.validate_embedding_for_simplices(simplices),
+                    Some([]) | None => self.is_valid_realization(),
+                    Some(simplices) => self.validate_realization_for_simplices(simplices),
                 }
-                .map_err(InvariantError::Embedding)
+                .map_err(InvariantError::Realization)
             }
             InsertionValidationWork::RequiredTopologyLinks => local_simplices.map_or_else(
                 || self.validate_required_topology_links(),
@@ -2185,9 +2189,9 @@ mod tests {
     use crate::core::algorithms::incremental_insertion::CavityFillingError;
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
     use crate::core::collections::{NeighborBuffer, SimplexVertexKeyBuffer};
-    use crate::core::embedding::TriangulationEmbeddingValidationError;
     use crate::core::facet::FacetError;
     use crate::core::operations::InsertionOutcome;
+    use crate::core::realization::TriangulationRealizationValidationError;
     use crate::core::simplex::Simplex;
     use crate::core::tds::{
         GeometricError, NeighborValidationError, Tds, TriangulationConstructionState,
@@ -2218,8 +2222,8 @@ mod tests {
         }
     }
 
-    const fn synthetic_embedding_error() -> TriangulationEmbeddingValidationError {
-        TriangulationEmbeddingValidationError::UnsupportedTopology {
+    const fn synthetic_realization_error() -> TriangulationRealizationValidationError {
+        TriangulationRealizationValidationError::UnsupportedTopology {
             topology: TopologyKind::Spherical,
             dimension: 3,
         }
@@ -3085,13 +3089,13 @@ mod tests {
             InvariantError::Triangulation(inner)
         );
 
-        let embedding_source = synthetic_embedding_error();
-        let error = InsertionError::EmbeddingValidationFailed {
-            source: embedding_source.clone(),
+        let realization_source = synthetic_realization_error();
+        let error = InsertionError::RealizationValidationFailed {
+            source: realization_source.clone(),
         };
         assert_eq!(
             insertion_error_to_invariant_error(error, "ctx"),
-            InvariantError::Embedding(embedding_source)
+            InvariantError::Realization(realization_source)
         );
 
         let delaunay_source = synthetic_delaunay_verification_error("delaunay");
@@ -3134,10 +3138,10 @@ mod tests {
             Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(inv);
         assert_matches!(ins, InsertionError::TopologyValidationFailed { .. });
 
-        let inv = InvariantError::Embedding(synthetic_embedding_error());
+        let inv = InvariantError::Realization(synthetic_realization_error());
         let ins =
             Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(inv);
-        assert_matches!(ins, InsertionError::EmbeddingValidationFailed { .. });
+        assert_matches!(ins, InsertionError::RealizationValidationFailed { .. });
 
         let inv = InvariantError::Delaunay(synthetic_delaunay_verification_error("test"));
         let ins =
@@ -4111,7 +4115,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_after_insertion_rejects_local_degenerate_simplex_embedding() {
+    fn validate_after_insertion_rejects_local_degenerate_simplex_realization() {
         let (tri, ck) = build_degenerate_tet();
         let mut scope = SimplexKeyBuffer::new();
         scope.push(ck);
@@ -4122,8 +4126,8 @@ mod tests {
 
         assert_matches!(
             err,
-            InvariantError::Embedding(
-                TriangulationEmbeddingValidationError::DegenerateSimplex {
+            InvariantError::Realization(
+                TriangulationRealizationValidationError::DegenerateSimplex {
                     simplex_key,
                     dimension: 3,
                     ..
@@ -4133,7 +4137,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_after_insertion_full_validation_rejects_local_degenerate_simplex_embedding() {
+    fn validate_after_insertion_full_validation_rejects_local_degenerate_simplex_realization() {
         let (mut tri, ck) = build_degenerate_tet();
         tri.set_validation_policy(ValidationPolicy::Always);
         let mut scope = SimplexKeyBuffer::new();
@@ -4145,8 +4149,8 @@ mod tests {
 
         assert_matches!(
             err,
-            InvariantError::Embedding(
-                TriangulationEmbeddingValidationError::DegenerateSimplex {
+            InvariantError::Realization(
+                TriangulationRealizationValidationError::DegenerateSimplex {
                     simplex_key,
                     dimension: 3,
                     ..
@@ -4156,14 +4160,14 @@ mod tests {
     }
 
     #[test]
-    fn validate_after_insertion_full_validation_rejects_global_embedding_intersection() {
+    fn validate_after_insertion_full_validation_rejects_global_realization_intersection() {
         let (tds, scope) = build_topologically_valid_self_overlapping_tds_2d();
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
         tri.set_validation_policy(ValidationPolicy::Always);
 
         tri.is_valid_topology()
-            .expect("fixture should isolate a Level 4 embedding failure");
+            .expect("fixture should isolate a Level 4 realization failure");
 
         let err = tri
             .validate_after_insertion_with_scope(SuspicionFlags::default(), Some(&scope[..1]))
@@ -4171,23 +4175,23 @@ mod tests {
 
         assert_matches!(
             err,
-            InvariantError::Embedding(
-                TriangulationEmbeddingValidationError::SimplexIntersectionOutsideSharedFace { .. }
+            InvariantError::Realization(
+                TriangulationRealizationValidationError::SimplexIntersectionOutsideSharedFace { .. }
             )
         );
     }
 
     #[test]
-    fn validate_after_insertion_full_validation_checks_empty_local_embedding_scope() {
+    fn validate_after_insertion_full_validation_checks_empty_local_realization_scope() {
         let (tds, _) = build_topologically_valid_self_overlapping_tds_2d();
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
         tri.set_validation_policy(ValidationPolicy::Always);
 
         tri.is_valid_topology()
-            .expect("fixture should isolate a Level 4 embedding failure");
-        let expected_embedding_error = tri
-            .is_valid_embedding()
+            .expect("fixture should isolate a Level 4 realization failure");
+        let expected_realization_error = tri
+            .is_valid_realization()
             .expect_err("fixture should fail whole-triangulation Level 4 validation");
 
         let empty_scope = SimplexKeyBuffer::new();
@@ -4195,18 +4199,18 @@ mod tests {
             .validate_after_insertion_with_scope(SuspicionFlags::default(), Some(&empty_scope))
             .unwrap_err();
 
-        assert_eq!(err, InvariantError::Embedding(expected_embedding_error));
+        assert_eq!(err, InvariantError::Realization(expected_realization_error));
     }
 
     #[test]
-    fn validate_after_insertion_full_validation_checks_large_raw_embedding_scope() {
+    fn validate_after_insertion_full_validation_checks_large_raw_realization_scope() {
         let (tds, scope) = build_topologically_valid_self_overlapping_tds_2d();
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
         tri.set_validation_policy(ValidationPolicy::Always);
 
         tri.is_valid_topology()
-            .expect("fixture should isolate a Level 4 embedding failure");
+            .expect("fixture should isolate a Level 4 realization failure");
 
         let mut large_scope = SimplexKeyBuffer::new();
         for _ in 0..9 {
@@ -4219,8 +4223,8 @@ mod tests {
 
         assert_matches!(
             err,
-            InvariantError::Embedding(
-                TriangulationEmbeddingValidationError::SimplexIntersectionOutsideSharedFace { .. }
+            InvariantError::Realization(
+                TriangulationRealizationValidationError::SimplexIntersectionOutsideSharedFace { .. }
             )
         );
     }

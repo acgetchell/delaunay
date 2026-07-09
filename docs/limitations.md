@@ -82,8 +82,8 @@ projecting finite nonzero coordinates onto the unit sphere. The bounded
 `SphericalDelaunayBuilder` prototype additionally supports `S^2` and `S^3`
 construction from points in `R^3`/`R^4` by ambient convex-hull duality. Its
 validation surface keeps Level 3 Intrinsic PL Topology separate from spherical
-Level 4 Embedding Validity and spherical Level 5 empty-cap / hull-facet predicates. Full
-2D-5D spherical integration, richer spherical embedding diagnostics, and
+Level 4 realization validation and spherical Level 5 empty-cap / hull-facet predicates. Full
+2D-5D spherical integration, richer spherical realization diagnostics, and
 integration with the ordinary mutable triangulation/editing surface remain
 tracked by issue #414. Hyperbolic topologies remain public metadata and
 behavior-model scaffolds.

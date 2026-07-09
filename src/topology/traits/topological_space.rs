@@ -75,7 +75,7 @@ pub enum TopologyError {
 /// Classification of topological spaces for triangulations.
 ///
 /// This enum categorizes the fundamental geometry of the space in which
-/// a triangulation is embedded. Different topologies have different
+/// a triangulation is realized. Different topologies have different
 /// properties regarding boundary conditions and geometric constraints.
 ///
 /// # Future Use
@@ -105,7 +105,7 @@ pub enum TopologyKind {
     /// as opposite edges are identified.
     Toroidal,
 
-    /// Spherical space embedded on the surface of a sphere.
+    /// Spherical space realized on the surface of a sphere.
     ///
     /// All points lie on a sphere surface. No boundary facets as the space
     /// is closed and compact.
@@ -135,7 +135,7 @@ pub enum ToroidalConstructionMode {
     ///
     /// No coordinate canonicalization or image-point expansion is performed. The
     /// current Delaunay builder rejects non-Euclidean explicit connectivity
-    /// because quotient embedding validation is not implemented for that
+    /// because quotient realization validation is not implemented for that
     /// construction path.
     Explicit,
 }

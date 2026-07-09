@@ -332,8 +332,8 @@ struct TryInsertImplOk {
     /// out of the final conflict region so higher layers can revisit nearby
     /// Delaunay violations without rediscovering the inserted vertex star globally.
     repair_seed_simplices: SimplexKeyBuffer,
-    /// Live simplices whose embedded geometry was newly created by this insertion.
-    embedding_validation_simplices: SimplexKeyBuffer,
+    /// Live simplices whose realized geometry was newly created by this insertion.
+    realization_validation_simplices: SimplexKeyBuffer,
     /// Whether the insertion path can leave local Delaunay work for the caller.
     ///
     /// Clean interior Bowyer-Watson insertions preserve the Delaunay property.
@@ -351,8 +351,8 @@ struct CavityInsertionOutcome {
     simplices_removed: usize,
     /// Simplices touched by insertion that should seed follow-up local repair.
     repair_seed_simplices: SimplexKeyBuffer,
-    /// Live simplices whose embedded geometry was newly created by this cavity fill.
-    embedding_validation_simplices: SimplexKeyBuffer,
+    /// Live simplices whose realized geometry was newly created by this cavity fill.
+    realization_validation_simplices: SimplexKeyBuffer,
     /// Whether this cavity path can leave Delaunay work for the caller.
     delaunay_repair_required: bool,
 }
@@ -1142,7 +1142,7 @@ where
             .triangulation_mut()
             .validate_after_insertion_and_record_telemetry(
                 insert_ok.suspicion,
-                &insert_ok.embedding_validation_simplices,
+                &insert_ok.realization_validation_simplices,
                 telemetry,
                 telemetry_mode,
             );
@@ -1235,7 +1235,7 @@ where
 
         let mut repair_seed_simplices = SimplexKeyBuffer::new();
         append_live_unique_simplex_seeds(&self.tds, &new_simplices, &mut repair_seed_simplices);
-        let embedding_validation_simplices = new_simplices
+        let realization_validation_simplices = new_simplices
             .iter()
             .copied()
             .filter(|simplex_key| self.tds.contains_simplex(*simplex_key))
@@ -1246,7 +1246,7 @@ where
             simplices_removed: 0,
             suspicion: SuspicionFlags::default(),
             repair_seed_simplices,
-            embedding_validation_simplices,
+            realization_validation_simplices,
             delaunay_repair_required: true,
         }))
     }
@@ -1298,7 +1298,7 @@ where
 
                 let validation_result = self.validate_after_insertion_and_record_telemetry(
                     fallback_ok.suspicion,
-                    &fallback_ok.embedding_validation_simplices,
+                    &fallback_ok.realization_validation_simplices,
                     telemetry,
                     telemetry_mode,
                 );
@@ -1975,7 +1975,7 @@ where
             hint,
             simplices_removed: total_removed,
             repair_seed_simplices,
-            embedding_validation_simplices: new_simplices
+            realization_validation_simplices: new_simplices
                 .iter()
                 .copied()
                 .filter(|simplex_key| self.tds.contains_simplex(*simplex_key))
@@ -2167,7 +2167,7 @@ where
                 simplices_removed: 0,
                 suspicion,
                 repair_seed_simplices: SimplexKeyBuffer::new(),
-                embedding_validation_simplices: SimplexKeyBuffer::new(),
+                realization_validation_simplices: SimplexKeyBuffer::new(),
                 delaunay_repair_required: false,
             });
         } else if num_vertices == D + 1 {
@@ -2191,13 +2191,13 @@ where
 
             // Return first simplex key for hint caching
             let first_simplex = self.tds.simplex_keys().next();
-            let embedding_validation_simplices = first_simplex.into_iter().collect();
+            let realization_validation_simplices = first_simplex.into_iter().collect();
             return Ok(TryInsertImplOk {
                 inserted: (v_key, first_simplex),
                 simplices_removed: 0,
                 suspicion,
                 repair_seed_simplices: SimplexKeyBuffer::new(),
-                embedding_validation_simplices,
+                realization_validation_simplices,
                 delaunay_repair_required: false,
             });
         }
@@ -2411,7 +2411,7 @@ where
                     simplices_removed: outcome.simplices_removed,
                     suspicion,
                     repair_seed_simplices: outcome.repair_seed_simplices,
-                    embedding_validation_simplices: outcome.embedding_validation_simplices,
+                    realization_validation_simplices: outcome.realization_validation_simplices,
                     delaunay_repair_required: outcome.delaunay_repair_required,
                 })
             }
@@ -2447,8 +2447,8 @@ where
                                 simplices_removed: outcome.simplices_removed,
                                 suspicion,
                                 repair_seed_simplices: outcome.repair_seed_simplices,
-                                embedding_validation_simplices: outcome
-                                    .embedding_validation_simplices,
+                                realization_validation_simplices: outcome
+                                    .realization_validation_simplices,
                                 delaunay_repair_required: true,
                             });
                         }
@@ -2570,8 +2570,8 @@ where
                                     simplices_removed: outcome.simplices_removed,
                                     suspicion,
                                     repair_seed_simplices: outcome.repair_seed_simplices,
-                                    embedding_validation_simplices: outcome
-                                        .embedding_validation_simplices,
+                                    realization_validation_simplices: outcome
+                                        .realization_validation_simplices,
                                     delaunay_repair_required: true,
                                 });
                             }
@@ -2836,7 +2836,7 @@ where
                     simplices_removed: total_removed,
                     suspicion,
                     repair_seed_simplices,
-                    embedding_validation_simplices: new_simplices
+                    realization_validation_simplices: new_simplices
                         .iter()
                         .copied()
                         .filter(|simplex_key| self.tds.contains_simplex(*simplex_key))

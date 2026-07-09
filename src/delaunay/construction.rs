@@ -65,13 +65,13 @@ use crate::core::construction::{
     PeriodicQuotientFacetKeyDerivationFailure, TriangulationConstructionError,
 };
 use crate::core::edge::EdgeKeyError;
-use crate::core::embedding::TriangulationEmbeddingValidationError;
 use crate::core::facet::FacetError;
 use crate::core::insertion::record_duplicate_detection_metrics;
 use crate::core::operations::{
     DelaunayInsertionState, InsertionOutcome, InsertionResult, InsertionStatistics,
     InsertionTelemetryMode, RepairDecision, TopologicalOperation,
 };
+use crate::core::realization::TriangulationRealizationValidationError;
 use crate::core::simplex::SimplexValidationError;
 use crate::core::tds::{InvariantError, SimplexKey, TdsMutationError};
 use crate::core::tds::{TdsConstructionError, TdsError, TriangulationConstructionState};
@@ -1190,12 +1190,12 @@ pub enum DelaunayConstructionFailure {
         source: DelaunayTriangulationValidationError,
     },
 
-    /// Level 4 embedding validation failed during insertion.
-    #[error("embedding validation failed during insertion: {source}")]
-    InsertionEmbeddingValidation {
-        /// Underlying embedding validation error.
+    /// Level 4 realization validation failed during insertion.
+    #[error("realization validation failed during insertion: {source}")]
+    InsertionRealizationValidation {
+        /// Underlying realization validation error.
         #[source]
-        source: TriangulationEmbeddingValidationError,
+        source: TriangulationRealizationValidationError,
     },
 
     /// Level 3 topology validation failed during insertion.
@@ -1427,8 +1427,8 @@ impl From<TriangulationConstructionError> for DelaunayConstructionFailure {
             TriangulationConstructionError::InsertionDelaunayValidation { source } => {
                 Self::InsertionDelaunayValidation { source }
             }
-            TriangulationConstructionError::InsertionEmbeddingValidation { source } => {
-                Self::InsertionEmbeddingValidation { source }
+            TriangulationConstructionError::InsertionRealizationValidation { source } => {
+                Self::InsertionRealizationValidation { source }
             }
             TriangulationConstructionError::InsertionTopologyValidation { context, source } => {
                 Self::InsertionTopologyValidation { context, source }
@@ -1509,7 +1509,7 @@ fn is_geometric_flip_error(error: &FlipError) -> bool {
         | FlipError::InsertedSimplexAlreadyExists { .. }
         | FlipError::FacetIteration { .. }
         | FlipError::PostconditionRepair { .. }
-        | FlipError::EmbeddingValidation { .. }
+        | FlipError::RealizationValidation { .. }
         | FlipError::NeighborWiring { .. }
         | FlipError::TdsMutation { .. } => false,
     }
@@ -5409,7 +5409,7 @@ where
                     | DelaunayConstructionFailure::CanonicalizedUnsupportedGlobalTopology { .. }
                     | DelaunayConstructionFailure::PeriodicImageConflictingGlobalTopology { .. }
                     | DelaunayConstructionFailure::SpatialIndexConstruction { .. }
-                    | DelaunayConstructionFailure::InsertionEmbeddingValidation { .. }
+                    | DelaunayConstructionFailure::InsertionRealizationValidation { .. }
                     | DelaunayConstructionFailure::InsertionTopologyValidation { .. }
                     | DelaunayConstructionFailure::LocalRepairBudgetExceeded { .. }
                     | DelaunayConstructionFailure::ShuffledRetryExhausted { .. }
@@ -5497,7 +5497,7 @@ where
             | InsertionError::Location(_)
             | InsertionError::NonManifoldTopology { .. }
             | InsertionError::HullExtension { .. }
-            | InsertionError::EmbeddingValidationFailed { .. }
+            | InsertionError::RealizationValidationFailed { .. }
             | InsertionError::DelaunayValidationFailed { .. }
             | InsertionError::DuplicateCoordinates { .. }
             | InsertionError::PerturbedCoordinateInvalid { .. }) => {
@@ -5590,8 +5590,8 @@ where
             InsertionError::DelaunayValidationFailed { source } => {
                 TriangulationConstructionError::InsertionDelaunayValidation { source }
             }
-            InsertionError::EmbeddingValidationFailed { source } => {
-                TriangulationConstructionError::InsertionEmbeddingValidation { source }
+            InsertionError::RealizationValidationFailed { source } => {
+                TriangulationConstructionError::InsertionRealizationValidation { source }
             }
             InsertionError::TopologyValidationFailed { context, source } => {
                 TriangulationConstructionError::InsertionTopologyValidation { context, source }

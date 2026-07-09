@@ -112,7 +112,7 @@ When in doubt, favor the invariant over the convenient edit.
 - Every mutating operation preserves the invariants checked by
   `Tds::is_valid` / `validate` (Levels 1-2),
   `Triangulation::is_valid_topology` / `validate` (Level 3),
-  `Triangulation::is_valid_embedding` / `validate_embedding` (Level 4), and
+  `Triangulation::is_valid_realization` / `validate_realization` (Level 4), and
   `DelaunayTriangulation::is_valid_delaunay` / `validate` (Level 5). An
   operation that cannot preserve them must fail explicitly rather than leave
   inconsistent state behind.
@@ -135,17 +135,20 @@ The library exposes five validation levels, each a superset of the last:
 3. **Level 3 - Intrinsic PL Topology**: the abstract simplicial complex has the
    requested PL topology, including manifold/pseudomanifold conditions, links,
    Euler characteristic, orientability, and connected components.
-4. **Level 4 - Embedding Validity**: the complex is faithfully realized in the
-   chosen ambient model, including Euclidean affine charts, toroidal periodic
-   charts, spherical `S^d` embeddings, and embedding-specific constraints.
-5. **Level 5 - Geometric Predicates**: the embedding satisfies the selected
+4. **Level 4 - Valid Realization**: the complex is realized without geometric
+   degeneracy or unintended intersections in the chosen model, including
+   Euclidean/toroidal affine-chart realization, spherical `S^d` realization,
+   and model-specific realization constraints.
+5. **Level 5 - Geometric Predicates**: the realization satisfies the selected
    geometric predicate family, currently Euclidean/toroidal/spherical Delaunay
    checks and eventually regular, weighted, constrained, Gabriel, alpha, or
    related predicates.
 
-Level 4 uses orientation and exact barycentric geometry for affine-chart
-embedding, with backend-specific realization checks for non-Euclidean models.
-Level 5 uses geometry-specific predicates. Levels 1-3 are embedding-independent
+Level 4 uses orientation and exact barycentric geometry for Euclidean/toroidal
+affine-chart realization, where toroidal checks run in lifted periodic
+covering-space charts, and backend-specific realization checks for curved
+models. Level 5 uses geometry-specific predicates. Levels 1-3 are
+realization-independent
 graph/topology checks. Validation code belongs at the lowest layer that owns the
 invariant.
 Each layer should expose the standard validation surface. Use plain
@@ -155,7 +158,7 @@ multiple validation layers. Use `*_diagnostic` for the first actionable
 repair/retry diagnostic, `*_report` for layer-local aggregate diagnostics, and
 `validate()` / `validation_report()` for cumulative roll-up through the owning
 layer. Report names should identify the layer being checked, e.g.
-`structure_report`, `topology_report`, `embedding_report`, and
+`structure_report`, `topology_report`, `realization_report`, and
 `delaunay_report`. Higher layers should roll lower diagnostics up without
 stringifying them.
 

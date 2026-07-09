@@ -63,7 +63,7 @@ PL-manifold validation. Ridge ownership therefore belongs in `src/topology/`.
 
 - `coordinate_range.rs` - validated coordinate-range value type for random
   point and triangulation generator APIs.
-- `embedding.rs` - pure labeled-simplex embedding predicates and witnesses
+- `realization.rs` - pure labeled-simplex realization predicates and witnesses
   used by generic Level 4 validation.
 - `kernel.rs` - kernel abstraction (`AdaptiveKernel`, `RobustKernel`,
   `FastKernel`) and `ExactPredicates` marker trait.
@@ -112,7 +112,7 @@ coordinate model/API rather than loosening ordinary `f64` APIs.
 - `serialization.rs` - conversion to/from `Tds` with topology metadata reset
   rules.
 - `spherical.rs` - bounded `S^2`/`S^3` spherical construction,
-  embedding-validation, and empty-cap Delaunay backend using the topology
+  realization-validation, and empty-cap Delaunay backend using the topology
   space coordinate/metric backend.
 - `validation.rs` - implemented Level 5 Geometric Predicate APIs for Delaunay
   validation errors and construction validation cadence helpers.
@@ -151,7 +151,7 @@ slotmap handles.
 - `spaces/euclidean.rs` and `spaces/toroidal.rs` - concrete
   `TopologicalSpace` helper implementations.
 - `spaces/spherical.rs` - spherical coordinate and metric backend for points on
-  `S^D` embedded in `R^(D+1)`.
+  `S^D` realized in `R^(D+1)`.
 - `traits/topological_space.rs` - public `GlobalTopology<D>` metadata enum and
   `TopologyKind`.
 - `traits/global_topology_model.rs` - internal scalar-generic

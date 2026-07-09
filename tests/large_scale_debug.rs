@@ -615,10 +615,10 @@ fn debug_mode_from_env() -> DebugMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ValidationScope {
-    /// Cumulative Levels 1–5, including the Level 4 embedding overlap scan.
+    /// Cumulative Levels 1–5, including the Level 4 realization overlap scan.
     Full,
     /// Construction correctness only: Levels 1–3 (structure + topology) plus
-    /// Level 5 (Delaunay property), skipping the expensive Level 4 embedding
+    /// Level 5 (Delaunay property), skipping the expensive Level 4 realization
     /// overlap scan. Used by the `perf-large-scale-smoke` wall-clock guard.
     Construction,
 }
@@ -1568,11 +1568,11 @@ where
         ValidationScope::Construction => {
             // Levels 1–3 (structure + topology) plus the fast O(simplices)
             // flip-based Level 5 Delaunay check. This skips the expensive Level 4
-            // embedding overlap scan and the full report's all-violations Delaunay
+            // realization overlap scan and the full report's all-violations Delaunay
             // scan, keeping the wall-clock guard focused on construction
             // correctness. Level 4 is exercised at scale by `just test-slow`
             // (full scope); see issue #482.
-            println!("Running validation (Levels 1–3 + fast Level 5; embedding skipped)...");
+            println!("Running validation (Levels 1–3 + fast Level 5; realization skipped)...");
             let t_validate = Instant::now();
             let topology_result = dt.as_triangulation().validation_report();
             let delaunay_result = if topology_result.is_ok() {

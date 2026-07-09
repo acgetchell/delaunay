@@ -94,7 +94,7 @@ fn topology_and_delaunay_valid<const D: usize>(
     dt: &DelaunayTriangulation<RobustKernel<f64>, (), (), D>,
 ) -> bool {
     dt.as_triangulation().validate().is_ok()
-        && dt.as_triangulation().is_valid_embedding().is_ok()
+        && dt.as_triangulation().is_valid_realization().is_ok()
         && dt.is_valid_delaunay().is_ok()
 }
 
@@ -106,8 +106,8 @@ fn assert_topology_and_delaunay_valid<const D: usize>(
         .validate()
         .unwrap_or_else(|err| panic!("{context} should pass Levels 1-3: {err}"));
     dt.as_triangulation()
-        .is_valid_embedding()
-        .unwrap_or_else(|err| panic!("{context} should pass Level 4 embedding: {err}"));
+        .is_valid_realization()
+        .unwrap_or_else(|err| panic!("{context} should pass Level 4 realization: {err}"));
     dt.is_valid_delaunay()
         .unwrap_or_else(|err| panic!("{context} should pass Level 5: {err}"));
 }

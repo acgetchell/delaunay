@@ -311,7 +311,7 @@ fn test_2d_toroidal_explicit_construction_rejected() {
         .global_topology(topology)
         .topology_guarantee(TopologyGuarantee::Pseudomanifold)
         .build()
-        .expect_err("explicit toroidal connectivity requires a quotient embedding validator");
+        .expect_err("explicit toroidal connectivity requires a quotient realization validator");
 
     match err {
         DelaunayTriangulationConstructionError::ExplicitConstruction(
@@ -393,7 +393,7 @@ fn test_3d_toroidal_explicit_construction_rejected() {
         .global_topology(topology)
         .topology_guarantee(TopologyGuarantee::Pseudomanifold)
         .build()
-        .expect_err("explicit toroidal connectivity requires a quotient embedding validator");
+        .expect_err("explicit toroidal connectivity requires a quotient realization validator");
 
     match err {
         DelaunayTriangulationConstructionError::ExplicitConstruction(

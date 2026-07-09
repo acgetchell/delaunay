@@ -191,7 +191,7 @@ pub const ADVERSARIAL_POINTS_5D: &[[f64; 5]] = &[
 /// Intentionally invalid 3D fixture used to prove benchmark setup rejects
 /// degenerate inputs instead of silently sanitizing them.
 ///
-/// All points are coplanar (`z = 0`), so no faithful 3D simplex embedding can
+/// All points are coplanar (`z = 0`), so no faithful 3D simplex realization can
 /// be formed.
 #[allow(
     dead_code,

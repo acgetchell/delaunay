@@ -12,8 +12,8 @@ use crate::core::algorithms::flips::{
     DelaunayRepairError, verify_triangulation_via_flip_predicates,
 };
 use crate::core::algorithms::incremental_insertion::InsertionError;
-use crate::core::embedding::TriangulationEmbeddingValidationError;
 use crate::core::operations::DelaunayInsertionState;
+use crate::core::realization::TriangulationRealizationValidationError;
 use crate::core::tds::{
     InvariantError, InvariantKind, InvariantViolation, SimplexKey, Tds, TdsError,
     TriangulationValidationReport,
@@ -45,9 +45,9 @@ pub(crate) struct TdsStructureValidationProof(());
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct DelaunayTriangulationValidationProof(());
 
-/// Proof that a candidate passed Levels 1-4 through embedded-geometry validation.
+/// Proof that a candidate passed Levels 1-4 through realized-geometry validation.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct TriangulationEmbeddingValidationProof(());
+pub(crate) struct TriangulationRealizationValidationProof(());
 
 /// Internal assembly stage for a triangulation that has not crossed its validation boundary yet.
 ///
@@ -117,9 +117,9 @@ impl<K, U, V, const D: usize> DelaunayTriangulationCandidate<K, U, V, D> {
     }
 
     /// Converts a candidate after the caller has proved Levels 1-4 validity.
-    pub(crate) fn into_embedding_validated_delaunay(
+    pub(crate) fn into_realization_validated_delaunay(
         self,
-        _proof: TriangulationEmbeddingValidationProof,
+        _proof: TriangulationRealizationValidationProof,
     ) -> DelaunayTriangulation<K, U, V, D> {
         self.candidate
     }
@@ -170,13 +170,13 @@ where
     /// This preserves the public reconstruction contract for
     /// [`DelaunayTriangulation`]: a candidate cannot cross the boundary until
     /// its underlying [`Triangulation`] passes Levels 1-3 validation. Euclidean
-    /// candidates additionally pass Level 4 embedded-geometry validation before
+    /// candidates additionally pass Level 4 realized-geometry validation before
     /// the Level 5 Delaunay property is checked with the topology-appropriate
     /// validator.
     pub(crate) fn validate_delaunay_property(
         &self,
     ) -> Result<DelaunayTriangulationValidationProof, DelaunayTriangulationValidationError> {
-        self.candidate.tri.validate_embedding()?;
+        self.candidate.tri.validate_realization()?;
 
         if self.candidate.global_topology().is_euclidean() {
             is_delaunay_property_only(&self.candidate.tri.tds).map_err(|source| {
@@ -192,11 +192,11 @@ where
     }
 
     /// Validates Levels 1-4 without enforcing the Level 5 Delaunay property.
-    pub(crate) fn validate_embedding_only(
+    pub(crate) fn validate_realization_only(
         &self,
-    ) -> Result<TriangulationEmbeddingValidationProof, DelaunayTriangulationValidationError> {
-        self.candidate.tri.validate_embedding()?;
-        Ok(TriangulationEmbeddingValidationProof(()))
+    ) -> Result<TriangulationRealizationValidationProof, DelaunayTriangulationValidationError> {
+        self.candidate.tri.validate_realization()?;
+        Ok(TriangulationRealizationValidationProof(()))
     }
 }
 
@@ -309,7 +309,7 @@ impl From<&DelaunayVerificationError> for DelaunayVerificationErrorKind {
 /// (validation Levels 1-5):
 /// - [`Tds`](Self::Tds) — element or TDS structural errors (Levels 1–2).
 /// - [`Triangulation`](Self::Triangulation) — topology errors (Level 3).
-/// - [`Embedding`](Self::Embedding) — embedded-geometry errors (Level 4).
+/// - [`Realization`](Self::Realization) — realized-geometry errors (Level 4).
 /// - [`VerificationFailed`](Self::VerificationFailed) — Delaunay property violation (Level 5).
 ///
 /// [`DelaunayTriangulation::is_valid_delaunay`](crate::DelaunayTriangulation::is_valid_delaunay) returns only the Level 5
@@ -356,9 +356,9 @@ pub enum DelaunayTriangulationValidationError {
     #[error(transparent)]
     Triangulation(Box<TriangulationValidationError>),
 
-    /// Lower-layer embedded-geometry validation error (Level 4).
+    /// Lower-layer realized-geometry validation error (Level 4).
     #[error(transparent)]
-    Embedding(Box<TriangulationEmbeddingValidationError>),
+    Realization(Box<TriangulationRealizationValidationError>),
 
     /// Flip-based Delaunay verification detected a violation.
     ///
@@ -407,14 +407,14 @@ impl From<TriangulationValidationError> for DelaunayTriangulationValidationError
     }
 }
 
-impl From<TriangulationEmbeddingValidationError> for DelaunayTriangulationValidationError {
-    fn from(source: TriangulationEmbeddingValidationError) -> Self {
+impl From<TriangulationRealizationValidationError> for DelaunayTriangulationValidationError {
+    fn from(source: TriangulationRealizationValidationError) -> Self {
         match source {
-            TriangulationEmbeddingValidationError::Tds(source) => Self::Tds(source),
-            TriangulationEmbeddingValidationError::Triangulation(source) => {
+            TriangulationRealizationValidationError::Tds(source) => Self::Tds(source),
+            TriangulationRealizationValidationError::Triangulation(source) => {
                 Self::Triangulation(source)
             }
-            source => Self::Embedding(Box::new(source)),
+            source => Self::Realization(Box::new(source)),
         }
     }
 }
@@ -782,13 +782,13 @@ where
     /// Performs cumulative validation for Levels 1–5.
     ///
     /// This validates:
-    /// - **Levels 1–4** via [`Triangulation::validate_embedding`](crate::Triangulation::validate_embedding)
+    /// - **Levels 1–4** via [`Triangulation::validate_realization`](crate::Triangulation::validate_realization)
     /// - **Level 5** via [`DelaunayTriangulation::is_valid_delaunay`](Self::is_valid_delaunay)
     ///
     /// # Errors
     ///
     /// Returns a [`DelaunayTriangulationValidationError`] if lower-layer validation fails, if
-    /// Euclidean embedded-geometry validation fails, or if the Delaunay property check (Level 5)
+    /// Euclidean realized-geometry validation fails, or if the Delaunay property check (Level 5)
     /// fails.
     ///
     /// # Examples
@@ -807,13 +807,13 @@ where
     /// ];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices_4d).build()?;
     ///
-    /// // Levels 1–5: elements + structure + topology + embedding + Delaunay property
+    /// // Levels 1–5: elements + structure + topology + realization + Delaunay property
     /// assert!(dt.validate().is_ok());
     /// # Ok(())
     /// # }
     /// ```
     pub fn validate(&self) -> Result<(), DelaunayTriangulationValidationError> {
-        self.tri.validate_embedding()?;
+        self.tri.validate_realization()?;
         self.is_valid_delaunay()
     }
 
@@ -856,21 +856,20 @@ where
         // Levels 1–3: reuse the Triangulation layer report.
         match self.tri.validation_report() {
             Ok(()) => {
-                // Level 4 (embedded geometry)
-                let embedding_report =
-                    self.tri
-                        .embedding_report()
-                        .map_err(|error| TriangulationValidationReport {
-                            violations: vec![InvariantViolation {
-                                kind: InvariantKind::Embedding,
-                                error: error.into(),
-                            }],
-                        })?;
+                // Level 4 (realized geometry)
+                let realization_report = self.tri.realization_report().map_err(|error| {
+                    TriangulationValidationReport {
+                        violations: vec![InvariantViolation {
+                            kind: InvariantKind::Realization,
+                            error: error.into(),
+                        }],
+                    }
+                })?;
                 let mut violations = Vec::new();
-                if !embedding_report.is_valid() {
-                    violations.extend(embedding_report.violations.into_iter().map(|error| {
+                if !realization_report.is_valid() {
+                    violations.extend(realization_report.violations.into_iter().map(|error| {
                         InvariantViolation {
-                            kind: InvariantKind::Embedding,
+                            kind: InvariantKind::Realization,
                             error: error.into(),
                         }
                     }));
@@ -898,22 +897,22 @@ where
                     return Err(report);
                 }
 
-                // Level 4 (embedded geometry)
-                match self.tri.embedding_report() {
-                    Ok(embedding_report) => {
+                // Level 4 (realized geometry)
+                match self.tri.realization_report() {
+                    Ok(realization_report) => {
                         report
                             .violations
-                            .extend(embedding_report.violations.into_iter().map(|error| {
+                            .extend(realization_report.violations.into_iter().map(|error| {
                                 InvariantViolation {
-                                    kind: InvariantKind::Embedding,
-                                    error: InvariantError::Embedding(error),
+                                    kind: InvariantKind::Realization,
+                                    error: InvariantError::Realization(error),
                                 }
                             }));
                     }
                     Err(source) => {
                         report.violations.push(InvariantViolation {
-                            kind: InvariantKind::Embedding,
-                            error: InvariantError::Embedding(source),
+                            kind: InvariantKind::Realization,
+                            error: InvariantError::Realization(source),
                         });
                     }
                 }
@@ -960,7 +959,7 @@ where
     ///   via `try_from_tds` validates with [`GlobalTopology::Euclidean`]. Use
     ///   [`try_from_tds_with_topology_context`](Self::try_from_tds_with_topology_context) if you
     ///   need to validate toroidal or other non-default topology metadata during reconstruction.
-    /// - Euclidean reconstruction validates Level 4 embedded geometry, then
+    /// - Euclidean reconstruction validates Level 4 realized geometry, then
     ///   validates Level 5 with the crate's robust empty-circumsphere validator,
     ///   independent of the supplied runtime kernel. The supplied kernel is
     ///   stored for later queries and insertions.
@@ -994,7 +993,7 @@ where
     /// # Errors
     ///
     /// Returns [`DelaunayTriangulationValidationError`] if the TDS violates
-    /// structural, topological, embedded-geometry, or Delaunay invariants.
+    /// structural, topological, realized-geometry, or Delaunay invariants.
     pub fn try_from_tds(
         tds: Tds<U, V, D>,
         kernel: K,
@@ -1046,7 +1045,7 @@ where
     /// # Errors
     ///
     /// Returns [`DelaunayTriangulationValidationError`] if the TDS violates
-    /// structural, topological, embedded-geometry, or Delaunay invariants.
+    /// structural, topological, realized-geometry, or Delaunay invariants.
     pub fn try_from_tds_with_topology_guarantee(
         tds: Tds<U, V, D>,
         kernel: K,
@@ -1102,7 +1101,7 @@ where
     /// # Errors
     ///
     /// Returns [`DelaunayTriangulationValidationError`] if the TDS violates
-    /// structural, topological, embedded-geometry, or Delaunay invariants under
+    /// structural, topological, realized-geometry, or Delaunay invariants under
     /// the supplied topology context.
     pub fn try_from_tds_with_topology_context(
         tds: Tds<U, V, D>,
@@ -1530,7 +1529,7 @@ mod tests {
     }
 
     #[test]
-    fn validation_report_includes_delaunay_after_embedding_violations() {
+    fn validation_report_includes_delaunay_after_realization_violations() {
         init_tracing();
         let tds = tds_from_2d_vertices_and_simplices(
             &[[0.0, 0.0], [2.0, 0.0], [0.0, 2.0], [2.0, 2.0], [1.0, -1.0]],
@@ -1544,8 +1543,8 @@ mod tests {
             report
                 .violations
                 .iter()
-                .any(|v| v.kind == InvariantKind::Embedding),
-            "expected embedding violation in report: {report:?}"
+                .any(|v| v.kind == InvariantKind::Realization),
+            "expected realization violation in report: {report:?}"
         );
         assert!(
             report

@@ -933,7 +933,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     ///
     /// This is a **Level 2 (TDS structural)** check in the validation hierarchy.
     /// It intentionally does **not** validate individual vertices/simplices (Level 1),
-    /// nor triangulation topology (Level 3), valid affine realization (Level 4),
+    /// nor triangulation topology (Level 3), valid realization (Level 4),
     /// or the Delaunay property (Level 5).
     ///
     /// # Structural invariants checked
@@ -1152,7 +1152,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// error.
     ///
     /// **Note**: This does NOT check the Delaunay property. Use
-    /// `Triangulation::validate_embedding()` for Levels 1–4, `DelaunayTriangulation::is_valid_delaunay()`
+    /// `Triangulation::validate_realization()` for Levels 1–4, `DelaunayTriangulation::is_valid_delaunay()`
     /// for Level 5 only, or `DelaunayTriangulation::validate()` for cumulative Levels 1–5.
     ///
     /// # Errors

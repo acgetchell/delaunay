@@ -32,8 +32,8 @@ use delaunay::flips::{
 use delaunay::geometry::{
     CoordinateConversionError as GeometryModuleCoordinateConversionError,
     CoordinateRange as GeometryCoordinateRange,
-    LabeledSimplexEmbedding as GeometryModuleLabeledSimplexEmbedding,
-    validate_simplex_embeddings_intersect_only_in_shared_faces as geometry_module_validate_simplex_embeddings_intersect_only_in_shared_faces,
+    LabeledSimplexRealization as GeometryModuleLabeledSimplexRealization,
+    validate_simplex_realizations_intersect_only_in_shared_faces as geometry_module_validate_simplex_realizations_intersect_only_in_shared_faces,
 };
 use delaunay::pachner::PachnerMoves as DirectPachnerMoves;
 use delaunay::prelude::DelaunayValidationError;
@@ -106,12 +106,12 @@ use delaunay::prelude::geometry::{
     ArrayConversionFailureReason, CircumcenterError, CircumcenterFailureReason,
     CoordinateConversionError, CoordinateConversionValue, CoordinateValidationError,
     CoordinateValues, DegenerateGeometry, DegenerateMeasure, DegenerateSimplexReason,
-    FiniteCoordinateValue, InvalidCoordinateValue, LaError, LabeledSimplexEmbedding,
-    LabeledSimplexEmbeddingError, MatrixError, PeriodicSimplexSpan, PeriodicSimplexSpanError,
-    Point, QualitySimplexVerticesError, SimplexEmbeddingBuffer, SimplexIntersectionFailure,
-    SimplexIntersectionWitness, SurfaceMeasureError, ValueConversionError,
+    FiniteCoordinateValue, InvalidCoordinateValue, LaError, LabeledSimplexRealization,
+    LabeledSimplexRealizationError, MatrixError, PeriodicSimplexSpan, PeriodicSimplexSpanError,
+    Point, QualitySimplexVerticesError, SimplexIntersectionFailure, SimplexIntersectionWitness,
+    SimplexRealizationBuffer, SurfaceMeasureError, ValueConversionError,
     ValueConversionFailureReason, axis_aligned_bounding_boxes_overlap, coordinate_range_for_axis,
-    try_periodic_simplex_span, validate_simplex_embeddings_intersect_only_in_shared_faces,
+    try_periodic_simplex_span, validate_simplex_realizations_intersect_only_in_shared_faces,
 };
 use delaunay::prelude::insertion::{
     InitialSimplexConstructionError, InitialSimplexUnexpectedInsertionStage, InsertionError,
@@ -1621,13 +1621,13 @@ fn geometry_prelude_covers_typed_error_variants() {
 }
 
 #[test]
-fn geometry_prelude_covers_simplex_embedding_validation() {
+fn geometry_prelude_covers_simplex_realization_validation() {
     let first =
-        LabeledSimplexEmbedding::try_new([0_usize, 1, 2], [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
-            .expect("valid labeled simplex embedding");
+        LabeledSimplexRealization::try_new([0_usize, 1, 2], [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+            .expect("valid labeled simplex realization");
     let second =
-        LabeledSimplexEmbedding::try_new([0_usize, 1, 3], [[0.0, 0.0], [1.0, 0.0], [0.25, 0.25]])
-            .expect("valid labeled simplex embedding");
+        LabeledSimplexRealization::try_new([0_usize, 1, 3], [[0.0, 0.0], [1.0, 0.0], [0.25, 0.25]])
+            .expect("valid labeled simplex realization");
 
     assert_matches!(
         coordinate_range_for_axis(&first, 0),
@@ -1637,7 +1637,7 @@ fn geometry_prelude_covers_simplex_embedding_validation() {
     );
     assert!(axis_aligned_bounding_boxes_overlap(&first, &second));
     assert_matches!(
-        validate_simplex_embeddings_intersect_only_in_shared_faces(&first, &second),
+        validate_simplex_realizations_intersect_only_in_shared_faces(&first, &second),
         Err(SimplexIntersectionFailure::IntersectionOutsideSharedFace {
             witness: SimplexIntersectionWitness {
                 shared,
@@ -1649,20 +1649,20 @@ fn geometry_prelude_covers_simplex_embedding_validation() {
             && first_only_witness.as_slice() == [2]
             && second_only_witness.as_slice() == [3]
     );
-    let module_root_simplex = GeometryModuleLabeledSimplexEmbedding::try_new(
+    let module_root_simplex = GeometryModuleLabeledSimplexRealization::try_new(
         [10_usize, 11, 12],
         [[2.0, 2.0], [3.0, 2.0], [2.0, 3.0]],
     )
-    .expect("geometry module root re-exports labeled simplex embedding");
-    geometry_module_validate_simplex_embeddings_intersect_only_in_shared_faces(
+    .expect("geometry module root re-exports labeled simplex realization");
+    geometry_module_validate_simplex_realizations_intersect_only_in_shared_faces(
         &first,
         &module_root_simplex,
     )
     .expect("geometry module root re-exports simplex-intersection validation");
 
     let spanning_simplex =
-        LabeledSimplexEmbedding::try_new([4_usize, 5, 6], [[0.0, 0.0], [1.0, 0.0], [0.0, 0.25]])
-            .expect("valid labeled simplex embedding");
+        LabeledSimplexRealization::try_new([4_usize, 5, 6], [[0.0, 0.0], [1.0, 0.0], [0.0, 0.25]])
+            .expect("valid labeled simplex realization");
     let span = try_periodic_simplex_span(&spanning_simplex, &[1.0, 2.0])
         .expect("prelude re-exports periodic span validation")
         .expect("spanning simplex crosses the first periodic domain");
@@ -1670,13 +1670,13 @@ fn geometry_prelude_covers_simplex_embedding_validation() {
     assert!(abs_diff_eq!(span.span(), 1.0, epsilon = f64::EPSILON));
     assert!(abs_diff_eq!(span.period(), 1.0, epsilon = f64::EPSILON));
 
-    let duplicate = LabeledSimplexEmbedding::<_, 2>::try_new(
+    let duplicate = LabeledSimplexRealization::<_, 2>::try_new(
         [7_usize, 7, 8],
         [[0.0, 0.0], [0.5, 0.0], [0.0, 0.5]],
     );
     assert_matches!(
         duplicate,
-        Err(LabeledSimplexEmbeddingError::DuplicateLabel {
+        Err(LabeledSimplexRealizationError::DuplicateLabel {
             first_index: 0,
             duplicate_index: 1
         })
@@ -1689,9 +1689,9 @@ fn geometry_prelude_covers_simplex_embedding_validation() {
         })
     );
 
-    let _labels: SimplexEmbeddingBuffer<usize> = [0, 1].into_iter().collect();
+    let _labels: SimplexRealizationBuffer<usize> = [0, 1].into_iter().collect();
     assert_send_sync_unpin::<PeriodicSimplexSpan>();
-    assert_send_sync_unpin::<LabeledSimplexEmbeddingError>();
+    assert_send_sync_unpin::<LabeledSimplexRealizationError>();
     assert_send_sync_unpin::<PeriodicSimplexSpanError>();
     assert_send_sync_unpin::<SimplexIntersectionFailure<usize>>();
     assert_error::<SimplexIntersectionFailure<usize>>();
@@ -1875,16 +1875,16 @@ fn construction_prelude_covers_typed_explicit_error_wrappers() {
             if matches!(source.as_ref(), InvariantError::Tds(TdsError::FacetSharingViolation { .. }))
     );
 
-    let explicit_embedding = ExplicitConstructionError::EmbeddingValidation {
+    let explicit_realization = ExplicitConstructionError::RealizationValidation {
         source: Box::new(ConstructionDelaunayTriangulationValidationError::Tds(
             Box::new(TdsError::InconsistentDataStructure {
-                message: "embedding validation failed".to_string(),
+                message: "realization validation failed".to_string(),
             }),
         )),
     };
     assert_matches!(
-        explicit_embedding,
-        ExplicitConstructionError::EmbeddingValidation { source }
+        explicit_realization,
+        ExplicitConstructionError::RealizationValidation { source }
             if matches!(
                 source.as_ref(),
                 ConstructionDelaunayTriangulationValidationError::Tds(tds)
@@ -1968,8 +1968,8 @@ fn validation_prelude_covers_configuration_error() {
     );
 
     assert_eq!(
-        FocusedSphericalValidationLayer::Embedding.to_string(),
-        "Level 4 Embedding Validity"
+        FocusedSphericalValidationLayer::Realization.to_string(),
+        "Level 4 Spherical Realization"
     );
     let _spherical_validation_error_size = size_of::<FocusedSphericalDelaunayValidationError>();
 }

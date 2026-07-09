@@ -676,7 +676,7 @@ pub fn facet_measure<const D: usize>(points: &[Point<D>]) -> Result<f64, Circumc
 /// Calculate the area/volume of a (D-1)-dimensional simplex using the Gram matrix method.
 ///
 /// This function implements the mathematically rigorous approach for computing the volume
-/// of a (D-1)-dimensional simplex embedded in D-dimensional space using the Gram matrix
+/// of a (D-1)-dimensional simplex realized in D-dimensional space using the Gram matrix
 /// determinant formula:
 ///
 /// **Volume = (1/(D-1)!) × √(det(G))**
@@ -725,7 +725,7 @@ fn facet_measure_gram_matrix<const D: usize>(
 
     // Compute Gram determinant with validation.
     //
-    // For a (D-1)-simplex embedded in D dimensions, there are (D-1) edge vectors from
+    // For a (D-1)-simplex realized in D dimensions, there are (D-1) edge vectors from
     // one vertex to the remaining vertices, so the Gram matrix is (D-1)×(D-1).
     let gram_dim = D - 1;
     let det = try_with_la_stack_matrix!(gram_dim, |gram_matrix| {
