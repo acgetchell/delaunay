@@ -18,6 +18,7 @@ on:
       - main
     paths:
       - ".github/workflows/papers.yml"
+      - ".github/actions/resolve-just/action.yml"
       - "justfile"
       - "notebooks/01_validation.ipynb"
       - "papers/**"
@@ -34,6 +35,7 @@ on:
       - main
     paths:
       - ".github/workflows/papers.yml"
+      - ".github/actions/resolve-just/action.yml"
       - "justfile"
       - "notebooks/01_validation.ipynb"
       - "papers/**"
@@ -66,16 +68,9 @@ jobs:
           cache: true
           cache-bin: false
 
-      - name: Resolve just version
+      - name: Resolve and install just
         id: just_version
-        run: |
-          version="$(grep '^just_version :=' justfile | cut -d '"' -f 2)"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Install just
-        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
-        with:
-          tool: just@${{ steps.just_version.outputs.version }}
+        uses: ./.github/actions/resolve-just
 
       - name: Export paper tool versions
         id: tool_versions

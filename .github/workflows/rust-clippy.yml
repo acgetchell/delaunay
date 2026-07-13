@@ -38,10 +38,25 @@ jobs:
 
       - name: Resolve Clippy SARIF tool versions
         id: tool_versions
+        shell: bash
         run: |
+          set -euo pipefail
+
+          clippy_sarif="$(grep '^clippy_sarif_version :=' justfile | cut -d '"' -f 2 || true)"
+          if [[ -z "$clippy_sarif" ]]; then
+            echo "::error::Could not resolve clippy_sarif_version from justfile"
+            exit 1
+          fi
+
+          sarif_fmt="$(grep '^sarif_fmt_version :=' justfile | cut -d '"' -f 2 || true)"
+          if [[ -z "$sarif_fmt" ]]; then
+            echo "::error::Could not resolve sarif_fmt_version from justfile"
+            exit 1
+          fi
+
           {
-            echo "CLIPPY_SARIF=$(grep '^clippy_sarif_version :=' justfile | cut -d '"' -f 2)"
-            echo "SARIF_FMT=$(grep '^sarif_fmt_version :=' justfile | cut -d '"' -f 2)"
+            echo "CLIPPY_SARIF=$clippy_sarif"
+            echo "SARIF_FMT=$sarif_fmt"
           } >> "$GITHUB_OUTPUT"
 
       - name: Cache clippy tools

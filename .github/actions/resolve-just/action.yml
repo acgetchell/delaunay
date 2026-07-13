@@ -1,0 +1,29 @@
+name: Resolve and install just
+description: Resolve the pinned just version from justfile and install it.
+
+outputs:
+  version:
+    description: Resolved just version from justfile.
+    value: ${{ steps.resolve.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve just version
+      id: resolve
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        version="$(grep '^just_version :=' justfile | cut -d '"' -f 2 || true)"
+        if [[ -z "$version" ]]; then
+          echo "::error::Could not resolve just_version from justfile"
+          exit 1
+        fi
+
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+    - name: Install just
+      uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
+      with:
+        tool: just@${{ steps.resolve.outputs.version }}

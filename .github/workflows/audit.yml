@@ -47,8 +47,16 @@ jobs:
 
       - name: Resolve cargo-audit version
         id: cargo_audit_version
+        shell: bash
         run: |
-          version="$(grep '^cargo_audit_version :=' justfile | cut -d '"' -f 2)"
+          set -euo pipefail
+
+          version="$(grep '^cargo_audit_version :=' justfile | cut -d '"' -f 2 || true)"
+          if [[ -z "$version" ]]; then
+            echo "::error::Could not resolve cargo_audit_version from justfile"
+            exit 1
+          fi
+
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Cache audit database
