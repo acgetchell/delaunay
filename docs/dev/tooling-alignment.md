@@ -237,8 +237,12 @@ The useful updates ported in this pass are:
   locked uv dev group and installing the pinned Cargo tools. The papers workflow
   runs on macOS, installs `chktex` from the TeX distribution when the runner
   does not already provide it, and installs the native bridge-library packages
-  required when compiling Tectonic from Cargo. All uv-backed workflows read the
-  `justfile` `uv_version` pin to match the local Python tooling bootstrap.
+  required when compiling Tectonic from Cargo. GitHub Actions bootstrap only
+  `just` through `.github/actions/setup-just`; after that, workflow-installed
+  tool versions are resolved with `just --evaluate` so the checked-in
+  `justfile` remains the single source of truth without per-tool parser
+  actions. All uv-backed workflows read the `justfile` `uv_version` pin through
+  that path to match the local Python tooling bootstrap.
 - `.codecov.yml` now ratchets Delaunay's coverage policy above the older
   causal-triangulations baseline without copying la-stack's near-total
   threshold. Project coverage targets the current 90% line with only 1%

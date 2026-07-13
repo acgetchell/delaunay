@@ -14,7 +14,7 @@ on:
     # Only run on changes that could affect performance
     paths:
       - ".github/workflows/benchmarks.yml"
-      - ".github/actions/resolve-uv/action.yml"
+      - ".github/actions/setup-just/action.yml"
       - "justfile"
       - "src/**"
       - "benches/**"
@@ -28,7 +28,7 @@ on:
     # Only run on changes that could affect performance
     paths:
       - ".github/workflows/benchmarks.yml"
-      - ".github/actions/resolve-uv/action.yml"
+      - ".github/actions/setup-just/action.yml"
       - "justfile"
       - "src/**"
       - "benches/**"
@@ -69,9 +69,23 @@ jobs:
           cache-bin: false
           # Toolchain from rust-toolchain.toml.
 
+      - name: Set up just
+        id: setup_just
+        uses: ./.github/actions/setup-just
+
       - name: Resolve uv version
         id: uv_version
-        uses: ./.github/actions/resolve-uv
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(just --evaluate uv_version)"
+          if [[ -z "$version" ]]; then
+            echo "::error::Could not resolve uv_version from justfile"
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Install uv (Python package manager)
         uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2

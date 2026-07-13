@@ -61,9 +61,9 @@ jobs:
           cache-bin: false # Avoid restoring stale rustup/cargo shims from cache.
       # toolchain, components, etc. are specified in rust-toolchain.toml
 
-      - name: Resolve and install just
-        id: just_version
-        uses: ./.github/actions/resolve-just
+      - name: Set up just
+        id: setup_just
+        uses: ./.github/actions/setup-just
 
       - name: Export tool versions
         id: tool_versions

@@ -18,7 +18,7 @@ on:
       - main
     paths:
       - ".github/workflows/papers.yml"
-      - ".github/actions/resolve-just/action.yml"
+      - ".github/actions/setup-just/action.yml"
       - "justfile"
       - "notebooks/01_validation.ipynb"
       - "papers/**"
@@ -35,7 +35,7 @@ on:
       - main
     paths:
       - ".github/workflows/papers.yml"
-      - ".github/actions/resolve-just/action.yml"
+      - ".github/actions/setup-just/action.yml"
       - "justfile"
       - "notebooks/01_validation.ipynb"
       - "papers/**"
@@ -68,9 +68,9 @@ jobs:
           cache: true
           cache-bin: false
 
-      - name: Resolve and install just
-        id: just_version
-        uses: ./.github/actions/resolve-just
+      - name: Set up just
+        id: setup_just
+        uses: ./.github/actions/setup-just
 
       - name: Export paper tool versions
         id: tool_versions
