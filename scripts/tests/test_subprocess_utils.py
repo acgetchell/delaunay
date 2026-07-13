@@ -298,6 +298,14 @@ class TestSecurityFeatures:
         with pytest.raises(ValueError, match="Overriding 'executable' is not allowed"):
             run_git_command_with_input(["hash-object", "--stdin"], "test content", executable="/malicious/fake/git")
 
+    def test_run_git_command_with_input_accepts_bytes(self) -> None:
+        """Test that git stdin helpers accept bytes payloads."""
+        result = run_git_command_with_input(["hash-object", "--stdin"], b"test content")
+
+        digest = result.stdout.strip()
+        assert len(digest) == 40
+        assert all(character in "0123456789abcdef" for character in digest)
+
 
 if __name__ == "__main__":
     # Allow running tests directly

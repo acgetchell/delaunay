@@ -438,8 +438,9 @@ For guidance on retry/skip behavior and choosing `RobustKernel`, see
 Vertex deletion is supported and preserves Levels 1–3. It uses an inverse k=1 fast path when
 possible and fan retriangulation otherwise, then runs flip-based Delaunay repair when the active
 `DelaunayRepairPolicy` allows it. If automatic repair is disabled, deletion still runs Level 4
-Level 4 realization validation and the Level 5 Delaunay predicate, rolling back on any violation. If post-deletion repair, validation, or
-orientation canonicalization fails, the operation rolls back to the pre-deletion triangulation.
+realization validation and the Level 5 Delaunay predicate, rolling back on any violation. If
+post-deletion repair, validation, or orientation canonicalization fails, the operation rolls back to
+the pre-deletion triangulation.
 
 ```rust
 use delaunay::prelude::construction::{

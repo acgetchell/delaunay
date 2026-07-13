@@ -23,9 +23,6 @@ jobs:
   clippy-sarif:
     name: Clippy SARIF Analysis
     runs-on: ubuntu-latest
-    env:
-      CLIPPY_SARIF_VERSION: "0.8.0"
-      SARIF_FMT_VERSION: "0.8.0"
     steps:
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -39,15 +36,26 @@ jobs:
           cache-bin: false
           # toolchain, components, etc. are specified in rust-toolchain.toml
 
+      - name: Resolve Clippy SARIF tool versions
+        id: tool_versions
+        run: |
+          {
+            echo "CLIPPY_SARIF=$(grep '^clippy_sarif_version :=' justfile | cut -d '"' -f 2)"
+            echo "SARIF_FMT=$(grep '^sarif_fmt_version :=' justfile | cut -d '"' -f 2)"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Cache clippy tools
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/bin/clippy-sarif
             ~/.cargo/bin/sarif-fmt
-          key: clippy-sarif-${{ runner.os }}-${{ env.CLIPPY_SARIF_VERSION }}-sarif-fmt-${{ env.SARIF_FMT_VERSION }}
+          key: clippy-sarif-${{ runner.os }}-${{ steps.tool_versions.outputs.CLIPPY_SARIF }}-sarif-fmt-${{ steps.tool_versions.outputs.SARIF_FMT }}
 
       - name: Install clippy-sarif tools
+        env:
+          CLIPPY_SARIF_VERSION: ${{ steps.tool_versions.outputs.CLIPPY_SARIF }}
+          SARIF_FMT_VERSION: ${{ steps.tool_versions.outputs.SARIF_FMT }}
         run: |
           if ! command -v clippy-sarif &> /dev/null; then
             cargo install clippy-sarif --locked --version "${CLIPPY_SARIF_VERSION}"

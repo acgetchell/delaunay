@@ -1976,7 +1976,46 @@ mod tests {
         tri
     }
 
-    fn assert_single_simplex_embeds<const D: usize>() {
+    fn realization_detail() -> TriangulationRealizationSimplexDetail {
+        TriangulationRealizationSimplexDetail {
+            key: SimplexKey::default(),
+            uuid: Uuid::nil(),
+            vertices: SimplexVertexKeyBuffer::new(),
+            vertex_uuids: SimplexVertexUuidBuffer::new(),
+        }
+    }
+
+    fn realization_pair_detail() -> TriangulationRealizationSimplexPairDetail {
+        TriangulationRealizationSimplexPairDetail {
+            first_simplex: realization_detail(),
+            second_simplex: realization_detail(),
+        }
+    }
+
+    fn realization_intersection_detail() -> TriangulationRealizationIntersectionDetail {
+        TriangulationRealizationIntersectionDetail {
+            first_simplex: realization_detail(),
+            second_simplex: realization_detail(),
+            shared_vertices: SimplexVertexKeyBuffer::new(),
+            shared_vertex_uuids: SimplexVertexUuidBuffer::new(),
+            first_only_witness_vertices: SimplexVertexKeyBuffer::new(),
+            first_only_witness_vertex_uuids: SimplexVertexUuidBuffer::new(),
+            second_only_witness_vertices: SimplexVertexKeyBuffer::new(),
+            second_only_witness_vertex_uuids: SimplexVertexUuidBuffer::new(),
+        }
+    }
+
+    fn assert_realization_error_kind(
+        source: &TriangulationRealizationValidationError,
+        expected: TriangulationRealizationValidationErrorKind,
+    ) {
+        assert_eq!(
+            TriangulationRealizationValidationErrorKind::from(source),
+            expected
+        );
+    }
+
+    fn assert_single_simplex_realizes<const D: usize>() {
         let mut coords = Vec::with_capacity(D + 1);
         coords.push([0.0; D]);
         for axis in 0..D {
@@ -1991,10 +2030,10 @@ mod tests {
 
     #[test]
     fn is_valid_realization_accepts_single_simplex_dimensions_two_through_five() {
-        assert_single_simplex_embeds::<2>();
-        assert_single_simplex_embeds::<3>();
-        assert_single_simplex_embeds::<4>();
-        assert_single_simplex_embeds::<5>();
+        assert_single_simplex_realizes::<2>();
+        assert_single_simplex_realizes::<3>();
+        assert_single_simplex_realizes::<4>();
+        assert_single_simplex_realizes::<5>();
     }
 
     #[test]
@@ -2333,68 +2372,153 @@ mod tests {
     }
 
     #[test]
-    fn realization_error_kind_covers_variants() {
-        let source = TriangulationRealizationValidationError::DegenerateSimplex {
-            simplex_key: SimplexKey::default(),
-            simplex_uuid: Uuid::nil(),
-            detail: Box::new(TriangulationRealizationSimplexDetail {
-                key: SimplexKey::default(),
-                uuid: Uuid::nil(),
-                vertices: SimplexVertexKeyBuffer::new(),
-                vertex_uuids: SimplexVertexUuidBuffer::new(),
-            }),
-            dimension: 2,
-        };
-
-        assert_eq!(
-            TriangulationRealizationValidationErrorKind::from(&source),
-            TriangulationRealizationValidationErrorKind::DegenerateSimplex,
+    fn realization_error_kind_covers_wrapped_and_topology_variants() {
+        assert_realization_error_kind(
+            &TriangulationRealizationValidationError::Tds(Box::new(
+                TdsError::InconsistentDataStructure {
+                    message: "synthetic TDS failure".to_string(),
+                },
+            )),
+            TriangulationRealizationValidationErrorKind::Tds,
         );
-
-        let duplicate_label_source =
-            TriangulationRealizationValidationError::DuplicateSimplexRealizationLabel {
+        assert_realization_error_kind(
+            &TriangulationRealizationValidationError::Triangulation(Box::new(
+                TriangulationValidationError::Disconnected { simplex_count: 2 },
+            )),
+            TriangulationRealizationValidationErrorKind::Triangulation,
+        );
+        assert_realization_error_kind(
+            &TriangulationRealizationValidationError::UnsupportedTopology {
+                topology: TopologyKind::Spherical,
+                dimension: 2,
+            },
+            TriangulationRealizationValidationErrorKind::UnsupportedTopology,
+        );
+        assert_realization_error_kind(
+            &TriangulationRealizationValidationError::TopologyLifting {
                 simplex_key: SimplexKey::default(),
                 simplex_uuid: Uuid::nil(),
-                detail: Box::new(TriangulationRealizationSimplexDetail {
-                    key: SimplexKey::default(),
-                    uuid: Uuid::nil(),
-                    vertices: SimplexVertexKeyBuffer::new(),
-                    vertex_uuids: SimplexVertexUuidBuffer::new(),
-                }),
+                vertex_key: VertexKey::default(),
+                vertex_uuid: Uuid::nil(),
+                source: GlobalTopologyModelError::NonFiniteCoordinate {
+                    axis: 0,
+                    value: f64::NAN,
+                },
+            },
+            TriangulationRealizationValidationErrorKind::TopologyLifting,
+        );
+    }
+
+    #[test]
+    fn realization_error_kind_covers_simplex_geometry_variants() {
+        assert_realization_error_kind(
+            &TriangulationRealizationValidationError::DuplicateSimplexRealizationLabel {
+                simplex_key: SimplexKey::default(),
+                simplex_uuid: Uuid::nil(),
+                detail: Box::new(realization_detail()),
                 vertex_key: VertexKey::default(),
                 vertex_uuid: Uuid::nil(),
                 first_index: 0,
                 duplicate_index: 2,
-            };
-
-        assert_eq!(
-            TriangulationRealizationValidationErrorKind::from(&duplicate_label_source),
+            },
             TriangulationRealizationValidationErrorKind::DuplicateSimplexRealizationLabel,
         );
-
-        let invalid_period_source =
-            TriangulationRealizationValidationError::InvalidPeriodicDomainPeriod {
+        assert_realization_error_kind(
+            &TriangulationRealizationValidationError::DegenerateSimplex {
                 simplex_key: SimplexKey::default(),
                 simplex_uuid: Uuid::nil(),
-                detail: Box::new(TriangulationRealizationSimplexDetail {
-                    key: SimplexKey::default(),
-                    uuid: Uuid::nil(),
-                    vertices: SimplexVertexKeyBuffer::new(),
-                    vertex_uuids: SimplexVertexUuidBuffer::new(),
-                }),
+                detail: Box::new(realization_detail()),
+                dimension: 2,
+            },
+            TriangulationRealizationValidationErrorKind::DegenerateSimplex,
+        );
+        assert_realization_error_kind(
+            &TriangulationRealizationValidationError::CoordinateValidation {
+                simplex_key: SimplexKey::default(),
+                simplex_uuid: Uuid::nil(),
+                vertex_key: VertexKey::default(),
+                vertex_uuid: Uuid::nil(),
+                source: CoordinateValidationError::InvalidCoordinate {
+                    coordinate_index: 0,
+                    coordinate_value: InvalidCoordinateValue::Nan,
+                    dimension: 2,
+                },
+            },
+            TriangulationRealizationValidationErrorKind::CoordinateValidation,
+        );
+        assert_realization_error_kind(
+            &TriangulationRealizationValidationError::PredicateFailed {
+                simplex_key: SimplexKey::default(),
+                simplex_uuid: Uuid::nil(),
+                detail: Box::new(realization_detail()),
+                source: CoordinateConversionError::NonFiniteValue {
+                    coordinate_index: 0,
+                    coordinate_value: InvalidCoordinateValue::Nan,
+                },
+            },
+            TriangulationRealizationValidationErrorKind::PredicateFailed,
+        );
+        assert_realization_error_kind(
+            &TriangulationRealizationValidationError::SingularBarycentricBasis {
+                simplex_key: SimplexKey::default(),
+                simplex_uuid: Uuid::nil(),
+                detail: Box::new(realization_detail()),
+                dimension: 2,
+            },
+            TriangulationRealizationValidationErrorKind::SingularBarycentricBasis,
+        );
+    }
+
+    #[test]
+    fn realization_error_kind_covers_intersection_periodic_and_layer_variants() {
+        assert_realization_error_kind(
+            &TriangulationRealizationValidationError::SimplexIntersectionOutsideSharedFace {
+                first_simplex_key: SimplexKey::default(),
+                first_simplex_uuid: Uuid::nil(),
+                second_simplex_key: SimplexKey::default(),
+                second_simplex_uuid: Uuid::nil(),
+                detail: Box::new(realization_intersection_detail()),
+            },
+            TriangulationRealizationValidationErrorKind::SimplexIntersectionOutsideSharedFace,
+        );
+        assert_realization_error_kind(
+            &TriangulationRealizationValidationError::PeriodicSimplexSpansDomain {
+                simplex_key: SimplexKey::default(),
+                simplex_uuid: Uuid::nil(),
+                detail: Box::new(realization_detail()),
+                axis: 0,
+                span: 1.0,
+                period: 1.0,
+            },
+            TriangulationRealizationValidationErrorKind::PeriodicSimplexSpansDomain,
+        );
+        assert_realization_error_kind(
+            &TriangulationRealizationValidationError::InvalidPeriodicDomainPeriod {
+                simplex_key: SimplexKey::default(),
+                simplex_uuid: Uuid::nil(),
+                detail: Box::new(realization_detail()),
                 source: PeriodicDomainPeriodError::NonPositivePeriod {
                     axis: 0,
                     period: 0.0,
                 },
-            };
-
-        assert_eq!(
-            TriangulationRealizationValidationErrorKind::from(&invalid_period_source),
+            },
             TriangulationRealizationValidationErrorKind::InvalidPeriodicDomainPeriod,
         );
-
-        let unexpected_source =
-            TriangulationRealizationValidationError::UnexpectedValidationLayer {
+        assert_realization_error_kind(
+            &TriangulationRealizationValidationError::PeriodicTranslateRangeOverflow {
+                first_simplex_key: SimplexKey::default(),
+                first_simplex_uuid: Uuid::nil(),
+                second_simplex_key: SimplexKey::default(),
+                second_simplex_uuid: Uuid::nil(),
+                detail: Box::new(realization_pair_detail()),
+                axis: 0,
+                lower_bound: f64::from(i32::MIN) - 1.0,
+                upper_bound: 0.0,
+            },
+            TriangulationRealizationValidationErrorKind::PeriodicTranslateRangeOverflow,
+        );
+        assert_realization_error_kind(
+            &TriangulationRealizationValidationError::UnexpectedValidationLayer {
                 kind: InvariantKind::DelaunayProperty,
                 source: Box::new(InvariantError::Delaunay(
                     DelaunayTriangulationValidationError::VerificationFailed {
@@ -2407,10 +2531,7 @@ mod tests {
                         )),
                     },
                 )),
-            };
-
-        assert_eq!(
-            TriangulationRealizationValidationErrorKind::from(&unexpected_source),
+            },
             TriangulationRealizationValidationErrorKind::UnexpectedValidationLayer,
         );
     }

@@ -1918,7 +1918,7 @@ rules:
     metadata:
       category: maintainability
       rationale: >-
-        The validation stack now separates Level 4 Embedding Validity from
+        The validation stack now separates Level 4 Valid Realization from
         Level 5 Geometric Predicates. Public docs and citation prose should not
         keep the old four-level hierarchy wording.
     paths:

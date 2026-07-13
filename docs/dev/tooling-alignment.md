@@ -52,16 +52,16 @@ The useful updates ported in this pass are:
   Rust 1.96.0. `Cargo.toml`, `rust-toolchain.toml`, `clippy.toml`, contributor
   docs, and agent guidance all use the same baseline so the `la-stack` 0.4.3
   dependency update in #424 has no MSRV conflict.
-- The local `cargo-nextest` pin and CI workflow environment variables now use
-  0.9.140, matching the current reviewed release. `cargo-llvm-cov` stays on 0.8.7,
+- The local `cargo-nextest` pin and CI installers now read version pins from
+  `justfile`, with `cargo-nextest` on 0.9.140 and `cargo-llvm-cov` on 0.8.7,
   which is still shared across the repositories.
 - CI command-runner, Markdown, and spelling tool pins now track the newer
   current reviewed versions:
-  `just` 1.55.1, `rumdl` 0.2.28, and `typos-cli` 1.48.0. The `rumdl` bump keeps
+  `just` 1.56.0, `rumdl` 0.2.32, and `typos-cli` 1.48.0. The `rumdl` bump keeps
   Delaunay on the sibling repository's current Markdown linter release after
   local `just check` exposed the older 0.2.10 pin as stale.
 - uv-managed Python support-tool pins now use exact reviewed versions for the
-  shared dev tools: `ruff` 0.15.20, `semgrep` 1.168.0, and `ty` 0.0.56.
+  shared dev tools: `ruff` 0.15.21, `semgrep` 1.169.0, and `ty` 0.0.59.
   Semgrep is intentionally ahead of the older sibling baseline so its transitive
   dependency graph stays on the current reviewed toolchain baseline. Delaunay
   previously used lower-bound specifiers for those tools, which allowed local
@@ -83,9 +83,10 @@ The useful updates ported in this pass are:
   the CI job. The GitHub selected-actions allowlist includes
   `taiki-e/cache-cargo-install-action@*`, so the cached Cargo-tool installer is
   permitted by repository policy.
-- `.github/workflows/audit.yml` now installs `cargo-audit` 0.22.2 through the
-  same cached Cargo-tool installer, and `.github/workflows/zizmor.yml` imports
-  the dedicated GitHub Actions security scan from `la-stack`.
+- `.github/workflows/audit.yml` now installs `cargo-audit` through the same
+  cached Cargo-tool installer, using the `justfile` `cargo_audit_version` pin,
+  and `.github/workflows/zizmor.yml` imports the dedicated GitHub Actions
+  security scan from `la-stack`.
 - `semgrep.yaml` now carries the low-noise hardening rules already proven useful
   in sibling repositories: checkout credential persistence, `pull_request_target`
   avoidance, `github-script` expression interpolation, locked `uv sync`, direct
@@ -127,6 +128,10 @@ The useful updates ported in this pass are:
 - `scripts/postprocess_changelog.py` follows the la-stack release-heading
   model, preserving real semver/Unreleased headings while demoting bracketed
   entry-local headings that only look like release boundaries.
+- `scripts/postprocess_changelog.py` also carries la-stack's newer generated
+  changelog cleanup for balanced Markdown links, multi-backtick code spans,
+  tilde fences, Dependabot metadata footers, escaped email autolinks, and
+  rumdl-friendly peer-list spacing.
 - Python support utilities parse invariant-bearing external data at their
   boundaries: Codacy SARIF is recursively checked as strict JSON, and
   `ci_performance_suite` metrics are loaded into typed count records before
@@ -145,6 +150,10 @@ The useful updates ported in this pass are:
   constructors.
 - release documentation describing the no-temporary-tag changelog flow and
   final annotated tag creation from the generated changelog.
+- `scripts/check_docs_version_sync.py` and `just docs-version-check` now match
+  the la-stack release guard for package metadata, lockfile, citation,
+  release-pinned README link, active dependency-snippet, and benchmark
+  current-tag drift.
 - `scripts/tag_release.py` now normalizes archived changelog paths with
   `as_posix()` before rendering GitHub URLs, with a regression test that
   exercises a Windows-style archive path.
@@ -216,7 +225,8 @@ The useful updates ported in this pass are:
   for PR gating unless a specific baseline audit requests them. If the Codacy
   UI exposes a separate duplicate-code metric, treat it the same way.
 - CI and local setup pins should track the same supported tool versions when
-  practical. The current workflow pins align coverage and test tooling on
+  practical. The `justfile` version variables are the source of truth for
+  workflow-installed tools. The current pins align coverage and test tooling on
   `cargo-llvm-cov` 0.8.7 and `cargo-nextest` 0.9.140, and paper tooling on
   `tectonic` 0.16.9 and `tex-fmt` 0.5.7. CI, Codecov, papers, and local setup
   install the same Cargo-tool pins with the sibling repositories'
@@ -227,8 +237,8 @@ The useful updates ported in this pass are:
   locked uv dev group and installing the pinned Cargo tools. The papers workflow
   runs on macOS, installs `chktex` from the TeX distribution when the runner
   does not already provide it, and installs the native bridge-library packages
-  required when compiling Tectonic from Cargo. All uv-backed workflows use uv
-  0.11.28 to match the local Python tooling bootstrap.
+  required when compiling Tectonic from Cargo. All uv-backed workflows read the
+  `justfile` `uv_version` pin to match the local Python tooling bootstrap.
 - `.codecov.yml` now ratchets Delaunay's coverage policy above the older
   causal-triangulations baseline without copying la-stack's near-total
   threshold. Project coverage targets the current 90% line with only 1%

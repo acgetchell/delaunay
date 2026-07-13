@@ -117,19 +117,21 @@ operation has certified which part of the structure:
    `TopologyGuarantee` (pseudomanifold, PL manifold, or strict PL manifold) through incidence,
    connected components, Euler-characteristic, and link checks.
 4. **Level 4 — Valid Realization**: the complex is geometrically valid in the chosen coordinate
-   model. Euclidean/toroidal topology validates affine-chart realizations, with toroidal checks
-   lifted to periodic covering-space charts; the bounded spherical prototype validates simplices on
-   `S^D \subset R^(D+1)`.
+   model. `Triangulation::is_valid_realization()` owns realization-only fast-fail validation, and
+   `Triangulation::validate_realization()` owns cumulative Levels 1–4 certification. Euclidean and
+   toroidal affine-chart realizations are checked by these validator APIs, with toroidal checks
+   lifted to periodic covering-space charts; spherical realization validation is owned by the
+   spherical backend for simplices on `S^D \subset R^(D+1)`.
 5. **Level 5 — Geometric Predicates**: the valid realization satisfies the selected
    geometry-specific predicate family. The implemented family today is Delaunay, with
    Euclidean/toroidal empty-circumsphere predicates and spherical empty-cap / ambient-hull-facet
    predicates.
 
-`Triangulation::is_valid_topology()` is a Level 3 intrinsic PL-topology check.
+`Triangulation::is_valid_topology()` is the Level 3 intrinsic PL-topology check.
+`Triangulation::is_valid_realization()` is the Level 4 realization-only check, and
+`Triangulation::validate_realization()` is the cumulative Levels 1–4 check.
 `DelaunayTriangulation::is_valid_delaunay()` is the implemented Level 5 geometric-predicate check
-for an already-formed Delaunay triangulation. `Triangulation` also exposes Level 4 realization
-validation through `is_valid_realization` /
-`validate_realization`.
+for an already-formed Delaunay triangulation.
 Cumulative validation is exposed through the `validate` / `validation_report` APIs described in
 [`docs/validation.md`](validation.md).
 

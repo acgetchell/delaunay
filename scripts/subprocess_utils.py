@@ -13,6 +13,7 @@ All scripts should use these functions instead of calling subprocess directly.
 
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ class ExecutableNotFoundError(Exception):
 
 
 type ExceptionFamily = tuple[type[BaseException], ...]
+type RunKwargs = dict[str, Any]
 
 
 _GIT_DISCOVERY_ERRORS: ExceptionFamily = (ExecutableNotFoundError, subprocess.CalledProcessError)
@@ -46,7 +48,7 @@ def get_safe_executable(command: str) -> str:
     return full_path
 
 
-def _build_run_kwargs(function_name: str, **kwargs: Any) -> dict[str, Any]:
+def _build_run_kwargs(function_name: str, **kwargs: Any) -> RunKwargs:
     """
     Build secure kwargs for subprocess.run with consistent hardening.
 
@@ -236,7 +238,7 @@ def check_git_history() -> bool:
 
 def run_git_command_with_input(
     args: list[str],
-    input_data: str,
+    input_data: str | bytes,
     cwd: Path | None = None,
     **kwargs: Any,
 ) -> subprocess.CompletedProcess[str]:
@@ -245,7 +247,7 @@ def run_git_command_with_input(
 
     Args:
         args: Git command arguments (without 'git' prefix)
-        input_data: Data to send to stdin
+        input_data: Text to encode or bytes to send to stdin without translation
         cwd: Working directory for the command
         **kwargs: Additional arguments passed to subprocess.run
                  (e.g., text=True, check=True, timeout=60)
@@ -264,12 +266,18 @@ def run_git_command_with_input(
     """
     git_path = get_safe_executable("git")
     run_kwargs = _build_run_kwargs("run_git_command_with_input", **kwargs)
-    return subprocess.run(  # noqa: S603,PLW1510  # Uses validated full executable path, no shell=True, check is in run_kwargs
-        [git_path, *args],
-        cwd=cwd,
-        input=input_data,
-        **run_kwargs,
-    )
+    encoding: str = run_kwargs.get("encoding") or "utf-8"
+    errors: str = run_kwargs.get("errors") or "strict"
+    payload = input_data if isinstance(input_data, bytes) else input_data.encode(encoding, errors)
+    with tempfile.TemporaryFile() as stdin:
+        stdin.write(payload)
+        stdin.seek(0)
+        return subprocess.run(  # noqa: S603,PLW1510  # Uses validated full executable path, no shell=True, check is in run_kwargs
+            [git_path, *args],
+            cwd=cwd,
+            stdin=stdin,
+            **run_kwargs,
+        )
 
 
 # Project navigation utilities

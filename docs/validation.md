@@ -598,11 +598,12 @@ section of `REFERENCES.md`.
 
 ### Pachner and Orientation Failure Modes
 
-Pachner and raw bistellar transactions keep two orientation contracts distinct. Level 2 coherent
-orientation is combinatorial: adjacent simplices must induce opposite orientations on their shared
-facets. Level 4 geometric orientation is coordinate-based: affected maximal simplices must have
-positive signed volume after any allowed vertex-slot reordering, and the realized simplices must not
-fold or overlap outside shared faces.
+Pachner and raw bistellar transactions keep orientation and realization contracts distinct. Level 2
+coherent orientation is combinatorial: adjacent simplices must induce opposite orientations on their
+shared facets. The triangulation storage contract also promotes affected maximal simplices to
+positive geometric orientation before the edited state is accepted. Level 4 realization validation is
+then a separate check: affected maximal simplices must have nonzero volume, and the realized
+simplices must not fold or overlap outside shared faces.
 
 A local move can satisfy one contract while violating the other. The ordinary `PachnerProposal::attempt_on`
 path canonicalizes replacement simplex orientation, preserves realized-geometry validity, and rolls

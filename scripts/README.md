@@ -27,6 +27,7 @@ just changelog
 just changelog-unreleased vX.Y.Z
 just tag vX.Y.Z
 
+uv run check-docs-version-sync --help
 uv run postprocess-changelog --help
 uv run archive-changelog --help
 uv run tag-release vX.Y.Z --help
@@ -34,6 +35,9 @@ uv run tag-release vX.Y.Z --help
 
 `just changelog` runs `git-cliff`, applies markdown hygiene, and archives
 completed minor release series under `docs/archive/changelog/`.
+
+`just docs-version-check` runs `check-docs-version-sync`, which compares the
+Cargo package version against release-facing docs and metadata.
 
 Use `just changelog-unreleased vX.Y.Z` while preparing a release PR before the
 final tag exists. Use `just tag vX.Y.Z` after the release PR is merged to

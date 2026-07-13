@@ -68,7 +68,7 @@ changed surface.
 
 | Touched surface | Iteration validation | Final validation |
 |-----|-----|-----|
-| Markdown documentation (`*.md`) | `just markdown-check` | `just markdown-ci` |
+| Markdown documentation (`*.md`) | `just markdown-check` | `just markdown-ci`; add `just docs-version-check` for release/versioned references |
 | Python under `scripts/` | Targeted pytest or `just test-python`; add `just python-check` for logic/style | `just python-check` and `just test-python` |
 | Jupyter notebooks (`notebooks/**/*.ipynb`) | `just notebook-lint` | `just notebook-check` |
 | Paper sources and figures (`papers/**/*`, paper notebooks) | `just paper-check` | `just papers` |
@@ -200,6 +200,16 @@ or
 cargo doc
 ```
 
+Release-facing version references are checked separately:
+
+```bash
+just docs-version-check
+```
+
+This compares the Cargo package version against `Cargo.lock`, `pyproject.toml`,
+`uv.lock`, `CITATION.cff`, release-pinned README links, active documentation
+dependency snippets, and current-tag benchmark workflow examples.
+
 ---
 
 ## Full CI Validation
@@ -216,6 +226,7 @@ This runs:
 - formatting checks
 - GitHub Actions checks
 - Markdown checks
+- release-version reference synchronization
 - JSON/TOML/YAML/CFF checks
 - Python lint/typecheck
 - notebook hygiene and fast headless execution
@@ -708,6 +719,7 @@ just action-lint
 | Check formatting | `just fmt-check` |
 | Apply formatters/auto-fixes | `just fix` |
 | Validate Markdown-only changes | `just markdown-ci` |
+| Validate release-version references | `just docs-version-check` |
 | Validate configuration-only changes | `just lint-config` |
 | Validate Python scripts/tests | `just python-check` and `just test-python` |
 | Validate notebook changes | `just notebook-check` |
@@ -733,6 +745,7 @@ CI enforces:
 
 - GitHub Actions checks
 - Markdown, JSON, TOML, YAML, CFF, and spell checks
+- release-version reference synchronization
 - Python lint, type checks, and tests
 - notebook hygiene and fast headless execution
 - core Rust formatting, Clippy, rustdoc, and Semgrep checks
