@@ -41,6 +41,9 @@ Both repositories now share the same core Rust and Python support-tooling loop:
 - `justfile` is the local entry point for formatting, linting, tests,
   coverage, Semgrep, changelog, setup commands, and supported Cargo feature
   surface checks.
+- `just check`, `just lint-config`, and `just ci` verify the justfile with
+  `just --fmt --check`; `just fix` applies the matching `just --fmt` formatter.
+  This keeps the check/fix command contract aligned with the dotfiles repository.
 - `scripts/` contains typed Python helpers for changelog, tag, benchmark,
   coverage, subprocess, and hardware workflows.
 

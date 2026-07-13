@@ -36,19 +36,22 @@ jobs:
           cache-bin: false
           # toolchain, components, etc. are specified in rust-toolchain.toml
 
+      - name: Set up just
+        uses: ./.github/actions/setup-just
+
       - name: Resolve Clippy SARIF tool versions
         id: tool_versions
         shell: bash
         run: |
           set -euo pipefail
 
-          clippy_sarif="$(grep '^clippy_sarif_version :=' justfile | cut -d '"' -f 2 || true)"
+          clippy_sarif="$(just --evaluate clippy_sarif_version)"
           if [[ -z "$clippy_sarif" ]]; then
             echo "::error::Could not resolve clippy_sarif_version from justfile"
             exit 1
           fi
 
-          sarif_fmt="$(grep '^sarif_fmt_version :=' justfile | cut -d '"' -f 2 || true)"
+          sarif_fmt="$(just --evaluate sarif_fmt_version)"
           if [[ -z "$sarif_fmt" ]]; then
             echo "::error::Could not resolve sarif_fmt_version from justfile"
             exit 1

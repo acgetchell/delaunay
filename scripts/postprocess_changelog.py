@@ -1067,7 +1067,11 @@ def _has_previous_peer_list_item(lines: list[str], idx: int, peer_indent: int) -
         prev_indent = _list_item_indent(prev)
         if prev_indent == peer_indent:
             return True
-        if prev_indent is not None or prev.startswith(" "):
+        if prev_indent is not None:
+            if prev_indent < peer_indent:
+                return False
+            continue
+        if prev.startswith(" "):
             continue
         return False
 

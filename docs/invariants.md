@@ -178,11 +178,11 @@ map, and test expectations.
 
 ### Valid realization
 
-Levels 1-3 validate the abstract oriented simplicial complex: elements, incidence, neighbor
-reciprocity, coherent orientation, manifoldness, links, connectedness, and Euler consistency. These
-checks do not by themselves prove that the complex is faithfully realized in its coordinates. A
-topologically valid complex can still fold over itself, contain a zero-volume maximal simplex, or
-identify simplices in a way that overlaps in the chosen geometric chart.
+Levels 1-3 validate the abstract simplicial complex with coherent orientation: elements, incidence,
+neighbor reciprocity, manifoldness, links, connectedness, and Euler consistency. These checks do not
+by themselves prove that the complex is faithfully realized in its coordinates. A topologically valid
+complex can still fold over itself, contain a zero-volume maximal simplex, or identify simplices in a
+way that overlaps in the chosen geometric chart.
 
 Level 4 is the valid-realization check. It is independent of Level 5 geometric predicates and
 enforces:

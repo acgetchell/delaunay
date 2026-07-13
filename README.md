@@ -191,10 +191,11 @@ just notebook-clear-outputs-all
 ## 🧪 Scientific Basis
 
 The crate treats a finite point-set triangulation as an oriented abstract simplicial complex plus a
-coordinate realization in a supported geometric model. Levels 1-3 certify element validity,
-combinatorial consistency, and intrinsic PL topology without depending on coordinates. Level 4
-certifies geometric validity: every maximal simplex must be nondegenerate and realized simplices may
-intersect only in their shared abstract faces. Level 5
+coordinate realization in a supported geometric model. Level 1 certifies element validity, including
+coordinate storage and local coordinate invariants. Levels 2-3 certify combinatorial consistency and
+intrinsic PL topology without depending on coordinates. Level 4 certifies geometric validity: every
+maximal simplex must be nondegenerate and realized simplices may intersect only in their shared
+abstract faces. Level 5
 certifies geometric optimality or predicate satisfaction, currently the Delaunay empty-circumsphere
 property.
 

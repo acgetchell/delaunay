@@ -145,6 +145,13 @@ class TestRumdlCompatibility:
 
         assert "\n\n- Second item\n" not in result
 
+    def test_preserves_blank_before_first_nested_item_after_parent_item(self) -> None:
+        content = "# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Added\n\n- Parent item\n\n  - First nested detail\n"
+
+        result = postprocess_text(content)
+
+        assert "- Parent item\n\n  - First nested detail\n" in result
+
     def test_does_not_add_blank_before_peer_item_with_body(self) -> None:
         content = (
             "# Changelog\n\n"

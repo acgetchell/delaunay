@@ -76,11 +76,18 @@ assets:
   it into `docs/PERFORMANCE.md`, and archives the previous committed report
   under `docs/archive/performance/`.
 
-Use explicit tag pairs such as `just performance-release "$TAG" "$PREVIOUS_TAG"`
-only for release repair or regeneration. Do not use release-comparison commands
-as a routine pre-`just ci` step. Temp-worktree commands apply tracked changes
-from the current checkout by default; untracked benchmark or script files must
-be added to git before they can affect the generated report.
+Use explicit tag pairs only for release repair or regeneration:
+
+```bash
+TAG=vX.Y.Z
+PREVIOUS_TAG=vX.Y.W
+just performance-release "$TAG" "$PREVIOUS_TAG"
+```
+
+Do not use release-comparison commands as a routine pre-`just ci` step.
+Temp-worktree commands apply tracked changes from the current checkout by
+default; untracked benchmark or script files must be added to git before they
+can affect the generated report.
 
 The default release-signal suite is deliberately curated. It favors stable,
 release-relevant public behavior over every exploratory benchmark in this

@@ -133,10 +133,11 @@ command does not exist.
 
 ## Formatting
 
-Rust formatting checks are non-mutating:
+Rust and justfile formatting checks are non-mutating:
 
 ```bash
 just fmt-check
+just justfile-fmt-check
 ```
 
 Apply formatting through:
@@ -146,7 +147,8 @@ just fix
 ```
 
 Run checks before mutating fixers; formatting drift should be understood before
-`just fix` rewrites files.
+`just fix` rewrites files. The focused mutating recipes are `just fmt` for Rust
+and `just justfile-fmt` for the justfile.
 
 ---
 
@@ -224,6 +226,7 @@ just ci
 This runs:
 
 - formatting checks
+- justfile formatting checks
 - GitHub Actions checks
 - Markdown checks
 - release-version reference synchronization
@@ -717,6 +720,7 @@ just action-lint
 | Run lints | `just check` |
 | Fast compile check | `just check-fast` |
 | Check formatting | `just fmt-check` |
+| Check justfile formatting | `just justfile-fmt-check` |
 | Apply formatters/auto-fixes | `just fix` |
 | Validate Markdown-only changes | `just markdown-ci` |
 | Validate release-version references | `just docs-version-check` |

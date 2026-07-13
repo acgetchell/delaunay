@@ -76,6 +76,8 @@ Alternative: edit `Cargo.toml` manually and update `version = "..."` under
 Update release metadata to match the crate version:
 
 - `CITATION.cff`: update `version` and `date-released`.
+- `CITATION.cff`: keep `abstract` synchronized with the first paragraph under
+  `README.md`'s Introduction; update both together when either changes.
 - `pyproject.toml`: update `[project] version` for the Python utility package.
 
 Review the citation identity fields at the same time: author, ORCID,
