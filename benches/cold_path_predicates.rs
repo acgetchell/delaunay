@@ -7,7 +7,9 @@
 //! both invoke) in 2D–4D, plus a Stage-2-dominant 5D reference. A secondary
 //! centered-query group retains its historical `near_boundary` benchmark
 //! identifier for saved-baseline compatibility, but it does not independently
-//! establish Stage-2 entry.
+//! establish Stage-2 entry. The `exact_fallback` group uses known cospherical
+//! points and validates their boundary classification before timing, so it is
+//! the correctness-certified Stage-2 signal for 2D-4D.
 //!
 //! ## Stage anatomy
 //!
@@ -39,7 +41,7 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
-use delaunay::prelude::geometry::CoordinateRange;
+use delaunay::prelude::geometry::{CoordinateRange, InSphere};
 use delaunay::prelude::query::*;
 use std::hint::black_box;
 
@@ -123,6 +125,44 @@ fn run_insphere_lifted<const D: usize>(simplex: &[Point<D>], queries: &[Point<D>
         };
         black_box(result);
     }
+}
+
+/// Benchmark a known cospherical query that forces exact sign resolution.
+fn bench_exact_fallback_case<const D: usize>(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+) {
+    let simplex = standard_simplex::<D>();
+    let boundary = finite_point([1.0; D]);
+
+    let insphere_result = insphere(&simplex, boundary).or_abort();
+    let lifted_result = insphere_lifted(&simplex, boundary).or_abort();
+    if insphere_result != InSphere::BOUNDARY || lifted_result != InSphere::BOUNDARY {
+        abort_benchmark(format_args!(
+            "{D}D exact-fallback fixture must be cospherical: insphere={insphere_result}, lifted={lifted_result}"
+        ));
+    }
+
+    group.bench_function(format!("insphere_{D}d"), |b| {
+        b.iter(|| {
+            let result = insphere(black_box(&simplex), black_box(boundary)).or_abort();
+            black_box(result)
+        });
+    });
+    group.bench_function(format!("insphere_lifted_{D}d"), |b| {
+        b.iter(|| {
+            let result = insphere_lifted(black_box(&simplex), black_box(boundary)).or_abort();
+            black_box(result)
+        });
+    });
+}
+
+/// Benchmark correctness-certified Stage-2 exact fallback in 2D-4D.
+fn bench_exact_fallback(c: &mut Criterion) {
+    let mut group = c.benchmark_group("predicates/exact_fallback");
+    bench_exact_fallback_case::<2>(&mut group);
+    bench_exact_fallback_case::<3>(&mut group);
+    bench_exact_fallback_case::<4>(&mut group);
+    group.finish();
 }
 
 /// Benchmark the Stage-1 hot path for `insphere` and `insphere_lifted`.
@@ -280,5 +320,10 @@ fn bench_centered_queries(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_hot_path, bench_centered_queries);
+criterion_group!(
+    benches,
+    bench_hot_path,
+    bench_centered_queries,
+    bench_exact_fallback
+);
 criterion_main!(benches);

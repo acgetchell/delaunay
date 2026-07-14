@@ -383,7 +383,7 @@ fn insphere_cofactor_det<const D: usize>(
 /// Compute the exact sign of a matrix determinant
 ///
 /// Uses the two-stage approach:
-/// 1. `det_direct()` + `det_errbound()` for D ≤ 4 (provable fast filter)
+/// 1. `det_direct_with_errbound()` for D ≤ 4 (provable fast filter)
 /// 2. `det_sign_exact()` for exact result
 ///
 /// Returns -1, 0, or +1.
@@ -400,7 +400,7 @@ pub(crate) fn exact_det_sign<const N: usize>(matrix: &Matrix<N>) -> i32 {
     }
 
     // Stage 2: exact sign via Bareiss algorithm in BigRational.
-    matrix.det_sign_exact().map_or(0, i32::from)
+    i32::from(matrix.det_sign_exact().as_i8())
 }
 
 // =============================================================================

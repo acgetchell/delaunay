@@ -21,7 +21,7 @@
 /// exposing the rest of `la-stack` to downstream callers.
 pub use la_stack::LaError;
 use la_stack::Matrix as LaMatrix;
-pub(crate) use la_stack::{DEFAULT_SINGULAR_TOL, Vector as LaVector};
+pub(crate) use la_stack::{DEFAULT_SINGULAR_TOL, SingularityReason, Vector as LaVector};
 use thiserror::Error;
 
 /// Stack-matrix dispatch limit.
@@ -106,10 +106,10 @@ pub(crate) enum StackMatrixDispatchError {
 impl From<LaError> for StackMatrixDispatchError {
     fn from(source: LaError) -> Self {
         match source {
-            LaError::UnsupportedDimension { requested, max } => {
+            LaError::UnsupportedDimension { requested, max, .. } => {
                 Self::UnsupportedDim { k: requested, max }
             }
-            LaError::IndexOutOfBounds { row, col, dim } => Self::Matrix {
+            LaError::IndexOutOfBounds { row, col, dim, .. } => Self::Matrix {
                 source: MatrixError::OutOfBounds {
                     row,
                     column: col,
@@ -166,7 +166,7 @@ pub(crate) fn matrix_get<const D: usize>(
     row: usize,
     column: usize,
 ) -> Result<f64, StackMatrixDispatchError> {
-    m.get_checked(row, column).map_err(Into::into)
+    m.try_get(row, column).map_err(Into::into)
 }
 
 /// Write one finite entry into a stack matrix, preserving backend diagnostics.
@@ -181,38 +181,27 @@ pub(crate) fn matrix_set<const D: usize>(
     column: usize,
     value: f64,
 ) -> Result<(), StackMatrixDispatchError> {
-    m.set_checked(row, column, value).map_err(Into::into)
+    m.set(row, column, value).map_err(Into::into)
 }
 
-/// Return a finite determinant and error-bound pair when the f64 fast filter supports the matrix size.
+/// Return a determinant and its certified error bound when the f64 fast filter supports the matrix size.
 ///
 /// `Ok(None)` means the closed-form direct determinant path is unavailable or
-/// inconclusive for this matrix size, including cases where the direct
-/// determinant overflowed to a non-finite value; callers should continue to
-/// exact arithmetic when the active matrix block is finite.
+/// inconclusive for this matrix size, including arithmetic overflow or
+/// underflow-sensitive evaluation. Callers should continue to exact arithmetic;
+/// `la-stack` matrices are finite by construction in v0.4.4.
 #[inline]
 pub(crate) fn matrix_fast_filter<const D: usize>(
     m: &Matrix<D>,
 ) -> Result<Option<(f64, f64)>, StackMatrixDispatchError> {
-    match (m.det_direct(), m.det_errbound()) {
-        (Ok(Some(det)), Ok(Some(errbound))) if det.is_finite() && errbound.is_finite() => {
-            Ok(Some((det, errbound)))
-        }
-        (Ok(_), Ok(_))
-        | (Err(LaError::NonFinite { row: None, .. }), _)
-        | (_, Err(LaError::NonFinite { row: None, .. })) => Ok(None),
-        (Err(source), _) | (_, Err(source)) => Err(source.into()),
+    match m.det_direct_with_errbound() {
+        Ok(Some(estimate)) => Ok(Some((
+            estimate.determinant(),
+            estimate.absolute_error_bound(),
+        ))),
+        Ok(None) | Err(LaError::NonFinite { .. }) => Ok(None),
+        Err(source) => Err(source.into()),
     }
-}
-
-/// Return whether the direct determinant is finite when the direct formula is available.
-///
-/// Predicate code uses this to decide whether a finite direct determinant has
-/// already established that the active matrix entries are safe for exact
-/// fallback.
-#[inline]
-pub(crate) fn matrix_direct_det_is_finite<const D: usize>(m: &Matrix<D>) -> bool {
-    matches!(m.det_direct(), Ok(Some(det)) if det.is_finite())
 }
 
 /// Compute a determinant, returning `Ok(0.0)` for singular matrices.
@@ -265,11 +254,7 @@ mod tests {
 
     #[test]
     fn la_index_error_maps_to_matrix_error_with_context() {
-        let err = StackMatrixDispatchError::from(LaError::IndexOutOfBounds {
-            row: 3,
-            col: 4,
-            dim: 2,
-        });
+        let err = StackMatrixDispatchError::from(LaError::index_out_of_bounds(3, 4, 2));
 
         assert_eq!(
             err,
@@ -285,7 +270,7 @@ mod tests {
 
     #[test]
     fn stack_matrix_dispatch_error_clones_la_error_source() {
-        let source = LaError::Singular { pivot_col: 3 };
+        let source = LaError::singular_exact(3);
         let error = StackMatrixDispatchError::La { source };
 
         assert_eq!(error.clone(), error);

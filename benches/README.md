@@ -102,8 +102,8 @@ allocation checks, or targeted diagnostics.
 |-----------|---------|-------|-----------------|---------|
 | `allocation_hot_paths.rs` | Construction/query/barycenter allocation contracts | Calibrated 2D-5D canary fixtures | ~1-2 min | Manual allocation checks |
 | `ci_performance_suite.rs` | Public workflow regression contract | Calibrated 2D-5D canaries | ~5-10 min | CI, baselines, `just perf-no-regressions` |
-| `circumsphere_containment.rs` | Compare circumsphere predicate methods | 2D-5D fixed, 3D random, edge cases | ~5 min | Predicate tuning, summaries |
-| `cold_path_predicates.rs` | Track hot/cold predicate paths | 2D-5D hot queries, near-boundary cases | ~2-5 min | Predicate optimization work |
+| `circumsphere_containment.rs` | Circumsphere predicates and solves | 2D-5D predicates, 3D LU/exact solves | ~5 min | Predicate/circumcenter tuning |
+| `cold_path_predicates.rs` | Track predicate paths | Hot, centered, and certified exact cases in 2D-5D | ~2-5 min | Predicate tuning |
 | `delaunay_repair.rs` | Flip-based Delaunay repair plus transaction-pressure cases | 2D-5D repair-convergent fixtures | ~2-5 min | Repair tuning |
 | `pachner_stress.rs` | Unified Pachner move API stress | Accepted 4D microcases plus forward/inverse round trips | Manual | Pachner move workflow tuning |
 | `pl_manifold_repair.rs` | Over-shared facet and targeted topology repair | 2D/3D synthetic repair fixtures | <1 min | PL-manifold repair tuning |
@@ -394,6 +394,10 @@ This suite compares three predicate paths:
 - `insphere_distance`: explicit circumcenter plus distance comparison
 - `insphere_lifted`: lifted-paraboloid determinant formulation
 
+The `circumcenter/solve_path` group separately compares a regular 3D LU solve
+with a near-coplanar fixture that LU classifies as numerically singular and the
+exact rounded solve resolves. Both fixtures are validated before timing.
+
 Fresh local perf-profile run on maintainer Apple M4 Max hardware
 (2026-05-14, Rust 1.95.0):
 
@@ -438,9 +442,13 @@ cargo bench --profile perf --bench cold_path_predicates -- --noplot
 
 `cold_path_predicates.rs` tracks the fast f64 filter path and the exact
 Bareiss fallback path used by `insphere`, `insphere_lifted`, and the orientation
-predicate they invoke. The hot group uses well-separated random queries; the
-near-boundary group deliberately pushes queries close to the circumsphere so
-Stage 2 costs remain visible.
+predicate they invoke. The hot group uses well-separated random queries. The
+historically named `near_boundary` group samples around the circumsphere center
+and remains only for saved-baseline compatibility; it does not establish exact
+fallback. The `exact_fallback` group validates known cospherical 2D-4D fixtures
+before timing them, making it the benchmark's correctness-certified Stage-2
+signal. The 5D hot group remains Stage-2-dominant because the fast determinant
+bound is unavailable at that matrix size.
 
 ## Profiling Suite
 

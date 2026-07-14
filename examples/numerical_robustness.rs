@@ -13,7 +13,7 @@ use delaunay::prelude::construction::{
 };
 use delaunay::prelude::geometry::{
     AdaptiveKernel, CircumcenterError, CoordinateConversionError, CoordinateValidationError,
-    FastKernel, Kernel, Point, RobustKernel, robust_insphere, robust_orientation,
+    FastKernel, Kernel, Point, RobustKernel, circumcenter, robust_insphere, robust_orientation,
 };
 use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 
@@ -39,7 +39,24 @@ fn main() -> Result<(), NumericalRobustnessExampleError> {
     println!();
     compare_insphere_boundary_handling()?;
     println!();
+    demonstrate_circumcenter_exact_fallback()?;
+    println!();
     build_with_adaptive_kernel()?;
+    Ok(())
+}
+
+/// Demonstrates the exact-solve fallback for a numerically near-singular tetrahedron.
+fn demonstrate_circumcenter_exact_fallback() -> Result<(), NumericalRobustnessExampleError> {
+    let near_coplanar = [
+        Point::try_new([0.0, 0.0, 0.0])?,
+        Point::try_new([1.0, 0.0, 0.0])?,
+        Point::try_new([0.0, 1.0, 0.0])?,
+        Point::try_new([0.5, 0.5, 1.0e-14])?,
+    ];
+    let center = circumcenter(&near_coplanar)?;
+
+    println!("Near-coplanar circumcenter:");
+    println!("  finite center from exact fallback: {:?}", center.coords());
     Ok(())
 }
 

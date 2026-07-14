@@ -8,8 +8,8 @@
 use super::conversions::{ValueConversionError, safe_coords_to_f64};
 use super::norms::{hypot, squared_norm};
 use crate::geometry::matrix::{
-    DEFAULT_SINGULAR_TOL, LaError, LaVector, Matrix, MatrixError, StackMatrixDispatchError,
-    matrix_set,
+    DEFAULT_SINGULAR_TOL, LaError, LaVector, Matrix, MatrixError, SingularityReason,
+    StackMatrixDispatchError, matrix_set,
 };
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
@@ -414,7 +414,10 @@ pub fn circumcenter<const D: usize>(points: &[Point<D>]) -> Result<Point<D>, Cir
             .solve(b_vec)
             .map_err(CircumcenterError::from)?
             .into_array(),
-        Err(LaError::Singular { .. }) => {
+        Err(LaError::Singular {
+            reason: SingularityReason::Numerical { .. },
+            ..
+        }) => {
             // Exact-arithmetic fallback: LU rejected the system as
             // near-singular, so we pay for BigRational Gaussian elimination.
             // This path is cold — well-conditioned simplices return above.
@@ -1231,6 +1234,16 @@ mod tests {
             Point::try_new([0.0, 1.0, 0.0]).expect("finite point coordinates"),
             Point::try_new([0.5, 0.5, eps]).expect("finite point coordinates"), // Barely off the z=0 plane
         ];
+
+        let system = Matrix::try_from_rows([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.5, 0.5, eps]])
+            .expect("finite system matrix");
+        assert_matches!(
+            system.lu(DEFAULT_SINGULAR_TOL),
+            Err(LaError::Singular {
+                reason: SingularityReason::Numerical { .. },
+                ..
+            })
+        );
 
         let result = circumcenter(&points);
         // The exact solver should succeed where LU alone would fail or

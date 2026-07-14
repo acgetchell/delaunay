@@ -1244,10 +1244,7 @@ mod tests {
 
     #[test]
     fn coordinate_conversion_error_clones_linear_algebra_source() {
-        let source = LaError::NonFinite {
-            row: Some(1),
-            col: 2,
-        };
+        let source = LaError::non_finite_input_matrix(1, 2);
         let converted = CoordinateConversionError::LinearAlgebraFailure { source };
 
         assert_eq!(converted.clone(), converted);
@@ -1256,10 +1253,7 @@ mod tests {
 
     #[test]
     fn la_errors_map_to_public_coordinate_conversion_errors() {
-        let unsupported = CoordinateConversionError::from(LaError::UnsupportedDimension {
-            requested: 9,
-            max: 7,
-        });
+        let unsupported = CoordinateConversionError::from(LaError::unsupported_dimension(9, 7));
         assert_eq!(
             unsupported,
             CoordinateConversionError::UnsupportedMatrixDimension {
@@ -1268,11 +1262,7 @@ mod tests {
             }
         );
 
-        let index_error = CoordinateConversionError::from(LaError::IndexOutOfBounds {
-            row: 3,
-            col: 4,
-            dim: 2,
-        });
+        let index_error = CoordinateConversionError::from(LaError::index_out_of_bounds(3, 4, 2));
         assert_eq!(
             index_error,
             CoordinateConversionError::MatrixError {

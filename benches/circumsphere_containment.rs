@@ -15,7 +15,7 @@
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
-use delaunay::prelude::geometry::{CoordinateRange, Point};
+use delaunay::prelude::geometry::{CoordinateRange, Point, circumcenter};
 use delaunay::prelude::query::*;
 use std::hint::black_box;
 
@@ -284,6 +284,31 @@ fn benchmark_edge_cases(c: &mut Criterion) {
     bench_edge_case!(c, 5, "near_boundary", simplex_5d, near_boundary_5d);
 }
 
+/// Benchmark circumcenter's regular LU path and numerical-singularity exact fallback.
+fn benchmark_circumcenter_solve_paths(c: &mut Criterion) {
+    let regular = standard_simplex::<3>();
+    let near_singular = vec![
+        finite_point([0.0, 0.0, 0.0]),
+        finite_point([1.0, 0.0, 0.0]),
+        finite_point([0.0, 1.0, 0.0]),
+        finite_point([0.5, 0.5, 1.0e-14]),
+    ];
+
+    // Validate both fixtures before timing. A successful `circumcenter` call
+    // returns a finite-by-construction `Point`.
+    let _regular_center = circumcenter(&regular).or_abort();
+    let _fallback_center = circumcenter(&near_singular).or_abort();
+
+    let mut group = c.benchmark_group("circumcenter/solve_path");
+    group.bench_function("regular_lu_3d", |b| {
+        b.iter(|| black_box(circumcenter(black_box(&regular)).or_abort()));
+    });
+    group.bench_function("near_singular_exact_fallback_3d", |b| {
+        b.iter(|| black_box(circumcenter(black_box(&near_singular)).or_abort()));
+    });
+    group.finish();
+}
+
 /// Numerical consistency test - compare results of all three methods
 fn numerical_consistency_test() {
     println!("\n=== Numerical Consistency Test ===");
@@ -386,6 +411,7 @@ fn benchmark_with_consistency_check(c: &mut Criterion) {
     benchmark_random_queries(c);
     benchmark_different_dimensions(c);
     benchmark_edge_cases(c);
+    benchmark_circumcenter_solve_paths(c);
 }
 
 criterion_group!(benches, benchmark_with_consistency_check);
