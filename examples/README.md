@@ -71,8 +71,9 @@ for ergonomic coordinate access.
 ### `numerical_robustness`
 
 Compares `FastKernel`, `RobustKernel`, and `AdaptiveKernel` on degenerate
-orientation and cospherical insphere queries, then builds a small triangulation
-with the default adaptive kernel.
+orientation and cospherical insphere queries, demonstrates the near-singular
+circumcenter exact-solve fallback, then builds a small triangulation with the
+default adaptive kernel.
 
 - Run: `cargo run --release --example numerical_robustness`
 - Source: [`numerical_robustness.rs`](./numerical_robustness.rs)

@@ -8,8 +8,7 @@
 
 use crate::core::simplex::SimplexValidationError;
 use crate::geometry::matrix::{
-    Matrix, StackMatrixDispatchError, matrix_direct_det_is_finite, matrix_fast_filter, matrix_get,
-    matrix_set, matrix_zero_like,
+    Matrix, StackMatrixDispatchError, matrix_fast_filter, matrix_get, matrix_set, matrix_zero_like,
 };
 use crate::geometry::point::Point;
 use crate::geometry::sos::exact_det_sign;
@@ -58,25 +57,6 @@ fn validate_active_matrix_dimension<const N: usize>(
     }
 
     Err(StackMatrixDispatchError::ActiveBlockDimensionMismatch { k, dim: N })
-}
-
-/// Verifies that the active matrix block is structurally present and finite.
-fn active_matrix_block_is_finite<const N: usize>(
-    matrix: &Matrix<N>,
-    k: usize,
-) -> Result<bool, StackMatrixDispatchError> {
-    validate_active_matrix_dimension::<N>(k)?;
-
-    for i in 0..k {
-        for j in 0..k {
-            let entry = matrix_get(matrix, i, j)?;
-            if !entry.is_finite() {
-                return Ok(false);
-            }
-        }
-    }
-
-    Ok(true)
 }
 
 /// Exact determinant signs for the relative-coordinate lifted insphere matrix.
@@ -255,8 +235,9 @@ pub(crate) fn relative_insphere_determinant_sign<const D: usize>(
 /// Compute insphere classification from a pre-populated insphere matrix.
 ///
 /// Uses [`la_stack::Matrix::det_sign_exact`] for provably correct results when
-/// the matrix entries are finite.  Returns [`InSphere::BOUNDARY`] when the
-/// entries are non-finite and exact arithmetic cannot run.
+/// the matrix entries are finite. `la-stack` matrices are finite by
+/// construction, so an inconclusive or overflowed fast filter always proceeds
+/// to an exact sign.
 ///
 /// `orient_sign` encodes how to interpret a positive determinant:
 /// - `1`: positive det → INSIDE (e.g. standard insphere with POSITIVE simplex orientation)
@@ -275,12 +256,12 @@ pub(crate) fn try_insphere_from_matrix<const N: usize>(
     validate_active_matrix_dimension::<N>(k)?;
 
     // Stage 1: provable f64 fast filter for D ≤ 4.
-    // `det_errbound()` returns a Shewchuk-style error bound derived from the
-    // matrix permanent: |det_direct() − det_exact| ≤ errbound.  If the f64
+    // `det_direct_with_errbound()` returns a paired determinant and
+    // Shewchuk-style error bound derived from the matrix permanent:
+    // |det_direct() − det_exact| ≤ errbound. If the f64
     // determinant clearly exceeds the bound, the sign is guaranteed correct
     // without allocating.  For D ≥ 5, `det_errbound()` returns `None` and
     // we skip directly to exact arithmetic.
-    let direct_det_is_finite = matrix_direct_det_is_finite(matrix);
     if let Some((det, errbound)) = matrix_fast_filter(matrix)? {
         let det_norm = det * f64::from(orient_sign);
         if det_norm > errbound {
@@ -296,23 +277,18 @@ pub(crate) fn try_insphere_from_matrix<const N: usize>(
     // keep Stage 1 lean; for D ≤ 4 with well-separated inputs, the vast
     // majority of calls return before reaching this point.
     cold_path();
-    let exact_is_safe = direct_det_is_finite || active_matrix_block_is_finite(matrix, k)?;
-    if exact_is_safe && let Ok(sign) = matrix.det_sign_exact() {
-        return Ok(sign_to_insphere(sign, orient_sign));
-    }
-
-    // Stage 3: sign is unresolvable (non-finite entries prevent exact
-    // arithmetic from running).
-    cold_path();
-    Ok(InSphere::BOUNDARY)
+    Ok(sign_to_insphere(
+        matrix.det_sign_exact().as_i8(),
+        orient_sign,
+    ))
 }
 
 /// Compute orientation from a pre-populated orientation matrix.
 ///
 /// Uses [`la_stack::Matrix::det_sign_exact`] for provably correct results when
 /// the matrix entries are finite (even if the f64 determinant overflows).
-/// Returns [`Orientation::DEGENERATE`] when the entries are non-finite and
-/// exact arithmetic cannot run.
+/// `la-stack` matrices are finite by construction, so an inconclusive or
+/// overflowed fast filter always proceeds to an exact sign.
 ///
 /// `k` must equal the number of rows/columns actually used in `matrix`.
 #[inline]
@@ -324,7 +300,6 @@ pub(crate) fn try_orientation_from_matrix<const N: usize>(
 
     // Stage 1: provable f64 fast filter for D ≤ 4.
     // See `insphere_from_matrix` for detailed explanation of the error bound.
-    let direct_det_is_finite = matrix_direct_det_is_finite(matrix);
     if let Some((det, errbound)) = matrix_fast_filter(matrix)? {
         if det > errbound {
             return Ok(Orientation::POSITIVE);
@@ -338,14 +313,7 @@ pub(crate) fn try_orientation_from_matrix<const N: usize>(
     // (D ≤ 4) or always for D ≥ 5.  See `insphere_from_matrix` for why this
     // is annotated cold.
     cold_path();
-    let exact_is_safe = direct_det_is_finite || active_matrix_block_is_finite(matrix, k)?;
-    if exact_is_safe && let Ok(sign) = matrix.det_sign_exact() {
-        return Ok(sign_to_orientation(sign));
-    }
-
-    // Stage 3: sign is unresolvable (same reasoning as insphere_from_matrix).
-    cold_path();
-    Ok(Orientation::DEGENERATE)
+    Ok(sign_to_orientation(matrix.det_sign_exact().as_i8()))
 }
 
 /// Represents the position of a point relative to a circumsphere.
@@ -653,11 +621,9 @@ pub fn insphere_distance<const D: usize>(
 /// - **4D-5D**: 1.6x faster than `insphere`
 ///
 /// The performance advantage comes from `insphere_lifted`'s use of relative coordinates and
-/// la-stack v0.2.0's closed-form determinants for D=1-4. Note that `insphere_lifted` is a
-/// fast floating-point predicate that may be less robust than
-/// [`crate::geometry::robust_predicates::robust_insphere`] for nearly-degenerate
-/// configurations; for 3D+ triangulations requiring numerical robustness, use
-/// [`crate::geometry::kernel::RobustKernel`].
+/// la-stack's closed-form determinants for D=1-4. Inconclusive fast-filter
+/// results fall back to an exact determinant sign, including nearly degenerate
+/// configurations.
 ///
 /// # Algorithm
 ///
@@ -845,7 +811,7 @@ pub fn insphere<const D: usize>(
 /// The performance gains come from:
 /// 1. Using relative coordinates which reduce numerical magnitude
 /// 2. Computing smaller (D+1)×(D+1) determinants instead of (D+2)×(D+2)
-/// 3. Benefiting from la-stack v0.2.0's closed-form determinants for D=1-4
+/// 3. Benefiting from la-stack's closed-form determinants for D=1-4
 ///
 /// This method combines the numerical stability of determinant-based predicates with
 /// optimal performance, making it ideal for production use.
@@ -2303,13 +2269,10 @@ mod tests {
         let k = 4;
         with_la_stack_matrix!(k, |m| {
             let err = try_matrix_set(&mut m, 3, 3, f64::NAN).unwrap_err();
-            assert_matches!(
+            assert_eq!(
                 err,
                 StackMatrixDispatchError::La {
-                    source: LaError::NonFinite {
-                        row: Some(3),
-                        col: 3
-                    }
+                    source: LaError::non_finite_input_matrix(3, 3),
                 }
             );
         });
@@ -2414,9 +2377,9 @@ mod tests {
 
     #[test]
     fn test_insphere_from_matrix_stage2_exact_via_overflow() {
-        // Stage 2: det_direct() overflows to non-finite, but all individual
-        // entries are finite.  The entry-by-entry finite check passes,
-        // enabling exact Bareiss to resolve the sign.
+        // Stage 2: the paired fast filter reports non-finite arithmetic, but
+        // the matrix itself is finite by construction. Exact Bareiss resolves
+        // the sign without rescanning its entries.
         let k = 4;
         let big = 1e100;
         with_la_stack_matrix!(k, |m| {
@@ -2489,13 +2452,10 @@ mod tests {
         let k = 3;
         with_la_stack_matrix!(k, |m| {
             let err = try_matrix_set(&mut m, 2, 2, f64::NAN).unwrap_err();
-            assert_matches!(
+            assert_eq!(
                 err,
                 StackMatrixDispatchError::La {
-                    source: LaError::NonFinite {
-                        row: Some(2),
-                        col: 2
-                    }
+                    source: LaError::non_finite_input_matrix(2, 2),
                 }
             );
         });

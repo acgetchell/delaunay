@@ -2143,10 +2143,7 @@ mod tests {
 
     #[test]
     fn circumcenter_error_clones_linear_algebra_source() {
-        let source = LaError::NonFinite {
-            row: Some(1),
-            col: 2,
-        };
+        let source = LaError::non_finite_input_matrix(1, 2);
         let error = CircumcenterError::LinearAlgebraFailure { source };
 
         assert_eq!(error.clone(), error);
@@ -2155,10 +2152,7 @@ mod tests {
 
     #[test]
     fn la_errors_map_to_public_circumcenter_errors() {
-        let unsupported = CircumcenterError::from(LaError::UnsupportedDimension {
-            requested: 9,
-            max: 7,
-        });
+        let unsupported = CircumcenterError::from(LaError::unsupported_dimension(9, 7));
         assert_eq!(
             unsupported,
             CircumcenterError::UnsupportedMatrixDimension {
@@ -2167,11 +2161,7 @@ mod tests {
             }
         );
 
-        let index_error = CircumcenterError::from(LaError::IndexOutOfBounds {
-            row: 3,
-            col: 4,
-            dim: 2,
-        });
+        let index_error = CircumcenterError::from(LaError::index_out_of_bounds(3, 4, 2));
         assert_eq!(
             index_error,
             CircumcenterError::MatrixError {

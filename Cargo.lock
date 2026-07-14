@@ -474,9 +474,9 @@ dependencies = [
 
 [[package]]
 name = "la-stack"
-version = "0.4.3"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a20547b00fd054ecec5b70da9094c06e36a85c6957edc1fb029355d1a49f4c0b"
+checksum = "52fcf8450d810977da5f9b3cebdfb3ca870f58189a50ed87cb8a05d653374213"
 dependencies = [
  "num-bigint",
  "num-rational",
