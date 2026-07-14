@@ -230,6 +230,7 @@ This runs:
 - GitHub Actions checks
 - Markdown checks
 - release-version reference synchronization
+- `Cargo.toml`/`Cargo.lock` synchronization
 - JSON/TOML/YAML/CFF checks
 - Python lint/typecheck
 - notebook hygiene and fast headless execution
@@ -266,8 +267,9 @@ release-profile nextest invocations;
 are explicit no-run smoke recipes for cases where a compile-only check is the
 desired validator; do not run them before `test-integration` unless you
 intentionally want a separate compile-only pass. `test-unit` and
-`test-integration` stay focused for targeted local validation; broad test and
-CI workflows use `test-rust-ci` to avoid a debug-plus-release profile split.
+`test-integration` run focused release-profile nextest buckets for targeted
+local validation; broad test and CI workflows use `test-rust-ci` to avoid
+compiling the same tests through separate profiles.
 
 ```bash
 just ci
@@ -724,6 +726,7 @@ just action-lint
 | Apply formatters/auto-fixes | `just fix` |
 | Validate Markdown-only changes | `just markdown-ci` |
 | Validate release-version references | `just docs-version-check` |
+| Validate `Cargo.toml`/`Cargo.lock` synchronization | `just cargo-lock-check` |
 | Validate configuration-only changes | `just lint-config` |
 | Validate Python scripts/tests | `just python-check` and `just test-python` |
 | Validate notebook changes | `just notebook-check` |
@@ -750,6 +753,7 @@ CI enforces:
 - GitHub Actions checks
 - Markdown, JSON, TOML, YAML, CFF, and spell checks
 - release-version reference synchronization
+- `Cargo.toml`/`Cargo.lock` synchronization
 - Python lint, type checks, and tests
 - notebook hygiene and fast headless execution
 - core Rust formatting, Clippy, rustdoc, and Semgrep checks

@@ -17,8 +17,11 @@ Usage:
 """
 
 import argparse
+import os
 import re
+import stat
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -250,7 +253,10 @@ def _markdown_tokens(text: str) -> list[str]:
         elif text[position] == "`":
             token_end = _backtick_span_end(text, position)
 
-        if token_end is None:
+        if token_end is not None:
+            while token_end < len(text) and not text[token_end].isspace():
+                token_end += 1
+        else:
             token_end = position + 1
             while token_end < len(text) and not text[token_end].isspace():
                 token_end += 1
@@ -1512,7 +1518,25 @@ def postprocess(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     text = postprocess_text(text)
 
-    path.write_text(text, encoding="utf-8")
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            tmp_path = Path(handle.name)
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        tmp_path.chmod(stat.S_IMODE(path.stat().st_mode))
+        tmp_path.replace(path)
+    finally:
+        if tmp_path is not None and tmp_path.exists():
+            tmp_path.unlink()
 
 
 def main() -> None:

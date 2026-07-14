@@ -289,11 +289,11 @@
 //! The initial policy is derived from the active topology guarantee. The default
 //! [`TopologyGuarantee::PLManifold`](crate::prelude::TopologyGuarantee::PLManifold)
 //! uses [`ValidationPolicy::ExplicitOnly`](crate::prelude::validation::ValidationPolicy::ExplicitOnly):
-//! mandatory local topology and nondegenerate-realization checks still run during insertion, while automatic
+//! mandatory local topology and orientation/nondegeneracy realization checks still run during insertion, while automatic
 //! global-topology/changed-scope realization validation is a caller-owned explicit checkpoint.
 //!
 //! This automatic pass runs Level 3 (`Triangulation::is_valid_topology()`), changed-simplex
-//! Level 4 nondegeneracy checks, and changed-vs-current Level 4 pairwise checks. It does
+//! Level 4 orientation/nondegeneracy checks, and changed-vs-current Level 4 pairwise checks. It does
 //! **not** run Level 5 geometric-predicate validation, and old-vs-old Level 4 rescans remain an explicit
 //! `Triangulation::validate_realization()` checkpoint.
 //!

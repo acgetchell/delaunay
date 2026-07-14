@@ -1,6 +1,9 @@
 """Tests for postprocess_changelog.py — trailing blanks, reflow, code blocks, summaries."""
 
-from typing import TYPE_CHECKING
+import stat
+from pathlib import Path
+
+import pytest
 
 from postprocess_changelog import (
     _CodeFence,
@@ -21,9 +24,6 @@ from postprocess_changelog import (
     postprocess,
     postprocess_text,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 class TestStripTrailingBlanks:
@@ -195,6 +195,15 @@ class TestReflowLine:
         result = _reflow_line(line, max_width=40)
         # The link must appear intact in one of the output lines.
         assert any(link in part for part in result.split("\n"))
+
+    @pytest.mark.parametrize("token", ["[API](https://example.com),", "`is_valid()`,"])
+    def test_preserves_punctuation_attached_to_atomic_markdown(self, token: str) -> None:
+        line = f"- Read {token} then continue with enough text to force the line to wrap"
+
+        result = _reflow_line(line, max_width=40)
+
+        assert token in result
+        assert token.replace(",", " ,") not in result
 
     def test_preserves_code_span(self) -> None:
         span = "`orientation_from_matrix()`"
@@ -1100,6 +1109,32 @@ class TestCodeBlockLanguage:
 
 
 class TestIntegration:
+    def test_atomic_replace_preserves_file_mode(self, tmp_path: Path) -> None:
+        changelog = tmp_path / "CHANGELOG.md"
+        changelog.write_text("# Changelog\n\n* Original entry\n", encoding="utf-8")
+        changelog.chmod(0o640)
+
+        postprocess(changelog)
+
+        assert stat.S_IMODE(changelog.stat().st_mode) == 0o640
+
+    def test_failed_atomic_replace_preserves_original(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        changelog = tmp_path / "CHANGELOG.md"
+        original = "# Changelog\n\n* Original entry\n"
+        changelog.write_text(original, encoding="utf-8")
+
+        def fail_replace(_source: Path, _target: Path) -> Path:
+            message = "simulated replacement failure"
+            raise OSError(message)
+
+        monkeypatch.setattr(Path, "replace", fail_replace)
+
+        with pytest.raises(OSError, match="simulated replacement failure"):
+            postprocess(changelog)
+
+        assert changelog.read_text(encoding="utf-8") == original
+        assert list(tmp_path.glob(".CHANGELOG.md.*.tmp")) == []
+
     def test_full_changelog_reflow(self, tmp_path: Path) -> None:
         """Simulate a realistic changelog snippet with long lines."""
         long_entry = (

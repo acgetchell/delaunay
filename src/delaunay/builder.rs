@@ -1993,8 +1993,8 @@ where
 
     /// Builds a triangulation from explicit vertex and simplex specifications.
     ///
-    /// This is a purely combinatorial construction that assembles a valid TDS from
-    /// the given connectivity without Delaunay point insertion. Euclidean explicit
+    /// This explicit-connectivity construction assembles a valid TDS from the given
+    /// vertices and connectivity without Delaunay point insertion. Euclidean explicit
     /// meshes are validated at Levels 1–4 and, by default, Level 5. When
     /// [`ConstructionOptions::without_final_delaunay_enforcement`] is used, the
     /// explicit connectivity is returned after Levels 1–4 validation without
@@ -2128,13 +2128,11 @@ where
             .into());
         }
 
-        // Level 3 (topology, excluding geometric orientation): connectedness,
-        // manifold facets, isolated vertices, Euler characteristic, and
-        // PL-manifold vertex/ridge links when the topology guarantee requires
-        // them.  We call `is_valid_topology_only()` which covers all these;
-        // the only check we intentionally omit is
-        // `validate_geometric_simplex_orientation`.
-        if let Err(e) = candidate.validate_topology_only() {
+        // Level 3 intrinsic topology: connectedness, manifold facets, isolated
+        // vertices, Euler characteristic, and PL-manifold vertex/ridge links
+        // when the topology guarantee requires them. Coordinate-dependent
+        // orientation belongs to the Level 4 realization checks below.
+        if let Err(e) = candidate.validate_topology() {
             return Err(ExplicitConstructionError::TopologyValidation {
                 source: Box::new(e),
             }

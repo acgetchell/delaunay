@@ -808,6 +808,8 @@ fn explicit_builder_parse_error<U, const D: usize>(
     }
 }
 
+/// Builds the origin and unit-basis facet plus an equal-coordinate apex.
+/// An apex sum above one places it across the shared facet from the origin.
 fn shared_facet_vertices<const D: usize>(apex_coordinate_sum: f64) -> Vec<Vertex<(), D>> {
     let dim = u32::try_from(D).expect("test dimension fits in u32");
     let high_apex_coord = apex_coordinate_sum / f64::from(dim);
@@ -825,6 +827,8 @@ fn shared_facet_vertices<const D: usize>(apex_coordinate_sum: f64) -> Vec<Vertex
     vertices
 }
 
+/// Connects the origin and apex to the unit-basis facet as two D-simplices,
+/// exercising a valid realization that can fail the Delaunay predicate.
 fn shared_facet_simplices<const D: usize>() -> Vec<Vec<usize>> {
     let low_simplex = (0..=D).collect();
     let mut high_simplex: Vec<usize> = (1..=D).collect();
@@ -832,6 +836,8 @@ fn shared_facet_simplices<const D: usize>() -> Vec<Vec<usize>> {
     vec![low_simplex, high_simplex]
 }
 
+/// Embeds a crossing 2D triangle strip in the first two coordinates and adds
+/// one unit cone vertex along every additional coordinate axis.
 fn crossing_cone_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
     let base_coords = [
         [2.0, 0.0],
@@ -859,6 +865,8 @@ fn crossing_cone_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
     vertices
 }
 
+/// Extends each crossing-strip triangle by all cone-axis vertices, preserving
+/// its unintended intersection as a D-dimensional realization failure.
 fn crossing_cone_simplices<const D: usize>() -> Vec<Vec<usize>> {
     let base_simplices = [[0, 1, 2], [1, 2, 3], [2, 3, 4], [3, 4, 5]];
     let cone_vertices: Vec<usize> = (6..D + 4).collect();

@@ -298,6 +298,16 @@ class TestSecurityFeatures:
         with pytest.raises(ValueError, match="Overriding 'executable' is not allowed"):
             run_git_command_with_input(["hash-object", "--stdin"], "test content", executable="/malicious/fake/git")
 
+    def test_run_git_command_with_input_rejects_input_override(self) -> None:
+        """Test that callers cannot replace the wrapper-managed input payload."""
+        with pytest.raises(ValueError, match="Overriding 'input' is not allowed"):
+            run_git_command_with_input(["hash-object", "--stdin"], "test content", input="replacement")
+
+    def test_run_git_command_with_input_rejects_stdin_override(self) -> None:
+        """Test that callers cannot replace the wrapper-managed stdin stream."""
+        with pytest.raises(ValueError, match="Overriding 'stdin' is not allowed"):
+            run_git_command_with_input(["hash-object", "--stdin"], "test content", stdin=subprocess.PIPE)
+
     def test_run_git_command_with_input_accepts_bytes(self) -> None:
         """Test that git stdin helpers accept bytes payloads."""
         result = run_git_command_with_input(["hash-object", "--stdin"], b"test content")

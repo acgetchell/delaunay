@@ -196,6 +196,21 @@ pub enum TriangulationRealizationValidationError {
         dimension: usize,
     },
 
+    /// A simplex has negative orientation instead of the canonical positive sign.
+    #[error(
+        "simplex {simplex_uuid} (key {simplex_key:?}) has negative orientation in dimension {dimension}"
+    )]
+    NegativeSimplexOrientation {
+        /// Key of the negatively oriented simplex.
+        simplex_key: SimplexKey,
+        /// UUID of the negatively oriented simplex.
+        simplex_uuid: Uuid,
+        /// Vertex-level diagnostic details for the negatively oriented simplex.
+        detail: Box<TriangulationRealizationSimplexDetail>,
+        /// Const-generic coordinate dimension.
+        dimension: usize,
+    },
+
     /// Coordinate validation failed while preparing an exact predicate input.
     #[error(
         "coordinate validation failed for simplex {simplex_uuid} (key {simplex_key:?}), vertex {vertex_key:?}: {source}"
@@ -363,6 +378,8 @@ pub enum TriangulationRealizationValidationErrorKind {
     DuplicateSimplexRealizationLabel,
     /// A simplex has zero D-volume.
     DegenerateSimplex,
+    /// A simplex has negative orientation instead of the canonical positive sign.
+    NegativeSimplexOrientation,
     /// Coordinate validation failed at the predicate boundary.
     CoordinateValidation,
     /// The robust orientation predicate failed.
@@ -399,6 +416,9 @@ impl From<&TriangulationRealizationValidationError>
             } => Self::DuplicateSimplexRealizationLabel,
             TriangulationRealizationValidationError::DegenerateSimplex { .. } => {
                 Self::DegenerateSimplex
+            }
+            TriangulationRealizationValidationError::NegativeSimplexOrientation { .. } => {
+                Self::NegativeSimplexOrientation
             }
             TriangulationRealizationValidationError::CoordinateValidation { .. } => {
                 Self::CoordinateValidation
@@ -881,9 +901,9 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Errors
     ///
     /// Returns [`TriangulationRealizationValidationError`] if the topology model is
-    /// unsupported, a simplex is geometrically degenerate, a periodic simplex is
-    /// not contained in a single covering chart, or two maximal simplices
-    /// intersect outside their shared face.
+    /// unsupported, a simplex is negatively oriented or geometrically degenerate,
+    /// a periodic simplex is not contained in a single covering chart, or two
+    /// maximal simplices intersect outside their shared face.
     ///
     /// # Examples
     ///
@@ -1017,7 +1037,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         let mut invalid_simplex_keys = FastHashSet::default();
 
         for simplex in &simplices {
-            if let Err(error) = validate_simplex_nondegenerate(simplex) {
+            if let Err(error) = validate_simplex_orientation(simplex) {
                 invalid_simplex_keys.insert(simplex.key);
                 report.violations.push(error);
             }
@@ -1098,13 +1118,14 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         self.is_valid_realization()
     }
 
-    /// Validates the Level 4 nondegeneracy invariant for a local simplex set.
+    /// Validates the Level 4 orientation invariant for a local simplex set.
     ///
     /// This intentionally does not perform pairwise overlap checks; insertion
-    /// uses it as a cheap mutation-time guard so zero-volume simplices fail
-    /// inside the existing rollback transaction. Full realization validation
-    /// remains the responsibility of [`is_valid_realization`](Self::is_valid_realization).
-    pub(crate) fn validate_local_realization_nondegeneracy(
+    /// uses it as a cheap mutation-time guard so negative- or zero-orientation
+    /// simplices fail inside the existing rollback transaction. Full realization
+    /// validation remains the responsibility of
+    /// [`is_valid_realization`](Self::is_valid_realization).
+    pub(crate) fn validate_local_realization_orientation(
         &self,
         simplices: &[SimplexKey],
     ) -> Result<(), TriangulationRealizationValidationError> {
@@ -1120,7 +1141,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
                     .simplex(simplex_key)
                     .ok_or_else(|| TdsError::SimplexNotFound {
                         simplex_key,
-                        context: "local realization nondegeneracy validation".to_string(),
+                        context: "local realization orientation validation".to_string(),
                     })?;
             let realized = RealizedSimplex::try_from_simplex(
                 &self.tds,
@@ -1128,7 +1149,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
                 simplex_key,
                 simplex,
             )?;
-            validate_simplex_nondegenerate(&realized)?;
+            validate_simplex_orientation(&realized)?;
             if let Some(domain) = periodic_domain {
                 validate_periodic_simplex_chart(&realized, domain.periods())?;
             }
@@ -1141,7 +1162,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///
     /// Insertion and repair already assume the pre-existing triangulation was
     /// realization-valid before the local mutation. Under that precondition, only
-    /// the changed simplices can introduce a new nondegenerate-simplex or
+    /// the changed simplices can introduce a new simplex-orientation or
     /// pairwise-intersection violation, so this checks each scoped simplex
     /// against every candidate it can intersect instead of rescanning all old
     /// simplex pairs.
@@ -1184,7 +1205,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             if !local_simplex_keys.contains(&simplex.key) {
                 continue;
             }
-            validate_simplex_nondegenerate(simplex)?;
+            validate_simplex_orientation(simplex)?;
             if let Some(domain) = periodic_domain {
                 validate_periodic_simplex_chart(simplex, domain.periods())?;
             }
@@ -1253,7 +1274,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
                 simplex_key,
                 simplex,
             )?;
-            if let Err(error) = validate_simplex_nondegenerate(&realized) {
+            if let Err(error) = validate_simplex_orientation(&realized) {
                 return Ok(Some(error));
             }
             if let Some(domain) = periodic_domain
@@ -1565,8 +1586,8 @@ fn validate_periodic_simplex_chart<const D: usize>(
     Ok(())
 }
 
-/// Rejects zero-volume simplices before pairwise overlap validation runs.
-fn validate_simplex_nondegenerate<const D: usize>(
+/// Rejects non-positive simplex orientation before pairwise overlap validation runs.
+fn validate_simplex_orientation<const D: usize>(
     simplex: &RealizedSimplex<D>,
 ) -> Result<(), TriangulationRealizationValidationError> {
     let points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
@@ -1575,7 +1596,15 @@ fn validate_simplex_nondegenerate<const D: usize>(
             .collect::<Result<_, _>>()?;
 
     match robust_orientation(&points) {
-        Ok(Orientation::POSITIVE | Orientation::NEGATIVE) => Ok(()),
+        Ok(Orientation::POSITIVE) => Ok(()),
+        Ok(Orientation::NEGATIVE) => Err(
+            TriangulationRealizationValidationError::NegativeSimplexOrientation {
+                simplex_key: simplex.key,
+                simplex_uuid: simplex.uuid,
+                detail: Box::new(simplex.detail()),
+                dimension: D,
+            },
+        ),
         Ok(Orientation::DEGENERATE) => {
             Err(TriangulationRealizationValidationError::DegenerateSimplex {
                 simplex_key: simplex.key,
@@ -2024,7 +2053,9 @@ mod tests {
             coords.push(point);
         }
         let simplex = (0..=D).collect();
-        let tri = tri_from_tds(tds_from_vertices_and_simplices(&coords, &[simplex]));
+        let mut tri = tri_from_tds(tds_from_vertices_and_simplices(&coords, &[simplex]));
+        tri.normalize_and_promote_positive_orientation()
+            .expect("fixture orientation should canonicalize");
         assert!(tri.is_valid_realization().is_ok());
     }
 
@@ -2062,13 +2093,15 @@ mod tests {
             [0.0, 0.0, -1.0],
         ];
         let tds = tds_from_vertices_and_simplices(&coords, &[vec![0, 1, 2, 3], vec![0, 2, 1, 4]]);
-        let tri = tri_from_tds(tds);
+        let mut tri = tri_from_tds(tds);
+        tri.normalize_and_promote_positive_orientation()
+            .expect("fixture orientation should canonicalize");
 
         assert!(tri.is_valid_realization().is_ok());
     }
 
     #[test]
-    fn is_valid_realization_rejects_full_facet_same_side_overlap() {
+    fn full_facet_shortcut_rejects_same_side_overlap() {
         let coords = [
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
@@ -2078,8 +2111,11 @@ mod tests {
         ];
         let tds = tds_from_vertices_and_simplices(&coords, &[vec![0, 1, 2, 3], vec![0, 2, 1, 4]]);
         let tri = tri_from_tds(tds);
-
-        let err = tri.is_valid_realization().unwrap_err();
+        let simplices = tri
+            .collect_realized_simplices()
+            .expect("fixture simplices should realize");
+        let err = validate_topology_aware_simplex_pair(&simplices[0], &simplices[1], None)
+            .expect_err("same-side simplices must overlap outside their shared facet");
 
         assert_matches!(
             err,
@@ -2119,6 +2155,27 @@ mod tests {
         assert_matches!(
             err,
             TriangulationRealizationValidationError::DegenerateSimplex { dimension: 2, .. }
+        );
+    }
+
+    #[test]
+    fn negative_orientation_is_level_four_not_level_three() {
+        let coords = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]];
+        let tds = tds_from_vertices_and_simplices(&coords, &[vec![0, 2, 1]]);
+        let tri = tri_from_tds(tds);
+
+        tri.is_valid_topology()
+            .expect("intrinsic topology must not depend on coordinate orientation");
+        let error = tri
+            .validate_realization()
+            .expect_err("negative coordinate orientation must fail Level 4");
+
+        assert_matches!(
+            error,
+            TriangulationRealizationValidationError::NegativeSimplexOrientation {
+                dimension: 2,
+                ..
+            }
         );
     }
 
@@ -2431,6 +2488,15 @@ mod tests {
                 dimension: 2,
             },
             TriangulationRealizationValidationErrorKind::DegenerateSimplex,
+        );
+        assert_realization_error_kind(
+            &TriangulationRealizationValidationError::NegativeSimplexOrientation {
+                simplex_key: SimplexKey::default(),
+                simplex_uuid: Uuid::nil(),
+                detail: Box::new(realization_detail()),
+                dimension: 2,
+            },
+            TriangulationRealizationValidationErrorKind::NegativeSimplexOrientation,
         );
         assert_realization_error_kind(
             &TriangulationRealizationValidationError::CoordinateValidation {

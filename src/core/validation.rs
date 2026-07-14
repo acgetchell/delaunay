@@ -1132,8 +1132,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         Ok(())
     }
 
-    /// Shared Level-3 topology validation sequence used by both [`is_valid_topology`](Self::is_valid_topology)
-    /// and [`is_valid_topology_only`](Self::is_valid_topology_only).
+    /// Shared Level-3 topology validation sequence.
     ///
     /// Checks connectedness, manifold facet degree, closed boundary, ridge/vertex
     /// links (when required by the topology guarantee), isolated vertices, and
@@ -1453,7 +1452,6 @@ where
     /// This checks the triangulation/topology layer **only**:
     /// - Codimension-1 pseudomanifold condition: each facet is one-sided or two-sided.
     /// - Topology-aware boundary manifoldness: true boundary facets must be closed ("no boundary of boundary").
-    /// - Geometric orientation-sign consistency for stored simplices (signed determinant > 0)
     /// - Ridge-link validation (when `topology_guarantee.requires_ridge_links()`)
     /// - Vertex-link validation during insertion (when `topology_guarantee.requires_vertex_links_during_insertion()`)
     /// - Connectedness (single component in the simplex neighbor graph)
@@ -1510,11 +1508,7 @@ where
     /// # }
     /// ```
     pub fn is_valid_topology(&self) -> Result<(), InvariantError> {
-        self.validate_topology_core()?;
-        // Check geometric orientation after manifold/link checks so topology-specific
-        // diagnostics surface first when multiple invariants are violated.
-        self.validate_geometric_simplex_orientation()?;
-        Ok(())
+        self.validate_topology_core()
     }
 
     /// Returns the first actionable Level 3 Intrinsic PL Topology diagnostic, if any.
@@ -1621,29 +1615,11 @@ where
             }
         }
 
-        if let Err(source) = self.validate_geometric_simplex_orientation() {
-            violations.push(InvariantViolation {
-                kind: InvariantKind::Topology,
-                error: source.into(),
-            });
-        }
-
         if violations.is_empty() {
             Ok(())
         } else {
             Err(TriangulationValidationReport { violations })
         }
-    }
-
-    /// Validates topological invariants **without** geometric orientation checks.
-    ///
-    /// This is identical to [`is_valid_topology`](Self::is_valid_topology) but omits the
-    /// `validate_geometric_simplex_orientation()` step. It is intended for
-    /// explicit combinatorial construction where the user-provided vertex
-    /// orderings may produce negative determinants that are nonetheless
-    /// topologically valid.
-    pub(crate) fn is_valid_topology_only(&self) -> Result<(), InvariantError> {
-        self.validate_topology_core()
     }
 
     /// Validates vertex-link condition at construction completion.
@@ -1777,9 +1753,6 @@ where
         let facet_to_simplices: FacetToSimplicesMap = self.tds.build_facet_to_simplices_map()?;
         let facet_to_simplices = ValidatedFacetDegreeMap::try_from_facet_map(&facet_to_simplices)?;
         self.validate_topology_core_from_validated_facet_map(facet_to_simplices)?;
-        // Check geometric orientation after manifold/link checks so topology-specific
-        // diagnostics surface first when multiple invariants are violated.
-        self.validate_geometric_simplex_orientation()?;
         self.validate_at_completion_from_validated_facet_map(facet_to_simplices)
     }
 
@@ -1914,9 +1887,8 @@ where
         // Keep geometric orientation non-negotiable during incremental insertion,
         // even when global validation is throttled. Run this after topology
         // checks so topology diagnostics still surface first.
-        self.validate_geometric_simplex_orientation()?;
         let simplex_keys: SimplexKeyBuffer = self.tds.simplex_keys().collect();
-        self.validate_local_realization_nondegeneracy(&simplex_keys)
+        self.validate_local_realization_orientation(&simplex_keys)
             .map_err(InvariantError::Realization)?;
 
         Ok(())
@@ -2049,8 +2021,7 @@ where
             validate_ridge_links_for_simplices_in_tds(&self.tds, simplices.iter().copied())?;
         }
 
-        self.validate_geometric_simplex_orientation_for_simplices(simplices)?;
-        self.validate_local_realization_nondegeneracy(simplices)
+        self.validate_local_realization_orientation(simplices)
             .map_err(InvariantError::Realization)?;
 
         Ok(())

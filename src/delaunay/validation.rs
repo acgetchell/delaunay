@@ -143,9 +143,9 @@ where
             .normalize_and_promote_positive_orientation()
     }
 
-    /// Validates Level 3 topology without geometric orientation checks.
-    pub(crate) fn validate_topology_only(&self) -> Result<(), InvariantError> {
-        self.candidate.tri.is_valid_topology_only()
+    /// Validates Level 3 intrinsic topology.
+    pub(crate) fn validate_topology(&self) -> Result<(), InvariantError> {
+        self.candidate.tri.is_valid_topology()
     }
 
     /// Validates completion-time PL-manifold constraints.

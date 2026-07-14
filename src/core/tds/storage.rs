@@ -73,6 +73,7 @@
 //! | **Neighbor Consistency** | `Tds::is_valid()` / `Tds::validate()` | Mutual neighbor relationships |
 //! | **Coherent Orientation** | `Tds::is_valid()` / `Tds::validate()` | Adjacent simplices induce opposite facet orientations |
 //! | **Simplex Vertex Keys** | `Tds::is_valid()` / `Tds::validate()` | Simplices reference only valid vertex keys |
+//! | **Simplex Coordinate Uniqueness** | `Tds::validate()` | Each simplex key set resolves to distinct coordinates |
 //! | **Vertex Incidence** | `Tds::is_valid()` / `Tds::validate()` | `Vertex::incident_simplex` is non-dangling and consistent (when present) |
 //! | **Simplex Validity** | `SimplexBuilder::validate()` (vertex count) + `simplex.is_valid()` / `simplex_report()` | Construction + runtime validation |
 //! | **Vertex Validity** | [`Point::try_new`](crate::geometry::point::Point::try_new) / [`Point`](crate::geometry::point::Point) coordinate conversion (coordinates) + UUID auto-gen + `vertex.is_valid()` / `vertex_report()` | Construction + runtime validation |
@@ -92,6 +93,7 @@
 //!
 //! 1. **Level 1: Element Validity** - [`Simplex::is_valid()`], [`Vertex::is_valid()`]
 //!    - Basic data integrity (coordinates, UUIDs, initialization)
+//!    - Simplex-local vertex keys resolve to distinct coordinates in cumulative [`Tds::validate()`]
 //! 2. **Level 2: Combinatorial Consistency** - [`Tds::is_valid()`] ← **This module**
 //!    - UUID ↔ Key mapping consistency
 //!    - Simplices reference only valid vertex keys (no stale/missing vertex keys)

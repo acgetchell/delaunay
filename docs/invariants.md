@@ -108,8 +108,8 @@ The implementation separates invariants into five validation levels. Keeping the
 prevents geometric checks from leaking into purely combinatorial validation and makes it clear which
 operation has certified which part of the structure:
 
-1. **Level 1 — Element Validity**: individual vertices, simplices, facets, coordinates, and local
-   orientation data are internally consistent.
+1. **Level 1 — Element Validity**: individual vertices, simplices, facets, coordinates, resolved
+   simplex-local coordinate uniqueness, and local orientation data are internally consistent.
 2. **Level 2 — Combinatorial Consistency**: the triangulation data structure has valid
    vertex/simplex mappings, reciprocal neighbor pointers, bounded facet sharing, no duplicate
    simplices, simplex/ridge connectivity, and coherent combinatorial orientation.
@@ -187,6 +187,7 @@ way that overlaps in the chosen geometric chart.
 Level 4 is the valid-realization check. It is independent of Level 5 geometric predicates and
 enforces:
 
+- every Euclidean/toroidal maximal simplex has positive geometric orientation in its affine chart;
 - every maximal simplex has nonzero `D`-volume under the robust orientation predicate;
 - every pair of maximal simplices intersects only in the realization of the face spanned by their
   shared vertices;

@@ -474,7 +474,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 
     /// Validates that no simplex contains vertices with identical coordinates.
     ///
-    /// This is a geometric-level check complementing [`Simplex::try_new()`]'s vertex-key uniqueness
+    /// This is an element-level coordinate check complementing [`Simplex::try_new()`]'s vertex-key uniqueness
     /// check. Two different vertex keys can reference geometrically identical points, producing
     /// a zero-volume simplex that is catastrophic for `SoS` orientation and Pachner moves.
     ///
@@ -1056,7 +1056,8 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// Performs cumulative validation for Levels 1–2.
     ///
     /// This validates:
-    /// - **Level 1**: all vertices (`Vertex::is_valid`) and all simplices (`Simplex::is_valid`)
+    /// - **Level 1**: all vertices (`Vertex::is_valid`), all simplices (`Simplex::is_valid`),
+    ///   and simplex-local coordinate uniqueness
     /// - **Level 2**: structural invariants (`Tds::is_valid`)
     ///
     /// # Errors
@@ -1202,14 +1203,6 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             });
         }
 
-        // 2b. Simplex coordinate uniqueness (no simplices with duplicate-coordinate vertices)
-        if simplex_vertex_keys_ok && let Err(e) = self.validate_simplex_coordinate_uniqueness() {
-            violations.push(InvariantViolation {
-                kind: InvariantKind::SimplexCoordinateUniqueness,
-                error: e.into(),
-            });
-        }
-
         // 3. Vertex incidence (non-dangling `incident_simplex` pointers, when present)
         if let Err(e) = self.validate_vertex_incidence() {
             violations.push(InvariantViolation {
@@ -1339,6 +1332,15 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                     }
                 }));
             }
+        }
+
+        if self.validate_simplex_vertex_keys().is_ok()
+            && let Err(error) = self.validate_simplex_coordinate_uniqueness()
+        {
+            violations.push(InvariantViolation {
+                kind: InvariantKind::SimplexCoordinateUniqueness,
+                error: error.into(),
+            });
         }
 
         if let Err(report) = self.structure_report() {
@@ -3502,7 +3504,7 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_simplex_coordinate_uniqueness_rejects_duplicate_coords() {
+    fn simplex_coordinate_uniqueness_is_level_one_not_level_two() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         // Two distinct vertex keys with identical coordinates
         let v0 = tds
@@ -3520,11 +3522,28 @@ mod tests {
         )
         .unwrap();
 
-        let err = tds.validate_simplex_coordinate_uniqueness().unwrap_err();
+        tds.is_valid()
+            .expect("Level 2 structural validation must be coordinate-independent");
+        tds.structure_report()
+            .expect("Level 2 diagnostics must be coordinate-independent");
+
+        let err = tds
+            .validate()
+            .expect_err("cumulative Levels 1-2 validation must reject duplicate coordinates");
         assert_matches!(
             &err,
             TdsError::DuplicateCoordinatesInSimplex { .. },
             "Expected DuplicateCoordinatesInSimplex, got {err:?}"
+        );
+
+        let report = tds
+            .validation_report()
+            .expect_err("the cumulative report must include the Level 1 coordinate violation");
+        assert!(
+            report
+                .violations
+                .iter()
+                .any(|violation| violation.kind == InvariantKind::SimplexCoordinateUniqueness)
         );
     }
 

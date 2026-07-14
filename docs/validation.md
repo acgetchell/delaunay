@@ -25,12 +25,12 @@ correctness question while building on the previous level:
 1. **Element Validity** - Are individual geometric and combinatorial objects internally valid?
 2. **Combinatorial Consistency** - Does the simplicial complex satisfy the required incidence invariants?
 3. **Intrinsic PL Topology** - Does the abstract complex represent the intended PL topology?
-4. **Valid Realization** - Is the complex realized by nondegenerate simplices whose intersections are shared faces?
+4. **Valid Realization** - Does the complex satisfy model-specific orientation and nondegeneracy constraints with only shared-face intersections?
 5. **Geometric Predicates** - Does a valid realization satisfy the selected geometry-specific predicate family?
 
 | Level | Concern | Depends on realization? |
 |---|---|---|
-| 1 | Local object correctness | No |
+| 1 | Local object correctness | Local coordinates only |
 | 2 | Combinatorial structure | No |
 | 3 | Intrinsic PL topology | No |
 | 4 | Geometric realization | Yes |
@@ -116,8 +116,9 @@ Note: neighbor-pointer consistency is a **Level 2 Combinatorial Consistency** in
 `Tds::is_valid()` / `Tds::validate()`, and is intentionally not part of Level 3.
 
 The same automatic validation pass then runs **Level 4 realization** guards for the changed simplex
-scope. It always checks changed simplices for degeneracy and checks changed-vs-current pairwise
-intersections. It does **not** rescan old-vs-old simplex pairs. It also does **not** run Level 5
+scope. It always checks changed affine-chart simplices for positive orientation and degeneracy, then
+checks changed-vs-current pairwise intersections. It does **not** rescan old-vs-old simplex pairs. It
+also does **not** run Level 5
 Delaunay empty-circumsphere validation. If you need complete Level 4 realization validation or a Level 5
 geometric-predicate check, call `dt.as_triangulation().validate_realization()`, `dt.is_valid_delaunay()`,
 `dt.delaunay_report()`, or `dt.validate()` explicitly.
@@ -265,7 +266,7 @@ The library separates **construction-time** failures from **validation-time** in
   (optional) vertex-link PL-manifold checks + connectedness + isolated-vertex + Euler characteristic checks.
 - `TriangulationRealizationValidationError` (Level 4): wraps
   `TriangulationValidationError` and adds Euclidean/toroidal affine-chart
-  nondegeneracy and overlap checks.
+  orientation, nondegeneracy, and overlap checks.
 - `SphericalDelaunayValidationError` (spherical prototype Levels 3-5): reports
   intrinsic PL-topology failures, spherical realization failures, and spherical
   Delaunay predicate failures for the bounded `S^2`/`S^3` backend.
@@ -297,22 +298,25 @@ Validates basic data integrity of individual vertices and simplices.
 - `Vertex::is_valid()` - Fast-fail vertex coordinate and UUID check
 - `Vertex::vertex_diagnostic()` - First vertex repair/retry diagnostic
 - `Vertex::vertex_report()` - Aggregate vertex validation report
+- `Tds::validate()` / `Tds::validation_report()` - Cumulative Levels 1–2 APIs that can resolve
+  simplex vertex keys for local coordinate-uniqueness checks
 
 ### What It Checks
 
 - **Vertices**: Coordinate validity, UUID presence, dimension consistency
 - **Simplices**: Correct number of vertices (D+1), no duplicate vertices, valid UUID
+- **Resolved simplex coordinates**: Distinct vertex keys in one simplex resolve to distinct points
 
 ### Complexity
 
-- **Time**: O(1) per element
+- **Time**: O(1) per standalone element; O(N×D²) for the cumulative TDS coordinate roll-up
 - **Space**: O(1)
 
 ### When to Use
 
 - Building blocks for higher-level validation
 - Rarely called directly by users
-- Automatically called by Level 2
+- Automatically included by cumulative Levels 1–2 validation
 
 ### Example
 
@@ -366,15 +370,15 @@ by the Triangulation Data Structure.
    manifold boundary facets are open, interior facets have reciprocal
    neighbors, and admissible periodic self-neighbors are closed topology.
 
-`Tds::validate()` (Levels 1–2) additionally checks:
+`Tds::validate()` (Levels 1–2) additionally rolls up these Level 1 checks:
 
 - **Vertex Validity**: All vertices pass `Vertex::is_valid()`
 - **Simplex Validity**: All simplices pass `Simplex::is_valid()`
 - **Simplex Coordinate Uniqueness**: No simplex contains two vertices with identical coordinates
   (exact `OrderedFloat` comparison). Duplicate-coordinate vertices produce zero-volume
   simplices that break SoS and Pachner moves.
-  **Note**: `is_valid()` does **not** check coordinate uniqueness. Use `validate()` (or
-  `validation_report()`) for the stronger guarantee.
+  **Note**: Level 2 `is_valid()` and `structure_report()` do **not** check coordinate uniqueness.
+  Use cumulative `validate()` or `validation_report()` for the stronger Level 1 guarantee.
 
 ### Complexity
 
@@ -539,8 +543,9 @@ Level 5: Geometric Predicate Satisfaction / Delaunay Optimality
 ```
 
 For Euclidean and toroidal affine-chart models, the Level 4 contract is: the vertex map is
-injective, every abstract simplex is realized as a nondegenerate simplex in the active chart, and any
-two realized simplices intersect exactly in the realization of their shared abstract face:
+injective, every abstract simplex is realized with positive orientation and nonzero volume in the
+active chart, and any two realized simplices intersect exactly in the realization of their shared
+abstract face:
 
 ```text
 |sigma| ∩ |tau| = |sigma ∩ tau|
@@ -560,6 +565,8 @@ coordinates.
 
 ### What It Checks
 
+- **Positive affine-chart orientation**: every Euclidean/toroidal maximal simplex has the canonical
+  positive geometric sign in its active chart.
 - **Nondegenerate maximal simplices**: every maximal simplex has nonzero `D`-volume by the robust
   orientation predicate.
 - **No overlap outside shared faces**: any two maximal simplices may intersect only in the
@@ -601,9 +608,9 @@ section of `REFERENCES.md`.
 Pachner and raw bistellar transactions keep orientation and realization contracts distinct. Level 2
 coherent orientation is combinatorial: adjacent simplices must induce opposite orientations on their
 shared facets. The triangulation storage contract also promotes affected maximal simplices to
-positive geometric orientation before the edited state is accepted. Level 4 realization validation is
-then a separate check: affected maximal simplices must have nonzero volume, and the realized
-simplices must not fold or overlap outside shared faces.
+positive geometric orientation before the edited state is accepted. Level 4 realization validation
+then certifies that affine-chart maximal simplices have positive sign and nonzero volume, and that
+realized simplices do not fold or overlap outside shared faces.
 
 A local move can satisfy one contract while violating the other. The ordinary `PachnerProposal::attempt_on`
 path canonicalizes replacement simplex orientation, preserves realized-geometry validity, and rolls
@@ -895,8 +902,8 @@ ensure no isolated vertices, and verify the simplex neighbor graph is connected
 
 ### Validation Passes Level 3, Fails at Level 4
 
-**Problem**: Realized simplex degeneracy or overlap outside shared faces
-**Likely Cause**: Folded realization, duplicate/collinear/coplanar coordinates,
+**Problem**: Invalid realized-simplex orientation, degeneracy, or overlap outside shared faces
+**Likely Cause**: Negative affine-chart orientation, folded realization, duplicate/collinear/coplanar coordinates,
 or a toroidal periodic image that overlaps across the fundamental-domain boundary
 **Fix**: Inspect the realization error's simplex keys, UUIDs, shared vertices, and witness vertices.
 If this happened during insertion, rollback or explicit deletion-based repair can use those witnesses,

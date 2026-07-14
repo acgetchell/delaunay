@@ -193,9 +193,10 @@ just notebook-clear-outputs-all
 The crate treats a finite point-set triangulation as an oriented abstract simplicial complex plus a
 coordinate realization in a supported geometric model. Level 1 certifies element validity, including
 coordinate storage and local coordinate invariants. Levels 2-3 certify combinatorial consistency and
-intrinsic PL topology without depending on coordinates. Level 4 certifies geometric validity: every
-maximal simplex must be nondegenerate and realized simplices may intersect only in their shared
-abstract faces. Level 5
+intrinsic PL topology without depending on coordinates. Level 4 certifies geometric validity:
+affine-chart maximal simplices must be positively oriented, every maximal simplex must satisfy its
+model's nondegeneracy constraints, and realized simplices may intersect only in their shared abstract
+faces. Level 5
 certifies geometric optimality or predicate satisfaction, currently the Delaunay empty-circumsphere
 property.
 
@@ -222,7 +223,7 @@ For the detailed contract, see [`docs/validation.md`](docs/validation.md),
 | 1 | Element Validity: vertex, simplex, facet, coordinate, and local-object invariants | `is_valid()` / element reports |
 | 2 | Combinatorial Consistency: TDS incidences, neighbors, and simplex/ridge connectivity | `validate_structure()` / `structure_report()` |
 | 3 | Intrinsic PL Topology: manifold/pseudomanifold links, components, and Euler consistency | `is_valid_topology()` / `topology_report()` |
-| 4 | Valid Realization: nondegenerate realized simplices with only shared-face intersections | `is_valid_realization()` / `realization_report()` |
+| 4 | Valid Realization: model-valid orientation, nondegeneracy, and only shared-face intersections | `is_valid_realization()` / `realization_report()` |
 | 5 | Geometric Predicates: Delaunay and future geometry-specific optimality predicates | `is_valid_delaunay()` / `delaunay_report()` |
 | 1-5 | Cumulative diagnostics | `dt.validate()` / `dt.validation_report()` |
 

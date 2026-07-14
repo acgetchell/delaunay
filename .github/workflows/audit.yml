@@ -4,6 +4,7 @@ on:
     paths:
       # Run if workflow changes
       - .github/workflows/audit.yml
+      - .github/actions/setup-just/action.yml
       # Run if tool-version source changes
       - justfile
       # Run on changed dependencies
@@ -13,6 +14,7 @@ on:
     paths:
       # Run if workflow changes
       - .github/workflows/audit.yml
+      - .github/actions/setup-just/action.yml
       # Run if tool-version source changes
       - justfile
       # Run on changed dependencies
@@ -45,13 +47,16 @@ jobs:
           cache-bin: false
           # toolchain, components, etc. are specified in rust-toolchain.toml
 
+      - name: Set up just
+        uses: ./.github/actions/setup-just
+
       - name: Resolve cargo-audit version
         id: cargo_audit_version
         shell: bash
         run: |
           set -euo pipefail
 
-          version="$(grep '^cargo_audit_version :=' justfile | cut -d '"' -f 2 || true)"
+          version="$(just --evaluate cargo_audit_version)"
           if [[ -z "$version" ]]; then
             echo "::error::Could not resolve cargo_audit_version from justfile"
             exit 1

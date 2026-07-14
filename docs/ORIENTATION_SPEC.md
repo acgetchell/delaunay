@@ -48,6 +48,10 @@ coordinate-dependent invariant.
 
 Implementation entry points:
 
+- `Triangulation::is_valid_realization()` certifies positive orientation and
+  nondegeneracy as Level 4 affine-chart realization invariants.
+- `Triangulation::validate_local_realization_orientation()` applies the same
+  sign and degeneracy checks to an insertion or repair scope.
 - `Triangulation::validate_geometric_simplex_orientation()` evaluates each simplex
   with `robust_orientation` and rejects negative signs as
   `GeometricError::NegativeOrientation`.
@@ -162,9 +166,9 @@ have been validated. The validation report records it as
   `canonicalize_positive_orientation_for_simplices(&new_simplices)`.
 - Local insertion validation calls both
   `tds.validate_coherent_orientation_for_simplices(simplices)` and
-  `validate_geometric_simplex_orientation_for_simplices(simplices)`.
-- Whole-triangulation topology validation runs `validate_topology_core()` and
-  then `validate_geometric_simplex_orientation()`.
+  `validate_local_realization_orientation(simplices)`.
+- Whole-triangulation topology validation runs `validate_topology_core()`;
+  geometric sign belongs to Level 4 realization validation.
 - Explicit combinatorial construction normalizes orientation, validates TDS
   structure, validates topology, and then calls
   `validate_geometric_nondegeneracy()` before enforcing the Delaunay property.
@@ -217,6 +221,8 @@ Degeneracy handling depends on context:
 - `validate_geometric_simplex_orientation()` does not reject zero determinants by
   itself; it only rejects negative signs. This allows topology diagnostics and
   repair paths to distinguish "wrong sign" from "geometrically collapsed."
+- `is_valid_realization()` rejects both negative and zero determinants through
+  distinct typed Level 4 errors.
 
 When adding a new construction or mutation path, decide explicitly whether a
 zero determinant should be rejected immediately, allowed temporarily for repair,

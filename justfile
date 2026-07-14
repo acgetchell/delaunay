@@ -454,7 +454,7 @@ check-fast:
     cargo check
 
 # CI simulation: comprehensive validation.
-ci: justfile-fmt-check github-actions-check markdown-ci docs-version-check cargo-lock-check json-check toml-ci yaml-ci python-ci notebook-clear-outputs-all notebook-check rust-core-check test-rust-ci test-doc bench-compile examples
+ci: justfile-fmt-check github-actions-check markdown-ci docs-version-check cargo-lock-check json-check toml-ci yaml-ci python-ci notebook-check rust-core-check test-rust-ci test-doc bench-compile examples
     @echo "🎯 CI checks complete!"
 
 # CI followed by an explicit persistent local baseline refresh.
@@ -1710,7 +1710,7 @@ test-slow-release: test-slow
 
 # test-unit: runs Rust lib unit tests.
 test-unit: _ensure-nextest
-    cargo nextest run --profile ci --lib
+    cargo nextest run --release --profile ci --lib
 
 # Check TOML files parse cleanly.
 toml-check: _ensure-uv

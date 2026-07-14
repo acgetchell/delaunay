@@ -264,6 +264,10 @@ def run_git_command_with_input(
         Uses UTF-8 encoding by default for deterministic behavior across environments.
         Override by passing encoding="<other>" via kwargs if needed.
     """
+    for managed_argument in ("input", "stdin"):
+        if managed_argument in kwargs:
+            msg = f"Overriding '{managed_argument}' is not allowed in run_git_command_with_input"
+            raise ValueError(msg)
     git_path = get_safe_executable("git")
     run_kwargs = _build_run_kwargs("run_git_command_with_input", **kwargs)
     encoding: str = run_kwargs.get("encoding") or "utf-8"

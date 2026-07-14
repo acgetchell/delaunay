@@ -137,8 +137,8 @@ The library exposes five validation levels, each a superset of the last:
    Euler characteristic, orientability, and connected components.
 4. **Level 4 - Valid Realization**: the complex is realized without geometric
    degeneracy or unintended intersections in the chosen model, including
-   Euclidean/toroidal affine-chart realization, spherical `S^d` realization,
-   and model-specific realization constraints.
+   positive orientation in Euclidean/toroidal affine charts, spherical `S^d`
+   realization, and model-specific realization constraints.
 5. **Level 5 - Geometric Predicates**: the realization satisfies the selected
    geometric predicate family, currently Euclidean/toroidal/spherical Delaunay
    checks and eventually regular, weighted, constrained, Gabriel, alpha, or
@@ -147,10 +147,10 @@ The library exposes five validation levels, each a superset of the last:
 Level 4 uses orientation and exact barycentric geometry for Euclidean/toroidal
 affine-chart realization, where toroidal checks run in lifted periodic
 covering-space charts, and backend-specific realization checks for curved
-models. Level 5 uses geometry-specific predicates. Levels 1-3 are
-realization-independent
-graph/topology checks. Validation code belongs at the lowest layer that owns the
-invariant.
+models. Level 5 uses geometry-specific predicates. Levels 2-3 are
+realization-independent graph/topology checks. Level 1 checks coordinate
+storage and local coordinate invariants without certifying a global
+realization. Validation code belongs at the lowest layer that owns the invariant.
 Each layer should expose the standard validation surface. Use plain
 `is_valid()` when the owner already names the invariant scope (`Vertex`,
 `Simplex`, and `Tds`); use `is_valid_*` when higher-level owners expose

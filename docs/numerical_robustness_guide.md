@@ -321,7 +321,7 @@ See `duplicate_coordinates_error` in
 
 ### Layer 3: Simplex-level coordinate uniqueness validation
 
-As a post-hoc safety net, `Tds::validate()` (Level 2 validation) includes a
+As a post-hoc safety net, cumulative `Tds::validate()` (Levels 1–2) includes a Level 1
 `SimplexCoordinateUniqueness` check that scans every simplex for pairs of vertices with
 identical coordinates. This uses exact `OrderedFloat`-based comparison (NaN-aware,
 +0.0 == -0.0) via `coords_equal_exact`.

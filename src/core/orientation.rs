@@ -567,7 +567,7 @@ where
 mod tests {
     use super::*;
     use crate::core::simplex::Simplex;
-    use crate::core::tds::{InvariantError, Tds};
+    use crate::core::tds::Tds;
     use crate::geometry::kernel::FastKernel;
     use crate::topology::traits::topological_space::{
         GlobalTopology, ToroidalConstructionMode, ToroidalDomainError,
@@ -575,10 +575,9 @@ mod tests {
     use crate::vertex;
     use std::assert_matches;
 
-    /// Regression test: a negatively oriented but topologically valid simplex
-    /// passes topology-only validation while failing full validation.
+    /// Regression test: coordinate orientation does not affect intrinsic topology.
     #[test]
-    fn negative_oriented_simplex_topology_only() {
+    fn negative_oriented_simplex_remains_topologically_valid() {
         let vertices = vec![
             vertex!([0.0, 0.0]).unwrap(),
             vertex!([1.0, 0.0]).unwrap(),
@@ -590,7 +589,6 @@ mod tests {
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
 
         assert!(tri.is_valid_topology().is_ok());
-        assert!(tri.is_valid_topology_only().is_ok());
 
         let simplex_key = tri.tds.simplex_keys().next().unwrap();
         tri.tds
@@ -598,8 +596,8 @@ mod tests {
             .unwrap()
             .swap_vertex_slots(0, 1);
 
-        assert!(tri.is_valid_topology_only().is_ok());
-        assert!(tri.is_valid_topology().is_err());
+        assert!(tri.is_valid_topology().is_ok());
+        assert!(tri.validate_geometric_simplex_orientation().is_err());
     }
 
     #[test]
@@ -624,30 +622,6 @@ mod tests {
             }) => assert_eq!(missing_key, simplex_key),
             other => panic!("Expected SimplexNotFound, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn is_valid_rejects_negative_geometric_simplex_orientation() {
-        let vertices = vec![
-            vertex!([0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0]).unwrap(),
-        ];
-        let mut tds =
-            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
-
-        let simplex_key = tds.simplex_keys().next().unwrap();
-        tds.simplex_mut(simplex_key)
-            .unwrap()
-            .swap_vertex_slots(0, 1);
-
-        let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        let err = tri.is_valid_topology().unwrap_err();
-        assert_matches!(
-            err,
-            InvariantError::Tds(TdsError::Geometric(GeometricError::NegativeOrientation { message }))
-                if message.contains("negative geometric orientation")
-        );
     }
 
     #[test]
