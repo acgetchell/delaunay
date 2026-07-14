@@ -17,6 +17,7 @@ remains the architecture hub.
 | [`testing.md`](testing.md) | Unit, integration, property, doctest, slow-test, and dimension-coverage expectations |
 | [`perf-tuning.md`](perf-tuning.md) | Benchmark-before/after workflow for performance-sensitive Rust changes |
 | [`docs.md`](docs.md) | Documentation ownership, scientific notation, references, changelog, and crates.io docs |
+| [`notebooks.md`](notebooks.md) | Notebook cell IDs, source hygiene, deliberate execution, and tracked artifacts |
 | [`python.md`](python.md) | Python support-script typing, subprocess mocks, exceptions, and parser contracts |
 | [`debug_env_vars.md`](debug_env_vars.md) | `DELAUNAY_*` diagnostic and debugging environment variables |
 | [`tooling-alignment.md`](tooling-alignment.md) | Cross-repository tooling comparison, rationale, and alignment notes |

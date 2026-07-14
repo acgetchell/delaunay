@@ -42,15 +42,24 @@ def load_notebook_fixture(tmp_path: Path, name: str, cells: list[dict[str, Any]]
     return load_notebook(path)
 
 
-def code_cell(source: Any, *, outputs: Any = None, execution_count: Any = None) -> dict[str, Any]:
+def code_cell(
+    source: Any,
+    *,
+    cell_id: Any = "test-code",
+    outputs: Any = None,
+    execution_count: Any = None,
+) -> dict[str, Any]:
     """Return a minimal code cell fixture."""
-    return {
+    cell = {
         "cell_type": "code",
         "execution_count": execution_count,
         "metadata": {},
         "outputs": [] if outputs is None else outputs,
         "source": source,
     }
+    if cell_id is not None:
+        cell["id"] = cell_id
+    return cell
 
 
 def completed_process(
@@ -145,6 +154,15 @@ def test_load_notebook_rejects_bad_outputs_shape(tmp_path: Path) -> None:
     write_notebook(notebook, [code_cell("x = 1", outputs={"output_type": "stream"})])
 
     with pytest.raises(TypeError, match="outputs must be a list"):
+        load_notebook(notebook)
+
+
+def test_load_notebook_rejects_non_string_cell_id(tmp_path: Path) -> None:
+    """Nbformat cell identifiers must be strings when present."""
+    notebook = tmp_path / "bad-cell-id.ipynb"
+    write_notebook(notebook, [code_cell("x = 1", cell_id=7)])
+
+    with pytest.raises(TypeError, match="id must be a string"):
         load_notebook(notebook)
 
 
@@ -312,6 +330,84 @@ def test_main_lint_reports_errors_to_stderr(tmp_path: Path, capsys: pytest.Captu
     assert captured.out == ""
     assert f"{notebook}: cell 1: error: has 1 output block(s); clear outputs before committing" in captured.err
     assert f"{notebook}: cell 1: error: execution_count=3; clear execution counts" in captured.err
+
+
+def test_main_lint_reports_missing_malformed_and_duplicate_cell_ids(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Cell identifiers should be stable, descriptive, and unique."""
+    notebook = tmp_path / "bad-cell-ids.ipynb"
+    write_notebook(
+        notebook,
+        [
+            {"cell_type": "markdown", "metadata": {}, "source": "# Missing ID"},
+            code_cell("empty = 2\n", cell_id=""),
+            code_cell("third = 3\n", cell_id="Setup_Code"),
+            code_cell("fourth = 4\n", cell_id="load-data"),
+            code_cell("fifth = 5\n", cell_id="load-data"),
+        ],
+    )
+
+    result = main(["lint", "--no-ruff", "--no-format", "--no-ty", str(notebook)])
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert captured.out == ""
+    assert f"{notebook}: cell 1: error: missing cell id" in captured.err
+    assert f"{notebook}: cell 2: error: cell id '' must be 1-64 characters of lowercase kebab-case" in captured.err
+    assert f"{notebook}: cell 3: error: cell id 'Setup_Code' must be 1-64 characters of lowercase kebab-case" in captured.err
+    assert f"{notebook}: cell 5: error: cell id 'load-data' duplicates cell 4; cell ids must be unique" in captured.err
+
+
+def test_main_lint_enforces_cell_id_length_boundary(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Cell identifiers may use exactly 64 characters, but not 65."""
+    accepted_id = "a" * 64
+    rejected_id = "b" * 65
+    notebook = tmp_path / "cell-id-length.ipynb"
+    write_notebook(
+        notebook,
+        [
+            code_cell("accepted = 1\n", cell_id=accepted_id),
+            code_cell("rejected = 2\n", cell_id=rejected_id),
+        ],
+    )
+
+    result = main(["lint", "--no-ruff", "--no-format", "--no-ty", str(notebook)])
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert captured.out == ""
+    assert accepted_id not in captured.err
+    assert f"cell id {rejected_id!r} must be 1-64 characters" in captured.err
+
+
+def test_main_summary_reports_cell_ids(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Notebook summaries should expose stable identifiers for review."""
+    notebook = tmp_path / "summary.ipynb"
+    write_notebook(
+        notebook,
+        [
+            code_cell("value = 1\n", cell_id="setup-code"),
+            code_cell("empty = 2\n", cell_id=""),
+            code_cell("missing = 3\n", cell_id=None),
+        ],
+    )
+
+    result = main(["summary", str(notebook)])
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert captured.err == ""
+    assert "id=setup-code" in captured.out
+    lines = captured.out.splitlines()
+    empty_id = next(line for line in lines if "cell 002" in line).split("id=", 1)[1].split(" lines=", 1)[0]
+    missing_id = next(line for line in lines if "cell 003" in line).split("id=", 1)[1].split(" lines=", 1)[0]
+    assert empty_id.strip() == ""
+    assert missing_id.strip() == "<missing>"
 
 
 def test_main_reports_missing_notebook_without_traceback(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

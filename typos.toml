@@ -36,6 +36,7 @@ continus = "continus"
 formes = "formes"
 Nd = "Nd"
 ND = "ND"
+PNG = "PNG"
 Sur = "Sur"
 Udo = "Udo"
 # Intentional misspellings used in the postprocess_changelog.py correction map

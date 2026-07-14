@@ -24,6 +24,8 @@ RUFF_EXTEND_IGNORE = "INP001"
 RUFF_LOCATION_RE = re.compile(r"\s*-->\s+.+?:(?P<line>\d+):(?P<column>\d+)")
 RUFF_INLINE_LOCATION_RE = re.compile(r"^.+?:(?P<line>\d+):(?P<column>\d+):")
 TY_LOCATION_RE = re.compile(r"^.+?:(?P<line>\d+):(?P<column>\d+): (?P<message>.+)$")
+CELL_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+MAX_CELL_ID_LENGTH = 64
 
 type CellType = Literal["code", "markdown", "raw"]
 VALID_CELL_TYPES: set[CellType] = {"code", "markdown", "raw"}
@@ -77,6 +79,7 @@ class NotebookCell:
 
     index: int
     cell_type: CellType
+    cell_id: str | None
     source: str
     output_count: int
     execution_count: int | None
@@ -107,6 +110,16 @@ def parse_cell_type(value: Any, *, path: Path, index: int) -> CellType:
         msg = f"{path}: cell {index}: expected cell_type to be one of {expected}; got {value!r}"
         raise ValueError(msg)
     return value
+
+
+def parse_cell_id(value: Any, *, path: Path, index: int) -> str | None:
+    """Parse an optional nbformat cell identifier."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    msg = f"{path}: cell {index}: id must be a string"
+    raise TypeError(msg)
 
 
 def parse_positive_int(value: str) -> int:
@@ -172,6 +185,7 @@ def parse_notebook_cell(raw_cell: Any, *, path: Path, index: int) -> NotebookCel
     return NotebookCell(
         index=index,
         cell_type=parse_cell_type(raw_cell.get("cell_type"), path=path, index=index),
+        cell_id=parse_cell_id(raw_cell.get("id"), path=path, index=index),
         source=parse_cell_source(raw_cell.get("source", ""), path=path, index=index),
         output_count=parse_output_count(raw_cell.get("outputs"), path=path, index=index),
         execution_count=parse_execution_count(raw_cell.get("execution_count"), path=path, index=index),
@@ -229,9 +243,11 @@ def summarize(path: Path) -> None:
         first_line = next((line.strip() for line in cell.source.splitlines() if line.strip()), "")
         outputs = cell.output_count if cell.is_code else 0
         execution_count = cell.execution_count if cell.is_code else ""
+        cell_id = "<missing>" if cell.cell_id is None else cell.cell_id
         print(
             f"  cell {cell.index:03d} {cell.cell_type:<8} "
-            f"lines={len(cell.source.splitlines()):<3} outputs={outputs:<2} exec={execution_count!s:<4} {first_line[:100]}",
+            f"id={cell_id:<32} lines={len(cell.source.splitlines()):<3} "
+            f"outputs={outputs:<2} exec={execution_count!s:<4} {first_line[:100]}",
         )
 
 
@@ -501,6 +517,35 @@ def ty_diagnostics(path: Path, notebook: NotebookDocument, project_root: Path) -
     return diagnostics
 
 
+def cell_id_diagnostics(notebook: NotebookDocument) -> list[Diagnostic]:
+    """Return diagnostics for stable, unique notebook cell identifiers."""
+    diagnostics: list[Diagnostic] = []
+    first_cell_by_id: dict[str, int] = {}
+    for cell in notebook.cells:
+        cell_id = cell.cell_id
+        if cell_id is None:
+            diagnostics.append(
+                Diagnostic("error", cell.index, "missing cell id; add a stable descriptive lowercase kebab-case id"),
+            )
+            continue
+
+        if len(cell_id) > MAX_CELL_ID_LENGTH or CELL_ID_RE.fullmatch(cell_id) is None:
+            diagnostics.append(
+                Diagnostic(
+                    "error",
+                    cell.index,
+                    f"cell id {cell_id!r} must be 1-{MAX_CELL_ID_LENGTH} characters of lowercase kebab-case",
+                ),
+            )
+
+        first_cell = first_cell_by_id.setdefault(cell_id, cell.index)
+        if first_cell != cell.index:
+            diagnostics.append(
+                Diagnostic("error", cell.index, f"cell id {cell_id!r} duplicates cell {first_cell}; cell ids must be unique"),
+            )
+    return diagnostics
+
+
 def code_cell_diagnostics(path: Path, notebook: NotebookDocument, options: LintOptions) -> list[Diagnostic]:
     """Return diagnostics from AST parsing and notebook output hygiene."""
     diagnostics: list[Diagnostic] = []
@@ -544,6 +589,7 @@ def lint(path: Path, options: LintOptions) -> int:
     """Validate notebook JSON, compile code cells, and run Python lint checks."""
     notebook = load_notebook(path)
     diagnostics = [
+        *cell_id_diagnostics(notebook),
         *code_cell_diagnostics(path, notebook, options),
         *external_tool_diagnostics(path, notebook, options),
     ]

@@ -1,8 +1,45 @@
 # Triangulation Validation Guide
 
+<!-- markdownlint-configure-file { "MD033": { "allowed_elements": ["img"] } } -->
+
 This document is the developer-facing validation contract for the `delaunay`
 library. It explains the validation hierarchy and gives practical guidance on
 when and how to use each validation level.
+
+## Notebook-generated validation gallery
+
+The deterministic [validation notebook](../notebooks/01_validation.ipynb)
+renders the same five-layer hierarchy described below. Refresh the tracked
+reviewer diagrams with `just validation-doc-figures`; routine notebook checks
+write only under `target/`.
+The reviewer-facing artifact guide that indexes this notebook workflow and its
+paper-claim mapping is tracked in [#408](https://github.com/acgetchell/delaunay/issues/408).
+
+<img src="assets/validation/validation_hierarchy.png" alt="Five-level validation hierarchy" width="760">
+
+The Level 3–5 panels make the critical separation explicit: intrinsic topology
+can be valid while a realization overlaps, and a faithful realization can
+still violate the Delaunay empty-circumsphere predicate.
+
+### Level 1 — Element Validity
+
+<img src="assets/validation/validation_level_1_element_validity.png" alt="Level 1 element-validity checks" width="720">
+
+### Level 2 — Combinatorial Consistency
+
+<img src="assets/validation/validation_level_2_combinatorial_consistency.png" alt="Level 2 combinatorial-consistency checks" width="720">
+
+### Level 3 — Intrinsic PL Topology
+
+<img src="assets/validation/validation_level_3_intrinsic_pl_topology.png" alt="Level 3 intrinsic PL-topology checks" width="720">
+
+### Level 4 — Valid Realization
+
+<img src="assets/validation/validation_level_4_valid_realization.png" alt="Level 4 valid-realization checks" width="720">
+
+### Level 5 — Geometric Predicates
+
+<img src="assets/validation/validation_level_5_geometric_predicates.png" alt="Level 5 geometric-predicate check" width="420">
 
 For the theoretical background, rationale, and implementation pointers behind the invariants, see
 [`invariants.md`](invariants.md).

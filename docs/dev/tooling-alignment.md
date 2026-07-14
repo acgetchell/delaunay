@@ -445,6 +445,15 @@ poisoned cache can make `cargo fmt` invoke `rustup-init` instead of Cargo.
 
 The following previously deferred checks are now repository-owned Semgrep rules:
 
+- `delaunay.notebook.no-random-cell-ids` rejects generated hexadecimal/UUID
+  identifiers and positional names such as `cell-1`, while the structured
+  notebook checker owns presence, kebab-case, length, and uniqueness.
+- `delaunay.notebook.no-direct-tracked-figure-write` keeps direct notebook
+  `savefig`/`write_image` calls away from `docs/assets/` and `docs/images/` so
+  tracked artifact destinations remain controlled by named refresh recipes.
+- `delaunay.paper.validation-figures-use-canonical-assets` warns when paper
+  sources reference paper-local validation figures and enforces reuse of the
+  shared canonical assets under `docs/assets/validation/`.
 - `delaunay.rust.public-error-enums-non-exhaustive` requires every public
   `*Error` enum to carry `#[non_exhaustive]`, preserving room for more precise
   typed variants without forcing a breaking exhaustive-match change on users.

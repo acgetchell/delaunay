@@ -35,6 +35,7 @@ delaunay/
 │   ├── tds_clone.rs
 │   └── topology_guarantee_construction.rs
 ├── docs/
+│   ├── assets/
 │   ├── architecture/
 │   │   ├── README.md
 │   │   ├── module_map.md
@@ -58,9 +59,9 @@ delaunay/
 ├── examples/
 ├── notebooks/
 │   ├── 00_quickstart.ipynb
-│   └── 01_validation.ipynb
+│   ├── 01_validation.ipynb
+│   └── 02_spherical_hero.ipynb
 ├── papers/
-│   ├── generated/
 │   ├── README.md
 │   ├── validation.bib
 │   ├── validation.pdf
@@ -129,8 +130,8 @@ find . -type f \( -name "*.rs" -o -name "*.md" -o -name "*.toml" -o -name "*.yml
   not in unit tests.
 - `examples/` contains user-facing API demos and workflow examples.
 - `notebooks/` contains reproducible visualization and analysis notebooks.
-- `papers/` contains publication-facing TeX/BibTeX sources, tracked reviewer
-  PDFs, and notebook-generated figure assets.
+- `papers/` contains publication-facing TeX/BibTeX sources and tracked reviewer
+  PDFs. Paper figures reuse canonical assets under `docs/assets/`.
 - `docs/` contains user documentation, contributor guidance, architecture
   references, archived design notes, and templates.
 - `docs/dev/` contains operational rules for agents and contributors, indexed

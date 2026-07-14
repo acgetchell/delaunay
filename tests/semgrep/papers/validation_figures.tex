@@ -1,0 +1,17 @@
+% Validation-figure path Semgrep fixture.
+
+// ruleid: delaunay.paper.validation-figures-use-canonical-assets
+\includegraphics[width=0.8\linewidth]
+{generated/validation_hierarchy.png}
+
+// ruleid: delaunay.paper.validation-figures-use-canonical-assets
+\includegraphics
+  {figures/validation_level_4_valid_realization.png}
+
+// ok: delaunay.paper.validation-figures-use-canonical-assets
+\includegraphics[width=0.8\linewidth]
+{../docs/assets/validation/validation_hierarchy.png}
+
+// ok: delaunay.paper.validation-figures-use-canonical-assets
+\includegraphics
+  {../docs/assets/validation/validation_level_4_valid_realization.png}
