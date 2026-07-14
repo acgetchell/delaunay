@@ -74,7 +74,7 @@ for the files they will touch.
 
 - **Language**: Rust
 - **Project**: d-dimensional Delaunay triangulation library
-- **MSRV**: 1.96.0
+- **MSRV**: 1.97.0
 - **Edition**: 2024
 - **Primary architecture hub**: `docs/code_organization.md`
 

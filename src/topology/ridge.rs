@@ -1229,7 +1229,7 @@ pub(crate) fn ridge_link_edges_from_star<U, V, const D: usize>(
                 return Err(TdsError::InconsistentDataStructure {
                     message: format!(
                         "Ridge link edge is a self-loop: link vertex {vk:?} repeated (simplex_key={simplex_key:?})",
-                        vk = &link_vertices[0],
+                        vk = link_vertices[0],
                     ),
                 }
                 .into());

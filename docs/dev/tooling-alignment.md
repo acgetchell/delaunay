@@ -51,10 +51,10 @@ Both repositories now share the same core Rust and Python support-tooling loop:
 
 The useful updates ported in this pass are:
 
-- Rust MSRV metadata now follows `causal-triangulations` and `la-stack` at
-  Rust 1.96.0. `Cargo.toml`, `rust-toolchain.toml`, `clippy.toml`, contributor
-  docs, and agent guidance all use the same baseline so the `la-stack` 0.4.3
-  dependency update in #424 has no MSRV conflict.
+- Rust MSRV metadata uses Rust 1.97.0 for the v0.8.0 release line.
+  `Cargo.toml`, `rust-toolchain.toml`, `clippy.toml`, contributor docs, and
+  agent guidance use the same baseline so upcoming `la-stack` and
+  `markov-chain-monte-carlo` releases have no MSRV conflict.
 - The local `cargo-nextest` pin and CI installers now read version pins from
   `justfile`, with `cargo-nextest` on 0.9.140 and `cargo-llvm-cov` on 0.8.7,
   which is still shared across the repositories.
@@ -210,7 +210,7 @@ The useful updates ported in this pass are:
   uv version. It complements the Codacy Opengrep workflow by uploading
   Semgrep-native SARIF and failing the workflow on repository-rule findings.
 - GitHub CodeQL and SARIF upload workflows keep `github/codeql-action` pinned to
-  the peeled commit for the documented `v4.36.2` tag so zizmor can verify the
+  the peeled commit for the documented `v4.37.0` tag so zizmor can verify the
   hash/comment pair instead of treating the broad `v4` comment as ambiguous.
 - `.github/workflows/generate-baseline.yml` no longer checks out arbitrary
   validated branch names with `actions/checkout`. The manual baseline workflow
@@ -249,10 +249,8 @@ The useful updates ported in this pass are:
 - `.codecov.yml` now ratchets Delaunay's coverage policy above the older
   causal-triangulations baseline without copying la-stack's near-total
   threshold. Project coverage targets the current 90% line with only 1%
-  tolerated drift. Patch coverage remains at 50% for this cleanup because
-  Codecov attributes the `assert_matches!` test-quality migration as uncovered
-  macro-invocation churn; once that lands, the next coverage-only ratchet should
-  raise the patch target toward 70% without forcing superficial tests.
+  tolerated drift. Patch coverage targets 70%; multiline macro-opening lines
+  that Cobertura attributes as uncovered do not justify superficial tests.
 - Semgrep now ports the sibling repositories' Rust examples/benchmarks hygiene
   checks: examples and benchmarks should avoid panic-only `unwrap`/`expect`
   paths and dynamic error erasure so public usage remains explicit and typed.
@@ -378,6 +376,51 @@ construction envelope changes.
   benchmark summary workflow.
 
 ## Cargo Packaging And Toolchain Hygiene
+
+### Rust 1.97 audit
+
+The v0.8.0 MSRV audit adopted `u32::isolate_highest_one` for Hilbert traversal
+mask initialization, where the API directly states the mask invariant. The
+remaining integer and `NonZero` bit helpers would recompute facts already
+carried by `HilbertBitDepth`, while the existing shift in
+`max_quantized_coordinate` directly expresses the inclusive `2^bits - 1`
+quantization grid. The two `repeat_n` call sites require nonempty iterators, so
+`RepeatN::default` would not remove placeholder state or simplify them.
+
+The `char::is_control` const change has no const parsing use here, and the new
+LoongArch feature-detection APIs do not serve any target-specific crate path.
+No unsafe or platform-specific API was adopted. The remaining baseline
+`assert!(matches!(...))` tests were migrated to `std::assert_matches!`; this is
+Rust 1.96 cleanup rather than a Rust 1.97 feature.
+
+Cargo 1.97's `-m` shorthand does not clarify the repository's current commands,
+which do not repeat long manifest paths, and no command passes a custom target
+directory to `cargo clean`. Cargo warning denial is already encoded in
+`Cargo.toml`, so `build.warnings` would duplicate repository lint policy. The
+custom lockfile-path and rustdoc emit/remap additions likewise have no current
+workflow use. Validation under the pinned toolchain is responsible for the
+release's Clippy, rustdoc, linker-message, v0 symbol-mangling, and other
+compatibility diagnostics.
+
+Rust 1.97 Clippy additionally diagnosed one redundant borrow in a ridge-link
+formatting path and two manual inequality assertions in vertex-ordering tests;
+the audit fixed all three rather than suppressing the new lints.
+Rustdoc's new redundant-explicit-link diagnostic identified thirteen crate-level
+links whose labels already resolved to their explicit targets; those targets
+were removed while preserving the same intra-doc destinations.
+
+The `cold_path_predicates` harness was also rerun on the same machine under
+Rust 1.96 and 1.97, then under Rust 1.97 with the predicate `cold_path()` hints
+temporarily removed. The compiler-version comparison was mixed across the
+2D–5D hot cases and the harness's historically named `near_boundary` cases.
+That secondary fixture samples a small cube around the standard simplex's
+circumsphere center, not its boundary, so these measurements do not establish
+Stage-2 or exact-path behavior. Removing the hints produced mostly noise, a
+1.76% improvement in the 4D hot case and a 2.45% improvement in its centered
+query case, but a 3.70% regression in the corresponding 3D centered-query case.
+The hints remain because the measurements provide no consistent evidence that
+removing them helps; any exact-path claim requires a corrected fixture that
+independently demonstrates Stage-2 entry outside the timed region.
 
 The Delaunay crate uses an explicit Cargo package allowlist so crates.io
 artifacts carry the public library surface, examples, benchmarks, integration

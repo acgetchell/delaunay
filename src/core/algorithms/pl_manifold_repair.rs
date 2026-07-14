@@ -1139,6 +1139,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use super::*;
     use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
@@ -1560,6 +1562,83 @@ mod tests {
     }
 
     #[test]
+    fn targeted_stage_violation_preserves_non_targeted_validation_error() {
+        let tds = make_overshared_tds();
+
+        let result = targeted_stage_violation(
+            &tds,
+            GlobalTopology::Euclidean,
+            PlManifoldRepairStage::BoundaryRidgeMultiplicity,
+        );
+
+        assert_matches!(
+            result,
+            Err(PlManifoldRepairError::TargetedValidation {
+                stage: PlManifoldRepairStage::BoundaryRidgeMultiplicity,
+                source,
+            }) if matches!(*source, ManifoldError::ManifoldFacetMultiplicity { .. })
+        );
+    }
+
+    #[test]
+    fn boundary_ridge_candidates_include_incident_simplices_across_interior_facet() {
+        let mut tds: Tds<(), (), 3> = Tds::empty();
+        let v0 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]).unwrap())
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]).unwrap())
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]).unwrap())
+            .unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]).unwrap())
+            .unwrap();
+        let v4 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, -1.0]).unwrap())
+            .unwrap();
+        let first = tds
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2, v3], None).unwrap(),
+            )
+            .unwrap();
+        let second = tds
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2, v4], None).unwrap(),
+            )
+            .unwrap();
+        let ridge_key = facet_key_from_vertices(&[v0, v1]);
+
+        let candidates =
+            boundary_ridge_candidate_simplices(&tds, GlobalTopology::Euclidean, ridge_key).unwrap();
+
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates.contains(&first));
+        assert!(candidates.contains(&second));
+    }
+
+    #[test]
+    fn simplex_facet_vertices_rejects_out_of_bounds_index() {
+        let tds = make_boundary_ridge_multiplicity_tds();
+        let simplex_key = tds.simplex_keys().next().unwrap();
+        let handle = FacetHandle::from_validated(simplex_key, u8::MAX);
+        let mut facet_vertices = VertexKeyBuffer::new();
+
+        let result = simplex_facet_vertices(&tds, handle, &mut facet_vertices);
+
+        assert_matches!(
+            result,
+            Err(ManifoldError::Tds(TdsError::IndexOutOfBounds {
+                index,
+                bound: 4,
+                ..
+            })) if index == <usize as From<u8>>::from(u8::MAX)
+        );
+        assert!(facet_vertices.is_empty());
+    }
+
+    #[test]
     fn remove_targeted_simplex_reports_zero_for_missing_key_without_mutating_stats() {
         let mut tds: Tds<(), (), 3> = Tds::empty();
         let mut stats = PlManifoldRepairStats::default();
@@ -1603,22 +1682,13 @@ mod tests {
         assert_eq!(max_simplices_removed, 0);
         match stage {
             PlManifoldRepairStage::BoundaryRidgeMultiplicity => {
-                assert!(matches!(
-                    *source,
-                    ManifoldError::BoundaryRidgeMultiplicity { .. }
-                ));
+                assert_matches!(*source, ManifoldError::BoundaryRidgeMultiplicity { .. });
             }
             PlManifoldRepairStage::RidgeLink => {
-                assert!(matches!(
-                    *source,
-                    ManifoldError::RidgeLinkNotManifold { .. }
-                ));
+                assert_matches!(*source, ManifoldError::RidgeLinkNotManifold { .. });
             }
             PlManifoldRepairStage::VertexLink => {
-                assert!(matches!(
-                    *source,
-                    ManifoldError::VertexLinkNotManifold { .. }
-                ));
+                assert_matches!(*source, ManifoldError::VertexLinkNotManifold { .. });
             }
         }
     }
@@ -1670,10 +1740,10 @@ mod tests {
     fn test_repair_pl_manifold_topology_repairs_boundary_ridge_multiplicity() {
         init_tracing();
         let mut tds = make_boundary_ridge_multiplicity_tds();
-        assert!(matches!(
+        assert_matches!(
             validate_boundary_ridge_multiplicity(&tds, GlobalTopology::Euclidean),
             Err(ManifoldError::BoundaryRidgeMultiplicity { .. })
-        ));
+        );
 
         let stats = repair_pl_manifold_topology(
             &mut tds,
@@ -1691,10 +1761,10 @@ mod tests {
     fn test_repair_pl_manifold_topology_repairs_ridge_link() {
         init_tracing();
         let mut tds = make_disconnected_ridge_link_tds();
-        assert!(matches!(
+        assert_matches!(
             validate_ridge_links(&tds),
             Err(ManifoldError::RidgeLinkNotManifold { .. })
-        ));
+        );
 
         let stats = repair_pl_manifold_topology(
             &mut tds,
@@ -1712,10 +1782,10 @@ mod tests {
     fn test_repair_pl_manifold_topology_repairs_vertex_link() {
         init_tracing();
         let mut tds = make_cone_on_torus_tds();
-        assert!(matches!(
+        assert_matches!(
             validate_vertex_link_manifoldness(&tds, GlobalTopology::Euclidean),
             Err(ManifoldError::VertexLinkNotManifold { .. })
-        ));
+        );
 
         let stats = repair_pl_manifold_topology(
             &mut tds,
