@@ -243,7 +243,7 @@ def summarize(path: Path) -> None:
         first_line = next((line.strip() for line in cell.source.splitlines() if line.strip()), "")
         outputs = cell.output_count if cell.is_code else 0
         execution_count = cell.execution_count if cell.is_code else ""
-        cell_id = cell.cell_id or "<missing>"
+        cell_id = "<missing>" if cell.cell_id is None else cell.cell_id
         print(
             f"  cell {cell.index:03d} {cell.cell_type:<8} "
             f"id={cell_id:<32} lines={len(cell.source.splitlines()):<3} "
@@ -523,7 +523,7 @@ def cell_id_diagnostics(notebook: NotebookDocument) -> list[Diagnostic]:
     first_cell_by_id: dict[str, int] = {}
     for cell in notebook.cells:
         cell_id = cell.cell_id
-        if not cell_id:
+        if cell_id is None:
             diagnostics.append(
                 Diagnostic("error", cell.index, "missing cell id; add a stable descriptive lowercase kebab-case id"),
             )

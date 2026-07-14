@@ -35,6 +35,7 @@ delaunay/
 │   ├── tds_clone.rs
 │   └── topology_guarantee_construction.rs
 ├── docs/
+│   ├── assets/
 │   ├── architecture/
 │   │   ├── README.md
 │   │   ├── module_map.md

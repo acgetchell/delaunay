@@ -290,6 +290,40 @@ mod cli_tests {
     }
 
     #[test]
+    fn spherical_hero_accepts_minimum_vertex_count() {
+        let output = run_cli(&["spherical-hero", "--vertices", "4"]);
+        assert_success(&output);
+
+        let json = stdout_json(&output);
+        assert_eq!(json["vertices"].as_array().map(Vec::len), Some(4));
+        assert_eq!(json["simplices"].as_array().map(Vec::len), Some(4));
+    }
+
+    #[test]
+    fn spherical_hero_writes_requested_json_artifact() {
+        let path = target_json_path("spherical-hero");
+        let output = run_cli(&[
+            "spherical-hero",
+            "--vertices",
+            "8",
+            "--output",
+            path.to_str().expect("target path should be UTF-8"),
+        ]);
+        assert_success(&output);
+        assert!(
+            output.stdout.is_empty(),
+            "--output should keep spherical hero JSON out of stdout"
+        );
+
+        let json = file_json(&path);
+        assert_eq!(json["schema"], "delaunay.spherical_hero");
+        assert_eq!(json["schema_version"], 1);
+        assert_eq!(json["intrinsic_dimension"], 2);
+        assert_eq!(json["ambient_dimension"], 3);
+        assert_eq!(json["vertices"].as_array().map(Vec::len), Some(8));
+    }
+
+    #[test]
     fn spherical_hero_rejects_too_few_vertices() {
         for vertices in ["0", "3"] {
             let output = run_cli(&["spherical-hero", "--vertices", vertices]);
@@ -299,6 +333,14 @@ mod cli_tests {
                 &format!("2D generation requires at least 4 vertices, got {vertices}"),
             );
         }
+    }
+
+    #[test]
+    fn spherical_hero_rejects_empty_output_path_during_parsing() {
+        let output = run_cli(&["spherical-hero", "--vertices", "8", "--output", ""]);
+        assert_exit_code(&output, 2);
+        assert_stderr_contains(&output, "a value is required");
+        assert_stderr_contains(&output, "--output <OUTPUT>");
     }
 
     #[test]

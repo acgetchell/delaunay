@@ -342,9 +342,10 @@ def test_main_lint_reports_missing_malformed_and_duplicate_cell_ids(
         notebook,
         [
             {"cell_type": "markdown", "metadata": {}, "source": "# Missing ID"},
-            code_cell("second = 2\n", cell_id="Setup_Code"),
-            code_cell("third = 3\n", cell_id="load-data"),
+            code_cell("empty = 2\n", cell_id=""),
+            code_cell("third = 3\n", cell_id="Setup_Code"),
             code_cell("fourth = 4\n", cell_id="load-data"),
+            code_cell("fifth = 5\n", cell_id="load-data"),
         ],
     )
 
@@ -354,8 +355,9 @@ def test_main_lint_reports_missing_malformed_and_duplicate_cell_ids(
     assert result == 1
     assert captured.out == ""
     assert f"{notebook}: cell 1: error: missing cell id" in captured.err
-    assert f"{notebook}: cell 2: error: cell id 'Setup_Code' must be 1-64 characters of lowercase kebab-case" in captured.err
-    assert f"{notebook}: cell 4: error: cell id 'load-data' duplicates cell 3; cell ids must be unique" in captured.err
+    assert f"{notebook}: cell 2: error: cell id '' must be 1-64 characters of lowercase kebab-case" in captured.err
+    assert f"{notebook}: cell 3: error: cell id 'Setup_Code' must be 1-64 characters of lowercase kebab-case" in captured.err
+    assert f"{notebook}: cell 5: error: cell id 'load-data' duplicates cell 4; cell ids must be unique" in captured.err
 
 
 def test_main_lint_enforces_cell_id_length_boundary(
@@ -386,7 +388,14 @@ def test_main_lint_enforces_cell_id_length_boundary(
 def test_main_summary_reports_cell_ids(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Notebook summaries should expose stable identifiers for review."""
     notebook = tmp_path / "summary.ipynb"
-    write_notebook(notebook, [code_cell("value = 1\n", cell_id="setup-code")])
+    write_notebook(
+        notebook,
+        [
+            code_cell("value = 1\n", cell_id="setup-code"),
+            code_cell("empty = 2\n", cell_id=""),
+            code_cell("missing = 3\n", cell_id=None),
+        ],
+    )
 
     result = main(["summary", str(notebook)])
 
@@ -394,6 +403,11 @@ def test_main_summary_reports_cell_ids(tmp_path: Path, capsys: pytest.CaptureFix
     assert result == 0
     assert captured.err == ""
     assert "id=setup-code" in captured.out
+    lines = captured.out.splitlines()
+    empty_id = next(line for line in lines if "cell 002" in line).split("id=", 1)[1].split(" lines=", 1)[0]
+    missing_id = next(line for line in lines if "cell 003" in line).split("id=", 1)[1].split(" lines=", 1)[0]
+    assert empty_id.strip() == ""
+    assert missing_id.strip() == "<missing>"
 
 
 def test_main_reports_missing_notebook_without_traceback(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

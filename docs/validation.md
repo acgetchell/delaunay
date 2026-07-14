@@ -1,5 +1,7 @@
 # Triangulation Validation Guide
 
+<!-- markdownlint-configure-file { "MD033": { "allowed_elements": ["img"] } } -->
+
 This document is the developer-facing validation contract for the `delaunay`
 library. It explains the validation hierarchy and gives practical guidance on
 when and how to use each validation level.
