@@ -1,13 +1,13 @@
 //! Spherical coordinate and metric backend.
 //!
 //! This module provides fallible coordinate and metric types for points on
-//! `S^D` embedded in `R^(D+1)`.
+//! `S^D` realized in `R^(D+1)`.
 
 #![forbid(unsafe_code)]
 
 use thiserror::Error;
 
-/// Typed point on `S^D` embedded in `R^(D+1)`.
+/// Typed point on `S^D` realized in `R^(D+1)`.
 ///
 /// Rust's stable const generics do not allow a public `[f64; D + 1]` field, so
 /// this topology backend stores the ambient coordinates in a length-checked

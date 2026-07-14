@@ -17,23 +17,27 @@ Usage:
 """
 
 import argparse
+import os
 import re
+import stat
 import sys
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 # Markdown line-length limit used by this project.
 MAX_LINE_WIDTH = 160
 
-# Tokenise a line into atomic markdown units that must not be split.
-# Order matters: longer patterns first.
-_TOKEN_RE = re.compile(
-    r"""
-    \[[^\]]*\]\([^)]*\)   # markdown link:  [text](url)
-    | `[^`]+`              # code span:      `code`
-    | \S+                  # regular word
-    """,
-    re.VERBOSE,
-)
+
+@dataclass(frozen=True, slots=True)
+class _CodeFence:
+    """Delimiter evidence for an open Markdown fenced code block."""
+
+    delimiter: str
+    length: int
+
+
+_FENCE_RE = re.compile(r"^(?P<indent>[ \t]*)(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
 
 
 # Version section heading: ## [X.Y.Z], ## [vX.Y.Z], or ## [Unreleased]
@@ -79,6 +83,10 @@ _BULLET_SYMBOL_RE = re.compile(r"^(\s*)•\s+")
 
 # Extra spaces after list marker: ``-   `` → ``- `` (MD030).
 _LIST_MARKER_SPACE_RE = re.compile(r"^(\s*-)\s{2,}")
+
+# git-cliff HTML-escapes co-author email angle brackets. Markdown wants real
+# angle brackets for email autolinks, otherwise rumdl treats the address as bare.
+_ESCAPED_EMAIL_RE = re.compile(r"&lt;(?P<email>[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})&gt;", re.IGNORECASE)
 
 # Indented ATX headings from commit bodies: ``  ## Title`` → ``#### Title``.
 _INDENTED_ATX_HEADING_RE = re.compile(r"^(?P<indent>\s+)#{1,6}\s+(?P<title>.*?)(?:\s+#+\s*)?$")
@@ -180,6 +188,81 @@ def _canonicalize_changelog_terms(text: str) -> str:
 def _strip_code_spans(text: str) -> str:
     """Return *text* with markdown code-span delimiters removed."""
     return _CODE_SPAN_RE.sub(r"\1", text)
+
+
+def _backtick_span_end(text: str, start: int) -> int | None:
+    """Return the end of a code span whose closing run matches its opener."""
+    delimiter_length = 1
+    while start + delimiter_length < len(text) and text[start + delimiter_length] == "`":
+        delimiter_length += 1
+
+    position = start + delimiter_length
+    while position < len(text):
+        run_start = text.find("`", position)
+        if run_start < 0:
+            return None
+        run_end = run_start + 1
+        while run_end < len(text) and text[run_end] == "`":
+            run_end += 1
+        if run_end - run_start == delimiter_length:
+            return run_end
+        position = run_end
+    return None
+
+
+def _balanced_delimiter_end(text: str, start: int, opening: str, closing: str) -> int | None:
+    """Return the end of a balanced delimiter pair, honoring escapes."""
+    depth = 1
+    position = start + 1
+    while position < len(text):
+        character = text[position]
+        if character == "\\" and position + 1 < len(text):
+            position += 2
+            continue
+        if character == opening:
+            depth += 1
+        elif character == closing:
+            depth -= 1
+            if depth == 0:
+                return position + 1
+        position += 1
+    return None
+
+
+def _markdown_link_end(text: str, start: int) -> int | None:
+    """Return the end of an inline link, balancing brackets and parentheses."""
+    label_end = _balanced_delimiter_end(text, start, "[", "]")
+    if label_end is None or label_end >= len(text) or text[label_end] != "(":
+        return None
+    return _balanced_delimiter_end(text, label_end, "(", ")")
+
+
+def _markdown_tokens(text: str) -> list[str]:
+    """Tokenize reflowable prose without splitting links or code spans."""
+    tokens: list[str] = []
+    position = 0
+    while position < len(text):
+        while position < len(text) and text[position].isspace():
+            position += 1
+        if position >= len(text):
+            break
+
+        token_end: int | None = None
+        if text[position] == "[":
+            token_end = _markdown_link_end(text, position)
+        elif text[position] == "`":
+            token_end = _backtick_span_end(text, position)
+
+        if token_end is not None:
+            while token_end < len(text) and not text[token_end].isspace():
+                token_end += 1
+        else:
+            token_end = position + 1
+            while token_end < len(text) and not text[token_end].isspace():
+                token_end += 1
+        tokens.append(text[position:token_end])
+        position = token_end
+    return tokens
 
 
 def _plain_summary(text: str) -> str:
@@ -889,7 +972,7 @@ def _reflow_line(line: str, max_width: int = MAX_LINE_WIDTH) -> str:
         content = stripped
         cont_indent = indent
 
-    tokens = _TOKEN_RE.findall(content)
+    tokens = _markdown_tokens(content)
     if not tokens:
         return line
 
@@ -972,21 +1055,81 @@ def _normalize_continuation_indent(line: str, lines: list[str], idx: int) -> str
     return line
 
 
-def _needs_blank_before(stripped: str, result: list[str]) -> bool:
+def _list_item_indent(line: str) -> int | None:
+    """Return the indentation of a Markdown list item, if *line* is one."""
+    stripped = line.lstrip()
+    if not stripped.startswith(("- ", "* ", "• ")):
+        return None
+    return len(line) - len(stripped)
+
+
+def _has_previous_peer_list_item(lines: list[str], idx: int, peer_indent: int) -> bool:
+    """Return true if a prior list item exists at *peer_indent* before *idx*."""
+    for j in range(idx - 1, -1, -1):
+        prev = lines[j]
+        if not prev.strip():
+            continue
+
+        prev_indent = _list_item_indent(prev)
+        if prev_indent == peer_indent:
+            return True
+        if prev_indent is not None:
+            if prev_indent < peer_indent:
+                return False
+            continue
+        if prev.startswith(" "):
+            continue
+        return False
+
+    return False
+
+
+def _next_list_item_indent(lines: list[str], idx: int) -> int | None:
+    """Return the next nonblank line's list-item indentation, if it is a list item."""
+    for next_line in lines[idx + 1 :]:
+        if not next_line.strip():
+            continue
+        return _list_item_indent(next_line)
+    return None
+
+
+def _is_blank_between_peer_list_items(lines: list[str], idx: int) -> bool:
+    """Return true when a blank line separates adjacent items in the same list."""
+    if lines[idx].strip():
+        return False
+
+    next_indent = _next_list_item_indent(lines, idx)
+    if next_indent is None:
+        return False
+
+    return _has_previous_peer_list_item(lines, idx, next_indent)
+
+
+def _normalize_email_autolinks(line: str) -> str:
+    """Convert git-cliff's escaped email autolinks into Markdown autolinks."""
+    return _ESCAPED_EMAIL_RE.sub(r"<\g<email>>", line)
+
+
+def _needs_blank_before(line: str, result: list[str]) -> bool:
     """
     Determine whether a blank line is required before a list item to satisfy Markdown rule MD032.
 
     Parameters:
-        stripped (str): The current line with leading whitespace removed.
+        line (str): The current line.
         result (list[str]): The lines already emitted immediately before the current line.
 
     Returns:
         bool: `True` if a blank line should be inserted before the list item, `False` otherwise.
     """
+    stripped = line.lstrip()
     if not stripped.startswith("- ") or not result or not result[-1].strip():
         return False
     prev = result[-1].lstrip()
-    return not prev.startswith(("-", "#"))
+    if prev.startswith(("-", "#")):
+        return False
+
+    current_indent = len(line) - len(stripped)
+    return not _has_previous_peer_list_item(result, len(result), current_indent)
 
 
 def _normalize_indented_heading(line: str) -> str:
@@ -1132,27 +1275,65 @@ def _normalize_horizontal_rule(line: str, result: list[str]) -> str:
     return "---"
 
 
-def _process_code_fence(line: str, result: list[str], in_code_block: bool, next_line: str | None) -> tuple[bool, bool]:
-    """Handle fenced-code transitions and append the line when consumed."""
-    stripped = line.lstrip()
-    if not stripped.startswith("```"):
-        return False, in_code_block
+def _fence_parts(line: str) -> tuple[str, str, str] | None:
+    """Return indentation, delimiter run, and info string for a fence line."""
+    match = _FENCE_RE.fullmatch(line)
+    if match is None:
+        return None
+    return match.group("indent"), match.group("fence"), match.group("info")
 
-    if not in_code_block:
-        in_code_block = True
+
+def _opening_code_fence(line: str) -> _CodeFence | None:
+    """Parse an opening backtick or tilde fence."""
+    parts = _fence_parts(line)
+    if parts is None:
+        return None
+    _, delimiter_run, info = parts
+    delimiter = delimiter_run[0]
+    if delimiter == "`" and "`" in info:
+        return None
+    return _CodeFence(delimiter=delimiter, length=len(delimiter_run))
+
+
+def _closes_code_fence(line: str, active_fence: _CodeFence) -> bool:
+    """Return whether *line* validly closes *active_fence*."""
+    parts = _fence_parts(line)
+    if parts is None:
+        return False
+    _, delimiter_run, info = parts
+    return delimiter_run[0] == active_fence.delimiter and len(delimiter_run) >= active_fence.length and not info.strip()
+
+
+def _process_code_fence(
+    line: str,
+    result: list[str],
+    active_fence: _CodeFence | None,
+    next_line: str | None,
+) -> tuple[bool, _CodeFence | None]:
+    """Handle fenced-code transitions and append the line when consumed."""
+    if active_fence is None:
+        active_fence = _opening_code_fence(line)
+        if active_fence is None:
+            return False, None
         # MD031: blank line before fenced code block.
         if result and result[-1].strip():
             result.append("")
         # MD040: add language tag if missing.
-        if stripped == "```":
-            line = line.replace("```", "```text", 1)
-    else:
-        in_code_block = False
+        parts = _fence_parts(line)
+        if parts is not None:
+            indent, delimiter_run, info = parts
+            if not info.strip():
+                line = f"{indent}{delimiter_run}text"
+        result.append(line)
+        return True, active_fence
+
+    if not _closes_code_fence(line, active_fence):
+        return False, active_fence
 
     result.append(line)
-    if not in_code_block and next_line is not None and next_line.strip():
+    if next_line is not None and next_line.strip():
         result.append("")
-    return True, in_code_block
+    return True, None
 
 
 def _update_entry_summary(line: str, current_entry_summary: str | None) -> str | None:
@@ -1197,14 +1378,69 @@ def _normalize_body_line(
 
     line = _normalize_entry_heading_text(line)
 
-    if _needs_blank_before(line.lstrip(), result):
+    if _needs_blank_before(line, result):
         result.append("")
 
     return _reflow_line(line) if len(line) > MAX_LINE_WIDTH else line
 
 
+def _dependabot_metadata_end(lines: list[str], separator_index: int) -> int | None:
+    """Return the closing marker index for an unfenced Dependabot footer."""
+    metadata_start = separator_index + 1
+    while metadata_start < len(lines) and not lines[metadata_start].strip():
+        metadata_start += 1
+    if metadata_start >= len(lines) or lines[metadata_start].strip() != "updated-dependencies:":
+        return None
+
+    metadata_end = metadata_start + 1
+    while metadata_end < len(lines) and lines[metadata_end].strip() != "..." and _opening_code_fence(lines[metadata_end]) is None:
+        metadata_end += 1
+    if metadata_end >= len(lines) or lines[metadata_end].strip() != "...":
+        return None
+    return metadata_end
+
+
+def _strip_dependabot_metadata(text: str) -> str:
+    """Remove Dependabot's YAML metadata footer from rendered commit bodies."""
+    lines = text.split("\n")
+    result: list[str] = []
+    active_fence: _CodeFence | None = None
+    idx = 0
+
+    while idx < len(lines):
+        if active_fence is not None:
+            result.append(lines[idx])
+            if _closes_code_fence(lines[idx], active_fence):
+                active_fence = None
+            idx += 1
+            continue
+
+        active_fence = _opening_code_fence(lines[idx])
+        if active_fence is not None:
+            result.append(lines[idx])
+            idx += 1
+            continue
+
+        metadata_end = _dependabot_metadata_end(lines, idx) if lines[idx].strip() == "---" else None
+        if metadata_end is None:
+            result.append(lines[idx])
+            idx += 1
+            continue
+
+        while result and not result[-1].strip():
+            result.pop()
+        idx = metadata_end + 1
+        while idx < len(lines) and not lines[idx].strip():
+            idx += 1
+        if result and idx < len(lines):
+            result.append("")
+
+    return "\n".join(result)
+
+
 def postprocess_text(text: str) -> str:
     """Apply changelog markdown hygiene transforms to *text*."""
+    text = _strip_dependabot_metadata(text)
     text = _canonicalize_changelog_terms(text)
 
     # Mirror squash-body conventional commit headings before summaries/reflow.
@@ -1215,7 +1451,7 @@ def postprocess_text(text: str) -> str:
 
     lines = text.split("\n")
     result: list[str] = []
-    in_code_block = False
+    active_fence: _CodeFence | None = None
     current_entry_summary: str | None = None
     seen_headings: dict[str, int] = {}
     drop_next_blank = False
@@ -1223,13 +1459,16 @@ def postprocess_text(text: str) -> str:
     for idx, line in enumerate(lines):
         # --- fenced code-block tracking ---
         next_line = lines[idx + 1] if idx + 1 < len(lines) else None
-        handled, in_code_block = _process_code_fence(line, result, in_code_block, next_line)
+        handled, active_fence = _process_code_fence(line, result, active_fence, next_line)
         if handled:
             continue
 
         # Never reflow inside code blocks.
-        if in_code_block:
+        if active_fence is not None:
             result.append(line)
+            continue
+
+        if _is_blank_between_peer_list_items(lines, idx):
             continue
 
         # --- MD004: normalise historical and ``* `` list markers to ``- `` ---
@@ -1238,6 +1477,7 @@ def postprocess_text(text: str) -> str:
 
         # --- MD030: normalise spaces after list marker ---
         line = _LIST_MARKER_SPACE_RE.sub(r"\1 ", line)
+        line = _normalize_email_autolinks(line)
 
         if _VERSION_RE.match(line):
             seen_headings.clear()
@@ -1278,7 +1518,25 @@ def postprocess(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     text = postprocess_text(text)
 
-    path.write_text(text, encoding="utf-8")
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            tmp_path = Path(handle.name)
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        tmp_path.chmod(stat.S_IMODE(path.stat().st_mode))
+        tmp_path.replace(path)
+    finally:
+        if tmp_path is not None and tmp_path.exists():
+            tmp_path.unlink()
 
 
 def main() -> None:

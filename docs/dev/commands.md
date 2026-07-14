@@ -68,7 +68,7 @@ changed surface.
 
 | Touched surface | Iteration validation | Final validation |
 |-----|-----|-----|
-| Markdown documentation (`*.md`) | `just markdown-check` | `just markdown-ci` |
+| Markdown documentation (`*.md`) | `just markdown-check` | `just markdown-ci`; add `just docs-version-check` for release/versioned references |
 | Python under `scripts/` | Targeted pytest or `just test-python`; add `just python-check` for logic/style | `just python-check` and `just test-python` |
 | Jupyter notebooks (`notebooks/**/*.ipynb`) | `just notebook-lint` | `just notebook-check` |
 | Paper sources and figures (`papers/**/*`, paper notebooks) | `just paper-check` | `just papers` |
@@ -133,10 +133,11 @@ command does not exist.
 
 ## Formatting
 
-Rust formatting checks are non-mutating:
+Rust and justfile formatting checks are non-mutating:
 
 ```bash
 just fmt-check
+just justfile-fmt-check
 ```
 
 Apply formatting through:
@@ -146,7 +147,8 @@ just fix
 ```
 
 Run checks before mutating fixers; formatting drift should be understood before
-`just fix` rewrites files.
+`just fix` rewrites files. The focused mutating recipes are `just fmt` for Rust
+and `just justfile-fmt` for the justfile.
 
 ---
 
@@ -200,6 +202,16 @@ or
 cargo doc
 ```
 
+Release-facing version references are checked separately:
+
+```bash
+just docs-version-check
+```
+
+This compares the Cargo package version against `Cargo.lock`, `pyproject.toml`,
+`uv.lock`, `CITATION.cff`, release-pinned README links, active documentation
+dependency snippets, and current-tag benchmark workflow examples.
+
 ---
 
 ## Full CI Validation
@@ -214,8 +226,11 @@ just ci
 This runs:
 
 - formatting checks
+- justfile formatting checks
 - GitHub Actions checks
 - Markdown checks
+- release-version reference synchronization
+- `Cargo.toml`/`Cargo.lock` synchronization
 - JSON/TOML/YAML/CFF checks
 - Python lint/typecheck
 - notebook hygiene and fast headless execution
@@ -242,18 +257,22 @@ diagnostic invariants.
 Actions. It is a flat union of leaf validators rather than a nested call to
 `just check`. The target classes are kept separate: `rust-core-check` covers
 formatting, all-targets Clippy, rustdoc, and Semgrep; `bench-compile` compiles
-benchmark harnesses once; `test-rust-ci` compiles and runs Rust lib unit tests,
-default-feature integration tests, and feature-gated CLI integration tests in
-release-profile nextest invocations;
+benchmark harnesses once; `test-rust-ci` compiles and runs Rust lib unit tests
+in debug and release profiles, then runs default-feature integration tests and
+feature-gated CLI integration tests in release-profile nextest invocations;
 `test-doc` compiles and runs Rust doctests once in release profile;
 `notebook-check` lints notebooks and executes fast notebooks headlessly once.
 
 `just test` is tests-only. `test-integration-compile` and `bench-test-compile`
 are explicit no-run smoke recipes for cases where a compile-only check is the
 desired validator; do not run them before `test-integration` unless you
-intentionally want a separate compile-only pass. `test-unit` and
-`test-integration` stay focused for targeted local validation; broad test and
-CI workflows use `test-rust-ci` to avoid a debug-plus-release profile split.
+intentionally want a separate compile-only pass. `test-unit` runs lib unit
+tests in both debug and release profiles so debug assertions and default
+overflow checks remain covered; the nextest `debug` profile gives slower debug
+geometry paths a finite 60-second watchdog. `test-integration` runs a focused
+release-profile nextest bucket. Broad test and CI workflows use `test-rust-ci`
+to provide the same two-profile unit coverage while compiling release lib and
+integration tests together.
 
 ```bash
 just ci
@@ -309,8 +328,8 @@ default to 100 attempted moves with progress every 10 attempts, write progress
 CSV plus summary JSON under `target/pachner_stress/`, and keep parseable stdout
 stage/report/progress lines so long workloads can be diagnosed without making
 the workflow part of routine CI. These direct stress recipes currently validate
-topology scope only (Levels 1-3); the large Level 4 embedding overlap scan is
-deferred to the dedicated embedding-validation work. The CLI supports
+topology scope only (Levels 1-3); the large Level 4 realization overlap scan is
+deferred to the dedicated realization-validation work. The CLI supports
 `round-trip` and `random-walk` modes; `round-trip` is the default. Pass explicit
 `attempts`, `vertices`, and `validate_every` arguments for soak runs. Use
 `just bench-pachner-stress*` when Criterion timing statistics for stable 4D move
@@ -706,8 +725,11 @@ just action-lint
 | Run lints | `just check` |
 | Fast compile check | `just check-fast` |
 | Check formatting | `just fmt-check` |
+| Check justfile formatting | `just justfile-fmt-check` |
 | Apply formatters/auto-fixes | `just fix` |
 | Validate Markdown-only changes | `just markdown-ci` |
+| Validate release-version references | `just docs-version-check` |
+| Validate `Cargo.toml`/`Cargo.lock` synchronization | `just cargo-lock-check` |
 | Validate configuration-only changes | `just lint-config` |
 | Validate Python scripts/tests | `just python-check` and `just test-python` |
 | Validate notebook changes | `just notebook-check` |
@@ -733,6 +755,8 @@ CI enforces:
 
 - GitHub Actions checks
 - Markdown, JSON, TOML, YAML, CFF, and spell checks
+- release-version reference synchronization
+- `Cargo.toml`/`Cargo.lock` synchronization
 - Python lint, type checks, and tests
 - notebook hygiene and fast headless execution
 - core Rust formatting, Clippy, rustdoc, and Semgrep checks

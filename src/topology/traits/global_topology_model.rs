@@ -156,12 +156,12 @@ pub trait GlobalTopologyModel<const D: usize> {
     }
 
     /// Indicates whether this topology has an affine chart suitable for Level 4
-    /// embedded-geometry validation.
+    /// realized-geometry validation.
     ///
     /// Euclidean topology validates directly in its ambient chart. Toroidal
     /// topology validates in its periodic covering-space charts. Curved models
     /// return `false` until they provide model-specific chart validators.
-    fn supports_affine_embedding_validation(&self) -> bool {
+    fn supports_affine_chart_realization_validation(&self) -> bool {
         false
     }
 
@@ -219,7 +219,7 @@ impl<const D: usize> GlobalTopologyModel<D> for EuclideanModel {
         Ok(coords)
     }
 
-    fn supports_affine_embedding_validation(&self) -> bool {
+    fn supports_affine_chart_realization_validation(&self) -> bool {
         true
     }
 }
@@ -309,7 +309,7 @@ impl<const D: usize> GlobalTopologyModel<D> for ToroidalModel<D> {
         Some(self.domain)
     }
 
-    fn supports_affine_embedding_validation(&self) -> bool {
+    fn supports_affine_chart_realization_validation(&self) -> bool {
         true
     }
 
@@ -571,19 +571,19 @@ impl<const D: usize> GlobalTopologyModel<D> for GlobalTopologyModelAdapter<D> {
         }
     }
 
-    fn supports_affine_embedding_validation(&self) -> bool {
+    fn supports_affine_chart_realization_validation(&self) -> bool {
         match self {
             Self::Euclidean(model) => {
-                GlobalTopologyModel::<D>::supports_affine_embedding_validation(model)
+                GlobalTopologyModel::<D>::supports_affine_chart_realization_validation(model)
             }
             Self::Toroidal(model) => {
-                GlobalTopologyModel::<D>::supports_affine_embedding_validation(model)
+                GlobalTopologyModel::<D>::supports_affine_chart_realization_validation(model)
             }
             Self::Spherical(model) => {
-                GlobalTopologyModel::<D>::supports_affine_embedding_validation(model)
+                GlobalTopologyModel::<D>::supports_affine_chart_realization_validation(model)
             }
             Self::Hyperbolic(model) => {
-                GlobalTopologyModel::<D>::supports_affine_embedding_validation(model)
+                GlobalTopologyModel::<D>::supports_affine_chart_realization_validation(model)
             }
         }
     }

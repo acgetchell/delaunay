@@ -328,7 +328,7 @@ pub enum ConvexHullConstructionError {
 /// let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())?;
 /// assert!(hull.is_valid_for_triangulation(dt.as_triangulation())); // Valid initially
 ///
-/// // Hull extension is now implemented - inserting outside points works!
+/// // Mutating the triangulation leaves this detached hull snapshot stale.
 /// dt.insert_vertex(vertex![2.0, 2.0, 2.0]?)?;
 /// # Ok(())
 /// # }
@@ -375,10 +375,10 @@ pub enum ConvexHullConstructionError {
 /// assert_eq!(hull.number_of_facets(), 4);
 /// assert!(hull.is_valid_for_triangulation(dt.as_triangulation()));
 ///
-/// // Hull extension is now implemented - inserting outside points works!
-/// // Note: The hull becomes invalid after modification and needs to be recreated
+/// // Inserting a vertex mutates the triangulation; the hull must be recreated
+/// // before using it against the new TDS state.
 /// let new_vertex = vertex![2.0, 2.0, 2.0]?;
-/// dt.insert_vertex(new_vertex)?; // Now works with hull extension!
+/// dt.insert_vertex(new_vertex)?;
 /// assert!(!hull.is_valid_for_triangulation(dt.as_triangulation())); // Hull is stale
 /// # Ok(())
 /// # }
@@ -830,9 +830,8 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     /// let hull = ConvexHull::try_from_triangulation(dt.as_triangulation())?;
     /// assert!(hull.is_valid_for_triangulation(dt.as_triangulation()));
     ///
-    /// // After any modification to the triangulation, the hull would become invalid
-    /// // Note: Currently, hull extension is not yet implemented, so inserting
-    /// // outside points will cause an error. This demonstrates the validation concept.
+    /// // After any modification to the triangulation, the hull would become invalid.
+    /// // Rebuild the hull before using it against the modified TDS state.
     /// # Ok(())
     /// # }
     /// ```

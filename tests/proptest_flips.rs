@@ -174,8 +174,8 @@ fn assert_valid<const D: usize>(
     triangulation
         .validate()
         .map_err(|err| TestCaseError::fail(format!("{context} validation failed: {err:?}")))?;
-    triangulation.is_valid_embedding().map_err(|err| {
-        TestCaseError::fail(format!("{context} embedding validation failed: {err:?}"))
+    triangulation.is_valid_realization().map_err(|err| {
+        TestCaseError::fail(format!("{context} realization validation failed: {err:?}"))
     })?;
     Ok(())
 }

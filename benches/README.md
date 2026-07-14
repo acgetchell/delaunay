@@ -76,11 +76,18 @@ assets:
   it into `docs/PERFORMANCE.md`, and archives the previous committed report
   under `docs/archive/performance/`.
 
-Use explicit tag pairs such as `just performance-release v0.8.0 v0.7.8` only
-for release repair or regeneration. Do not use release-comparison commands as a
-routine pre-`just ci` step. Temp-worktree commands apply tracked changes from
-the current checkout by default; untracked benchmark or script files must be
-added to git before they can affect the generated report.
+Use explicit tag pairs only for release repair or regeneration:
+
+```bash
+TAG=vX.Y.Z
+PREVIOUS_TAG=vX.Y.W
+just performance-release "$TAG" "$PREVIOUS_TAG"
+```
+
+Do not use release-comparison commands as a routine pre-`just ci` step.
+Temp-worktree commands apply tracked changes from the current checkout by
+default; untracked benchmark or script files must be added to git before they
+can affect the generated report.
 
 The default release-signal suite is deliberately curated. It favors stable,
 release-relevant public behavior over every exploratory benchmark in this
@@ -262,7 +269,7 @@ isolated temporary worktrees:
 just performance-local
 just performance-github-assets
 just performance-release
-just performance-release v0.8.0 v0.7.8
+just performance-release "$TAG" "$PREVIOUS_TAG"
 ```
 
 `performance-local` compares the current package version against the latest
@@ -288,7 +295,7 @@ cargo bench --profile perf --bench ci_performance_suite
 - convex hull extraction
 - boundary facet traversal
 - cumulative validation Levels 1-5, including Level 1-2 TDS structure, Level 3
-  topology, Level 4 embedding, and Level 5 Delaunay predicate checks
+  topology, Level 4 realization, and Level 5 Delaunay predicate checks
 - incremental vertex insertion into prepared triangulations
 - explicit 2D-5D bistellar flip roundtrips
 
@@ -357,7 +364,7 @@ Use `just bench-pachner-stress*` for Criterion timing evidence. Criterion
 requires at least 10 samples. The benchmark recipe measures stable accepted
 move fixtures and corresponding forward/inverse round trips.
 
-The stress cases validate topology plus the Level 4 embedding invariant that
+The stress cases validate topology plus the Level 4 realization invariant that
 arbitrary Pachner moves are expected to preserve; Level 5 Delaunay validity is
 not a postcondition of arbitrary topology edits. Invalid local candidates are
 counted as candidate misses or proposal rejections, while successfully planned

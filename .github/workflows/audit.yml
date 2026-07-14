@@ -4,6 +4,9 @@ on:
     paths:
       # Run if workflow changes
       - .github/workflows/audit.yml
+      - .github/actions/setup-just/action.yml
+      # Run if tool-version source changes
+      - justfile
       # Run on changed dependencies
       - "**/Cargo.toml"
       - "**/Cargo.lock"
@@ -11,6 +14,9 @@ on:
     paths:
       # Run if workflow changes
       - .github/workflows/audit.yml
+      - .github/actions/setup-just/action.yml
+      # Run if tool-version source changes
+      - justfile
       # Run on changed dependencies
       - "**/Cargo.toml"
       - "**/Cargo.lock"
@@ -29,8 +35,6 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    env:
-      CARGO_AUDIT_VERSION: "0.22.2"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -43,6 +47,23 @@ jobs:
           cache-bin: false
           # toolchain, components, etc. are specified in rust-toolchain.toml
 
+      - name: Set up just
+        uses: ./.github/actions/setup-just
+
+      - name: Resolve cargo-audit version
+        id: cargo_audit_version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(just --evaluate cargo_audit_version)"
+          if [[ -z "$version" ]]; then
+            echo "::error::Could not resolve cargo_audit_version from justfile"
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Cache audit database
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -53,7 +74,7 @@ jobs:
       - name: Install cargo-audit
         uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
         with:
-          tool: cargo-audit@${{ env.CARGO_AUDIT_VERSION }}
+          tool: cargo-audit@${{ steps.cargo_audit_version.outputs.version }}
 
       - name: Run cargo audit
         run: |

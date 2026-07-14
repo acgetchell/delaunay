@@ -1683,8 +1683,8 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// [`DelaunayTriangulationValidationError::Triangulation`] when Level 3
     /// topology violates the requested metadata, for example when Euclidean
     /// boundary facets are relabeled as closed spherical or toroidal topology,
-    /// [`DelaunayTriangulationValidationError::Embedding`] when Level 4 rejects
-    /// the requested embedding model, or
+    /// [`DelaunayTriangulationValidationError::Realization`] when Level 4 rejects
+    /// the requested realization model, or
     /// [`DelaunayTriangulationValidationError::VerificationFailed`] when Level 5
     /// Delaunay validation fails. The previous topology metadata is restored
     /// before the error is returned.
@@ -1717,7 +1717,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
             Ok(()) => Ok(()),
             Err(InvariantError::Tds(err)) => Err(err.into()),
             Err(InvariantError::Triangulation(err)) => Err(err.into()),
-            Err(InvariantError::Embedding(err)) => Err(err.into()),
+            Err(InvariantError::Realization(err)) => Err(err.into()),
             Err(InvariantError::Delaunay(err)) => Err(err),
         }
     }

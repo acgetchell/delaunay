@@ -20,10 +20,6 @@ jobs:
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
-    env:
-      CARGO_LLVM_COV_VERSION: "0.8.7"
-      JUST_VERSION: "1.55.1"
-      NEXTEST_VERSION: "0.9.140"
     steps:
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -38,23 +34,30 @@ jobs:
           cache-bin: false
           # toolchain, components, etc. are specified in rust-toolchain.toml
 
+      - name: Set up just
+        id: setup_just
+        uses: ./.github/actions/setup-just
+
+      - name: Export coverage tool versions
+        id: tool_versions
+        run: |
+          {
+            echo "CARGO_LLVM_COV_VERSION=$(just --evaluate cargo_llvm_cov_version)"
+            echo "CARGO_NEXTEST_VERSION=$(just --evaluate nextest_version)"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Install LLVM coverage tools
         run: rustup component add llvm-tools-preview
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
         with:
-          tool: cargo-llvm-cov@${{ env.CARGO_LLVM_COV_VERSION }}
-
-      - name: Install just
-        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
-        with:
-          tool: just@${{ env.JUST_VERSION }}
+          tool: cargo-llvm-cov@${{ steps.tool_versions.outputs.CARGO_LLVM_COV_VERSION }}
 
       - name: Install cargo-nextest
         uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
         with:
-          tool: cargo-nextest@${{ env.NEXTEST_VERSION }}
+          tool: cargo-nextest@${{ steps.tool_versions.outputs.CARGO_NEXTEST_VERSION }}
 
       - name: Verify cargo-nextest
         run: cargo nextest --version

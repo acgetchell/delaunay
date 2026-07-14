@@ -1,13 +1,18 @@
 """Tests for postprocess_changelog.py — trailing blanks, reflow, code blocks, summaries."""
 
-from typing import TYPE_CHECKING
+import stat
+from pathlib import Path
+
+import pytest
 
 from postprocess_changelog import (
+    _CodeFence,
     _compact_entry,
     _inject_summary_sections,
     _is_duplicate_squash_heading,
     _is_isolated_body_heading,
     _max_pr_number,
+    _normalize_email_autolinks,
     _normalize_entry_heading,
     _normalize_indented_heading,
     _normalize_squash_heading,
@@ -15,12 +20,10 @@ from postprocess_changelog import (
     _process_code_fence,
     _reflow_line,
     _squash_heading_parts,
+    _strip_dependabot_metadata,
     postprocess,
     postprocess_text,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 class TestStripTrailingBlanks:
@@ -80,6 +83,99 @@ class TestStripTrailingBlanks:
         assert f.read_text(encoding="utf-8") == "\n"
 
 
+class TestDependabotMetadata:
+    def test_strips_yaml_footer_from_commit_body(self) -> None:
+        content = (
+            "- Update setuptools [`abcdef0`](https://example.com/commit/abcdef0)\n\n"
+            "  Updates setuptools to 83.0.0\n\n"
+            "---\n\n"
+            "  updated-dependencies:\n\n"
+            "- dependency-name: setuptools\n"
+            "  dependency-version: 83.0.0\n"
+            "  dependency-type: direct:development\n"
+            "  ...\n"
+            "- Next entry\n"
+        )
+
+        assert _strip_dependabot_metadata(content) == (
+            "- Update setuptools [`abcdef0`](https://example.com/commit/abcdef0)\n\n  Updates setuptools to 83.0.0\n\n- Next entry\n"
+        )
+
+    def test_preserves_unrelated_thematic_break(self) -> None:
+        content = "- Entry\n\n---\n\nAdditional context\n"
+
+        assert _strip_dependabot_metadata(content) == content
+
+    def test_postprocess_text_strips_dependabot_footer(self) -> None:
+        content = "- Update setuptools\n\n---\n\nupdated-dependencies:\n- dependency-name: setuptools\n  dependency-version: 83.0.0\n...\n\n- Next entry\n"
+
+        result = postprocess_text(content)
+
+        assert "updated-dependencies:" not in result
+        assert result == "- Update setuptools\n- Next entry\n"
+
+    def test_postprocess_text_preserves_dependabot_markers_inside_yaml_fence(self) -> None:
+        fenced_example = "```yaml\n---\nupdated-dependencies:\n- dependency-name: setuptools\n...\n```"
+
+        result = postprocess_text(f"Example metadata:\n\n{fenced_example}\n")
+
+        assert fenced_example in result
+
+
+class TestRumdlCompatibility:
+    def test_removes_blank_between_peer_list_items(self) -> None:
+        content = (
+            "# Changelog\n\n"
+            "## [1.0.0] - 2026-01-01\n\n"
+            "### Added\n\n"
+            "- First item\n"
+            "  [`1111111`](https://github.com/acgetchell/delaunay/commit/1111111111111111111111111111111111111111)\n\n"
+            "- Second item\n"
+        )
+
+        result = postprocess_text(content)
+
+        assert "\n\n- Second item\n" not in result
+        assert "\n- Second item\n" in result
+
+    def test_removes_blank_after_nested_body_before_top_level_peer(self) -> None:
+        content = "# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Added\n\n- First item\n\n  - Body point\n  - Body point\n\n- Second item\n"
+
+        result = postprocess_text(content)
+
+        assert "\n\n- Second item\n" not in result
+
+    def test_preserves_blank_before_first_nested_item_after_parent_item(self) -> None:
+        content = "# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Added\n\n- Parent item\n\n  - First nested detail\n"
+
+        result = postprocess_text(content)
+
+        assert "- Parent item\n\n  - First nested detail\n" in result
+
+    def test_does_not_add_blank_before_peer_item_with_body(self) -> None:
+        content = (
+            "# Changelog\n\n"
+            "## [1.0.0] - 2026-01-01\n\n"
+            "### Added\n\n"
+            "- Simple item [`1111111`](https://github.com/acgetchell/delaunay/commit/1111111111111111111111111111111111111111)\n"
+            "- Item with body [`2222222`](https://github.com/acgetchell/delaunay/commit/2222222222222222222222222222222222222222)\n\n"
+            "  Body paragraph.\n"
+        )
+
+        result = postprocess_text(content)
+
+        assert "\n- Simple item" in result
+        assert "\n- Item with body" in result
+        assert "\n\n- Item with body" not in result
+
+    def test_normalizes_git_cliff_escaped_email_autolink(self) -> None:
+        line = "  Co-Authored-By: Oz &lt;oz-agent@warp.dev&gt;"
+
+        result = _normalize_email_autolinks(line)
+
+        assert result == "  Co-Authored-By: Oz <oz-agent@warp.dev>"
+
+
 class TestReflowLine:
     """Unit tests for the _reflow_line helper."""
 
@@ -99,6 +195,15 @@ class TestReflowLine:
         result = _reflow_line(line, max_width=40)
         # The link must appear intact in one of the output lines.
         assert any(link in part for part in result.split("\n"))
+
+    @pytest.mark.parametrize("token", ["[API](https://example.com),", "`is_valid()`,"])
+    def test_preserves_punctuation_attached_to_atomic_markdown(self, token: str) -> None:
+        line = f"- Read {token} then continue with enough text to force the line to wrap"
+
+        result = _reflow_line(line, max_width=40)
+
+        assert token in result
+        assert token.replace(",", " ,") not in result
 
     def test_preserves_code_span(self) -> None:
         span = "`orientation_from_matrix()`"
@@ -148,6 +253,22 @@ class TestReflowLine:
             assert cont.startswith("  ")
         # All links must be intact.
         assert link in result
+
+    def test_preserves_link_with_balanced_destination_parentheses(self) -> None:
+        link = "[API](https://example.com/search(function(arg(nested))))"
+        line = f"- Read the detailed publication API notes before continuing with the release process {link}"
+
+        result = _reflow_line(line, max_width=60)
+
+        assert link in result
+
+    def test_preserves_multi_backtick_code_span(self) -> None:
+        span = "``call(`inner`, value)``"
+        line = f"- Use {span} when documenting the generated command and all of its arguments"
+
+        result = _reflow_line(line, max_width=45)
+
+        assert span in result
 
 
 # ---------------------------------------------------------------------------
@@ -869,38 +990,70 @@ class TestCodeBlockLanguage:
     def test_process_code_fence_opens_and_tags_bare_fence(self) -> None:
         result: list[str] = []
 
-        handled, in_code_block = _process_code_fence("```", result, in_code_block=False, next_line="let x = 1;")
+        handled, active_fence = _process_code_fence("```", result, active_fence=None, next_line="let x = 1;")
 
         assert handled
-        assert in_code_block
+        assert active_fence == _CodeFence(delimiter="`", length=3)
         assert result == ["```text"]
 
     def test_process_code_fence_closes_existing_block(self) -> None:
         result: list[str] = []
 
-        handled, in_code_block = _process_code_fence("```", result, in_code_block=True, next_line=None)
+        handled, active_fence = _process_code_fence(
+            "```",
+            result,
+            active_fence=_CodeFence(delimiter="`", length=3),
+            next_line=None,
+        )
 
         assert handled
-        assert not in_code_block
+        assert active_fence is None
         assert result == ["```"]
 
     def test_process_code_fence_adds_blank_after_closing_fence(self) -> None:
         result: list[str] = []
 
-        handled, in_code_block = _process_code_fence("```", result, in_code_block=True, next_line="following prose")
+        handled, active_fence = _process_code_fence(
+            "```",
+            result,
+            active_fence=_CodeFence(delimiter="`", length=3),
+            next_line="following prose",
+        )
 
         assert handled
-        assert not in_code_block
+        assert active_fence is None
         assert result == ["```", ""]
 
     def test_process_code_fence_ignores_regular_line(self) -> None:
         result: list[str] = []
 
-        handled, in_code_block = _process_code_fence("regular text", result, in_code_block=False, next_line=None)
+        handled, active_fence = _process_code_fence("regular text", result, active_fence=None, next_line=None)
 
         assert not handled
-        assert not in_code_block
+        assert active_fence is None
         assert result == []
+
+    def test_tilde_fence_is_supported_and_tagged(self) -> None:
+        result: list[str] = []
+
+        handled, active_fence = _process_code_fence("~~~~", result, active_fence=None, next_line="code")
+
+        assert handled
+        assert active_fence == _CodeFence(delimiter="~", length=4)
+        assert result == ["~~~~text"]
+
+    def test_shorter_or_different_delimiter_does_not_close_fence(self) -> None:
+        active = _CodeFence(delimiter="`", length=4)
+
+        handled_short, still_active = _process_code_fence("```", [], active_fence=active, next_line=None)
+        handled_tilde, still_active = _process_code_fence("~~~~", [], active_fence=still_active, next_line=None)
+        handled_close, closed = _process_code_fence("`````", [], active_fence=still_active, next_line=None)
+
+        assert not handled_short
+        assert not handled_tilde
+        assert still_active == active
+        assert handled_close
+        assert closed is None
 
     def test_adds_language_to_bare_fence(self, tmp_path: Path) -> None:
         f = tmp_path / "CHANGELOG.md"
@@ -931,6 +1084,21 @@ class TestCodeBlockLanguage:
         result = f.read_text(encoding="utf-8")
         assert long_code in result
 
+    def test_no_reflow_or_heading_rewrite_inside_tilde_block(self, tmp_path: Path) -> None:
+        long_code = "## " + "code " * 50
+        f = tmp_path / "CHANGELOG.md"
+        f.write_text(
+            f"# Changelog\n\n## [1.0.0]\n\n### Fixed\n\n- Parent entry\n\n~~~markdown\n{long_code.rstrip()}\n~~~\n## Outside\n",
+            encoding="utf-8",
+        )
+
+        postprocess(f)
+
+        result = f.read_text(encoding="utf-8")
+        assert long_code.rstrip() in result
+        assert "~~~markdown" in result
+        assert "#### Outside" in result
+
     def test_adds_blank_after_code_block_before_prose(self, tmp_path: Path) -> None:
         f = tmp_path / "CHANGELOG.md"
         f.write_text("```text\ncode\n```\nfollowing prose\n", encoding="utf-8")
@@ -941,6 +1109,33 @@ class TestCodeBlockLanguage:
 
 
 class TestIntegration:
+    def test_atomic_replace_preserves_file_mode(self, tmp_path: Path) -> None:
+        changelog = tmp_path / "CHANGELOG.md"
+        changelog.write_text("# Changelog\n\n* Original entry\n", encoding="utf-8")
+        changelog.chmod(0o640)
+        original_mode = stat.S_IMODE(changelog.stat().st_mode)
+
+        postprocess(changelog)
+
+        assert stat.S_IMODE(changelog.stat().st_mode) == original_mode
+
+    def test_failed_atomic_replace_preserves_original(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        changelog = tmp_path / "CHANGELOG.md"
+        original = "# Changelog\n\n* Original entry\n"
+        changelog.write_text(original, encoding="utf-8")
+
+        def fail_replace(_source: Path, _target: Path) -> Path:
+            message = "simulated replacement failure"
+            raise OSError(message)
+
+        monkeypatch.setattr(Path, "replace", fail_replace)
+
+        with pytest.raises(OSError, match="simulated replacement failure"):
+            postprocess(changelog)
+
+        assert changelog.read_text(encoding="utf-8") == original
+        assert list(tmp_path.glob(".CHANGELOG.md.*.tmp")) == []
+
     def test_full_changelog_reflow(self, tmp_path: Path) -> None:
         """Simulate a realistic changelog snippet with long lines."""
         long_entry = (

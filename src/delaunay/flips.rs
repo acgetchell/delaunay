@@ -40,8 +40,8 @@ use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::triangulation::DelaunayTriangulation;
 
-/// Applies a high-level flip transaction and preserves topology/embedding invariants.
-fn apply_embedded_flip<K, U, V, const D: usize>(
+/// Applies a high-level flip transaction and preserves topology/realization invariants.
+fn apply_realized_flip<K, U, V, const D: usize>(
     tri: &mut Triangulation<K, U, V, D>,
     apply: impl FnOnce(&mut Triangulation<K, U, V, D>) -> Result<FlipInfo<D>, FlipError>,
 ) -> Result<FlipInfo<D>, FlipError>
@@ -69,9 +69,9 @@ where
             source: Box::new(error),
         });
     }
-    if let Err(source) = transaction.triangulation_mut().validate_embedding() {
+    if let Err(source) = transaction.triangulation_mut().validate_realization() {
         transaction.rollback();
-        return Err(FlipError::EmbeddingValidation {
+        return Err(FlipError::RealizationValidation {
             source: Box::new(source),
         });
     }
@@ -597,7 +597,7 @@ where
         simplex_key: SimplexKey,
         vertex: Vertex<U, D>,
     ) -> Result<FlipInfo<D>, FlipError> {
-        apply_embedded_flip(self, |tri| {
+        apply_realized_flip(self, |tri| {
             apply_bistellar_flip_k1_raw(&mut tri.tds, simplex_key, vertex)
         })
     }
@@ -611,7 +611,7 @@ where
     }
 
     fn flip_k1_remove(&mut self, vertex_key: VertexKey) -> Result<FlipInfo<D>, FlipError> {
-        apply_embedded_flip(self, |tri| {
+        apply_realized_flip(self, |tri| {
             apply_bistellar_flip_k1_inverse_raw(&mut tri.tds, vertex_key)
         })
     }
@@ -621,7 +621,7 @@ where
     }
 
     fn flip_k2(&mut self, facet: FacetHandle) -> Result<FlipInfo<D>, FlipError> {
-        apply_embedded_flip(self, |tri| {
+        apply_realized_flip(self, |tri| {
             let context = build_k2_flip_context(&tri.tds, facet)?;
             apply_bistellar_flip_raw::<U, V, D, 2>(&mut tri.tds, &context)
         })
@@ -633,7 +633,7 @@ where
     }
 
     fn flip_k3(&mut self, ridge: RidgeHandle) -> Result<FlipInfo<D>, FlipError> {
-        apply_embedded_flip(self, |tri| {
+        apply_realized_flip(self, |tri| {
             let context = build_k3_flip_context(&tri.tds, ridge)?;
             apply_bistellar_flip_raw::<U, V, D, 3>(&mut tri.tds, &context)
         })
@@ -645,7 +645,7 @@ where
     }
 
     fn flip_k2_inverse_from_edge(&mut self, edge: EdgeKey) -> Result<FlipInfo<D>, FlipError> {
-        apply_embedded_flip(self, |tri| {
+        apply_realized_flip(self, |tri| {
             let context = build_k2_flip_context_from_edge(&tri.tds, edge)?;
             apply_bistellar_flip_dynamic_raw(&mut tri.tds, D, &context)
         })
@@ -667,7 +667,7 @@ where
             return Err(FlipError::UnsupportedDimension { dimension: D });
         }
 
-        apply_embedded_flip(self, |tri| {
+        apply_realized_flip(self, |tri| {
             let context = build_k3_flip_context_from_triangle(&tri.tds, triangle)?;
 
             // Avoid const-eval underflow for invalid instantiations (e.g. D=0), even though
@@ -801,8 +801,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::embedding::TriangulationEmbeddingValidationError;
     use crate::core::facet::FacetError;
+    use crate::core::realization::TriangulationRealizationValidationError;
     use crate::vertex;
     use std::assert_matches;
 
@@ -865,11 +865,11 @@ mod tests {
         assert_eq!(tri.tds.number_of_simplices(), before_simplices);
         assert!(tri.vertex_key_from_uuid(&inserted_uuid).is_none());
         assert!(tri.validate().is_ok());
-        assert!(tri.is_valid_embedding().is_ok());
+        assert!(tri.is_valid_realization().is_ok());
     }
 
     #[test]
-    fn embedded_flip_transaction_rolls_back_topology_validation_failure() {
+    fn realized_flip_transaction_rolls_back_topology_validation_failure() {
         let vertices = vec![
             vertex!([0.0, 0.0]).unwrap(),
             vertex!([1.0, 0.0]).unwrap(),
@@ -883,7 +883,7 @@ mod tests {
         let before_vertices = tri.tds.number_of_vertices();
         let before_simplices = tri.tds.number_of_simplices();
 
-        let err = apply_embedded_flip(&mut tri, |tri| {
+        let err = apply_realized_flip(&mut tri, |tri| {
             tri.tds
                 .insert_vertex_with_mapping(vertex!([2.0, 2.0]).unwrap())
                 .unwrap();
@@ -900,13 +900,13 @@ mod tests {
 
         assert_matches!(
             err,
-            FlipError::EmbeddingValidation { source }
-                if matches!(*source, TriangulationEmbeddingValidationError::Triangulation(_))
+            FlipError::RealizationValidation { source }
+                if matches!(*source, TriangulationRealizationValidationError::Triangulation(_))
         );
         assert_eq!(tri.tds.number_of_vertices(), before_vertices);
         assert_eq!(tri.tds.number_of_simplices(), before_simplices);
         assert!(tri.validate().is_ok());
-        assert!(tri.validate_embedding().is_ok());
+        assert!(tri.validate_realization().is_ok());
     }
 
     #[test]

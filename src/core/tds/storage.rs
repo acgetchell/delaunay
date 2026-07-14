@@ -30,7 +30,7 @@
 //!
 //! The triangulation data structure represents a finite simplicial complex where:
 //!
-//! - **0-simplices**: Individual vertices embedded in D-dimensional Euclidean space
+//! - **0-simplices**: Individual vertices realized in D-dimensional Euclidean space
 //! - **1-simplices**: Edges connecting two vertices (inferred from maximal simplices)
 //! - **2-simplices**: Triangular faces with three vertices (inferred from maximal simplices)
 //! - **...**
@@ -73,6 +73,7 @@
 //! | **Neighbor Consistency** | `Tds::is_valid()` / `Tds::validate()` | Mutual neighbor relationships |
 //! | **Coherent Orientation** | `Tds::is_valid()` / `Tds::validate()` | Adjacent simplices induce opposite facet orientations |
 //! | **Simplex Vertex Keys** | `Tds::is_valid()` / `Tds::validate()` | Simplices reference only valid vertex keys |
+//! | **Simplex Coordinate Uniqueness** | `Tds::validate()` | Each simplex key set resolves to distinct coordinates |
 //! | **Vertex Incidence** | `Tds::is_valid()` / `Tds::validate()` | `Vertex::incident_simplex` is non-dangling and consistent (when present) |
 //! | **Simplex Validity** | `SimplexBuilder::validate()` (vertex count) + `simplex.is_valid()` / `simplex_report()` | Construction + runtime validation |
 //! | **Vertex Validity** | [`Point::try_new`](crate::geometry::point::Point::try_new) / [`Point`](crate::geometry::point::Point) coordinate conversion (coordinates) + UUID auto-gen + `vertex.is_valid()` / `vertex_report()` | Construction + runtime validation |
@@ -80,7 +81,7 @@
 //! The incremental insertion algorithm attempts to maintain the Delaunay property during
 //! construction, but rare violations can remain. Structural invariants are enforced
 //! **reactively** through validation methods. For a definitive Delaunay check, run
-//! Level 4 Embedding Validity via `Triangulation::validate_embedding()` and
+//! Level 4 Valid Realization via `Triangulation::validate_realization()` and
 //! Level 5 Geometric Predicates via `DelaunayTriangulation::is_valid_delaunay()` /
 //! `DelaunayTriangulation::validate()`.
 //!
@@ -92,6 +93,7 @@
 //!
 //! 1. **Level 1: Element Validity** - [`Simplex::is_valid()`], [`Vertex::is_valid()`]
 //!    - Basic data integrity (coordinates, UUIDs, initialization)
+//!    - Simplex-local vertex keys resolve to distinct coordinates in cumulative [`Tds::validate()`]
 //! 2. **Level 2: Combinatorial Consistency** - [`Tds::is_valid()`] ← **This module**
 //!    - UUID ↔ Key mapping consistency
 //!    - Simplices reference only valid vertex keys (no stale/missing vertex keys)
@@ -104,8 +106,8 @@
 //! 3. **Level 3: Intrinsic PL Topology** - [`Triangulation::is_valid_topology()`]
 //!    - Builds on Level 2, and rejects isolated vertices (every vertex must be incident to ≥ 1 simplex)
 //!    - Adds manifold-with-boundary + Euler characteristic
-//! 4. **Level 4: Embedding Validity** - [`Triangulation::validate_embedding()`](crate::Triangulation::validate_embedding)
-//!    - Nondegenerate embedded simplices and no intersections outside shared faces
+//! 4. **Level 4: Valid Realization** - [`Triangulation::validate_realization()`](crate::Triangulation::validate_realization)
+//!    - Nondegenerate realized simplices and no intersections outside shared faces
 //! 5. **Level 5: Geometric Predicates** - [`DelaunayTriangulation::is_valid_delaunay()`]
 //!    - Implemented Delaunay predicates, including the empty circumsphere property
 //!

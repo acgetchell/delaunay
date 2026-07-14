@@ -164,7 +164,7 @@ for topology guarantee and validation policy details.
   `RepairOperationFailed { operation, source }`.
 - **Validation**: The active `ValidationPolicy` (set with
   `dt.try_set_validation_policy(...)` or `dt.set_validation_policy(...)`) governs automatic topology and
-  changed-scope embedding guards for subsequent construction/modification operations
+  changed-scope realization guards for subsequent construction/modification operations
 
 ### Simplex Barycenters For Local Editing
 
@@ -342,7 +342,7 @@ After applying flips, you should:
 1. Manually verify the Delaunay property if needed:
 
    ```rust
-   assert!(dt.as_triangulation().validate_embedding().is_ok()); // Check Level 4 (Embedding Validity)
+   assert!(dt.as_triangulation().validate_realization().is_ok()); // Check Level 4 (Valid Realization)
    assert!(dt.is_valid_delaunay().is_ok()); // Check Level 5 (Geometric Predicates: Delaunay)
    ```
 
@@ -395,7 +395,7 @@ Both APIs work with the same validation framework but have different guarantees:
 
 - ✅ Maintains **Element Validity** and **Combinatorial Consistency** (Levels 1-2)
 - ✅ Maintains **Intrinsic PL Topology** (Level 3, controlled by `TopologyGuarantee`)
-- ✅ Designed to maintain **Embedding Validity** (Level 4) and the implemented
+- ✅ Designed to maintain **Valid Realization** (Level 4) and the implemented
   **Geometric Predicates** for Delaunay (Level 5)
 - ✅ Fails gracefully if invariants cannot be maintained
 
@@ -417,8 +417,8 @@ assert!(dt.is_valid_structure().is_ok());
 // Level 3: + Intrinsic PL Topology
 assert!(dt.as_triangulation().is_valid_topology().is_ok());
 
-// Level 4: + Embedding Validity
-assert!(dt.as_triangulation().validate_embedding().is_ok());
+// Level 4: + Valid Realization
+assert!(dt.as_triangulation().validate_realization().is_ok());
 
 // Level 5: + Geometric Predicates (Delaunay today)
 assert!(dt.is_valid_delaunay().is_ok());

@@ -27,7 +27,7 @@ the guarantees stated in the public API documentation.
   - [Validation layering](#validation-layering)
   - [Coherent orientation](#coherent-orientation)
   - [Geometric invariants](#geometric-invariants)
-    - [Embedding validity in affine charts](#embedding-validity-in-affine-charts)
+    - [Valid realization](#valid-realization)
     - [Geometric predicates and the Delaunay condition](#geometric-predicates-and-the-delaunay-condition)
     - [Robust predicate envelope](#robust-predicate-envelope)
   - [PL-manifold conditions](#pl-manifold-conditions)
@@ -108,33 +108,36 @@ The implementation separates invariants into five validation levels. Keeping the
 prevents geometric checks from leaking into purely combinatorial validation and makes it clear which
 operation has certified which part of the structure:
 
-1. **Level 1 — Element Validity**: individual vertices, simplices, facets, coordinates, and local
-   orientation data are internally consistent.
+1. **Level 1 — Element Validity**: individual vertices, simplices, facets, coordinates, resolved
+   simplex-local coordinate uniqueness, and local orientation data are internally consistent.
 2. **Level 2 — Combinatorial Consistency**: the triangulation data structure has valid
    vertex/simplex mappings, reciprocal neighbor pointers, bounded facet sharing, no duplicate
    simplices, simplex/ridge connectivity, and coherent combinatorial orientation.
 3. **Level 3 — Intrinsic PL Topology**: the abstract simplicial complex satisfies the requested
    `TopologyGuarantee` (pseudomanifold, PL manifold, or strict PL manifold) through incidence,
    connected components, Euler-characteristic, and link checks.
-4. **Level 4 — Embedding Validity**: the complex is faithfully realized in the chosen ambient model.
-   Euclidean topology validates in the ambient affine chart; toroidal topology validates in periodic
-   covering-space charts; the bounded spherical prototype validates simplices on
-   `S^D \subset R^(D+1)`.
-5. **Level 5 — Geometric Predicates**: the embedding satisfies the selected geometry-specific
-   predicate family. The implemented family today is Delaunay, with Euclidean/toroidal
-   empty-circumsphere predicates and spherical empty-cap / ambient-hull-facet predicates.
+4. **Level 4 — Valid Realization**: the complex is geometrically valid in the chosen coordinate
+   model. `Triangulation::is_valid_realization()` owns realization-only fast-fail validation, and
+   `Triangulation::validate_realization()` owns cumulative Levels 1–4 certification. Euclidean and
+   toroidal affine-chart realizations are checked by these validator APIs, with toroidal checks
+   lifted to periodic covering-space charts; spherical realization validation is owned by the
+   spherical backend for simplices on `S^D \subset R^(D+1)`.
+5. **Level 5 — Geometric Predicates**: the valid realization satisfies the selected
+   geometry-specific predicate family. The implemented family today is Delaunay, with
+   Euclidean/toroidal empty-circumsphere predicates and spherical empty-cap / ambient-hull-facet
+   predicates.
 
-`Triangulation::is_valid_topology()` is a Level 3 intrinsic PL-topology check.
+`Triangulation::is_valid_topology()` is the Level 3 intrinsic PL-topology check.
+`Triangulation::is_valid_realization()` is the Level 4 realization-only check, and
+`Triangulation::validate_realization()` is the cumulative Levels 1–4 check.
 `DelaunayTriangulation::is_valid_delaunay()` is the implemented Level 5 geometric-predicate check
-for an already-formed Delaunay triangulation. `Triangulation` also exposes Level 4 embedding
-validation through `is_valid_embedding` /
-`validate_embedding`.
+for an already-formed Delaunay triangulation.
 Cumulative validation is exposed through the `validate` / `validation_report` APIs described in
 [`docs/validation.md`](validation.md).
 
 Automatic validation during construction is intentionally topology-oriented: `ValidationPolicy`
-controls Level 3 checks during insertion and can enable local insertion-time embedding checks.
-Full/global Level 4 embedding certification and Level 5 geometric-predicate validation remain
+controls Level 3 checks during insertion and can enable local insertion-time realization checks.
+Full/global Level 4 realization certification and Level 5 geometric-predicate validation remain
 explicit certification steps for workflows that need them.
 
 ---
@@ -157,6 +160,15 @@ are a deliberate exception at the TDS layer: their neighbor reciprocity is still
 plain Euclidean facet-parity test is not a meaningful combinatorial-orientation certificate once
 periodic offsets are part of the simplex identity.
 
+Pachner and bistellar-editing transactions must keep coherent combinatorial orientation and positive
+geometric simplex orientation separate. A move can leave the TDS coherently oriented while affected
+simplices have negative signed volume, or can make individual simplices positive while breaking
+shared-facet coherence. The ordinary realized-geometry-preserving edit path repairs negative
+orientation by reordering simplex vertex slots where possible, then relies on topology and Level 4
+realization validation before the edited state is accepted. If the repaired state still violates the
+contract, the transaction rolls back with a typed error instead of leaving a partially repaired
+triangulation behind.
+
 See [`ORIENTATION_SPEC.md`](ORIENTATION_SPEC.md) for the exact parity convention, implementation
 map, and test expectations.
 
@@ -164,20 +176,23 @@ map, and test expectations.
 
 ## Geometric invariants
 
-### Embedding validity in affine charts
+### Valid realization
 
-Levels 1-3 validate the abstract oriented simplicial complex: elements, incidence, neighbor
-reciprocity, coherent orientation, manifoldness, links, connectedness, and Euler consistency. These
-checks do not by themselves prove that the complex is faithfully embedded in its coordinates. A
-topologically valid complex can still fold over itself, contain a zero-volume maximal simplex, or
-identify simplices in a way that overlaps in the chosen geometric chart.
+Levels 1-3 validate the abstract simplicial complex with coherent orientation: elements, incidence,
+neighbor reciprocity, manifoldness, links, connectedness, and Euler consistency. These checks do not
+by themselves prove that the complex is faithfully realized in its coordinates. A topologically valid
+complex can still fold over itself, contain a zero-volume maximal simplex, or identify simplices in a
+way that overlaps in the chosen geometric chart.
 
-Level 4 is the embedding-validity check. It is independent of Level 5 geometric predicates and
+Level 4 is the valid-realization check. It is independent of Level 5 geometric predicates and
 enforces:
 
+- every Euclidean/toroidal maximal simplex has positive geometric orientation in its affine chart;
 - every maximal simplex has nonzero `D`-volume under the robust orientation predicate;
-- every pair of maximal simplices intersects only in the face spanned by their shared vertices;
-- toroidal triangulations are checked in periodic covering-space charts, including translated
+- every pair of maximal simplices intersects only in the realization of the face spanned by their
+  shared vertices;
+- Euclidean and toroidal triangulations use valid affine-chart realization checks, with toroidal
+  triangulations checked in periodic covering-space charts, including translated
   images that can overlap across the fundamental-domain boundary.
 - the bounded spherical prototype validates `S^2`/`S^3` maximal simplices as nondegenerate spherical simplices
   in `S^D \subset R^(D+1)`.
@@ -185,15 +200,20 @@ enforces:
 This is intentionally separate from topology. Non-orientable spaces are valid objects in topology in
 general, but this crate's TDS contract maintains coherent orientation for the oriented complexes its
 construction, flip, and predicate machinery operate on. Level 4 then asks whether that oriented
-complex is a valid realization in the active embedding model. General spherical integration with
-the ordinary mutable triangulation surface and hyperbolic topology need model-specific chart
-validators before they can offer the same Level 4 guarantee.
+complex is a valid realization in the active realization model. For Euclidean/toroidal affine-chart models, this means
+the vertex map is injective, every abstract simplex is realized as a nondegenerate affine simplex,
+and realized simplex intersections satisfy `|sigma| ∩ |tau| = |sigma ∩ tau|`. General spherical
+integration with the ordinary mutable triangulation surface and hyperbolic topology need
+model-specific chart validators before they can offer the same Level 4 guarantee. The crate
+validates finite coordinate realizations; it does not construct a realization for an arbitrary
+abstract PL-manifold.
 
 ### Geometric predicates and the Delaunay condition
 
-Level 5 is the geometric-predicate layer. Its implemented predicate family is Delaunay:
-Euclidean and toroidal triangulations use empty-circumsphere predicates, while the bounded
-spherical prototype uses the equivalent empty-cap / ambient convex-hull-facet predicate.
+Level 5 is the geometric-predicate layer: geometric optimality or predicate satisfaction on top of
+a valid realization. Its implemented predicate family is Delaunay: Euclidean and toroidal
+triangulations use empty-circumsphere predicates, while the bounded spherical prototype uses the
+equivalent empty-cap / ambient convex-hull-facet predicate.
 
 A Euclidean Delaunay triangulation is characterized by the **empty circumsphere**
 condition:[^deberg2008][^edelsbrunner2001]
@@ -201,7 +221,7 @@ condition:[^deberg2008][^edelsbrunner2001]
 - for each `D`-simplex (simplex), no non-simplex vertex lies *strictly inside* that simplex’s
   circumsphere.
 
-This is a **geometric** invariant: it depends on the embedding coordinates and on robust evaluation
+This is a **geometric** invariant: it depends on the realization coordinates and on robust evaluation
 of orientation / in-sphere predicates.[^shewchuk1997]
 
 The key assumption behind local repair is that *regular triangulations* (including Delaunay triangulations)
@@ -297,7 +317,7 @@ and intuition.
 A **vertex link** is the simplicial complex formed by taking all simplices incident
 to a given vertex and removing that vertex from each simplex. Intuitively, the
 vertex link represents the local neighborhood around the vertex, abstracted
-away from the embedding space.
+away from the realization space.
 
 For a PL-manifold, the link of every interior vertex must be homeomorphic to a
 (d−1)-sphere, where d is the dimension of the triangulation. Boundary vertices
@@ -488,8 +508,9 @@ The crate therefore treats flip/repair as a best-effort procedure with explicit 
 
 - Prefer to validate Level 3 intrinsic PL topology (`Triangulation::validate` /
   `TopologyGuarantee`) when running flip-heavy workflows.
-- Validate the relevant Level 5 geometric predicate explicitly when inputs are near-degenerate
-  (`DelaunayTriangulation::is_valid_delaunay` for the Delaunay predicate family).
+- Validate Level 4 realization and the relevant Level 5 geometric predicate explicitly when inputs
+  are near-degenerate (`Triangulation::validate_realization` and
+  `DelaunayTriangulation::is_valid_delaunay` for the Delaunay predicate family).
 
 See the public API docs (<https://docs.rs/delaunay>) and [`docs/workflows.md`](workflows.md) for practical guidance.
 

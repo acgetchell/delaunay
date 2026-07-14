@@ -240,7 +240,7 @@ mod cli_tests {
         assert_eq!(json["dimension"], 2);
         assert_eq!(json["valid_baseline"]["status"], "passed");
         assert_eq!(cases.len(), 5);
-        assert_eq!(cases[3]["layer"], "Valid affine realization");
+        assert_eq!(cases[3]["layer"], "Valid realization");
     }
 
     #[test]

@@ -374,7 +374,7 @@ The test suite has two routine correctness buckets:
 
 Default test recipes are split by target class:
 
-- `just test-unit` runs Rust lib unit tests.
+- `just test-unit` runs Rust lib unit tests in debug and release profiles.
 - `just test-doc` runs Rust doctests in release profile.
 - `just test-integration` runs Rust integration tests.
 - `just test-python` runs Python tests.
@@ -382,9 +382,9 @@ Default test recipes are split by target class:
 For test-only changes, run only the matching focused recipe. If multiple test
 target classes changed, compose those focused recipes once each. Use
 `just test` when you intentionally want the full default test suite; broad Rust
-test workflows use `just test-rust-ci` so lib unit tests and integration tests
-compile together under the release profile rather than as separate
-debug/release nextest passes.
+test workflows use `just test-rust-ci` so debug-only unit behavior is covered
+before lib unit and integration tests compile together under the release
+profile.
 During iteration, prefer the targeted changed-test commands in
 [`commands.md`](commands.md); reserve full focused recipes such as
 `just test-doc`, `just test-unit`, and `just test-integration` for final bucket

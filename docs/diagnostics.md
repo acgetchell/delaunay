@@ -61,7 +61,7 @@ In downstream application code:
 
 ```toml
 [dependencies]
-delaunay = { version = "...", features = ["diagnostics"] }
+delaunay = { version = "0.7.8", features = ["diagnostics"] }
 ```
 
 ## Validation Reports
@@ -98,10 +98,10 @@ Layer-local diagnostics follow a standard naming pattern:
 - `*_diagnostic`: first actionable repair/retry diagnostic for that layer.
 - `*_report`: all checkable layer-local failures.
 
-For Level 4 embedding failures specifically, use
-`dt.as_triangulation().embedding_diagnostic()` for the first repair-oriented
-failure and `dt.as_triangulation().embedding_report()` for all checkable
-embedding failures. These report invalid simplices or simplex pairs with
+For Level 4 realization failures specifically, use
+`dt.as_triangulation().realization_diagnostic()` for the first repair-oriented
+failure and `dt.as_triangulation().realization_report()` for all checkable
+realization failures. These report invalid simplices or simplex pairs with
 simplex keys, simplex UUIDs, offending vertex keys, and offending vertex UUIDs.
 That key-oriented payload is the intended starting point for explicit rollback,
 vertex deletion, or future repair workflows; the report itself is pure and does

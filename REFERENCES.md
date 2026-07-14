@@ -347,12 +347,14 @@ set-based structures (e.g., edge sets) under different construction orders.
   IBM Technical Report, 1958. Often cited for the Tanimoto coefficient (equivalent to the
   Jaccard index for binary vectors).
 
-## Topological Manifolds and PL Topology (Level 3 Validation)
+## Topological Manifolds, Realizations, and PL Topology (Levels 3-4 Validation)
 
-These references support the topology-only manifold / PL-manifold validation logic in this
-library (facet degree, closed-boundary checks, and links of simplices).
+These references support abstract and geometric simplicial complexes, affine/geometric
+realizations, and the topology-only manifold / PL-manifold validation logic in this library
+(facet degree, closed-boundary checks, and links of simplices).
 
-- Edelsbrunner, H., and Harer, J. *Computational Topology*. AMS, 2010.
+- Dey, T. K., and Wang, Y. *Computational Topology for Data Analysis*. Cambridge University Press, 2022.
+- Edelsbrunner, H., and Harer, J. *Computational Topology: An Introduction*. AMS, 2010.
 - Hatcher, A. *Algebraic Topology*. Cambridge University Press, 2002.
   (Appendix A: PL Manifolds and Links.)
 - Munkres, J. R. *Elements of Algebraic Topology*. Addison–Wesley, 1984.
@@ -361,15 +363,16 @@ library (facet degree, closed-boundary checks, and links of simplices).
 - Stillwell, J. *Euler's Gem: The Polyhedron Formula and the Birth of Topology*. Princeton University Press, 2010.
 - Zomorodian, A. *Topology for Computing*. Cambridge University Press, 2005.
 
-## Embedded-Geometry Overlap Detection (Level 4 Validation)
+## Realized-Simplex Overlap Detection (Level 4 Validation)
 
-These references support the embedded-geometry (Level 4) validator, which certifies that maximal
-simplices are nondegenerate and intersect only in their shared faces. Candidate overlapping pairs
-are found with a sweep-and-prune broad phase over axis-aligned bounding boxes before exact rational
-barycentric intersection tests are applied. Two axis-aligned boxes intersect if and only if their
-projections overlap on every coordinate axis (the separating-axis test), and sorting boxes by their
-lower endpoint on one axis while retiring boxes whose upper endpoint precedes the current lower
-endpoint examines a superset of all axis-overlapping pairs, so no intersecting pair is skipped.
+These references support the realized-simplex overlap validator used by Level 4 affine-chart
+realization checks, which certify that maximal simplices are nondegenerate and intersect only in
+their shared faces. Candidate overlapping pairs are found with a sweep-and-prune broad phase over
+axis-aligned bounding boxes before exact rational barycentric intersection tests are applied. Two
+axis-aligned boxes intersect if and only if their projections overlap on every coordinate axis (the
+separating-axis test), and sorting boxes by their lower endpoint on one axis while retiring boxes
+whose upper endpoint precedes the current lower endpoint examines a superset of all axis-overlapping
+pairs, so no intersecting pair is skipped.
 
 - Baraff, D. "Dynamic Simulation of Non-Penetrating Rigid Bodies." PhD thesis, Cornell University, 1992.
   Introduces coordinate sorting ("sort and sweep") for axis-aligned bounding-box overlap detection.

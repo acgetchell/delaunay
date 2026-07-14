@@ -55,7 +55,7 @@
 //! | Post-construction vertex deletion errors and keys | `use delaunay::prelude::deletion::*` |
 //! | Read-only queries, traversal, ridge views, simplex barycenters, convex hull | `use delaunay::prelude::query::*` |
 //! | Point location and conflict-region algorithms | `use delaunay::prelude::algorithms::*` |
-//! | Geometry helpers, simplex embeddings, coordinate ranges, predicates, points | `use delaunay::prelude::geometry::*` |
+//! | Geometry helpers, simplex realizations, coordinate ranges, predicates, points | `use delaunay::prelude::geometry::*` |
 //! | Random points / triangulations for examples and tests | `use delaunay::prelude::generators::*` |
 //! | Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
 //! | Unified Pachner move workflow | `use delaunay::prelude::pachner::*` |
@@ -120,8 +120,8 @@
 //! // Levels 1–3: + Intrinsic PL Topology
 //! assert!(dt.as_triangulation().validate().is_ok());
 //!
-//! // Levels 1–4: elements + combinatorics + topology + embedding validity
-//! assert!(dt.as_triangulation().validate_embedding().is_ok());
+//! // Levels 1–4: elements + combinatorics + topology + realization validity
+//! assert!(dt.as_triangulation().validate_realization().is_ok());
 //!
 //! // Level 5 only: Geometric Predicates (Delaunay today; assumes Levels 1–4)
 //! assert!(dt.is_valid_delaunay().is_ok());
@@ -234,10 +234,10 @@
 //!     boundary; two-sided facets are interior.
 //!   - Checks the **Euler characteristic** of the triangulation (using the topology module).
 //!
-//! - [`Triangulation`] also validates the **embedding validity** of the abstract
+//! - [`Triangulation`] also validates the **realization validity** of the abstract
 //!   complex in the active ambient model. Level 4 validation is performed by
-//!   [`Triangulation::is_valid_embedding`](crate::Triangulation::is_valid_embedding) (Level 4 only) and
-//!   [`Triangulation::validate_embedding`](crate::Triangulation::validate_embedding) (Levels 1–4).
+//!   [`Triangulation::is_valid_realization`](crate::Triangulation::is_valid_realization) (Level 4 only) and
+//!   [`Triangulation::validate_realization`](crate::Triangulation::validate_realization) (Levels 1–4).
 //!   Euclidean topology is checked directly in its ambient chart; toroidal
 //!   topology is checked in periodic covering-space charts.
 //!
@@ -259,7 +259,7 @@
 //!
 //! The crate exposes five validation levels
 //! (Element Validity → Combinatorial Consistency → Intrinsic PL Topology →
-//! Embedding Validity → Geometric Predicates). The
+//! Valid Realization → Geometric Predicates). The
 //! canonical guide (when to use each level, complexity, examples, troubleshooting) lives in
 //! `docs/validation.md`:
 //! <https://github.com/acgetchell/delaunay/blob/main/docs/validation.md>
@@ -273,14 +273,14 @@
 //! - Level 3 (Intrinsic PL Topology / `Triangulation`):
 //!   `dt.as_triangulation().is_valid_topology()` for topology-only checks, or
 //!   `dt.as_triangulation().validate()` for Levels 1–3.
-//! - Level 4 (Embedding Validity / `Triangulation`): `dt.as_triangulation().validate_embedding()`
-//!   for cumulative embedded-geometry checks, or `dt.as_triangulation().embedding_report()` for layer-local diagnostics.
+//! - Level 4 (Valid Realization / `Triangulation`): `dt.as_triangulation().validate_realization()`
+//!   for cumulative realized-geometry checks, or `dt.as_triangulation().realization_report()` for layer-local diagnostics.
 //! - Level 5 (Geometric Predicates / `DelaunayTriangulation`): `dt.is_valid_delaunay()` for the
 //!   implemented Delaunay predicate family, or `dt.delaunay_report()` for layer-local diagnostics.
 //! - Cumulative Delaunay validation: `dt.validate()` for Levels 1–5, or
 //!   `dt.validation_report()` for full diagnostics.
 //!
-//! ### Automatic topology and changed-scope embedding validation during insertion (`ValidationPolicy`)
+//! ### Automatic topology and changed-scope realization validation during insertion (`ValidationPolicy`)
 //!
 //! In addition to explicit validation calls, incremental construction (`new()` / `insert*()`) can run an
 //! automatic **global Level 3 plus changed-scope Level 4** validation pass after insertion, controlled by
@@ -289,13 +289,13 @@
 //! The initial policy is derived from the active topology guarantee. The default
 //! [`TopologyGuarantee::PLManifold`](crate::prelude::TopologyGuarantee::PLManifold)
 //! uses [`ValidationPolicy::ExplicitOnly`](crate::prelude::validation::ValidationPolicy::ExplicitOnly):
-//! mandatory local topology and nondegenerate-embedding checks still run during insertion, while automatic
-//! global-topology/changed-scope embedding validation is a caller-owned explicit checkpoint.
+//! mandatory local topology and orientation/nondegeneracy realization checks still run during insertion, while automatic
+//! global-topology/changed-scope realization validation is a caller-owned explicit checkpoint.
 //!
 //! This automatic pass runs Level 3 (`Triangulation::is_valid_topology()`), changed-simplex
-//! Level 4 nondegeneracy checks, and changed-vs-current Level 4 pairwise checks. It does
+//! Level 4 orientation/nondegeneracy checks, and changed-vs-current Level 4 pairwise checks. It does
 //! **not** run Level 5 geometric-predicate validation, and old-vs-old Level 4 rescans remain an explicit
-//! `Triangulation::validate_embedding()` checkpoint.
+//! `Triangulation::validate_realization()` checkpoint.
 //!
 //! ```rust
 //! use delaunay::prelude::construction::{
@@ -581,8 +581,6 @@ mod core {
     /// Generic triangulation construction helpers.
     pub mod construction;
     pub mod edge;
-    /// Embedded Euclidean geometry validation for generic triangulations.
-    pub mod embedding;
     pub mod facet;
     /// Incremental insertion for generic triangulations.
     pub mod insertion;
@@ -592,6 +590,8 @@ mod core {
     pub mod orientation;
     /// Read-only query and traversal helpers for generic triangulations.
     pub mod query;
+    /// Realized Euclidean geometry validation for generic triangulations.
+    pub mod realization;
     /// Local topology repair for generic triangulations.
     pub mod repair;
     /// Scoped rollback guards for internal topology mutation windows.
@@ -681,8 +681,8 @@ pub mod geometry {
     }
     /// Validated coordinate-range types.
     pub mod coordinate_range;
-    /// Pure labeled-simplex embedding predicates used by Level 4 validation.
-    pub mod embedding;
+    /// Pure labeled-simplex realization predicates used by Level 4 validation.
+    pub mod realization;
     #[macro_use]
     pub mod matrix;
     /// Geometric kernel abstraction (CGAL-style).
@@ -724,11 +724,11 @@ pub mod geometry {
     }
     pub use algorithms::*;
     pub use coordinate_range::*;
-    pub use embedding::*;
     pub use matrix::*;
     pub use point::*;
     pub use predicates::*;
     pub use quality::*;
+    pub use realization::*;
     pub use traits::*;
     pub use util::*;
 }
@@ -815,16 +815,16 @@ pub use crate::core::algorithms::pl_manifold_repair::{
 pub use crate::core::construction::{
     FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
 };
-pub use crate::core::embedding::{
-    PeriodicDomainPeriodError, TriangulationEmbeddingIntersectionDetail,
-    TriangulationEmbeddingSimplexDetail, TriangulationEmbeddingSimplexPairDetail,
-    TriangulationEmbeddingValidationError, TriangulationEmbeddingValidationErrorKind,
-    TriangulationEmbeddingValidationReport,
-};
 pub use crate::core::insertion::DuplicateDetectionMetrics;
 pub use crate::core::operations::{
     InsertionOutcome, InsertionResult, InsertionStatistics, RepairDecision, RepairSkipReason,
     SuspicionFlags, TopologicalOperation,
+};
+pub use crate::core::realization::{
+    PeriodicDomainPeriodError, TriangulationRealizationIntersectionDetail,
+    TriangulationRealizationSimplexDetail, TriangulationRealizationSimplexPairDetail,
+    TriangulationRealizationValidationError, TriangulationRealizationValidationErrorKind,
+    TriangulationRealizationValidationReport,
 };
 pub use crate::core::triangulation::Triangulation;
 pub use crate::core::util::DeduplicationError;
@@ -989,7 +989,7 @@ pub mod topology {
     ///
     /// This module contains the Euclidean and toroidal topology-space helpers,
     /// plus the spherical coordinate/metric backend for points on `S^D`
-    /// embedded in `R^(D+1)`.
+    /// realized in `R^(D+1)`.
     pub mod spaces {
         /// Euclidean space topology
         pub mod euclidean;
@@ -1224,10 +1224,10 @@ pub mod prelude {
         SphericalDelaunayTriangulation, SphericalDelaunayValidationError, SphericalMetric,
         SphericalPoint, SphericalPointError, SphericalSimplex, SphericalSimplexError,
         SphericalValidationLayer, TopologicalOperation, TopologyGuarantee, Triangulation,
-        TriangulationConstructionError, TriangulationEmbeddingIntersectionDetail,
-        TriangulationEmbeddingSimplexDetail, TriangulationEmbeddingSimplexPairDetail,
-        TriangulationEmbeddingValidationError, TriangulationEmbeddingValidationErrorKind,
-        TriangulationEmbeddingValidationReport, TriangulationValidationError,
+        TriangulationConstructionError, TriangulationRealizationIntersectionDetail,
+        TriangulationRealizationSimplexDetail, TriangulationRealizationSimplexPairDetail,
+        TriangulationRealizationValidationError, TriangulationRealizationValidationErrorKind,
+        TriangulationRealizationValidationReport, TriangulationValidationError,
         TriangulationValidationReport, ValidationConfigurationError, ValidationPolicy,
         try_vertices_from_points,
     };
@@ -1443,9 +1443,9 @@ pub mod prelude {
         pub use crate::{
             InsertionError, PeriodicDomainPeriodError, SpatialIndexConstructionFailure,
             TopologyGuarantee, Triangulation, TriangulationConstructionError,
-            TriangulationEmbeddingIntersectionDetail, TriangulationEmbeddingSimplexDetail,
-            TriangulationEmbeddingSimplexPairDetail, TriangulationEmbeddingValidationError,
-            TriangulationEmbeddingValidationErrorKind, TriangulationEmbeddingValidationReport,
+            TriangulationRealizationIntersectionDetail, TriangulationRealizationSimplexDetail,
+            TriangulationRealizationSimplexPairDetail, TriangulationRealizationValidationError,
+            TriangulationRealizationValidationErrorKind, TriangulationRealizationValidationReport,
             TriangulationValidationError, TriangulationValidationReport,
             ValidationConfigurationError, ValidationPolicy,
         };
@@ -1667,9 +1667,9 @@ pub mod prelude {
             DelaunayTriangulationValidationError, DelaunayVerificationError,
             DelaunayVerificationErrorKind, PeriodicDomainPeriodError,
             SphericalDelaunayValidationError, SphericalValidationLayer, TopologyGuarantee,
-            TriangulationEmbeddingIntersectionDetail, TriangulationEmbeddingSimplexDetail,
-            TriangulationEmbeddingSimplexPairDetail, TriangulationEmbeddingValidationError,
-            TriangulationEmbeddingValidationErrorKind, TriangulationEmbeddingValidationReport,
+            TriangulationRealizationIntersectionDetail, TriangulationRealizationSimplexDetail,
+            TriangulationRealizationSimplexPairDetail, TriangulationRealizationValidationError,
+            TriangulationRealizationValidationErrorKind, TriangulationRealizationValidationReport,
             TriangulationValidationError, TriangulationValidationReport,
             ValidationConfigurationError, ValidationPolicy,
         };
@@ -1741,19 +1741,12 @@ pub mod prelude {
         pub use crate::tds::*;
     }
 
-    /// Focused exports for geometry types, simplex embeddings, predicates, and helpers.
+    /// Focused exports for geometry types, simplex realizations, predicates, and helpers.
     pub mod geometry {
         pub use crate::geometry::{
             coordinate_range::{
                 CoordinateRange, CoordinateRangeBound, CoordinateRangeError,
                 CoordinateRangeOrdering, InvalidCoordinateValue,
-            },
-            embedding::{
-                LabeledSimplexEmbedding, LabeledSimplexEmbeddingError, PeriodicSimplexSpan,
-                PeriodicSimplexSpanError, SimplexEmbeddingBuffer, SimplexIntersectionFailure,
-                SimplexIntersectionWitness, axis_aligned_bounding_boxes_overlap,
-                coordinate_range_for_axis, try_periodic_simplex_span,
-                validate_simplex_embeddings_intersect_only_in_shared_faces,
             },
             kernel::{AdaptiveKernel, ExactPredicates, FastKernel, Kernel, RobustKernel},
             matrix::{LaError, Matrix, MatrixError, determinant},
@@ -1765,6 +1758,13 @@ pub mod prelude {
             quality::{
                 QualityDegeneracyMeasure, QualityError, QualityNumericOperation,
                 QualitySimplexVerticesError, normalized_volume, radius_ratio,
+            },
+            realization::{
+                LabeledSimplexRealization, LabeledSimplexRealizationError, PeriodicSimplexSpan,
+                PeriodicSimplexSpanError, SimplexIntersectionFailure, SimplexIntersectionWitness,
+                SimplexRealizationBuffer, axis_aligned_bounding_boxes_overlap,
+                coordinate_range_for_axis, try_periodic_simplex_span,
+                validate_simplex_realizations_intersect_only_in_shared_faces,
             },
             robust_predicates::{
                 ConsistencyResult, InsphereConsistencyError, robust_insphere, robust_orientation,

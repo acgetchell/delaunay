@@ -13,15 +13,19 @@ export PATH := cargo_home + "/bin" + path_separator + env_var("PATH")
 binary_extension := if os_family() == "windows" { ".exe" } else { "" }
 perf_delaunay_binary := "target/perf/delaunay" + binary_extension
 
+cargo_audit_version := "0.22.2"
 cargo_llvm_cov_version := "0.8.7"
+clippy_sarif_version := "0.8.0"
 dprint_version := "0.55.1"
-just_version := "1.55.1"
+just_version := "1.56.0"
 nextest_version := "0.9.140"
-rumdl_version := "0.2.28"
+rumdl_version := "0.2.32"
+sarif_fmt_version := "0.8.0"
 taplo_version := "0.10.0"
 tectonic_version := "0.16.9"
 tex_fmt_version := "0.5.7"
 typos_version := "1.48.0"
+uv_version := "0.11.28"
 zizmor_version := "1.26.1"
 
 # Common cargo-llvm-cov arguments for all coverage runs.
@@ -450,7 +454,7 @@ check-fast:
     cargo check
 
 # CI simulation: comprehensive validation.
-ci: github-actions-check markdown-ci json-check toml-ci yaml-ci python-ci notebook-clear-outputs-all notebook-check rust-core-check test-rust-ci test-doc bench-compile examples
+ci: justfile-fmt-check github-actions-check markdown-ci docs-version-check cargo-lock-check json-check toml-ci yaml-ci python-ci notebook-check rust-core-check test-rust-ci test-doc bench-compile examples
     @echo "🎯 CI checks complete!"
 
 # CI followed by an explicit persistent local baseline refresh.
@@ -510,12 +514,18 @@ default:
 doc-check:
     RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --document-private-items
 
+docs-version-check: _ensure-uv
+    uv run --locked check-docs-version-sync
+
+cargo-lock-check:
+    cargo metadata --locked --format-version 1 --no-deps > /dev/null
+
 # Examples and validation
 examples:
     ./scripts/run_all_examples.sh
 
 # Fix (mutating): apply formatters/auto-fixes
-fix: toml-fix fmt python-fix shell-fix markdown-fix yaml-fix
+fix: justfile-fmt toml-fix fmt python-fix shell-fix markdown-fix yaml-fix
     @echo "✅ Fixes applied!"
 
 fmt:
@@ -523,6 +533,12 @@ fmt:
 
 fmt-check:
     cargo fmt --all -- --check
+
+justfile-fmt:
+    just --fmt
+
+justfile-fmt-check:
+    just --fmt --check
 
 github-actions-check: action-lint zizmor
     @echo "✅ GitHub Actions checks complete!"
@@ -539,6 +555,8 @@ help-workflows:
     @echo "  just python-ci         # Python lint/typecheck + pytest"
     @echo "  just notebook-check    # Notebook hygiene + fast headless execution"
     @echo "  just markdown-ci       # Markdown lint + spell check"
+    @echo "  just docs-version-check # Release-version references against Cargo.toml"
+    @echo "  just cargo-lock-check  # Cargo.toml and Cargo.lock synchronization"
     @echo "  just toml-ci           # TOML parse/lint/format checks"
     @echo "  just yaml-ci           # YAML/CFF format/lint/citation checks"
     @echo "  just github-actions-check # actionlint + zizmor"
@@ -546,7 +564,7 @@ help-workflows:
     @echo "Focused testing:"
     @echo "  just test-rust         # Rust unit, doctest, and integration tests"
     @echo "  just test-rust-ci      # CI Rust unit, integration, and CLI tests"
-    @echo "  just test-unit         # Rust lib unit tests only"
+    @echo "  just test-unit         # Rust lib unit tests in debug and release profiles"
     @echo "  just test-doc          # Rust doctests only, in release profile"
     @echo "  just test-integration  # All integration tests (includes proptests)"
     @echo "  just test-integration-fast # Integration tests (skips proptests)"
@@ -612,16 +630,16 @@ json-check: _ensure-jq
     fi
 
 # All linting: code + documentation + configuration
-lint: github-actions-check markdown-ci json-check toml-ci yaml-ci python-check notebook-lint rust-core-check shell-lint
+lint: justfile-fmt-check github-actions-check markdown-ci docs-version-check cargo-lock-check json-check toml-ci yaml-ci python-check notebook-lint rust-core-check shell-lint
 
 # Code linting: Rust, Python, notebooks, and shell scripts.
 lint-code: rust-core-check python-check notebook-lint shell-lint
 
-# Configuration checks: JSON, TOML, YAML/CFF, GitHub Actions workflows
-lint-config: json-check toml-ci yaml-ci github-actions-check
+# Configuration checks: justfile, JSON, TOML, YAML/CFF, GitHub Actions workflows
+lint-config: justfile-fmt-check cargo-lock-check json-check toml-ci yaml-ci github-actions-check
 
-# Documentation linting: Markdown + spell checking
-lint-docs: markdown-ci
+# Documentation linting: Markdown + spell checking + release-version references
+lint-docs: markdown-ci docs-version-check
 
 markdown-check: _ensure-rumdl
     #!/usr/bin/env bash
@@ -1676,8 +1694,9 @@ test-release: test-rust-ci test-doc
 test-rust: test-rust-ci test-doc
     @echo "✅ Rust tests passed!"
 
-# test-rust-ci: runs Rust lib unit tests, integration tests, and feature-gated CLI tests.
+# test-rust-ci: runs debug lib unit tests, then release lib, integration, and CLI tests.
 test-rust-ci: _ensure-nextest
+    cargo nextest run --profile debug --lib
     cargo nextest run --release --profile ci --lib --tests
     cargo nextest run --release --profile ci --features cli --test cli
 
@@ -1690,9 +1709,10 @@ test-slow: _ensure-nextest
 
 test-slow-release: test-slow
 
-# test-unit: runs Rust lib unit tests.
+# test-unit: runs Rust lib unit tests in debug and release profiles.
 test-unit: _ensure-nextest
-    cargo nextest run --profile ci --lib
+    cargo nextest run --profile debug --lib
+    cargo nextest run --release --profile ci --lib
 
 # Check TOML files parse cleanly.
 toml-check: _ensure-uv

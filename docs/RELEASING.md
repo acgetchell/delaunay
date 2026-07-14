@@ -7,6 +7,9 @@ changelog, publish to crates.io, and create the GitHub release.
 The release changelog is generated with `git-cliff --tag` through
 `just changelog-unreleased`, so no temporary local tag is needed.
 
+Applies to versions `vX.Y.Z`. Prefer updating documentation before publishing
+to crates.io.
+
 ---
 
 ## Conventions and environment
@@ -17,6 +20,7 @@ Set these variables to avoid repeating the version string:
 # tag has the leading v, version does not
 TAG=vX.Y.Z
 VERSION=${TAG#v}
+PREVIOUS_TAG=vA.B.C
 ```
 
 Verify your git remotes:
@@ -28,7 +32,7 @@ git remote -v
 Ensure your local `main` is up to date before beginning:
 
 ```bash
-git checkout main
+git switch main
 git pull --ff-only
 ```
 
@@ -39,6 +43,10 @@ git pull --ff-only
 This PR should primarily include version bumps, changelog updates, benchmark
 summary updates, and documentation updates. All major code changes should
 already be on `main`.
+
+Finalize release-facing metadata and documentation in this dedicated release
+PR. Ordinary feature, fix, review, and hygiene work should not preemptively
+bump versions or prepare release artifacts.
 
 Small, critical fixes discovered during the release process may be included,
 but keep them minimal and release-critical.
@@ -51,7 +59,7 @@ the release artifacts.
 1. Create the release branch
 
 ```bash
-git checkout -b "release/$TAG"
+git switch -c "release/$TAG"
 ```
 
 2. Bump versions
@@ -65,18 +73,36 @@ cargo set-version "$VERSION"
 Alternative: edit `Cargo.toml` manually and update `version = "..."` under
 `[package]`.
 
-Update `CITATION.cff` for the release. Confirm:
+Update release metadata to match the crate version:
 
-- `version` matches `$VERSION`.
-- `date-released` is the planned release date.
-- `doi` is the current Zenodo DOI for this release, if already known.
-- author, ORCID, repository, and license metadata still match the package.
+- `CITATION.cff`: update `version` and `date-released`.
+- `CITATION.cff`: keep `abstract` synchronized with the first paragraph under
+  `README.md`'s Introduction; update both together when either changes.
+- `pyproject.toml`: update `[project] version` for the Python utility package.
 
-Review version references in documentation:
+Review the citation identity fields at the same time: author, ORCID,
+repository, license, and DOI. Keep the DOI policy deliberate: update it only
+when the release has a known release-specific DOI or the archival policy
+changes.
+
+Refresh both committed lockfiles after manual metadata edits:
 
 ```bash
-rg -n "\bv?[0-9]+\.[0-9]+\.[0-9]+\b" README.md docs/ || true
+cargo metadata --format-version 1 --no-deps > /dev/null
+uv lock
 ```
+
+Review version references in active documentation and package metadata:
+
+```bash
+just docs-version-check
+```
+
+The automated check covers package metadata, lockfiles, citation version,
+release-pinned README links, active documentation dependency snippets, and
+current-tag arguments in benchmark workflow examples. Historical prose,
+archived reports, baseline arguments, and tool versions intentionally remain
+independent of the current package version.
 
 3. Generate the release changelog
 
@@ -133,7 +159,7 @@ previous curated report under `docs/archive/performance/`. To repair a specific
 pair, pass both tags explicitly:
 
 ```bash
-just performance-release "$TAG" "vX.Y.Z"
+just performance-release "$TAG" "$PREVIOUS_TAG"
 ```
 
 For manual investigation only, `DELAUNAY_BENCH_EXPORT_METRICS=1` can print the
@@ -152,6 +178,8 @@ flow.
 5. Validate the release branch
 
 ```bash
+just docs-version-check
+just cargo-lock-check
 just ci
 just publish-check
 ```
@@ -159,11 +187,12 @@ just publish-check
 6. Stage and commit release artifacts
 
 ```bash
-git add Cargo.toml Cargo.lock CHANGELOG.md CITATION.cff docs/ benches/PERFORMANCE_RESULTS.md
+git add Cargo.toml Cargo.lock CITATION.cff pyproject.toml uv.lock CHANGELOG.md docs/ benches/PERFORMANCE_RESULTS.md
 
 git commit -m "chore(release): release $TAG
 
 - Bump version to $TAG
+- Update citation and utility package metadata
 - Update changelog with latest changes
 - Update documentation for release
 - Refresh release benchmark summary"
@@ -207,7 +236,7 @@ If you discover issues after generating the changelog:
 1. Sync your local `main` to the merge commit
 
 ```bash
-git checkout main
+git switch main
 git pull --ff-only
 ```
 
@@ -236,14 +265,18 @@ git push origin "$TAG"
 5. Publish to crates.io
 
 ```bash
+# Publish the crate. Ensure docs are already updated on main via the PR.
 cargo publish --locked
 ```
 
 6. Create the GitHub release with notes from the tag annotation
 
 ```bash
-gh release create "$TAG" --notes-from-tag
+gh release create "$TAG" --title "$TAG" --notes-from-tag
 ```
+
+Always set the GitHub release title to the exact tag string, including the
+leading `v`.
 
 Publishing the release triggers `.github/workflows/release-benchmarks.yml`, which
 runs fresh perf-profile release-signal benchmarks on `ubuntu-latest`, packages
@@ -261,14 +294,18 @@ After the release benchmark workflow completes, verify that the GitHub Release
 has the durable benchmark baseline asset:
 
 ```bash
-gh release view "$TAG" --json assets --jq '.assets[].name'
+gh release view "$TAG" --json assets \
+  --jq ".assets[] | select(.name == \"delaunay-$TAG-criterion-baseline.tar.gz\") | .name" | cat
 ```
+
+The command must print `delaunay-$TAG-criterion-baseline.tar.gz`. An Actions
+artifact alone is not a durable release baseline.
 
 8. Clean up the release branch
 
 ```bash
-git push origin --delete "release/$TAG"
 git branch -d "release/$TAG"
+git push origin --delete "release/$TAG"
 ```
 
 ---

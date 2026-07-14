@@ -13,6 +13,9 @@ on:
       - main
     # Only run on changes that could affect performance
     paths:
+      - ".github/workflows/benchmarks.yml"
+      - ".github/actions/setup-just/action.yml"
+      - "justfile"
       - "src/**"
       - "benches/**"
       - "Cargo.toml"
@@ -24,6 +27,9 @@ on:
       - main
     # Only run on changes that could affect performance
     paths:
+      - ".github/workflows/benchmarks.yml"
+      - ".github/actions/setup-just/action.yml"
+      - "justfile"
       - "src/**"
       - "benches/**"
       - "Cargo.toml"
@@ -42,8 +48,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  UV_VERSION: "0.11.27"
-  BENCHMARK_TIMEOUT: 1800 # 30 min; pre-computed seeds + reduced 5D counts keep runtime well under this
+  BENCHMARK_TIMEOUT_SECONDS: 1800 # 30 min; pre-computed seeds + reduced 5D counts keep runtime well under this
   DELAUNAY_BENCH_DISCOVER_SEEDS_LIMIT: 256 # fallback only; ci_performance_suite uses pre-computed seeds
 
 jobs:
@@ -64,10 +69,28 @@ jobs:
           cache-bin: false
           # Toolchain from rust-toolchain.toml.
 
+      - name: Set up just
+        id: setup_just
+        uses: ./.github/actions/setup-just
+
+      - name: Resolve uv version
+        id: uv_version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(just --evaluate uv_version)"
+          if [[ -z "$version" ]]; then
+            echo "::error::Could not resolve uv_version from justfile"
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Install uv (Python package manager)
-        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
-          version: ${{ env.UV_VERSION }}
+          version: ${{ steps.uv_version.outputs.version }}
 
       - name: Verify uv installation
         run: uv --version
@@ -170,7 +193,7 @@ jobs:
 
           uv run benchmark-utils compare \
             --baseline "baseline-artifact/baseline_results.txt" \
-            --bench-timeout "${BENCHMARK_TIMEOUT}"
+            --bench-timeout "${BENCHMARK_TIMEOUT_SECONDS}"
       - name: Classify benchmark comparison outcome
         if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false'
         env:

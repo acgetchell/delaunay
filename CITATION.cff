@@ -26,7 +26,7 @@ abstract: >-
   robustness and degeneracy handling, and Hilbert curves for deterministic
   insertion ordering and efficient spatial indexing. Provides an explicit
   5-level validation hierarchy on individual elements, combinatorial
-  consistency, intrinsic PL topology, embedding validity in the active model,
+  consistency, intrinsic PL topology, valid realization in the active model,
   and geometric predicates such as Delaunay.
   Allows for the complete set of Pachner moves up to D=5 using bistellar flips,
   vertex insertion and deletion, and the conversion of non-Delaunay

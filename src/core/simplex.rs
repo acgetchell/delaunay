@@ -1468,29 +1468,22 @@ impl<V, const D: usize> Simplex<V, D> {
 
     /// The function `is_valid` checks if a [Simplex] is valid.
     ///
-    /// # Type Parameters
-    ///
-    /// This method relies on f64-backed vertex coordinate comparisons
-    /// (finite, comparable, and hashable coordinates suitable for geometric checks).
-    ///
     /// # Returns
     ///
     /// A Result indicating whether the [Simplex] is valid. Returns `Ok(())` if valid,
     /// or a `SimplexValidationError` if invalid. The validation checks that:
-    /// - All vertices are valid (coordinates are finite and UUIDs are valid)
-    /// - All vertices are distinct from one another
+    /// - All stored vertex keys are distinct from one another
     /// - The simplex UUID is valid and not nil
     /// - The simplex has exactly D+1 vertices (forming a proper D-simplex)
     /// - If neighbors are provided, they must have exactly D+1 entries (positional semantics)
     ///
-    /// Note: This method validates basic neighbor structure invariants but does not validate
-    /// the correctness of neighbor relationships, which requires global knowledge of the
-    /// triangulation and is handled by the [`Tds`].
+    /// A standalone simplex does not own the vertices referenced by its keys. Vertex validity,
+    /// resolved coordinate uniqueness, and neighbor reciprocity require TDS-level context and are
+    /// checked by [`Tds::validate`](Tds::validate).
     ///
     /// # Errors
     ///
-    /// Returns `SimplexValidationError::InvalidVertex` if any vertex is invalid,
-    /// `SimplexValidationError::InvalidUuid` if the simplex's UUID is nil,
+    /// Returns `SimplexValidationError::InvalidUuid` if the simplex's UUID is nil,
     /// `SimplexValidationError::DuplicateVertices` if the simplex contains duplicate vertices,
     /// `SimplexValidationError::InsufficientVertices` if the simplex doesn't have exactly D+1 vertices,
     /// `SimplexValidationError::InvalidNeighborsLength` if neighbors are provided but don't have D+1 entries, or

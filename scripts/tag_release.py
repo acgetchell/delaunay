@@ -12,12 +12,15 @@ Usage:
 Ported from the la-stack project's tag_release.py.
 """
 
+from __future__ import annotations
+
 import argparse
 import logging
 import re
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from subprocess_utils import (
     ExecutableNotFoundError,
@@ -35,6 +38,9 @@ _YELLOW = "\033[1;33m"
 _RESET = "\033[0m"
 
 log = logging.getLogger(__name__)
+
+_GITHUB_SCP_REMOTE_RE = re.compile(r"^git@github\.com:(?P<path>.+)$", re.IGNORECASE)
+_GITHUB_REPO_COMPONENT_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 # ---------------------------------------------------------------------------
@@ -218,36 +224,64 @@ def _tag_exists(tag_version: str) -> bool:
         return True
 
 
+def _github_repo_url(path: str) -> str:
+    """Return a canonical GitHub URL for a validated two-component path."""
+    normalized = path.strip("/").removesuffix(".git")
+    components = normalized.split("/")
+    if (
+        len(components) != 2
+        or any(component in {"", ".", ".."} for component in components)
+        or any(_GITHUB_REPO_COMPONENT_RE.fullmatch(component) is None for component in components)
+    ):
+        msg = "Origin remote must identify exactly one GitHub owner and repository."
+        raise ValueError(msg)
+    return f"https://github.com/{components[0]}/{components[1]}"
+
+
 def _get_repo_url() -> str:
-    """
-    Return a normalized GitHub HTTPS repository URL derived from the `origin` remote.
-
-    If the `origin` remote is a GitHub SSH or HTTPS URL, this returns it in the form
-    `https://github.com/<owner>/<repo>`. If the remote does not match recognized
-    GitHub patterns, returns the raw remote URL as a best-effort fallback.
-
-    Returns:
-        str: Normalized GitHub HTTPS URL when detected, otherwise the raw origin remote URL.
-
-    Raises:
-        ValueError: If the unrecognized remote URL appears to contain embedded credentials.
-    """
+    """Detect and validate the public GitHub HTTPS URL for ``origin``."""
     result = run_git_command(["remote", "get-url", "origin"])
     raw = result.stdout.strip()
-    patterns = [
-        r"^git@github\.com:(?P<slug>[^/]+/[^/]+?)(?:\.git)?/?$",
-        r"^https://github\.com/(?P<slug>[^/]+/[^/]+?)(?:\.git)?/?$",
-        r"^ssh://git@github\.com[:/](?P<slug>[^/]+/[^/]+?)(?:\.git)?/?$",
-    ]
-    for pat in patterns:
-        m = re.match(pat, raw)
-        if m:
-            return f"https://github.com/{m.group('slug')}"
-    # Refuse to return URLs that embed credentials (user:pass@ or user@).
-    if re.search(r"://[^/@]+:[^/@]+@", raw) or re.search(r"://[^/@]+@", raw) or re.match(r"[^@]+@", raw):
-        msg = f"Remote URL appears to contain credentials; cannot use as a public URL: {raw[:20]}..."
+    if not raw or any(character.isspace() for character in raw):
+        msg = "Origin remote must be a GitHub HTTPS or SSH repository URL."
         raise ValueError(msg)
-    return raw  # best-effort fallback
+
+    scp_match = _GITHUB_SCP_REMOTE_RE.fullmatch(raw)
+    if scp_match is not None:
+        path = scp_match.group("path")
+        if "?" in path or "#" in path:
+            msg = "Origin remote must not include query parameters or fragments."
+            raise ValueError(msg)
+        return _github_repo_url(path)
+
+    try:
+        parsed = urlsplit(raw)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError as err:
+        msg = "Origin remote must be a GitHub HTTPS or SSH repository URL."
+        raise ValueError(msg) from err
+
+    if parsed.query or parsed.fragment:
+        msg = "Origin remote must not include query parameters or fragments."
+        raise ValueError(msg)
+    if parsed.password is not None or (parsed.scheme == "https" and parsed.username is not None):
+        msg = "Origin remote must not contain credentials."
+        raise ValueError(msg)
+    if parsed.scheme == "ssh" and parsed.username not in {None, "git"}:
+        msg = "Origin remote must not contain credentials other than the standard SSH user."
+        raise ValueError(msg)
+    if (
+        parsed.scheme not in {"https", "ssh"}
+        or hostname is None
+        or hostname.casefold() != "github.com"
+        or port is not None
+        or (parsed.scheme == "ssh" and parsed.username != "git")
+    ):
+        msg = "Origin remote must be a GitHub HTTPS or SSH repository URL."
+        raise ValueError(msg)
+
+    return _github_repo_url(parsed.path)
 
 
 def _version_header_re(version: str) -> re.Pattern[str]:

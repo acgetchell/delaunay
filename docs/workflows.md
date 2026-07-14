@@ -31,7 +31,7 @@ fn main() -> DelaunayResult<()> {
     let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
     // Optional verification (see docs/validation.md for when to use each):
-    assert!(dt.as_triangulation().validate_embedding().is_ok()); // Levels 1-4 (Embedding Validity)
+    assert!(dt.as_triangulation().validate_realization().is_ok()); // Levels 1-4 (Valid Realization)
     assert!(dt.is_valid_delaunay().is_ok()); // Level 5 only (Geometric Predicates: Delaunay)
     Ok(())
 }
@@ -438,8 +438,9 @@ For guidance on retry/skip behavior and choosing `RobustKernel`, see
 Vertex deletion is supported and preserves Levels 1–3. It uses an inverse k=1 fast path when
 possible and fan retriangulation otherwise, then runs flip-based Delaunay repair when the active
 `DelaunayRepairPolicy` allows it. If automatic repair is disabled, deletion still runs Level 4
-Embedding Validity and the Level 5 Delaunay predicate, rolling back on any violation. If post-deletion repair, validation, or
-orientation canonicalization fails, the operation rolls back to the pre-deletion triangulation.
+realization validation and the Level 5 Delaunay predicate, rolling back on any violation. If
+post-deletion repair, validation, or orientation canonicalization fails, the operation rolls back to
+the pre-deletion triangulation.
 
 ```rust
 use delaunay::prelude::construction::{

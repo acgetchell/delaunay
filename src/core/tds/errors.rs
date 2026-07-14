@@ -5,8 +5,8 @@
 
 use super::{SimplexKey, VertexKey};
 use crate::core::algorithms::flips::{FlipError, FlipNeighborWiringError};
-use crate::core::embedding::TriangulationEmbeddingValidationError;
 use crate::core::facet::FacetError;
+use crate::core::realization::TriangulationRealizationValidationError;
 use crate::core::simplex::SimplexValidationError;
 use crate::core::validation::TriangulationValidationError;
 use crate::core::vertex::VertexValidationError;
@@ -987,8 +987,8 @@ pub enum InvariantKind {
     Connectedness,
     /// Triangulation/topology invariants (manifold-with-boundary, Euler characteristic).
     Topology,
-    /// Embedded Euclidean geometry (nondegenerate simplices, no illegal overlap).
-    Embedding,
+    /// Realized geometry (nondegenerate simplices, no illegal overlap).
+    Realization,
     /// Delaunay empty-circumsphere property.
     DelaunayProperty,
 }
@@ -1020,9 +1020,9 @@ pub enum InvariantError {
     #[error(transparent)]
     Triangulation(#[from] TriangulationValidationError),
 
-    /// Level 4 (embedded Euclidean geometry).
+    /// Level 4 (realized geometry).
     #[error(transparent)]
-    Embedding(#[from] TriangulationEmbeddingValidationError),
+    Realization(#[from] TriangulationRealizationValidationError),
 
     /// Level 5 (Delaunay property).
     #[error(transparent)]
@@ -1097,8 +1097,8 @@ pub enum DelaunayValidationErrorKind {
     Tds,
     /// Lower-layer topology validation failed.
     Triangulation,
-    /// Lower-layer embedded-geometry validation failed.
-    Embedding,
+    /// Lower-layer realized-geometry validation failed.
+    Realization,
     /// Delaunay verification failed.
     VerificationFailed,
     /// Typed repair validation failed.
@@ -1110,7 +1110,7 @@ impl From<&DelaunayTriangulationValidationError> for DelaunayValidationErrorKind
         match source {
             DelaunayTriangulationValidationError::Tds(_) => Self::Tds,
             DelaunayTriangulationValidationError::Triangulation(_) => Self::Triangulation,
-            DelaunayTriangulationValidationError::Embedding(_) => Self::Embedding,
+            DelaunayTriangulationValidationError::Realization(_) => Self::Realization,
             DelaunayTriangulationValidationError::VerificationFailed { .. } => {
                 Self::VerificationFailed
             }

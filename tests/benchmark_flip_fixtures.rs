@@ -29,7 +29,7 @@ use delaunay::prelude::construction::{
 };
 use delaunay::prelude::tds::{FacetError, SimplexKey};
 use delaunay::prelude::validation::{
-    DelaunayTriangulationValidationError, TriangulationEmbeddingValidationError,
+    DelaunayTriangulationValidationError, TriangulationRealizationValidationError,
 };
 use slotmap::KeyData;
 
@@ -601,8 +601,8 @@ fn assert_topology_and_delaunay_valid<const D: usize>(dt: &FlipTriangulation<D>,
         .validate()
         .unwrap_or_else(|err| panic!("{context} should pass Levels 1-3: {err}"));
     dt.as_triangulation()
-        .is_valid_embedding()
-        .unwrap_or_else(|err| panic!("{context} should pass Level 4 embedding: {err}"));
+        .is_valid_realization()
+        .unwrap_or_else(|err| panic!("{context} should pass Level 4 realization: {err}"));
     dt.is_valid_delaunay()
         .unwrap_or_else(|err| panic!("{context} should pass Level 5: {err}"));
 }
@@ -616,10 +616,10 @@ fn construction_error_is_degenerate(error: &DelaunayTriangulationConstructionErr
             DelaunayConstructionFailure::FinalDelaunayValidation { source, .. },
         ) => validation_error_is_degenerate(source),
         DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::InsertionEmbeddingValidation { source },
+            DelaunayConstructionFailure::InsertionRealizationValidation { source },
         ) => matches!(
             source,
-            TriangulationEmbeddingValidationError::DegenerateSimplex { .. }
+            TriangulationRealizationValidationError::DegenerateSimplex { .. }
         ),
         DelaunayTriangulationConstructionError::Triangulation(
             DelaunayConstructionFailure::ShuffledRetryExhausted { source, .. },
@@ -636,10 +636,10 @@ fn construction_error_is_degenerate(error: &DelaunayTriangulationConstructionErr
 fn validation_error_is_degenerate(error: &DelaunayTriangulationValidationError) -> bool {
     matches!(
         error,
-        DelaunayTriangulationValidationError::Embedding(source)
+        DelaunayTriangulationValidationError::Realization(source)
             if matches!(
                 source.as_ref(),
-                TriangulationEmbeddingValidationError::DegenerateSimplex { .. }
+                TriangulationRealizationValidationError::DegenerateSimplex { .. }
             )
     )
 }

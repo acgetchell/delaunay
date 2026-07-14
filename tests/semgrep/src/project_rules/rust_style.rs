@@ -168,22 +168,22 @@ impl ValidationApiNamingFixture {
     }
 
     // ruleid: delaunay.rust.validation-api-naming-standard
-    pub fn embedding_validation_report(&self) -> Result<(), ()> {
+    pub fn realization_validation_report(&self) -> Result<(), ()> {
         Ok(())
     }
 
     // ok: delaunay.rust.validation-api-naming-standard
-    pub fn is_valid_embedding(&self) -> Result<(), ()> {
+    pub fn is_valid_realization(&self) -> Result<(), ()> {
         Ok(())
     }
 
     // ok: delaunay.rust.validation-api-naming-standard
-    pub fn embedding_diagnostic(&self) -> Option<()> {
+    pub fn realization_diagnostic(&self) -> Option<()> {
         None
     }
 
     // ok: delaunay.rust.validation-api-naming-standard
-    pub fn embedding_report(&self) -> Result<(), ()> {
+    pub fn realization_report(&self) -> Result<(), ()> {
         Ok(())
     }
 
@@ -193,7 +193,7 @@ impl ValidationApiNamingFixture {
     }
 
     // ok: delaunay.rust.validation-api-naming-standard
-    pub fn validate_embedding(&self) -> Result<(), ()> {
+    pub fn validate_realization(&self) -> Result<(), ()> {
         Ok(())
     }
 

@@ -39,9 +39,9 @@ use crate::core::collections::{
     SimplexKeyBuffer, SmallBuffer,
 };
 use crate::core::edge::{EdgeKey, EdgeKeyError};
-use crate::core::embedding::TriangulationEmbeddingValidationError;
 use crate::core::facet::{AllFacetsIter, FacetError, FacetHandle, facet_key_from_vertices};
 use crate::core::operations::TopologicalOperation;
+use crate::core::realization::TriangulationRealizationValidationError;
 use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
 use crate::core::tds::{
     EntityKind, NeighborValidationError, SimplexKey, Tds, TdsMutationError, TdsRollbackTransaction,
@@ -3208,9 +3208,9 @@ pub enum FlipFailureKind {
     /// Flip transaction could not repair post-mutation orientation invariants.
     #[error("postcondition orientation repair")]
     PostconditionRepair,
-    /// Flip transaction failed embedded-geometry validation after mutation.
-    #[error("embedding validation")]
-    EmbeddingValidation,
+    /// Flip transaction failed realized-geometry validation after mutation.
+    #[error("realization validation")]
+    RealizationValidation,
     /// Neighbor wiring failed.
     #[error("neighbor wiring")]
     NeighborWiring,
@@ -3378,9 +3378,9 @@ pub enum FlipNeighborDelaunayValidationFailureKind {
     /// Lower-layer topology validation failed.
     #[error("triangulation")]
     Triangulation,
-    /// Embedded-geometry validation failed.
-    #[error("embedding")]
-    Embedding,
+    /// Realized-geometry validation failed.
+    #[error("realization")]
+    Realization,
     /// Delaunay verification failed.
     #[error("verification failed")]
     VerificationFailed,
@@ -3394,7 +3394,7 @@ impl From<&DelaunayTriangulationValidationError> for FlipNeighborDelaunayValidat
         match source {
             DelaunayTriangulationValidationError::Tds(_) => Self::Tds,
             DelaunayTriangulationValidationError::Triangulation(_) => Self::Triangulation,
-            DelaunayTriangulationValidationError::Embedding(_) => Self::Embedding,
+            DelaunayTriangulationValidationError::Realization(_) => Self::Realization,
             DelaunayTriangulationValidationError::VerificationFailed { .. } => {
                 Self::VerificationFailed
             }
@@ -3411,7 +3411,7 @@ impl From<DelaunayTriangulationValidationError> for FlipNeighborDelaunayValidati
     }
 }
 
-/// Compact repair diagnostics preserved when embedding repair failures in flip wiring errors.
+/// Compact repair diagnostics preserved when realization repair failures in flip wiring errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FlipNeighborRepairDiagnostics {
     /// Number of queued items checked.
@@ -3586,12 +3586,12 @@ pub enum FlipNeighborWiringError {
         /// Structured validation reason.
         reason: FlipNeighborDelaunayValidationFailureKind,
     },
-    /// Embedding validation failed while preparing flip neighbor wiring.
-    #[error("embedding validation error reached flip neighbor wiring: {source}")]
-    EmbeddingValidation {
-        /// Underlying embedding validation error, preserving simplex/pair witness context.
+    /// Realization validation failed while preparing flip neighbor wiring.
+    #[error("realization validation error reached flip neighbor wiring: {source}")]
+    RealizationValidation {
+        /// Underlying realization validation error, preserving simplex/pair witness context.
         #[source]
-        source: TriangulationEmbeddingValidationError,
+        source: TriangulationRealizationValidationError,
     },
     /// Delaunay repair failed while preparing flip neighbor wiring.
     #[error("Delaunay repair error reached flip neighbor wiring: {reason}")]
@@ -3676,8 +3676,8 @@ impl From<InsertionError> for FlipNeighborWiringError {
             InsertionError::DelaunayValidationFailed { source } => Self::DelaunayValidation {
                 reason: source.into(),
             },
-            InsertionError::EmbeddingValidationFailed { source } => {
-                Self::EmbeddingValidation { source }
+            InsertionError::RealizationValidationFailed { source } => {
+                Self::RealizationValidation { source }
             }
             InsertionError::DelaunayRepairFailed { source, context: _ } => Self::DelaunayRepair {
                 reason: FlipNeighborRepairFailure::from(*source),
@@ -4145,12 +4145,12 @@ pub enum FlipError {
         #[source]
         source: Box<InsertionError>,
     },
-    /// Flip transaction failed embedded-geometry validation after mutation.
-    #[error("Flip postcondition embedding validation failed: {source}")]
-    EmbeddingValidation {
-        /// Structured Level 4 embedding validation error.
+    /// Flip transaction failed realized-geometry validation after mutation.
+    #[error("Flip postcondition realization validation failed: {source}")]
+    RealizationValidation {
+        /// Structured Level 4 realization validation error.
         #[source]
-        source: Box<TriangulationEmbeddingValidationError>,
+        source: Box<TriangulationRealizationValidationError>,
     },
     /// Neighbor wiring failed during flip application.
     #[error("Neighbor wiring failed: {reason}")]
@@ -4271,11 +4271,11 @@ impl From<&FlipError> for FlipFailureKind {
             FlipError::FacetIteration { .. } => Self::FacetIteration,
             FlipError::SimplexCreation(_) => Self::SimplexCreation,
             FlipError::PostconditionRepair { .. } => Self::PostconditionRepair,
-            FlipError::EmbeddingValidation { .. } => Self::EmbeddingValidation,
+            FlipError::RealizationValidation { .. } => Self::RealizationValidation,
             FlipError::NeighborWiring { reason } => match reason.as_ref() {
                 FlipNeighborWiringError::TopologyValidation { .. }
                 | FlipNeighborWiringError::DelaunayValidation { .. }
-                | FlipNeighborWiringError::EmbeddingValidation { .. }
+                | FlipNeighborWiringError::RealizationValidation { .. }
                 | FlipNeighborWiringError::TopologyValidationFailed { .. } => {
                     Self::WiringValidation
                 }
@@ -5341,8 +5341,8 @@ const fn insertion_error_kind(source: &InsertionError) -> InsertionErrorKind {
         InsertionError::DelaunayValidationFailed { .. } => {
             InsertionErrorKind::DelaunayValidationFailed
         }
-        InsertionError::EmbeddingValidationFailed { .. } => {
-            InsertionErrorKind::EmbeddingValidationFailed
+        InsertionError::RealizationValidationFailed { .. } => {
+            InsertionErrorKind::RealizationValidationFailed
         }
         InsertionError::DelaunayRepairFailed { .. } => InsertionErrorKind::DelaunayRepairFailed,
         InsertionError::DuplicateCoordinates { .. } => InsertionErrorKind::DuplicateCoordinates,
@@ -10683,7 +10683,7 @@ mod tests {
     };
     use crate::core::algorithms::locate::LocateResult;
     use crate::core::collections::{SimplexVertexKeyBuffer, SimplexVertexUuidBuffer, Uuid};
-    use crate::core::embedding::TriangulationEmbeddingSimplexDetail;
+    use crate::core::realization::TriangulationRealizationSimplexDetail;
     use crate::core::validation::TopologyGuarantee;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::geometry::traits::coordinate::CoordinateConversionValue;
@@ -15044,7 +15044,7 @@ mod tests {
     }
 
     #[test]
-    fn flip_neighbor_wiring_preserves_embedding_validation_source() {
+    fn flip_neighbor_wiring_preserves_realization_validation_source() {
         let simplex_key = SimplexKey::from(KeyData::from_ffi(9_101));
         let simplex_uuid = Uuid::from_u128(0x9101);
         let vertices: SimplexVertexKeyBuffer = [
@@ -15062,10 +15062,10 @@ mod tests {
         .into_iter()
         .collect();
 
-        let embedding_source = TriangulationEmbeddingValidationError::DegenerateSimplex {
+        let realization_source = TriangulationRealizationValidationError::DegenerateSimplex {
             simplex_key,
             simplex_uuid,
-            detail: Box::new(TriangulationEmbeddingSimplexDetail {
+            detail: Box::new(TriangulationRealizationSimplexDetail {
                 key: simplex_key,
                 uuid: simplex_uuid,
                 vertices,
@@ -15074,35 +15074,35 @@ mod tests {
             dimension: 2,
         };
 
-        let embedding_wiring =
-            FlipNeighborWiringError::from(InsertionError::EmbeddingValidationFailed {
-                source: embedding_source.clone(),
+        let realization_wiring =
+            FlipNeighborWiringError::from(InsertionError::RealizationValidationFailed {
+                source: realization_source.clone(),
             });
-        let FlipNeighborWiringError::EmbeddingValidation { source } = &embedding_wiring else {
-            panic!("expected preserved embedding validation source, got {embedding_wiring:?}");
+        let FlipNeighborWiringError::RealizationValidation { source } = &realization_wiring else {
+            panic!("expected preserved realization validation source, got {realization_wiring:?}");
         };
-        assert_eq!(source, &embedding_source);
-        let error_source = embedding_wiring
+        assert_eq!(source, &realization_source);
+        let error_source = realization_wiring
             .source()
-            .and_then(|source| source.downcast_ref::<TriangulationEmbeddingValidationError>())
-            .expect("embedding validation should remain the typed error source");
-        assert_eq!(error_source, &embedding_source);
+            .and_then(|source| source.downcast_ref::<TriangulationRealizationValidationError>())
+            .expect("realization validation should remain the typed error source");
+        assert_eq!(error_source, &realization_source);
         assert_eq!(
-            FlipFailureKind::from(&FlipError::from(embedding_wiring)),
+            FlipFailureKind::from(&FlipError::from(realization_wiring)),
             FlipFailureKind::WiringValidation
         );
 
-        let transaction_embedding = FlipError::EmbeddingValidation {
-            source: Box::new(embedding_source.clone()),
+        let transaction_realization = FlipError::RealizationValidation {
+            source: Box::new(realization_source.clone()),
         };
         assert_eq!(
-            FlipFailureKind::from(&transaction_embedding),
-            FlipFailureKind::EmbeddingValidation
+            FlipFailureKind::from(&transaction_realization),
+            FlipFailureKind::RealizationValidation
         );
 
         let transaction_repair = FlipError::PostconditionRepair {
-            source: Box::new(InsertionError::EmbeddingValidationFailed {
-                source: embedding_source,
+            source: Box::new(InsertionError::RealizationValidationFailed {
+                source: realization_source,
             }),
         };
         assert_eq!(

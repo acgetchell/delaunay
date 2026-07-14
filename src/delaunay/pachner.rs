@@ -437,11 +437,11 @@ impl<U, const D: usize> PachnerProposal<U, D> {
     /// Attempts this provenanced proposal while preserving topology-scope invariants only.
     ///
     /// This terminal method is intended for diagnostics and benchmarks that
-    /// deliberately validate Levels 1-3 without paying the Level 4 embedding
+    /// deliberately validate Levels 1-3 without paying the Level 4 realization
     /// overlap scan after every move. It still checks proposal provenance,
     /// revalidates the local bistellar move, and canonicalizes positive simplex
     /// orientation before committing. Use [`attempt_on`](Self::attempt_on) for
-    /// ordinary editing workflows that must preserve embedded-geometry validity.
+    /// ordinary editing workflows that must preserve realized-geometry validity.
     ///
     /// # Errors
     ///
@@ -721,18 +721,18 @@ pub trait PachnerMoves<const D: usize>: BistellarFlips<D> + TopologyOwner {
     ) -> Result<PachnerProposal<Self::VertexData, D>, FlipError>;
 }
 
-/// Topology-scope Pachner execution that skips Level 4 embedding validation.
+/// Topology-scope Pachner execution that skips Level 4 realization validation.
 ///
 /// This trait backs [`PachnerProposal::attempt_topology_on`]. It is intentionally
-/// separate from [`BistellarFlips`], whose mutating methods preserve embedded
+/// separate from [`BistellarFlips`], whose mutating methods preserve realized
 /// geometry after every committed move. Use this trait only for diagnostics,
-/// stress tests, or benchmark workloads that validate embedding separately.
+/// stress tests, or benchmark workloads that validate realization separately.
 #[doc(hidden)]
 pub trait TopologyPachnerMoves<const D: usize>: TopologyOwner {
     /// User data type stored on vertices inserted through k=1 moves.
     type VertexData;
 
-    /// Apply a forward k=1 move without Level 4 embedding validation.
+    /// Apply a forward k=1 move without Level 4 realization validation.
     ///
     /// # Errors
     ///
@@ -744,7 +744,7 @@ pub trait TopologyPachnerMoves<const D: usize>: TopologyOwner {
         vertex: Vertex<Self::VertexData, D>,
     ) -> Result<FlipInfo<D>, FlipError>;
 
-    /// Apply an inverse k=1 move without Level 4 embedding validation.
+    /// Apply an inverse k=1 move without Level 4 realization validation.
     ///
     /// # Errors
     ///
@@ -752,7 +752,7 @@ pub trait TopologyPachnerMoves<const D: usize>: TopologyOwner {
     /// applied atomically, or fails topology-scope postcondition repair.
     fn flip_k1_remove_topology(&mut self, vertex_key: VertexKey) -> Result<FlipInfo<D>, FlipError>;
 
-    /// Apply a forward k=2 move without Level 4 embedding validation.
+    /// Apply a forward k=2 move without Level 4 realization validation.
     ///
     /// # Errors
     ///
@@ -760,7 +760,7 @@ pub trait TopologyPachnerMoves<const D: usize>: TopologyOwner {
     /// applied atomically, or fails topology-scope postcondition repair.
     fn flip_k2_topology(&mut self, facet: FacetHandle) -> Result<FlipInfo<D>, FlipError>;
 
-    /// Apply an inverse k=2 move without Level 4 embedding validation.
+    /// Apply an inverse k=2 move without Level 4 realization validation.
     ///
     /// # Errors
     ///
@@ -771,7 +771,7 @@ pub trait TopologyPachnerMoves<const D: usize>: TopologyOwner {
         edge: EdgeKey,
     ) -> Result<FlipInfo<D>, FlipError>;
 
-    /// Apply a forward k=3 move without Level 4 embedding validation.
+    /// Apply a forward k=3 move without Level 4 realization validation.
     ///
     /// # Errors
     ///
@@ -779,7 +779,7 @@ pub trait TopologyPachnerMoves<const D: usize>: TopologyOwner {
     /// applied atomically, or fails topology-scope postcondition repair.
     fn flip_k3_topology(&mut self, ridge: RidgeHandle) -> Result<FlipInfo<D>, FlipError>;
 
-    /// Apply an inverse k=3 move without Level 4 embedding validation.
+    /// Apply an inverse k=3 move without Level 4 realization validation.
     ///
     /// # Errors
     ///

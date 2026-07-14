@@ -3,6 +3,7 @@
 
 \setcopyright{none}
 \settopmatter{printacmref=false}
+\raggedbottom{}
 \acmJournal{TOMS}
 
 \title{Validation Architecture in delaunay}
@@ -25,6 +26,14 @@
 % TeX structure, build tooling, citation plumbing, figures, and TODO prompts,
 % but Adam writes the substantive paper prose.
 \newcommand{\AuthorTodo}[1]{\textbf{Author TODO.} #1}
+\newcommand{\ValidationWitnessPanel}[3]{%
+  \begin{minipage}[t]{0.30\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{#1}
+    \par\smallskip
+    {\footnotesize\textbf{#2}\\#3}
+  \end{minipage}%
+}
 
 \begin{abstract}
   \AuthorTodo{Write the abstract in your own words.}
@@ -49,9 +58,9 @@
 
 \begin{itemize}
   \item \AuthorTodo{Define the triangulation, simplex, ridge, facet, and
-    embedding terms used throughout the paper.}
+    realization terms used throughout the paper.}
   \item \AuthorTodo{Introduce PL-manifold terminology and the link condition.}
-  \item \AuthorTodo{Introduce Euclidean, toroidal, and spherical embedding
+  \item \AuthorTodo{Introduce Euclidean, toroidal, and spherical realization
     models.}
   \item \AuthorTodo{Introduce Delaunay and future geometric-predicate
     terminology.}
@@ -62,10 +71,12 @@
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=0.95\linewidth]{generated/validation_hierarchy.png}
-  \caption{\AuthorTodo{Describe the validation hierarchy
-  figure.}}\label{fig:validation-hierarchy}
-  \Description{Author TODO accessible description of the validation
-  hierarchy figure.}
+  \caption{Overview of the validation hierarchy in
+  delaunay}\label{fig:validation-hierarchy}
+  \Description{The 5-level validation hierarchy in delaunay. Level 1:
+    Element Validity; Level 2: Combinatorial Consistency; Level 3: Intrinsic
+    PL Topology; Level 4: Valid Realization; Level 5: Geometric Predicate
+  Satisfaction.}
 \end{figure}
 
 \subsection{Level 1: Element Validity}
@@ -91,17 +102,21 @@
   \item \AuthorTodo{Discuss pseudomanifold and strict PL-manifold policy
     choices.}
   \item \AuthorTodo{Explain why this layer is independent of Euclidean,
-    toroidal, and spherical embeddings.}
+    toroidal, and spherical realizations.}
 \end{itemize}
 
-\subsection{Level 4: Embedding Validity}
+\subsection{Level 4: Valid Realization}
 
 \begin{itemize}
-  \item \AuthorTodo{Describe faithful realization in the active ambient
+  \item \AuthorTodo{Use the terminology stack: Level 4 Valid Realization;
+      Euclidean/toroidal valid affine-chart realization; spherical valid
+      spherical realization; Level 5 Geometric Predicate Satisfaction / Delaunay
+    Optimality.}
+  \item \AuthorTodo{Describe valid realization in the active ambient
     model.}
-  \item \AuthorTodo{Compare Euclidean affine charts, toroidal periodic charts,
-    and spherical embeddings.}
-  \item \AuthorTodo{Explain why embedding validity is a precondition for
+  \item \AuthorTodo{Compare Euclidean/toroidal affine-chart realizations and
+    spherical realizations.}
+  \item \AuthorTodo{Explain why realization validity is a precondition for
     geometric predicates.}
 \end{itemize}
 
@@ -132,11 +147,36 @@
 
 \begin{figure}[htbp]
   \centering
-  \includegraphics[width=\linewidth]{generated/validation_model_failures.png}
-  \caption{\AuthorTodo{Describe the generated validation-failure
-  examples.}}\label{fig:validation-failures}
-  \Description{Author TODO accessible description of the validation-failure
-  figure.}
+  \ValidationWitnessPanel%
+  {generated/validation_level_1_element_validity.png}
+  {Level 1}
+  {Element Validity}
+  \hfill
+  \ValidationWitnessPanel%
+  {generated/validation_level_2_combinatorial_consistency.png}
+  {Level 2}
+  {Combinatorial Consistency}
+  \hfill
+  \ValidationWitnessPanel%
+  {generated/validation_level_3_intrinsic_pl_topology.png}
+  {Level 3}
+  {Intrinsic PL Topology}
+
+  \medskip
+
+  \ValidationWitnessPanel%
+  {generated/validation_level_4_valid_realization.png}
+  {Level 4}
+  {Valid Realization}
+  \hfill
+  \ValidationWitnessPanel%
+  {generated/validation_level_5_geometric_predicates.png}
+  {Level 5}
+  {Geometric Predicate Satisfaction}
+  \caption{\AuthorTodo{Describe the validation witness
+  figures.}}\label{fig:validation-witnesses}
+  \Description{Author TODO accessible description of the validation witness
+  figures.}
 \end{figure}
 
 \begin{itemize}
@@ -162,7 +202,7 @@
 \section{Discussion and Future Work}
 
 \begin{itemize}
-  \item \AuthorTodo{Discuss extensibility to additional embedding models and
+  \item \AuthorTodo{Discuss extensibility to additional realization models and
     predicate families.}
   \item \AuthorTodo{Discuss limitations of the current implementation.}
   \item \AuthorTodo{Identify open validation and benchmarking questions.}

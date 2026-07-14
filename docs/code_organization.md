@@ -49,7 +49,7 @@ into architecture docs; link to the command guide instead.
 - `edge.rs` and `facet.rs` stay in `src/core/` because they are direct TDS
   traversal primitives. Ridge query/view types belong in `src/topology/`
   because ridge shape and link semantics depend on dimension and topology.
-- Generic Level 4 Embedding Validity belongs in `src/core/embedding.rs`;
+- Generic Level 4 realization validation belongs in `src/core/realization.rs`;
   implemented Level 5 Geometric Predicate APIs for Delaunay belong in
   `src/delaunay/validation.rs`, with TDS-level Delaunay-property scan helpers
   under `src/delaunay/`; generic Level 1-3 validation belongs in the

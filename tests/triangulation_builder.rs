@@ -19,7 +19,9 @@ use delaunay::prelude::insertion::InsertionError;
 use delaunay::prelude::tds::{InvariantError, TdsConstructionError, TdsError, VertexKey};
 use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
 use delaunay::prelude::topology::validation::{TopologyClassification, euler_characteristic};
-use delaunay::prelude::validation::{TriangulationValidationError, ValidationPolicy};
+use delaunay::prelude::validation::{
+    DelaunayTriangulationValidationError, TriangulationValidationError, ValidationPolicy,
+};
 use delaunay::vertex;
 
 // =============================================================================
@@ -700,10 +702,10 @@ fn test_builder_toroidal_large_dimension_fails_before_expansion_math() {
 }
 
 /// Explicit 7-vertex torus (Heawood triangulation) with `GlobalTopology::Toroidal`
-/// is rejected until explicit non-Euclidean construction has quotient embedding validation.
+/// is rejected until explicit non-Euclidean construction has quotient realization validation.
 ///
 /// The 14-triangle closed mesh has χ = 0 (torus), but explicit quotient
-/// connectivity cannot yet be validated against a faithful quotient embedding.
+/// connectivity cannot yet be validated against a faithful quotient realization.
 #[test]
 fn test_explicit_toroidal_heawood_torus_rejected() {
     // Regular heptagon: 7 well-separated points, no 3 collinear.
@@ -729,7 +731,7 @@ fn test_explicit_toroidal_heawood_torus_rejected() {
         .unwrap()
         .global_topology(topology)
         .build()
-        .expect_err("explicit toroidal connectivity requires a quotient embedding validator");
+        .expect_err("explicit toroidal connectivity requires a quotient realization validator");
 
     match err {
         DelaunayTriangulationConstructionError::ExplicitConstruction(
@@ -805,6 +807,142 @@ fn explicit_builder_parse_error<U, const D: usize>(
         Err(err) => err,
     }
 }
+
+/// Builds the origin and unit-basis facet plus an equal-coordinate apex.
+/// An apex sum above one places it across the shared facet from the origin.
+fn shared_facet_vertices<const D: usize>(apex_coordinate_sum: f64) -> Vec<Vertex<(), D>> {
+    let dim = u32::try_from(D).expect("test dimension fits in u32");
+    let high_apex_coord = apex_coordinate_sum / f64::from(dim);
+    let mut vertices = Vec::with_capacity(D + 2);
+    vertices.push(Vertex::try_new([0.0; D]).expect("origin vertex should be valid"));
+
+    for axis in 0..D {
+        let mut coords = [0.0; D];
+        coords[axis] = 1.0;
+        vertices.push(Vertex::try_new(coords).expect("basis vertex should be valid"));
+    }
+
+    vertices
+        .push(Vertex::try_new([high_apex_coord; D]).expect("opposite apex vertex should be valid"));
+    vertices
+}
+
+/// Connects the origin and apex to the unit-basis facet as two D-simplices,
+/// exercising a valid realization that can fail the Delaunay predicate.
+fn shared_facet_simplices<const D: usize>() -> Vec<Vec<usize>> {
+    let low_simplex = (0..=D).collect();
+    let mut high_simplex: Vec<usize> = (1..=D).collect();
+    high_simplex.push(D + 1);
+    vec![low_simplex, high_simplex]
+}
+
+/// Embeds a crossing 2D triangle strip in the first two coordinates and adds
+/// one unit cone vertex along every additional coordinate axis.
+fn crossing_cone_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
+    let base_coords = [
+        [2.0, 0.0],
+        [3.0, -2.0],
+        [-2.0, -1.0],
+        [0.0, -2.0],
+        [3.0, -4.0],
+        [0.0, 3.0],
+    ];
+    let mut vertices = Vec::with_capacity(D + 4);
+
+    for [x, y] in base_coords {
+        let mut coords = [0.0; D];
+        coords[0] = x;
+        coords[1] = y;
+        vertices.push(Vertex::try_new(coords).expect("base crossing vertex should be valid"));
+    }
+
+    for axis in 2..D {
+        let mut coords = [0.0; D];
+        coords[axis] = 1.0;
+        vertices.push(Vertex::try_new(coords).expect("cone vertex should be valid"));
+    }
+
+    vertices
+}
+
+/// Extends each crossing-strip triangle by all cone-axis vertices, preserving
+/// its unintended intersection as a D-dimensional realization failure.
+fn crossing_cone_simplices<const D: usize>() -> Vec<Vec<usize>> {
+    let base_simplices = [[0, 1, 2], [1, 2, 3], [2, 3, 4], [3, 4, 5]];
+    let cone_vertices: Vec<usize> = (6..D + 4).collect();
+
+    base_simplices
+        .into_iter()
+        .map(|base| {
+            let mut simplex = base.to_vec();
+            simplex.extend(cone_vertices.iter().copied());
+            simplex
+        })
+        .collect()
+}
+
+fn assert_relaxed_explicit_non_delaunay_succeeds<const D: usize>() {
+    let vertices = shared_facet_vertices::<D>(1.1);
+    let simplices = shared_facet_simplices::<D>();
+
+    let dt = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+        .expect("explicit simplex specs should validate")
+        .construction_options(ConstructionOptions::default().without_final_delaunay_enforcement())
+        .build()
+        .expect("relaxed explicit construction should accept a realized non-Delaunay mesh");
+
+    assert_eq!(dt.number_of_vertices(), D + 2);
+    assert_eq!(dt.number_of_simplices(), 2);
+    dt.as_triangulation()
+        .validate_realization()
+        .expect("relaxed explicit mesh should pass Levels 1-4");
+    assert!(
+        dt.is_valid_delaunay().is_err(),
+        "fixture should still violate Level 5 Delaunay predicates",
+    );
+}
+
+fn assert_relaxed_explicit_invalid_realization_fails<const D: usize>() {
+    let vertices = crossing_cone_vertices::<D>();
+    let simplices = crossing_cone_simplices::<D>();
+
+    let err = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+        .expect("explicit simplex specs should validate")
+        .construction_options(ConstructionOptions::default().without_final_delaunay_enforcement())
+        .build()
+        .expect_err("relaxed explicit construction should still reject invalid realizations");
+
+    match err {
+        DelaunayTriangulationConstructionError::ExplicitConstruction(
+            ExplicitConstructionError::RealizationValidation { source },
+        ) => assert_matches!(
+            source.as_ref(),
+            DelaunayTriangulationValidationError::Realization(_)
+        ),
+        other => panic!("expected relaxed explicit realization-validation failure, got {other:?}"),
+    }
+}
+
+macro_rules! gen_relaxed_explicit_validation_tests {
+    ($dim:literal) => {
+        pastey::paste! {
+            #[test]
+            fn [<test_relaxed_explicit_non_delaunay_mesh_succeeds_ $dim d>]() {
+                assert_relaxed_explicit_non_delaunay_succeeds::<$dim>();
+            }
+
+            #[test]
+            fn [<test_relaxed_explicit_invalid_realization_fails_ $dim d>]() {
+                assert_relaxed_explicit_invalid_realization_fails::<$dim>();
+            }
+        }
+    };
+}
+
+gen_relaxed_explicit_validation_tests!(2);
+gen_relaxed_explicit_validation_tests!(3);
+gen_relaxed_explicit_validation_tests!(4);
+gen_relaxed_explicit_validation_tests!(5);
 
 /// 2D: Build two triangles forming a quad from explicit vertices and simplices.
 #[test]

@@ -40,6 +40,7 @@ dependencies = [
 [project.scripts]
 archive-changelog = "archive_changelog:main"
 benchmark-utils = "benchmark_utils:main"
+check-docs-version-sync = "check_docs_version_sync:main"
 hardware-utils = "hardware_utils:main"
 notebook-check = "notebook_check:main"
 paper-pdf-check = "paper_check:main"
@@ -54,6 +55,7 @@ package-dir = { "" = "scripts" }
 py-modules = [
     "archive_changelog",
     "benchmark_utils",
+    "check_docs_version_sync",
     "hardware_utils",
     "notebook_check",
     "paper_check",
@@ -179,6 +181,7 @@ max-complexity = 10
 known-first-party = [
     "archive_changelog",
     "benchmark_utils",
+    "check_docs_version_sync",
     "hardware_utils",
     "notebook_check",
     "paper_check",
@@ -238,11 +241,11 @@ line-length = 160
 dev = [
     "actionlint-py==1.7.12.24",
     "pytest==9.1.1",
-    "ruff==0.15.20",
-    "semgrep==1.168.0",
+    "ruff==0.15.21",
+    "semgrep==1.169.0",
     "shellcheck-py==0.11.0.1",
     "shfmt-py==4.0.0",
-    "ty==0.0.56",
+    "ty==0.0.59",
     "yamllint==1.38.0",
 ]
 notebooks = [
@@ -253,5 +256,5 @@ notebooks = [
     "nbconvert>=7.17.1",
     "nbformat>=5.10.4",
     "polars>=1.42.1",
-    "plotly>=6.8.0",
+    "plotly>=6.9.0",
 ]

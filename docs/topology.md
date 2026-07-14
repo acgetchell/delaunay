@@ -56,10 +56,10 @@ Notes:
 
 ## Level 3 Intrinsic PL Topology validation (`Triangulation::is_valid_topology()`)
 
-`Triangulation::is_valid_topology()` validates embedding-independent PL-topology
+`Triangulation::is_valid_topology()` validates realization-independent PL-topology
 invariants (Level 3). It intentionally does **not** validate lower layers
 (elements or combinatorial TDS consistency), nor does it certify Level 4
-embedding validity or Level 5 geometric predicates.
+realization validity or Level 5 geometric predicates.
 
 For cumulative validation, use `Triangulation::validate()` (Levels 1–3) or
 `DelaunayTriangulation::validate()` (Levels 1–5).

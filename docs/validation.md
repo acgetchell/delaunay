@@ -25,15 +25,15 @@ correctness question while building on the previous level:
 1. **Element Validity** - Are individual geometric and combinatorial objects internally valid?
 2. **Combinatorial Consistency** - Does the simplicial complex satisfy the required incidence invariants?
 3. **Intrinsic PL Topology** - Does the abstract complex represent the intended PL topology?
-4. **Embedding Validity** - Is the complex faithfully realized in the chosen ambient space?
-5. **Geometric Predicates** - Does the embedding satisfy the selected geometry-specific predicate family?
+4. **Valid Realization** - Does the complex satisfy model-specific orientation and nondegeneracy constraints with only shared-face intersections?
+5. **Geometric Predicates** - Does a valid realization satisfy the selected geometry-specific predicate family?
 
-| Level | Concern | Depends on embedding? |
+| Level | Concern | Depends on realization? |
 |---|---|---|
 | 1 | Local object correctness | No |
 | 2 | Combinatorial structure | No |
 | 3 | Intrinsic PL topology | No |
-| 4 | Geometric realization | Yes |
+| 4 | Valid Realization | Yes |
 | 5 | Geometric predicates | Yes |
 
 This separation is why Level 3 does not change when spherical support is added:
@@ -49,7 +49,7 @@ Level 2: Combinatorial Consistency
     ↓ (called by)
 Level 3: Intrinsic PL Topology
     ↓ (independent)
-Level 4: Embedding Validity
+Level 4: Valid Realization
     ↓ (independent)
 Level 5: Geometric Predicates
 ```
@@ -72,7 +72,7 @@ support it without hiding useful failures:
   layers up through the owning abstraction.
 
 Report names identify the layer being checked: `structure_report`,
-`topology_report`, `embedding_report`, and `delaunay_report`.
+`topology_report`, `realization_report`, and `delaunay_report`.
 
 Higher-level reports roll up lower-level diagnostics as structured enum values,
 not strings. This keeps `DelaunayTriangulation::validation_report()` useful both
@@ -85,17 +85,17 @@ as a full audit and as input to future repair workflows.
 The library always provides **explicit** validation APIs (Levels 1–5) that you can call when you need them.
 
 Separately, incremental construction (`new()` / `insert*()`) can run an **automatic**
-global Level 3 intrinsic-topology pass plus changed-scope Level 4 embedding guards after an insertion attempt,
+global Level 3 intrinsic-topology pass plus changed-scope Level 4 realization guards after an insertion attempt,
 controlled by a `ValidationPolicy` on the triangulation.
 
 This is a performance vs certainty knob: Level 3 (`Triangulation::is_valid_topology()`) and full
-pairwise Level 4 (`Triangulation::is_valid_embedding()`) are relatively expensive. The default depends
+pairwise Level 4 (`Triangulation::is_valid_realization()`) are relatively expensive. The default depends
 on the topology guarantee chosen for the incremental construction path:
 
 - `TopologyGuarantee::PLManifold` starts with `ValidationPolicy::ExplicitOnly`, so normal insertions
   preserve local invariants and callers request global Level 3 / Level 4 checks explicitly.
 - `TopologyGuarantee::Pseudomanifold` starts with `ValidationPolicy::OnSuspicion`, so automatic
-  global topology and changed-scope embedding checks run only when an insertion reports a suspicious
+  global topology and changed-scope realization checks run only when an insertion reports a suspicious
   local condition.
 
 ### What is validated automatically?
@@ -115,11 +115,12 @@ When the policy triggers automatic validation, it runs **Level 3**
 Note: neighbor-pointer consistency is a **Level 2 Combinatorial Consistency** invariant checked by
 `Tds::is_valid()` / `Tds::validate()`, and is intentionally not part of Level 3.
 
-The same automatic validation pass then runs **Level 4 Embedding Validity** guards for the changed simplex
-scope. It always checks changed simplices for degeneracy and checks changed-vs-current pairwise
-intersections. It does **not** rescan old-vs-old simplex pairs. It also does **not** run Level 5
-Delaunay empty-circumsphere validation. If you need complete Embedding Validity or a Level 5
-geometric-predicate check, call `dt.as_triangulation().validate_embedding()`, `dt.is_valid_delaunay()`,
+The same automatic validation pass then runs **Level 4 realization** guards for the changed simplex
+scope. It always checks changed affine-chart simplices for positive orientation and degeneracy, then
+checks changed-vs-current pairwise intersections. It does **not** rescan old-vs-old simplex pairs. It
+also does **not** run Level 5
+Delaunay empty-circumsphere validation. If you need complete Level 4 realization validation or a Level 5
+geometric-predicate check, call `dt.as_triangulation().validate_realization()`, `dt.is_valid_delaunay()`,
 `dt.delaunay_report()`, or `dt.validate()` explicitly.
 
 ### Default: derived from `TopologyGuarantee`
@@ -263,10 +264,15 @@ The library separates **construction-time** failures from **validation-time** in
 - `TriangulationValidationError` (Level 3): wraps `TdsError` and adds
   codimension-1 manifoldness + codimension-2 boundary manifoldness (closed boundary) +
   (optional) vertex-link PL-manifold checks + connectedness + isolated-vertex + Euler characteristic checks.
-- `TriangulationEmbeddingValidationError` (Level 4): wraps `TriangulationValidationError` and adds
-  nondegenerate-simplex and overlap checks in the active affine chart.
-- `DelaunayTriangulationValidationError` (Level 5): wraps `TriangulationEmbeddingValidationError`
-  and adds the implemented geometric predicate checks, currently Delaunay.
+- `TriangulationRealizationValidationError` (Level 4): wraps
+  `TriangulationValidationError` and adds Euclidean/toroidal affine-chart
+  orientation, nondegeneracy, and overlap checks.
+- `SphericalDelaunayValidationError` (spherical prototype Levels 3-5): reports
+  intrinsic PL-topology failures, spherical realization failures, and spherical
+  Delaunay predicate failures for the bounded `S^2`/`S^3` backend.
+- `DelaunayTriangulationValidationError` (Level 5): wraps
+  `TriangulationRealizationValidationError` and adds the implemented geometric
+  predicate checks, currently Delaunay.
 
 ### Reporting (full diagnostics)
 
@@ -274,7 +280,7 @@ The library separates **construction-time** failures from **validation-time** in
 On failure, the `Err(TriangulationValidationReport)` contains a `Vec<InvariantViolation>`; each
 `InvariantViolation` stores an `InvariantKind` plus an `InvariantError` **enum** that wraps the
 structured error from the failing layer (`TdsError`, `TriangulationValidationError`,
-`TriangulationEmbeddingValidationError`, or `DelaunayTriangulationValidationError`).
+`TriangulationRealizationValidationError`, or `DelaunayTriangulationValidationError`).
 
 ---
 
@@ -292,22 +298,25 @@ Validates basic data integrity of individual vertices and simplices.
 - `Vertex::is_valid()` - Fast-fail vertex coordinate and UUID check
 - `Vertex::vertex_diagnostic()` - First vertex repair/retry diagnostic
 - `Vertex::vertex_report()` - Aggregate vertex validation report
+- `Tds::validate()` / `Tds::validation_report()` - Cumulative Levels 1–2 APIs that can resolve
+  simplex vertex keys for local coordinate-uniqueness checks
 
 ### What It Checks
 
 - **Vertices**: Coordinate validity, UUID presence, dimension consistency
 - **Simplices**: Correct number of vertices (D+1), no duplicate vertices, valid UUID
+- **Resolved simplex coordinates**: Distinct vertex keys in one simplex resolve to distinct points
 
 ### Complexity
 
-- **Time**: O(1) per element
+- **Time**: O(1) per standalone element; O(N×D²) for the cumulative TDS coordinate roll-up
 - **Space**: O(1)
 
 ### When to Use
 
 - Building blocks for higher-level validation
 - Rarely called directly by users
-- Automatically called by Level 2
+- Automatically included by cumulative Levels 1–2 validation
 
 ### Example
 
@@ -361,15 +370,15 @@ by the Triangulation Data Structure.
    manifold boundary facets are open, interior facets have reciprocal
    neighbors, and admissible periodic self-neighbors are closed topology.
 
-`Tds::validate()` (Levels 1–2) additionally checks:
+`Tds::validate()` (Levels 1–2) additionally rolls up these Level 1 checks:
 
 - **Vertex Validity**: All vertices pass `Vertex::is_valid()`
 - **Simplex Validity**: All simplices pass `Simplex::is_valid()`
 - **Simplex Coordinate Uniqueness**: No simplex contains two vertices with identical coordinates
   (exact `OrderedFloat` comparison). Duplicate-coordinate vertices produce zero-volume
   simplices that break SoS and Pachner moves.
-  **Note**: `is_valid()` does **not** check coordinate uniqueness. Use `validate()` (or
-  `validation_report()`) for the stronger guarantee.
+  **Note**: Level 2 `is_valid()` and `structure_report()` do **not** check coordinate uniqueness.
+  Use cumulative `validate()` or `validation_report()` for the stronger Level 1 guarantee.
 
 ### Complexity
 
@@ -425,7 +434,9 @@ For most users, start with `dt.is_valid_structure()` (fast-fail) or `dt.validati
 
 ### Purpose
 
-Validates that the triangulation forms a valid topological manifold.
+Validates that the triangulation satisfies the requested intrinsic PL-topology
+contract, ranging from relaxed pseudomanifold checks to strict PL-manifold
+certification.
 
 ### Methods
 
@@ -515,33 +526,57 @@ fn main() -> DelaunayResult<()> {
 
 ---
 
-## Level 4: Embedding Validity
+## Level 4: Valid Realization
 
 ### Purpose
 
-Validates that the abstract triangulation has a faithful geometric realization
-in the active embedding model.
+Validates that the coordinate realization of the abstract triangulation is geometrically valid in
+the active model.
+
+The terminology separates the generic Level 4 contract from its model-specific implementations:
+
+```text
+Level 4: Valid Realization
+  Euclidean/toroidal: valid affine-chart realization
+  Spherical: valid spherical realization
+Level 5: Geometric Predicate Satisfaction / Delaunay Optimality
+```
+
+For Euclidean and toroidal affine-chart models, the Level 4 contract is: the vertex map is
+injective, every abstract simplex is realized with positive orientation and nonzero volume in the
+active chart, and any two realized simplices intersect exactly in the realization of their shared
+abstract face:
+
+```text
+|sigma| ∩ |tau| = |sigma ∩ tau|
+```
+
+This is a validation contract over the finite coordinate realization the crate constructs or accepts.
+It is not a general realization algorithm for an arbitrary abstract PL-manifold into
+coordinates.
 
 ### Methods
 
-- `Triangulation::is_valid_embedding()` - Level 4 embedding fast-fail validation only.
-- `Triangulation::embedding_diagnostic()` - First actionable Level 4 diagnostic.
-- `Triangulation::embedding_report()` - Level 4 diagnostic report with offending
+- `Triangulation::is_valid_realization()` - Level 4 realization fast-fail validation only.
+- `Triangulation::realization_diagnostic()` - First actionable Level 4 diagnostic.
+- `Triangulation::realization_report()` - Level 4 diagnostic report with offending
   simplex and vertex keys/UUIDs.
-- `Triangulation::validate_embedding()` - Levels 1–4 (elements + combinatorics + intrinsic topology + embedding).
+- `Triangulation::validate_realization()` - Levels 1–4 (elements + combinatorics + intrinsic topology + realization).
 
 ### What It Checks
 
+- **Positive affine-chart orientation**: every Euclidean/toroidal maximal simplex has the canonical
+  positive geometric sign in its active chart.
 - **Nondegenerate maximal simplices**: every maximal simplex has nonzero `D`-volume by the robust
   orientation predicate.
-- **No overlap outside shared faces**: any two maximal simplices may intersect only in the face
-  spanned by their shared vertices.
+- **No overlap outside shared faces**: any two maximal simplices may intersect only in the
+  realization of the face spanned by their shared vertices.
 - **Toroidal periodic images**: toroidal topology is checked in covering-space charts, including
   periodic translates that can overlap across the fundamental-domain boundary.
 - **Spherical prototype simplices**: `SphericalDelaunayTriangulation` validates `S^2`/`S^3`
-  maximal simplices as nondegenerate spherical simplices embedded in `S^D \subset R^(D+1)`.
-- **Independent of geometric predicates**: Level 4 does not evaluate empty-circumsphere,
-  empty-cap, regular, weighted, or constrained predicates. It catches invalid embeddings before
+  maximal simplices as nondegenerate spherical simplices realized in `S^D \subset R^(D+1)`.
+- **Geometric validity, not optimality**: Level 4 does not evaluate empty-circumsphere,
+  empty-cap, regular, weighted, or constrained predicates. It catches invalid realizations before
   Level 5 asks whether the realized triangulation satisfies the selected predicate family.
 
 General spherical integration with the ordinary mutable triangulation surface, dimensions beyond
@@ -555,18 +590,34 @@ until model-specific chart validators are implemented.
 - **Space**: O(D²) to O(simplices) temporary space depending on the number of candidate overlaps.
 
 For the broad-phase overlap-detection references, see the
-[Embedded-Geometry Overlap Detection](../REFERENCES.md#embedded-geometry-overlap-detection-level-4-validation)
+[Realized-Simplex Overlap Detection](../REFERENCES.md#realized-simplex-overlap-detection-level-4-validation)
 section of `REFERENCES.md`.
 
 ### When to Use
 
-- **Tests**: After construction or manual edits when embedded correctness matters.
+- **Tests**: After construction or manual edits when realized correctness matters.
 - **Debug**: Investigating folded, self-overlapping, or zero-volume triangulations.
 - **Before geometric-predicate certification**: Level 5 validation runs Level 4 first so Delaunay
-  or future predicates are evaluated only on a valid embedding.
-- **Repair planning**: `Triangulation::embedding_report()` reports simplex keys, UUIDs, shared
+  or future predicates are evaluated only on a valid realization.
+- **Repair planning**: `Triangulation::realization_report()` reports simplex keys, UUIDs, shared
   vertices, and witness vertices that can guide explicit rollback or deletion-based repair. The
   validator itself is pure and does not delete vertices.
+
+### Pachner and Orientation Failure Modes
+
+Pachner and raw bistellar transactions keep orientation and realization contracts distinct. Level 2
+coherent orientation is combinatorial: adjacent simplices must induce opposite orientations on their
+shared facets. The triangulation storage contract also promotes affected maximal simplices to
+positive geometric orientation before the edited state is accepted. Level 4 realization validation
+then certifies that affine-chart maximal simplices have positive sign and nonzero volume, and that
+realized simplices do not fold or overlap outside shared faces.
+
+A local move can satisfy one contract while violating the other. The ordinary `PachnerProposal::attempt_on`
+path canonicalizes replacement simplex orientation, preserves realized-geometry validity, and rolls
+back with typed `FlipError` or validation errors if the repaired state still violates the contract.
+The hidden `attempt_topology_on` path is narrower: it is reserved for diagnostics and benchmarks that
+intentionally validate topology-scope invariants without paying the Level 4 overlap scan after every
+move.
 
 ### Example
 
@@ -584,10 +635,10 @@ fn main() -> DelaunayResult<()> {
     ];
     let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 
-    // Embedding validity validation (Levels 1-4)
-    match dt.as_triangulation().validate_embedding() {
-        Ok(()) => println!("valid embedded triangulation"),
-        Err(e) => eprintln!("embedding violation: {}", e),
+    // Realization validation (Levels 1-4)
+    match dt.as_triangulation().validate_realization() {
+        Ok(()) => println!("valid realized triangulation"),
+        Err(e) => eprintln!("realization violation: {}", e),
     }
     Ok(())
 }
@@ -599,19 +650,19 @@ fn main() -> DelaunayResult<()> {
 
 ### Purpose
 
-Validates geometry-specific predicates on a valid embedding. The implemented
-predicate family today is Delaunay; the layer is intentionally broad enough for
-future regular, weighted, Gabriel, alpha, constrained, or related predicates.
+Validates geometry-specific predicates on a valid realization. This is the geometric optimality
+layer: the implemented predicate family today is Delaunay, and the layer is intentionally broad
+enough for future regular, weighted, Gabriel, alpha, constrained, or related predicates.
 
 ### Methods
 
-- `DelaunayTriangulation::is_valid_delaunay()` - implemented Level 5 Delaunay predicate only after Level 4 Embedding Validity
+- `DelaunayTriangulation::is_valid_delaunay()` - implemented Level 5 Delaunay predicate only after Level 4 realization validation.
 - `DelaunayTriangulation::delaunay_diagnostic()` - First actionable Level 5 diagnostic, including the
   violating simplex, its vertices, neighbor slots, and an offending vertex when available.
 - `DelaunayTriangulation::delaunay_report()` - All checkable Level 5 Delaunay failures with the same
   repair-oriented detail where it can be reconstructed.
 - `DelaunayTriangulation::validate()` - Levels 1–5 (elements + combinatorics + intrinsic topology +
-  embedding + geometric predicates).
+  realization + geometric predicates).
 
 ### What It Checks
 
@@ -626,7 +677,7 @@ future regular, weighted, Gabriel, alpha, constrained, or related predicates.
   or on the facet hyperplane. Euclidean and toroidal triangulations keep using
   their existing empty-circumsphere validators.
 - **Layered after Levels 1-4**: `validate()` checks elements, combinatorics, intrinsic topology,
-  and embedding before the geometric-predicate layer.
+  and realization before the geometric-predicate layer.
 - **Flip-based repair**: Insertions run k=2/k=3 flip repairs with inverse edge/triangle queues in
   higher dimensions by default. Delaunay validation can still fail if repair is disabled, if repair
   fails to converge, or if inputs are highly degenerate/duplicate-heavy. See
@@ -688,18 +739,18 @@ Start: Do you need to validate?
     │
     ├─ Just built triangulation?
     │   ├─ Production hot path? → Usually skip (but validate during integration testing / when debugging)
-    │   └─ Need certainty? → Validate (Level 2 or 3; add Level 4 if embedding matters, Level 5 if predicates matter)
+    │   └─ Need certainty? → Validate (Level 2 or 3; add Level 4 if realization matters, Level 5 if predicates matter)
     │
     ├─ After manual topology mutation? → Level 2 (`dt.is_valid_structure()`)
     │
-    ├─ Debugging embedded-geometry issues? → Level 4 (`dt.as_triangulation().validate_embedding()`)
+    ├─ Debugging realized-geometry issues? → Level 4 (`dt.as_triangulation().validate_realization()`)
     │
     ├─ Debugging Delaunay or other geometric-predicate issues? → Level 5 (`dt.is_valid_delaunay()`)
     │
     ├─ Production validation?
     │   ├─ Performance critical? → Level 2 (`dt.is_valid_structure()`)
     │   ├─ Topological correctness critical? → Level 3 (`dt.as_triangulation().is_valid_topology()`)
-    │   ├─ Realization correctness critical? → Level 4 (`dt.as_triangulation().validate_embedding()`)
+    │   ├─ Realization correctness critical? → Level 4 (`dt.as_triangulation().validate_realization()`)
     │   └─ Delaunay or geometric-predicate correctness critical? → Level 5 (`dt.is_valid_delaunay()`)
     │
     └─ Paranoid mode? → All levels (`dt.validate()`)
@@ -711,10 +762,10 @@ Start: Do you need to validate?
 
 - Level 2 Combinatorial Consistency and Level 3 Intrinsic PL Topology validation are dominated by
   combinatorial bookkeeping (roughly O(simplices × D²)).
-- Level 4 Embedding Validity checks simplex degeneracy and pairwise realized-simplex
+- Level 4 Valid Realization checks simplex degeneracy and pairwise realized-simplex
   intersections, using bounding boxes before exact rational witness construction.
 - Level 5 `DelaunayTriangulation::is_valid_delaunay()` verifies the implemented Delaunay predicate
-  family via local flip predicates after Level 4 Embedding Validity.
+  family via local flip predicates after Level 4 realization validation.
 - A brute-force empty-circumsphere check would be O(simplices × vertices) and is not used by `is_valid_delaunay()`.
 
 In practice, `DelaunayTriangulation::validate()` is usually dominated by Level 3 Intrinsic PL Topology work or
@@ -735,7 +786,7 @@ helper.
 used for validation failures across Levels 1–4. Its variants preserve the
 failing layer's typed error: `TdsError` for Levels 1–2,
 `TriangulationValidationError` for Level 3 Intrinsic PL Topology failures, and
-`TriangulationEmbeddingValidationError` for Level 4 embedding failures. In normal
+`TriangulationRealizationValidationError` for Level 4 realization failures. In normal
 Level 3 code, handle the wrapper as shown in Patterns 2 and 3 rather than
 expecting `TriangulationValidationError` directly.
 
@@ -752,7 +803,7 @@ fn test_my_triangulation_operation() {
     // Validate at appropriate level
     assert!(dt.is_valid_structure().is_ok()); // Level 2: Combinatorial Consistency
     assert!(dt.as_triangulation().is_valid_topology().is_ok()); // Level 3: Intrinsic PL Topology
-    assert!(dt.as_triangulation().validate_embedding().is_ok()); // Level 4: Embedding Validity
+    assert!(dt.as_triangulation().validate_realization().is_ok()); // Level 4: Valid Realization
     assert!(dt.is_valid_delaunay().is_ok());        // Level 5: Geometric Predicates (Delaunay)
     assert!(dt.validate().is_ok());                 // Levels 1–5: Full validation
 }
@@ -793,7 +844,7 @@ pub fn my_algorithm(
 use delaunay::prelude::query::*;
 use delaunay::prelude::tds::{InvariantError, TdsError};
 use delaunay::prelude::validation::{
-    DelaunayTriangulationValidationError, TriangulationEmbeddingValidationError,
+    DelaunayTriangulationValidationError, TriangulationRealizationValidationError,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -803,7 +854,7 @@ pub enum ValidationLevelError {
     #[error(transparent)]
     Topology(#[from] InvariantError),
     #[error(transparent)]
-    Embedding(#[from] TriangulationEmbeddingValidationError),
+    Realization(#[from] TriangulationRealizationValidationError),
     #[error(transparent)]
     Delaunay(#[from] DelaunayTriangulationValidationError),
     #[error("unsupported validation level {level}; expected 2, 3, 4, or 5")]
@@ -822,7 +873,7 @@ pub fn validate_with_level(
             .map_err(ValidationLevelError::from),
         4 => dt
             .as_triangulation()
-            .validate_embedding()
+            .validate_realization()
             .map_err(ValidationLevelError::from),
         5 => dt.is_valid_delaunay().map_err(ValidationLevelError::from),
         _ => Err(ValidationLevelError::UnsupportedLevel { level }),
@@ -851,10 +902,10 @@ ensure no isolated vertices, and verify the simplex neighbor graph is connected
 
 ### Validation Passes Level 3, Fails at Level 4
 
-**Problem**: Embedded simplex degeneracy or overlap outside shared faces
-**Likely Cause**: Folded realization, duplicate/collinear/coplanar coordinates,
+**Problem**: Invalid realized-simplex orientation, degeneracy, or overlap outside shared faces
+**Likely Cause**: Negative affine-chart orientation, folded realization, duplicate/collinear/coplanar coordinates,
 or a toroidal periodic image that overlaps across the fundamental-domain boundary
-**Fix**: Inspect the embedding error's simplex keys, UUIDs, shared vertices, and witness vertices.
+**Fix**: Inspect the realization error's simplex keys, UUIDs, shared vertices, and witness vertices.
 If this happened during insertion, rollback or explicit deletion-based repair can use those witnesses,
 but the validator itself does not mutate the triangulation.
 
@@ -881,8 +932,8 @@ converge, consider the opt-in heuristic rebuild fallback via
 | 2 | `Tds::validate()` | `tds` | O(N×D²) |
 | 3 | `Triangulation::is_valid_topology()` | `triangulation` | O(N×D²) |
 | 3 | `Triangulation::validate()` | `triangulation` | O(N×D²) |
-| 4 | `Triangulation::is_valid_embedding()` | `triangulation` | O(simplices² × f(D)) |
-| 4 | `Triangulation::validate_embedding()` | `triangulation` | O(simplices × D²) + O(simplices² × f(D)) |
+| 4 | `Triangulation::is_valid_realization()` | `triangulation` | O(simplices² × f(D)) |
+| 4 | `Triangulation::validate_realization()` | `triangulation` | O(simplices × D²) + O(simplices² × f(D)) |
 | 5 | `DelaunayTriangulation::is_valid_delaunay()` | `delaunay` | O(simplices) |
 | 5 | `DelaunayTriangulation::validate()` | `delaunay` | Levels 1-4 + O(simplices) |
 | — | `DelaunayTriangulation::validation_report()` | `delaunay` | Levels 1-4 + O(simplices) |

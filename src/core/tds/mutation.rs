@@ -1933,7 +1933,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                                 ),
                             })?;
                     // Periodic-lifted adjacencies do not have a unique canonical orientation at this
-                    // structural layer because the embedding depends on lattice representative choice.
+                    // structural layer because the realization depends on lattice representative choice.
                     // Skip normalization constraints for these pairs.
                     if simplex.periodic_vertex_offsets().is_some()
                         || neighbor_simplex.periodic_vertex_offsets().is_some()
