@@ -210,7 +210,7 @@ The useful updates ported in this pass are:
   uv version. It complements the Codacy Opengrep workflow by uploading
   Semgrep-native SARIF and failing the workflow on repository-rule findings.
 - GitHub CodeQL and SARIF upload workflows keep `github/codeql-action` pinned to
-  the peeled commit for the documented `v4.36.2` tag so zizmor can verify the
+  the peeled commit for the documented `v4.37.0` tag so zizmor can verify the
   hash/comment pair instead of treating the broad `v4` comment as ambiguous.
 - `.github/workflows/generate-baseline.yml` no longer checks out arbitrary
   validated branch names with `actions/checkout`. The manual baseline workflow
@@ -249,10 +249,8 @@ The useful updates ported in this pass are:
 - `.codecov.yml` now ratchets Delaunay's coverage policy above the older
   causal-triangulations baseline without copying la-stack's near-total
   threshold. Project coverage targets the current 90% line with only 1%
-  tolerated drift. Patch coverage remains at 50% for this cleanup because
-  Codecov attributes the `assert_matches!` test-quality migration as uncovered
-  macro-invocation churn; once that lands, the next coverage-only ratchet should
-  raise the patch target toward 70% without forcing superficial tests.
+  tolerated drift. Patch coverage targets 70%; multiline macro-opening lines
+  that Cobertura attributes as uncovered do not justify superficial tests.
 - Semgrep now ports the sibling repositories' Rust examples/benchmarks hygiene
   checks: examples and benchmarks should avoid panic-only `unwrap`/`expect`
   paths and dynamic error erasure so public usage remains explicit and typed.
@@ -393,7 +391,7 @@ The `char::is_control` const change has no const parsing use here, and the new
 LoongArch feature-detection APIs do not serve any target-specific crate path.
 No unsafe or platform-specific API was adopted. The remaining baseline
 `assert!(matches!(...))` tests were migrated to `std::assert_matches!`; this is
-Rust 1.95 cleanup rather than a Rust 1.97 feature.
+Rust 1.96 cleanup rather than a Rust 1.97 feature.
 
 Cargo 1.97's `-m` shorthand does not clarify the repository's current commands,
 which do not repeat long manifest paths, and no command passes a custom target

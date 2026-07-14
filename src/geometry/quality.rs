@@ -1022,13 +1022,13 @@ mod tests {
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         let simplex_key = dt.simplices().next().unwrap().0;
 
-        // Should compute without panicking
-        let ratio_result = radius_ratio(dt.as_triangulation(), simplex_key);
-        let norm_vol_result = normalized_volume(dt.as_triangulation(), simplex_key);
+        let ratio = radius_ratio(dt.as_triangulation(), simplex_key)
+            .expect("mixed-scale simplex should have a radius ratio");
+        let normalized = normalized_volume(dt.as_triangulation(), simplex_key)
+            .expect("mixed-scale simplex should have a normalized volume");
 
-        // Either succeed or fail gracefully (no panic)
-        assert!(ratio_result.is_ok() || ratio_result.is_err());
-        assert!(norm_vol_result.is_ok() || norm_vol_result.is_err());
+        assert!(ratio.is_finite() && ratio > 0.0);
+        assert!(normalized.is_finite() && normalized > 0.0);
     }
 
     // =============================================================================
