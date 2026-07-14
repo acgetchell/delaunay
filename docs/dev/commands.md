@@ -257,19 +257,22 @@ diagnostic invariants.
 Actions. It is a flat union of leaf validators rather than a nested call to
 `just check`. The target classes are kept separate: `rust-core-check` covers
 formatting, all-targets Clippy, rustdoc, and Semgrep; `bench-compile` compiles
-benchmark harnesses once; `test-rust-ci` compiles and runs Rust lib unit tests,
-default-feature integration tests, and feature-gated CLI integration tests in
-release-profile nextest invocations;
+benchmark harnesses once; `test-rust-ci` compiles and runs Rust lib unit tests
+in debug and release profiles, then runs default-feature integration tests and
+feature-gated CLI integration tests in release-profile nextest invocations;
 `test-doc` compiles and runs Rust doctests once in release profile;
 `notebook-check` lints notebooks and executes fast notebooks headlessly once.
 
 `just test` is tests-only. `test-integration-compile` and `bench-test-compile`
 are explicit no-run smoke recipes for cases where a compile-only check is the
 desired validator; do not run them before `test-integration` unless you
-intentionally want a separate compile-only pass. `test-unit` and
-`test-integration` run focused release-profile nextest buckets for targeted
-local validation; broad test and CI workflows use `test-rust-ci` to avoid
-compiling the same tests through separate profiles.
+intentionally want a separate compile-only pass. `test-unit` runs lib unit
+tests in both debug and release profiles so debug assertions and default
+overflow checks remain covered; the nextest `debug` profile gives slower debug
+geometry paths a finite 60-second watchdog. `test-integration` runs a focused
+release-profile nextest bucket. Broad test and CI workflows use `test-rust-ci`
+to provide the same two-profile unit coverage while compiling release lib and
+integration tests together.
 
 ```bash
 just ci

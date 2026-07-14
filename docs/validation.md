@@ -30,10 +30,10 @@ correctness question while building on the previous level:
 
 | Level | Concern | Depends on realization? |
 |---|---|---|
-| 1 | Local object correctness | Local coordinates only |
+| 1 | Local object correctness | No |
 | 2 | Combinatorial structure | No |
 | 3 | Intrinsic PL topology | No |
-| 4 | Geometric realization | Yes |
+| 4 | Valid Realization | Yes |
 | 5 | Geometric predicates | Yes |
 
 This separation is why Level 3 does not change when spherical support is added:

@@ -894,7 +894,7 @@ fn assert_relaxed_explicit_non_delaunay_succeeds<const D: usize>() {
     assert_eq!(dt.number_of_vertices(), D + 2);
     assert_eq!(dt.number_of_simplices(), 2);
     dt.as_triangulation()
-        .validate()
+        .validate_realization()
         .expect("relaxed explicit mesh should pass Levels 1-4");
     assert!(
         dt.is_valid_delaunay().is_err(),

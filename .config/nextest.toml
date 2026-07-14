@@ -45,6 +45,14 @@ path = "test-results/junit.xml"
 store-success-output = false
 store-failure-output = true
 
+[profile.debug]
+# Debug assertions and overflow checks make exact-geometry paths slower than
+# their release counterparts. Keep a finite watchdog without weakening CI's
+# release/default 10-second budget.
+inherits = "ci"
+retries = 0
+slow-timeout = { period = "60s", terminate-after = 1 }
+
 [profile.coverage]
 # Coverage runs execute LLVM-instrumented binaries in parallel, so exact
 # predicate regressions need more headroom than the normal CI profile while

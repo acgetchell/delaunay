@@ -1113,10 +1113,11 @@ class TestIntegration:
         changelog = tmp_path / "CHANGELOG.md"
         changelog.write_text("# Changelog\n\n* Original entry\n", encoding="utf-8")
         changelog.chmod(0o640)
+        original_mode = stat.S_IMODE(changelog.stat().st_mode)
 
         postprocess(changelog)
 
-        assert stat.S_IMODE(changelog.stat().st_mode) == 0o640
+        assert stat.S_IMODE(changelog.stat().st_mode) == original_mode
 
     def test_failed_atomic_replace_preserves_original(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         changelog = tmp_path / "CHANGELOG.md"

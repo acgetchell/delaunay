@@ -564,7 +564,7 @@ help-workflows:
     @echo "Focused testing:"
     @echo "  just test-rust         # Rust unit, doctest, and integration tests"
     @echo "  just test-rust-ci      # CI Rust unit, integration, and CLI tests"
-    @echo "  just test-unit         # Rust lib unit tests only"
+    @echo "  just test-unit         # Rust lib unit tests in debug and release profiles"
     @echo "  just test-doc          # Rust doctests only, in release profile"
     @echo "  just test-integration  # All integration tests (includes proptests)"
     @echo "  just test-integration-fast # Integration tests (skips proptests)"
@@ -1694,8 +1694,9 @@ test-release: test-rust-ci test-doc
 test-rust: test-rust-ci test-doc
     @echo "✅ Rust tests passed!"
 
-# test-rust-ci: runs Rust lib unit tests, integration tests, and feature-gated CLI tests.
+# test-rust-ci: runs debug lib unit tests, then release lib, integration, and CLI tests.
 test-rust-ci: _ensure-nextest
+    cargo nextest run --profile debug --lib
     cargo nextest run --release --profile ci --lib --tests
     cargo nextest run --release --profile ci --features cli --test cli
 
@@ -1708,8 +1709,9 @@ test-slow: _ensure-nextest
 
 test-slow-release: test-slow
 
-# test-unit: runs Rust lib unit tests.
+# test-unit: runs Rust lib unit tests in debug and release profiles.
 test-unit: _ensure-nextest
+    cargo nextest run --profile debug --lib
     cargo nextest run --release --profile ci --lib
 
 # Check TOML files parse cleanly.

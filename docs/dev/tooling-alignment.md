@@ -256,10 +256,11 @@ The useful updates ported in this pass are:
 - Semgrep now ports the sibling repositories' Rust examples/benchmarks hygiene
   checks: examples and benchmarks should avoid panic-only `unwrap`/`expect`
   paths and dynamic error erasure so public usage remains explicit and typed.
-- `.config/nextest.toml` keeps `profile.ci` bounded for normal CI while
-  `profile.slow` raises the per-test watchdog for `just test-slow`, allowing
-  intentional multi-minute correctness regressions to run without making the
-  default suite or CI profile permissive.
+- `.config/nextest.toml` keeps `profile.ci` bounded for release/default CI,
+  gives debug unit tests a finite 60-second watchdog through `profile.debug`,
+  and raises the per-test watchdog through `profile.slow` for `just test-slow`.
+  Debug-only invariant coverage and intentional multi-minute correctness tests
+  therefore do not make the release/default suite permissive.
 - `.github/workflows/release-benchmarks.yml` ports the durable release-asset
   benchmark storage pattern used by `la-stack`. Delaunay now packages
   `baseline_results.txt`, `PERFORMANCE_RESULTS.md`, raw Criterion data, and
