@@ -1564,8 +1564,8 @@ mod tests {
         let vertex2: Vertex<(), 2> = Vertex::<(), _>::try_new([1.0, 2.0]).unwrap();
 
         // Test that equal points result in equal ordering
-        assert!(vertex1.partial_cmp(&vertex2) != Some(Ordering::Less));
-        assert!(vertex2.partial_cmp(&vertex1) != Some(Ordering::Less));
+        assert_ne!(vertex1.partial_cmp(&vertex2), Some(Ordering::Less));
+        assert_ne!(vertex2.partial_cmp(&vertex1), Some(Ordering::Less));
         assert_matches!(
             vertex1.partial_cmp(&vertex2),
             Some(Ordering::Less | Ordering::Equal)

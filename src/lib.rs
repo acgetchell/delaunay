@@ -74,9 +74,9 @@
 //!
 //! High-level Delaunay APIs are available directly from the crate root and
 //! focused root modules: [`DelaunayTriangulation`], [`DelaunayTriangulationBuilder`],
-//! [`construction`](crate::construction), [`flips`](crate::flips),
-//! [`repair`](crate::repair), [`validation`](crate::validation), and
-//! [`delaunayize`](crate::delaunayize).  The nested `delaunay::delaunay::*`
+//! [`construction`](crate::construction), [`flips`],
+//! [`repair`], [`validation`], and
+//! [`delaunayize`].  The nested `delaunay::delaunay::*`
 //! facade is intentionally not part of the public API; use the crate root or a
 //! focused prelude instead.
 //!
@@ -86,8 +86,8 @@
 //!
 //! The low-level implementation namespace is private. The public low-level
 //! surface is exposed through curated modules:
-//! [`tds`](crate::tds), [`collections`](crate::collections),
-//! [`algorithms`](crate::algorithms), and [`query`](crate::query), plus the
+//! [`tds`](crate::tds), [`collections`],
+//! [`algorithms`], and [`query`], plus the
 //! matching focused preludes. These names describe the data structures and
 //! workflows users compose without colliding with Rust's standard `core`
 //! vocabulary.
@@ -251,7 +251,7 @@
 //!   opts into returning after Levels 1–4 validation for exact degenerate or
 //!   externally constrained connectivity.
 //!   Incremental insertion can run global Level 5 checks according to
-//!   [`DelaunayCheckPolicy`](crate::repair::DelaunayCheckPolicy). If robust
+//!   [`DelaunayCheckPolicy`]. If robust
 //!   fallback and repair cannot certify a checked result, the operation returns a
 //!   typed error rather than silently accepting a known violation.
 //!
@@ -288,7 +288,7 @@
 //!
 //! The initial policy is derived from the active topology guarantee. The default
 //! [`TopologyGuarantee::PLManifold`](crate::prelude::TopologyGuarantee::PLManifold)
-//! uses [`ValidationPolicy::ExplicitOnly`](crate::prelude::validation::ValidationPolicy::ExplicitOnly):
+//! uses [`ValidationPolicy::ExplicitOnly`]:
 //! mandatory local topology and orientation/nondegeneracy realization checks still run during insertion, while automatic
 //! global-topology/changed-scope realization validation is a caller-owned explicit checkpoint.
 //!
@@ -342,9 +342,9 @@
 //!
 //!   The formal topological definitions, link conditions, and rationale for this validation strategy
 //!   are documented in `docs/invariants.md`.
-//! - [`TopologyGuarantee::PLManifoldStrict`](crate::prelude::construction::TopologyGuarantee::PLManifoldStrict):
+//! - [`TopologyGuarantee::PLManifoldStrict`]:
 //!   vertex-link validation after every insertion (slowest, maximum safety).
-//! - [`TopologyGuarantee::Pseudomanifold`](crate::prelude::construction::TopologyGuarantee::Pseudomanifold):
+//! - [`TopologyGuarantee::Pseudomanifold`]:
 //!   skips vertex-link validation (may be faster), but bistellar flip convergence is not guaranteed and
 //!   you may want to validate the Delaunay property explicitly for near-degenerate inputs.
 //!
@@ -405,9 +405,9 @@
 //!   previous state.
 //! - **Duplicate detection**: Near-duplicate coordinates are rejected using a scale-aware
 //!   Euclidean tolerance based on nearby geometry and floating-point resolution, returning
-//!   [`InsertionError::DuplicateCoordinates`](crate::prelude::insertion::InsertionError::DuplicateCoordinates).
+//!   [`InsertionError::DuplicateCoordinates`].
 //!   Duplicate UUIDs return
-//!   [`InsertionError::DuplicateUuid`](crate::prelude::insertion::InsertionError::DuplicateUuid).
+//!   [`InsertionError::DuplicateUuid`].
 //! - **Explicit verification**: Use `dt.validate()` for cumulative verification (Levels 1–5), or
 //!   `dt.is_valid_delaunay()` for Level 5 only.
 

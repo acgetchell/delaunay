@@ -2,10 +2,12 @@
 
 //! Microbenchmark for `core::hint::cold_path` adoption in geometric predicates.
 //!
-//! This benchmark exercises the hot Stage-1 path of the [`insphere`] / [`insphere_lifted`]
-//! predicates (and implicitly the orientation predicate they both invoke) across
-//! 2D–5D.  A small "near-boundary" group is included to guard against regressions
-//! when `cold_path` is added to Stage-2 / Stage-3 branches.
+//! This benchmark exercises the hot Stage-1 path of the [`insphere`] /
+//! [`insphere_lifted`] predicates (and implicitly the orientation predicate they
+//! both invoke) in 2D–4D, plus a Stage-2-dominant 5D reference. A secondary
+//! centered-query group retains its historical `near_boundary` benchmark
+//! identifier for saved-baseline compatibility, but it does not independently
+//! establish Stage-2 entry.
 //!
 //! ## Stage anatomy
 //!
@@ -17,8 +19,9 @@
 //! 3. Stage 3 (very cold): non-finite fallback.
 //!
 //! Random, well-separated inputs hit Stage 1 almost exclusively. The
-//! `near_boundary` group constructs test points very close to the circumsphere
-//! boundary to exercise Stage 2.
+//! `near_boundary` group samples a small cube around the standard simplex's
+//! circumsphere center. It measures a distinct centered-query workload, not a
+//! proven Stage-2 workload.
 //!
 //! ## Usage
 //!
@@ -55,14 +58,13 @@ fn coordinate_range(min: f64, max: f64) -> CoordinateRange<f64> {
 
 /// Deterministic seed for query-point generation in the hot path.
 const HOT_SEED: u64 = 0xC01D_BEEF_0000_CAFE_u64;
-/// Deterministic seed for query-point generation in the near-boundary group.
-const NEAR_BOUNDARY_SEED: u64 = 0x0000_0000_0000_BEEF_u64;
+/// Deterministic seed for query-point generation in the centered-query group.
+const CENTERED_QUERY_SEED: u64 = 0x0000_0000_0000_BEEF_u64;
 /// Number of queries per hot-path benchmark.  Keep above the size where
 /// per-iteration overhead dominates so Stage-1 improvements are visible.
 const HOT_QUERIES: usize = 10_000;
-/// Number of queries per near-boundary benchmark.  Kept smaller because
-/// Stage 2 is slower per call.
-const NEAR_BOUNDARY_QUERIES: usize = 1_000;
+/// Number of queries per centered-query benchmark.
+const CENTERED_QUERIES: usize = 1_000;
 
 /// Standard D-dimensional simplex: origin + unit basis vectors.
 fn standard_simplex<const D: usize>() -> Vec<Point<D>> {
@@ -85,18 +87,18 @@ fn hot_queries<const D: usize>() -> Vec<Point<D>> {
         .or_abort()
 }
 
-/// Generate near-boundary query points for dimension `D`.
+/// Generate centered query points for dimension `D`.
 ///
-/// Uses a narrow range centered on the standard simplex so many queries land
-/// within the Stage-1 errbound window and spill into Stage 2.
-fn near_boundary_queries<const D: usize>() -> Vec<Point<D>> {
-    // Centered near the circumsphere radius of the standard simplex (~0.5 for
-    // the D = 3 unit case); the exact value is unimportant — we just want a
-    // high rate of errbound-ambiguous inputs.
+/// Uses a narrow range around the standard simplex's circumsphere center. For
+/// the standard simplex this cube lies well inside the circumsphere, so this
+/// fixture must not be used as evidence that Stage 2 is exercised.
+fn centered_queries<const D: usize>() -> Vec<Point<D>> {
+    // Centered on the circumsphere center of the standard simplex. Preserve the
+    // existing distribution so saved performance baselines remain comparable.
     generate_random_points_in_range_seeded(
-        NEAR_BOUNDARY_QUERIES,
+        CENTERED_QUERIES,
         coordinate_range(0.40, 0.60),
-        NEAR_BOUNDARY_SEED,
+        CENTERED_QUERY_SEED,
     )
     .or_abort()
 }
@@ -213,23 +215,23 @@ fn bench_hot_path(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark the Stage-2 cold path via near-boundary queries (2D–4D).
-fn bench_near_boundary(c: &mut Criterion) {
+/// Benchmark the historical `near_boundary` centered-query workload (2D–4D).
+fn bench_centered_queries(c: &mut Criterion) {
     let mut group = c.benchmark_group("predicates/near_boundary");
-    group.throughput(Throughput::Elements(NEAR_BOUNDARY_QUERIES as u64));
+    group.throughput(Throughput::Elements(CENTERED_QUERIES as u64));
 
     {
         let simplex = standard_simplex::<2>();
-        let queries = near_boundary_queries::<2>();
+        let queries = centered_queries::<2>();
         group.bench_with_input(
-            BenchmarkId::new("insphere_2d", NEAR_BOUNDARY_QUERIES),
+            BenchmarkId::new("insphere_2d", CENTERED_QUERIES),
             &(),
             |b, ()| {
                 b.iter(|| run_insphere(black_box(&simplex), black_box(&queries)));
             },
         );
         group.bench_with_input(
-            BenchmarkId::new("insphere_lifted_2d", NEAR_BOUNDARY_QUERIES),
+            BenchmarkId::new("insphere_lifted_2d", CENTERED_QUERIES),
             &(),
             |b, ()| {
                 b.iter(|| run_insphere_lifted(black_box(&simplex), black_box(&queries)));
@@ -239,16 +241,16 @@ fn bench_near_boundary(c: &mut Criterion) {
 
     {
         let simplex = standard_simplex::<3>();
-        let queries = near_boundary_queries::<3>();
+        let queries = centered_queries::<3>();
         group.bench_with_input(
-            BenchmarkId::new("insphere_3d", NEAR_BOUNDARY_QUERIES),
+            BenchmarkId::new("insphere_3d", CENTERED_QUERIES),
             &(),
             |b, ()| {
                 b.iter(|| run_insphere(black_box(&simplex), black_box(&queries)));
             },
         );
         group.bench_with_input(
-            BenchmarkId::new("insphere_lifted_3d", NEAR_BOUNDARY_QUERIES),
+            BenchmarkId::new("insphere_lifted_3d", CENTERED_QUERIES),
             &(),
             |b, ()| {
                 b.iter(|| run_insphere_lifted(black_box(&simplex), black_box(&queries)));
@@ -258,16 +260,16 @@ fn bench_near_boundary(c: &mut Criterion) {
 
     {
         let simplex = standard_simplex::<4>();
-        let queries = near_boundary_queries::<4>();
+        let queries = centered_queries::<4>();
         group.bench_with_input(
-            BenchmarkId::new("insphere_4d", NEAR_BOUNDARY_QUERIES),
+            BenchmarkId::new("insphere_4d", CENTERED_QUERIES),
             &(),
             |b, ()| {
                 b.iter(|| run_insphere(black_box(&simplex), black_box(&queries)));
             },
         );
         group.bench_with_input(
-            BenchmarkId::new("insphere_lifted_4d", NEAR_BOUNDARY_QUERIES),
+            BenchmarkId::new("insphere_lifted_4d", CENTERED_QUERIES),
             &(),
             |b, ()| {
                 b.iter(|| run_insphere_lifted(black_box(&simplex), black_box(&queries)));
@@ -278,5 +280,5 @@ fn bench_near_boundary(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_hot_path, bench_near_boundary);
+criterion_group!(benches, bench_hot_path, bench_centered_queries);
 criterion_main!(benches);

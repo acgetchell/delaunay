@@ -1139,6 +1139,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use super::*;
     use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
@@ -1603,22 +1605,13 @@ mod tests {
         assert_eq!(max_simplices_removed, 0);
         match stage {
             PlManifoldRepairStage::BoundaryRidgeMultiplicity => {
-                assert!(matches!(
-                    *source,
-                    ManifoldError::BoundaryRidgeMultiplicity { .. }
-                ));
+                assert_matches!(*source, ManifoldError::BoundaryRidgeMultiplicity { .. });
             }
             PlManifoldRepairStage::RidgeLink => {
-                assert!(matches!(
-                    *source,
-                    ManifoldError::RidgeLinkNotManifold { .. }
-                ));
+                assert_matches!(*source, ManifoldError::RidgeLinkNotManifold { .. });
             }
             PlManifoldRepairStage::VertexLink => {
-                assert!(matches!(
-                    *source,
-                    ManifoldError::VertexLinkNotManifold { .. }
-                ));
+                assert_matches!(*source, ManifoldError::VertexLinkNotManifold { .. });
             }
         }
     }
@@ -1670,10 +1663,10 @@ mod tests {
     fn test_repair_pl_manifold_topology_repairs_boundary_ridge_multiplicity() {
         init_tracing();
         let mut tds = make_boundary_ridge_multiplicity_tds();
-        assert!(matches!(
+        assert_matches!(
             validate_boundary_ridge_multiplicity(&tds, GlobalTopology::Euclidean),
             Err(ManifoldError::BoundaryRidgeMultiplicity { .. })
-        ));
+        );
 
         let stats = repair_pl_manifold_topology(
             &mut tds,
@@ -1691,10 +1684,10 @@ mod tests {
     fn test_repair_pl_manifold_topology_repairs_ridge_link() {
         init_tracing();
         let mut tds = make_disconnected_ridge_link_tds();
-        assert!(matches!(
+        assert_matches!(
             validate_ridge_links(&tds),
             Err(ManifoldError::RidgeLinkNotManifold { .. })
-        ));
+        );
 
         let stats = repair_pl_manifold_topology(
             &mut tds,
@@ -1712,10 +1705,10 @@ mod tests {
     fn test_repair_pl_manifold_topology_repairs_vertex_link() {
         init_tracing();
         let mut tds = make_cone_on_torus_tds();
-        assert!(matches!(
+        assert_matches!(
             validate_vertex_link_manifoldness(&tds, GlobalTopology::Euclidean),
             Err(ManifoldError::VertexLinkNotManifold { .. })
-        ));
+        );
 
         let stats = repair_pl_manifold_topology(
             &mut tds,

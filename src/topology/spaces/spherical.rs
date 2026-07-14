@@ -593,7 +593,7 @@ pub(crate) fn normalize_unit_sphere_coordinates(coords: &mut [f64]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::f64::consts::FRAC_1_SQRT_2;
+    use std::{assert_matches, f64::consts::FRAC_1_SQRT_2};
 
     use approx::assert_relative_eq;
 
@@ -657,10 +657,10 @@ mod tests {
         let opposite = SphericalPoint::<2>::try_new_with_radius([-1.0, 0.0, 0.0], f64::MAX)
             .expect("opposite point should normalize onto maximum radius");
 
-        assert!(matches!(
+        assert_matches!(
             metric.try_distance(&x, &opposite),
             Err(SphericalPointError::NonFiniteDistance { distance }) if distance.is_infinite()
-        ));
+        );
     }
 
     #[test]

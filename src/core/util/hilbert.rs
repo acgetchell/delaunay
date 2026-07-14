@@ -909,7 +909,7 @@ fn index_from_quantized<const D: usize>(coords: &[u32; D], params: HilbertIndexP
 
     // See: J. Skilling, "Programming the Hilbert curve", AIP Conference Proceedings 707 (2004).
     // Step 1: transform axes to 'transpose' form.
-    let highest_bit_mask: u32 = 1_u32 << (bits - 1);
+    let highest_bit_mask = max_quantized_coordinate(params.bits).isolate_highest_one();
     let mut bit_mask: u32 = highest_bit_mask;
     while bit_mask > 1 {
         let mask_minus_one = bit_mask - 1;

@@ -2,7 +2,7 @@
 # This ensures consistent configuration across all developers and IDEs
 
 # Minimum Supported Rust Version - matches Cargo.toml and rust-toolchain.toml
-msrv = "1.96.0"
+msrv = "1.97.0"
 
 # Lint levels are controlled by Cargo.toml plus the `just clippy` / CI
 # invocation flags. This file contains Clippy configuration options that are
