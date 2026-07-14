@@ -28,20 +28,20 @@ enough to load and remember. Detailed operational rules are indexed in
 
 ## Required Reading
 
-Before modifying code, agents MUST read:
+Before modifying repository files, agents MUST read:
 
 - `AGENTS.md` (this file)
-- `docs/dev/README.md` - development guidance index
-- **All top-level files in `docs/dev/*.md`** - focused repository development
-  rules and routing indexes
+- `docs/dev/README.md` - development guidance index; read each focused document
+  whose ownership row matches the files or workflows the task touches
 - `docs/code_organization.md` - short architecture hub; follow its focused
   links when touching module layout, public namespace, preludes, or file
   organization
 
 `docs/dev/README.md` explains which focused document owns each development
-workflow. Agents must load every top-level file in `docs/dev/` before making
-changes, then follow any workflow-specific links to deeper focused references
-for the files they will touch.
+workflow. Agents must read the task-relevant focused documents completely before
+making changes and load additional owners if the task expands. Cross-cutting
+changes must follow every applicable owner; unrelated development histories and
+workflow references do not need to be loaded preemptively.
 
 ## Non-Negotiable Rules
 
@@ -65,6 +65,11 @@ for the files they will touch.
 - **Treat paper prose as author-owned.** Agents must not add substantive
   publication prose to `papers/`; local paper maintenance rules live in
   `docs/dev/docs.md`.
+- **Keep notebook execution deliberate.** Routine notebook validation is
+  lint-only. Execute one notebook only when the task requires it; refresh
+  tracked notebook artifacts only through named recipes when the task includes
+  that refresh. Every cell must have a unique, stable, descriptive lowercase
+  kebab-case ID. Detailed policy lives in `docs/dev/notebooks.md`.
 - **Keep README and citation prose mirrored.** The first paragraph under
   `README.md`'s Introduction is mirrored by the `abstract` field in
   `CITATION.cff`; update both together. The invariant is checked by
@@ -204,6 +209,7 @@ enforce that contract.
 | Tests, doctests, proptests, slow tests, and dimension coverage | `docs/dev/testing.md` |
 | Performance tuning and benchmark evidence | `docs/dev/perf-tuning.md` |
 | Documentation, references, changelog, and scientific notation | `docs/dev/docs.md` |
+| Jupyter notebook cells, execution, and tracked artifacts | `docs/dev/notebooks.md` |
 | Python support scripts | `docs/dev/python.md` |
 | Debug environment variables | `docs/dev/debug_env_vars.md` |
 | Tooling alignment and workflow/config rationale | `docs/dev/tooling-alignment.md` |

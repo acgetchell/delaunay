@@ -14,8 +14,8 @@ Run the paper workflow with:
 just papers
 ```
 
-That recipe executes the validation notebook with paper figure output enabled,
-refreshes `papers/generated/*.png`, checks TeX formatting with `tex-fmt`, lints
+That recipe refreshes the canonical validation figures under
+`docs/assets/validation/`, checks TeX formatting with `tex-fmt`, lints
 TeX with `chktex`, compiles the paper with Tectonic in `target/papers/`, and
 copies the final reading copy to `papers/validation.pdf`. The build derives
 `SOURCE_DATE_EPOCH` from the paper's explicit `\date{...}` command so CI
@@ -36,7 +36,7 @@ Tracked paper files:
 - `*.bib` BibTeX sources for paper-local references
 - `*.tex` source files
 - `*.pdf` reading copies intended for advisors/reviewers
-- `generated/*.png` figures included by the TeX source
+- `../docs/assets/validation/*.png` figures shared with validation documentation
 
 Untracked paper files:
 

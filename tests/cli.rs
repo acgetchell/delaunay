@@ -98,6 +98,7 @@ mod cli_tests {
         let help = output_text(&output.stdout);
         assert!(help.contains("Generate and diagnose d-dimensional Delaunay triangulations"));
         assert!(help.contains("generate"));
+        assert!(help.contains("spherical-hero"));
         assert!(help.contains("validation-demo"));
         assert!(help.contains("pachner-stress"));
     }
@@ -190,6 +191,114 @@ mod cli_tests {
             Some(u64::try_from(facets.len()).expect("facet count should fit in u64"))
         );
         assert!(!facets.is_empty());
+    }
+
+    #[test]
+    fn generate_visualization_emits_generic_schema_json_to_stdout() {
+        let output = run_cli(&[
+            "generate",
+            "visualization",
+            "--dimension",
+            "3",
+            "--vertices",
+            "6",
+            "--seed",
+            "1",
+        ]);
+        assert_success(&output);
+
+        let json = stdout_json(&output);
+        let metadata = &json["metadata"];
+        let simplices = json["simplices"]
+            .as_array()
+            .expect("visualization JSON should include simplices");
+        let adjacency = json["adjacency"]
+            .as_array()
+            .expect("visualization JSON should include adjacency");
+
+        assert_eq!(metadata["schema"], "delaunay.simplicial_complex");
+        assert_eq!(metadata["schema_version"], 1);
+        assert_eq!(metadata["dimension"], 3);
+        assert_eq!(metadata["vertex_count"], 6);
+        assert!(!simplices.is_empty());
+        assert_eq!(adjacency.len(), simplices.len() * 4);
+        assert!(
+            json["vertices"]
+                .as_array()
+                .is_some_and(|vertices| vertices.iter().all(|vertex| {
+                    vertex["id"].is_string()
+                        && vertex["coordinates"]
+                            .as_array()
+                            .is_some_and(|coordinates| coordinates.len() == 3)
+                }))
+        );
+    }
+
+    #[test]
+    fn spherical_hero_emits_valid_s2_triangles_to_stdout() {
+        let output = run_cli(&["spherical-hero", "--vertices", "8"]);
+        assert_success(&output);
+
+        let json = stdout_json(&output);
+        let vertices = json["vertices"]
+            .as_array()
+            .expect("spherical hero JSON should include vertices");
+        let simplices = json["simplices"]
+            .as_array()
+            .expect("spherical hero JSON should include simplices");
+
+        assert_eq!(json["schema"], "delaunay.spherical_hero");
+        assert_eq!(json["schema_version"], 1);
+        assert_eq!(json["intrinsic_dimension"], 2);
+        assert_eq!(json["ambient_dimension"], 3);
+        assert_eq!(vertices.len(), 8);
+        let exported_vertex_count =
+            u64::try_from(vertices.len()).expect("small fixture count should fit u64");
+        assert!(vertices.iter().all(|vertex| {
+            let coordinates = vertex
+                .as_array()
+                .expect("spherical hero vertex should be a coordinate array");
+            let squared_norm = coordinates
+                .iter()
+                .map(|coordinate| {
+                    let value = coordinate
+                        .as_f64()
+                        .expect("spherical hero coordinate should be finite f64 JSON");
+                    value * value
+                })
+                .sum::<f64>();
+            coordinates.len() == 3 && (squared_norm - 1.0).abs() <= 1.0e-12
+        }));
+        assert_eq!(simplices.len(), 2 * vertices.len() - 4);
+        assert!(simplices.iter().all(|simplex| {
+            simplex.as_array().is_some_and(|vertex_indices| {
+                vertex_indices.len() == 3
+                    && vertex_indices.iter().all(|index| {
+                        index
+                            .as_u64()
+                            .is_some_and(|index| index < exported_vertex_count)
+                    })
+                    && vertex_indices[0] != vertex_indices[1]
+                    && vertex_indices[0] != vertex_indices[2]
+                    && vertex_indices[1] != vertex_indices[2]
+            })
+        }));
+
+        let repeated = run_cli(&["spherical-hero", "--vertices", "8"]);
+        assert_success(&repeated);
+        assert_eq!(output.stdout, repeated.stdout);
+    }
+
+    #[test]
+    fn spherical_hero_rejects_too_few_vertices() {
+        for vertices in ["0", "3"] {
+            let output = run_cli(&["spherical-hero", "--vertices", vertices]);
+            assert_exit_code(&output, 1);
+            assert_stderr_contains(
+                &output,
+                &format!("2D generation requires at least 4 vertices, got {vertices}"),
+            );
+        }
     }
 
     #[test]

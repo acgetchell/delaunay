@@ -553,7 +553,7 @@ help-workflows:
     @echo "Focused validation:"
     @echo "  just rust-core-check   # Formatting, all-targets Clippy, docs, and Semgrep"
     @echo "  just python-ci         # Python lint/typecheck + pytest"
-    @echo "  just notebook-check    # Notebook hygiene + fast headless execution"
+    @echo "  just notebook-check    # Notebook hygiene and extracted-code checks"
     @echo "  just markdown-ci       # Markdown lint + spell check"
     @echo "  just docs-version-check # Release-version references against Cargo.toml"
     @echo "  just cargo-lock-check  # Cargo.toml and Cargo.lock synchronization"
@@ -576,8 +576,8 @@ help-workflows:
     @echo "Notebook workflows:"
     @echo "  just notebook          # Launch the default notebook with uv-managed dependencies"
     @echo "  just notebook-lint     # Validate notebook JSON, output hygiene, and extracted code"
-    @echo "  just notebook-check    # Lint notebooks and execute fast notebooks under target/notebooks"
-    @echo "  just notebook-check-slow # Include slow notebook execution"
+    @echo "  just notebook-check    # Lint notebooks without executing them"
+    @echo "  just notebook-execute    # Explicitly execute one notebook"
     @echo "  just notebook-clear-outputs-all # Clear source notebook outputs"
     @echo "  just notebook-reset-from-git # Restore tracked source notebooks and clear artifacts"
     @echo "  just run <args>        # Run the opt-in delaunay binary with --features cli"
@@ -702,11 +702,8 @@ notebook notebook="notebooks/00_quickstart.ipynb": _ensure-uv
     mkdir -p "$notebook_cache/.ipython" "$notebook_cache/.matplotlib"
     MPLBACKEND=Agg IPYTHONDIR="$notebook_cache/.ipython" MPLCONFIGDIR="$notebook_cache/.matplotlib" uv run --group notebooks jupyter lab --ServerApp.open_browser=True --LabApp.open_browser=True "{{ notebook }}"
 
-notebook-check: notebook-lint notebook-execute-fast
+notebook-check: notebook-lint
     @echo "📓 Notebook checks complete!"
-
-notebook-check-slow: notebook-check notebook-execute-slow
-    @echo "📓 Slow notebook checks complete!"
 
 notebook-clear-outputs notebook="notebooks/00_quickstart.ipynb": _ensure-uv
     uv run --group notebooks jupyter nbconvert --clear-output --inplace "{{ notebook }}"
@@ -758,56 +755,14 @@ notebook-reset-from-git source="index":
     find notebooks -type d -name .ipynb_checkpoints -prune -exec rm -rf {} +
     printf 'Restored %s tracked source notebook(s) from %s and removed target/notebooks.\n' "$tracked_count" "$restored_from"
 
-notebook-execute notebook="notebooks/00_quickstart.ipynb" output_dir="target/notebooks": _ensure-uv
+notebook-execute notebook="notebooks/00_quickstart.ipynb" output_dir="target/notebooks" timeout="600": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
     output_path="$(pwd)/{{ output_dir }}"
     notebook_stem="$(basename "{{ notebook }}" .ipynb)"
     notebook_output_dir="$output_path/$notebook_stem"
     mkdir -p "$output_path/.ipython" "$output_path/.matplotlib" "$notebook_output_dir"
-    MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout=600 --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "$notebook_output_dir" "{{ notebook }}"
-
-notebook-execute-fast output_dir="target/notebooks": _ensure-uv
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ ! -d notebooks ]; then
-        echo "No fast notebooks found to execute."
-        exit 0
-    fi
-    output_path="$(pwd)/{{ output_dir }}"
-    mkdir -p "$output_path/.ipython" "$output_path/.matplotlib"
-    found=0
-    while IFS= read -r notebook; do
-        found=1
-        notebook_stem="$(basename "$notebook" .ipynb)"
-        notebook_output_dir="$output_path/$notebook_stem"
-        mkdir -p "$notebook_output_dir"
-        MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout=600 --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "$notebook_output_dir" "$notebook"
-    done < <(find notebooks -type f -name '*.ipynb' ! -path '*/.ipynb_checkpoints/*' ! -path 'notebooks/slow/*' ! -name '*_slow.ipynb' | sort)
-    if [ "$found" -eq 0 ]; then
-        echo "No fast notebooks found to execute."
-    fi
-
-notebook-execute-slow output_dir="target/notebooks": _ensure-uv
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ ! -d notebooks ]; then
-        echo "No slow notebooks found to execute."
-        exit 0
-    fi
-    output_path="$(pwd)/{{ output_dir }}"
-    mkdir -p "$output_path/.ipython" "$output_path/.matplotlib"
-    found=0
-    while IFS= read -r notebook; do
-        found=1
-        notebook_stem="$(basename "$notebook" .ipynb)"
-        notebook_output_dir="$output_path/$notebook_stem"
-        mkdir -p "$notebook_output_dir"
-        MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout=1800 --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "$notebook_output_dir" "$notebook"
-    done < <(find notebooks -type f \( -path 'notebooks/slow/*' -o -name '*_slow.ipynb' \) ! -path '*/.ipynb_checkpoints/*' | sort)
-    if [ "$found" -eq 0 ]; then
-        echo "No slow notebooks found to execute."
-    fi
+    MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout={{ timeout }} --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "$notebook_output_dir" "{{ notebook }}"
 
 notebook-lint: _ensure-uv
     uv run --group dev --group notebooks notebook-check lint --repo-root .
@@ -822,12 +777,22 @@ notebook-setup: _ensure-uv
 paper-cli:
     cargo build --profile perf --features cli --bin delaunay
 
-# Refresh tracked paper figures from reproducible notebooks.
-paper-figures: _ensure-uv paper-cli
+# Refresh the canonical validation figures reused by documentation and papers.
+paper-figures: validation-doc-figures
+    @echo "📊 Paper figures refreshed under docs/assets/validation"
+
+# Refresh reviewer-facing validation diagrams from the reproducible notebook.
+validation-doc-figures: _ensure-uv paper-cli
     #!/usr/bin/env bash
     set -euo pipefail
-    mkdir -p papers/generated
-    DELAUNAY_BINARY="{{ perf_delaunay_binary }}" DELAUNAY_VALIDATION_PAPER_FIGURE_DIR="papers/generated" just notebook-execute notebooks/01_validation.ipynb target/papers/notebooks
+    mkdir -p docs/assets/validation
+    DELAUNAY_BINARY="{{ perf_delaunay_binary }}" DELAUNAY_VALIDATION_DOC_FIGURE_DIR="docs/assets/validation" just notebook-execute notebooks/01_validation.ipynb target/docs/notebooks
+
+# Deliberately refresh the slow notebook-backed spherical README hero.
+spherical-readme-hero: _ensure-uv paper-cli
+    #!/usr/bin/env bash
+    set -euo pipefail
+    DELAUNAY_SPHERICAL_HERO_FIGURE="docs/assets/readme/delaunay_spherical_readme.png" just notebook-execute notebooks/02_spherical_hero.ipynb target/docs/notebooks 1800
 
 # Format publication-facing TeX sources.
 paper-tex-fmt: _ensure-tex-fmt

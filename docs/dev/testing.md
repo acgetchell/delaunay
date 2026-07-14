@@ -390,10 +390,10 @@ During iteration, prefer the targeted changed-test commands in
 `just test-doc`, `just test-unit`, and `just test-integration` for final bucket
 validation or broad changes.
 
-Notebook validation is separate from `just test`. Use `just notebook-lint` for
-notebook hygiene and extracted-code checks, `just notebook-check` for fast
-headless execution, and `just notebook-check-slow` for notebooks that exceed
-the routine execution budget.
+Notebook validation is separate from `just test`. Cell identity, source
+hygiene, deliberate execution, and artifact rules live in
+[`notebooks.md`](notebooks.md); exact recipes remain in
+[`commands.md`](commands.md).
 
 Do not mark deterministic slow correctness tests with `#[ignore]`; that makes
 them invisible to `just test-slow`. Benchmark-style tests should live in

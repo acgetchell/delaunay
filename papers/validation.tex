@@ -26,15 +26,6 @@
 % TeX structure, build tooling, citation plumbing, figures, and TODO prompts,
 % but Adam writes the substantive paper prose.
 \newcommand{\AuthorTodo}[1]{\textbf{Author TODO.} #1}
-\newcommand{\ValidationWitnessPanel}[3]{%
-  \begin{minipage}[t]{0.30\textwidth}
-    \centering
-    \includegraphics[width=\linewidth]{#1}
-    \par\smallskip
-    {\footnotesize\textbf{#2}\\#3}
-  \end{minipage}%
-}
-
 \begin{abstract}
   \AuthorTodo{Write the abstract in your own words.}
 \end{abstract}
@@ -70,7 +61,8 @@
 
 \begin{figure}[htbp]
   \centering
-  \includegraphics[width=0.95\linewidth]{generated/validation_hierarchy.png}
+  \includegraphics[width=0.95\linewidth]
+  {../docs/assets/validation/validation_hierarchy.png}
   \caption{Overview of the validation hierarchy in
   delaunay}\label{fig:validation-hierarchy}
   \Description{The 5-level validation hierarchy in delaunay. Level 1:
@@ -145,38 +137,55 @@
 
 \section{Diagnostics and Reproducible Figures}
 
+\begin{figure}[p]
+  \centering
+  \includegraphics[width=0.88\linewidth]
+  {../docs/assets/validation/validation_level_1_element_validity.png}
+  \caption{\AuthorTodo{Describe the Level 1 validation witness figure.}}
+  \label{fig:validation-level-1}
+  \Description{Author TODO accessible description of the Level 1 validation
+  witness figure.}
+\end{figure}
+
+\begin{figure}[p]
+  \centering
+  \includegraphics[width=0.88\linewidth]
+  {../docs/assets/validation/validation_level_2_combinatorial_consistency.png}
+  \caption{\AuthorTodo{Describe the Level 2 validation witness figure.}}
+  \label{fig:validation-level-2}
+  \Description{Author TODO accessible description of the Level 2 validation
+  witness figure.}
+\end{figure}
+
+\begin{figure}[p]
+  \centering
+  \includegraphics[width=0.88\linewidth]
+  {../docs/assets/validation/validation_level_3_intrinsic_pl_topology.png}
+  \caption{\AuthorTodo{Describe the Level 3 validation witness figure.}}
+  \label{fig:validation-level-3}
+  \Description{Author TODO accessible description of the Level 3 validation
+  witness figure.}
+\end{figure}
+
+\begin{figure}[p]
+  \centering
+  \includegraphics[width=0.88\linewidth]
+  {../docs/assets/validation/validation_level_4_valid_realization.png}
+  \caption{\AuthorTodo{Describe the Level 4 validation witness figure.}}
+  \label{fig:validation-level-4}
+  \Description{Author TODO accessible description of the Level 4 validation
+  witness figure.}
+\end{figure}
+
+\clearpage
 \begin{figure}[htbp]
   \centering
-  \ValidationWitnessPanel%
-  {generated/validation_level_1_element_validity.png}
-  {Level 1}
-  {Element Validity}
-  \hfill
-  \ValidationWitnessPanel%
-  {generated/validation_level_2_combinatorial_consistency.png}
-  {Level 2}
-  {Combinatorial Consistency}
-  \hfill
-  \ValidationWitnessPanel%
-  {generated/validation_level_3_intrinsic_pl_topology.png}
-  {Level 3}
-  {Intrinsic PL Topology}
-
-  \medskip
-
-  \ValidationWitnessPanel%
-  {generated/validation_level_4_valid_realization.png}
-  {Level 4}
-  {Valid Realization}
-  \hfill
-  \ValidationWitnessPanel%
-  {generated/validation_level_5_geometric_predicates.png}
-  {Level 5}
-  {Geometric Predicate Satisfaction}
-  \caption{\AuthorTodo{Describe the validation witness
-  figures.}}\label{fig:validation-witnesses}
-  \Description{Author TODO accessible description of the validation witness
-  figures.}
+  \includegraphics[width=0.52\linewidth]
+  {../docs/assets/validation/validation_level_5_geometric_predicates.png}
+  \caption{\AuthorTodo{Describe the Level 5 validation witness figure.}}
+  \label{fig:validation-level-5}
+  \Description{Author TODO accessible description of the Level 5 validation
+  witness figure.}
 \end{figure}
 
 \begin{itemize}

@@ -56,6 +56,9 @@ before shipping.
   integer/`NonZero` bit helpers against Hilbert bit-depth/index invariants,
   review `RepeatN::default` and Cargo 1.97 tooling changes for useful adoption,
   and re-benchmark predicate `cold_path` decisions under the 1.97.0 compiler.
+- **Notebook/export artifact (#64/#408):** ship the generic simplicial-complex
+  JSON export, reproducible quickstart and validation notebooks, tracked
+  validation diagrams, and reviewer-facing artifact instructions.
 
 ### v0.9.0 and later horizon
 
@@ -64,8 +67,8 @@ tightly coupled to the v0.8.0 paper/API push:
 
 - **Broader geometry features (#299/#63/#136):** constrained Delaunay
   triangulations, Voronoi diagrams, and weakly-visible hull facets.
-- **Visualization and high-dimensional tuning (#64/#106):** built-in
-  visualization and convex-hull buffer allocation work for D > 7.
+- **Built-in visualization and high-dimensional tuning (#106):** any native
+  plotting layer and convex-hull buffer allocation work for D > 7.
 
 ## Ongoing Performance Monitoring
 

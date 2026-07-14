@@ -1934,6 +1934,30 @@ rules:
       (?i)(?:\b4-level validation hierarchy\b|\bfour levels of validation\b|\blevel 4:\s*delaunay
       property\b|\bdelaunay property\s*\(level 4\)|\bdelaunay level 4 validation\b|\brepair\s*/\s*verify\b[^\n]*\bdelaunay property\b)
 
+  - id: delaunay.paper.validation-figures-use-canonical-assets
+    languages:
+      - regex
+    severity: WARNING
+    message: "Reuse validation figures from ../docs/assets/validation/ instead of maintaining paper-local copies."
+    metadata:
+      category: maintainability
+      rationale: >-
+        Documentation and papers should share the canonical notebook-generated
+        validation figures so paper-local copies cannot drift from the public
+        documentation.
+    paths:
+      include:
+        - "/papers/*.tex"
+        - "/tests/semgrep/papers/*.tex"
+    pattern-regex: |-
+      (?sx)
+      \\includegraphics
+      (?:\s*\[[^\]]*\])?
+      \s*\{\s*
+      (?!\.\./docs/assets/validation/)
+      [^}\n]*validation_(?:hierarchy|level_[1-5]_[^}/]+)\.png
+      \s*\}
+
   - id: delaunay.github-actions.external-action-sha-pinned
     languages:
       - regex
@@ -2161,15 +2185,37 @@ rules:
     languages:
       - generic
     severity: WARNING
-    message: "Use stable descriptive notebook cell IDs instead of generated-looking IDs."
+    message: "Use stable descriptive notebook cell IDs instead of generated or positional IDs."
     metadata:
       category: notebook
-      rationale: "Descriptive cell IDs make notebook diffs, review comments, and output clearing stable."
+      rationale: >-
+        Descriptive cell IDs make notebook diffs, review comments, and output
+        clearing stable. Random hexadecimal/UUID identifiers and positional
+        names such as cell-1 do not describe a cell's purpose.
     paths:
       include:
         - "/notebooks/**/*.ipynb"
         - "/tests/semgrep/notebooks/**/*.ipynb"
-    pattern-regex: '"id":\s*"[a-f0-9]{8}"'
+    pattern-regex: >-
+      "id":\s*"(?:[a-f0-9]{8}|[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}|(?:cell|code|markdown|raw|section|step)-?[0-9]+)"
+
+  - id: delaunay.notebook.no-direct-tracked-figure-write
+    languages:
+      - generic
+    severity: WARNING
+    message: "Write notebook figures under target/ by default; use a named recipe to supply tracked docs/assets or docs/images destinations."
+    metadata:
+      category: notebook
+      rationale: >-
+        Routine notebook runs should remain scratch-only. Tracked figures are
+        refreshed deliberately through named recipes that provide the tracked
+        destination rather than through direct save calls in notebook cells.
+    paths:
+      include:
+        - "/notebooks/**/*.ipynb"
+        - "/tests/semgrep/notebooks/**/*.ipynb"
+    pattern-regex: |-
+      (?s)\b(?:savefig|write_image)\s*\([^)]*(?:\\"|')docs/(?:assets|images)/
 
   - id: delaunay.notebook.no-direct-csv-in-display-or-plot-cells
     languages:

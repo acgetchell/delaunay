@@ -18,6 +18,7 @@ Agents must run appropriate checks after modifying code.
 - [Benchmark Profiles](#benchmark-profiles)
 - [Examples](#examples)
 - [Spell Checking](#spell-checking)
+- [Notebook Validation](#notebook-validation)
 - [Markdown Checks](#markdown-checks)
 - [TOML Checks](#toml-checks)
 - [YAML Checks](#yaml-checks)
@@ -233,7 +234,7 @@ This runs:
 - `Cargo.toml`/`Cargo.lock` synchronization
 - JSON/TOML/YAML/CFF checks
 - Python lint/typecheck
-- notebook hygiene and fast headless execution
+- notebook hygiene and extracted-code checks
 - Rust core lint, documentation, and Semgrep checks
 - benchmark harness compile checks
 - Rust lib unit tests
@@ -261,7 +262,10 @@ benchmark harnesses once; `test-rust-ci` compiles and runs Rust lib unit tests
 in debug and release profiles, then runs default-feature integration tests and
 feature-gated CLI integration tests in release-profile nextest invocations;
 `test-doc` compiles and runs Rust doctests once in release profile;
-`notebook-check` lints notebooks and executes fast notebooks headlessly once.
+`notebook-check` lints notebooks without executing them.
+Routine notebook checks are lint-only. Execute one notebook deliberately with
+`just notebook-execute` or use its named artifact-refresh recipe. There is no
+aggregate recipe that executes every notebook.
 
 `just test` is tests-only. `test-integration-compile` and `bench-test-compile`
 are explicit no-run smoke recipes for cases where a compile-only check is the
@@ -536,33 +540,39 @@ under:
 [default.extend-words]
 ```
 
+Allowlist the exact acronym or domain term rather than a shorter fragment.
+`typos` can split some plural capitalized acronyms unexpectedly; prefer wording
+such as “PNG files” over allowlisting the shorter fragment reported by the
+diagnostic.
+
 ---
 
 ## Notebook Validation
 
-Notebook source files should not commit generated outputs or execution counts.
-Notebook code is extracted and checked with Ruff and ty so `.ipynb` cells follow
-the same Python standards as repository scripts.
+Notebook policy for cell identity, source hygiene, deliberate execution, and
+tracked artifacts lives in [`notebooks.md`](notebooks.md). Notebook code is
+extracted and checked with Ruff and ty so `.ipynb` cells follow the same Python
+standards as repository scripts.
 
 Commands:
 
 ```bash
 just notebook-lint
 just notebook-check
-just notebook-check-slow
+just notebook-execute notebooks/00_quickstart.ipynb
 just notebook-clear-outputs-all
 just notebook-reset-from-git
 ```
 
-`notebook-check` runs notebook hygiene and fast headless execution. Headless
-execution writes executed notebooks and generated notebook artifacts under
-`target/notebooks/<notebook-stem>/` and leaves source notebooks unchanged. The
-quickstart README hero preview also defaults to
-`target/notebooks/00_quickstart/delaunay_3d_readme.png`; set
-`DELAUNAY_README_FIGURE=docs/images/delaunay_3d_readme.png` only when
-intentionally refreshing the tracked asset. Slow notebooks should be named
-`*_slow.ipynb` or placed under `notebooks/slow/`; those run through
-`notebook-check-slow`.
+`notebook-check` runs notebook hygiene and extracted-code checks without
+executing notebooks. Explicit notebook execution writes the executed notebook
+and generated artifacts under `target/notebooks/<notebook-stem>/` while leaving
+the source notebook unchanged. The
+quickstart Euclidean hero preview also defaults to
+`target/notebooks/00_quickstart/delaunay_3d_readme.png` and is not a tracked
+artifact. The tracked spherical README hero is generated separately with
+`just spherical-readme-hero`. Notebook names do not encode expected runtime
+because execution cost depends on chosen parameters.
 
 `just notebook-reset-from-git` discards edits to tracked source notebooks by
 restoring tracked `.ipynb` files under `notebooks/` from the Git index, removes
@@ -570,7 +580,13 @@ restoring tracked `.ipynb` files under `notebooks/` from the Git index, removes
 explicit source when needed, for example `just notebook-reset-from-git HEAD`, to
 restore notebooks from a committed tree instead of the current index.
 
-These recipes keep the CI shape stable as notebooks are added or split.
+These recipes keep the CI shape stable as notebooks are added or split. The
+repository intentionally has no aggregate recipe that executes every notebook.
+
+`just spherical-readme-hero` is the deliberate, potentially long-running
+refresh path for `docs/assets/readme/delaunay_spherical_readme.png`. It executes
+`notebooks/02_spherical_hero.ipynb` with the perf-profile Rust CLI;
+routine notebook checks do not regenerate the tracked hero.
 
 ---
 
@@ -593,12 +609,10 @@ just papers
 ```
 
 `just paper-cli` builds the local `delaunay` binary used by paper notebooks
-before nbconvert starts its execution timeout. `just paper-figures` executes
-`notebooks/01_validation.ipynb` with
-`DELAUNAY_VALIDATION_PAPER_FIGURE_DIR=papers/generated` and
-`DELAUNAY_BINARY` pointing at the perf-profile CLI binary, refreshing the PNG
-figures included by `papers/validation.tex`. Ordinary notebook validation does
-not refresh tracked paper figures. `just paper-tex-lint` runs `tex-fmt --check`
+before nbconvert starts its execution timeout. `just paper-figures` refreshes
+the canonical PNG files under `docs/assets/validation/`, which are reused directly
+by `papers/validation.tex`. Ordinary notebook validation does not refresh
+tracked figures. `just paper-tex-lint` runs `tex-fmt --check`
 and `chktex` over `papers/*.tex`. `just paper-build` compiles
 `papers/validation.tex` with Tectonic in `target/papers/validation/` and copies
 the reading copy to `papers/validation.pdf`. `just paper-pdf-check` uses the
@@ -614,6 +628,16 @@ including fontconfig, FreeType, Graphite2, HarfBuzz, ICU, libpng, and zlib.
 `just setup-tools` checks ICU locally and auto-detects common Homebrew ICU
 pkg-config directories before it asks for a manual `PKG_CONFIG_PATH`; paper CI
 installs the platform native package set explicitly.
+
+Reviewer-facing validation diagrams under `docs/assets/validation/` use the
+same deterministic notebook with a separate explicit output switch:
+
+```bash
+just validation-doc-figures
+```
+
+Routine notebook checks keep writing only under `target/`; neither tracked
+documentation nor paper figures are refreshed implicitly.
 
 ---
 
@@ -758,7 +782,7 @@ CI enforces:
 - release-version reference synchronization
 - `Cargo.toml`/`Cargo.lock` synchronization
 - Python lint, type checks, and tests
-- notebook hygiene and fast headless execution
+- notebook hygiene and extracted-code checks
 - core Rust formatting, Clippy, rustdoc, and Semgrep checks
 - Rust unit, doctest, and integration tests
 - benchmark harness compilation

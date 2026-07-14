@@ -11,7 +11,7 @@ use std::{
     fmt::{self, Display},
     fs::{self, File},
     io::{self, BufWriter, Write},
-    num::{NonZeroUsize, TryFromIntError},
+    num::{NonZeroU32, NonZeroUsize, TryFromIntError},
     path::{Path, PathBuf},
     process::ExitCode,
     time::Instant,
@@ -19,11 +19,12 @@ use std::{
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use delaunay::{
-    DelaunayTriangulation, InvariantError,
+    DelaunayTriangulation, InvariantError, VisualizationExportError,
     prelude::{
         construction::{
             ConstructionOptions, DelaunayTriangulationBuilder,
-            DelaunayTriangulationConstructionError, RetryPolicy, TopologyGuarantee, Vertex, vertex,
+            DelaunayTriangulationConstructionError, RetryPolicy, SphericalDelaunayBuilder,
+            SphericalDelaunayConstructionError, TopologyGuarantee, Vertex, vertex,
         },
         generators::{
             RandomPointGenerationError, generate_random_points_in_ball_seeded,
@@ -64,6 +65,8 @@ const CONVEX_HULL_EXPORT_SCHEMA: &str = "delaunay.convex_hull";
 const CONVEX_HULL_EXPORT_SCHEMA_VERSION: u32 = 1;
 const VALIDATION_DEMO_EXPORT_SCHEMA: &str = "delaunay.validation_demo";
 const VALIDATION_DEMO_EXPORT_SCHEMA_VERSION: u32 = 1;
+const SPHERICAL_HERO_EXPORT_SCHEMA: &str = "delaunay.spherical_hero";
+const SPHERICAL_HERO_EXPORT_SCHEMA_VERSION: u32 = 1;
 
 /// Top-level command-line parser for the opt-in binary.
 #[derive(Debug, Parser)]
@@ -118,12 +121,14 @@ impl ValidatedDelaunayCommand {
     /// # Errors
     ///
     /// Returns [`CliError`] when command execution fails. Failure modes include
-    /// artifact I/O or JSON serialization errors, random point generation or
-    /// triangulation construction errors, convex-hull extraction errors,
-    /// validation-demo invariant drift, and Pachner stress diagnostic failures.
+    /// artifact I/O or JSON serialization errors, random point generation,
+    /// Euclidean or spherical triangulation construction, visualization or
+    /// convex-hull export, validation-demo invariant drift, and Pachner stress
+    /// diagnostic failures.
     pub fn run(self) -> Result<(), CliError> {
         match self.0 {
             DelaunayCommand::Generate(command) => run_generate(&command),
+            DelaunayCommand::SphericalHero(command) => run_spherical_hero(&command),
             DelaunayCommand::ValidationDemo(command) => run_validation_demo(&command),
             DelaunayCommand::PachnerStress { config, artifacts } => {
                 run_pachner_stress(config, &artifacts)?;
@@ -137,6 +142,7 @@ impl ValidatedDelaunayCommand {
 #[derive(Debug)]
 enum DelaunayCommand {
     Generate(GenerateCommand),
+    SphericalHero(SphericalHeroConfig),
     ValidationDemo(ValidationDemoConfig),
     PachnerStress {
         config: PachnerStressConfig,
@@ -147,8 +153,10 @@ enum DelaunayCommand {
 /// Raw binary subcommands parsed by clap.
 #[derive(Debug, Subcommand)]
 enum DelaunayCommandArgs {
-    /// Generate a random Delaunay triangulation or its convex hull.
+    /// Generate a random Delaunay triangulation or visualization export.
     Generate(GenerateArgs),
+    /// Emit a deterministic S2 triangulation for the notebook-backed README hero.
+    SphericalHero(SphericalHeroArgs),
     /// Emit deterministic validation-level failure examples for notebooks.
     ValidationDemo(ValidationDemoArgs),
     /// Run a direct Pachner move stress workload.
@@ -160,6 +168,7 @@ impl DelaunayCommandArgs {
     fn into_validated(self) -> Result<DelaunayCommand, CliError> {
         match self {
             Self::Generate(args) => args.into_validated(),
+            Self::SphericalHero(args) => Ok(DelaunayCommand::SphericalHero(args.into_validated()?)),
             Self::ValidationDemo(args) => {
                 Ok(DelaunayCommand::ValidationDemo(args.into_validated()))
             }
@@ -168,11 +177,52 @@ impl DelaunayCommandArgs {
     }
 }
 
+/// Raw command-line arguments for `delaunay spherical-hero`.
+#[derive(Debug, Args)]
+struct SphericalHeroArgs {
+    /// Number of deterministic Fibonacci-sphere vertices.
+    #[arg(short = 'n', long, default_value_t = 160)]
+    vertices: usize,
+    /// Write JSON to a file instead of stdout.
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+}
+
+impl SphericalHeroArgs {
+    /// Validate the S2 vertex count.
+    fn into_validated(self) -> Result<SphericalHeroConfig, CliError> {
+        let vertices =
+            u32::try_from(self.vertices).map_err(|_| CliError::SphericalHeroVertexCount {
+                value: self.vertices,
+            })?;
+        let vertices = NonZeroU32::new(vertices)
+            .filter(|vertices| vertices.get() >= 4)
+            .ok_or(CliError::TooFewVertices {
+                dimension: 2,
+                vertices: self.vertices,
+                minimum: 4,
+            })?;
+        Ok(SphericalHeroConfig {
+            vertices,
+            output: self.output,
+        })
+    }
+}
+
+/// Validated deterministic S2 hero configuration.
+#[derive(Debug)]
+struct SphericalHeroConfig {
+    vertices: NonZeroU32,
+    output: Option<PathBuf>,
+}
+
 /// Generated object requested by the companion binary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum GenerateKind {
     /// Emit the generated Delaunay triangulation as the crate's serde JSON.
     Triangulation,
+    /// Emit generic simplicial-complex visualization primitives as JSON.
+    Visualization,
     /// Emit the generated triangulation's convex-hull facets as JSON.
     ConvexHull,
 }
@@ -384,6 +434,17 @@ struct ConvexHullFacetRecord<const D: usize> {
     coordinates: Vec<Vec<f64>>,
 }
 
+/// Detached S2 triangulation rendered by the spherical hero notebook.
+#[derive(Debug, Serialize)]
+struct SphericalHeroExport {
+    schema: &'static str,
+    schema_version: u32,
+    intrinsic_dimension: usize,
+    ambient_dimension: usize,
+    vertices: Vec<Vec<f64>>,
+    simplices: Vec<Vec<usize>>,
+}
+
 /// Notebook-facing validation-model artifact generated by public failure paths.
 #[derive(Debug, Serialize)]
 struct ValidationDemoExport {
@@ -454,6 +515,10 @@ fn run_generate_dimension<const D: usize>(config: &GenerateConfig<D>) -> Result<
         GenerateKind::Triangulation => {
             write_json_output(&triangulation, config.output.as_deref())?;
         }
+        GenerateKind::Visualization => {
+            let visualization = triangulation.to_visualization_data()?;
+            write_json_output(&visualization, config.output.as_deref())?;
+        }
         GenerateKind::ConvexHull => {
             let hull = build_convex_hull_export(&triangulation)?;
             write_json_output(&hull, config.output.as_deref())?;
@@ -465,6 +530,41 @@ fn run_generate_dimension<const D: usize>(config: &GenerateConfig<D>) -> Result<
 /// Generate the validation-model artifact used by the notebook quickstart.
 fn run_validation_demo(config: &ValidationDemoConfig) -> Result<(), CliError> {
     let export = build_validation_demo_export()?;
+    write_json_output(&export, config.output.as_deref())?;
+    Ok(())
+}
+
+/// Build and emit a deterministic S2 Delaunay triangulation in R3.
+fn run_spherical_hero(config: &SphericalHeroConfig) -> Result<(), CliError> {
+    let vertex_count = config.vertices.get();
+    let count = f64::from(vertex_count);
+    let golden_angle = std::f64::consts::PI * (3.0 - 5.0_f64.sqrt());
+    let points = (0..vertex_count)
+        .map(|index| {
+            let position = f64::from(index) + 0.5;
+            let z = 1.0 - 2.0 * position / count;
+            let radial = (1.0 - z * z).sqrt();
+            let azimuth = golden_angle * f64::from(index);
+            [radial * azimuth.cos(), radial * azimuth.sin(), z]
+        })
+        .collect::<Vec<_>>();
+    let triangulation = SphericalDelaunayBuilder::<2>::try_new(points)?.build()?;
+    let export = SphericalHeroExport {
+        schema: SPHERICAL_HERO_EXPORT_SCHEMA,
+        schema_version: SPHERICAL_HERO_EXPORT_SCHEMA_VERSION,
+        intrinsic_dimension: triangulation.dimension(),
+        ambient_dimension: triangulation.ambient_dimension(),
+        vertices: triangulation
+            .points()
+            .iter()
+            .map(|point| point.coords().to_vec())
+            .collect(),
+        simplices: triangulation
+            .simplices()
+            .iter()
+            .map(|simplex| simplex.vertex_indices().to_vec())
+            .collect(),
+    };
     write_json_output(&export, config.output.as_deref())?;
     Ok(())
 }
@@ -861,6 +961,18 @@ pub enum CliError {
     /// Delaunay construction failed.
     #[error(transparent)]
     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// Spherical Delaunay construction failed.
+    #[error(transparent)]
+    SphericalConstruction(#[from] SphericalDelaunayConstructionError),
+    /// The spherical hero count cannot be represented exactly by its plotting generator.
+    #[error("spherical hero vertex count is too large: {value}")]
+    SphericalHeroVertexCount {
+        /// Requested vertex count.
+        value: usize,
+    },
+    /// Generic visualization export failed.
+    #[error(transparent)]
+    Visualization(#[from] VisualizationExportError),
     /// Convex hull extraction failed.
     #[error(transparent)]
     ConvexHull(Box<ConvexHullConstructionError>),
@@ -2357,6 +2469,27 @@ mod tests {
         assert_eq!(dimension, 3);
         assert_eq!(vertices, 0);
         assert_eq!(minimum, 4);
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn spherical_hero_rejects_counts_that_exceed_exact_generator_range() {
+        let requested = usize::try_from(u64::from(u32::MAX) + 1)
+            .expect("64-bit usize should represent u32::MAX + 1");
+        let error = DelaunayCliArgs::try_parse_from([
+            "delaunay",
+            "spherical-hero",
+            "--vertices",
+            &requested.to_string(),
+        ])
+        .expect("CLI arguments should parse")
+        .into_validated()
+        .expect_err("oversized spherical count should fail validation");
+
+        let CliError::SphericalHeroVertexCount { value } = error else {
+            panic!("expected SphericalHeroVertexCount error, got {error:?}");
+        };
+        assert_eq!(value, requested);
     }
 
     #[test]

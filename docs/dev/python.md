@@ -27,10 +27,10 @@ configuration.
 `just check` also runs Python formatting checks, Ruff, and `ty` as part of the
 normal repository validation bundle.
 
-Jupyter notebooks are validated separately through `just notebook-lint` and
-`just notebook-check`. Notebook cells are extracted and checked with Ruff and
-ty, but notebook edits should use the notebook validators rather than treating
-`.ipynb` files as ordinary Python scripts.
+Jupyter notebook policy for authoring, cell metadata, execution, and artifacts
+lives in [`notebooks.md`](notebooks.md). Notebook code still follows the Python
+standards here, but notebook edits use the notebook validators rather than
+treating `.ipynb` files as ordinary Python scripts.
 
 ---
 
