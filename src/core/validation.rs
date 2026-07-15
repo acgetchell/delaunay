@@ -317,13 +317,21 @@ pub enum TriangulationValidationError {
 
     /// The intrinsic simplex-orientation constraints contain a parity obstruction.
     #[error(
-        "Intrinsic complex is non-orientable: the shared facet between simplices {simplex1_key:?} and {simplex2_key:?} closes with contradictory orientation parity"
+        "Intrinsic complex is non-orientable: the shared facet between simplices {simplex1_uuid}[{simplex1_facet_index}] ({simplex1_key:?}) and {simplex2_uuid}[{simplex2_facet_index}] ({simplex2_key:?}) closes with contradictory orientation parity"
     )]
     NonOrientable {
         /// First simplex on the contradictory adjacency.
         simplex1_key: SimplexKey,
+        /// Stable identifier of the first simplex.
+        simplex1_uuid: Uuid,
+        /// Local shared-facet index in the first simplex.
+        simplex1_facet_index: usize,
         /// Second simplex on the contradictory adjacency.
         simplex2_key: SimplexKey,
+        /// Stable identifier of the second simplex.
+        simplex2_uuid: Uuid,
+        /// Local shared-facet index in the second simplex.
+        simplex2_facet_index: usize,
     },
 
     /// Euler characteristic does not match the expected value for the classified topology.
@@ -415,36 +423,36 @@ pub enum TriangulationValidationError {
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OrientationWitness {
-    assignments: Vec<(SimplexKey, bool)>,
+    assignments: FastHashMap<SimplexKey, bool>,
 }
 
 impl OrientationWitness {
     /// Returns the number of oriented maximal simplices in the witness.
     #[inline]
     #[must_use]
-    pub const fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.assignments.len()
     }
 
     /// Returns whether the witness contains no maximal simplices.
     #[inline]
     #[must_use]
-    pub const fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.assignments.is_empty()
     }
 
     /// Returns whether `simplex_key` must be reversed relative to its stored ordering.
     #[must_use]
     pub fn is_reversed(&self, simplex_key: SimplexKey) -> Option<bool> {
-        self.assignments
-            .iter()
-            .find_map(|&(key, reversed)| (key == simplex_key).then_some(reversed))
+        self.assignments.get(&simplex_key).copied()
     }
 
     /// Iterates over simplex keys and their required reversal states.
     #[must_use]
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (SimplexKey, bool)> + '_ {
-        self.assignments.iter().copied()
+        self.assignments
+            .iter()
+            .map(|(&simplex_key, &reversed)| (simplex_key, reversed))
     }
 }
 
@@ -1264,7 +1272,9 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         // 2e. Intrinsic orientability is independent of whether the orderings
         // currently stored in the TDS happen to be coherent. PL-manifold
         // guarantees certify this additional property in supported dimensions.
+        // Periodic quotient orientability is a separate contract (#521).
         if matches!(D, 2 | 3)
+            && !self.global_topology.is_periodic()
             && self
                 .topology_guarantee
                 .requires_vertex_links_at_completion()
@@ -1384,7 +1394,11 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
                         if *existing != required_neighbor {
                             return Err(TriangulationValidationError::NonOrientable {
                                 simplex1_key: simplex_key,
+                                simplex1_uuid: simplex.uuid(),
+                                simplex1_facet_index: facet_index,
                                 simplex2_key: neighbor_key,
+                                simplex2_uuid: neighbor.uuid(),
+                                simplex2_facet_index: mirror_index,
                             }
                             .into());
                         }
@@ -1396,16 +1410,6 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             }
         }
 
-        let assignments = self
-            .tds
-            .simplices()
-            .filter_map(|(key, _)| {
-                assignments
-                    .get(&key)
-                    .copied()
-                    .map(|reversed| (key, reversed))
-            })
-            .collect();
         Ok(OrientationWitness { assignments })
     }
 
@@ -3663,20 +3667,32 @@ mod tests {
             Triangulation::new_empty(FastKernel::new());
 
         assert!(tri.is_valid_topology().is_ok());
+        assert!(tri.orientation_witness().unwrap().is_empty());
     }
 
     #[test]
     fn orientation_witness_distinguishes_local_ordering_from_intrinsic_orientability_2d() {
-        let non_orientable = build_mobius_strip_tds_2d();
+        let non_orientable = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(
+            FastKernel::new(),
+            build_mobius_strip_tds_2d(),
+        );
         assert_matches!(
-            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(
-                FastKernel::new(),
-                non_orientable
-            )
-            .orientation_witness(),
+            non_orientable.orientation_witness(),
             Err(InvariantError::Triangulation(
-                TriangulationValidationError::NonOrientable { .. }
-            ))
+                TriangulationValidationError::NonOrientable {
+                    simplex1_key,
+                    simplex1_uuid,
+                    simplex1_facet_index,
+                    simplex2_key,
+                    simplex2_uuid,
+                    simplex2_facet_index,
+                }
+            )) if non_orientable.tds.simplex(simplex1_key).map(Simplex::uuid)
+                == Some(simplex1_uuid)
+                && non_orientable.tds.simplex(simplex2_key).map(Simplex::uuid)
+                    == Some(simplex2_uuid)
+                && simplex1_facet_index <= 2
+                && simplex2_facet_index <= 2
         );
         let mut non_orientable = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(
             FastKernel::new(),
@@ -3702,6 +3718,12 @@ mod tests {
         let witness = tri.orientation_witness().unwrap();
         assert_eq!(witness.len(), tri.tds.number_of_simplices());
         assert!(witness.iter().any(|(_, reversed)| reversed));
+        let (witness_key, reversed) = witness.iter().next().unwrap();
+        assert_eq!(witness.is_reversed(witness_key), Some(reversed));
+        assert_eq!(
+            witness.is_reversed(SimplexKey::from(KeyData::from_ffi(u64::MAX))),
+            None
+        );
 
         // Restore the local reversal, then reverse every simplex. Both global
         // orientation choices satisfy the same Level 2 coherence contract.

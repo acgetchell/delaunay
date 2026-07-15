@@ -1504,6 +1504,23 @@ mod tests {
     }
 
     #[test]
+    fn triangulation_validation_error_kind_preserves_non_orientable() {
+        let source = TriangulationValidationError::NonOrientable {
+            simplex1_key: SimplexKey::from(KeyData::from_ffi(7)),
+            simplex1_uuid: Uuid::from_u128(7),
+            simplex1_facet_index: 1,
+            simplex2_key: SimplexKey::from(KeyData::from_ffi(8)),
+            simplex2_uuid: Uuid::from_u128(8),
+            simplex2_facet_index: 2,
+        };
+
+        assert_eq!(
+            TriangulationValidationErrorKind::from(&source),
+            TriangulationValidationErrorKind::NonOrientable
+        );
+    }
+
+    #[test]
     fn delaunay_validation_error_kind_from_error_preserves_all_variants() {
         let cases = [
             (
