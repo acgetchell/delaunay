@@ -155,10 +155,9 @@ Coherent orientation has two related meanings in this crate:
 
 The orientation checker uses the robust orientation predicate directly instead of a kernel-level
 predicate that may apply Simulation of Simplicity. That preserves the distinction between an
-actually degenerate simplex and a deterministically tie-broken predicate result. Periodic-image simplices
-are a deliberate exception at the TDS layer: their neighbor reciprocity is still checked, but the
-plain Euclidean facet-parity test is not a meaningful combinatorial-orientation certificate once
-periodic offsets are part of the simplex identity.
+actually degenerate simplex and a deterministically tie-broken predicate result. At the TDS layer,
+periodic-image simplices compare lifted `(vertex, offset)` facet identities after translation
+normalization, so quotient facets participate in the same combinatorial-orientation contract.
 
 Pachner and bistellar-editing transactions must keep coherent combinatorial orientation and positive
 geometric simplex orientation separate. A move can leave the TDS coherently oriented while affected

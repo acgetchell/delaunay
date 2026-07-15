@@ -5,8 +5,6 @@ This document describes the current coherent-orientation machinery in the
 [`invariants.md`](invariants.md), which gives the broader mathematical rationale
 for the library's topological and geometric invariants.
 
-Keep these documents separate:
-
 - `invariants.md` explains the whole invariant model: simplicial complexes,
   PL-manifold checks, Delaunay validation, and convergence rationale.
 - `ORIENTATION_SPEC.md` documents one invariant in detail: how simplex orderings,

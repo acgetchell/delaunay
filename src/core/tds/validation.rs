@@ -3346,6 +3346,34 @@ mod tests {
     }
 
     #[test]
+    fn test_orientation_validation_rejects_unlinked_distinct_slot_periodic_self_mirror() {
+        let (tds, simplex_key) = periodic_distinct_slot_self_mirror::<3>(
+            vec![[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]],
+            [0, 0],
+        );
+        let simplex = tds.simplex(simplex_key).unwrap();
+
+        let error = Tds::<(), (), 3>::orientation_mirror_facet_index(
+            simplex,
+            0,
+            simplex,
+            "unlinked distinct-slot periodic self-mirror test",
+        )
+        .unwrap_err();
+        assert_matches!(
+            error,
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::MirrorFacetMissing {
+                    simplex_uuid,
+                    facet_index: 0,
+                    neighbor_uuid,
+                    ..
+                },
+            } if simplex_uuid == simplex.uuid() && neighbor_uuid == simplex.uuid()
+        );
+    }
+
+    #[test]
     fn test_orientation_validation_rejects_incoherent_distinct_slot_periodic_self_mirror() {
         let (tds, simplex_key) =
             periodic_distinct_slot_self_mirror::<2>(vec![[0, 0], [1, 0], [2, 0]], [0, 2]);
@@ -3989,7 +4017,7 @@ mod tests {
         )
         .unwrap();
         tds.insert_simplex_bypassing_topology_checks_for_test(
-            Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
+            Simplex::try_new_periodic(vec![v0, v1, v2], vec![[0; 2]; 3]).unwrap(),
         )
         .unwrap();
 

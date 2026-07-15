@@ -650,8 +650,8 @@ impl<const D: usize> RealizedSimplex<D> {
             .ok_or_else(|| TdsError::VertexNotFound {
                 vertex_key: identity.key,
                 context: format!(
-                    "realized simplex {:?} (key {:?}) facet-side validation",
-                    self.uuid, self.key,
+                    "lifted vertex identity ({:?}, offset {:?}) in realized simplex {:?} (key {:?}) facet-side validation",
+                    identity.key, identity.offset, self.uuid, self.key,
                 ),
             })?;
         self.point_at(vertex_index)
@@ -2437,6 +2437,40 @@ mod tests {
                 std::array::from_fn(|axis| before.offset[axis] + i64::from(shift[axis])),
             );
         }
+    }
+
+    #[test]
+    fn point_for_identity_reports_missing_lifted_offset() {
+        let coords = [[0.9, 0.1], [0.1, 0.1], [0.9, 0.3]];
+        let (mut tds, simplex_keys) =
+            tds_from_vertices_and_simplices_with_keys(&coords, &[vec![0, 1, 2]]);
+        tds.simplex_mut(simplex_keys[0])
+            .unwrap()
+            .set_periodic_vertex_offsets(vec![[0, 0], [1, 0], [0, 0]])
+            .unwrap();
+        let tri = tri_from_tds_with_topology(
+            tds,
+            GlobalTopology::try_toroidal([1.0, 1.0], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap(),
+        );
+        let realized = tri
+            .collect_realized_simplices()
+            .expect("periodic simplex should realize")
+            .pop()
+            .expect("fixture should contain one simplex");
+        let missing_identity = realized.realization.labels()[0].translated(&[2, -3]);
+
+        let err = realized.point_for_identity(missing_identity).unwrap_err();
+        assert_matches!(
+            err,
+            TriangulationRealizationValidationError::Tds(source)
+                if matches!(
+                    *source,
+                    TdsError::VertexNotFound { vertex_key, ref context }
+                        if vertex_key == missing_identity.key
+                            && context.contains(&format!("offset {:?}", missing_identity.offset))
+                )
+        );
     }
 
     #[test]

@@ -442,11 +442,13 @@ impl<const D: usize> ClosedPeriodicSelectionDfs<'_, D> {
             return false;
         };
         for candidate_index in branch_candidates {
-            let candidate_facets = self.candidates[candidate_index].2.clone();
-            let candidate_vertices = self.candidates[candidate_index].1.clone();
             selected[candidate_index] = true;
-            update_periodic_facet_incidences(&candidate_facets, facet_incidences, true);
-            for &(vertex_key, _) in &candidate_vertices {
+            update_periodic_facet_incidences(
+                &self.candidates[candidate_index].2,
+                facet_incidences,
+                true,
+            );
+            for &(vertex_key, _) in &self.candidates[candidate_index].1 {
                 *covered_vertex_counts.entry(vertex_key).or_insert(0) += 1;
             }
 
@@ -454,7 +456,7 @@ impl<const D: usize> ClosedPeriodicSelectionDfs<'_, D> {
                 return true;
             }
 
-            for &(vertex_key, _) in &candidate_vertices {
+            for &(vertex_key, _) in &self.candidates[candidate_index].1 {
                 if let Some(count) = covered_vertex_counts.get_mut(&vertex_key) {
                     *count = count.saturating_sub(1);
                     if *count == 0 {
@@ -462,7 +464,11 @@ impl<const D: usize> ClosedPeriodicSelectionDfs<'_, D> {
                     }
                 }
             }
-            update_periodic_facet_incidences(&candidate_facets, facet_incidences, false);
+            update_periodic_facet_incidences(
+                &self.candidates[candidate_index].2,
+                facet_incidences,
+                false,
+            );
             selected[candidate_index] = false;
         }
         false
@@ -3676,6 +3682,21 @@ mod tests {
         ]
     }
 
+    /// Builds one synthetic periodic candidate for quotient-selection tests.
+    fn periodic_selection_candidate<const D: usize>(
+        lifted_vertices: &[(VertexKey, [i8; D])],
+        facets: &[OrientedPeriodicFacet],
+        in_domain: bool,
+    ) -> PeriodicCandidate<D> {
+        let lifted_vertices = lifted_vertices.to_vec();
+        (
+            lifted_vertices.clone(),
+            lifted_vertices,
+            facets.to_vec(),
+            in_domain,
+        )
+    }
+
     #[derive(Clone, Copy, Debug)]
     struct ValidationFailureModel;
 
@@ -4372,6 +4393,123 @@ mod tests {
                 axis: 0,
                 component: 383,
             }
+        );
+    }
+
+    #[test]
+    fn test_periodic_facet_incidence_updates_are_reversible() {
+        let candidate_facets = [(10, false), (10, true), (11, false)];
+        let mut facet_incidences = FastHashMap::default();
+
+        assert!(periodic_candidate_can_be_added(
+            &candidate_facets,
+            &facet_incidences
+        ));
+        assert_eq!(
+            periodic_boundary_delta(&candidate_facets, &facet_incidences, true),
+            1
+        );
+
+        update_periodic_facet_incidences(&candidate_facets, &mut facet_incidences, true);
+        assert_eq!(facet_incidences.get(&10), Some(&[1, 1]));
+        assert_eq!(facet_incidences.get(&11), Some(&[1, 0]));
+        assert!(!periodic_candidate_can_be_added(
+            &candidate_facets,
+            &facet_incidences
+        ));
+        assert!(!periodic_candidate_can_be_added(
+            &[(12, false), (12, false)],
+            &FastHashMap::default()
+        ));
+        assert_eq!(
+            periodic_boundary_delta(&candidate_facets, &facet_incidences, false),
+            -1
+        );
+
+        update_periodic_facet_incidences(&candidate_facets, &mut facet_incidences, false);
+        assert!(facet_incidences.is_empty());
+    }
+
+    #[test]
+    fn test_best_connected_periodic_component_ranks_quotient_invariants() {
+        let vertex_key = |value| VertexKey::from(slotmap::KeyData::from_ffi(value));
+        let [a, b, c] = [1_u64, 2, 3].map(vertex_key);
+        let two_vertex_coverage = [(a, [0, 0]), (a, [1, 0]), (b, [0, 0])];
+        let full_coverage = [(a, [0, 0]), (b, [0, 0]), (c, [0, 0])];
+        let candidates = vec![
+            periodic_selection_candidate(
+                &two_vertex_coverage,
+                &[(10, false), (11, false), (12, false)],
+                true,
+            ),
+            periodic_selection_candidate(
+                &two_vertex_coverage,
+                &[(10, true), (11, true), (12, true)],
+                true,
+            ),
+            periodic_selection_candidate(
+                &full_coverage,
+                &[(20, false), (21, false), (22, false)],
+                false,
+            ),
+            periodic_selection_candidate(
+                &full_coverage,
+                &[(20, true), (21, true), (23, true)],
+                false,
+            ),
+            periodic_selection_candidate(
+                &full_coverage,
+                &[(30, false), (31, false), (32, false)],
+                false,
+            ),
+            periodic_selection_candidate(
+                &full_coverage,
+                &[(30, true), (31, true), (32, true)],
+                false,
+            ),
+            periodic_selection_candidate(
+                &full_coverage,
+                &[(40, false), (41, false), (42, false)],
+                true,
+            ),
+            periodic_selection_candidate(
+                &full_coverage,
+                &[(40, true), (41, true), (42, true)],
+                false,
+            ),
+        ];
+
+        assert_eq!(
+            best_connected_periodic_component(&vec![true; candidates.len()], &candidates),
+            vec![false, false, false, false, false, false, true, true]
+        );
+    }
+
+    #[test]
+    fn test_closed_periodic_selection_backtracks_and_obeys_budget() {
+        let vertex_key = |value| VertexKey::from(slotmap::KeyData::from_ffi(value));
+        let [a, b] = [1_u64, 2].map(vertex_key);
+        let seed_vertices = [(a, [0, 0]), (a, [1, 0]), (a, [2, 0])];
+        let covering_vertices = [(b, [0, 0]), (b, [1, 0]), (b, [2, 0])];
+        let forward_facets = [(0, false), (1, false), (2, false)];
+        let reverse_facets = [(0, true), (1, true), (2, true)];
+        let candidates = vec![
+            periodic_selection_candidate(&seed_vertices, &forward_facets, true),
+            periodic_selection_candidate(&seed_vertices, &reverse_facets, false),
+            periodic_selection_candidate(&covering_vertices, &reverse_facets, false),
+        ];
+
+        let selected = search_closed_connected_periodic_selection(&candidates, 2, 100)
+            .expect("the search should backtrack to the candidate completing vertex coverage");
+        assert_eq!(selected, vec![true, false, true]);
+
+        assert!(
+            search_closed_connected_periodic_selection(&candidates, 2, 1).is_none(),
+            "the node budget must bound exact quotient selection"
+        );
+        assert!(
+            search_closed_connected_periodic_selection(&candidates[..1], 1, 100).is_none(),
+            "an open periodic component must not be accepted"
         );
     }
 

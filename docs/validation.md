@@ -707,7 +707,8 @@ enough for future regular, weighted, Gabriel, alpha, constrained, or related pre
 
 ### Methods
 
-- `DelaunayTriangulation::is_valid_delaunay()` - implemented Level 5 Delaunay predicate only after Level 4 realization validation.
+- `DelaunayTriangulation::is_valid_delaunay()` - Level 5 Delaunay predicate only; cumulative
+  `validate()` runs Level 4 realization validation first.
 - `DelaunayTriangulation::delaunay_diagnostic()` - First actionable Level 5 diagnostic, including the
   violating simplex, its vertices, neighbor slots, and an offending vertex when available.
 - `DelaunayTriangulation::delaunay_report()` - All checkable Level 5 Delaunay failures with the same
