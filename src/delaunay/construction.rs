@@ -945,30 +945,6 @@ pub enum DelaunayConstructionFailure {
         source: CoordinateValidationError,
     },
 
-    /// Periodic expanded-DT construction failed after deterministic fallback attempts.
-    #[error(
-        "periodic expanded DT construction failed after {retry_attempts} fallback attempts; best canonical coverage {best_canonical_vertex_count}/{canonical_vertex_count}, inserted={best_inserted_count}, skipped={best_skipped_count}, hard_errors={best_hard_error_count}: {primary_error}"
-    )]
-    PeriodicImageExpandedConstructionFailure {
-        /// Primary expanded-DT construction error before fallback attempts.
-        #[source]
-        primary_error: Box<DelaunayTriangulationConstructionError>,
-        /// Canonical vertex count expected in the expanded DT.
-        canonical_vertex_count: usize,
-        /// Expanded image vertex count attempted.
-        expanded_vertex_count: usize,
-        /// Number of deterministic fallback attempts.
-        retry_attempts: usize,
-        /// Best canonical vertex coverage reached by fallback attempts.
-        best_canonical_vertex_count: usize,
-        /// Best inserted vertex count reached by fallback attempts.
-        best_inserted_count: usize,
-        /// Skipped insertion count from the best fallback attempt.
-        best_skipped_count: usize,
-        /// Hard insertion error count from the best fallback attempt.
-        best_hard_error_count: usize,
-    },
-
     /// Periodic image construction lost at least one canonical vertex in the expanded DT.
     #[error(
         "periodic expanded DT is missing at least one canonical vertex out of {canonical_vertex_count}"
@@ -1801,6 +1777,13 @@ impl FinalDelaunayEnforcement {
     }
 }
 
+/// Internal insertion behavior used while assembling construction scaffolding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct InsertionConstructionPolicy {
+    validation_policy: Option<ValidationPolicy>,
+    retry_degenerate_realization: bool,
+}
+
 /// Options controlling batch construction behavior.
 ///
 /// Defaults prioritize strict [`DelaunayTriangulation`] construction: insertion
@@ -1817,6 +1800,7 @@ pub struct ConstructionOptions {
     pub(crate) initial_simplex: InitialSimplexStrategy,
     pub(crate) retry_policy: RetryPolicy,
     pub(crate) final_delaunay: FinalDelaunayEnforcement,
+    pub(crate) insertion_policy: InsertionConstructionPolicy,
 }
 
 impl Default for ConstructionOptions {
@@ -1827,6 +1811,7 @@ impl Default for ConstructionOptions {
             initial_simplex: InitialSimplexStrategy::default(),
             retry_policy: RetryPolicy::default(),
             final_delaunay: FinalDelaunayEnforcement::strict_default(),
+            insertion_policy: InsertionConstructionPolicy::default(),
         }
     }
 }
@@ -1997,6 +1982,27 @@ impl ConstructionOptions {
     #[must_use]
     pub(crate) const fn without_global_repair_fallback(mut self) -> Self {
         self.final_delaunay = self.final_delaunay.without_global_repair_fallback();
+        self
+    }
+
+    /// Overrides policy-triggered validation during the insertion phase only.
+    ///
+    /// Final construction validation still runs after the original topology-
+    /// derived policy is restored. This is reserved for internal scaffolding
+    /// builds whose output is independently validated before it is exposed.
+    #[must_use]
+    pub(crate) const fn with_insertion_validation_policy(
+        mut self,
+        insertion_validation_policy: ValidationPolicy,
+    ) -> Self {
+        self.insertion_policy.validation_policy = Some(insertion_validation_policy);
+        self
+    }
+
+    /// Allows retrying zero-volume insertion attempts for internal scaffolding.
+    #[must_use]
+    pub(crate) const fn with_degenerate_realization_retries(mut self) -> Self {
+        self.insertion_policy.retry_degenerate_realization = true;
         self
     }
 }
@@ -3334,6 +3340,10 @@ where
         clippy::too_many_lines,
         reason = "construction retry flow keeps seed selection, validation, and diagnostics together"
     )]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "retry construction keeps its existing policy inputs explicit across attempts"
+    )]
     pub(crate) fn build_with_shuffled_retries(
         kernel: &K,
         vertices: &[Vertex<U, D>],
@@ -3342,6 +3352,7 @@ where
         base_seed: Option<u64>,
         grid_cell_size: Option<f64>,
         final_delaunay: FinalDelaunayEnforcement,
+        insertion_policy: InsertionConstructionPolicy,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
         let base_seed = base_seed.unwrap_or_else(|| Self::construction_shuffle_seed(vertices));
         let enforce_final_delaunay = final_delaunay.enforces_final_delaunay();
@@ -3368,6 +3379,7 @@ where
             0_u64,
             grid_cell_size,
             final_delaunay,
+            insertion_policy,
         ) {
             Ok(candidate) => {
                 if !enforce_final_delaunay {
@@ -3461,6 +3473,7 @@ where
                 perturbation_seed,
                 grid_cell_size,
                 final_delaunay,
+                insertion_policy,
             ) {
                 Ok(candidate) => {
                     if !enforce_final_delaunay {
@@ -3567,6 +3580,10 @@ where
         clippy::result_large_err,
         reason = "Internal helper propagates public by-value construction-statistics error type"
     )]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "statistics retries mirror the explicit policy inputs of ordinary retries"
+    )]
     pub(crate) fn build_with_shuffled_retries_with_construction_statistics(
         kernel: &K,
         vertices: &[Vertex<U, D>],
@@ -3575,6 +3592,7 @@ where
         base_seed: Option<u64>,
         grid_cell_size: Option<f64>,
         final_delaunay: FinalDelaunayEnforcement,
+        insertion_policy: InsertionConstructionPolicy,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
         let base_seed = base_seed.unwrap_or_else(|| Self::construction_shuffle_seed(vertices));
@@ -3606,6 +3624,7 @@ where
                 0_u64,
                 grid_cell_size,
                 final_delaunay,
+                insertion_policy,
             ) {
                 Ok((candidate, mut stats)) => {
                     if !enforce_final_delaunay {
@@ -3743,6 +3762,7 @@ where
                 perturbation_seed,
                 grid_cell_size,
                 final_delaunay,
+                insertion_policy,
             ) {
                 Ok((candidate, mut stats)) => {
                     if !enforce_final_delaunay {
@@ -3871,6 +3891,7 @@ where
         topology_guarantee: TopologyGuarantee,
         grid_cell_size: Option<f64>,
         final_delaunay: FinalDelaunayEnforcement,
+        insertion_policy: InsertionConstructionPolicy,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
         let dt = Self::build_with_kernel_inner_seeded(
             kernel,
@@ -3879,6 +3900,7 @@ where
             0,
             grid_cell_size,
             final_delaunay,
+            insertion_policy,
         )?;
         let enforce_final_delaunay = final_delaunay.enforces_final_delaunay();
 
@@ -3918,6 +3940,7 @@ where
         topology_guarantee: TopologyGuarantee,
         grid_cell_size: Option<f64>,
         final_delaunay: FinalDelaunayEnforcement,
+        insertion_policy: InsertionConstructionPolicy,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
         let (dt, mut stats) = Self::build_with_kernel_inner_seeded_with_construction_statistics(
@@ -3927,6 +3950,7 @@ where
             0,
             grid_cell_size,
             final_delaunay,
+            insertion_policy,
         )?;
         let enforce_final_delaunay = final_delaunay.enforces_final_delaunay();
 
@@ -3976,6 +4000,7 @@ where
         perturbation_seed: u64,
         grid_cell_size: Option<f64>,
         final_delaunay: FinalDelaunayEnforcement,
+        insertion_policy: InsertionConstructionPolicy,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
         let batch_repair_policy = final_delaunay.batch_repair_policy();
@@ -4030,11 +4055,13 @@ where
         // including vertex-link validation. Suspicious insertions still escalate
         // to full validation without making every bulk insertion pay that cost.
         let original_validation_policy = dt.tri.validation_policy;
-        dt.tri.validation_policy = if dt.tri.topology_guarantee.requires_ridge_links() {
-            ValidationPolicy::OnSuspicion
-        } else {
-            ValidationPolicy::DebugOnly
-        };
+        dt.tri.validation_policy = insertion_policy.validation_policy.unwrap_or_else(|| {
+            if dt.tri.topology_guarantee.requires_ridge_links() {
+                ValidationPolicy::OnSuspicion
+            } else {
+                ValidationPolicy::DebugOnly
+            }
+        });
 
         // Disable maybe_repair_after_insertion during bulk construction: its full pipeline
         // (multi-pass repair + topology validation + heuristic rebuild) is too expensive
@@ -4064,6 +4091,7 @@ where
             perturbation_seed,
             grid_cell_size,
             batch_repair_policy,
+            insertion_policy.retry_degenerate_realization,
             Some(&mut stats),
             &mut pending_repair_seeds,
             &mut soft_fail_seeds,
@@ -4113,6 +4141,7 @@ where
         perturbation_seed: u64,
         grid_cell_size: Option<f64>,
         final_delaunay: FinalDelaunayEnforcement,
+        insertion_policy: InsertionConstructionPolicy,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
         let batch_repair_policy = final_delaunay.batch_repair_policy();
         let use_global_repair_fallback = final_delaunay.use_global_repair_fallback();
@@ -4154,11 +4183,13 @@ where
         // including vertex-link validation. Suspicious insertions still escalate
         // to full validation without making every bulk insertion pay that cost.
         let original_validation_policy = dt.tri.validation_policy;
-        dt.tri.validation_policy = if dt.tri.topology_guarantee.requires_ridge_links() {
-            ValidationPolicy::OnSuspicion
-        } else {
-            ValidationPolicy::DebugOnly
-        };
+        dt.tri.validation_policy = insertion_policy.validation_policy.unwrap_or_else(|| {
+            if dt.tri.topology_guarantee.requires_ridge_links() {
+                ValidationPolicy::OnSuspicion
+            } else {
+                ValidationPolicy::DebugOnly
+            }
+        });
 
         // See the _with_construction_statistics variant for the repair policy rationale.
         let original_repair_policy = dt.insertion_state.delaunay_repair_policy;
@@ -4171,6 +4202,7 @@ where
             perturbation_seed,
             grid_cell_size,
             batch_repair_policy,
+            insertion_policy.retry_degenerate_realization,
             None,
             &mut pending_repair_seeds,
             &mut soft_fail_seeds,
@@ -4369,6 +4401,7 @@ where
         perturbation_seed: u64,
         grid_cell_size: Option<f64>,
         batch_repair_policy: DelaunayRepairPolicy,
+        retry_degenerate_realization: bool,
         construction_stats: Option<&mut ConstructionStatistics>,
         pending_repair_seeds: &mut SimplexKeyBuffer,
         soft_fail_seeds: &mut SimplexKeyBuffer,
@@ -4435,14 +4468,17 @@ where
                         // Pass the batch index through to transactional insertion so the
                         // lower-layer retryable-skip trace can point back to this exact
                         // bulk-construction position.
-                        self.tri.insert_with_statistics_seeded_indexed_detailed(
-                            *vertex,
-                            None,
-                            self.insertion_state.last_inserted_simplex,
-                            perturbation_seed,
-                            grid_index.as_mut(),
-                            Some(index),
-                        )
+                        self.tri
+                            .insert_with_statistics_seeded_indexed_detailed_with_retry_policy(
+                                *vertex,
+                                None,
+                                self.insertion_state.last_inserted_simplex,
+                                perturbation_seed,
+                                grid_index.as_mut(),
+                                Some(index),
+                                InsertionTelemetryMode::CountsOnly,
+                                retry_degenerate_realization,
+                            )
                     };
                     let insert_result = if trace_insertion {
                         let span = tracing::warn_span!(
@@ -4603,7 +4639,7 @@ where
                         // tracing behaves the same regardless of whether the caller records
                         // construction statistics.
                         self.tri
-                            .insert_with_statistics_seeded_indexed_detailed_with_telemetry(
+                            .insert_with_statistics_seeded_indexed_detailed_with_retry_policy(
                                 *vertex,
                                 None,
                                 self.insertion_state.last_inserted_simplex,
@@ -4611,6 +4647,7 @@ where
                                 grid_index.as_mut(),
                                 Some(index),
                                 InsertionTelemetryMode::CountsAndTimings,
+                                retry_degenerate_realization,
                             )
                     };
                     let insert_result = if trace_insertion {
@@ -5085,6 +5122,7 @@ where
             initial_simplex,
             retry_policy,
             final_delaunay,
+            insertion_policy,
         } = options;
 
         let preprocessed = Self::preprocess_vertices_for_construction(
@@ -5113,6 +5151,7 @@ where
                             base_seed,
                             grid_cell_size,
                             final_delaunay,
+                            insertion_policy,
                         );
                     }
                 }
@@ -5131,6 +5170,7 @@ where
                             base_seed,
                             grid_cell_size,
                             final_delaunay,
+                            insertion_policy,
                         );
                     }
                 }
@@ -5142,6 +5182,7 @@ where
                 topology_guarantee,
                 grid_cell_size,
                 final_delaunay,
+                insertion_policy,
             )
         };
 
@@ -5181,6 +5222,7 @@ where
             initial_simplex,
             retry_policy,
             final_delaunay,
+            insertion_policy,
         } = options;
 
         let preprocessing_started = Instant::now();
@@ -5225,6 +5267,7 @@ where
                             base_seed,
                             grid_cell_size,
                             final_delaunay,
+                            insertion_policy,
                         );
                     }
                 }
@@ -5243,6 +5286,7 @@ where
                             base_seed,
                             grid_cell_size,
                             final_delaunay,
+                            insertion_policy,
                         );
                     }
                 }
@@ -5254,6 +5298,7 @@ where
                 topology_guarantee,
                 grid_cell_size,
                 final_delaunay,
+                insertion_policy,
             )
         };
 

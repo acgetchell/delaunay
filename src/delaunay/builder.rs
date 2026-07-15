@@ -130,7 +130,6 @@ use crate::core::construction::{
     FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
 };
 use crate::core::facet::facet_key_from_vertices;
-use crate::core::operations::InsertionOutcome;
 use crate::core::simplex::{Simplex, SimplexValidationError};
 use crate::core::tds::{
     InvariantError, SimplexKey, Tds, TdsConstructionError, TdsError, TdsMutationError,
@@ -138,12 +137,11 @@ use crate::core::tds::{
 };
 use crate::core::traits::data_type::DataType;
 use crate::core::util::periodic_facet_key_from_lifted_vertices;
-use crate::core::validation::TopologyGuarantee;
+use crate::core::validation::{TopologyGuarantee, ValidationPolicy};
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{AdaptiveKernel, Kernel};
 use crate::geometry::point::Point;
 use crate::geometry::util::circumcenter;
-use crate::repair::DelaunayRepairPolicy;
 use crate::topology::traits::global_topology_model::GlobalTopologyModel;
 use crate::topology::traits::topological_space::{
     GlobalTopology, TopologyKind, ToroidalConstructionMode, ToroidalDomain, ToroidalDomainError,
@@ -170,23 +168,368 @@ const FNV_PRIME: u64 = 0x0100_0000_01b3;
 type LiftedVertex<const D: usize> = (VertexKey, [i8; D]);
 type SymbolicSignature<const D: usize> = Vec<LiftedVertex<D>>;
 type PeriodicFacetKey = u64;
+type OrientedPeriodicFacet = (PeriodicFacetKey, bool);
 type PeriodicCandidate<const D: usize> = (
     SymbolicSignature<D>,
     SymbolicSignature<D>,
-    Vec<PeriodicFacetKey>,
+    Vec<OrientedPeriodicFacet>,
     bool,
 );
+
+/// Returns the induced orientation side of a periodic facet.
+///
+/// The facet order inherited from the positively oriented lifted simplex is
+/// compared with canonical vertex-key order. Including the omitted-slot parity
+/// makes opposite sides of the same lifted facet produce opposite bits.
+fn periodic_facet_orientation_side<const D: usize>(
+    lifted_vertices: &[LiftedVertex<D>],
+    facet_index: usize,
+) -> bool {
+    let facet_vertices: Vec<LiftedVertex<D>> = lifted_vertices
+        .iter()
+        .enumerate()
+        .filter_map(|(index, lifted_vertex)| (index != facet_index).then_some(*lifted_vertex))
+        .collect();
+    let mut inversion_count = 0_usize;
+    for left in 0..facet_vertices.len() {
+        for right in (left + 1)..facet_vertices.len() {
+            if facet_vertices[left] > facet_vertices[right] {
+                inversion_count += 1;
+            }
+        }
+    }
+
+    !inversion_count.is_multiple_of(2) ^ !facet_index.is_multiple_of(2)
+}
+
+/// Counts both oriented incidences of one periodic facet without overflowing.
+#[inline]
+const fn periodic_facet_incidence_total(incidence: [u8; 2]) -> u8 {
+    incidence[0].saturating_add(incidence[1])
+}
+
+/// Returns whether a candidate can be added without duplicating either
+/// oriented side of a periodic facet.
+fn periodic_candidate_can_be_added(
+    candidate_facets: &[OrientedPeriodicFacet],
+    facet_incidences: &FastHashMap<PeriodicFacetKey, [u8; 2]>,
+) -> bool {
+    candidate_facets
+        .iter()
+        .enumerate()
+        .all(|(position, &(facet_key, side))| {
+            let side_index = usize::from(side);
+            let already_selected = facet_incidences
+                .get(&facet_key)
+                .is_some_and(|incidence| incidence[side_index] > 0);
+            let duplicated_within_candidate =
+                candidate_facets[..position]
+                    .iter()
+                    .any(|&(earlier_key, earlier_side)| {
+                        earlier_key == facet_key && earlier_side == side
+                    });
+            !already_selected && !duplicated_within_candidate
+        })
+}
+
+/// Applies or rolls back one candidate's oriented facet incidences.
+///
+/// Keeping this update symmetric lets greedy and exact selection paths share
+/// the same one-incidence-per-side invariant during backtracking.
+fn update_periodic_facet_incidences(
+    candidate_facets: &[OrientedPeriodicFacet],
+    facet_incidences: &mut FastHashMap<PeriodicFacetKey, [u8; 2]>,
+    is_add: bool,
+) {
+    for &(facet_key, side) in candidate_facets {
+        let side_index = usize::from(side);
+        let incidence = facet_incidences.entry(facet_key).or_insert([0; 2]);
+        incidence[side_index] = if is_add {
+            incidence[side_index].saturating_add(1)
+        } else {
+            incidence[side_index].saturating_sub(1)
+        };
+        if *incidence == [0; 2] {
+            facet_incidences.remove(&facet_key);
+        }
+    }
+}
+
+/// Computes the change in unmatched-facet count for adding or removing one candidate.
+fn periodic_boundary_delta(
+    candidate_facets: &[OrientedPeriodicFacet],
+    facet_incidences: &FastHashMap<PeriodicFacetKey, [u8; 2]>,
+    is_add: bool,
+) -> i32 {
+    let mut delta = 0_i32;
+    for (position, &(facet_key, _)) in candidate_facets.iter().enumerate() {
+        if candidate_facets[..position]
+            .iter()
+            .any(|&(earlier_key, _)| earlier_key == facet_key)
+        {
+            continue;
+        }
+        let candidate_count = candidate_facets
+            .iter()
+            .filter(|&&(candidate_key, _)| candidate_key == facet_key)
+            .count();
+        let current_count = facet_incidences
+            .get(&facet_key)
+            .copied()
+            .map_or(0_usize, |incidence| {
+                usize::from(periodic_facet_incidence_total(incidence))
+            });
+        let updated_count = if is_add {
+            current_count.saturating_add(candidate_count)
+        } else {
+            current_count.saturating_sub(candidate_count)
+        };
+        delta += i32::from(updated_count == 1) - i32::from(current_count == 1);
+    }
+    delta
+}
+
+/// Keeps the strongest connected component from a periodic candidate selection.
+///
+/// Finite image triangulations can contribute closed boundary-artifact components
+/// in addition to the component representing the fundamental quotient. A torus
+/// must be connected, so rank components by canonical-vertex coverage, then by
+/// closure, in-domain support, and finally compactness.
+fn best_connected_periodic_component<const D: usize>(
+    selected: &[bool],
+    candidates: &[PeriodicCandidate<D>],
+) -> Vec<bool> {
+    let mut adjacency = vec![Vec::new(); candidates.len()];
+    let mut first_owner: FastHashMap<PeriodicFacetKey, usize> = FastHashMap::default();
+    for (candidate_index, is_selected) in selected.iter().copied().enumerate() {
+        if !is_selected {
+            continue;
+        }
+        for &(facet_key, _) in &candidates[candidate_index].2 {
+            if let Some(other_index) = first_owner.insert(facet_key, candidate_index)
+                && other_index != candidate_index
+            {
+                adjacency[candidate_index].push(other_index);
+                adjacency[other_index].push(candidate_index);
+            }
+        }
+    }
+
+    let mut visited = vec![false; candidates.len()];
+    let mut best_component = Vec::new();
+    let mut best_coverage = 0_usize;
+    let mut best_boundary_count = usize::MAX;
+    let mut best_in_domain_count = 0_usize;
+
+    for root in 0..candidates.len() {
+        if !selected[root] || visited[root] {
+            continue;
+        }
+        let mut stack = vec![root];
+        let mut component = Vec::new();
+        visited[root] = true;
+        while let Some(candidate_index) = stack.pop() {
+            component.push(candidate_index);
+            for &neighbor_index in &adjacency[candidate_index] {
+                if !visited[neighbor_index] {
+                    visited[neighbor_index] = true;
+                    stack.push(neighbor_index);
+                }
+            }
+        }
+
+        let mut covered: VertexKeySet = VertexKeySet::default();
+        let mut facet_counts: FastHashMap<PeriodicFacetKey, u8> = FastHashMap::default();
+        let mut in_domain_count = 0_usize;
+        for &candidate_index in &component {
+            in_domain_count += usize::from(candidates[candidate_index].3);
+            for &(vertex_key, _) in &candidates[candidate_index].1 {
+                covered.insert(vertex_key);
+            }
+            for &(facet_key, _) in &candidates[candidate_index].2 {
+                *facet_counts.entry(facet_key).or_insert(0) += 1;
+            }
+        }
+        let boundary_count = facet_counts.values().filter(|&&count| count == 1).count();
+        let coverage = covered.len();
+        let is_better = coverage > best_coverage
+            || (coverage == best_coverage
+                && (boundary_count < best_boundary_count
+                    || (boundary_count == best_boundary_count
+                        && (in_domain_count > best_in_domain_count
+                            || (in_domain_count == best_in_domain_count
+                                && (best_component.is_empty()
+                                    || component.len() < best_component.len()))))));
+        if is_better {
+            best_coverage = coverage;
+            best_boundary_count = boundary_count;
+            best_in_domain_count = in_domain_count;
+            best_component = component;
+        }
+    }
+
+    let mut connected_selection = vec![false; candidates.len()];
+    for candidate_index in best_component {
+        connected_selection[candidate_index] = true;
+    }
+    connected_selection
+}
+
+/// Bounded DFS for a connected, closed periodic quotient component.
+struct ClosedPeriodicSelectionDfs<'a, const D: usize> {
+    candidates: &'a [PeriodicCandidate<D>],
+    candidates_by_facet_side: FastHashMap<PeriodicFacetKey, [Vec<usize>; 2]>,
+    target_vertex_count: usize,
+    nodes: usize,
+    node_limit: usize,
+}
+
+impl<const D: usize> ClosedPeriodicSelectionDfs<'_, D> {
+    /// Completes the selected component while preserving facet orientation and
+    /// covering every canonical vertex required by the quotient.
+    fn search(
+        &mut self,
+        selected: &mut [bool],
+        facet_incidences: &mut FastHashMap<PeriodicFacetKey, [u8; 2]>,
+        covered_vertex_counts: &mut FastHashMap<VertexKey, usize>,
+    ) -> bool {
+        if self.nodes >= self.node_limit {
+            return false;
+        }
+        self.nodes = self.nodes.saturating_add(1);
+
+        let mut unmatched_facets: Vec<PeriodicFacetKey> = facet_incidences
+            .iter()
+            .filter_map(|(&facet_key, &incidence)| {
+                (periodic_facet_incidence_total(incidence) == 1).then_some(facet_key)
+            })
+            .collect();
+        unmatched_facets.sort_unstable();
+        if unmatched_facets.is_empty() {
+            return covered_vertex_counts.len() == self.target_vertex_count;
+        }
+
+        let mut branch_candidates: Option<Vec<usize>> = None;
+        for facet_key in unmatched_facets {
+            let incidence = facet_incidences.get(&facet_key).copied().unwrap_or([0; 2]);
+            let missing_side = usize::from(incidence[0] > 0);
+            let Some(candidates_by_side) = self.candidates_by_facet_side.get(&facet_key) else {
+                return false;
+            };
+            let viable: Vec<usize> = candidates_by_side[missing_side]
+                .iter()
+                .copied()
+                .filter(|&candidate_index| {
+                    !selected[candidate_index]
+                        && periodic_candidate_can_be_added(
+                            &self.candidates[candidate_index].2,
+                            facet_incidences,
+                        )
+                })
+                .collect();
+            if viable.is_empty() {
+                return false;
+            }
+            if branch_candidates
+                .as_ref()
+                .is_none_or(|current| viable.len() < current.len())
+            {
+                branch_candidates = Some(viable);
+            }
+        }
+
+        let Some(branch_candidates) = branch_candidates else {
+            return false;
+        };
+        for candidate_index in branch_candidates {
+            let candidate_facets = self.candidates[candidate_index].2.clone();
+            let candidate_vertices = self.candidates[candidate_index].1.clone();
+            selected[candidate_index] = true;
+            update_periodic_facet_incidences(&candidate_facets, facet_incidences, true);
+            for &(vertex_key, _) in &candidate_vertices {
+                *covered_vertex_counts.entry(vertex_key).or_insert(0) += 1;
+            }
+
+            if self.search(selected, facet_incidences, covered_vertex_counts) {
+                return true;
+            }
+
+            for &(vertex_key, _) in &candidate_vertices {
+                if let Some(count) = covered_vertex_counts.get_mut(&vertex_key) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        covered_vertex_counts.remove(&vertex_key);
+                    }
+                }
+            }
+            update_periodic_facet_incidences(&candidate_facets, facet_incidences, false);
+            selected[candidate_index] = false;
+        }
+        false
+    }
+}
+
+/// Searches candidate seeds for one closed quotient component within a bounded
+/// amount of work so periodic construction fails explicitly instead of hanging.
+fn search_closed_connected_periodic_selection<const D: usize>(
+    candidates: &[PeriodicCandidate<D>],
+    target_vertex_count: usize,
+    node_limit: usize,
+) -> Option<Vec<bool>> {
+    let mut candidates_by_facet_side: FastHashMap<PeriodicFacetKey, [Vec<usize>; 2]> =
+        FastHashMap::default();
+    for (candidate_index, candidate) in candidates.iter().enumerate() {
+        for &(facet_key, side) in &candidate.2 {
+            candidates_by_facet_side
+                .entry(facet_key)
+                .or_insert_with(|| [Vec::new(), Vec::new()])[usize::from(side)]
+            .push(candidate_index);
+        }
+    }
+    let mut search = ClosedPeriodicSelectionDfs {
+        candidates,
+        candidates_by_facet_side,
+        target_vertex_count,
+        nodes: 0,
+        node_limit,
+    };
+
+    for seed_index in 0..candidates.len() {
+        let mut selected = vec![false; candidates.len()];
+        let mut facet_incidences: FastHashMap<PeriodicFacetKey, [u8; 2]> = FastHashMap::default();
+        if !periodic_candidate_can_be_added(&candidates[seed_index].2, &facet_incidences) {
+            continue;
+        }
+        selected[seed_index] = true;
+        update_periodic_facet_incidences(&candidates[seed_index].2, &mut facet_incidences, true);
+        let mut covered_vertex_counts: FastHashMap<VertexKey, usize> = FastHashMap::default();
+        for &(vertex_key, _) in &candidates[seed_index].1 {
+            *covered_vertex_counts.entry(vertex_key).or_insert(0) += 1;
+        }
+        if search.search(
+            &mut selected,
+            &mut facet_incidences,
+            &mut covered_vertex_counts,
+        ) {
+            return Some(selected);
+        }
+        if search.nodes >= search.node_limit {
+            break;
+        }
+    }
+    None
+}
 /// Sort candidates by heuristic priority: prefer in-domain candidates first,
 /// then by cumulative edge rarity (rarer edges first), then by index.
 fn sort_candidates_by_rarity_and_domain(
     order: &mut [usize],
-    candidate_edges: &[[usize; 3]],
+    candidate_edges: &[[(usize, bool); 3]],
     candidate_in_domain: &[bool],
     edge_count: usize,
 ) {
     let mut edge_frequency = vec![0usize; edge_count];
     for edges in candidate_edges {
-        for &edge in edges {
+        for &(edge, _) in edges {
             edge_frequency[edge] = edge_frequency[edge].saturating_add(1);
         }
     }
@@ -194,10 +537,12 @@ fn sort_candidates_by_rarity_and_domain(
     order.sort_by(|a, b| {
         let a_edges = candidate_edges[*a];
         let b_edges = candidate_edges[*b];
-        let a_score =
-            edge_frequency[a_edges[0]] + edge_frequency[a_edges[1]] + edge_frequency[a_edges[2]];
-        let b_score =
-            edge_frequency[b_edges[0]] + edge_frequency[b_edges[1]] + edge_frequency[b_edges[2]];
+        let a_score = edge_frequency[a_edges[0].0]
+            + edge_frequency[a_edges[1].0]
+            + edge_frequency[a_edges[2].0];
+        let b_score = edge_frequency[b_edges[0].0]
+            + edge_frequency[b_edges[1].0]
+            + edge_frequency[b_edges[2].0];
         candidate_in_domain[*b]
             .cmp(&candidate_in_domain[*a])
             .then_with(|| a_score.cmp(&b_score))
@@ -211,9 +556,12 @@ fn sort_candidates_by_rarity_and_domain(
 /// the recursive [`search`](Self::search) method takes only `pos` and `chosen`.
 struct ClosedSelectionDfs<'a> {
     target_faces: usize,
+    target_vertex_count: usize,
     order: &'a [usize],
-    candidate_edges: &'a [[usize; 3]],
-    edge_counts: Vec<u8>,
+    candidate_edges: &'a [[(usize, bool); 3]],
+    candidate_vertices: &'a [Vec<VertexKey>],
+    edge_incidences: Vec<[u8; 2]>,
+    covered_vertex_counts: FastHashMap<VertexKey, usize>,
     selected: Vec<bool>,
     nodes: usize,
     node_limit: usize,
@@ -222,7 +570,12 @@ struct ClosedSelectionDfs<'a> {
 impl ClosedSelectionDfs<'_> {
     fn search(&mut self, pos: usize, chosen: usize) -> bool {
         if chosen == self.target_faces {
-            return true;
+            return self
+                .edge_incidences
+                .iter()
+                .all(|&incidence| incidence == [0, 0] || incidence == [1, 1])
+                && self.covered_vertex_counts.len() == self.target_vertex_count
+                && self.selected_faces_are_connected();
         }
         if pos == self.order.len() {
             return false;
@@ -237,9 +590,12 @@ impl ClosedSelectionDfs<'_> {
 
         // Capacity-based prune: each additional face consumes 3 remaining edge incidences.
         let remaining_capacity: usize = self
-            .edge_counts
+            .edge_incidences
             .iter()
-            .map(|&count| usize::from(2_u8.saturating_sub(count)))
+            .map(|incidence| {
+                usize::from(1_u8.saturating_sub(incidence[0]))
+                    + usize::from(1_u8.saturating_sub(incidence[1]))
+            })
             .sum();
         if chosen + (remaining_capacity / 3) < self.target_faces {
             return false;
@@ -248,38 +604,95 @@ impl ClosedSelectionDfs<'_> {
         let idx = self.order[pos];
         let edges = self.candidate_edges[idx];
 
-        if self.edge_counts[edges[0]] < 2
-            && self.edge_counts[edges[1]] < 2
-            && self.edge_counts[edges[2]] < 2
-        {
+        let can_add = edges.iter().enumerate().all(|(position, &(edge, side))| {
+            self.edge_incidences[edge][usize::from(side)] == 0
+                && !edges[..position].contains(&(edge, side))
+        });
+        if can_add {
             self.selected[idx] = true;
-            self.edge_counts[edges[0]] += 1;
-            self.edge_counts[edges[1]] += 1;
-            self.edge_counts[edges[2]] += 1;
+            for (edge, side) in edges {
+                self.edge_incidences[edge][usize::from(side)] += 1;
+            }
+            for &vertex_key in &self.candidate_vertices[idx] {
+                *self.covered_vertex_counts.entry(vertex_key).or_insert(0) += 1;
+            }
 
             if self.search(pos + 1, chosen + 1) {
                 return true;
             }
 
-            self.edge_counts[edges[0]] -= 1;
-            self.edge_counts[edges[1]] -= 1;
-            self.edge_counts[edges[2]] -= 1;
+            for &vertex_key in &self.candidate_vertices[idx] {
+                if let Some(count) = self.covered_vertex_counts.get_mut(&vertex_key) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        self.covered_vertex_counts.remove(&vertex_key);
+                    }
+                }
+            }
+            for (edge, side) in edges {
+                self.edge_incidences[edge][usize::from(side)] -= 1;
+            }
             self.selected[idx] = false;
         }
 
         self.search(pos + 1, chosen)
     }
+
+    /// Returns whether every selected face belongs to one facet-connected component.
+    fn selected_faces_are_connected(&self) -> bool {
+        let Some(root) = self.selected.iter().position(|is_selected| *is_selected) else {
+            return false;
+        };
+        let mut adjacency: Vec<Vec<usize>> = vec![Vec::new(); self.selected.len()];
+        let mut first_owner: Vec<Option<usize>> = vec![None; self.edge_incidences.len()];
+        for (candidate_index, is_selected) in self.selected.iter().copied().enumerate() {
+            if !is_selected {
+                continue;
+            }
+            for &(edge, _) in &self.candidate_edges[candidate_index] {
+                if let Some(other_index) = first_owner[edge] {
+                    if other_index != candidate_index {
+                        adjacency[candidate_index].push(other_index);
+                        adjacency[other_index].push(candidate_index);
+                    }
+                } else {
+                    first_owner[edge] = Some(candidate_index);
+                }
+            }
+        }
+
+        let mut visited = vec![false; self.selected.len()];
+        let mut stack = vec![root];
+        visited[root] = true;
+        while let Some(candidate_index) = stack.pop() {
+            for &neighbor_index in &adjacency[candidate_index] {
+                if !visited[neighbor_index] {
+                    visited[neighbor_index] = true;
+                    stack.push(neighbor_index);
+                }
+            }
+        }
+
+        self.selected
+            .iter()
+            .zip(visited)
+            .all(|(is_selected, was_visited)| !*is_selected || was_visited)
+    }
 }
 
-/// Finds a bounded-size 2D face subset whose edge incidences can close a quotient boundary.
+/// Finds a bounded-size 2D face subset whose oriented edge incidences close a quotient boundary.
 ///
 /// Returns a boolean mask aligned with `candidate_edges` when a selection of exactly
-/// `target_faces` candidates is found such that no edge is used more than twice. The search
-/// uses a DFS with pruning and a heuristic ordering that prefers in-domain candidates first.
+/// `target_faces` candidates is found such that every used edge has one incidence on each
+/// orientation side, every canonical vertex is covered, and the selected faces are connected.
+/// The search uses a DFS with pruning and a heuristic ordering that prefers in-domain candidates
+/// first.
 fn search_closed_2d_selection(
-    candidate_edges: &[[usize; 3]],
+    candidate_edges: &[[(usize, bool); 3]],
+    candidate_vertices: &[Vec<VertexKey>],
     candidate_in_domain: &[bool],
     target_faces: usize,
+    target_vertex_count: usize,
     edge_count: usize,
     node_limit: usize,
 ) -> Option<Vec<bool>> {
@@ -298,9 +711,12 @@ fn search_closed_2d_selection(
 
     let mut dfs = ClosedSelectionDfs {
         target_faces,
+        target_vertex_count,
         order: &order,
         candidate_edges,
-        edge_counts: vec![0u8; edge_count],
+        candidate_vertices,
+        edge_incidences: vec![[0u8; 2]; edge_count],
+        covered_vertex_counts: FastHashMap::default(),
         selected: vec![false; m],
         nodes: 0,
         node_limit,
@@ -932,6 +1348,10 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     /// the validated 2D and compact 3D cases. Use
     /// [`.try_canonicalized_toroidal()`](Self::try_canonicalized_toroidal) only when you
     /// explicitly want the cheaper wrapping-only Euclidean construction.
+    /// Periodic construction applies a deterministic perturbation of at most
+    /// approximately `2^-32` of each domain period to canonical coordinates to
+    /// resolve covering-space degeneracies; stable vertex UUIDs and payloads are
+    /// preserved.
     ///
     /// # Arguments
     ///
@@ -1104,7 +1524,7 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     /// Sets the [`TopologyGuarantee`]
     ///
     /// Defaults to [`TopologyGuarantee::DEFAULT`] (`PLManifold`).
-    /// The builder derives the initial [`ValidationPolicy`](crate::ValidationPolicy)
+    /// The builder derives the initial [`ValidationPolicy`]
     /// from this guarantee; it does not expose a separate construction-time validation
     /// policy knob.
     ///
@@ -2317,9 +2737,10 @@ where
     ///
     /// **Algorithm** (see module-level doc for periodic image-point details):
     /// 1. Validate: at least `2*D + 1` canonical vertices required.
-    /// 2. Build 3^D-1 image copies of each shifted by `{-L_i, 0, +L_i}` per axis.
-    ///    Every copy of canonical vertex `v_i` (including the zero-offset canonical copy)
-    ///    receives the **same** tiny deterministic per-vertex perturbation `δ_i`.
+    /// 2. Apply one tiny deterministic perturbation `δ_i` to each canonical
+    ///    vertex, then build 3^D-1 image copies shifted by
+    ///    `{-L_i, 0, +L_i}` per axis. Noncentral scaffolding images receive a
+    ///    smaller construction-only joggle to escape finite-cover insertion degeneracy.
     /// 3. Build a full Euclidean DT on the expanded set (n * 3^D points).
     /// 4. Normalize lifted simplices to canonical quotient signatures.
     /// 5. Search for a closed candidate subset whose periodic facet incidences are valid.
@@ -2396,8 +2817,10 @@ where
         }
 
         // 3^D offset grid; zero-offset index = (3^D - 1) / 2.
-        let three_pow_d: usize = 3_usize.pow(u32::try_from(D).expect("dimension D fits in u32"));
-        let zero_offset_idx = (three_pow_d - 1) / 2;
+        let image_width = 3_usize;
+        let image_radius = 1_usize;
+        let image_count = image_width.pow(u32::try_from(D).expect("dimension D fits in u32"));
+        let zero_offset_idx = (image_count - 1) / 2;
 
         // Collect canonical UUIDs for key lookup after full DT is built.
         let canonical_uuids: Vec<Uuid> = canonical_vertices.iter().map(Vertex::uuid).collect();
@@ -2450,15 +2873,15 @@ where
 
         let mut image_uuid_to_canonical_with_offset: FastHashMap<Uuid, (Uuid, [i8; D])> =
             FastHashMap::default();
-        let mut expanded: Vec<Vertex<U, D>> = Vec::with_capacity(n.saturating_mul(three_pow_d));
-        for k in 0..three_pow_d {
-            // Per-axis integer offsets {-1, 0, +1}.
+        let mut expanded: Vec<Vertex<U, D>> = Vec::with_capacity(n.saturating_mul(image_count));
+        for k in 0..image_count {
             let mut offset = [0i8; D];
             for (i, offset_val) in offset.iter_mut().enumerate() {
-                let digit =
-                    (k / 3_usize.pow(u32::try_from(i).expect("dimension index fits in u32"))) % 3;
-                // Map {0, 1, 2} → {-1, 0, +1}.
-                *offset_val = i8::try_from(digit).expect("digit is 0, 1, or 2; fits in i8") - 1;
+                let digit = (k / image_width
+                    .pow(u32::try_from(i).expect("dimension index fits in u32")))
+                    % image_width;
+                *offset_val = i8::try_from(digit).expect("image digit fits in i8")
+                    - i8::try_from(image_radius).expect("image radius fits in i8");
             }
 
             let is_canonical = k == zero_offset_idx;
@@ -2498,6 +2921,8 @@ where
         }
         let expanded_base_options = construction_options
             .with_initial_simplex_strategy(InitialSimplexStrategy::Balanced)
+            .with_insertion_validation_policy(ValidationPolicy::ExplicitOnly)
+            .with_degenerate_realization_retries()
             .without_global_repair_fallback();
         let expanded_options = match construction_options.retry_policy() {
             RetryPolicy::Disabled => expanded_base_options,
@@ -2508,125 +2933,14 @@ where
                     base_seed,
                 }),
         };
-        let full_dt: DelaunayTriangulation<K, U, V, D> =
-            match DelaunayTriangulation::build_with_kernel_options(
-                kernel,
+        let image_kernel = AdaptiveKernel::<f64>::new();
+        let full_dt: DelaunayTriangulation<AdaptiveKernel<f64>, U, V, D> =
+            DelaunayTriangulation::build_with_kernel_options(
+                &image_kernel,
                 &expanded,
                 TopologyGuarantee::Pseudomanifold,
                 expanded_options,
-            ) {
-                Ok(dt) => dt,
-                Err(primary_err) if D > 2 => {
-                    let (total_attempts, retry_seed) = match expanded_options.retry_policy() {
-                        RetryPolicy::Disabled => (0_usize, None),
-                        RetryPolicy::Shuffled {
-                            attempts,
-                            base_seed,
-                        }
-                        | RetryPolicy::DebugOnlyShuffled {
-                            attempts,
-                            base_seed,
-                        } => (
-                            attempts.get().saturating_mul(4).clamp(24, 256),
-                            Some(base_seed.unwrap_or(0xA5A5_5A5A_D1E1_A1E1_u64)),
-                        ),
-                    };
-
-                    let mut built: Option<DelaunayTriangulation<K, U, V, D>> = None;
-                    let mut best_fallback_stats: (usize, usize, usize, usize) = (0, 0, 0, 0);
-                    let mut insertion_order: Vec<usize> = Vec::with_capacity(expanded.len());
-                    let canonical_start = zero_offset_idx * n;
-                    let canonical_end = canonical_start + n;
-                    for attempt_idx in 0..total_attempts {
-                        insertion_order.clear();
-                        insertion_order.extend(canonical_start..canonical_end);
-                        insertion_order.extend(0..canonical_start);
-                        insertion_order.extend(canonical_end..expanded.len());
-
-                        if attempt_idx > 0 {
-                            let retry_seed = retry_seed
-                                .expect("retry_seed is only used when retry attempts are enabled");
-                            let attempt_u64 =
-                                u64::try_from(attempt_idx).expect("attempt index fits in u64");
-                            let mut rng = StdRng::seed_from_u64(
-                                retry_seed
-                                    .wrapping_add(attempt_u64.wrapping_mul(0x9E37_79B9_7F4A_7C15)),
-                            );
-                            let (_canonical_prefix, image_suffix) = insertion_order.split_at_mut(n);
-                            image_suffix.shuffle(&mut rng);
-                        }
-
-                        let mut candidate_dt: DelaunayTriangulation<K, U, V, D> =
-                            DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
-                                kernel.clone(),
-                                TopologyGuarantee::Pseudomanifold,
-                            );
-                        candidate_dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
-                        let mut inserted = 0_usize;
-                        let mut skipped = 0_usize;
-                        let mut hard_errors = 0_usize;
-                        for (insert_idx, &source_idx) in insertion_order.iter().enumerate() {
-                            match candidate_dt
-                                .insert_best_effort_with_statistics(expanded[source_idx])
-                            {
-                                Ok((InsertionOutcome::Inserted { .. }, _stats)) => {
-                                    inserted = inserted.saturating_add(1);
-                                }
-                                Ok((InsertionOutcome::Skipped { error }, _stats)) => {
-                                    skipped = skipped.saturating_add(1);
-                                    let _ = (error, insert_idx, source_idx);
-                                }
-                                Err(err) => {
-                                    hard_errors = hard_errors.saturating_add(1);
-                                    let _ = (err, insert_idx, source_idx);
-                                }
-                            }
-                        }
-
-                        let canonical_present = canonical_uuids
-                            .iter()
-                            .filter(|uuid| {
-                                candidate_dt
-                                    .vertices()
-                                    .any(|(_, vertex)| vertex.uuid() == **uuid)
-                            })
-                            .count();
-                        if canonical_present > best_fallback_stats.0
-                            || (canonical_present == best_fallback_stats.0
-                                && inserted > best_fallback_stats.1)
-                        {
-                            best_fallback_stats =
-                                (canonical_present, inserted, skipped, hard_errors);
-                        }
-
-                        if canonical_present == n
-                            && candidate_dt.number_of_simplices() > 0
-                            && candidate_dt.is_valid_structure().is_ok()
-                        {
-                            built = Some(candidate_dt);
-                            break;
-                        }
-                    }
-
-                    if let Some(dt) = built {
-                        dt
-                    } else {
-                        return Err(DelaunayTriangulationConstructionError::Triangulation(
-                            DelaunayConstructionFailure::PeriodicImageExpandedConstructionFailure {
-                                primary_error: Box::new(primary_err),
-                                canonical_vertex_count: canonical_vertices.len(),
-                                expanded_vertex_count: expanded.len(),
-                                retry_attempts: total_attempts,
-                                best_canonical_vertex_count: best_fallback_stats.0,
-                                best_inserted_count: best_fallback_stats.1,
-                                best_skipped_count: best_fallback_stats.2,
-                                best_hard_error_count: best_fallback_stats.3,
-                            },
-                        ));
-                    }
-                }
-                Err(err) => return Err(err),
-            };
+            )?;
 
         let uuid_to_key: FastHashMap<Uuid, VertexKey> = full_dt
             .vertices()
@@ -2672,15 +2986,10 @@ where
                     .map(|vk| vertex_key_to_lifted.get(vk).copied())
                     .collect::<Option<Vec<_>>>()?;
 
-                let mut canonical_keys: Vec<VertexKey> = lifted.iter().map(|(ck, _)| *ck).collect();
-                canonical_keys.sort_unstable();
-                canonical_keys.dedup();
-                if canonical_keys.len() != D + 1 {
-                    // Simplex collapses in the quotient (repeated canonical vertex); skip it.
-                    return None;
-                }
-
-                let (anchor_idx, _) = lifted.iter().enumerate().min_by_key(|(_, (ck, _))| *ck)?;
+                let (anchor_idx, _) = lifted
+                    .iter()
+                    .enumerate()
+                    .min_by_key(|(_, lifted_vertex)| **lifted_vertex)?;
                 let anchor_offset = lifted[anchor_idx].1;
                 for (_, offset) in &mut lifted {
                     for axis in 0..D {
@@ -2724,9 +3033,11 @@ where
             let mut symbolic_signature = lifted_vertices.clone();
             symbolic_signature.sort_unstable();
             let lifted_ordered = lifted_vertices.clone();
-            let mut periodic_facets: Vec<PeriodicFacetKey> = Vec::with_capacity(D + 1);
+            let mut periodic_facets: Vec<OrientedPeriodicFacet> = Vec::with_capacity(D + 1);
             for facet_idx in 0..=D {
-                periodic_facets.push(Self::derive_periodic_facet_key(&lifted_ordered, facet_idx)?);
+                let facet_key = Self::derive_periodic_facet_key(&lifted_ordered, facet_idx)?;
+                let orientation_side = periodic_facet_orientation_side(&lifted_ordered, facet_idx);
+                periodic_facets.push((facet_key, orientation_side));
             }
 
             if let Some(existing) = candidates_by_symbolic.get_mut(&symbolic_signature) {
@@ -2759,7 +3070,7 @@ where
         candidates.sort_by(|a, b| b.3.cmp(&a.3).then_with(|| a.0.cmp(&b.0)));
 
         let (search_attempts, search_seed) = match construction_options.retry_policy() {
-            RetryPolicy::Disabled => (1_usize, 0xD1CE_0B5E_2100_0001_u64),
+            RetryPolicy::Disabled => (1, 0xD1CE_0B5E_2100_0001_u64),
             RetryPolicy::Shuffled {
                 attempts,
                 base_seed,
@@ -2784,20 +3095,28 @@ where
         let mut best_abs_chi = i64::MAX;
         if D > 2 {
             let selected: Vec<bool> = candidates.iter().map(|candidate| candidate.3).collect();
-            let mut facet_counts: FastHashMap<PeriodicFacetKey, u8> = FastHashMap::default();
+            let mut facet_incidences: FastHashMap<PeriodicFacetKey, [u8; 2]> =
+                FastHashMap::default();
             let mut covered: VertexKeySet = VertexKeySet::default();
+            let mut has_compatible_facet_orientations = true;
             for (idx, is_selected) in selected.iter().copied().enumerate() {
                 if !is_selected {
                     continue;
                 }
-                for facet in &candidates[idx].2 {
-                    *facet_counts.entry(*facet).or_insert(0) += 1;
+                let candidate_facets = &candidates[idx].2;
+                if !periodic_candidate_can_be_added(candidate_facets, &facet_incidences) {
+                    has_compatible_facet_orientations = false;
+                    break;
                 }
+                update_periodic_facet_incidences(candidate_facets, &mut facet_incidences, true);
                 for (vertex_key, _) in &candidates[idx].1 {
                     covered.insert(*vertex_key);
                 }
             }
-            if facet_counts.values().all(|&count| count == 2)
+            if has_compatible_facet_orientations
+                && facet_incidences
+                    .values()
+                    .all(|&incidence| periodic_facet_incidence_total(incidence) == 2)
                 && covered.len() == central_key_set.len()
             {
                 best_boundary_count = 0;
@@ -2809,17 +3128,25 @@ where
         } else if D == 2 {
             let target_faces = central_key_set.len().saturating_mul(2);
             let mut edge_to_index: FastHashMap<PeriodicFacetKey, usize> = FastHashMap::default();
-            let mut candidate_edges: Vec<[usize; 3]> = Vec::with_capacity(candidates.len());
+            let mut candidate_edges: Vec<[(usize, bool); 3]> = Vec::with_capacity(candidates.len());
+            let mut candidate_vertices: Vec<Vec<VertexKey>> = Vec::with_capacity(candidates.len());
             let mut candidate_in_domain: Vec<bool> = Vec::with_capacity(candidates.len());
 
             for candidate in &candidates {
-                let mut edge_indices = [0usize; 3];
-                for (slot, edge_key) in candidate.2.iter().enumerate() {
+                let mut edge_indices = [(0usize, false); 3];
+                for (slot, &(edge_key, side)) in candidate.2.iter().enumerate() {
                     let next_index = edge_to_index.len();
-                    let edge_index = *edge_to_index.entry(*edge_key).or_insert(next_index);
-                    edge_indices[slot] = edge_index;
+                    let edge_index = *edge_to_index.entry(edge_key).or_insert(next_index);
+                    edge_indices[slot] = (edge_index, side);
                 }
                 candidate_edges.push(edge_indices);
+                candidate_vertices.push(
+                    candidate
+                        .1
+                        .iter()
+                        .map(|(vertex_key, _)| *vertex_key)
+                        .collect(),
+                );
                 candidate_in_domain.push(candidate.3);
             }
             let exact_search_node_limit = candidate_edges
@@ -2830,9 +3157,33 @@ where
 
             if let Some(exact_selected) = search_closed_2d_selection(
                 &candidate_edges,
+                &candidate_vertices,
                 &candidate_in_domain,
                 target_faces,
+                central_key_set.len(),
                 edge_to_index.len(),
+                exact_search_node_limit,
+            ) {
+                best_selected_count = exact_selected
+                    .iter()
+                    .filter(|&&is_selected| is_selected)
+                    .count();
+                best_coverage_count = central_key_set.len();
+                best_boundary_count = 0;
+                best_abs_chi = 0;
+                best_selected = exact_selected;
+            }
+        }
+
+        if D == 3 && best_selected.is_empty() {
+            let exact_search_node_limit = candidates
+                .len()
+                .saturating_mul(D + 1)
+                .saturating_mul(4096)
+                .clamp(250_000, 5_000_000);
+            if let Some(exact_selected) = search_closed_connected_periodic_selection(
+                &candidates,
+                central_key_set.len(),
                 exact_search_node_limit,
             ) {
                 best_selected_count = exact_selected
@@ -2862,21 +3213,18 @@ where
                 order.sort_by(|a, b| candidates[*b].3.cmp(&candidates[*a].3));
 
                 let mut selected = vec![false; candidates.len()];
-                let mut facet_counts: FastHashMap<PeriodicFacetKey, u8> = FastHashMap::default();
+                let mut facet_incidences: FastHashMap<PeriodicFacetKey, [u8; 2]> =
+                    FastHashMap::default();
 
-                // Pass 1: greedy maximal subset with no canonical facet incidence > 2.
+                // Pass 1: greedy maximal subset with at most one incidence on
+                // each oriented side of a canonical periodic facet.
                 for idx in order.iter().copied() {
                     let candidate_facets = &candidates[idx].2;
-                    if candidate_facets
-                        .iter()
-                        .any(|facet| facet_counts.get(facet).copied().unwrap_or(0) >= 2)
-                    {
+                    if !periodic_candidate_can_be_added(candidate_facets, &facet_incidences) {
                         continue;
                     }
                     selected[idx] = true;
-                    for facet in candidate_facets {
-                        *facet_counts.entry(*facet).or_insert(0) += 1;
-                    }
+                    update_periodic_facet_incidences(candidate_facets, &mut facet_incidences, true);
                 }
 
                 // Pass 2: only add simplices that strictly reduce boundary facets (count == 1).
@@ -2888,29 +3236,20 @@ where
                             continue;
                         }
                         let candidate_facets = &candidates[idx].2;
-                        if candidate_facets
-                            .iter()
-                            .any(|facet| facet_counts.get(facet).copied().unwrap_or(0) >= 2)
-                        {
+                        if !periodic_candidate_can_be_added(candidate_facets, &facet_incidences) {
                             continue;
                         }
 
-                        let boundary_delta: i32 = candidate_facets
-                            .iter()
-                            .map(
-                                |facet| match facet_counts.get(facet).copied().unwrap_or(0) {
-                                    0 => 1,
-                                    1 => -1,
-                                    _ => 0,
-                                },
-                            )
-                            .sum();
+                        let boundary_delta =
+                            periodic_boundary_delta(candidate_facets, &facet_incidences, true);
 
                         if boundary_delta < 0 {
                             selected[idx] = true;
-                            for facet in candidate_facets {
-                                *facet_counts.entry(*facet).or_insert(0) += 1;
-                            }
+                            update_periodic_facet_incidences(
+                                candidate_facets,
+                                &mut facet_incidences,
+                                true,
+                            );
                             improved = true;
                         }
                     }
@@ -2922,16 +3261,8 @@ where
                     for idx in order.iter().copied() {
                         let candidate_facets = &candidates[idx].2;
                         if selected[idx] {
-                            let boundary_delta: i32 = candidate_facets
-                                .iter()
-                                .map(
-                                    |facet| match facet_counts.get(facet).copied().unwrap_or(0) {
-                                        1 => -1,
-                                        2 => 1,
-                                        _ => 0,
-                                    },
-                                )
-                                .sum();
+                            let boundary_delta =
+                                periodic_boundary_delta(candidate_facets, &facet_incidences, false);
                             if boundary_delta < 0
                                 && best_move
                                     .is_none_or(|(_, _, best_delta)| boundary_delta < best_delta)
@@ -2939,23 +3270,13 @@ where
                                 best_move = Some((false, idx, boundary_delta));
                             }
                         } else {
-                            if candidate_facets
-                                .iter()
-                                .any(|facet| facet_counts.get(facet).copied().unwrap_or(0) >= 2)
+                            if !periodic_candidate_can_be_added(candidate_facets, &facet_incidences)
                             {
                                 continue;
                             }
 
-                            let boundary_delta: i32 = candidate_facets
-                                .iter()
-                                .map(
-                                    |facet| match facet_counts.get(facet).copied().unwrap_or(0) {
-                                        0 => 1,
-                                        1 => -1,
-                                        _ => 0,
-                                    },
-                                )
-                                .sum();
+                            let boundary_delta =
+                                periodic_boundary_delta(candidate_facets, &facet_incidences, true);
                             if boundary_delta < 0
                                 && best_move
                                     .is_none_or(|(_, _, best_delta)| boundary_delta < best_delta)
@@ -2971,23 +3292,39 @@ where
                     let candidate_facets = &candidates[idx].2;
                     if is_add {
                         selected[idx] = true;
-                        for facet in candidate_facets {
-                            *facet_counts.entry(*facet).or_insert(0) += 1;
-                        }
+                        update_periodic_facet_incidences(
+                            candidate_facets,
+                            &mut facet_incidences,
+                            true,
+                        );
                     } else {
                         selected[idx] = false;
-                        for facet in candidate_facets {
-                            if let Some(count) = facet_counts.get_mut(facet) {
-                                *count -= 1;
-                                if *count == 0 {
-                                    facet_counts.remove(facet);
-                                }
-                            }
+                        update_periodic_facet_incidences(
+                            candidate_facets,
+                            &mut facet_incidences,
+                            false,
+                        );
+                    }
+                }
+
+                if D > 2 {
+                    selected = best_connected_periodic_component(&selected, &candidates);
+                    facet_incidences.clear();
+                    for (idx, is_selected) in selected.iter().copied().enumerate() {
+                        if is_selected {
+                            update_periodic_facet_incidences(
+                                &candidates[idx].2,
+                                &mut facet_incidences,
+                                true,
+                            );
                         }
                     }
                 }
 
-                let boundary_count = facet_counts.values().filter(|&&count| count == 1).count();
+                let boundary_count = facet_incidences
+                    .values()
+                    .filter(|&&incidence| periodic_facet_incidence_total(incidence) == 1)
+                    .count();
                 let selected_count = selected.iter().filter(|&&is_selected| is_selected).count();
                 let mut covered: VertexKeySet = VertexKeySet::default();
                 for (idx, is_selected) in selected.iter().copied().enumerate() {
@@ -3002,8 +3339,8 @@ where
                 let abs_chi = if D == 2 {
                     let v_count =
                         i64::try_from(central_key_set.len()).expect("vertex count fits in i64");
-                    let e_count =
-                        i64::try_from(facet_counts.len()).expect("edge/facet count fits in i64");
+                    let e_count = i64::try_from(facet_incidences.len())
+                        .expect("edge/facet count fits in i64");
                     let f_count = i64::try_from(selected_count).expect("simplex count fits in i64");
                     (v_count - e_count + f_count).abs()
                 } else {
@@ -3125,14 +3462,12 @@ where
             };
             let canonical_vertex_keys: Vec<VertexKey> =
                 lifted_vertices.iter().map(|(ck, _)| *ck).collect();
-            let mut simplex = Simplex::try_new(canonical_vertex_keys).map_err(|e| {
-                TriangulationConstructionError::PeriodicQuotientSimplexCreation { source: e }
-            })?;
             let offsets: PeriodicOffsetBuffer<D> =
                 lifted_vertices.iter().map(|(_, offset)| *offset).collect();
-            simplex.set_periodic_vertex_offsets(offsets).map_err(|e| {
-                TriangulationConstructionError::PeriodicQuotientSimplexCreation { source: e }
-            })?;
+            let simplex =
+                Simplex::try_new_periodic(canonical_vertex_keys, offsets).map_err(|e| {
+                    TriangulationConstructionError::PeriodicQuotientSimplexCreation { source: e }
+                })?;
             let ck = tds_mut
                 .insert_simplex_with_mapping_trusted_vertices(simplex)
                 .map_err(TriangulationConstructionError::Tds)?;
@@ -3273,10 +3608,10 @@ where
             topology_guarantee,
             global_topology,
         );
-        let proof = candidate.validate_tds_structure().map_err(|e| {
+        let proof = candidate.validate_tds_structure().map_err(|source| {
             TriangulationConstructionError::FinalTopologyValidation {
                 context: FinalTopologyValidationContext::PeriodicQuotientTopology,
-                source: Box::new(InvariantError::Tds(e)),
+                source: Box::new(InvariantError::Tds(source)),
             }
         })?;
         Ok(candidate.into_structurally_valid_delaunay(proof))
@@ -4037,6 +4372,92 @@ mod tests {
                 axis: 0,
                 component: 383,
             }
+        );
+    }
+
+    #[test]
+    fn test_closed_2d_selection_requires_opposite_oriented_edge_incidences() {
+        let vertex_key = |value| VertexKey::from(slotmap::KeyData::from_ffi(value));
+        let [a, b, c, d] = [1_u64, 2, 3, 4].map(vertex_key);
+        let first_face = [(0, false), (1, false), (2, false)];
+        let closed_faces = [first_face, [(0, true), (1, true), (2, true)]];
+        let connected_vertices = [vec![a, b, a], vec![a, b, b]];
+        let selected = search_closed_2d_selection(
+            &closed_faces,
+            &connected_vertices,
+            &[true, false],
+            2,
+            2,
+            3,
+            100,
+        )
+        .expect("opposite edge incidences should close the quotient");
+        assert_eq!(selected, vec![true, true]);
+
+        let same_sided_faces = [first_face, first_face];
+        assert!(
+            search_closed_2d_selection(
+                &same_sided_faces,
+                &connected_vertices,
+                &[true, false],
+                2,
+                2,
+                3,
+                100,
+            )
+            .is_none(),
+            "same-sided incidences must not be mistaken for a closed quotient",
+        );
+
+        let open_faces = [first_face, [(3, true), (4, true), (5, true)]];
+        assert!(
+            search_closed_2d_selection(
+                &open_faces,
+                &connected_vertices,
+                &[true, false],
+                2,
+                2,
+                6,
+                100,
+            )
+            .is_none(),
+            "a face-count target alone must not pass with unmatched edges",
+        );
+
+        let incomplete_vertices = [vec![a, a, a], vec![a, a, a]];
+        assert!(
+            search_closed_2d_selection(
+                &closed_faces,
+                &incomplete_vertices,
+                &[true, false],
+                2,
+                2,
+                3,
+                100,
+            )
+            .is_none(),
+            "a closed subset must cover every canonical vertex",
+        );
+
+        let disconnected_faces = [
+            first_face,
+            [(0, true), (1, true), (2, true)],
+            [(3, false), (4, false), (5, false)],
+            [(3, true), (4, true), (5, true)],
+        ];
+        let disconnected_vertices = [vec![a, b, a], vec![a, b, b], vec![c, d, c], vec![c, d, d]];
+        assert!(
+            search_closed_2d_selection(
+                &disconnected_faces,
+                &disconnected_vertices,
+                &[true, false, true, false],
+                4,
+                4,
+                6,
+                1_000,
+            )
+            .is_none(),
+            "closed components must not be mistaken for one connected quotient",
         );
     }
 

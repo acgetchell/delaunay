@@ -73,9 +73,12 @@ Toroidal support has two modes:
 - `.try_toroidal([..])` uses the 3^D image-point method to construct a
   true periodic quotient with rewired neighbor pointers. This path is release
   covered in 2D and compact 3D, where periodic triangulations validate as
-  closed tori through Levels 1-5. 4D/5D periodic construction fails fast until
-  issue #416 makes quotient selection scalable and diagnosable enough for
-  release validation.
+  closed tori through Levels 1-5. Construction moves each canonical coordinate
+  by at most about 2^-32 of its domain period using a deterministic perturbation
+  that resolves periodic covering-space degeneracies while preserving vertex
+  UUIDs and payloads.
+  4D/5D periodic construction fails fast until issue #416 makes quotient
+  selection scalable and diagnosable enough for release validation.
 
 Spherical topologies provide public metadata and behavior-model support for
 projecting finite nonzero coordinates onto the unit sphere. The bounded

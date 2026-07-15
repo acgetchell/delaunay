@@ -379,7 +379,7 @@ struct TdsSnapshotSimplex<V, const D: usize> {
 /// The raw interchange shape uses `Vec<Uuid>` because codecs cannot express the
 /// `D + 1` invariant. This private wrapper is the parsed representation: it is
 /// constructed only after checking arity, dangling UUID references, and duplicate
-/// vertex UUIDs.
+/// lifted vertex identities.
 #[derive(Debug)]
 struct SnapshotVertexUuidSlots<const D: usize> {
     slots: SimplexVertexUuidBuffer,
@@ -391,18 +391,22 @@ impl<const D: usize> SnapshotVertexUuidSlots<D> {
         simplex_uuid: Uuid,
         slots: &[Uuid],
         vertex_uuids: &SnapshotUuidSet,
+        periodic_offsets: Option<&SnapshotPeriodicOffsetSlots<D>>,
     ) -> Result<Self, TdsSnapshotError> {
         validate_snapshot_vertex_slot_arity::<D>(simplex_uuid, slots.len())?;
 
-        let mut seen_vertex_uuids = fast_hash_set_with_capacity(slots.len());
-        for &vertex_uuid in slots {
+        for (index, &vertex_uuid) in slots.iter().enumerate() {
             if !vertex_uuids.contains(&vertex_uuid) {
                 return Err(TdsSnapshotError::DanglingSimplexVertexUuid {
                     simplex_uuid,
                     vertex_uuid,
                 });
             }
-            if !seen_vertex_uuids.insert(vertex_uuid) {
+            if (0..index).any(|earlier| {
+                slots[earlier] == vertex_uuid
+                    && periodic_offsets
+                        .is_none_or(|offsets| offsets.slots[earlier] == offsets.slots[index])
+            }) {
                 return Err(TdsSnapshotError::InvalidSimplex {
                     simplex_uuid,
                     source: SimplexValidationError::DuplicateVertices,
@@ -414,12 +418,19 @@ impl<const D: usize> SnapshotVertexUuidSlots<D> {
     }
 
     /// Builds vertex UUID slots from validated runtime state before serialization.
-    fn try_from_runtime(simplex_uuid: Uuid, slots: &[Uuid]) -> Result<Self, TdsSnapshotError> {
+    fn try_from_runtime(
+        simplex_uuid: Uuid,
+        slots: &[Uuid],
+        periodic_offsets: Option<&SnapshotPeriodicOffsetSlots<D>>,
+    ) -> Result<Self, TdsSnapshotError> {
         validate_snapshot_vertex_slot_arity::<D>(simplex_uuid, slots.len())?;
 
-        let mut seen_vertex_uuids = fast_hash_set_with_capacity(slots.len());
-        for &vertex_uuid in slots {
-            if !seen_vertex_uuids.insert(vertex_uuid) {
+        for (index, &vertex_uuid) in slots.iter().enumerate() {
+            if (0..index).any(|earlier| {
+                slots[earlier] == vertex_uuid
+                    && periodic_offsets
+                        .is_none_or(|offsets| offsets.slots[earlier] == offsets.slots[index])
+            }) {
                 return Err(TdsSnapshotError::InvalidSimplex {
                     simplex_uuid,
                     source: SimplexValidationError::DuplicateVertices,
@@ -602,13 +613,17 @@ impl<SnapshotData, const D: usize> TdsSnapshotSimplex<SnapshotData, D> {
                     .transpose()
             })
             .collect::<Result<Vec<_>, TdsSnapshotError>>()?;
-        let vertex_uuids = SnapshotVertexUuidSlots::try_from_runtime(simplex_uuid, &vertex_uuids)?;
-        let neighbor_uuids =
-            SnapshotNeighborUuidSlots::try_from_runtime(simplex_uuid, &neighbor_uuids)?;
         let periodic_vertex_offsets = simplex
             .periodic_vertex_offsets()
             .map(|offsets| SnapshotPeriodicOffsetSlots::try_from_runtime(simplex_uuid, offsets))
             .transpose()?;
+        let vertex_uuids = SnapshotVertexUuidSlots::try_from_runtime(
+            simplex_uuid,
+            &vertex_uuids,
+            periodic_vertex_offsets.as_ref(),
+        )?;
+        let neighbor_uuids =
+            SnapshotNeighborUuidSlots::try_from_runtime(simplex_uuid, &neighbor_uuids)?;
 
         Ok(Self {
             uuid: simplex_uuid,
@@ -984,22 +999,26 @@ fn parse_raw_simplex<V, const D: usize>(
 ) -> Result<TdsSnapshotSimplex<V, D>, TdsSnapshotError> {
     let simplex_uuid = raw_simplex.uuid;
     let data = raw_simplex.data;
+    let periodic_vertex_offsets = simplex_vertex_offsets
+        .get(&simplex_uuid)
+        .map(|offsets| SnapshotPeriodicOffsetSlots::parse(simplex_uuid, offsets))
+        .transpose()?;
+
     let vertex_uuid_slots = simplex_vertices
         .get(&simplex_uuid)
         .ok_or(TdsSnapshotError::MissingSimplexVertexUuids { simplex_uuid })?;
-    let vertex_uuids =
-        SnapshotVertexUuidSlots::parse(simplex_uuid, vertex_uuid_slots, vertex_uuids)?;
+    let vertex_uuids = SnapshotVertexUuidSlots::parse(
+        simplex_uuid,
+        vertex_uuid_slots,
+        vertex_uuids,
+        periodic_vertex_offsets.as_ref(),
+    )?;
 
     let neighbor_uuid_slots = simplex_neighbors
         .get(&simplex_uuid)
         .ok_or(TdsSnapshotError::MissingSimplexNeighborUuids { simplex_uuid })?;
     let neighbor_uuids =
         SnapshotNeighborUuidSlots::parse(simplex_uuid, neighbor_uuid_slots, simplex_uuids)?;
-
-    let periodic_vertex_offsets = simplex_vertex_offsets
-        .get(&simplex_uuid)
-        .map(|offsets| SnapshotPeriodicOffsetSlots::parse(simplex_uuid, offsets))
-        .transpose()?;
 
     Ok(TdsSnapshotSimplex {
         uuid: simplex_uuid,
@@ -1071,21 +1090,19 @@ fn rebuild_simplices<V, const D: usize>(
             })
             .collect::<Result<Vec<_>, TdsSnapshotError>>()?;
 
-        let mut simplex =
-            Simplex::try_new_with_uuid(vertex_keys, simplex_uuid, snapshot_simplex.data).map_err(
-                |source| TdsSnapshotError::InvalidSimplex {
-                    simplex_uuid,
-                    source,
-                },
-            )?;
-        if let Some(offsets) = snapshot_simplex.periodic_vertex_offsets {
-            simplex
-                .set_periodic_vertex_offsets(offsets.into_buffer())
-                .map_err(|source| TdsSnapshotError::InvalidSimplex {
-                    simplex_uuid,
-                    source,
-                })?;
+        let simplex = match snapshot_simplex.periodic_vertex_offsets {
+            Some(offsets) => Simplex::try_new_periodic_with_uuid(
+                vertex_keys,
+                offsets.into_buffer(),
+                simplex_uuid,
+                snapshot_simplex.data,
+            ),
+            None => Simplex::try_new_with_uuid(vertex_keys, simplex_uuid, snapshot_simplex.data),
         }
+        .map_err(|source| TdsSnapshotError::InvalidSimplex {
+            simplex_uuid,
+            source,
+        })?;
 
         let simplex_key = simplices.insert(simplex);
         uuid_to_simplex_key.insert(simplex_uuid, simplex_key);
@@ -1222,6 +1239,7 @@ mod tests {
     use crate::core::vertex::Vertex;
     use crate::geometry::point::Point;
     use crate::vertex;
+    use proptest::prelude::*;
     use slotmap::KeyData;
     use std::assert_matches;
 
@@ -1235,26 +1253,8 @@ mod tests {
     }
 
     fn periodic_offset_tds_2d() -> (Tds<(), (), 2>, Uuid, Vec<[i8; 2]>) {
-        let mut tds: Tds<(), (), 2> = Tds::empty();
-        let v0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
-            .unwrap();
-        let v1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0]).unwrap())
-            .unwrap();
-        let v2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0]).unwrap())
-            .unwrap();
         let offsets = vec![[0_i8, 0_i8], [1_i8, 0_i8], [0_i8, 1_i8]];
-        let mut simplex = Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap();
-        simplex
-            .set_periodic_vertex_offsets(offsets.clone())
-            .unwrap();
-        let simplex_uuid = simplex.uuid();
-        tds.insert_simplex_with_mapping(simplex).unwrap();
-        tds.construction_state = TriangulationConstructionState::Constructed;
-        tds.assign_neighbors().unwrap();
-        tds.assign_incident_simplices().unwrap();
+        let (tds, simplex_uuid) = periodic_offset_tds(&offsets);
         (tds, simplex_uuid, offsets)
     }
 
@@ -1271,6 +1271,37 @@ mod tests {
     #[derive(Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
     struct NonCopyPayload {
         label: String,
+    }
+
+    /// Builds a one-simplex TDS with caller-selected aligned periodic offsets.
+    fn periodic_offset_tds<const D: usize>(offsets: &[[i8; D]]) -> (Tds<(), (), D>, Uuid) {
+        assert_eq!(offsets.len(), D + 1);
+        let mut tds = Tds::empty();
+        let vertex_keys: Vec<_> = (0..=D)
+            .map(|index| {
+                let coordinate =
+                    f64::from(u32::try_from(index).expect("test vertex index fits in u32"));
+                let coords = std::array::from_fn(|axis| if axis == 0 { coordinate } else { 0.0 });
+                tds.insert_vertex_with_mapping(
+                    vertex!(coords).expect("test coordinates are finite"),
+                )
+                .expect("generated vertex should insert")
+            })
+            .collect();
+        let mut simplex =
+            Simplex::try_new(vertex_keys).expect("generated simplex keys are distinct");
+        simplex
+            .set_periodic_vertex_offsets(offsets.to_vec())
+            .expect("one offset per simplex vertex");
+        let simplex_uuid = simplex.uuid();
+        tds.insert_simplex_with_mapping(simplex)
+            .expect("generated simplex should insert");
+        tds.construction_state = TriangulationConstructionState::Constructed;
+        tds.assign_neighbors()
+            .expect("generated simplex facets should be indexable");
+        tds.assign_incident_simplices()
+            .expect("generated incidence should assign");
+        (tds, simplex_uuid)
     }
 
     /// Builds raw snapshot JSON with a duplicated object key in one relationship map.
@@ -1360,6 +1391,52 @@ mod tests {
         assert!(!uuid.is_nil(), "serialized {field} UUID should not be nil");
         uuid
     }
+
+    /// Generates periodic snapshot round-trip properties in every practical dimension.
+    macro_rules! gen_periodic_snapshot_properties {
+        ($dim:literal, $uniform:path) => {
+            pastey::paste! {
+                proptest! {
+                    #![proptest_config(ProptestConfig::with_cases(32))]
+
+                    /// Snapshot hydration preserves every periodic offset slot exactly.
+                    #[test]
+                    fn [<prop_periodic_snapshot_round_trip_ $dim d>](
+                        offsets in prop::collection::vec(
+                            $uniform(-32_i8..=32_i8),
+                            ($dim + 1)..=($dim + 1),
+                        ),
+                    ) {
+                        let (original, simplex_uuid) = periodic_offset_tds::<$dim>(&offsets);
+                        let json = serde_json::to_value(&original)
+                            .expect("generated periodic TDS should serialize");
+                        let restored_result = serde_json::from_value::<Tds<(), (), $dim>>(json);
+                        prop_assert!(
+                            restored_result.is_ok(),
+                            "generated periodic snapshot failed to hydrate: {:?}",
+                            restored_result.as_ref().err(),
+                        );
+                        let restored = restored_result.expect("successful result checked above");
+                        let simplex_key = restored
+                            .simplex_key_from_uuid(&simplex_uuid)
+                            .expect("simplex UUID should survive round-trip");
+                        let restored_offsets = restored
+                            .simplex(simplex_key)
+                            .and_then(Simplex::periodic_vertex_offsets)
+                            .expect("periodic offsets should survive round-trip");
+
+                        prop_assert_eq!(restored_offsets, offsets.as_slice());
+                        prop_assert!(restored.is_valid().is_ok());
+                    }
+                }
+            }
+        };
+    }
+
+    gen_periodic_snapshot_properties!(2, prop::array::uniform2);
+    gen_periodic_snapshot_properties!(3, prop::array::uniform3);
+    gen_periodic_snapshot_properties!(4, prop::array::uniform4);
+    gen_periodic_snapshot_properties!(5, prop::array::uniform5);
 
     #[test]
     fn test_tds_snapshot_serialization_includes_stable_uuid_relationships() {
@@ -1703,6 +1780,67 @@ mod tests {
 
         assert_eq!(restored_offsets, expected_offsets.as_slice());
         assert!(deserialized.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_tds_snapshot_round_trip_preserves_distinct_lifted_duplicate_key_slots() {
+        let mut original: Tds<(), (), 2> = Tds::empty();
+        let first = original
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
+            .unwrap();
+        let second = original
+            .insert_vertex_with_mapping(vertex!([0.5, 0.5]).unwrap())
+            .unwrap();
+        let offsets = vec![[0_i8, 0_i8], [0_i8, 0_i8], [1_i8, 0_i8]];
+        let mut simplex = Simplex::try_new_periodic(vec![first, second, first], offsets.clone())
+            .expect("repeated canonical key has distinct lifted identities");
+        simplex
+            .set_neighbors_from_keys(vec![None; 3])
+            .expect("2D simplex should have three neighbor slots");
+        let simplex_uuid = simplex.uuid();
+        original
+            .insert_simplex_with_mapping(simplex)
+            .expect("periodic simplex should insert");
+        original
+            .assign_incident_simplices()
+            .expect("canonical incidence should deduplicate repeated slots");
+        original.construction_state = TriangulationConstructionState::Constructed;
+
+        let json = serde_json::to_value(&original).expect("serialize lifted duplicate slots");
+        let restored: Tds<(), (), 2> =
+            serde_json::from_value(json).expect("deserialize lifted duplicate slots");
+        let restored_key = restored
+            .simplex_key_from_uuid(&simplex_uuid)
+            .expect("simplex UUID should survive round-trip");
+        let restored_simplex = restored
+            .simplex(restored_key)
+            .expect("simplex should exist");
+
+        assert_eq!(
+            restored_simplex.vertices()[0],
+            restored_simplex.vertices()[2]
+        );
+        assert_eq!(
+            restored_simplex.periodic_vertex_offsets(),
+            Some(offsets.as_slice())
+        );
+        assert!(restored.is_valid().is_ok());
+
+        let mut duplicate_identity_json =
+            serde_json::to_value(&original).expect("serialize duplicate-identity fixture");
+        let serialized_offsets = duplicate_identity_json
+            .get_mut("simplex_vertex_offsets")
+            .and_then(serde_json::Value::as_object_mut)
+            .and_then(|offsets_by_simplex| offsets_by_simplex.get_mut(&simplex_uuid.to_string()))
+            .and_then(serde_json::Value::as_array_mut)
+            .expect("serialized periodic offsets should contain the simplex");
+        serialized_offsets[2] = serde_json::json!([0_i8, 0_i8]);
+        let error = serde_json::from_value::<Tds<(), (), 2>>(duplicate_identity_json)
+            .expect_err("an identical UUID-offset pair must be rejected during hydration");
+        assert!(
+            error.to_string().contains("non-unique vertex identities"),
+            "unexpected duplicate lifted-identity error: {error}",
+        );
     }
 
     #[test]

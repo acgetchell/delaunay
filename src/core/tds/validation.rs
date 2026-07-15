@@ -367,7 +367,20 @@ impl<U, V, const D: usize> Tds<U, V, D> {
             .values()
             .map(SmallBuffer::len)
             .sum::<usize>();
-        let expected_incidence_count = self.simplices.len().saturating_mul(D.saturating_add(1));
+        let expected_incidence_count = self
+            .simplices
+            .values()
+            .map(|simplex| {
+                let mut unique_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                    SmallBuffer::new();
+                for &vertex_key in simplex.vertices() {
+                    if !unique_vertices.contains(&vertex_key) {
+                        unique_vertices.push(vertex_key);
+                    }
+                }
+                unique_vertices.len()
+            })
+            .sum::<usize>();
         if incidence_count != expected_incidence_count {
             return Err(TdsError::InconsistentDataStructure {
                 message: format!(
@@ -622,7 +635,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                             ),
                         })?;
 
-                let (mirror_idx, _) = Self::orientation_mirror_facet_index(
+                let mirror_idx = Self::orientation_mirror_facet_index(
                     simplex,
                     facet_idx,
                     neighbor_simplex,
@@ -695,7 +708,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         facet_idx: usize,
         neighbor_simplex: &Simplex<V, D>,
         context: &str,
-    ) -> Result<(usize, bool), TdsError> {
+    ) -> Result<usize, TdsError> {
         let uses_periodic_offsets = simplex.periodic_vertex_offsets().is_some()
             || neighbor_simplex.periodic_vertex_offsets().is_some();
         let mirror_idx = if uses_periodic_offsets && std::ptr::eq(simplex, neighbor_simplex) {
@@ -714,7 +727,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                     },
                 })?
         };
-        Ok((mirror_idx, uses_periodic_offsets))
+        Ok(mirror_idx)
     }
 
     /// Finds the other occurrence of a self-identified lifted facet.
@@ -2021,6 +2034,7 @@ mod tests {
     use crate::core::tds::errors::{InvariantError, NeighborValidationError, TdsError};
     use crate::core::vertex::Vertex;
     use crate::vertex;
+    use proptest::prelude::*;
     use slotmap::KeyData;
     use std::assert_matches;
     use uuid::Uuid;
@@ -2033,6 +2047,173 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ]
     }
+
+    /// Computes permutation parity independently for generated shared-facet orders.
+    fn index_permutation_is_odd(order: &[usize]) -> bool {
+        let mut is_odd = false;
+        for first in 0..order.len() {
+            for second in (first + 1)..order.len() {
+                if order[first] > order[second] {
+                    is_odd = !is_odd;
+                }
+            }
+        }
+        is_odd
+    }
+
+    /// Builds two periodic neighbors whose shared-facet parity is selected by the caller.
+    fn periodic_neighbor_pair<const D: usize>(
+        shared_offsets: &[[i8; D]],
+        translation: [i8; D],
+        priorities: &[u16],
+        coherent: bool,
+    ) -> Tds<(), (), D> {
+        assert_eq!(shared_offsets.len(), D);
+        assert_eq!(priorities.len(), D);
+        assert!(D >= 2);
+
+        let mut tds = Tds::empty();
+        let vertex_keys: Vec<_> = (0..(D + 2))
+            .map(|index| {
+                let coordinate =
+                    f64::from(u32::try_from(index).expect("test vertex index fits in u32"));
+                let coords = std::array::from_fn(|axis| if axis == 0 { coordinate } else { 0.0 });
+                tds.insert_vertex_with_mapping(
+                    vertex!(coords).expect("test coordinates are finite"),
+                )
+                .expect("generated vertex should insert")
+            })
+            .collect();
+
+        let mut simplex_vertices = vertex_keys[..D].to_vec();
+        simplex_vertices.push(vertex_keys[D]);
+        let mut simplex_offsets = shared_offsets.to_vec();
+        simplex_offsets.push([0_i8; D]);
+        let mut simplex = Simplex::try_new(simplex_vertices).expect("distinct simplex keys");
+        simplex
+            .set_periodic_vertex_offsets(simplex_offsets)
+            .expect("one offset per simplex vertex");
+
+        let mut neighbor_order: Vec<_> = (0..D).collect();
+        neighbor_order.sort_by_key(|&index| (priorities[index], index));
+        if index_permutation_is_odd(&neighbor_order) != coherent {
+            neighbor_order.swap(0, 1);
+        }
+
+        let mut neighbor_vertices: Vec<_> = neighbor_order
+            .iter()
+            .map(|&index| vertex_keys[index])
+            .collect();
+        neighbor_vertices.push(vertex_keys[D + 1]);
+        let mut neighbor_offsets: Vec<_> = neighbor_order
+            .iter()
+            .map(|&index| {
+                std::array::from_fn(|axis| {
+                    shared_offsets[index][axis]
+                        .checked_add(translation[axis])
+                        .expect("generated offset sum stays in i8 range")
+                })
+            })
+            .collect();
+        neighbor_offsets.push(translation);
+        let mut neighbor = Simplex::try_new(neighbor_vertices).expect("distinct neighbor keys");
+        neighbor
+            .set_periodic_vertex_offsets(neighbor_offsets)
+            .expect("one offset per neighbor vertex");
+
+        tds.insert_simplex_with_mapping(simplex)
+            .expect("first simplex should insert");
+        tds.insert_simplex_with_mapping(neighbor)
+            .expect("second simplex should insert");
+        tds.assign_neighbors()
+            .expect("translated shared facet should be identified");
+        tds
+    }
+
+    /// Builds one periodic simplex whose translated boundary facets occupy two slots.
+    fn periodic_distinct_slot_self_mirror<const D: usize>(
+        offsets: Vec<[i8; D]>,
+        mirror_facets: [usize; 2],
+    ) -> (Tds<(), (), D>, SimplexKey) {
+        assert_eq!(offsets.len(), D + 1);
+
+        let mut tds = Tds::empty();
+        let vertex_key = tds
+            .insert_vertex_with_mapping(
+                vertex!(std::array::from_fn(|_| 0.0)).expect("test coordinates are finite"),
+            )
+            .expect("test vertex should insert");
+        let simplex = Simplex::try_new_periodic(vec![vertex_key; D + 1], offsets)
+            .expect("lifted vertex identities should be distinct");
+        let simplex_key = tds
+            .insert_simplex_with_mapping(simplex)
+            .expect("periodic simplex should insert");
+
+        let mut neighbors = vec![None; D + 1];
+        for facet_index in mirror_facets {
+            neighbors[facet_index] = Some(simplex_key);
+        }
+        tds.simplex_mut(simplex_key)
+            .expect("inserted simplex should exist")
+            .set_neighbors_from_keys(neighbors)
+            .expect("one neighbor slot per facet");
+
+        (tds, simplex_key)
+    }
+
+    /// Generates periodic neighbor-parity properties in every practical dimension.
+    macro_rules! gen_periodic_neighbor_parity_properties {
+        ($dim:literal, $uniform:path) => {
+            pastey::paste! {
+                proptest! {
+                    #![proptest_config(ProptestConfig::with_cases(64))]
+
+                    /// Common lattice translations and slot permutations preserve coherent parity,
+                    /// while the opposite parity produces the typed orientation failure.
+                    #[test]
+                    fn [<prop_periodic_neighbor_parity_ $dim d>](
+                        shared_offsets in prop::collection::vec(
+                            $uniform(-32_i8..=32_i8),
+                            $dim..=$dim,
+                        ),
+                        translation in $uniform(-32_i8..=32_i8),
+                        priorities in prop::collection::vec(any::<u16>(), $dim..=$dim),
+                    ) {
+                        let coherent = periodic_neighbor_pair::<$dim>(
+                            &shared_offsets,
+                            translation,
+                            &priorities,
+                            true,
+                        );
+                        prop_assert!(coherent.validate_coherent_orientation().is_ok());
+
+                        let incoherent = periodic_neighbor_pair::<$dim>(
+                            &shared_offsets,
+                            translation,
+                            &priorities,
+                            false,
+                        );
+                        let error = incoherent
+                            .validate_coherent_orientation()
+                            .expect_err("even shared-facet parity should be rejected");
+                        prop_assert!(matches!(
+                            &error,
+                            TdsError::OrientationViolation {
+                                observed_odd_permutation: false,
+                                expected_odd_permutation: true,
+                                ..
+                            }
+                        ), "unexpected incoherent-pair error: {error:?}");
+                    }
+                }
+            }
+        };
+    }
+
+    gen_periodic_neighbor_parity_properties!(2, prop::array::uniform2);
+    gen_periodic_neighbor_parity_properties!(3, prop::array::uniform3);
+    gen_periodic_neighbor_parity_properties!(4, prop::array::uniform4);
+    gen_periodic_neighbor_parity_properties!(5, prop::array::uniform5);
 
     #[test]
     fn test_facet_vertex_identities_anchor_uses_lexicographic_key_offset() {
@@ -3140,6 +3321,49 @@ mod tests {
         assert!(tds.validate_coherent_orientation().is_ok());
         assert!(tds.is_coherently_oriented());
         assert!(tds.normalize_coherent_orientation().is_ok());
+    }
+
+    #[test]
+    fn test_orientation_validation_allows_distinct_slot_periodic_self_mirror() {
+        let (tds, simplex_key) = periodic_distinct_slot_self_mirror::<3>(
+            vec![[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]],
+            [0, 3],
+        );
+        let simplex = tds.simplex(simplex_key).unwrap();
+
+        assert_eq!(
+            Tds::<(), (), 3>::orientation_mirror_facet_index(
+                simplex,
+                0,
+                simplex,
+                "distinct-slot periodic self-mirror test",
+            )
+            .unwrap(),
+            3,
+        );
+        assert!(tds.validate_coherent_orientation().is_ok());
+        assert!(tds.is_coherently_oriented());
+    }
+
+    #[test]
+    fn test_orientation_validation_rejects_incoherent_distinct_slot_periodic_self_mirror() {
+        let (tds, simplex_key) =
+            periodic_distinct_slot_self_mirror::<2>(vec![[0, 0], [1, 0], [2, 0]], [0, 2]);
+
+        let error = tds.validate_coherent_orientation().unwrap_err();
+        assert_matches!(
+            error,
+            TdsError::OrientationViolation {
+                simplex1_key,
+                simplex2_key,
+                simplex1_facet_index: 0,
+                simplex2_facet_index: 2,
+                observed_odd_permutation: false,
+                expected_odd_permutation: true,
+                ..
+            } if simplex1_key == simplex_key && simplex2_key == simplex_key
+        );
+        assert!(!tds.is_coherently_oriented());
     }
 
     #[test]

@@ -1362,7 +1362,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
                         }
                     })?;
 
-                    let (mirror_index, _) = Tds::<U, V, D>::orientation_mirror_facet_index(
+                    let mirror_index = Tds::<U, V, D>::orientation_mirror_facet_index(
                         simplex,
                         facet_index,
                         neighbor,

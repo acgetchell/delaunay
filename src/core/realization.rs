@@ -511,7 +511,24 @@ struct RealizedSimplex<const D: usize> {
     uuid: Uuid,
     vertex_keys: SimplexVertexKeyBuffer,
     vertex_uuids: SimplexVertexUuidBuffer,
-    realization: LabeledSimplexRealization<VertexKey, D>,
+    realization: LabeledSimplexRealization<RealizedVertexIdentity<D>, D>,
+}
+
+/// Identifies one canonical vertex in a specific periodic covering-space image.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RealizedVertexIdentity<const D: usize> {
+    key: VertexKey,
+    offset: [i64; D],
+}
+
+impl<const D: usize> RealizedVertexIdentity<D> {
+    /// Moves an identity with its simplex so translated copies do not retain stale shared labels.
+    fn translated(self, shift: &[i32; D]) -> Self {
+        Self {
+            key: self.key,
+            offset: std::array::from_fn(|axis| self.offset[axis] + i64::from(shift[axis])),
+        }
+    }
 }
 
 type PeriodicShiftRangeBuffer = SmallBuffer<(i32, i32), MAX_PRACTICAL_DIMENSION_SIZE>;
@@ -573,17 +590,22 @@ impl<const D: usize> RealizedSimplex<D> {
             coords.push(lifted_coords);
         }
 
-        let realization =
-            LabeledSimplexRealization::try_new(vertices.iter().copied(), coords.iter().copied())
-                .map_err(|source| {
-                    labeled_simplex_error_to_realization_error(
-                        source,
-                        simplex_key,
-                        simplex,
-                        &vertices,
-                        &vertex_uuids,
-                    )
-                })?;
+        let identities = vertices.iter().enumerate().map(|(vertex_index, &key)| {
+            let offset = periodic_offsets.map_or([0_i64; D], |offsets| {
+                std::array::from_fn(|axis| i64::from(offsets[vertex_index][axis]))
+            });
+            RealizedVertexIdentity { key, offset }
+        });
+        let realization = LabeledSimplexRealization::try_new(identities, coords.iter().copied())
+            .map_err(|source| {
+                labeled_simplex_error_to_realization_error(
+                    source,
+                    simplex_key,
+                    simplex,
+                    &vertices,
+                    &vertex_uuids,
+                )
+            })?;
 
         Ok(Self {
             key: simplex_key,
@@ -612,22 +634,21 @@ impl<const D: usize> RealizedSimplex<D> {
         })
     }
 
-    /// Finds a labeled vertex in this realized simplex and validates its point coordinates.
+    /// Finds a lifted vertex identity and validates its point coordinates.
     ///
-    /// The full-facet shortcut uses keys rather than coordinate indices so its
-    /// orientation predicates stay tied to the same vertex identities reported
-    /// in Level 4 diagnostics.
-    fn point_for_key(
+    /// The full-facet shortcut uses lifted identities rather than coordinate
+    /// indices so periodic translations cannot collapse distinct vertex images.
+    fn point_for_identity(
         &self,
-        vertex_key: VertexKey,
+        identity: RealizedVertexIdentity<D>,
     ) -> Result<Point<D>, TriangulationRealizationValidationError> {
         let vertex_index = self
             .realization
             .labels()
             .iter()
-            .position(|candidate| *candidate == vertex_key)
+            .position(|candidate| *candidate == identity)
             .ok_or_else(|| TdsError::VertexNotFound {
-                vertex_key,
+                vertex_key: identity.key,
                 context: format!(
                     "realized simplex {:?} (key {:?}) facet-side validation",
                     self.uuid, self.key,
@@ -1337,20 +1358,22 @@ fn try_validate_full_facet_pair<const D: usize>(
     first: &RealizedSimplex<D>,
     second: &RealizedSimplex<D>,
 ) -> Result<bool, TriangulationRealizationValidationError> {
-    let mut shared = SimplexVertexKeyBuffer::new();
-    let mut first_only = SimplexVertexKeyBuffer::new();
-    let mut second_only = SimplexVertexKeyBuffer::new();
+    let mut shared = SmallBuffer::<RealizedVertexIdentity<D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+    let mut first_only =
+        SmallBuffer::<RealizedVertexIdentity<D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+    let mut second_only =
+        SmallBuffer::<RealizedVertexIdentity<D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
 
-    for &vertex_key in &first.vertex_keys {
-        if second.vertex_keys.contains(&vertex_key) {
-            shared.push(vertex_key);
+    for &identity in first.realization.labels() {
+        if second.realization.labels().contains(&identity) {
+            shared.push(identity);
         } else {
-            first_only.push(vertex_key);
+            first_only.push(identity);
         }
     }
-    for &vertex_key in &second.vertex_keys {
-        if !first.vertex_keys.contains(&vertex_key) {
-            second_only.push(vertex_key);
+    for &identity in second.realization.labels() {
+        if !first.realization.labels().contains(&identity) {
+            second_only.push(identity);
         }
     }
 
@@ -1369,9 +1392,9 @@ fn try_validate_full_facet_pair<const D: usize>(
         ) => Err(shared_facet_same_side_intersection(
             first,
             second,
-            shared,
-            first_only,
-            second_only,
+            realized_vertex_keys(&shared),
+            realized_vertex_keys(&first_only),
+            realized_vertex_keys(&second_only),
         )),
         (Orientation::DEGENERATE, _) => {
             Err(TriangulationRealizationValidationError::DegenerateSimplex {
@@ -1399,14 +1422,14 @@ fn try_validate_full_facet_pair<const D: usize>(
 /// constructing a barycentric intersection system.
 fn orientation_against_shared_facet<const D: usize>(
     simplex: &RealizedSimplex<D>,
-    shared: &SimplexVertexKeyBuffer,
-    opposite: VertexKey,
+    shared: &[RealizedVertexIdentity<D>],
+    opposite: RealizedVertexIdentity<D>,
 ) -> Result<Orientation, TriangulationRealizationValidationError> {
     let mut points = SmallBuffer::<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE>::with_capacity(D + 1);
-    for &vertex_key in shared {
-        points.push(simplex.point_for_key(vertex_key)?);
+    for &identity in shared {
+        points.push(simplex.point_for_identity(identity)?);
     }
-    points.push(simplex.point_for_key(opposite)?);
+    points.push(simplex.point_for_identity(opposite)?);
 
     robust_orientation(&points).map_err(|source| {
         TriangulationRealizationValidationError::PredicateFailed {
@@ -1465,6 +1488,9 @@ fn validate_periodic_translates<const D: usize>(
     if axis == D {
         let translated = translated_simplex(second, periods, shift)?;
         if bounding_boxes_overlap(first, &translated) {
+            if try_validate_full_facet_pair(first, &translated)? {
+                return Ok(());
+            }
             validate_simplex_pair_intersection(first, &translated)?;
         }
         return Ok(());
@@ -1545,10 +1571,17 @@ fn translated_simplex<const D: usize>(
     periods: &[f64; D],
     shift: &[i32; D],
 ) -> Result<RealizedSimplex<D>, TriangulationRealizationValidationError> {
-    let realization = simplex
+    let translated = simplex
         .realization
         .try_translated(periods, shift)
         .map_err(|source| labeled_simplex_error_to_realized_simplex_error(source, simplex))?;
+    let labels = translated
+        .labels()
+        .iter()
+        .map(|identity| identity.translated(shift));
+    let realization =
+        LabeledSimplexRealization::try_new(labels, translated.coordinates().iter().copied())
+            .map_err(|source| labeled_simplex_error_to_realized_simplex_error(source, simplex))?;
     Ok(RealizedSimplex {
         key: simplex.key,
         uuid: simplex.uuid,
@@ -1649,11 +1682,14 @@ fn validate_simplex_pair_intersection<const D: usize>(
             },
         ),
         Err(SimplexIntersectionFailure::IntersectionOutsideSharedFace { witness, .. }) => {
-            let shared_vertex_uuids = first.vertex_uuids_for_keys(&witness.shared);
+            let shared_vertices = realized_vertex_keys(&witness.shared);
+            let first_only_witness_vertices = realized_vertex_keys(&witness.first_only_witness);
+            let second_only_witness_vertices = realized_vertex_keys(&witness.second_only_witness);
+            let shared_vertex_uuids = first.vertex_uuids_for_keys(&shared_vertices);
             let first_only_witness_vertex_uuids =
-                first.vertex_uuids_for_keys(&witness.first_only_witness);
+                first.vertex_uuids_for_keys(&first_only_witness_vertices);
             let second_only_witness_vertex_uuids =
-                second.vertex_uuids_for_keys(&witness.second_only_witness);
+                second.vertex_uuids_for_keys(&second_only_witness_vertices);
             Err(
                 TriangulationRealizationValidationError::SimplexIntersectionOutsideSharedFace {
                     first_simplex_key: first.key,
@@ -1663,17 +1699,24 @@ fn validate_simplex_pair_intersection<const D: usize>(
                     detail: Box::new(TriangulationRealizationIntersectionDetail {
                         first_simplex: first.detail(),
                         second_simplex: second.detail(),
-                        shared_vertices: witness.shared,
+                        shared_vertices,
                         shared_vertex_uuids,
-                        first_only_witness_vertices: witness.first_only_witness,
+                        first_only_witness_vertices,
                         first_only_witness_vertex_uuids,
-                        second_only_witness_vertices: witness.second_only_witness,
+                        second_only_witness_vertices,
                         second_only_witness_vertex_uuids,
                     }),
                 },
             )
         }
     }
+}
+
+/// Projects lifted identities back to canonical keys for public diagnostics.
+fn realized_vertex_keys<const D: usize>(
+    identities: &[RealizedVertexIdentity<D>],
+) -> SimplexVertexKeyBuffer {
+    identities.iter().map(|identity| identity.key).collect()
 }
 
 /// Axis-aligned bounding box for one realized simplex, tagged with its index
@@ -2357,6 +2400,43 @@ mod tests {
         );
 
         assert!(tri.is_valid_realization().is_ok());
+    }
+
+    #[test]
+    fn translated_simplex_updates_lifted_vertex_identities() {
+        let coords = [[0.9, 0.1], [0.1, 0.1], [0.9, 0.3]];
+        let (mut tds, simplex_keys) =
+            tds_from_vertices_and_simplices_with_keys(&coords, &[vec![0, 1, 2]]);
+        tds.simplex_mut(simplex_keys[0])
+            .unwrap()
+            .set_periodic_vertex_offsets(vec![[0, 0], [1, 0], [0, 0]])
+            .unwrap();
+        let tri = tri_from_tds_with_topology(
+            tds,
+            GlobalTopology::try_toroidal([1.0, 1.0], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap(),
+        );
+        let realized = tri
+            .collect_realized_simplices()
+            .expect("periodic simplex should realize")
+            .pop()
+            .expect("fixture should contain one simplex");
+        let shift = [-1_i32, 2_i32];
+        let translated = translated_simplex(&realized, &[1.0, 1.0], &shift)
+            .expect("finite periodic translation should succeed");
+
+        for (before, after) in realized
+            .realization
+            .labels()
+            .iter()
+            .zip(translated.realization.labels())
+        {
+            assert_eq!(before.key, after.key);
+            assert_eq!(
+                after.offset,
+                std::array::from_fn(|axis| before.offset[axis] + i64::from(shift[axis])),
+            );
+        }
     }
 
     #[test]

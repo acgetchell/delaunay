@@ -1924,7 +1924,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                                     "neighbor of simplex {simplex_key:?} during orientation normalization"
                                 ),
                             })?;
-                    let (mirror_idx, _) = Self::orientation_mirror_facet_index(
+                    let mirror_idx = Self::orientation_mirror_facet_index(
                         simplex,
                         facet_idx,
                         neighbor_simplex,
@@ -2020,7 +2020,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                             ),
                         })?;
 
-                let (mirror_idx, _) = Self::orientation_mirror_facet_index(
+                let mirror_idx = Self::orientation_mirror_facet_index(
                     simplex,
                     facet_idx,
                     neighbor_simplex,

@@ -28,6 +28,7 @@ use crate::core::operations::{
     InsertionOutcome, InsertionResult, InsertionStatistics, InsertionTelemetry,
     InsertionTelemetryMode, SuspicionFlags,
 };
+use crate::core::realization::TriangulationRealizationValidationError;
 use crate::core::rollback::TriangulationRollbackTransaction;
 #[cfg(debug_assertions)]
 use crate::core::simplex::Simplex;
@@ -489,6 +490,37 @@ where
         bulk_index: Option<usize>,
         telemetry_mode: InsertionTelemetryMode,
     ) -> Result<DetailedInsertionResult, InsertionError> {
+        self.insert_with_statistics_seeded_indexed_detailed_with_retry_policy(
+            vertex,
+            conflict_simplices,
+            hint,
+            perturbation_seed,
+            index,
+            bulk_index,
+            telemetry_mode,
+            false,
+        )
+    }
+
+    /// Runs detailed insertion with a scaffolding-specific degeneracy policy.
+    ///
+    /// Periodic image construction may retry a zero-volume realization while
+    /// ordinary Euclidean callers retain the stricter public retry contract.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Internal scaffolding insertion extends the detailed retry context"
+    )]
+    pub(crate) fn insert_with_statistics_seeded_indexed_detailed_with_retry_policy(
+        &mut self,
+        vertex: Vertex<U, D>,
+        conflict_simplices: Option<&SimplexKeyBuffer>,
+        hint: Option<SimplexKey>,
+        perturbation_seed: u64,
+        index: Option<&mut HashGridIndex<D>>,
+        bulk_index: Option<usize>,
+        telemetry_mode: InsertionTelemetryMode,
+        retry_degenerate_realization: bool,
+    ) -> Result<DetailedInsertionResult, InsertionError> {
         self.insert_transactional_detailed(
             vertex,
             conflict_simplices,
@@ -498,6 +530,7 @@ where
             index,
             bulk_index,
             telemetry_mode,
+            retry_degenerate_realization,
         )
     }
 
@@ -521,6 +554,7 @@ where
         mut index: Option<&mut HashGridIndex<D>>,
         bulk_index: Option<usize>,
         telemetry_mode: InsertionTelemetryMode,
+        retry_degenerate_realization: bool,
     ) -> Result<DetailedInsertionResult, InsertionError> {
         let mut stats = InsertionStatistics::default();
         let mut telemetry = InsertionTelemetry::default();
@@ -717,7 +751,15 @@ where
                     }
 
                     // Check if this is a retryable error (geometric degeneracy)
-                    let is_retryable = e.is_retryable();
+                    let is_retryable = e.is_retryable()
+                        || (retry_degenerate_realization
+                            && matches!(
+                                e,
+                                InsertionError::RealizationValidationFailed {
+                                    source:
+                                        TriangulationRealizationValidationError::DegenerateSimplex { .. },
+                                }
+                            ));
 
                     // Emit the conflict summary after rollback so the trace captures the
                     // restored manifold state that the next retry will start from.
@@ -2978,6 +3020,7 @@ mod tests {
             index,
             bulk_index,
             InsertionTelemetryMode::CountsOnly,
+            false,
         )?;
         Ok((detail.outcome, detail.stats))
     }

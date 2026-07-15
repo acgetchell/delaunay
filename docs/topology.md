@@ -264,8 +264,9 @@ the codebase.
 
 ### Toroidal topology support
 
-Toroidal (periodic) triangulations are **fully implemented and functional**. You can
-construct toroidal triangulations using `DelaunayTriangulationBuilder`:
+Toroidal workflows use two explicit `DelaunayTriangulationBuilder` modes:
+canonicalized coordinate wrapping and true periodic quotient construction. The
+periodic path is release-validated in 2D and for compact 3D inputs:
 
 ```rust
 use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};

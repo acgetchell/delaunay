@@ -58,11 +58,10 @@ The useful updates ported in this pass are:
 - The local `cargo-nextest` pin and CI installers now read version pins from
   `justfile`, with `cargo-nextest` on 0.9.140 and `cargo-llvm-cov` on 0.8.7,
   which is still shared across the repositories.
-- CI command-runner, Markdown, and spelling tool pins now track the newer
-  current reviewed versions:
-  `just` 1.56.0, `rumdl` 0.2.32, and `typos-cli` 1.48.0. The `rumdl` bump keeps
-  Delaunay on the sibling repository's current Markdown linter release after
-  local `just check` exposed the older 0.2.10 pin as stale.
+- CI command-runner, Markdown, YAML formatting, and spelling tool pins now
+  track the current reviewed versions: `just` 1.56.0, `rumdl` 0.2.34,
+  `dprint` 0.55.2, and `typos-cli` 1.48.0. The linter and formatter pins keep
+  local setup and CI on the same reviewed releases.
 - uv-managed Python support-tool pins now use exact reviewed versions for the
   shared dev tools: `ruff` 0.15.21, `semgrep` 1.169.0, and `ty` 0.0.59.
   Semgrep is intentionally ahead of the older sibling baseline so its transitive

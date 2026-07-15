@@ -157,9 +157,9 @@ impl VertexIncidenceIndex {
     ///
     /// # Errors
     ///
-    /// Returns a typed error if a vertex is missing from the index, if
-    /// `vertices` contains duplicate vertex keys, or if this simplex is already
-    /// recorded for any listed vertex.
+    /// Returns a typed error if a vertex is missing from the index or if this
+    /// simplex is already recorded for any listed vertex. Repeated vertex keys
+    /// contribute one canonical incidence, as required by periodic lifted cells.
     pub(super) fn insert_simplex(
         &mut self,
         simplex_key: SimplexKey,
@@ -169,6 +169,9 @@ impl VertexIncidenceIndex {
             SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::with_capacity(vertices.len());
 
         for &vertex_key in vertices {
+            if inserted_vertices.contains(&vertex_key) {
+                continue;
+            }
             let Some(incident_simplices) = self.map.get_mut(&vertex_key) else {
                 self.rollback_inserted_simplex(simplex_key, &inserted_vertices);
                 return Err(TdsError::VertexNotFound {
@@ -207,9 +210,9 @@ impl VertexIncidenceIndex {
     ///
     /// # Errors
     ///
-    /// Returns a typed error if a vertex is missing from the index, if
-    /// `vertices` contains duplicate vertex keys, or if this simplex is not
-    /// currently recorded for any listed vertex. If an error occurs after some
+    /// Returns a typed error if a vertex is missing from the index or if this
+    /// simplex is not currently recorded for any listed vertex. Repeated vertex
+    /// keys remove one canonical incidence. If an error occurs after some
     /// vertex incidence entries have been removed, those entries are rolled back
     /// before the error is returned.
     pub(super) fn remove_simplex(
@@ -217,7 +220,6 @@ impl VertexIncidenceIndex {
         simplex_key: SimplexKey,
         vertices: &[VertexKey],
     ) -> Result<SimplexIncidenceRemoval, TdsError> {
-        Self::validate_simplex_vertices_are_unique(simplex_key, vertices)?;
         let mut removal = SimplexIncidenceRemoval {
             simplex_key,
             removed_vertices:
@@ -227,6 +229,13 @@ impl VertexIncidenceIndex {
         };
 
         for &vertex_key in vertices {
+            if removal
+                .removed_vertices
+                .iter()
+                .any(|removed| removed.vertex_key == vertex_key)
+            {
+                continue;
+            }
             let Some(incident_simplices) = self.map.get_mut(&vertex_key) else {
                 self.rollback_removed_simplex(&removal);
                 return Err(TdsError::VertexNotFound {
@@ -257,28 +266,6 @@ impl VertexIncidenceIndex {
         }
 
         Ok(removal)
-    }
-
-    /// Verifies that a simplex vertex list does not contain duplicate keys.
-    ///
-    /// Incidence mutation is defined over the simplex's vertex set. Rejecting
-    /// duplicates here prevents a malformed caller from removing or inserting
-    /// the same `(vertex, simplex)` relation twice during one operation.
-    fn validate_simplex_vertices_are_unique(
-        simplex_key: SimplexKey,
-        vertices: &[VertexKey],
-    ) -> Result<(), TdsError> {
-        for (index, &vertex_key) in vertices.iter().enumerate() {
-            if vertices[..index].contains(&vertex_key) {
-                return Err(TdsError::InconsistentDataStructure {
-                    message: format!(
-                        "Simplex {simplex_key:?} has duplicate vertex {vertex_key:?} while updating vertex incidence index"
-                    ),
-                });
-            }
-        }
-
-        Ok(())
     }
 
     /// Removes an already-inserted simplex from partially updated vertices.
@@ -380,18 +367,21 @@ mod tests {
     }
 
     #[test]
-    fn insert_simplex_rolls_back_duplicate_vertex_entry() {
+    fn insert_simplex_records_repeated_vertex_key_once() {
         let mut index = VertexIncidenceIndex::default();
         let vertex = vertex_key(1);
         let simplex = simplex_key(1);
         index.insert_vertex(vertex).unwrap();
 
-        let err = index
+        index
             .insert_simplex(simplex, &[vertex, vertex])
-            .unwrap_err();
+            .expect("periodic lifted slots share one canonical incidence");
 
-        assert_matches!(err, TdsError::InconsistentDataStructure { .. });
-        assert_eq!(index.number_of_simplices(vertex), 0);
+        assert_eq!(index.number_of_simplices(vertex), 1);
+        assert_eq!(
+            index.simplex_keys(vertex).collect::<Vec<_>>(),
+            vec![simplex]
+        );
     }
 
     #[test]
@@ -435,22 +425,19 @@ mod tests {
     }
 
     #[test]
-    fn remove_simplex_rejects_duplicate_vertices_before_mutating_incidence() {
+    fn remove_simplex_removes_repeated_vertex_key_once() {
         let mut index = VertexIncidenceIndex::default();
         let vertex = vertex_key(1);
         let simplex = simplex_key(1);
         index.insert_vertex(vertex).unwrap();
         index.insert_simplex(simplex, &[vertex]).unwrap();
 
-        let err = index
+        let removal = index
             .remove_simplex(simplex, &[vertex, vertex])
-            .unwrap_err();
+            .expect("periodic lifted slots remove one canonical incidence");
 
-        assert_matches!(err, TdsError::InconsistentDataStructure { .. });
-        assert_eq!(
-            index.simplex_keys(vertex).collect::<Vec<_>>(),
-            vec![simplex]
-        );
+        assert_eq!(removal.removed_vertices.len(), 1);
+        assert_eq!(index.number_of_simplices(vertex), 0);
     }
 
     #[test]
