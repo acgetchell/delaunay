@@ -37,10 +37,11 @@ deterministic degeneracy handling, explicit topology validation, and bistellar f
 ## 📐 Introduction
 
 Rust crate providing D-dimensional [Delaunay triangulations] and [convex hulls][Convex hulls]
-(2D through 5D explicitly tested) constructed with a [PL-manifold] (default) or
-[pseudomanifold][Pseudomanifold] guarantee on finite point sets with Euclidean and toroidal global
-topologies. Uses [exact predicates] and [Simulation of Simplicity] for robustness and degeneracy
-handling, and [Hilbert curve]s for deterministic insertion ordering and efficient spatial indexing.
+constructed with a [PL-manifold] (default) or [pseudomanifold][Pseudomanifold] guarantee on finite
+point sets. Euclidean construction is explicitly tested in 2D through 5D, periodic toroidal
+construction is validated in 2D and for compact 3D inputs, and bounded spherical S²/S³ construction
+is available as a prototype. Uses [exact predicates] and [Simulation of Simplicity] for robustness and
+degeneracy handling, and [Hilbert curve]s for deterministic insertion ordering and efficient spatial indexing.
 Provides an explicit [5-level validation hierarchy][Validation Guide] on individual elements,
 combinatorial consistency, intrinsic PL topology, valid realization in the active
 model, and geometric predicates such as Delaunay. Allows for the complete set of [Pachner moves] up to D=5

@@ -5,8 +5,6 @@ This document describes the current coherent-orientation machinery in the
 [`invariants.md`](invariants.md), which gives the broader mathematical rationale
 for the library's topological and geometric invariants.
 
-Keep these documents separate:
-
 - `invariants.md` explains the whole invariant model: simplicial complexes,
   PL-manifold checks, Delaunay validation, and convergence rationale.
 - `ORIENTATION_SPEC.md` documents one invariant in detail: how simplex orderings,
@@ -18,15 +16,15 @@ The crate maintains three related but distinct orientation properties.
 
 ### Intrinsic PL Orientability
 
-Level 3 intrinsic orientability asks whether ordinary shared-facet parity
+Level 3 intrinsic orientability asks whether shared-facet parity
 constraints admit any coherent assignment, independently of the orderings
 currently stored in the TDS. For pure 2D and 3D complexes,
 `Triangulation::orientation_witness()` returns an opaque `OrientationWitness`
 when such an assignment exists and reports
 `TriangulationValidationError::NonOrientable` for a parity obstruction.
 PL-manifold Level 3 validation includes this check in those dimensions.
-Periodic quotient facet parity and self-identifications are intentionally
-separate from this intrinsic ordinary-facet certificate.
+Periodic quotient facets contribute the same parity constraints after lifted
+`(vertex, offset)` identities are normalized by a common translation.
 
 ### Coherent Combinatorial Orientation
 
@@ -37,7 +35,7 @@ neighbor slots; it does not require coordinate predicates.
 Implementation entry points:
 
 - [`Tds::is_coherently_oriented`](../src/core/tds/validation.rs) returns `true` when all
-  non-periodic adjacent simplex pairs satisfy the facet-parity convention.
+  ordinary and periodic adjacent simplex pairs satisfy the facet-parity convention.
 - `Tds::validate_coherent_orientation()` is called by `Tds::is_valid()` and by
   `Tds::validation_report()` as `InvariantKind::CoherentOrientation`.
 - `TdsError::OrientationViolation` reports the first incoherent adjacent pair,
@@ -46,11 +44,12 @@ Implementation entry points:
   each connected component and swaps vertex slots `0 <-> 1` for simplices that must
   flip.
 
-Periodic image-point triangulations are special: periodic-lifted adjacencies do
-not have a single canonical structural orientation independent of the chosen
-lattice representative. The TDS orientation validator still checks reciprocal
-neighbor wiring, but skips combinatorial facet-parity checks when either simplex in
-the adjacent pair carries periodic offsets.
+Periodic image-point triangulations compare lifted facet identities after
+subtracting a deterministic common offset. This makes parity independent of
+lattice representative. A self-neighbor resolves to the other matching facet
+slot when one exists; a single implicit self-mirror represents adjacency to a
+translated copy of the same simplex and contributes a satisfied equality
+constraint. Ambiguous or contradictory quotient constraints fail explicitly.
 
 ### Positive Geometric Simplex Orientation
 

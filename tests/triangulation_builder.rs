@@ -439,6 +439,18 @@ fn toroidal_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
         .collect()
 }
 
+fn compact_toroidal_vertices_3d() -> Vec<Vertex<(), 3>> {
+    vec![
+        vertex!([0.2_f64, 0.3, 0.4]).unwrap(),
+        vertex!([0.8, 0.1, 0.2]).unwrap(),
+        vertex!([0.5, 0.7, 0.6]).unwrap(),
+        vertex!([0.1, 0.9, 0.3]).unwrap(),
+        vertex!([0.6, 0.4, 0.8]).unwrap(),
+        vertex!([0.3, 0.5, 0.9]).unwrap(),
+        vertex!([0.9, 0.2, 0.6]).unwrap(),
+    ]
+}
+
 fn build_toroidal_triangulation<const D: usize>()
 -> DelaunayTriangulation<RobustKernel<f64>, (), (), D> {
     let vertices = toroidal_vertices::<D>();
@@ -567,13 +579,13 @@ fn test_builder_build_with_statistics_periodic_toroidal_records_telemetry() {
 }
 
 macro_rules! gen_toroidal_validation_test {
-    ($dim:literal, $label:ident, $run_level4:expr $(, #[$attr:meta])?) => {
+    ($dim:literal, $label:ident, $run_full_validation:expr $(, #[$attr:meta])?) => {
         pastey::paste! {
             /// `toroidal` validation for this dimension.
             ///
             /// Periodic-aware ridge and vertex link validation correctly handles reused
-            /// vertex keys via lifted vertex identity. When `$run_level4` is true, this
-            /// also exercises Level 4 periodic lifted Delaunay predicates.
+            /// vertex keys via lifted vertex identity. When `$run_full_validation` is true,
+            /// this also exercises cumulative Levels 1-5 periodic validation.
             #[test]
             $(#[$attr])?
             fn [<test_builder_toroidal_validate_ $label _ $dim d>]() {
@@ -586,12 +598,12 @@ macro_rules! gen_toroidal_validation_test {
                     topology_result.err()
                 );
 
-                if $run_level4 {
-                    let level4_result = dt.validate();
+                if $run_full_validation {
+                    let full_result = dt.validate();
                     assert!(
-                        level4_result.is_ok(),
-                        "Level 1-4 validate() should pass for toroidal: {:?}",
-                        level4_result.err()
+                        full_result.is_ok(),
+                        "Levels 1-5 validate() should pass for toroidal: {:?}",
+                        full_result.err()
                     );
                 }
             }
@@ -599,42 +611,107 @@ macro_rules! gen_toroidal_validation_test {
     };
 }
 
-gen_toroidal_validation_test!(2, levels_1_to_4, true);
+gen_toroidal_validation_test!(2, levels_1_to_5, true);
+
+/// Compact 3D construction preserves canonical identity and validates topology and Delaunay predicates.
 #[test]
-#[cfg_attr(
-    debug_assertions,
-    ignore = "release-mode guardrail; debug/coverage quotient search is intentionally skipped"
-)]
-fn test_builder_toroidal_3d_fails_fast_until_scalable_quotient() {
-    let vertices = vec![
-        vertex!([0.2_f64, 0.3, 0.4]).unwrap(),
-        vertex!([0.8, 0.1, 0.2]).unwrap(),
-        vertex!([0.5, 0.7, 0.6]).unwrap(),
-        vertex!([0.1, 0.9, 0.3]).unwrap(),
-        vertex!([0.6, 0.4, 0.8]).unwrap(),
-        vertex!([0.3, 0.5, 0.9]).unwrap(),
-        vertex!([0.9, 0.2, 0.6]).unwrap(),
-    ];
+fn test_builder_toroidal_3d_compact_quotient_validates_topology_and_delaunay() {
+    let vertices = compact_toroidal_vertices_3d();
     let kernel = RobustKernel::new();
-    let err = DelaunayTriangulationBuilder::new(&vertices)
+    let dt = DelaunayTriangulationBuilder::new(&vertices)
         .try_toroidal([1.0_f64; 3])
         .unwrap()
         .build_with_kernel(&kernel)
-        .expect_err("compact periodic 3D quotient remains pending scalable selection");
+        .expect("compact periodic 3D quotient should succeed");
 
-    match err {
-        DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::PeriodicQuotientSelectionIncompleteCoverage {
-                dimension,
-                covered_vertex_count,
-                canonical_vertex_count,
-            },
-        ) => {
-            assert_eq!(dimension, 3);
-            assert!(covered_vertex_count < canonical_vertex_count);
+    assert_eq!(dt.number_of_vertices(), vertices.len());
+    assert!(dt.number_of_simplices() > 0);
+    assert!(dt.global_topology().is_periodic());
+    assert_eq!(
+        dt.boundary_facets()
+            .expect("periodic boundary query should succeed")
+            .count(),
+        0,
+    );
+    assert!(dt.is_valid_structure().is_ok());
+    assert!(dt.as_triangulation().validate().is_ok());
+    assert!(dt.is_valid_delaunay().is_ok());
+
+    for input_vertex in &vertices {
+        let output_vertex = dt
+            .vertices()
+            .find_map(|(_, vertex)| (vertex.uuid() == input_vertex.uuid()).then_some(vertex))
+            .expect("every canonical UUID should survive quotient construction");
+        for (output, input) in output_vertex
+            .point()
+            .coords()
+            .iter()
+            .zip(input_vertex.point().coords())
+        {
+            assert!(
+                (output - input).abs() <= 5.0e-10,
+                "canonical symbolic perturbation must remain tightly bounded"
+            );
         }
-        other => panic!("expected 3D periodic quotient coverage guardrail, got {other:?}"),
     }
+
+    assert!(dt.simplices().all(|(_, simplex)| {
+        simplex
+            .periodic_vertex_offsets()
+            .is_some_and(|offsets| offsets.len() == 4)
+    }));
+    assert!(dt.simplices().any(|(_, simplex)| {
+        simplex
+            .periodic_vertex_offsets()
+            .is_some_and(|offsets| offsets.iter().flatten().any(|component| *component != 0))
+    }));
+}
+
+/// Compact 3D construction remains valid after input reversal and an orientation-reversing map.
+#[test]
+fn test_builder_toroidal_3d_compact_quotient_handles_adversarial_transforms() {
+    let mut reversed = compact_toroidal_vertices_3d();
+    reversed.reverse();
+    let reflected = compact_toroidal_vertices_3d()
+        .iter()
+        .map(|vertex| {
+            let [x, y, z]: [f64; 3] = vertex.into();
+            vertex!([1.0 - x, y, z]).unwrap()
+        })
+        .collect::<Vec<_>>();
+    let kernel = RobustKernel::new();
+
+    for vertices in [&reversed, &reflected] {
+        let dt = DelaunayTriangulationBuilder::new(vertices)
+            .try_toroidal([1.0_f64; 3])
+            .unwrap()
+            .build_with_kernel(&kernel)
+            .expect("transformed compact periodic 3D quotient should succeed");
+
+        assert_eq!(dt.number_of_vertices(), vertices.len());
+        assert!(dt.number_of_simplices() > 0);
+        assert_eq!(count_boundary_facets(&dt), 0);
+        assert!(dt.is_valid_structure().is_ok());
+        assert!(dt.as_triangulation().validate().is_ok());
+        assert!(dt.is_valid_delaunay().is_ok());
+        #[cfg(feature = "slow-tests")]
+        assert!(dt.validate().is_ok());
+    }
+}
+
+/// Exhaustive periodic all-translates intersection validation belongs to the slow bucket.
+#[cfg(feature = "slow-tests")]
+#[test]
+fn test_builder_toroidal_3d_compact_quotient_validates_levels_1_to_5() {
+    let vertices = compact_toroidal_vertices_3d();
+    let kernel = RobustKernel::new();
+    let dt = DelaunayTriangulationBuilder::new(&vertices)
+        .try_toroidal([1.0_f64; 3])
+        .unwrap()
+        .build_with_kernel(&kernel)
+        .expect("compact periodic 3D quotient should succeed");
+
+    assert!(dt.validate().is_ok());
 }
 
 macro_rules! gen_toroidal_high_dim_guardrail_test {
@@ -1420,7 +1497,7 @@ fn test_explicit_validate_delaunay_mesh() {
 
     assert!(
         dt.validate().is_ok(),
-        "Full Levels 1-4 validation should pass for Delaunay-compatible explicit mesh"
+        "Full Levels 1-5 validation should pass for Delaunay-compatible explicit mesh"
     );
 }
 

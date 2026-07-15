@@ -371,6 +371,43 @@ mod tests {
     use std::thread;
     use std::time::Instant;
 
+    /// Verifies that every axis rejects the full `i8` relative-offset span.
+    fn assert_periodic_facet_key_extreme_delta_rejected<const D: usize>() {
+        assert!(D >= 2);
+        for axis in 0..D {
+            let mut lifted_vertices = vec![(VertexKey::null(), [0_i8; D]); D + 1];
+            lifted_vertices[0].1[axis] = i8::MIN;
+            lifted_vertices[1].1[axis] = i8::MAX;
+
+            let error = periodic_facet_key_from_lifted_vertices::<D>(&lifted_vertices, D)
+                .expect_err("full i8 delta cannot fit in normalized periodic facet key");
+            assert_matches!(
+                error,
+                PeriodicFacetKeyDerivationError::RelativeOffsetOutOfRange {
+                    axis: error_axis,
+                    ..
+                } if error_axis == axis
+            );
+        }
+    }
+
+    /// Generates extreme-offset checks in every practical dimension.
+    macro_rules! gen_periodic_facet_key_extreme_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<periodic_facet_key_rejects_extreme_delta_on_every_axis_ $dim d>]() {
+                    assert_periodic_facet_key_extreme_delta_rejected::<$dim>();
+                }
+            }
+        };
+    }
+
+    gen_periodic_facet_key_extreme_tests!(2);
+    gen_periodic_facet_key_extreme_tests!(3);
+    gen_periodic_facet_key_extreme_tests!(4);
+    gen_periodic_facet_key_extreme_tests!(5);
+
     #[test]
     fn periodic_facet_key_rejects_invalid_lifted_simplex_arity() {
         let lifted_vertices = vec![
@@ -387,19 +424,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn periodic_facet_key_rejects_relative_offset_out_of_range() {
-        let lifted_vertices = vec![
-            (VertexKey::null(), [-128_i8, 0_i8]),
-            (VertexKey::null(), [0_i8, 0_i8]),
-            (VertexKey::null(), [127_i8, 0_i8]),
-        ];
-        let err = periodic_facet_key_from_lifted_vertices::<2>(&lifted_vertices, 1).unwrap_err();
-        assert_matches!(
-            err,
-            PeriodicFacetKeyDerivationError::RelativeOffsetOutOfRange { axis: 0, .. }
-        );
-    }
     #[test]
     fn periodic_facet_key_happy_path_translation_invariance_and_distinctness() {
         let lifted_base = vec![

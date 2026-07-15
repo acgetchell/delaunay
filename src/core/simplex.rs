@@ -63,7 +63,7 @@ use super::{
     util::{UuidValidationError, make_uuid, validate_uuid},
 };
 use crate::core::collections::{
-    FastHashMap, NeighborBuffer, PeriodicOffsetBuffer, SimplexVertexKeyBuffer,
+    FastHashMap, NeighborBuffer, PeriodicOffsetBuffer, SimplexVertexBuffer, SimplexVertexKeyBuffer,
     SimplexVertexUuidBuffer, fast_hash_map_with_capacity,
 };
 use crate::geometry::matrix::StackMatrixDispatchError;
@@ -113,8 +113,11 @@ pub enum SimplexValidationError {
         #[from]
         source: UuidValidationError,
     },
-    /// The simplex contains duplicate vertices.
-    #[error("Duplicate vertices: simplex contains non-unique vertices which is not allowed")]
+    /// The simplex contains duplicate vertex identities.
+    ///
+    /// Ordinary identity is the vertex key. Periodic identity is the aligned
+    /// `(vertex key, lattice offset)` pair.
+    #[error("Duplicate vertices: simplex contains non-unique vertex identities")]
     DuplicateVertices,
     /// The simplex has insufficient vertices to form a proper D-simplex.
     #[error(
@@ -634,6 +637,63 @@ impl<V, const D: usize> Simplex<V, D> {
             neighbors: None,
             data,
             periodic_vertex_offsets: None,
+        })
+    }
+
+    /// Creates a periodic simplex whose lifted `(vertex key, offset)` identities are distinct.
+    ///
+    /// Periodic quotient cells may contain two lattice images of the same canonical
+    /// vertex. This constructor keeps ordinary simplices strict while admitting
+    /// repeated keys only when aligned offsets distinguish the lifted vertices.
+    pub(crate) fn try_new_periodic(
+        vertices: impl Into<SimplexVertexKeyBuffer>,
+        offsets: impl Into<PeriodicOffsetBuffer<D>>,
+    ) -> Result<Self, SimplexValidationError> {
+        Self::try_new_periodic_with_uuid(vertices, offsets, make_uuid(), None)
+    }
+
+    /// Creates a periodic simplex with stable UUID and optional user data.
+    ///
+    /// This is the snapshot-hydration counterpart to [`Self::try_new_periodic`].
+    /// Repeated canonical vertex keys are valid only when their aligned lattice
+    /// offsets produce distinct lifted vertex identities.
+    pub(crate) fn try_new_periodic_with_uuid(
+        vertices: impl Into<SimplexVertexKeyBuffer>,
+        offsets: impl Into<PeriodicOffsetBuffer<D>>,
+        uuid: Uuid,
+        data: Option<V>,
+    ) -> Result<Self, SimplexValidationError> {
+        validate_uuid(&uuid)?;
+        let vertices = vertices.into();
+        let offsets = offsets.into();
+        let actual = vertices.len();
+        if actual != D + 1 {
+            return Err(SimplexValidationError::InsufficientVertices {
+                actual,
+                expected: D + 1,
+                dimension: D,
+            });
+        }
+        if offsets.len() != vertices.len() {
+            return Err(SimplexValidationError::PeriodicOffsetLengthMismatch {
+                expected: vertices.len(),
+                found: offsets.len(),
+            });
+        }
+        for index in 0..vertices.len() {
+            if (0..index).any(|earlier| {
+                vertices[earlier] == vertices[index] && offsets[earlier] == offsets[index]
+            }) {
+                return Err(SimplexValidationError::DuplicateVertices);
+            }
+        }
+
+        Ok(Self {
+            vertices,
+            uuid,
+            neighbors: None,
+            data,
+            periodic_vertex_offsets: Some(offsets),
         })
     }
 
@@ -1472,7 +1532,8 @@ impl<V, const D: usize> Simplex<V, D> {
     ///
     /// A Result indicating whether the [Simplex] is valid. Returns `Ok(())` if valid,
     /// or a `SimplexValidationError` if invalid. The validation checks that:
-    /// - All stored vertex keys are distinct from one another
+    /// - Ordinary vertex keys are distinct, while periodic lifted
+    ///   `(vertex key, offset)` identities are distinct
     /// - The simplex UUID is valid and not nil
     /// - The simplex has exactly D+1 vertices (forming a proper D-simplex)
     /// - If neighbors are provided, they must have exactly D+1 entries (positional semantics)
@@ -1484,7 +1545,7 @@ impl<V, const D: usize> Simplex<V, D> {
     /// # Errors
     ///
     /// Returns `SimplexValidationError::InvalidUuid` if the simplex's UUID is nil,
-    /// `SimplexValidationError::DuplicateVertices` if the simplex contains duplicate vertices,
+    /// `SimplexValidationError::DuplicateVertices` if the simplex contains duplicate vertex identities,
     /// `SimplexValidationError::InsufficientVertices` if the simplex doesn't have exactly D+1 vertices,
     /// `SimplexValidationError::InvalidNeighborsLength` if neighbors are provided but don't have D+1 entries, or
     /// `SimplexValidationError::UnassignedNeighborSlot` if an assigned neighbor buffer still has an unassigned slot.
@@ -1524,9 +1585,26 @@ impl<V, const D: usize> Simplex<V, D> {
             });
         }
 
-        // D is intentionally small in this crate; a fixed-size scan avoids a hash allocation.
-        for (index, &vkey) in self.vertices.iter().enumerate() {
-            if self.vertices[..index].contains(&vkey) {
+        if let Some(offsets) = &self.periodic_vertex_offsets
+            && offsets.len() != self.vertices.len()
+        {
+            return Err(SimplexValidationError::PeriodicOffsetLengthMismatch {
+                expected: self.vertices.len(),
+                found: offsets.len(),
+            });
+        }
+
+        // Ordinary simplices require unique keys. Periodic simplices require
+        // unique lifted `(key, offset)` identities instead.
+        for index in 0..self.vertices.len() {
+            let is_duplicate = (0..index).any(|earlier| {
+                self.vertices[earlier] == self.vertices[index]
+                    && self
+                        .periodic_vertex_offsets
+                        .as_ref()
+                        .is_none_or(|offsets| offsets[earlier] == offsets[index])
+            });
+            if is_duplicate {
                 return Err(SimplexValidationError::DuplicateVertices);
             }
         }
@@ -1582,12 +1660,31 @@ impl<V, const D: usize> Simplex<V, D> {
             });
         }
 
-        // D is intentionally small in this crate; a fixed-size scan avoids a hash allocation.
+        let periodic_offsets_valid = self.periodic_vertex_offsets.as_ref().is_none_or(|offsets| {
+            if offsets.len() == self.vertices.len() {
+                true
+            } else {
+                violations.push(SimplexValidationError::PeriodicOffsetLengthMismatch {
+                    expected: self.vertices.len(),
+                    found: offsets.len(),
+                });
+                false
+            }
+        });
+
         let mut duplicate_vertices = false;
-        for (index, &vkey) in self.vertices.iter().enumerate() {
-            if self.vertices[..index].contains(&vkey) {
-                duplicate_vertices = true;
-                break;
+        if periodic_offsets_valid {
+            for index in 0..self.vertices.len() {
+                if (0..index).any(|earlier| {
+                    self.vertices[earlier] == self.vertices[index]
+                        && self
+                            .periodic_vertex_offsets
+                            .as_ref()
+                            .is_none_or(|offsets| offsets[earlier] == offsets[index])
+                }) {
+                    duplicate_vertices = true;
+                    break;
+                }
             }
         }
         if duplicate_vertices {
@@ -1740,40 +1837,65 @@ impl<V, const D: usize> Simplex<V, D> {
 // STANDARD TRAIT IMPLEMENTATIONS
 // =============================================================================
 
-/// Equality of simplices based on sorted vertex keys.
+/// Canonical identity used by equality, ordering, and hashing.
+///
+/// Periodic simplices include each vertex's aligned lattice offset. Missing
+/// offsets normalize to zero, matching TDS duplicate validation, while the
+/// optional length records malformed crate-internal states.
+type SimplexIdentitySortKey<const D: usize> =
+    (SimplexVertexBuffer<(VertexKey, [i8; D])>, Option<usize>);
+
+/// Builds the canonical trait identity for one simplex.
+fn canonical_simplex_identity<V, const D: usize>(
+    simplex: &Simplex<V, D>,
+) -> SimplexIdentitySortKey<D> {
+    let periodic_offsets = simplex.periodic_vertex_offsets.as_deref();
+    let mut identities: SimplexVertexBuffer<(VertexKey, [i8; D])> = simplex
+        .vertices
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(index, key)| {
+            let offset = periodic_offsets
+                .and_then(|offsets| offsets.get(index))
+                .copied()
+                .unwrap_or([0_i8; D]);
+            (key, offset)
+        })
+        .collect();
+    identities.sort_unstable();
+
+    let malformed_offset_len = periodic_offsets
+        .and_then(|offsets| (offsets.len() != simplex.vertices.len()).then_some(offsets.len()));
+    (identities, malformed_offset_len)
+}
+
+/// Equality of simplices based on their canonical vertex identities.
 ///
 /// Two simplices are equal if they contain the same set of vertex keys,
-/// regardless of order. This is fast (O(D log D)) and doesn't require TDS access.
+/// regardless of order. Periodic simplices additionally compare the aligned
+/// `(vertex key, lattice offset)` identities used by TDS duplicate validation;
+/// absent offsets normalize to zero.
+/// This is fast (O(D log D)) and doesn't require TDS access.
 ///
 /// **Note**: This compares simplices within the same TDS context. For cross-TDS
 /// comparison by coordinates, use [`Simplex::eq_by_vertices`].
 impl<V, const D: usize> PartialEq for Simplex<V, D> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        // Fast comparison using vertex keys (just u64 comparisons)
-        // Use SimplexVertexKeyBuffer for stack allocation (D+1 keys fit on stack for D ≤ 7)
-        let mut self_keys: SimplexVertexKeyBuffer = self.vertices.iter().copied().collect();
-        let mut other_keys: SimplexVertexKeyBuffer = other.vertices.iter().copied().collect();
-        self_keys.sort_unstable();
-        other_keys.sort_unstable();
-        self_keys == other_keys
+        canonical_simplex_identity(self) == canonical_simplex_identity(other)
     }
 }
 
-/// Order of simplices based on lexicographic order of sorted vertex keys.
+/// Order of simplices based on their canonical vertex identities.
 ///
-/// This provides a consistent ordering for simplices based on their vertex keys.
-/// Fast (O(D log D)) and doesn't require TDS access.
+/// Periodic simplices include aligned lattice offsets after the sorted vertex
+/// keys, keeping ordering consistent with equality. Fast (O(D log D)) and
+/// doesn't require TDS access.
 impl<V, const D: usize> PartialOrd for Simplex<V, D> {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        // Fast comparison using vertex keys
-        // Use SimplexVertexKeyBuffer for stack allocation (D+1 keys fit on stack for D ≤ 7)
-        let mut self_keys: SimplexVertexKeyBuffer = self.vertices.iter().copied().collect();
-        let mut other_keys: SimplexVertexKeyBuffer = other.vertices.iter().copied().collect();
-        self_keys.sort_unstable();
-        other_keys.sort_unstable();
-        self_keys.partial_cmp(&other_keys)
+        canonical_simplex_identity(self).partial_cmp(&canonical_simplex_identity(other))
     }
 }
 
@@ -1781,32 +1903,24 @@ impl<V, const D: usize> PartialOrd for Simplex<V, D> {
 // HASHING AND EQUALITY IMPLEMENTATIONS
 // =============================================================================
 
-/// Eq implementation for Simplex based on sorted vertex keys.
+/// Eq implementation for Simplex based on canonical vertex identities.
 ///
-/// Maintains the Eq contract with `PartialEq`: simplices with the same vertex keys
-/// are considered equal.
+/// Maintains the Eq contract with `PartialEq`: nonzero periodic offsets
+/// participate, while absent offsets match explicit zero offsets.
 impl<V, const D: usize> Eq for Simplex<V, D> {}
 
-/// Custom Hash implementation for Simplex using sorted vertex keys.
+/// Custom Hash implementation for Simplex using canonical vertex identities.
 ///
-/// This ensures that simplices with the same vertex keys have the same hash,
-/// maintaining the Eq/Hash contract: if a == b, then hash(a) == hash(b).
+/// This maintains the Eq/Hash contract: if `a == b`, then
+/// `hash(a) == hash(b)`, including periodic lattice offsets.
 ///
-/// **Performance**: Fast O(D log D) hashing using just vertex keys (u64).
+/// **Performance**: Fast O(D log D) hashing using stack-backed identity buffers.
 ///
 /// **Note**: UUID, neighbors, and data are excluded from hashing to match
-/// the `PartialEq` implementation which only compares vertex keys.
+/// the `PartialEq` implementation.
 impl<V, const D: usize> Hash for Simplex<V, D> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Hash sorted vertex keys for consistent ordering
-        // Use SimplexVertexKeyBuffer for stack allocation (D+1 keys fit on stack for D ≤ 7)
-        let mut sorted_keys: SimplexVertexKeyBuffer = self.vertices.iter().copied().collect();
-        sorted_keys.sort_unstable();
-        for key in sorted_keys {
-            key.hash(state);
-        }
-        // Intentionally exclude UUID, neighbors, and data to maintain
-        // consistency with PartialEq implementation which only compares vertex keys
+        canonical_simplex_identity(self).hash(state);
     }
 }
 
@@ -1829,6 +1943,7 @@ mod tests {
     use crate::prelude::DelaunayTriangulation;
     use crate::vertex;
     use approx::assert_relative_eq;
+    use proptest::prelude::*;
     use std::assert_matches;
     use std::iter::once;
     use std::{
@@ -1857,6 +1972,112 @@ mod tests {
             periodic_vertex_offsets: None,
         }
     }
+
+    /// Creates distinct synthetic vertex keys for tests.
+    fn synthetic_vertex_keys(count: usize) -> Vec<VertexKey> {
+        (0..count)
+            .map(|index| {
+                let key_value = u64::try_from(index + 1).expect("test key index fits in u64");
+                VertexKey::from(slotmap::KeyData::from_ffi(key_value))
+            })
+            .collect()
+    }
+
+    /// Creates a simplex with distinct synthetic keys and aligned periodic offsets.
+    fn simplex_with_periodic_offsets<const D: usize>(offsets: &[[i8; D]]) -> Simplex<(), D> {
+        assert_eq!(offsets.len(), D + 1);
+        let vertex_keys = synthetic_vertex_keys(D + 1);
+        let mut simplex = Simplex::try_new(vertex_keys).expect("synthetic keys are distinct");
+        simplex
+            .set_periodic_vertex_offsets(offsets.to_vec())
+            .expect("one offset per simplex vertex");
+        simplex
+    }
+
+    /// Generates offset-alignment and malformed-length tests for each practical dimension.
+    macro_rules! gen_periodic_offset_slot_tests {
+        ($dim:literal, $uniform:path) => {
+            pastey::paste! {
+                proptest! {
+                    #![proptest_config(ProptestConfig::with_cases(64))]
+
+                    /// Arbitrary slot-swap sequences keep periodic offsets attached to their keys.
+                    #[test]
+                    fn [<prop_periodic_offsets_follow_slot_swaps_ $dim d>](
+                        offsets in prop::collection::vec(
+                            $uniform(any::<i8>()),
+                            ($dim + 1)..=($dim + 1),
+                        ),
+                        swaps in prop::collection::vec(
+                            (0_usize..($dim + 1), 0_usize..($dim + 1)),
+                            0..=32,
+                        ),
+                    ) {
+                        let mut simplex = simplex_with_periodic_offsets::<$dim>(&offsets);
+                        let mut expected: Vec<_> = simplex
+                            .vertices()
+                            .iter()
+                            .copied()
+                            .zip(offsets.iter().copied())
+                            .collect();
+
+                        for (first, second) in swaps {
+                            simplex.swap_vertex_slots(first, second);
+                            expected.swap(first, second);
+                        }
+
+                        let actual: Vec<_> = simplex
+                            .vertices()
+                            .iter()
+                            .copied()
+                            .zip(
+                                simplex
+                                    .periodic_vertex_offsets()
+                                    .expect("offsets remain present")
+                                    .iter()
+                                    .copied(),
+                            )
+                            .collect();
+                        prop_assert_eq!(actual, expected);
+                        prop_assert!(simplex.is_valid().is_ok());
+                    }
+                }
+
+                #[test]
+                fn [<test_periodic_offset_length_failure_is_atomic_ $dim d>]() {
+                    let valid_offsets = vec![[0_i8; $dim]; $dim + 1];
+                    let mut simplex = simplex_with_periodic_offsets::<$dim>(&valid_offsets);
+                    let before = simplex
+                        .periodic_vertex_offsets()
+                        .expect("fixture offsets are present")
+                        .to_vec();
+
+                    for found in [0_usize, $dim, $dim + 2] {
+                        let error = simplex
+                            .set_periodic_vertex_offsets(vec![[1_i8; $dim]; found])
+                            .expect_err("misaligned periodic offsets should be rejected");
+                        assert_eq!(
+                            error,
+                            SimplexValidationError::PeriodicOffsetLengthMismatch {
+                                expected: $dim + 1,
+                                found,
+                            }
+                        );
+                        assert_eq!(
+                            simplex.periodic_vertex_offsets(),
+                            Some(before.as_slice()),
+                            "failed setter must preserve the prior aligned offsets",
+                        );
+                    }
+                }
+            }
+        };
+    }
+
+    gen_periodic_offset_slot_tests!(2, prop::array::uniform2);
+    gen_periodic_offset_slot_tests!(3, prop::array::uniform3);
+    gen_periodic_offset_slot_tests!(4, prop::array::uniform4);
+    gen_periodic_offset_slot_tests!(5, prop::array::uniform5);
 
     // =============================================================================
     // DIMENSION-PARAMETERIZED TEST MACRO
@@ -1976,6 +2197,53 @@ mod tests {
 
         assert_eq!(simplex_a.data.as_ref().unwrap().0, "left");
         assert_eq!(simplex_b.data.as_ref().unwrap().0, "right");
+    }
+
+    #[test]
+    fn periodic_equality_ordering_and_hash_include_offsets() {
+        let keys = synthetic_vertex_keys(3);
+        let non_periodic = Simplex::<(), 2>::try_new(keys.clone()).unwrap();
+        let zero_offset_periodic =
+            Simplex::<(), 2>::try_new_periodic(keys.clone(), vec![[0, 0]; 3]).unwrap();
+        let simplex =
+            Simplex::<(), 2>::try_new_periodic(keys.clone(), vec![[0, 0], [1, 0], [0, 1]]).unwrap();
+        let permuted = Simplex::<(), 2>::try_new_periodic(
+            vec![keys[2], keys[0], keys[1]],
+            vec![[0, 1], [0, 0], [1, 0]],
+        )
+        .unwrap();
+        let different_offset =
+            Simplex::<(), 2>::try_new_periodic(keys, vec![[0, 0], [2, 0], [0, 1]]).unwrap();
+
+        assert_eq!(simplex, permuted);
+        assert_eq!(simplex.partial_cmp(&permuted), Some(cmp::Ordering::Equal));
+        assert_ne!(simplex, different_offset);
+        assert_ne!(
+            simplex.partial_cmp(&different_offset),
+            Some(cmp::Ordering::Equal)
+        );
+        assert_eq!(non_periodic, zero_offset_periodic);
+        assert_eq!(
+            non_periodic.partial_cmp(&zero_offset_periodic),
+            Some(cmp::Ordering::Equal)
+        );
+
+        let mut non_periodic_hash = DefaultHasher::new();
+        let mut zero_offset_periodic_hash = DefaultHasher::new();
+        let mut simplex_hash = DefaultHasher::new();
+        let mut permuted_hash = DefaultHasher::new();
+        let mut different_offset_hash = DefaultHasher::new();
+        non_periodic.hash(&mut non_periodic_hash);
+        zero_offset_periodic.hash(&mut zero_offset_periodic_hash);
+        simplex.hash(&mut simplex_hash);
+        permuted.hash(&mut permuted_hash);
+        different_offset.hash(&mut different_offset_hash);
+        assert_eq!(
+            non_periodic_hash.finish(),
+            zero_offset_periodic_hash.finish()
+        );
+        assert_eq!(simplex_hash.finish(), permuted_hash.finish());
+        assert_ne!(simplex_hash.finish(), different_offset_hash.finish());
     }
 
     // Generate tests for dimensions 2D through 5D
@@ -3615,6 +3883,70 @@ mod tests {
             Simplex::<(), 3>::try_new_with_data(vec![vkeys[0], vkeys[1], vkeys[2], vkeys[0]], None)
                 .unwrap_err();
         assert_matches!(err, SimplexValidationError::DuplicateVertices);
+    }
+
+    #[test]
+    fn periodic_simplex_accepts_repeated_key_with_distinct_lifted_offsets() {
+        let keys = synthetic_vertex_keys(3);
+        let simplex = Simplex::<(), 3>::try_new_periodic(
+            vec![keys[0], keys[1], keys[2], keys[0]],
+            vec![[0, 0, 0], [0, 0, 0], [0, 0, 0], [1, 0, 0]],
+        )
+        .expect("distinct lifted identities should form a periodic simplex");
+
+        assert!(simplex.is_valid().is_ok());
+    }
+
+    #[test]
+    fn periodic_simplex_rejects_repeated_lifted_identity() {
+        let keys = synthetic_vertex_keys(3);
+        let error = Simplex::<(), 3>::try_new_periodic(
+            vec![keys[0], keys[1], keys[2], keys[0]],
+            vec![[1, 0, 0], [0, 0, 0], [0, 0, 0], [1, 0, 0]],
+        )
+        .expect_err("an identical key-offset pair must remain invalid");
+
+        assert_eq!(error, SimplexValidationError::DuplicateVertices);
+    }
+
+    #[test]
+    fn periodic_simplex_rejects_misaligned_shapes_and_reports_corruption() {
+        let keys = synthetic_vertex_keys(4);
+        assert_eq!(
+            Simplex::<(), 3>::try_new_periodic(keys[..3].to_vec(), vec![[0; 3]; 3]).unwrap_err(),
+            SimplexValidationError::InsufficientVertices {
+                actual: 3,
+                expected: 4,
+                dimension: 3,
+            }
+        );
+        assert_eq!(
+            Simplex::<(), 3>::try_new_periodic(keys.clone(), vec![[0; 3]; 3]).unwrap_err(),
+            SimplexValidationError::PeriodicOffsetLengthMismatch {
+                expected: 4,
+                found: 3,
+            }
+        );
+
+        let mut misaligned =
+            Simplex::<(), 3>::try_new_periodic(keys.clone(), vec![[0; 3]; 4]).unwrap();
+        misaligned.periodic_vertex_offsets.as_mut().unwrap().pop();
+        let mismatch = SimplexValidationError::PeriodicOffsetLengthMismatch {
+            expected: 4,
+            found: 3,
+        };
+        assert_eq!(misaligned.is_valid(), Err(mismatch.clone()));
+        assert_eq!(
+            misaligned.simplex_report().unwrap_err().violations,
+            vec![mismatch]
+        );
+
+        let mut duplicate = Simplex::<(), 3>::try_new_periodic(keys, vec![[0; 3]; 4]).unwrap();
+        duplicate.vertices[3] = duplicate.vertices[0];
+        assert_eq!(
+            duplicate.simplex_report().unwrap_err().violations,
+            vec![SimplexValidationError::DuplicateVertices]
+        );
     }
 
     #[test]

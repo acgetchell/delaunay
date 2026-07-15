@@ -5832,7 +5832,6 @@ mod tests {
             }
             .is_retryable()
         );
-
         // InconsistentDataStructure is now non-retryable (structural bug, not geometry).
         assert!(
             !InsertionError::TopologyValidation(TdsError::InconsistentDataStructure {

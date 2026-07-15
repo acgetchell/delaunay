@@ -264,8 +264,9 @@ the codebase.
 
 ### Toroidal topology support
 
-Toroidal (periodic) triangulations are **fully implemented and functional**. You can
-construct toroidal triangulations using `DelaunayTriangulationBuilder`:
+Toroidal workflows use two explicit `DelaunayTriangulationBuilder` modes:
+canonicalized coordinate wrapping and true periodic quotient construction. The
+periodic path is release-validated in 2D and for compact 3D inputs:
 
 ```rust
 use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
@@ -290,7 +291,10 @@ opposite boundary facets. For a true periodic quotient, use
 and compact 3D fixtures. 4D/5D periodic quotients fail fast pending scalable
 construction work in issue #416.
 
-For more examples, see the toroidal section in the main `README.md`.
+For examples, see
+[Builder API: toroidal construction modes](workflows.md#builder-api-toroidal-construction-modes)
+and
+[`DelaunayTriangulationBuilder::try_toroidal`](https://docs.rs/delaunay/latest/delaunay/builder/struct.DelaunayTriangulationBuilder.html#method.try_toroidal).
 
 ### Future work
 
