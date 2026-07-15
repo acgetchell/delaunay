@@ -42,6 +42,7 @@
 //!   - No duplicate simplices (same vertex sets)
 //!   - Facet sharing invariant (≤2 simplices per facet)
 //!   - Neighbor consistency (mutual relationships)
+//!   - Stored simplex orderings induce opposite orientations on ordinary shared facets
 //! - **Cost**: O(N×D²) where N = simplices, D = dimension
 //!
 //! Use [`Tds::validate()`](crate::prelude::tds::Tds::validate) for cumulative
@@ -55,6 +56,7 @@
 //!   - **Topology-aware boundary manifoldness**: true boundary facets are closed ("no boundary of boundary")
 //!   - Connectedness (single connected component in the simplex neighbor graph)
 //!   - No isolated vertices (every vertex must be incident to at least one simplex)
+//!   - Intrinsic orientability for 2D/3D PL-manifold guarantees
 //!   - Euler characteristic (χ = V - E + F - C matches expected topology)
 //! - **Cost**: O(N×D²) dominated by simplex counting
 //!
@@ -108,12 +110,12 @@ use crate::core::algorithms::incremental_insertion::{
     InsertionError, InsertionTopologyValidationContext,
 };
 use crate::core::collections::{
-    FacetToSimplicesMap, FastHashSet, SimplexKeyBuffer, SimplexKeySet, VertexKeyBuffer,
-    fast_hash_set_with_capacity,
+    FacetToSimplicesMap, FastHashMap, FastHashSet, SimplexKeyBuffer, SimplexKeySet,
+    VertexKeyBuffer, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
 };
 use crate::core::operations::{InsertionTelemetry, InsertionTelemetryMode, SuspicionFlags};
 use crate::core::tds::{
-    InvariantError, InvariantKind, InvariantViolation, SimplexKey, TdsError,
+    InvariantError, InvariantKind, InvariantViolation, SimplexKey, Tds, TdsError,
     TriangulationValidationReport, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
@@ -136,6 +138,7 @@ use crate::topology::manifold::{
     validate_vertex_links_from_validated_facet_map,
 };
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyError, TopologyKind};
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use uuid::Uuid;
@@ -312,6 +315,17 @@ pub enum TriangulationValidationError {
         interior_vertex: bool,
     },
 
+    /// The intrinsic simplex-orientation constraints contain a parity obstruction.
+    #[error(
+        "Intrinsic complex is non-orientable: the shared facet between simplices {simplex1_key:?} and {simplex2_key:?} closes with contradictory orientation parity"
+    )]
+    NonOrientable {
+        /// First simplex on the contradictory adjacency.
+        simplex1_key: SimplexKey,
+        /// Second simplex on the contradictory adjacency.
+        simplex2_key: SimplexKey,
+    },
+
     /// Euler characteristic does not match the expected value for the classified topology.
     #[error(
         "Euler characteristic mismatch: computed χ={computed}, expected χ={expected} for {classification:?}"
@@ -366,6 +380,72 @@ pub enum TriangulationValidationError {
         /// Total number of simplices in the triangulation.
         simplex_count: usize,
     },
+}
+
+/// A coherent intrinsic orientation of a pure simplicial complex.
+///
+/// Each entry records whether the corresponding simplex ordering must be
+/// reversed to obtain one coherent orientation. The representation is opaque
+/// so callers can retain the certificate without depending on the traversal
+/// or storage strategy used to construct it.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::construction::{
+///     DelaunayResult, DelaunayTriangulationBuilder, vertex,
+/// };
+///
+/// # fn main() -> DelaunayResult<()> {
+/// let vertices = [
+///     vertex![0.0, 0.0]?,
+///     vertex![1.0, 0.0]?,
+///     vertex![0.0, 1.0]?,
+/// ];
+/// let triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
+/// let witness = triangulation.as_triangulation().orientation_witness()?;
+///
+/// assert_eq!(witness.len(), 1);
+/// assert!(!witness.is_empty());
+/// for (simplex_key, reversed) in witness.iter() {
+///     assert_eq!(witness.is_reversed(simplex_key), Some(reversed));
+/// }
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OrientationWitness {
+    assignments: Vec<(SimplexKey, bool)>,
+}
+
+impl OrientationWitness {
+    /// Returns the number of oriented maximal simplices in the witness.
+    #[inline]
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.assignments.len()
+    }
+
+    /// Returns whether the witness contains no maximal simplices.
+    #[inline]
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.assignments.is_empty()
+    }
+
+    /// Returns whether `simplex_key` must be reversed relative to its stored ordering.
+    #[must_use]
+    pub fn is_reversed(&self, simplex_key: SimplexKey) -> Option<bool> {
+        self.assignments
+            .iter()
+            .find_map(|&(key, reversed)| (key == simplex_key).then_some(reversed))
+    }
+
+    /// Iterates over simplex keys and their required reversal states.
+    #[must_use]
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (SimplexKey, bool)> + '_ {
+        self.assignments.iter().copied()
+    }
 }
 
 impl TryFrom<ManifoldError> for TriangulationValidationError {
@@ -1181,6 +1261,17 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             )?;
         }
 
+        // 2e. Intrinsic orientability is independent of whether the orderings
+        // currently stored in the TDS happen to be coherent. PL-manifold
+        // guarantees certify this additional property in supported dimensions.
+        if matches!(D, 2 | 3)
+            && self
+                .topology_guarantee
+                .requires_vertex_links_at_completion()
+        {
+            self.orientation_witness()?;
+        }
+
         // 3. Vertex incidence (manifold invariant): every vertex must be incident to at least one simplex.
         self.validate_no_isolated_vertices()?;
 
@@ -1204,6 +1295,118 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         }
 
         Ok(())
+    }
+
+    /// Computes a coherent intrinsic orientation witness for a pure 2D or 3D complex.
+    ///
+    /// The result is independent of the currently selected orientation of each
+    /// stored simplex: locally reversing any subset merely changes the returned
+    /// reversal assignments. Ordinary shared facets contribute parity
+    /// constraints; periodic quotient identifications are intentionally deferred
+    /// to the quotient-orientability contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TriangulationValidationError::NonOrientable`] when the dual-graph
+    /// parity constraints are contradictory. Structural lookup or adjacency
+    /// failures retain their Level 2 [`TdsError`] provenance through
+    /// [`InvariantError::Tds`].
+    pub fn orientation_witness(&self) -> Result<OrientationWitness, InvariantError> {
+        let mut assignments: FastHashMap<SimplexKey, bool> =
+            fast_hash_map_with_capacity(self.tds.number_of_simplices());
+
+        for (root_key, _) in self.tds.simplices() {
+            if assignments.contains_key(&root_key) {
+                continue;
+            }
+
+            assignments.insert(root_key, false);
+            let mut queue = VecDeque::from([root_key]);
+
+            while let Some(simplex_key) = queue.pop_front() {
+                let reversed = assignments.get(&simplex_key).copied().ok_or_else(|| {
+                    TdsError::InconsistentDataStructure {
+                        message: format!(
+                            "Missing orientation assignment for simplex {simplex_key:?}"
+                        ),
+                    }
+                })?;
+                let simplex =
+                    self.tds
+                        .simplex(simplex_key)
+                        .ok_or_else(|| TdsError::SimplexNotFound {
+                            simplex_key,
+                            context: "intrinsic orientability traversal".to_string(),
+                        })?;
+                let Some(neighbors) = simplex.neighbor_keys() else {
+                    continue;
+                };
+
+                for (facet_index, neighbor_key) in neighbors.enumerate() {
+                    let Some(neighbor_key) = neighbor_key else {
+                        continue;
+                    };
+                    let neighbor = self.tds.simplex(neighbor_key).ok_or_else(|| {
+                        TdsError::SimplexNotFound {
+                            simplex_key: neighbor_key,
+                            context: "neighbor during intrinsic orientability traversal"
+                                .to_string(),
+                        }
+                    })?;
+
+                    // Quotient-facet parity and self-identifications are owned by #521.
+                    if neighbor_key == simplex_key
+                        || simplex.periodic_vertex_offsets().is_some()
+                        || neighbor.periodic_vertex_offsets().is_some()
+                    {
+                        continue;
+                    }
+
+                    let (mirror_index, uses_periodic_offsets) =
+                        Tds::<U, V, D>::orientation_mirror_facet_index(
+                            simplex,
+                            facet_index,
+                            neighbor,
+                            "intrinsic orientability",
+                        )?;
+                    if uses_periodic_offsets {
+                        continue;
+                    }
+                    let (currently_coherent, _, _) = Tds::<U, V, D>::facet_permutation_parity(
+                        simplex,
+                        facet_index,
+                        neighbor,
+                        mirror_index,
+                    )?;
+                    let required_neighbor = reversed ^ !currently_coherent;
+
+                    if let Some(existing) = assignments.get(&neighbor_key) {
+                        if *existing != required_neighbor {
+                            return Err(TriangulationValidationError::NonOrientable {
+                                simplex1_key: simplex_key,
+                                simplex2_key: neighbor_key,
+                            }
+                            .into());
+                        }
+                    } else {
+                        assignments.insert(neighbor_key, required_neighbor);
+                        queue.push_back(neighbor_key);
+                    }
+                }
+            }
+        }
+
+        let assignments = self
+            .tds
+            .simplices()
+            .filter_map(|(key, _)| {
+                assignments
+                    .get(&key)
+                    .copied()
+                    .map(|reversed| (key, reversed))
+            })
+            .collect();
+        Ok(OrientationWitness { assignments })
     }
 
     /// Validates that the triangulation's simplex neighbor graph is a single connected component.
@@ -2316,6 +2519,125 @@ mod tests {
         tds
     }
 
+    fn build_mobius_strip_tds_2d() -> Tds<(), (), 2> {
+        let mut tds = Tds::empty();
+        let vertices: Vec<_> = [
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [2.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 1.0],
+            [2.0, 1.0],
+        ]
+        .into_iter()
+        .map(|coords| tds.insert_vertex_with_mapping(test_vertex(coords)).unwrap())
+        .collect();
+
+        for [a, b, c] in [
+            [0, 2, 1],
+            [2, 3, 1],
+            [2, 4, 3],
+            [4, 5, 3],
+            [4, 1, 5],
+            [1, 0, 5],
+        ] {
+            tds.insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![vertices[a], vertices[b], vertices[c]], None)
+                    .unwrap(),
+            )
+            .unwrap();
+        }
+        tds.assign_neighbors().unwrap();
+        tds
+    }
+
+    fn build_two_triangle_disk_tds_2d() -> Tds<(), (), 2> {
+        let mut tds = Tds::empty();
+        let vertices: Vec<_> = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]
+            .into_iter()
+            .map(|coords| tds.insert_vertex_with_mapping(test_vertex(coords)).unwrap())
+            .collect();
+        for indices in [[0, 1, 2], [1, 3, 2]] {
+            tds.insert_simplex_with_mapping(
+                Simplex::try_new_with_data(
+                    indices
+                        .into_iter()
+                        .map(|index| vertices[index])
+                        .collect::<Vec<_>>(),
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        tds.assign_neighbors().unwrap();
+        tds
+    }
+
+    fn build_coned_mobius_strip_tds_3d() -> Tds<(), (), 3> {
+        let mut tds = Tds::empty();
+        let vertices: Vec<_> = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [2.0, 1.0, 0.0],
+        ]
+        .into_iter()
+        .map(|coords| tds.insert_vertex_with_mapping(test_vertex(coords)).unwrap())
+        .collect();
+        let apex = tds
+            .insert_vertex_with_mapping(test_vertex([0.5, 0.5, 1.0]))
+            .unwrap();
+
+        for [a, b, c] in [
+            [0, 2, 1],
+            [2, 3, 1],
+            [2, 4, 3],
+            [4, 5, 3],
+            [4, 1, 5],
+            [1, 0, 5],
+        ] {
+            tds.insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![vertices[a], vertices[b], vertices[c], apex], None)
+                    .unwrap(),
+            )
+            .unwrap();
+        }
+        tds.assign_neighbors().unwrap();
+        tds
+    }
+
+    fn build_two_tetrahedra_ball_tds_3d() -> Tds<(), (), 3> {
+        let mut tds = Tds::empty();
+        let vertices: Vec<_> = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, -1.0],
+        ]
+        .into_iter()
+        .map(|coords| tds.insert_vertex_with_mapping(test_vertex(coords)).unwrap())
+        .collect();
+        for indices in [[0, 1, 2, 3], [0, 2, 1, 4]] {
+            tds.insert_simplex_with_mapping(
+                Simplex::try_new_with_data(
+                    indices
+                        .into_iter()
+                        .map(|index| vertices[index])
+                        .collect::<Vec<_>>(),
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        tds.assign_neighbors().unwrap();
+        tds
+    }
+
     fn build_three_triangles_sharing_edge_tds_2d() -> Tds<(), (), 2> {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
@@ -3341,6 +3663,77 @@ mod tests {
             Triangulation::new_empty(FastKernel::new());
 
         assert!(tri.is_valid_topology().is_ok());
+    }
+
+    #[test]
+    fn orientation_witness_distinguishes_local_ordering_from_intrinsic_orientability_2d() {
+        let non_orientable = build_mobius_strip_tds_2d();
+        assert_matches!(
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(
+                FastKernel::new(),
+                non_orientable
+            )
+            .orientation_witness(),
+            Err(InvariantError::Triangulation(
+                TriangulationValidationError::NonOrientable { .. }
+            ))
+        );
+        let mut non_orientable = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(
+            FastKernel::new(),
+            build_mobius_strip_tds_2d(),
+        );
+        non_orientable.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        assert_matches!(
+            non_orientable.is_valid_topology(),
+            Err(InvariantError::Triangulation(
+                TriangulationValidationError::NonOrientable { .. }
+            ))
+        );
+
+        // A local reversal violates Level 2 while the intrinsic witness remains available.
+        let mut tds = build_two_triangle_disk_tds_2d();
+        tds.normalize_coherent_orientation().unwrap();
+        let key = tds.simplices().next().unwrap().0;
+        tds.simplex_mut(key).unwrap().swap_vertex_slots(0, 1);
+        assert!(tds.is_valid().is_err());
+
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        let witness = tri.orientation_witness().unwrap();
+        assert_eq!(witness.len(), tri.tds.number_of_simplices());
+        assert!(witness.iter().any(|(_, reversed)| reversed));
+
+        // Restore the local reversal, then reverse every simplex. Both global
+        // orientation choices satisfy the same Level 2 coherence contract.
+        tri.tds.simplex_mut(key).unwrap().swap_vertex_slots(0, 1);
+        let keys: Vec<_> = tri.tds.simplices().map(|(key, _)| key).collect();
+        for key in keys {
+            tri.tds.simplex_mut(key).unwrap().swap_vertex_slots(0, 1);
+        }
+        assert!(tri.tds.is_valid().is_ok());
+        assert!(tri.orientation_witness().is_ok());
+    }
+
+    #[test]
+    fn orientation_witness_detects_three_dimensional_parity_obstruction() {
+        let orientable = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(
+            FastKernel::new(),
+            build_two_tetrahedra_ball_tds_3d(),
+        );
+        let witness = orientable.orientation_witness().unwrap();
+        assert_eq!(witness.len(), 2);
+
+        let tri = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(
+            FastKernel::new(),
+            build_coned_mobius_strip_tds_3d(),
+        );
+
+        assert_matches!(
+            tri.orientation_witness(),
+            Err(InvariantError::Triangulation(
+                TriangulationValidationError::NonOrientable { .. }
+            ))
+        );
     }
 
     #[test]

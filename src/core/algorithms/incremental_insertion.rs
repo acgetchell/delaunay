@@ -2136,6 +2136,7 @@ impl InsertionError {
                 ..
             }
             | TriangulationValidationError::RidgeNotFound { .. }
+            | TriangulationValidationError::NonOrientable { .. }
             | TriangulationValidationError::EulerCharacteristicMismatch { .. }
             | TriangulationValidationError::Disconnected { .. } => false,
         }

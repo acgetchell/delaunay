@@ -433,7 +433,7 @@ This project is licensed under the [BSD 3-Clause License](https://github.com/acg
 [Pachner moves]: https://en.wikipedia.org/wiki/Pachner_move
 [PL-manifold]: https://en.wikipedia.org/wiki/Piecewise_linear_manifold
 [Pseudomanifold]: https://en.wikipedia.org/wiki/Pseudomanifold
-[readme-hero]: docs/assets/readme/delaunay_spherical_readme.png
+[readme-hero]: https://raw.githubusercontent.com/acgetchell/delaunay/main/docs/assets/readme/delaunay_spherical_readme.png
 [Secondary maps]: docs/workflows.md#builder-api-auxiliary-vertex-and-simplex-data
 [Simulation of Simplicity]: docs/numerical_robustness_guide.md#simulation-of-simplicity-sos
 [Validation Guide]: docs/validation.md

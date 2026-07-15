@@ -1047,6 +1047,8 @@ pub enum TriangulationValidationErrorKind {
     RidgeLinkNotManifold,
     /// A vertex link failed PL-manifold validation.
     VertexLinkNotManifold,
+    /// The intrinsic simplex-orientation constraints are contradictory.
+    NonOrientable,
     /// Euler characteristic did not match the expected classification.
     EulerCharacteristicMismatch,
     /// A vertex was not incident to any simplex.
@@ -1077,6 +1079,7 @@ impl From<&TriangulationValidationError> for TriangulationValidationErrorKind {
             TriangulationValidationError::VertexLinkNotManifold { .. } => {
                 Self::VertexLinkNotManifold
             }
+            TriangulationValidationError::NonOrientable { .. } => Self::NonOrientable,
             TriangulationValidationError::EulerCharacteristicMismatch { .. } => {
                 Self::EulerCharacteristicMismatch
             }
