@@ -700,7 +700,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     }
 
     /// Resolves the mirror facet for orientation validation without forcing periodic parity checks.
-    pub(super) fn orientation_mirror_facet_index(
+    pub(crate) fn orientation_mirror_facet_index(
         simplex: &Simplex<V, D>,
         facet_idx: usize,
         neighbor_simplex: &Simplex<V, D>,
@@ -821,7 +821,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     /// Returns `(currently_coherent, observed_odd_permutation, expected_odd_permutation)`.
     /// The expected odd parity follows the coherent boundary-orientation convention:
     /// odd is expected exactly when `(facet_idx + mirror_idx)` is even.
-    pub(super) fn facet_permutation_parity(
+    pub(crate) fn facet_permutation_parity(
         simplex: &Simplex<V, D>,
         facet_idx: usize,
         neighbor_simplex: &Simplex<V, D>,

@@ -507,14 +507,27 @@ certification.
    construction completion, or when `TopologyGuarantee::PLManifoldStrict` checks every insertion):
    For every vertex `v`, the link `Lk(v)` must be a (D−1)-sphere (interior vertex) or (D−1)-ball (boundary vertex).
    Use `dt.validate_vertex_links()` for an explicit owner-level check.
-5. **Connectedness**: All simplices form a single connected component in the simplex neighbor graph
+5. **Intrinsic orientability** (for the 2D/3D PL-manifold guarantees):
+   Ordinary shared-facet parity constraints must admit a coherent assignment.
+   Use `Triangulation::orientation_witness()` to obtain the opaque
+   simplex-reversal certificate directly. A parity obstruction is reported as
+   the typed Level 3 `TriangulationValidationError::NonOrientable` diagnostic.
+6. **Connectedness**: All simplices form a single connected component in the simplex neighbor graph
    - Detected via a graph traversal over neighbor pointers (O(N·D))
-6. **No isolated vertices**: Every vertex must be incident to at least one simplex
-7. **Euler Characteristic**: χ matches expected topology (when an expectation is defined)
+7. **No isolated vertices**: Every vertex must be incident to at least one simplex
+8. **Euler Characteristic**: χ matches expected topology (when an expectation is defined)
    - Empty: χ = 0
    - Single simplex / Ball(D): χ = 1
    - Closed sphere S^D: χ = 1 + (-1)^D
    - Unknown: χ is computed but not enforced
+
+Intrinsic orientability is distinct from Level 2 stored-ordering coherence:
+reversing one stored simplex can violate `Tds::is_valid()` without changing
+whether the underlying complex is orientable, while reversing every simplex
+preserves coherence. Euler characteristic and manifold-link checks do not imply
+orientability. Positive geometric orientation belongs to Level 4 and is not a
+substitute for the intrinsic Level 3 certificate. Periodic quotient facet
+parity and self-identifications are a separate quotient-orientability contract.
 
 `Triangulation::validate()` (Levels 1–3) additionally runs `Tds::validate()` first.
 The `DelaunayTriangulation` wrapper forwards the explicit ridge-link and

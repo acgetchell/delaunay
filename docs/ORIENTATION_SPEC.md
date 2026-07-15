@@ -14,7 +14,19 @@ Keep these documents separate:
 
 ## Orientation Invariants
 
-The crate maintains two related but distinct orientation properties.
+The crate maintains three related but distinct orientation properties.
+
+### Intrinsic PL Orientability
+
+Level 3 intrinsic orientability asks whether ordinary shared-facet parity
+constraints admit any coherent assignment, independently of the orderings
+currently stored in the TDS. For pure 2D and 3D complexes,
+`Triangulation::orientation_witness()` returns an opaque `OrientationWitness`
+when such an assignment exists and reports
+`TriangulationValidationError::NonOrientable` for a parity obstruction.
+PL-manifold Level 3 validation includes this check in those dimensions.
+Periodic quotient facet parity and self-identifications are intentionally
+separate from this intrinsic ordinary-facet certificate.
 
 ### Coherent Combinatorial Orientation
 

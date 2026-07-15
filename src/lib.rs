@@ -829,7 +829,8 @@ pub use crate::core::realization::{
 pub use crate::core::triangulation::Triangulation;
 pub use crate::core::util::DeduplicationError;
 pub use crate::core::validation::{
-    TopologyGuarantee, TriangulationValidationError, ValidationConfigurationError, ValidationPolicy,
+    OrientationWitness, TopologyGuarantee, TriangulationValidationError,
+    ValidationConfigurationError, ValidationPolicy,
 };
 #[cfg(feature = "diagnostics")]
 #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
@@ -1665,7 +1666,7 @@ pub mod prelude {
         pub use crate::validation::*;
         pub use crate::{
             DelaunayTriangulationValidationError, DelaunayVerificationError,
-            DelaunayVerificationErrorKind, PeriodicDomainPeriodError,
+            DelaunayVerificationErrorKind, OrientationWitness, PeriodicDomainPeriodError,
             SphericalDelaunayValidationError, SphericalValidationLayer, TopologyGuarantee,
             TriangulationRealizationIntersectionDetail, TriangulationRealizationSimplexDetail,
             TriangulationRealizationSimplexPairDetail, TriangulationRealizationValidationError,
