@@ -18,7 +18,7 @@ paper-claim mapping is tracked in [#408](https://github.com/acgetchell/delaunay/
 <img src="assets/validation/validation_hierarchy.png" alt="Five-level validation hierarchy" width="760">
 
 The Level 3–5 panels make the critical separation explicit: intrinsic topology
-can be valid while a realization overlaps, and a faithful realization can
+can be valid while a realization overlaps, and a valid realization can
 still violate the Delaunay empty-circumsphere predicate.
 
 ### Level 1 — Element Validity
@@ -60,8 +60,8 @@ The library provides **five levels of validation**, each answering a different
 correctness question while building on the previous level:
 
 1. **Element Validity** - Are individual geometric and combinatorial objects internally valid?
-2. **Combinatorial Consistency** - Does the simplicial complex satisfy the required incidence invariants?
-3. **Intrinsic PL Topology** - Does the abstract complex represent the intended PL topology?
+2. **Combinatorial Consistency** - Does the TDS satisfy its incidence, adjacency, index, and stored-orientation invariants?
+3. **Intrinsic PL Topology** - Does the abstract complex represent the intended PL topology, including orientability when required?
 4. **Valid Realization** - Does the complex satisfy model-specific orientation and nondegeneracy constraints with only shared-face intersections?
 5. **Geometric Predicates** - Does a valid realization satisfy the selected geometry-specific predicate family?
 
@@ -81,15 +81,18 @@ spherical Delaunay belongs in Level 5.
 
 ```text
 Level 1: Element Validity
-    ↓ (called by)
+    ↓ (cumulative validation adds)
 Level 2: Combinatorial Consistency
-    ↓ (called by)
+    ↓ (cumulative validation adds)
 Level 3: Intrinsic PL Topology
-    ↓ (independent)
+    ↓ (cumulative validation adds)
 Level 4: Valid Realization
-    ↓ (independent)
+    ↓ (cumulative validation adds)
 Level 5: Geometric Predicates
 ```
+
+Layer-local `is_valid_*` checks isolate one level; cumulative `validate()` and
+`validation_report()` APIs add every lower layer owned by the receiver.
 
 ## Validation API Pattern
 
@@ -145,6 +148,8 @@ When the policy triggers automatic validation, it runs **Level 3**
 - Codimension-2 boundary manifoldness (the boundary is closed; "no boundary of boundary")
 - Ridge-link validation (when `TopologyGuarantee::PLManifold` or `TopologyGuarantee::PLManifoldStrict`)
 - Vertex-link validation during insertion (when `TopologyGuarantee::PLManifoldStrict`)
+- Intrinsic orientability for 2D/3D PL-manifold guarantees, including ordinary
+  and periodic quotient parity constraints
 - Connectedness (single component)
 - No isolated vertices
 - Euler characteristic
@@ -298,18 +303,26 @@ The library separates **construction-time** failures from **validation-time** in
 ### Validation errors (checking invariants)
 
 - `TdsError` (Levels 1–2): element + structural invariants.
-- `TriangulationValidationError` (Level 3): wraps `TdsError` and adds
+- `TriangulationValidationError` (Level 3 topology validation): reports
   codimension-1 manifoldness + codimension-2 boundary manifoldness (closed boundary) +
-  (optional) vertex-link PL-manifold checks + connectedness + isolated-vertex + Euler characteristic checks.
-- `TriangulationRealizationValidationError` (Level 4): wraps
-  `TriangulationValidationError` and adds Euclidean/toroidal affine-chart
-  orientation, nondegeneracy, and overlap checks.
+  (optional) link-based PL-manifold checks + 2D/3D intrinsic orientability +
+  connectedness + isolated-vertex + Euler characteristic checks. The type also
+  carries `OrientationPromotionNonConvergence` when a triangulation-layer repair
+  cannot restore positive simplex orientation; that variant is a repair diagnostic,
+  not an intrinsic-topology invariant.
+- `InvariantError` (cumulative layer wrapper): preserves `TdsError`,
+  `TriangulationValidationError`, `TriangulationRealizationValidationError`, or
+  `DelaunayTriangulationValidationError` according to the failing level.
+- `TriangulationRealizationValidationError` (Level 4): preserves lower-layer
+  `TdsError` and `TriangulationValidationError` values and adds
+  Euclidean/toroidal affine-chart orientation, nondegeneracy, and overlap checks.
 - `SphericalDelaunayValidationError` (spherical prototype Levels 3-5): reports
   intrinsic PL-topology failures, spherical realization failures, and spherical
   Delaunay predicate failures for the bounded `S^2`/`S^3` backend.
-- `DelaunayTriangulationValidationError` (Level 5): wraps
-  `TriangulationRealizationValidationError` and adds the implemented geometric
-  predicate checks, currently Delaunay.
+- `DelaunayTriangulationValidationError` (Level 5): preserves lower-layer
+  `TdsError`, `TriangulationValidationError`, and
+  `TriangulationRealizationValidationError` values and adds the implemented
+  geometric predicate checks, currently Delaunay.
 
 ### Reporting (full diagnostics)
 
@@ -401,11 +414,18 @@ by the Triangulation Data Structure.
 `Tds::is_valid()` (Level 2) checks:
 
 1. **UUID ↔ Key Mappings**: Bidirectional consistency for vertices and simplices
-2. **No Duplicate Simplices**: No simplices with identical vertex sets
-3. **Facet Sharing Invariant**: Each facet shared by at most 2 simplices
-4. **Neighbor Consistency**: Mutual neighbor relationships are correct:
+2. **Resolved References**: Every simplex vertex, simplex neighbor, and optional
+   vertex incident-simplex hint resolves to a compatible stored object
+3. **Vertex-to-Simplices Index**: The derived incidence index exactly matches
+   simplex membership
+4. **No Duplicate Simplices**: No simplices with identical vertex sets
+5. **Facet Sharing Invariant**: Each facet shared by at most 2 simplices
+6. **Neighbor Consistency**: Mutual neighbor relationships are correct:
    manifold boundary facets are open, interior facets have reciprocal
    neighbors, and admissible periodic self-neighbors are closed topology.
+7. **Stored Coherent Orientation**: Adjacent simplex orderings induce compatible
+   opposite facet orientations. Periodic facets compare translation-normalized
+   lifted `(vertex, offset)` identities, including quotient self-identifications.
 
 `Tds::validate()` (Levels 1–2) additionally rolls up these Level 1 checks:
 
@@ -618,10 +638,10 @@ coordinates.
 
 - **Positive affine-chart orientation**: every Euclidean/toroidal maximal simplex has the canonical
   positive geometric sign in its active chart.
-- **Nondegenerate maximal simplices**: every maximal simplex has nonzero `D`-volume by the robust
-  orientation predicate.
-- **No overlap outside shared faces**: any two maximal simplices may intersect only in the
-  realization of the face spanned by their shared vertices.
+- **Nondegenerate affine-chart simplices**: every Euclidean/toroidal maximal simplex has nonzero
+  `D`-volume by the robust orientation predicate.
+- **No affine-chart overlap outside shared faces**: any two Euclidean/toroidal maximal simplices may
+  intersect only in the realization of the face spanned by their shared vertices.
 - **Toroidal periodic images**: toroidal topology is checked in covering-space charts, including
   periodic translates that can overlap across the fundamental-domain boundary.
 - **Spherical prototype simplices**: `SphericalDelaunayTriangulation` validates `S^2`/`S^3`
@@ -635,6 +655,9 @@ the bounded `S^2`/`S^3` prototype, and hyperbolic topology still return unsuppor
 until model-specific chart validators are implemented.
 
 ### Complexity
+
+The following bounds describe the ordinary Euclidean/toroidal affine-chart validator; the bounded
+spherical prototype uses its separate model-specific realization checks.
 
 - **Time**: O(simplices² × f(D)) for pairwise simplex-intersection checks in fixed dimension, with
   bounding-box pruning before exact rational barycentric witness construction.
@@ -941,16 +964,19 @@ pub fn validate_with_level(
 
 **Problem**: Structural invariants violated
 **Likely Cause**: Bug in construction or mutation code
-**Fix**: Check for duplicate simplices, incorrect neighbor assignments, or mapping inconsistencies
+**Fix**: Check for duplicate simplices, incorrect neighbor assignments, mapping/index inconsistencies,
+or incompatible stored simplex orderings across ordinary or periodic facets
 
 ### Validation Passes Level 2, Fails at Level 3
 
 **Problem**: Codimension-1 manifoldness violated (facet has 0 or >2 simplices), boundary is not closed ("boundary of boundary"),
-triangulation disconnected, isolated vertex present, or Euler characteristic wrong
+triangulation disconnected, isolated vertex present, intrinsic orientation constraints are contradictory,
+or Euler characteristic is wrong
 **Likely Cause**: Non-manifold topology, missing/broken neighbor wiring, boundary topology corruption,
-or disconnected components
+non-orientable 2D/3D PL topology, contradictory periodic quotient parity, or disconnected components
 **Fix**: Check facet-to-simplices mapping, ensure boundary ridges have degree 2 within boundary facets,
-ensure no isolated vertices, and verify the simplex neighbor graph is connected
+ensure no isolated vertices, verify the simplex neighbor graph is connected, and inspect
+`orientation_witness()` / `TriangulationValidationError::NonOrientable`
 
 ### Validation Passes Level 3, Fails at Level 4
 

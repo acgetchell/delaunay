@@ -25,7 +25,7 @@ the guarantees stated in the public API documentation.
   - [Simplicial complexes and manifolds](#simplicial-complexes-and-manifolds)
     - [Simplicial complex model](#simplicial-complex-model)
   - [Validation layering](#validation-layering)
-  - [Coherent orientation](#coherent-orientation)
+  - [Orientation contracts](#orientation-contracts)
   - [Geometric invariants](#geometric-invariants)
     - [Valid realization](#valid-realization)
     - [Geometric predicates and the Delaunay condition](#geometric-predicates-and-the-delaunay-condition)
@@ -115,7 +115,7 @@ operation has certified which part of the structure:
    simplices, simplex/ridge connectivity, and coherent combinatorial orientation.
 3. **Level 3 — Intrinsic PL Topology**: the abstract simplicial complex satisfies the requested
    `TopologyGuarantee` (pseudomanifold, PL manifold, or strict PL manifold) through incidence,
-   connected components, Euler-characteristic, and link checks.
+   connected components, Euler-characteristic, link, and supported 2D/3D orientability checks.
 4. **Level 4 — Valid Realization**: the complex is geometrically valid in the chosen coordinate
    model. `Triangulation::is_valid_realization()` owns realization-only fast-fail validation, and
    `Triangulation::validate_realization()` owns cumulative Levels 1–4 certification. Euclidean and
@@ -142,22 +142,29 @@ explicit certification steps for workflows that need them.
 
 ---
 
-## Coherent orientation
+## Orientation contracts
 
-Coherent orientation has two related meanings in this crate:
+Orientation has three related but independently validated meanings in this crate:
 
-- **TDS orientation**: adjacent simplices must induce opposite orientations on their shared facet. In
+- **Intrinsic PL orientability (Level 3)**: the shared-facet parity constraints
+  must admit a coherent simplex-orientation assignment independently of the
+  orderings currently stored in the TDS. `Triangulation::orientation_witness()`
+  returns the opaque assignment for supported pure 2D/3D complexes.
+- **Stored TDS coherence (Level 2)**: adjacent simplices must induce opposite orientations on their shared facet. In
   practice this is checked by comparing the facet index in one simplex with the reciprocal mirror index
   in its neighbor.
-- **Geometric orientation**: a full `Triangulation` should store simplices with positive orientation in
-  Euclidean coordinates, except where an operation is explicitly handling a degenerate or
-  intermediate state.
+- **Geometric orientation (Level 4)**: Euclidean/toroidal maximal simplices
+  should have positive orientation in their active affine charts, while the
+  spherical backend enforces its model-specific realization conditions. An
+  operation may handle a degenerate or intermediate state only inside a
+  failure-atomic transaction.
 
 The orientation checker uses the robust orientation predicate directly instead of a kernel-level
 predicate that may apply Simulation of Simplicity. That preserves the distinction between an
 actually degenerate simplex and a deterministically tie-broken predicate result. At the TDS layer,
 periodic-image simplices compare lifted `(vertex, offset)` facet identities after translation
-normalization, so quotient facets participate in the same combinatorial-orientation contract.
+normalization, so quotient facets participate in stored-coherence and intrinsic-orientability
+constraints without conflating either property with geometric sign.
 
 Pachner and bistellar-editing transactions must keep coherent combinatorial orientation and positive
 geometric simplex orientation separate. A move can leave the TDS coherently oriented while affected
@@ -187,9 +194,9 @@ Level 4 is the valid-realization check. It is independent of Level 5 geometric p
 enforces:
 
 - every Euclidean/toroidal maximal simplex has positive geometric orientation in its affine chart;
-- every maximal simplex has nonzero `D`-volume under the robust orientation predicate;
-- every pair of maximal simplices intersects only in the realization of the face spanned by their
-  shared vertices;
+- every Euclidean/toroidal maximal simplex has nonzero `D`-volume under the robust orientation predicate;
+- every pair of Euclidean/toroidal maximal simplices intersects only in the realization of the face
+  spanned by their shared vertices;
 - Euclidean and toroidal triangulations use valid affine-chart realization checks, with toroidal
   triangulations checked in periodic covering-space charts, including translated
   images that can overlap across the fundamental-domain boundary.
@@ -197,9 +204,10 @@ enforces:
   in `S^D \subset R^(D+1)`.
 
 This is intentionally separate from topology. Non-orientable spaces are valid objects in topology in
-general, but this crate's TDS contract maintains coherent orientation for the oriented complexes its
-construction, flip, and predicate machinery operate on. Level 4 then asks whether that oriented
-complex is a valid realization in the active realization model. For Euclidean/toroidal affine-chart models, this means
+general, but the crate's 2D/3D PL-manifold guarantees require an intrinsic orientation witness, and
+its TDS contract separately maintains coherent stored orderings for the complexes its construction,
+flip, and predicate machinery operate on. Level 4 then asks whether that oriented complex is a valid
+realization in the active realization model. For Euclidean/toroidal affine-chart models, this means
 the vertex map is injective, every abstract simplex is realized as a nondegenerate affine simplex,
 and realized simplex intersections satisfy `|sigma| ∩ |tau| = |sigma ∩ tau|`. General spherical
 integration with the ordinary mutable triangulation surface and hyperbolic topology need

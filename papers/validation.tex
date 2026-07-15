@@ -84,6 +84,8 @@
 \begin{itemize}
   \item \AuthorTodo{Describe adjacency, incidence, neighbor symmetry, and TDS
     integrity.}
+  \item \AuthorTodo{Distinguish coherent stored simplex orderings, including
+    periodic quotient facets, from intrinsic orientability.}
   \item \AuthorTodo{Explain the separation from topology and geometry.}
 \end{itemize}
 
@@ -93,6 +95,8 @@
   \item \AuthorTodo{State the PL-manifold and boundary conditions.}
   \item \AuthorTodo{Discuss pseudomanifold and strict PL-manifold policy
     choices.}
+  \item \AuthorTodo{Describe the 2D/3D intrinsic orientation witness and
+    periodic quotient parity constraints.}
   \item \AuthorTodo{Explain why this layer is independent of Euclidean,
     toroidal, and spherical realizations.}
 \end{itemize}
@@ -108,6 +112,8 @@
     model.}
   \item \AuthorTodo{Compare Euclidean/toroidal affine-chart realizations and
     spherical realizations.}
+  \item \AuthorTodo{Keep positive geometric orientation distinct from Level 2
+    stored coherence and Level 3 intrinsic orientability.}
   \item \AuthorTodo{Explain why realization validity is a precondition for
     geometric predicates.}
 \end{itemize}
@@ -124,6 +130,33 @@
 \end{itemize}
 
 \section{Implementation Architecture}
+
+\begin{center}
+  \begin{minipage}{\textwidth}
+    \captionof{table}{Public validation API by owning layer.}
+    \label{tab:validation-api}
+    \small
+    \begin{tabular}{@{}cp{0.88\textwidth}@{}}
+      \toprule
+      Level & Canonical public surface \\
+      \midrule
+      1 & \texttt{Vertex::is\_valid} / \texttt{vertex\_report};
+      \texttt{Simplex::is\_valid} / \texttt{simplex\_report} \\
+      2 & \texttt{Tds::is\_valid} / \texttt{structure\_report};
+      \texttt{Tds::validate} certifies Levels 1--2 \\
+      3 & \texttt{Triangulation::is\_valid\_topology} /
+      \texttt{topology\_report} / \texttt{orientation\_witness};
+      \texttt{Triangulation::validate} certifies Levels 1--3 \\
+      4 & \texttt{Triangulation::is\_valid\_realization} /
+      \texttt{realization\_report}; \texttt{validate\_realization} certifies
+      Levels 1--4 \\
+      5 & \texttt{DelaunayTriangulation::is\_valid\_delaunay} /
+      \texttt{delaunay\_report}; \texttt{DelaunayTriangulation::validate}
+      certifies Levels 1--5 \\
+      \bottomrule
+    \end{tabular}
+  \end{minipage}
+\end{center}
 
 \begin{itemize}
   \item \AuthorTodo{Map the five validation levels onto the Rust API surface.}

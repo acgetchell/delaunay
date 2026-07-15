@@ -98,6 +98,13 @@ Layer-local diagnostics follow a standard naming pattern:
 - `*_diagnostic`: first actionable repair/retry diagnostic for that layer.
 - `*_report`: all checkable layer-local failures.
 
+Orientation failures retain their owning layer. Level 2 stored-ordering
+incoherence is reported as `TdsError::OrientationViolation`; Level 3 intrinsic
+orientability is queried with `Triangulation::orientation_witness()` and reports
+`TriangulationValidationError::NonOrientable` for a contradictory 2D/3D parity
+system. Level 4 positive geometric orientation remains part of the realization
+diagnostic/report surface below.
+
 For Level 4 realization failures specifically, use
 `dt.as_triangulation().realization_diagnostic()` for the first repair-oriented
 failure and `dt.as_triangulation().realization_report()` for all checkable

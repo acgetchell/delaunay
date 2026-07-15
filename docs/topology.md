@@ -88,16 +88,24 @@ Level 3 always checks:
 
 `TopologyGuarantee` controls which additional PL-manifold checks Level 3 runs:
 
-- `TopologyGuarantee::Pseudomanifold`: no additional link checks.
+- `TopologyGuarantee::Pseudomanifold`: no additional link or orientability checks.
 - `TopologyGuarantee::PLManifold`: runs ridge-link validation during insertion and
-  requires a completion-time vertex-link pass for full certification.
+  requires a completion-time vertex-link pass for full certification; in 2D/3D,
+  it also certifies intrinsic orientability.
 - `TopologyGuarantee::PLManifoldStrict`: runs vertex-link validation after every
-  insertion (slowest, maximum safety).
+  insertion and certifies 2D/3D intrinsic orientability (slowest, maximum safety).
+
+`Triangulation::orientation_witness()` returns the opaque coherent assignment
+used by the 2D/3D Level 3 check. This is independent of Level 2 stored-ordering
+coherence and Level 4 positive geometric orientation. Periodic quotient facets
+contribute parity constraints through translation-normalized lifted vertex
+identities, including explicit self-identifications.
 
 Implementation pointers:
 
 - Level 3 entry points and validation vocabulary: `src/core/validation.rs`
-  (`Triangulation::is_valid_topology`, `Triangulation::validate`)
+  (`Triangulation::is_valid_topology`, `Triangulation::orientation_witness`,
+  `OrientationWitness`, and `Triangulation::validate`)
 - Owner-level topology validators: `src/core/validation.rs` and
   `src/delaunay/query.rs`
   (`Triangulation::validate_ridge_links`,
