@@ -1272,9 +1272,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         // 2e. Intrinsic orientability is independent of whether the orderings
         // currently stored in the TDS happen to be coherent. PL-manifold
         // guarantees certify this additional property in supported dimensions.
-        // Periodic quotient orientability is a separate contract (#521).
         if matches!(D, 2 | 3)
-            && !self.global_topology.is_periodic()
             && self
                 .topology_guarantee
                 .requires_vertex_links_at_completion()
@@ -1312,8 +1310,8 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// The result is independent of the currently selected orientation of each
     /// stored simplex: locally reversing any subset merely changes the returned
     /// reversal assignments. Ordinary shared facets contribute parity
-    /// constraints; periodic quotient identifications are intentionally deferred
-    /// to the quotient-orientability contract.
+    /// constraints. Periodic quotient facets use translation-normalized lifted
+    /// vertex identities, including explicit self-identification constraints.
     ///
     /// # Errors
     ///
@@ -1364,24 +1362,12 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
                         }
                     })?;
 
-                    // Quotient-facet parity and self-identifications are owned by #521.
-                    if neighbor_key == simplex_key
-                        || simplex.periodic_vertex_offsets().is_some()
-                        || neighbor.periodic_vertex_offsets().is_some()
-                    {
-                        continue;
-                    }
-
-                    let (mirror_index, uses_periodic_offsets) =
-                        Tds::<U, V, D>::orientation_mirror_facet_index(
-                            simplex,
-                            facet_index,
-                            neighbor,
-                            "intrinsic orientability",
-                        )?;
-                    if uses_periodic_offsets {
-                        continue;
-                    }
+                    let (mirror_index, _) = Tds::<U, V, D>::orientation_mirror_facet_index(
+                        simplex,
+                        facet_index,
+                        neighbor,
+                        "intrinsic orientability",
+                    )?;
                     let (currently_coherent, _, _) = Tds::<U, V, D>::facet_permutation_parity(
                         simplex,
                         facet_index,
@@ -2380,6 +2366,7 @@ mod tests {
     use crate::geometry::point::Point;
     use crate::geometry::util::generate_random_points_in_range_seeded;
     use crate::repair::DelaunayRepairPolicy;
+    use crate::topology::traits::topological_space::ToroidalConstructionMode;
     use crate::triangulation::DelaunayTriangulation;
     use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
     use crate::vertex;
@@ -2409,6 +2396,74 @@ mod tests {
 
     fn test_vertex<const D: usize>(coords: [f64; D]) -> Vertex<(), D> {
         vertex!(coords).unwrap()
+    }
+
+    /// Builds the 2×2×2 periodic Freudenthal triangulation of the unit 3-torus.
+    ///
+    /// This fixture bypasses periodic quotient selection so validation coverage
+    /// remains independent of the 3D construction-scaling work tracked in #416.
+    fn build_periodic_three_torus_tds() -> Tds<(), (), 3> {
+        const SIDE: usize = 2;
+        const AXIS_PERMUTATIONS: [[usize; 3]; 6] = [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ];
+
+        let mut tds = Tds::empty();
+        let mut vertex_keys = Vec::with_capacity(SIDE.pow(3));
+        for z in 0..SIDE {
+            for y in 0..SIDE {
+                for x in 0..SIDE {
+                    vertex_keys.push(
+                        tds.insert_vertex_with_mapping(test_vertex([
+                            f64::from(u8::try_from(x).unwrap()) / 2.0,
+                            f64::from(u8::try_from(y).unwrap()) / 2.0,
+                            f64::from(u8::try_from(z).unwrap()) / 2.0,
+                        ]))
+                        .unwrap(),
+                    );
+                }
+            }
+        }
+
+        let vertex_key = |coords: [usize; 3]| {
+            let [x, y, z] = coords.map(|coordinate| coordinate % SIDE);
+            vertex_keys[x + SIDE * (y + SIDE * z)]
+        };
+
+        for z in 0..SIDE {
+            for y in 0..SIDE {
+                for x in 0..SIDE {
+                    let origin = [x, y, z];
+                    for permutation in AXIS_PERMUTATIONS {
+                        let mut lifted = origin;
+                        let mut simplex_vertices = vec![vertex_key(lifted)];
+                        let mut offsets = vec![[0_i8; 3]];
+                        for axis in permutation {
+                            lifted[axis] += 1;
+                            simplex_vertices.push(vertex_key(lifted));
+                            offsets.push(
+                                lifted.map(|coordinate| i8::try_from(coordinate / SIDE).unwrap()),
+                            );
+                        }
+
+                        let mut simplex =
+                            Simplex::try_new_with_data(simplex_vertices, None).unwrap();
+                        simplex.set_periodic_vertex_offsets(offsets).unwrap();
+                        tds.insert_simplex_with_mapping(simplex).unwrap();
+                    }
+                }
+            }
+        }
+
+        tds.assign_neighbors().unwrap();
+        tds.assign_incident_simplices().unwrap();
+        tds.normalize_coherent_orientation().unwrap();
+        tds
     }
 
     fn insert_test_vertex_with_coords<const D: usize>(
@@ -3755,6 +3810,64 @@ mod tests {
             Err(InvariantError::Triangulation(
                 TriangulationValidationError::NonOrientable { .. }
             ))
+        );
+    }
+
+    #[test]
+    fn periodic_orientation_witness_covers_two_and_three_dimensions() {
+        let mut orientable_2d = build_two_triangle_disk_tds_2d();
+        let keys: Vec<_> = orientable_2d.simplices().map(|(key, _)| key).collect();
+        for key in keys {
+            orientable_2d
+                .simplex_mut(key)
+                .unwrap()
+                .set_periodic_vertex_offsets(vec![[0, 0]; 3])
+                .unwrap();
+        }
+        let tri_2d = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(
+            FastKernel::new(),
+            orientable_2d,
+        );
+        assert!(tri_2d.orientation_witness().is_ok());
+
+        let mut non_orientable_3d = build_coned_mobius_strip_tds_3d();
+        let keys: Vec<_> = non_orientable_3d.simplices().map(|(key, _)| key).collect();
+        for key in keys {
+            non_orientable_3d
+                .simplex_mut(key)
+                .unwrap()
+                .set_periodic_vertex_offsets(vec![[0, 0, 0]; 4])
+                .unwrap();
+        }
+        let tri_3d = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(
+            FastKernel::new(),
+            non_orientable_3d,
+        );
+        assert_matches!(
+            tri_3d.orientation_witness(),
+            Err(InvariantError::Triangulation(
+                TriangulationValidationError::NonOrientable { .. }
+            ))
+        );
+    }
+
+    #[test]
+    fn periodic_three_torus_passes_validation_levels_one_through_four() {
+        let tds = build_periodic_three_torus_tds();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
+        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        tri.try_set_global_topology(
+            GlobalTopology::try_toroidal([1.0; 3], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap(),
+        )
+        .unwrap();
+        tri.normalize_and_promote_positive_orientation().unwrap();
+
+        assert!(tri.validate().is_ok(), "Levels 1-3 should pass");
+        assert!(
+            tri.validate_realization().is_ok(),
+            "cumulative Levels 1-4 should pass"
         );
     }
 

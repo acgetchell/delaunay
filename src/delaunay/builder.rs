@@ -3250,18 +3250,11 @@ where
         }
 
         // Canonicalize quotient-simplex orientation after symbolic neighbor reconstruction.
-        //
-        // For periodic quotients, self-neighbor identifications can produce orientation
-        // constraints that are contradictory for global normalization even when the local
-        // adjacency invariants are still structurally valid. Keep this best-effort here and
-        // defer hard failure to the subsequent `is_valid()` check.
-        if let Err(_error) = tds_mut.normalize_coherent_orientation() {
-            #[cfg(debug_assertions)]
-            tracing::debug!(
-                ?_error,
-                "periodic quotient: skipping coherent-orientation normalization failure"
-            );
-        }
+        // Contradictory quotient parity is a typed construction failure.
+        tds_mut
+            .normalize_coherent_orientation()
+            .map_err(TdsMutationError::from)
+            .map_err(periodic_quotient_tds_mutation_error)?;
         // Rebuild incident-simplex pointers after topology surgery.
         tds_mut
             .assign_incident_simplices()

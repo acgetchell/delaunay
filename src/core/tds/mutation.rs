@@ -1878,10 +1878,6 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         self.bump_generation();
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "orientation normalization is unchanged; simplex nomenclature makes existing names longer"
-    )]
     pub(crate) fn normalize_coherent_orientation(&mut self) -> Result<(), TdsError> {
         let mut flip_assignment: FastHashMap<SimplexKey, bool> =
             fast_hash_map_with_capacity(self.simplices.len());
@@ -1919,10 +1915,6 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                     let Some(neighbor_key) = neighbor_key_opt else {
                         continue;
                     };
-                    if neighbor_key == simplex_key && Self::allows_periodic_self_neighbor(simplex) {
-                        continue;
-                    }
-
                     let neighbor_simplex =
                         self.simplices
                             .get(neighbor_key)
@@ -1932,24 +1924,12 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                                     "neighbor of simplex {simplex_key:?} during orientation normalization"
                                 ),
                             })?;
-                    // Periodic-lifted adjacencies do not have a unique canonical orientation at this
-                    // structural layer because the realization depends on lattice representative choice.
-                    // Skip normalization constraints for these pairs.
-                    if simplex.periodic_vertex_offsets().is_some()
-                        || neighbor_simplex.periodic_vertex_offsets().is_some()
-                    {
-                        continue;
-                    }
-                    let mirror_idx = simplex
-                        .mirror_facet_index(facet_idx, neighbor_simplex)
-                        .ok_or_else(|| TdsError::InvalidNeighbors {
-                            reason: NeighborValidationError::MirrorFacetMissing {
-                                simplex_uuid: simplex.uuid(),
-                                facet_index: facet_idx,
-                                neighbor_uuid: neighbor_simplex.uuid(),
-                                context: "orientation normalization".to_string(),
-                            },
-                        })?;
+                    let (mirror_idx, _) = Self::orientation_mirror_facet_index(
+                        simplex,
+                        facet_idx,
+                        neighbor_simplex,
+                        "orientation normalization",
+                    )?;
 
                     let (currently_coherent, _, _) = Self::facet_permutation_parity(
                         simplex,
@@ -2030,10 +2010,6 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                 let Some(neighbor_key) = neighbor_key_opt else {
                     continue;
                 };
-                if neighbor_key == simplex_key && Self::allows_periodic_self_neighbor(simplex) {
-                    continue;
-                }
-
                 let neighbor_simplex =
                     self.simplices
                         .get(neighbor_key)
@@ -2044,7 +2020,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                             ),
                         })?;
 
-                let (mirror_idx, uses_periodic_offsets) = Self::orientation_mirror_facet_index(
+                let (mirror_idx, _) = Self::orientation_mirror_facet_index(
                     simplex,
                     facet_idx,
                     neighbor_simplex,
@@ -2065,10 +2041,6 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                         },
                     });
                 }
-                if uses_periodic_offsets {
-                    continue;
-                }
-
                 let simplex1_facet_vertices =
                     Self::facet_vertices_in_simplex_order(simplex, facet_idx)?;
                 let simplex2_facet_vertices =
