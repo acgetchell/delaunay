@@ -202,12 +202,13 @@ just notebook-clear-outputs-all
 The crate treats a finite point-set triangulation as an oriented abstract simplicial complex plus a
 coordinate realization in a supported geometric model. Level 1 certifies element validity, including
 coordinate storage and local coordinate invariants. Levels 2-3 certify combinatorial consistency and
-intrinsic PL topology without depending on coordinates. Level 4 certifies geometric validity:
-affine-chart maximal simplices must be positively oriented, every maximal simplex must satisfy its
-model's nondegeneracy constraints, and realized simplices may intersect only in their shared abstract
-faces. Level 5
-certifies geometric optimality or predicate satisfaction, currently the Delaunay empty-circumsphere
-property.
+intrinsic PL topology without depending on coordinates: Level 2 checks coherent stored simplex
+orderings, while Level 3 independently certifies intrinsic orientability for supported 2D/3D
+PL-manifold guarantees, including periodic quotient constraints. Level 4 certifies geometric validity:
+Euclidean/toroidal affine-chart maximal simplices must be positively oriented and nondegenerate, and
+their realizations may intersect only in shared abstract faces. The bounded spherical prototype
+separately certifies model-specific simplex nondegeneracy in `S^D \subset R^(D+1)`. Level 5 certifies
+geometric optimality or predicate satisfaction, currently the Delaunay empty-circumsphere property.
 
 Correctness evidence comes from the invariant model, exact predicate fallbacks, deterministic
 Simulation of Simplicity, validation reports, property tests, regression tests, and public examples.
@@ -230,9 +231,9 @@ For the detailed contract, see [`docs/validation.md`](docs/validation.md),
 | Level | Validates | Primary API |
 |---|---|---|
 | 1 | Element Validity: vertex, simplex, facet, coordinate, and local-object invariants | `is_valid()` / element reports |
-| 2 | Combinatorial Consistency: TDS incidences, neighbors, and simplex/ridge connectivity | `validate_structure()` / `structure_report()` |
-| 3 | Intrinsic PL Topology: manifold/pseudomanifold links, components, and Euler consistency | `is_valid_topology()` / `topology_report()` |
-| 4 | Valid Realization: model-valid orientation, nondegeneracy, and only shared-face intersections | `is_valid_realization()` / `realization_report()` |
+| 2 | Combinatorial Consistency: TDS incidence, adjacency, indexes, and stored orientation | `is_valid_structure()` / `structure_report()` |
+| 3 | Intrinsic PL Topology: manifold links, components, Euler consistency, and orientability | `is_valid_topology()` / `topology_report()` |
+| 4 | Valid Realization: affine-chart validity or bounded spherical simplex nondegeneracy, by backend | `is_valid_realization()` / `realization_report()` |
 | 5 | Geometric Predicates: Delaunay and future geometry-specific optimality predicates | `is_valid_delaunay()` / `delaunay_report()` |
 | 1-5 | Cumulative diagnostics | `dt.validate()` / `dt.validation_report()` |
 
@@ -250,6 +251,7 @@ PL-manifold topology with explicit full-validation
 checkpoints. Layer-local APIs use `is_valid()` for unambiguous element/TDS owners, `is_valid_*`
 for higher-level fast-fail checks, and `*_diagnostic` / `*_report` for diagnostics; cumulative
 APIs use `validate()` / `validation_report()`.
+`orientation_witness()` exposes the supported 2D/3D Level 3 orientability certificate directly.
 
 For generated failure pictures, public test anchors, and diagnostics for each layer, run
 [`notebooks/01_validation.ipynb`](notebooks/01_validation.ipynb). For the paper-facing mathematical
@@ -271,7 +273,7 @@ exposition, see [`papers/validation.tex`](papers/validation.tex) and the compile
 - [Property Testing Summary](docs/property_testing_summary.md) - Property-test layout and coverage summary.
 - [Releasing](docs/RELEASING.md) - Changelog, benchmark, and publish workflow.
 - [Roadmap](docs/roadmap.md) - Current release sequence and deferred feature tracks.
-- [Topology](docs/topology.md) - Level 3 Intrinsic PL Topology validation and global topology models.
+- [Topology](docs/topology.md) - Level 3 Intrinsic PL Topology validation, orientability, and global topology models.
 - [Validation Guide](docs/validation.md) - Validation hierarchy and policy configuration.
 - [Validation Paper](papers/validation.pdf) - Reviewer-facing PDF for the validation architecture.
 - [Workflows](docs/workflows.md) - Practical recipes for construction, repair, toroidal domains, payloads, and flips.

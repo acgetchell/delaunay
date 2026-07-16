@@ -8,7 +8,7 @@ Historical design notes, investigations, and completed optimization roadmaps liv
 ## Start here
 
 - [`api_design.md`](api_design.md): construction, vertex lifecycle, and Pachner move APIs.
-- [`topology.md`](topology.md): Level 3 Intrinsic PL Topology invariants (manifold checks, Euler characteristic).
+- [`topology.md`](topology.md): Level 3 Intrinsic PL Topology invariants (manifold checks, orientability, Euler characteristic).
 - [`validation.md`](validation.md): the five-level validation model (Levels 1–5) and how to configure it.
 - [`../papers/validation.pdf`](../papers/validation.pdf): reviewer-facing validation architecture paper.
 - [`diagnostics.md`](diagnostics.md): opt-in diagnostic helpers, structured reports, and debug switches.
