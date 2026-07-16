@@ -57,20 +57,14 @@ _ensure-pinned-cargo-tool binary package version cargo_subcommand="":
     #!/usr/bin/env bash
     set -euo pipefail
 
+    source scripts/cargo_tool_versions.sh
+
     binary="{{ binary }}"
     package="{{ package }}"
     version="{{ version }}"
     cargo_subcommand="{{ cargo_subcommand }}"
 
-    installed_version=""
-    if command -v "$binary" >/dev/null; then
-        if [[ -n "$cargo_subcommand" ]]; then
-            installed_version="$(cargo "$cargo_subcommand" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-        else
-            installed_version="$("$binary" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-        fi
-    fi
-    if [[ "$installed_version" != "$version" ]]; then
+    if ! cargo_tool_has_exact_version "$binary" "$version" "$cargo_subcommand"; then
         echo "❌ '$binary' $version not found. See 'just setup-tools' or install:"
         echo "   cargo install --locked $package --version $version"
         exit 1

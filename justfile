@@ -1116,34 +1116,20 @@ setup-tools: _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
 
+    source scripts/cargo_tool_versions.sh
+
     echo "🔧 Ensuring tooling required by just recipes is installed..."
     echo ""
 
     have() { command -v "$1" >/dev/null 2>&1; }
-
-    installed_cargo_tool_version() {
-        local binary="$1"
-        local cargo_subcommand="${2:-}"
-
-        if ! have "$binary"; then
-            return 0
-        fi
-        if [[ -n "$cargo_subcommand" ]]; then
-            cargo "$cargo_subcommand" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true
-        else
-            "$binary" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true
-        fi
-    }
 
     ensure_pinned_cargo_tool() {
         local binary="$1"
         local package="$2"
         local expected_version="$3"
         local cargo_subcommand="${4:-}"
-        local installed_version
 
-        installed_version="$(installed_cargo_tool_version "$binary" "$cargo_subcommand")"
-        if [[ "$installed_version" != "$expected_version" ]]; then
+        if ! cargo_tool_has_exact_version "$binary" "$expected_version" "$cargo_subcommand"; then
             echo "  ⏳ Installing $package $expected_version (cargo)..."
             cargo install --locked "$package" --version "$expected_version"
         else
@@ -1212,7 +1198,7 @@ setup-tools: _ensure-uv
     ensure_pinned_cargo_tool rumdl rumdl "{{ rumdl_version }}"
     ensure_pinned_cargo_tool samply samply "{{ samply_version }}"
     ensure_pinned_cargo_tool taplo taplo-cli "{{ taplo_version }}"
-    if [[ "$(installed_cargo_tool_version tectonic)" != "{{ tectonic_version }}" ]]; then
+    if ! cargo_tool_has_exact_version tectonic "{{ tectonic_version }}"; then
         ensure_tectonic_build_dependencies
     fi
     ensure_pinned_cargo_tool tectonic tectonic "{{ tectonic_version }}"

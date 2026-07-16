@@ -516,9 +516,10 @@ The following previously deferred checks are now repository-owned Semgrep rules:
   cumulative roll-ups. Plain `is_valid()` remains reserved for unambiguous
   element and TDS owners.
 - `delaunay.docs.topological-space-notation` distinguishes fixed manifold names
-  from dimensional labels: prose uses `T^n`/`S^n`, Rust identifiers use
-  `tn`/`sn`, and labels such as `2D`/`3D` remain available for algorithm,
-  coordinate, ambient, and simplicial-complex dimensions.
+  from dimensional labels: prose uses `T^2`/`T^3` and `S^2`/`S^3`, Rust
+  identifiers use `t2`/`t3` and `s2`/`s3`, and labels such as `2D`/`3D` remain
+  available for algorithm, coordinate, ambient, and simplicial-complex
+  dimensions.
 
 ## Retired Repository Rules
 

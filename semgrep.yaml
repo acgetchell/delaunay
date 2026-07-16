@@ -1939,8 +1939,8 @@ rules:
       - regex
     severity: WARNING
     message: >-
-      Name fixed tori and spheres as T^n/S^n in prose and tn/sn in Rust
-      identifiers; reserve labels such as 2D and 3D for dimensionality.
+      Name fixed tori and spheres as T^2/T^3 and S^2/S^3 in prose and as
+      t2/t3 and s2/s3 in Rust identifiers; reserve 2D/3D for dimensionality.
     metadata:
       category: maintainability
       rationale: >-
@@ -1964,15 +1964,15 @@ rules:
       exclude:
         - "/docs/archive/**"
     pattern-either:
-      - pattern-regex: '(?im)^.*?\b(?:[2-5]D|(?:two|three|four|five)[ -]dimensional)\s+(?:(?:periodic|compact|unit|square|cube|cubic|rectangular)\s+){0,4}(?:toroidal|torus)\b' # yamllint disable-line rule:line-length
-      - pattern-regex: '(?im)^.*?\btoroidal\s+(?:construction|quotient|path|case|input|domain|fixture|triangulation|build)[^,;\n]{0,60}\b[2-5]D\b' # yamllint disable-line rule:line-length
-      - pattern-regex: '(?i)\b[2-5]D\s+spherical\s+(?:Delaunay\s+)?(?:construction|triangulation|prototype|integration)\b' # yamllint disable-line rule:line-length
-      - pattern-regex: '(?i)\bspherical\s+(?:Delaunay\s+)?(?:construction|triangulation|prototype|integration)[^,;\n]{0,60}\b[2-5]D\b' # yamllint disable-line rule:line-length
-      - pattern-regex: '\b[ST][2-5]\b'
+      - pattern-regex: '(?im)^.*?\b(?:[23]D|(?:two|three)[ -]dimensional)\s+(?:(?:periodic|compact|unit|square|cube|cubic|rectangular)\s+){0,4}(?:toroidal|torus)\b' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?im)^.*?\btoroidal\s+(?:construction|quotient|path|case|input|domain|fixture|triangulation|build)[^,;\n]{0,60}\b[23]D\b' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?i)\b[23]D\s+spherical\s+(?:Delaunay\s+)?(?:construction|triangulation|prototype|integration)\b' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?i)\bspherical\s+(?:Delaunay\s+)?(?:construction|triangulation|prototype|integration)[^,;\n]{0,60}\b[23]D\b' # yamllint disable-line rule:line-length
+      - pattern-regex: '\b[ST][23]\b'
       - pattern-regex: >-
-          (?i)\b(?:[a-z0-9]+_)*(?:toroidal|spherical)(?:_[a-z0-9]+)*_[2-5]d(?:_[a-z0-9]+)*\b
+          (?i)\b(?:[a-z0-9]+_)*(?:toroidal|spherical)(?:_[a-z0-9]+)*_[23]d(?:_[a-z0-9]+)*\b
       - pattern-regex: >-
-          (?i)\b(?:[a-z0-9]+_)*[2-5]d(?:_[a-z0-9]+)*_(?:toroidal|spherical)(?:_[a-z0-9]+)*\b
+          (?i)\b(?:[a-z0-9]+_)*[23]d(?:_[a-z0-9]+)*_(?:toroidal|spherical)(?:_[a-z0-9]+)*\b
 
   - id: delaunay.paper.validation-figures-use-canonical-assets
     languages:
