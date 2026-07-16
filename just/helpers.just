@@ -23,7 +23,7 @@ _bench-pachner-stress samples:
 
     echo "Pachner stress Criterion fixture benchmark: ${samples} samples."
     env CRIT_SAMPLE_SIZE="$samples" \
-        cargo bench --profile perf --features bench --bench pachner_stress -- --noplot
+        cargo bench --locked --profile perf --features bench --bench pachner_stress -- --noplot
 
 _ensure-actionlint: _ensure-uv
     #!/usr/bin/env bash
@@ -148,7 +148,7 @@ _pachner-stress-dim label vertices attempts validate_every output_dir mode:
 
     echo "Pachner stress ${label}/${mode}: ${vertices} vertices, ${attempts} attempted moves."
     echo "Validation scope: topology (Levels 1-3; Level 4 embedding overlap scan deferred to #483)."
-    cargo run --profile perf --features cli --bin delaunay -- \
+    cargo run --locked --profile perf --features cli --bin delaunay -- \
         pachner-stress \
         --dimension "$label" \
         --mode "$mode" \
