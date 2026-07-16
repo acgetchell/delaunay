@@ -3,7 +3,7 @@
 //!
 //! [`DelaunayTriangulationBuilder`] unifies the existing family of `DelaunayTriangulation`
 //! constructors under a single, composable API and adds first-class support for
-//! toroidal construction modes.
+//! periodic toroidal construction.
 //!
 //! # When to use the builder
 //!
@@ -12,28 +12,21 @@
 //! | Simple Euclidean, default options | [`DelaunayTriangulationBuilder::new`] |
 //! | Custom `ConstructionOptions` or `TopologyGuarantee` | [`DelaunayTriangulationBuilder`] |
 //! | Periodic toroidal quotient (χ = 0) | [`DelaunayTriangulationBuilder`] with [`.try_toroidal()`](DelaunayTriangulationBuilder::try_toroidal) |
-//! | Canonicalized toroidal points | [`DelaunayTriangulationBuilder`] with [`.try_canonicalized_toroidal()`](DelaunayTriangulationBuilder::try_canonicalized_toroidal) |
 //! | Euler/topology metadata expectation only | [`DelaunayTriangulationBuilder`] with [`.global_topology(...)`](DelaunayTriangulationBuilder::global_topology) |
 //! | Persisted simplex payloads | [`DelaunayTriangulationBuilder`] with [`.simplex_data_type::<V>()`](DelaunayTriangulationBuilder::simplex_data_type), then [`DelaunayTriangulation::fill_simplex_data`] |
 //! | Custom kernel (`RobustKernel`, etc.) | [`DelaunayTriangulationBuilder::build_with_kernel`] |
 //!
-//! # Canonicalized vs periodic toroidal construction
+//! # Periodic toroidal construction
 //!
-//! **Periodic image-point (`.try_toroidal()`, issue #210):** Periodic construction using
+//! **Image-point construction (`.try_toroidal()`, issue #210):** Periodic construction using
 //! the 3^D image-point method — generating copies of each point shifted by ±L in each
 //! dimension, building the full Euclidean DT on the expanded set, normalizing lifted
 //! simplices, searching a closed quotient candidate subset, and rebuilding quotient
-//! representatives with periodic neighbor pointers. The 2D and compact 3D paths
-//! are release-validated as true toroidal (χ = 0) triangulations. 4D/5D periodic
+//! representatives with periodic neighbor pointers. The `T^2` and compact `T^3` paths
+//! are release-validated as true toroidal (χ = 0) triangulations. `T^4`/`T^5` periodic
 //! quotients fail fast until issue #416 makes quotient selection scalable enough
 //! for routine validation. See `REFERENCES.md`, "Periodic and Toroidal
 //! Triangulations", first entry.
-//!
-//! **Canonicalized (`.try_canonicalized_toroidal()`):** The builder canonicalizes all input
-//! vertices into the fundamental domain `[0, L_i)` before passing them to the standard
-//! Euclidean constructor. The resulting triangulation is a valid Euclidean Delaunay
-//! triangulation of the canonicalized point set; it does **not** identify opposite
-//! boundary facets and cannot be combined with non-Euclidean global topology metadata.
 //!
 //! # Examples
 //!
@@ -57,31 +50,7 @@
 //! # }
 //! ```
 //!
-//! ## Toroidal construction (canonicalization only)
-//!
-//! ```rust
-//! use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
-//!
-//! # fn main() -> DelaunayResult<()> {
-//! // Vertices that fall outside [0, 1)² are wrapped before triangulation.
-//! let vertices = vec![
-//!     delaunay::vertex![0.2, 0.3]?,
-//!     delaunay::vertex![1.8, 0.1]?,  // x wraps to 0.8
-//!     delaunay::vertex![0.5, 0.7]?,
-//!     delaunay::vertex![-0.4, 0.9]?, // x wraps to 0.6
-//! ];
-//!
-//! let dt = DelaunayTriangulationBuilder::new(&vertices)
-//!     .try_canonicalized_toroidal([1.0, 1.0])
-//!     ?
-//!     .build()?;
-//!
-//! assert_eq!(dt.number_of_vertices(), 4);
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! ## Toroidal construction (periodic image-point method)
+//! ## Toroidal construction
 //!
 //! Uses the 3^D image-point method to produce a true toroidal (χ = 0) triangulation
 //! where boundary facets are identified and neighbor pointers are rewired periodically.
@@ -1037,8 +1006,8 @@ pub struct DelaunayTriangulationBuilder<'v, U, const D: usize, V = ()> {
     vertices: &'v [Vertex<U, D>],
     /// Topology mode for construction.
     ///
-    /// Toroidal modes carry a validated domain and determine whether construction
-    /// uses canonicalization-only or periodic image points.
+    /// The toroidal mode carries a validated domain for periodic image-point
+    /// construction.
     topology: BuilderTopology<D>,
     topology_guarantee: TopologyGuarantee,
     construction_options: ConstructionOptions,
@@ -1064,47 +1033,8 @@ pub struct DelaunayTriangulationBuilder<'v, U, const D: usize, V = ()> {
 enum BuilderTopology<const D: usize> {
     /// Ordinary Euclidean batch construction.
     Euclidean,
-    /// Canonicalize input coordinates into a toroidal fundamental domain, then
-    /// use Euclidean batch construction.
-    Canonicalized(ToroidalDomain<D>),
     /// Construct a toroidal quotient through periodic image points.
     PeriodicImagePoint(ToroidalDomain<D>),
-}
-
-/// Non-periodic topology mode accepted by batch-construction backends.
-///
-/// The public statistics and non-statistics builder terminals share this type so
-/// both paths apply the same topology rejection and canonicalization preamble
-/// before choosing the terminal-specific construction backend.
-#[derive(Clone, Copy)]
-enum BatchBuilderTopology<const D: usize> {
-    /// Use the original vertex slice as-is.
-    Euclidean,
-    /// Canonicalize vertices before Euclidean batch construction.
-    Canonicalized(ToroidalDomain<D>),
-}
-
-/// Prepared vertex storage for non-periodic batch construction paths.
-///
-/// Euclidean construction borrows the caller's slice, while canonicalized
-/// toroidal construction owns a transformed vertex buffer. This lets public
-/// builder terminals pass one stable slice shape to their backend without
-/// duplicating canonicalization behavior.
-enum PreparedBatchVertices<'a, U, const D: usize> {
-    /// Original caller-provided vertices.
-    Borrowed(&'a [Vertex<U, D>]),
-    /// Canonicalized vertices with UUIDs and payloads preserved.
-    Owned(Vec<Vertex<U, D>>),
-}
-
-impl<U, const D: usize> PreparedBatchVertices<'_, U, D> {
-    /// Returns the vertices to pass to a batch-construction backend.
-    fn as_slice(&self) -> &[Vertex<U, D>] {
-        match self {
-            Self::Borrowed(vertices) => vertices,
-            Self::Owned(vertices) => vertices,
-        }
-    }
 }
 
 // =============================================================================
@@ -1351,9 +1281,7 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     ///
     /// This is the correctness-first toroidal constructor: it builds a periodic
     /// quotient with rewired neighbor pointers and Euler characteristic χ = 0 for
-    /// the validated 2D and compact 3D cases. Use
-    /// [`.try_canonicalized_toroidal()`](Self::try_canonicalized_toroidal) only when you
-    /// explicitly want the cheaper wrapping-only Euclidean construction.
+    /// the validated `T^2` and compact `T^3` cases.
     /// Periodic construction applies a deterministic perturbation of at most
     /// approximately `2^-32` of each domain period to canonical coordinates to
     /// resolve covering-space degeneracies; stable vertex UUIDs and payloads are
@@ -1443,90 +1371,6 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
         self
     }
 
-    /// Enables toroidal coordinate canonicalization without periodic quotient rewiring.
-    ///
-    /// Input vertices are canonicalized into `[0, L_i)` per dimension before the
-    /// triangulation is built. The resulting triangulation remains Euclidean:
-    /// boundary facets are **not** rewired, and non-Euclidean global topology
-    /// metadata is rejected at build time. Use [`.try_toroidal()`](Self::try_toroidal)
-    /// for the true periodic quotient path with closed toroidal topology.
-    ///
-    /// # Arguments
-    ///
-    /// * `domain` — Period length for each dimension.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::construction::{
-    ///     DelaunayResult, DelaunayTriangulationBuilder,
-    /// };
-    ///
-    /// # fn main() -> DelaunayResult<()> {
-    /// let vertices = vec![
-    ///     delaunay::vertex![0.2, 0.3]?,
-    ///     delaunay::vertex![0.8, 0.1]?,
-    ///     delaunay::vertex![0.5, 0.7]?,
-    ///     delaunay::vertex![0.1, 0.9]?,
-    /// ];
-    ///
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
-    ///     .try_canonicalized_toroidal([1.0, 1.0])
-    ///     ?
-    ///     .build()?;
-    ///
-    /// assert_eq!(dt.number_of_vertices(), 4);
-    /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ToroidalDomainError`] when any period is non-finite, zero, or
-    /// negative.
-    pub fn try_canonicalized_toroidal(
-        mut self,
-        domain: [f64; D],
-    ) -> Result<Self, ToroidalDomainError> {
-        self.topology = BuilderTopology::Canonicalized(ToroidalDomain::try_new(domain)?);
-        Ok(self)
-    }
-
-    /// Enables toroidal coordinate canonicalization from an already-validated domain.
-    ///
-    /// This infallible setter is for callers that already hold a
-    /// [`ToroidalDomain`]. Use [`Self::try_canonicalized_toroidal`] at raw
-    /// numeric boundaries when the periods still need validation.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
-    /// use delaunay::prelude::topology::spaces::ToroidalDomain;
-    ///
-    /// # fn main() -> DelaunayResult<()> {
-    /// let vertices = vec![
-    ///     delaunay::vertex![0.2, 0.3]?,
-    ///     delaunay::vertex![0.8, 0.1]?,
-    ///     delaunay::vertex![0.5, 0.7]?,
-    ///     delaunay::vertex![0.1, 0.9]?,
-    /// ];
-    ///
-    /// let domain = ToroidalDomain::<2>::unit();
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
-    ///     .canonicalized_toroidal(domain)
-    ///     .build()?;
-    ///
-    /// assert_eq!(dt.number_of_vertices(), 4);
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[must_use]
-    pub const fn canonicalized_toroidal(mut self, domain: ToroidalDomain<D>) -> Self {
-        self.topology = BuilderTopology::Canonicalized(domain);
-        self
-    }
-
     /// Sets the [`TopologyGuarantee`]
     ///
     /// Defaults to [`TopologyGuarantee::DEFAULT`] (`PLManifold`).
@@ -1569,20 +1413,17 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     /// [`GlobalTopology::Toroidal`] tells the validator to expect χ = 0 for a closed
     /// mesh instead of χ = 2 (the sphere default).
     ///
-    /// This is **metadata only** and does not trigger any coordinate
-    /// canonicalization or image-point construction. Plain Euclidean,
-    /// canonicalized toroidal, and explicit-simplex construction reject
-    /// non-Euclidean metadata because those paths do not build closed quotient
-    /// connectivity. For construction-time toroidal processing, use
-    /// [`.try_toroidal()`](Self::try_toroidal) for true toroidal topology, or
-    /// [`.try_canonicalized_toroidal()`](Self::try_canonicalized_toroidal) for
-    /// wrapping-only Euclidean construction. If explicit metadata is supplied on
-    /// the periodic image-point path, it must exactly match the toroidal topology
-    /// derived from [`.try_toroidal()`](Self::try_toroidal).
+    /// This is **metadata only** and does not trigger coordinate canonicalization
+    /// or image-point construction. Plain Euclidean and explicit-simplex
+    /// construction reject non-Euclidean metadata because those paths do not build
+    /// closed quotient connectivity. For construction-time toroidal processing,
+    /// use [`.try_toroidal()`](Self::try_toroidal). If explicit metadata is supplied
+    /// on the periodic image-point path, it must exactly match the toroidal topology
+    /// derived from that method.
     ///
-    /// When this setter is not called, Euclidean, canonicalized, and explicit
-    /// construction paths use [`GlobalTopology::Euclidean`]. The periodic
-    /// image-point path derives [`GlobalTopology::Toroidal`] metadata from
+    /// When this setter is not called, Euclidean and explicit construction paths
+    /// use [`GlobalTopology::Euclidean`]. The periodic image-point path derives
+    /// [`GlobalTopology::Toroidal`] metadata from
     /// [`.try_toroidal()`](Self::try_toroidal) instead.
     ///
     /// # Examples
@@ -1696,7 +1537,7 @@ where
     /// # Usage
     ///
     /// Called internally by [`build_with_kernel`](Self::build_with_kernel) before
-    /// canonicalization in both toroidal construction paths.
+    /// periodic toroidal coordinate canonicalization.
     fn validate_topology_model<M>(model: &M) -> Result<(), DelaunayTriangulationConstructionError>
     where
         M: GlobalTopologyModel<D>,
@@ -1807,35 +1648,6 @@ where
         Ok(out)
     }
 
-    /// Prepares Euclidean and canonicalized-toroidal vertices for batch construction.
-    ///
-    /// This centralizes topology metadata rejection, topology-model validation,
-    /// and canonicalization so the statistics and non-statistics build terminals
-    /// cannot drift apart.
-    fn prepare_batch_vertices(
-        topology: BatchBuilderTopology<D>,
-        global_topology: GlobalTopology<D>,
-        vertices: &[Vertex<U, D>],
-    ) -> Result<PreparedBatchVertices<'_, U, D>, DelaunayTriangulationConstructionError> {
-        match topology {
-            BatchBuilderTopology::Euclidean => {
-                Self::reject_euclidean_non_euclidean_topology(global_topology)?;
-                Ok(PreparedBatchVertices::Borrowed(vertices))
-            }
-            BatchBuilderTopology::Canonicalized(domain) => {
-                Self::reject_canonicalized_non_euclidean_topology(global_topology)?;
-                let topology = GlobalTopology::Toroidal {
-                    domain,
-                    mode: ToroidalConstructionMode::Canonicalized,
-                };
-                let topology_model = topology.model();
-                Self::validate_topology_model(&topology_model)?;
-                let canonical = Self::canonicalize_vertices(vertices, &topology_model)?;
-                Ok(PreparedBatchVertices::Owned(canonical))
-            }
-        }
-    }
-
     // -------------------------------------------------------------------------
     // Build methods
     // -------------------------------------------------------------------------
@@ -1848,7 +1660,6 @@ where
     /// # Errors
     ///
     /// Returns [`DelaunayTriangulationConstructionError`] if:
-    /// - Toroidal canonicalization fails (non-finite coordinate in input).
     /// - The underlying triangulation construction fails (insufficient vertices,
     ///   geometric degeneracy, etc.).
     /// - Explicit-simplex construction is requested with unsupported
@@ -1891,10 +1702,10 @@ where
     /// Builds the triangulation and returns aggregate construction statistics.
     ///
     /// This is the fluent builder terminal for callers that want the configured
-    /// workflow and skipped-input observability in one chain. Euclidean and
-    /// canonicalized-toroidal construction return statistics from the same
-    /// batch backend used by [`Self::build_with_kernel`]. Explicit
-    /// connectivity and true periodic quotient construction bypass the batch
+    /// workflow and skipped-input observability in one chain. Euclidean
+    /// construction returns statistics from the same batch backend used by
+    /// [`Self::build_with_kernel`]. Explicit connectivity and periodic quotient
+    /// construction bypass the batch
     /// insertion statistics collector; on those successful paths the returned
     /// statistics record the final vertex count in
     /// [`ConstructionStatistics::inserted`] and total construction timing in
@@ -2025,9 +1836,10 @@ where
             );
         }
 
-        let batch_topology = match self.topology {
-            BuilderTopology::Euclidean => BatchBuilderTopology::Euclidean,
-            BuilderTopology::Canonicalized(domain) => BatchBuilderTopology::Canonicalized(domain),
+        match self.topology {
+            BuilderTopology::Euclidean => {
+                Self::reject_euclidean_non_euclidean_topology(self.global_topology_or_default())?;
+            }
             BuilderTopology::PeriodicImagePoint(domain) => {
                 let topology = Self::periodic_image_global_topology(domain);
                 Self::reject_periodic_conflicting_global_topology(
@@ -2081,16 +1893,11 @@ where
                 })?;
                 return Ok(dt);
             }
-        };
+        }
 
-        let prepared = Self::prepare_batch_vertices(
-            batch_topology,
-            self.global_topology_or_default(),
-            self.vertices,
-        )?;
         let dt = DelaunayTriangulation::build_with_kernel_options(
             kernel,
-            prepared.as_slice(),
+            self.vertices,
             self.topology_guarantee,
             self.construction_options,
         )?;
@@ -2100,9 +1907,9 @@ where
     /// Builds the triangulation with a caller-supplied kernel and returns statistics.
     ///
     /// This is the statistics-returning counterpart of
-    /// [`build_with_kernel`](Self::build_with_kernel). Euclidean and
-    /// canonicalized-toroidal construction return batch insertion statistics.
-    /// Explicit connectivity and true periodic quotient construction bypass the
+    /// [`build_with_kernel`](Self::build_with_kernel). Euclidean construction
+    /// returns batch insertion statistics. Explicit connectivity and periodic
+    /// quotient construction bypass the
     /// batch insertion statistics collector; on those successful paths the
     /// returned statistics record the final vertex count in
     /// [`ConstructionStatistics::inserted`] and total construction timing in
@@ -2174,11 +1981,8 @@ where
             let vertices = self.vertices;
             let topology_guarantee = self.topology_guarantee;
             let construction_options = self.construction_options;
-            let batch_topology = match self.topology {
-                BuilderTopology::Euclidean => BatchBuilderTopology::Euclidean,
-                BuilderTopology::Canonicalized(domain) => {
-                    BatchBuilderTopology::Canonicalized(domain)
-                }
+            match self.topology {
+                BuilderTopology::Euclidean => {}
                 BuilderTopology::PeriodicImagePoint(_) => {
                     return Self::record_construction_total_timing(
                         self.build_with_kernel(kernel)
@@ -2187,14 +1991,14 @@ where
                         construction_started,
                     );
                 }
-            };
+            }
 
-            Self::prepare_batch_vertices(batch_topology, global_topology, vertices)
+            Self::reject_euclidean_non_euclidean_topology(global_topology)
                 .map_err(Self::with_default_error_statistics)
-                .and_then(|prepared| {
+                .and_then(|()| {
                     DelaunayTriangulation::build_with_kernel_options_and_statistics(
                         kernel,
-                        prepared.as_slice(),
+                        vertices,
                         topology_guarantee,
                         construction_options,
                     )
@@ -2665,25 +2469,6 @@ where
 
         Err(DelaunayTriangulationConstructionError::Triangulation(
             DelaunayConstructionFailure::EuclideanUnsupportedGlobalTopology {
-                topology: global_topology.kind(),
-            },
-        ))
-    }
-
-    /// Rejects topology metadata that would misclassify canonicalized Euclidean boundaries.
-    ///
-    /// Canonicalization wraps coordinates into a toroidal domain but intentionally
-    /// leaves connectivity Euclidean. True closed toroidal topology must use the
-    /// periodic image-point builder path.
-    const fn reject_canonicalized_non_euclidean_topology(
-        global_topology: GlobalTopology<D>,
-    ) -> Result<(), DelaunayTriangulationConstructionError> {
-        if global_topology.is_euclidean() {
-            return Ok(());
-        }
-
-        Err(DelaunayTriangulationConstructionError::Triangulation(
-            DelaunayConstructionFailure::CanonicalizedUnsupportedGlobalTopology {
                 topology: global_topology.kind(),
             },
         ))
@@ -3670,7 +3455,7 @@ mod tests {
         );
     }
 
-    fn periodic_fixture_vertices_2d() -> Vec<Vertex<(), 2>> {
+    fn periodic_fixture_vertices_t2() -> Vec<Vertex<(), 2>> {
         vec![
             vertex!([0.1_f64, 0.2]).unwrap(),
             vertex!([0.4, 0.7]).unwrap(),
@@ -3956,141 +3741,6 @@ mod tests {
         assert_eq!(dt.number_of_vertices(), 3);
     }
 
-    // -------------------------------------------------------------------------
-    // Canonicalized toroidal path
-    // -------------------------------------------------------------------------
-
-    /// Vertices outside [0, 1)² must be canonicalized into the domain.
-    /// Verified by inspecting each vertex coordinate in the built triangulation.
-    #[test]
-    fn test_builder_canonicalized_toroidal_canonicalizes_out_of_domain_vertices() {
-        let vertices = vec![
-            vertex!([0.2, 0.3]).unwrap(),  // in domain
-            vertex!([1.8, 0.1]).unwrap(),  // x → 0.8
-            vertex!([0.5, 0.7]).unwrap(),  // in domain
-            vertex!([-0.4, 0.9]).unwrap(), // x → 0.6
-        ];
-        let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .try_canonicalized_toroidal([1.0, 1.0])
-            .unwrap()
-            .build()
-            .unwrap();
-
-        // Every vertex coordinate must lie within [0, 1) × [0, 1)
-        for (_, v) in dt.vertices() {
-            let c = v.point().coords();
-            assert!(c[0] >= 0.0 && c[0] < 1.0, "x = {} not in [0, 1)", c[0]);
-            assert!(c[1] >= 0.0 && c[1] < 1.0, "y = {} not in [0, 1)", c[1]);
-        }
-        assert_eq!(dt.number_of_vertices(), 4);
-    }
-
-    /// In-domain vertices should be unchanged by canonicalized toroidal wrapping.
-    #[test]
-    fn test_builder_canonicalized_toroidal_in_domain_vertices_unchanged() {
-        let vertices = vec![
-            vertex!([0.1, 0.2]).unwrap(),
-            vertex!([0.8, 0.3]).unwrap(),
-            vertex!([0.4, 0.9]).unwrap(),
-        ];
-        let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .try_canonicalized_toroidal([1.0, 1.0])
-            .unwrap()
-            .build()
-            .unwrap();
-
-        for (_, v) in dt.vertices() {
-            let c = v.point().coords();
-            assert!(c[0] >= 0.0 && c[0] < 1.0);
-            assert!(c[1] >= 0.0 && c[1] < 1.0);
-        }
-    }
-
-    #[test]
-    fn test_builder_canonicalized_toroidal_build_succeeds_2d() {
-        let vertices = vec![
-            vertex!([0.2, 0.3]).unwrap(),
-            vertex!([0.8, 0.1]).unwrap(),
-            vertex!([0.5, 0.7]).unwrap(),
-            vertex!([0.1, 0.9]).unwrap(),
-        ];
-        let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .try_canonicalized_toroidal([1.0, 1.0])
-            .unwrap()
-            .build()
-            .unwrap();
-        assert_eq!(dt.number_of_vertices(), 4);
-        assert_eq!(dt.dim(), 2);
-        assert!(dt.as_triangulation().validate().is_ok());
-        assert_eq!(dt.global_topology(), GlobalTopology::Euclidean);
-    }
-
-    #[test]
-    fn test_builder_canonicalized_toroidal_build_out_of_domain_input_2d() {
-        let vertices = vec![
-            vertex!([2.2, 3.3]).unwrap(),  // → (0.2, 0.3)
-            vertex!([-0.2, 1.1]).unwrap(), // → (0.8, 0.1)
-            vertex!([1.5, 0.7]).unwrap(),  // → (0.5, 0.7)
-            vertex!([-0.9, 2.9]).unwrap(), // → (0.1, 0.9)
-        ];
-        let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .try_canonicalized_toroidal([1.0, 1.0])
-            .unwrap()
-            .build()
-            .unwrap();
-        assert_eq!(dt.number_of_vertices(), 4);
-        assert_eq!(dt.dim(), 2);
-        assert!(dt.as_triangulation().validate().is_ok());
-        assert_eq!(dt.global_topology(), GlobalTopology::Euclidean);
-    }
-
-    #[test]
-    fn test_builder_canonicalized_toroidal_rejects_non_euclidean_global_topology() {
-        let vertices = vec![
-            vertex!([0.2, 0.3]).unwrap(),
-            vertex!([0.8, 0.1]).unwrap(),
-            vertex!([0.5, 0.7]).unwrap(),
-            vertex!([0.1, 0.9]).unwrap(),
-        ];
-        let topology =
-            GlobalTopology::try_toroidal([1.0, 1.0], ToroidalConstructionMode::Canonicalized)
-                .unwrap();
-        let result = DelaunayTriangulationBuilder::new(&vertices)
-            .try_canonicalized_toroidal([1.0, 1.0])
-            .unwrap()
-            .global_topology(topology)
-            .build();
-
-        assert_matches!(
-            result,
-            Err(DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::CanonicalizedUnsupportedGlobalTopology {
-                    topology: TopologyKind::Toroidal,
-                }
-            ))
-        );
-    }
-
-    #[test]
-    fn test_builder_canonicalized_toroidal_non_finite_coordinate_is_error() {
-        assert!(Point::<2>::try_new([f64::NAN, 0.1]).is_err());
-    }
-
-    #[test]
-    fn test_builder_canonicalized_toroidal_invalid_domain_is_error() {
-        let vertices = vec![
-            vertex!([0.2, 0.3]).unwrap(),
-            vertex!([0.8, 0.1]).unwrap(),
-            vertex!([0.5, 0.7]).unwrap(),
-        ];
-        let Err(err) =
-            DelaunayTriangulationBuilder::new(&vertices).try_canonicalized_toroidal([0.0, 1.0])
-        else {
-            panic!("zero period should be rejected");
-        };
-        assert_invalid_toroidal_domain_error(err, 0, 0.0);
-    }
-
     #[test]
     fn test_builder_toroidal_invalid_domain_is_error() {
         let vertices = vec![
@@ -4109,8 +3759,8 @@ mod tests {
     }
 
     #[test]
-    fn test_builder_toroidal_2d_smoke() {
-        let vertices = periodic_fixture_vertices_2d();
+    fn test_builder_toroidal_t2_smoke() {
+        let vertices = periodic_fixture_vertices_t2();
         let n = vertices.len();
         let kernel = RobustKernel::new();
         let dt = DelaunayTriangulationBuilder::new(&vertices)
@@ -4151,7 +3801,7 @@ mod tests {
 
     #[test]
     fn test_builder_toroidal_rejects_global_topology_before_toroidal_setter() {
-        let vertices = periodic_fixture_vertices_2d();
+        let vertices = periodic_fixture_vertices_t2();
         let result = DelaunayTriangulationBuilder::new(&vertices)
             .global_topology(GlobalTopology::Spherical)
             .try_toroidal([1.0, 1.0])
@@ -4174,7 +3824,7 @@ mod tests {
 
     #[test]
     fn test_builder_toroidal_rejects_global_topology_after_toroidal_setter() {
-        let vertices = periodic_fixture_vertices_2d();
+        let vertices = periodic_fixture_vertices_t2();
         let result = DelaunayTriangulationBuilder::new(&vertices)
             .try_toroidal([1.0, 1.0])
             .unwrap()
@@ -4197,10 +3847,9 @@ mod tests {
 
     #[test]
     fn test_builder_toroidal_rejects_conflicting_explicit_toroidal_mode() {
-        let vertices = periodic_fixture_vertices_2d();
+        let vertices = periodic_fixture_vertices_t2();
         let requested_topology =
-            GlobalTopology::try_toroidal([1.0, 1.0], ToroidalConstructionMode::Canonicalized)
-                .unwrap();
+            GlobalTopology::try_toroidal([1.0, 1.0], ToroidalConstructionMode::Explicit).unwrap();
         let result = DelaunayTriangulationBuilder::new(&vertices)
             .try_toroidal([1.0, 1.0])
             .unwrap()
@@ -4212,7 +3861,7 @@ mod tests {
             Err(DelaunayTriangulationConstructionError::Triangulation(
                 DelaunayConstructionFailure::PeriodicImageConflictingGlobalTopology {
                     requested_topology: TopologyKind::Toroidal,
-                    requested_mode: Some(ToroidalConstructionMode::Canonicalized),
+                    requested_mode: Some(ToroidalConstructionMode::Explicit),
                     requested_periods: Some(requested_periods),
                     expected_mode: ToroidalConstructionMode::PeriodicImagePoint,
                     expected_periods,
@@ -4224,7 +3873,7 @@ mod tests {
 
     #[test]
     fn test_builder_toroidal_rejects_conflicting_explicit_toroidal_domain() {
-        let vertices = periodic_fixture_vertices_2d();
+        let vertices = periodic_fixture_vertices_t2();
         let requested_topology =
             GlobalTopology::try_toroidal([2.0, 1.0], ToroidalConstructionMode::PeriodicImagePoint)
                 .unwrap();
@@ -4251,7 +3900,7 @@ mod tests {
 
     #[test]
     fn test_builder_toroidal_accepts_matching_explicit_global_topology() {
-        let vertices = periodic_fixture_vertices_2d();
+        let vertices = periodic_fixture_vertices_t2();
         let topology =
             GlobalTopology::try_toroidal([1.0, 1.0], ToroidalConstructionMode::PeriodicImagePoint)
                 .unwrap();
@@ -4266,60 +3915,23 @@ mod tests {
         assert!(dt.validate().is_ok());
     }
 
-    #[test]
-    fn test_builder_canonicalized_toroidal_idempotent_on_canonical_input() {
-        let vertices = vec![
-            vertex!([0.1, 0.2]).unwrap(),
-            vertex!([0.8, 0.3]).unwrap(),
-            vertex!([0.4, 0.9]).unwrap(),
-        ];
-        let dt_euclidean = DelaunayTriangulationBuilder::new(&vertices)
-            .build()
-            .unwrap();
-        let dt_toroidal = DelaunayTriangulationBuilder::new(&vertices)
-            .try_canonicalized_toroidal([1.0, 1.0])
-            .unwrap()
-            .build()
-            .unwrap();
-        assert_eq!(
-            dt_euclidean.number_of_vertices(),
-            dt_toroidal.number_of_vertices()
-        );
-        assert_eq!(
-            dt_euclidean.number_of_simplices(),
-            dt_toroidal.number_of_simplices()
-        );
-    }
-
     // -------------------------------------------------------------------------
     // Generic builder path
     // -------------------------------------------------------------------------
 
-    /// `new` accepts vertices carrying user data (`U ≠ ()`). Verify that the
-    /// data is preserved after canonicalized toroidal wrapping.
+    /// `new` accepts vertices carrying user data (`U ≠ ()`).
     #[test]
     fn test_builder_new_preserves_vertex_data() {
         let vertices: Vec<Vertex<i32, 2>> = vec![
             vertex!([0.2_f64, 0.3]; data = 1_i32).unwrap(),
-            vertex!([1.8_f64, 0.1]; data = 2_i32).unwrap(), // x → 0.8
+            vertex!([0.8_f64, 0.1]; data = 2_i32).unwrap(),
             vertex!([0.5_f64, 0.7]; data = 3_i32).unwrap(),
         ];
         let dt = DelaunayTriangulationBuilder::new(&vertices)
-            .try_canonicalized_toroidal([1.0, 1.0])
-            .unwrap()
             .build()
             .unwrap();
 
         assert_eq!(dt.number_of_vertices(), 3);
-
-        // All coordinates must be in [0, 1) × [0, 1)
-        for (_, v) in dt.vertices() {
-            let c = v.point().coords();
-            assert!(c[0] >= 0.0 && c[0] < 1.0);
-            assert!(c[1] >= 0.0 && c[1] < 1.0);
-        }
-
-        // All three user-data values must survive the wrap
         let mut data: Vec<i32> = dt.vertices().filter_map(|(_, v)| v.data).collect();
         data.sort_unstable();
         assert_eq!(data, vec![1, 2, 3]);
@@ -4347,7 +3959,7 @@ mod tests {
 
     #[test]
     fn test_validate_topology_model_accepts_valid_toroidal() {
-        let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::PeriodicImagePoint);
         let result = DelaunayTriangulationBuilder::<(), 2>::validate_topology_model(&model);
         assert!(result.is_ok());
     }
@@ -4656,7 +4268,7 @@ mod tests {
             vertex!([0.5, 0.7]).unwrap(),
         ];
         let original_uuids: Vec<_> = vertices.iter().map(Vertex::uuid).collect();
-        let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::PeriodicImagePoint);
         let canonical =
             DelaunayTriangulationBuilder::<(), 2>::canonicalize_vertices(&vertices, &model)
                 .unwrap();
@@ -4673,7 +4285,7 @@ mod tests {
             vertex!([1.8_f64, -0.5]; data = 20_i32).unwrap(),
             vertex!([0.5_f64, 0.7]; data = 30_i32).unwrap(),
         ];
-        let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::PeriodicImagePoint);
         let canonical =
             DelaunayTriangulationBuilder::<i32, 2>::canonicalize_vertices(&vertices, &model)
                 .unwrap();
@@ -4691,7 +4303,7 @@ mod tests {
             vertex!([1.8, -0.5]).unwrap(), // → (1.8, 2.5)
             vertex!([0.3, 0.2]).unwrap(),  // → (0.3, 0.2)
         ];
-        let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::PeriodicImagePoint);
         let canonical =
             DelaunayTriangulationBuilder::<(), 2>::canonicalize_vertices(&vertices, &model)
                 .unwrap();

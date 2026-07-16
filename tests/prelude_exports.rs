@@ -478,16 +478,6 @@ fn assert_construction_prelude_unsupported_topology_variants() {
             topology: TopologyKind::Spherical,
         }
     );
-    let unsupported_canonicalized_topology =
-        DelaunayConstructionFailure::CanonicalizedUnsupportedGlobalTopology {
-            topology: TopologyKind::Toroidal,
-        };
-    assert_matches!(
-        unsupported_canonicalized_topology,
-        DelaunayConstructionFailure::CanonicalizedUnsupportedGlobalTopology {
-            topology: TopologyKind::Toroidal,
-        }
-    );
     let conflicting_periodic_topology =
         DelaunayConstructionFailure::PeriodicImageConflictingGlobalTopology {
             requested_topology: TopologyKind::Euclidean,

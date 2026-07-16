@@ -537,7 +537,7 @@ pub mod pl_manifold {
         Ok(())
     }
 
-    /// Inserts one 2D cluster made from two closed triangle-sphere complexes sharing one vertex.
+    /// Inserts one 2D cluster made from two closed `S^2` complexes sharing one vertex.
     fn insert_ridge_link_cluster(
         tds: &mut Tds<(), (), 2>,
         cluster_index: usize,
@@ -567,7 +567,7 @@ pub mod pl_manifold {
         Ok(())
     }
 
-    /// Inserts one 3D cluster whose apex has a torus link instead of a sphere or ball link.
+    /// Inserts one 3D cluster whose apex has a `T^2` link instead of an `S^2` or ball link.
     fn insert_vertex_link_cluster(
         tds: &mut Tds<(), (), 3>,
         cluster_index: usize,

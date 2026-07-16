@@ -36,188 +36,10 @@ _coverage_base_args := '''--ignore-filename-regex '(^|/)(benches|examples)/' \
   --workspace --lib --tests \
   --verbose'''
 
-_ensure-actionlint:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v uv >/dev/null || { echo "❌ 'uv' not found. See 'just setup' or https://github.com/astral-sh/uv"; exit 1; }
-    uv run actionlint -version >/dev/null
-
-_ensure-cargo-llvm-cov:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    installed_version=""
-    if command -v cargo-llvm-cov >/dev/null; then
-        installed_version="$(cargo llvm-cov --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_version" != "{{ cargo_llvm_cov_version }}" ]]; then
-        echo "❌ 'cargo-llvm-cov' {{ cargo_llvm_cov_version }} not found. See 'just setup-tools' or install:"
-        echo "   cargo install --locked cargo-llvm-cov --version {{ cargo_llvm_cov_version }}"
-        exit 1
-    fi
-
-_ensure-cargo-machete:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if ! cargo machete --version >/dev/null 2>&1; then
-        echo "❌ 'cargo-machete' not found. Install with:"
-        echo "   cargo install --locked cargo-machete"
-        exit 1
-    fi
-
-_ensure-dprint:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    installed_version=""
-    if command -v dprint >/dev/null; then
-        installed_version="$(dprint --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_version" != "{{ dprint_version }}" ]]; then
-        echo "❌ 'dprint' {{ dprint_version }} not found. See 'just setup-tools' or install:"
-        echo "   cargo install --locked dprint --version {{ dprint_version }}"
-        exit 1
-    fi
-
-# Internal helpers: ensure external tooling is installed
-_ensure-git-cliff:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v git-cliff >/dev/null || {
-        echo "❌ 'git-cliff' not found. Install with:"
-        echo "   cargo install --locked git-cliff"
-        exit 1
-    }
-
-_ensure-jq:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v jq >/dev/null || { echo "❌ 'jq' not found. Install jq and ensure it is on PATH."; exit 1; }
-
-_ensure-chktex:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v chktex >/dev/null || {
-        echo "❌ 'chktex' not found. Install a TeX distribution or package manager copy of chktex and ensure it is on PATH."
-        exit 1
-    }
-
-_ensure-tectonic:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    installed_version=""
-    if command -v tectonic >/dev/null; then
-        installed_version="$(tectonic --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_version" != "{{ tectonic_version }}" ]]; then
-        echo "❌ 'tectonic' {{ tectonic_version }} not found. See 'just setup-tools' or install:"
-        echo "   cargo install --locked tectonic --version {{ tectonic_version }}"
-        exit 1
-    fi
-
-_ensure-tex-fmt:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    installed_version=""
-    if command -v tex-fmt >/dev/null; then
-        installed_version="$(tex-fmt --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_version" != "{{ tex_fmt_version }}" ]]; then
-        echo "❌ 'tex-fmt' {{ tex_fmt_version }} not found. See 'just setup-tools' or install:"
-        echo "   cargo install --locked tex-fmt --version {{ tex_fmt_version }}"
-        exit 1
-    fi
-
-_ensure-nextest:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    installed_version=""
-    if cargo nextest --version >/dev/null 2>&1; then
-        installed_version="$(cargo nextest --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_version" != "{{ nextest_version }}" ]]; then
-        echo "❌ 'cargo-nextest' {{ nextest_version }} not found. See 'just setup-tools' or install:"
-        echo "   cargo install --locked cargo-nextest --version {{ nextest_version }}"
-        exit 1
-    fi
-
-_ensure-rumdl:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    installed_version=""
-    if command -v rumdl >/dev/null; then
-        installed_version="$(rumdl --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_version" != "{{ rumdl_version }}" ]]; then
-        echo "❌ 'rumdl' {{ rumdl_version }} not found. See 'just setup-tools' or install:"
-        echo "   cargo install --locked rumdl --version {{ rumdl_version }}"
-        exit 1
-    fi
-
-_ensure-shellcheck:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v uv >/dev/null || { echo "❌ 'uv' not found. See 'just setup' or https://github.com/astral-sh/uv"; exit 1; }
-    uv run shellcheck --version >/dev/null
-
-_ensure-shfmt:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v uv >/dev/null || { echo "❌ 'uv' not found. See 'just setup' or https://github.com/astral-sh/uv"; exit 1; }
-    uv run shfmt --version >/dev/null
-
-# Internal helper: ensure taplo is installed
-_ensure-taplo:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    installed_version=""
-    if command -v taplo >/dev/null; then
-        installed_version="$(taplo --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_version" != "{{ taplo_version }}" ]]; then
-        echo "❌ 'taplo' {{ taplo_version }} not found. See 'just setup-tools' or install:"
-        echo "   cargo install --locked taplo-cli --version {{ taplo_version }}"
-        exit 1
-    fi
-
-# Internal helper: ensure typos-cli is installed
-_ensure-typos:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    installed_version=""
-    if command -v typos >/dev/null; then
-        installed_version="$(typos --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_version" != "{{ typos_version }}" ]]; then
-        echo "❌ 'typos' {{ typos_version }} not found. See 'just setup-tools' or install:"
-        echo "   cargo install --locked typos-cli --version {{ typos_version }}"
-        exit 1
-    fi
-
-# Internal helper: ensure uv is installed
-_ensure-uv:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v uv >/dev/null || { echo "❌ 'uv' not found. See 'just setup' or https://github.com/astral-sh/uv"; exit 1; }
-
-_ensure-yamllint:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v uv >/dev/null || { echo "❌ 'uv' not found. See 'just setup' or https://github.com/astral-sh/uv"; exit 1; }
-    uv run yamllint --version >/dev/null
-
-_ensure-zizmor:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    installed_version=""
-    if command -v zizmor >/dev/null; then
-        installed_version="$(zizmor --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_version" != "{{ zizmor_version }}" ]]; then
-        echo "❌ 'zizmor' {{ zizmor_version }} not found. See 'just setup-tools' or install:"
-        echo "   cargo install --locked zizmor --version {{ zizmor_version }}"
-        exit 1
-    fi
+import 'just/helpers.just'
 
 # GitHub Actions workflow validation
+[group('validation')]
 action-lint: _ensure-actionlint
     #!/usr/bin/env bash
     set -euo pipefail
@@ -232,18 +54,33 @@ action-lint: _ensure-actionlint
     fi
 
 # Benchmark recipes that produce performance numbers use Cargo's perf profile.
+[group('benchmarks and performance')]
 bench:
     cargo bench --workspace --profile perf --features bench
 
 # Allocation-contract microbenchmarks for public hot paths.
+[group('benchmarks and performance')]
 bench-allocations:
     cargo bench --profile perf --bench allocation_hot_paths --features count-allocations -- --noplot
 
 # CI regression benchmarks with the perf profile.
+[group('benchmarks and performance')]
 bench-ci:
     cargo bench --profile perf --bench ci_performance_suite
 
+# Render a Markdown comparison against a saved Criterion baseline.
+[group('benchmarks and performance')]
+bench-compare baseline="last" suite="release-signal": _ensure-uv
+    uv run benchmark-utils bench-compare "{{ baseline }}" --suite "{{ suite }}"
+
+# Compile benchmark harnesses without running them.
+[group('benchmarks and performance')]
+bench-compile:
+    @echo "Compiling benchmark harnesses without running them; this can take several minutes on Windows/MSVC."
+    cargo bench --workspace --no-run --features bench
+
 # Run the curated release-signal benchmark set and leave Criterion `new` output.
+[group('benchmarks and performance')]
 bench-latest:
     cargo bench --profile perf --bench ci_performance_suite
     cargo bench --profile perf --bench circumsphere_containment
@@ -251,15 +88,21 @@ bench-latest:
     cargo bench --profile perf --bench topology_guarantee_construction
     cargo bench --profile perf --bench locate
 
-# Render a Markdown comparison against a saved Criterion baseline.
-bench-compare baseline="last" suite="release-signal": _ensure-uv
-    uv run benchmark-utils bench-compare "{{ baseline }}" --suite "{{ suite }}"
-
 # Run latest measurements and render the latest-vs-last performance report.
-bench-latest-vs-last baseline="last": bench-latest
-    just bench-compare "{{ baseline }}"
+[group('benchmarks and performance')]
+bench-latest-vs-last baseline="last": bench-latest && (bench-compare baseline)
+
+# Run Criterion's Pachner move and round-trip stress benchmark.
+[group('benchmarks and performance')]
+bench-pachner-stress samples="10": (_bench-pachner-stress samples)
+
+# Generate a release performance summary from fresh perf-profile benchmark runs.
+[group('benchmarks and performance')]
+bench-perf-summary: _ensure-uv
+    uv run benchmark-utils generate-summary --run-benchmarks --profile perf
 
 # Save a Criterion baseline for a Delaunay benchmark suite.
+[group('benchmarks and performance')]
 bench-save-baseline tag suite="release-signal":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -290,137 +133,30 @@ bench-save-baseline tag suite="release-signal":
         cargo bench --profile perf --bench "$target" -- --save-baseline "$tag"
     done
 
-# Save a full Criterion baseline for the previous release signal.
-bench-save-last:
-    just bench-save-baseline last
-
-# Compile benchmark harnesses without running them.
-bench-compile:
-    @echo "Compiling benchmark harnesses without running them; this can take several minutes on Windows/MSVC."
-    cargo bench --workspace --no-run --features bench
-
-# Generate performance summary with fresh perf-profile benchmark runs (for releases)
-bench-perf-summary: _ensure-uv
-    uv run benchmark-utils generate-summary --run-benchmarks --profile perf
-
 # Smoke-test benchmark harnesses with minimal samples; not for performance data.
 # Criterion requires sample_size >= 10; use the minimum with short measurement/warm-up windows.
+[doc('Smoke-test benchmark harnesses with minimal samples; do not use as performance data.')]
+[group('benchmarks and performance')]
 bench-smoke:
     CRIT_SAMPLE_SIZE=10 CRIT_MEASUREMENT_MS=500 CRIT_WARMUP_MS=200 cargo bench --workspace --profile perf --features bench
 
-# Run the opt-in companion binary with the CLI feature and perf profile.
-run *args:
-    cargo run --profile perf --features cli --bin delaunay -- {{ args }}
-
-# Run one 3D and one 4D direct Pachner stress workload with topology-scope reports enabled.
-pachner-stress attempts="100" validate_every="10" mode="round-trip":
-    just _pachner-stress-dim 3d 9000 "{{ attempts }}" "{{ validate_every }}" target/pachner_stress/3d "{{ mode }}"
-    just _pachner-stress-dim 4d 1000 "{{ attempts }}" "{{ validate_every }}" target/pachner_stress/4d "{{ mode }}"
-
-# Run one 3D direct Pachner stress workload with topology-scope reports enabled.
-pachner-stress-3d attempts="100" vertices="9000" validate_every="10" output_dir="target/pachner_stress/3d" mode="round-trip":
-    just _pachner-stress-dim 3d "{{ vertices }}" "{{ attempts }}" "{{ validate_every }}" "{{ output_dir }}" "{{ mode }}"
-
-# Run one 4D direct Pachner stress workload with topology-scope reports enabled.
-pachner-stress-4d attempts="100" vertices="1000" validate_every="10" output_dir="target/pachner_stress/4d" mode="round-trip":
-    just _pachner-stress-dim 4d "{{ vertices }}" "{{ attempts }}" "{{ validate_every }}" "{{ output_dir }}" "{{ mode }}"
-
-# Run Criterion's Pachner move and round-trip stress benchmark.
-bench-pachner-stress samples="10":
-    just _bench-pachner-stress "{{ samples }}"
-
-# Alias for the dimension-agnostic Pachner stress benchmark.
-bench-pachner-stress-3d samples="10":
-    just _bench-pachner-stress "{{ samples }}"
-
-# Alias for the dimension-agnostic Pachner stress benchmark.
-bench-pachner-stress-4d samples="10":
-    just _bench-pachner-stress "{{ samples }}"
-
-[private]
-_pachner-stress-dim label vertices attempts validate_every output_dir mode:
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    label="{{ label }}"
-    vertices="{{ vertices }}"
-    attempts="{{ attempts }}"
-    validate_every="{{ validate_every }}"
-    output_dir="{{ output_dir }}"
-    mode="{{ mode }}"
-
-    require_positive_integer() {
-        local name="$1"
-        local value="$2"
-        if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then
-            echo "ERROR: $name must be a positive integer, got: $value" >&2
-            exit 2
-        fi
-    }
-
-    require_positive_integer "vertices" "$vertices"
-    require_positive_integer "attempts" "$attempts"
-    require_positive_integer "validate_every" "$validate_every"
-    case "$mode" in
-        round-trip|random-walk) ;;
-        *)
-            echo "ERROR: unsupported Pachner stress mode: $mode" >&2
-            exit 2
-            ;;
-    esac
-
-    mkdir -p "$output_dir"
-
-    echo "Pachner stress ${label}/${mode}: ${vertices} vertices, ${attempts} attempted moves."
-    echo "Validation scope: topology (Levels 1-3; Level 4 embedding overlap scan deferred to #483)."
-    cargo run --profile perf --features cli --bin delaunay -- \
-        pachner-stress \
-        --dimension "$label" \
-        --mode "$mode" \
-        --vertices "$vertices" \
-        --attempts "$attempts" \
-        --validate-every "$validate_every" \
-        --progress-csv "$output_dir/progress.csv" \
-        --summary-json "$output_dir/summary.json"
-
-[private]
-_bench-pachner-stress samples:
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    samples="{{ samples }}"
-
-    require_positive_integer() {
-        local name="$1"
-        local value="$2"
-        if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then
-            echo "ERROR: $name must be a positive integer, got: $value" >&2
-            exit 2
-        fi
-    }
-
-    require_positive_integer "samples" "$samples"
-
-    if (( samples < 10 )); then
-        echo "ERROR: samples must be at least 10 because Criterion requires sample_size >= 10." >&2
-        exit 2
-    fi
-
-    echo "Pachner stress Criterion fixture benchmark: ${samples} samples."
-    env CRIT_SAMPLE_SIZE="$samples" \
-        cargo bench --profile perf --features bench --bench pachner_stress -- --noplot
-
-# Compile benchmarks and release integration tests without running.
-bench-test-compile: bench-compile test-integration-compile
-
-# Build commands
+# Build the crate in the development profile.
+[group('build and setup')]
 build:
     cargo build
 
+# Build the crate in the release profile.
+[group('build and setup')]
 build-release:
     cargo build --release
 
+# Check that Cargo.toml and Cargo.lock are synchronized.
+[group('validation')]
+cargo-lock-check:
+    cargo metadata --locked --format-version 1 --no-deps > /dev/null
+
 # Changelog management (git-cliff + post-processing + archiving + rumdl formatting)
+[group('release')]
 changelog: _ensure-git-cliff _ensure-rumdl python-sync
     #!/usr/bin/env bash
     set -euo pipefail
@@ -429,9 +165,8 @@ changelog: _ensure-git-cliff _ensure-rumdl python-sync
     uv run archive-changelog
     rumdl fmt --silent CHANGELOG.md docs/archive/changelog/*.md
 
-changelog-tag version:
-    just tag {{ version }}
-
+# Generate the changelog as if releasing the requested version.
+[group('release')]
 changelog-unreleased version: _ensure-git-cliff _ensure-rumdl python-sync
     #!/usr/bin/env bash
     set -euo pipefail
@@ -440,182 +175,197 @@ changelog-unreleased version: _ensure-git-cliff _ensure-rumdl python-sync
     uv run archive-changelog
     rumdl fmt --silent CHANGELOG.md docs/archive/changelog/*.md
 
-changelog-update: changelog
-    @echo "📝 Changelog updated successfully!"
-    @echo "To create a git tag with changelog content for a specific version, run:"
-    @echo "  just tag <version>  # e.g., just tag v0.4.2"
-
-# Check (non-mutating): run non-test validators.
-check: lint
+# Run every non-mutating validator outside the test suites.
+[group('workflows')]
+check: check-code check-config check-docs
     @echo "✅ Checks complete!"
 
+# Check Rust, Python, notebooks, and shell scripts.
+[group('validation')]
+check-code: rust-core-check python-check notebook-check shell-check
+
+# Check justfile, JSON, TOML, YAML/CFF, and GitHub Actions configuration.
+[group('validation')]
+check-config: justfile-fmt-check cargo-lock-check json-check toml-check yaml-check citation-check github-actions-check
+
+# Check Markdown, spelling, and release-version references.
+[group('validation')]
+check-docs: markdown-check spell-check docs-version-check
+
 # Fast compile check (no binary produced)
+[group('build and setup')]
 check-fast:
     cargo check
 
 # CI simulation: comprehensive validation.
-ci: justfile-fmt-check github-actions-check markdown-ci docs-version-check cargo-lock-check json-check toml-ci yaml-ci python-ci notebook-check rust-core-check test-rust-ci test-doc bench-compile examples
+[group('workflows')]
+ci: check test bench-compile examples
     @echo "🎯 CI checks complete!"
 
 # CI followed by an explicit persistent local baseline refresh.
-ci-baseline ref="main":
-    just ci
-    just perf-baseline {{ ref }}
+[group('workflows')]
+ci-baseline ref="main": ci && (perf-baseline ref)
 
 # CI plus the explicit slow correctness bucket.
+[group('workflows')]
 ci-slow: ci test-slow
     @echo "✅ CI + slow tests passed!"
 
 # Validate CITATION.cff against the Citation File Format schema.
+[group('validation')]
 citation-check: _ensure-uv
     uvx --from cffconvert==2.0.0 cffconvert --validate -i CITATION.cff
 
 # Clean build artifacts
+[group('build and setup')]
 clean:
     cargo clean
     rm -rf target/llvm-cov
     rm -rf coverage_report
     rm -rf coverage
 
-# Code quality and formatting
-clippy: clippy-all-targets
-
-clippy-all-targets:
+# Run strict Clippy checks for every target with default and all features.
+[group('validation')]
+clippy:
     cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
     cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
 # Coverage analysis for local development (HTML output)
+[group('tests and coverage')]
 coverage: _ensure-cargo-llvm-cov
     mkdir -p target/llvm-cov
     cargo llvm-cov {{ _coverage_base_args }} --html --output-dir target/llvm-cov
     @echo "📊 Coverage report generated: target/llvm-cov/html/index.html"
 
 # Coverage analysis for CI (XML output for codecov/codacy)
+[group('tests and coverage')]
 coverage-ci: _ensure-cargo-llvm-cov
     mkdir -p coverage
     cargo llvm-cov nextest {{ _coverage_base_args }} --cobertura --output-path coverage/cobertura.xml -P coverage
 
+# Run the large-scale 2D diagnostic fixture with progress output.
+[group('diagnostics')]
 debug-large-scale-2d n="36000" repair_every="1": _ensure-nextest
     DELAUNAY_BULK_PROGRESS_EVERY=2000 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_2D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug debug_large_scale_2d -- --exact --nocapture
 
+# Run the large-scale 3D diagnostic fixture with progress output.
+[group('diagnostics')]
 debug-large-scale-3d n="7500" repair_every="1": _ensure-nextest
     DELAUNAY_BULK_PROGRESS_EVERY=500 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_3D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug debug_large_scale_3d -- --exact --nocapture
 
+# Run the large-scale 4D diagnostic fixture with progress output.
+[group('diagnostics')]
 debug-large-scale-4d n="800" repair_every="1": _ensure-nextest
     DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_4D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug debug_large_scale_4d -- --exact --nocapture
 
+# Run the large-scale 5D diagnostic fixture with progress output.
+[group('diagnostics')]
 debug-large-scale-5d n="140" repair_every="1": _ensure-nextest
     DELAUNAY_BULK_PROGRESS_EVERY=20 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_5D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug debug_large_scale_5d -- --exact --nocapture
 
-# Default recipe shows available commands
-default:
-    @just --list
+# Show the curated workflow guide when `just` is invoked without a recipe.
+[default]
+[private]
+default: help-workflows
 
+# Build rustdoc for the workspace and reject warnings.
+[group('validation')]
 doc-check:
     RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --document-private-items
 
+# Check release-version references against Cargo.toml.
+[group('validation')]
 docs-version-check: _ensure-uv
     uv run --locked check-docs-version-sync
 
-cargo-lock-check:
-    cargo metadata --locked --format-version 1 --no-deps > /dev/null
-
-# Examples and validation
+# Build and run every Rust example.
+[group('tests and coverage')]
 examples:
     ./scripts/run_all_examples.sh
 
 # Fix (mutating): apply formatters/auto-fixes
+[group('workflows')]
 fix: justfile-fmt toml-fix fmt python-fix shell-fix markdown-fix yaml-fix
     @echo "✅ Fixes applied!"
 
+# Format Rust source files.
+[group('validation')]
 fmt:
     cargo fmt --all
 
+# Check Rust source formatting without modifying files.
+[group('validation')]
 fmt-check:
     cargo fmt --all -- --check
 
-justfile-fmt:
-    just --fmt
-
-justfile-fmt-check:
-    just --fmt --check
-
+# Run actionlint and zizmor over GitHub Actions workflows.
+[group('validation')]
 github-actions-check: action-lint zizmor
     @echo "✅ GitHub Actions checks complete!"
 
+# Show the curated entry points for common repository workflows.
+[group('workflows')]
 help-workflows:
-    @echo "Recommended Just workflow:"
-    @echo "  just check             # Run all non-mutating lints/validators"
-    @echo "  just fix               # Apply formatters/auto-fixes (mutating)"
-    @echo "  just test              # Run default test buckets"
-    @echo "  just ci                # GitHub-equivalent union of every validation bucket"
+    @echo "Recommended workflows:"
+    @echo "  just check              # All non-mutating source, config, and docs checks"
+    @echo "  just fix                # Apply repository formatters and safe auto-fixes"
+    @echo "  just test               # Default Rust and Python test buckets"
+    @echo "  just ci                 # GitHub-equivalent default validation suite"
     @echo ""
-    @echo "Focused validation:"
-    @echo "  just rust-core-check   # Formatting, all-targets Clippy, docs, and Semgrep"
-    @echo "  just python-ci         # Python lint/typecheck + pytest"
-    @echo "  just notebook-check    # Notebook hygiene and extracted-code checks"
-    @echo "  just markdown-ci       # Markdown lint + spell check"
-    @echo "  just docs-version-check # Release-version references against Cargo.toml"
-    @echo "  just cargo-lock-check  # Cargo.toml and Cargo.lock synchronization"
-    @echo "  just toml-ci           # TOML parse/lint/format checks"
-    @echo "  just yaml-ci           # YAML/CFF format/lint/citation checks"
-    @echo "  just github-actions-check # actionlint + zizmor"
+    @echo "Focused checks:"
+    @echo "  just check-code         # Rust, Python, notebooks, and shell"
+    @echo "  just check-config       # Just, Cargo, JSON, TOML, YAML/CFF, and Actions"
+    @echo "  just check-docs         # Markdown, spelling, and version references"
+    @echo "  just rust-core-check    # Rust fmt, Clippy, rustdoc, and Semgrep"
+    @echo "  just python-check       # Ruff formatting/lint plus ty type checking"
+    @echo "  just notebook-check     # Notebook hygiene and extracted-code checks"
+    @echo "  just shell-check        # ShellCheck plus shfmt verification"
     @echo ""
-    @echo "Focused testing:"
-    @echo "  just test-rust         # Rust unit, doctest, and integration tests"
-    @echo "  just test-rust-ci      # CI Rust unit, integration, and CLI tests"
-    @echo "  just test-unit         # Rust lib unit tests in debug and release profiles"
-    @echo "  just test-doc          # Rust doctests only, in release profile"
-    @echo "  just test-integration  # All integration tests (includes proptests)"
-    @echo "  just test-integration-fast # Integration tests (skips proptests)"
-    @echo "  just test-integration-compile # Compile integration tests without running"
-    @echo "  just test-python       # Python tests only (pytest)"
-    @echo "  just test-slow         # Run correctness tests over the 10s default-suite budget"
-    @echo "  just examples          # Run all examples"
+    @echo "Focused tests:"
+    @echo "  just test-rust          # Unit, integration, CLI, and doctests"
+    @echo "  just test-unit          # Debug and release Rust lib unit tests"
+    @echo "  just test-integration   # Release integration tests, including proptests"
+    @echo "  just test-integration-fast # Integration tests without proptests"
+    @echo "  just test-cli           # CLI-feature integration tests"
+    @echo "  just test-doc           # Release doctests"
+    @echo "  just test-python        # Python support-script tests"
+    @echo "  just test-slow          # Explicit slow correctness bucket"
+    @echo "  just examples           # Build and run every Rust example"
     @echo ""
-    @echo "Notebook workflows:"
-    @echo "  just notebook          # Launch the default notebook with uv-managed dependencies"
-    @echo "  just notebook-lint     # Validate notebook JSON, output hygiene, and extracted code"
-    @echo "  just notebook-check    # Lint notebooks without executing them"
-    @echo "  just notebook-execute    # Explicitly execute one notebook"
-    @echo "  just notebook-clear-outputs-all # Clear source notebook outputs"
-    @echo "  just notebook-reset-from-git # Restore tracked source notebooks and clear artifacts"
-    @echo "  just run <args>        # Run the opt-in delaunay binary with --features cli"
+    @echo "Notebooks and papers:"
+    @echo "  just notebook           # Launch the default source notebook"
+    @echo "  just notebook-execute   # Execute one notebook under target/notebooks"
+    @echo "  just validation-doc-figures # Refresh canonical validation figures"
+    @echo "  just paper-check        # Lint, build, and check without tracked changes"
+    @echo "  just paper-refresh      # Check, then refresh one tracked reviewer PDF"
+    @echo "  just papers             # Refresh figures and the validation reviewer PDF"
     @echo ""
-    @echo "Active large-scale debugging:"
-    @echo "  just test-diagnostics      # Run diagnostics tools with output"
-    @echo "  just debug-large-scale-2d [n] [repair_every] # 2D acceptance/profiling (defaults n=36000, repair_every=1)"
-    @echo "  just debug-large-scale-3d [n] [repair_every] # Issue #341: 3D scalability (defaults n=7500, repair_every=1)"
-    @echo "  just debug-large-scale-4d [n] [repair_every] # Issue #340: 4D large-scale runtime (defaults n=800, repair_every=1)"
-    @echo "  just debug-large-scale-5d [n] [repair_every] # Issue #342: 5D feasibility (defaults n=140, repair_every=1)"
+    @echo "Performance checks (perf-*):"
+    @echo "  just perf-no-regressions # Fast guard against the cached main baseline"
+    @echo "  just perf-vs-ref <ref>  # Compare against another cached Git ref"
+    @echo "  just perf-large-scale-smoke # Bounded 2D-5D wall-clock guard"
+    @echo "  just perf-local         # Compare the current tree with the latest release"
+    @echo "  just perf-help          # Detailed performance and profiling commands"
     @echo ""
-    @echo "Benchmark workflows:"
+    @echo "Larger benchmarks (bench-*):"
     @echo "  just bench-compile      # Compile benchmark harnesses without running"
-    @echo "  just bench-smoke        # Smoke-test benchmark harnesses (minimal samples)"
-    @echo "  just bench              # Run all benchmarks with perf profile (ThinLTO)"
-    @echo "  just bench-ci           # CI regression benchmarks with perf profile (~5-10 min)"
-    @echo "  just pachner-stress     # 3D+4D direct Pachner stress with CSV/JSON artifacts"
-    @echo "  just pachner-stress-3d [attempts] [vertices] [validate_every] [output_dir] [mode]"
-    @echo "                          # 3D Pachner stress (defaults: 100K, 10K vertices, round-trip)"
-    @echo "  just pachner-stress-4d [attempts] [vertices] [validate_every] [output_dir] [mode]"
-    @echo "                          # 4D Pachner stress (defaults: 100K, 1K vertices, round-trip)"
-    @echo "  just bench-pachner-stress # Criterion timing for Pachner move/round-trip stress"
-    @echo "  just perf-large-scale-smoke [max_secs] # Quick pre-push 2D-5D wall-clock guard (default 60s)"
-    @echo "  just perf-no-regressions [threshold] # Fast pre-PR 2D-5D regression guard (default 7.5%)"
-    @echo "  just perf-baseline [ref] # Persist/update default local baseline (default: main)"
-    @echo "  just perf-baseline-to <out> [ref] # Generate scratch baseline without replacing default"
-    @echo "  just bench-perf-summary # Generate perf-profile release summary (~30-45 min)"
-    @echo "  just profile [toolchain] [code_ref] # Run ci_performance_suite for a compiler/code pair"
+    @echo "  just bench-smoke        # Smoke-test harnesses; not performance evidence"
+    @echo "  just bench              # Run the complete benchmark suite"
+    @echo "  just bench-ci           # Run the CI regression benchmark suite"
+    @echo "  just bench-latest-vs-last # Measure release signals and compare to last"
+    @echo "  just bench-perf-summary # Generate the release performance summary"
     @echo ""
-    @echo "Larger/optional workflows:"
-    @echo "  just ci-slow             # CI + slow correctness tests"
-    @echo "  just ci-baseline         # CI + persist default performance baseline"
-    @echo "  just coverage            # Generate coverage report (HTML)"
-    @echo "  just semgrep             # Run repository-owned Semgrep rules"
+    @echo "Release and optional workflows:"
+    @echo "  just publish-check      # Validate metadata and cargo publish --dry-run"
+    @echo "  just changelog          # Regenerate and format changelog artifacts"
+    @echo "  just ci-slow            # Default CI plus slow correctness tests"
+    @echo "  just ci-baseline        # Default CI plus persistent perf baseline refresh"
+    @echo "  just coverage           # Generate local HTML coverage"
     @echo ""
-    @echo "Use 'just --list' for every granular recipe."
+    @echo "Use 'just --list' for the complete grouped recipe reference."
 
 # Check JSON files parse cleanly.
+[group('validation')]
 json-check: _ensure-jq
     #!/usr/bin/env bash
     set -euo pipefail
@@ -629,18 +379,20 @@ json-check: _ensure-jq
         echo "No JSON files found to check."
     fi
 
-# All linting: code + documentation + configuration
-lint: justfile-fmt-check github-actions-check markdown-ci docs-version-check cargo-lock-check json-check toml-ci yaml-ci python-check notebook-lint rust-core-check shell-lint
+# Format the root and helper justfiles.
+[group('validation')]
+justfile-fmt:
+    just --fmt
+    just --fmt --justfile just/helpers.just
 
-# Code linting: Rust, Python, notebooks, and shell scripts.
-lint-code: rust-core-check python-check notebook-lint shell-lint
+# Check root and helper justfile formatting without modifying them.
+[group('validation')]
+justfile-fmt-check:
+    just --fmt --check
+    just --fmt --check --justfile just/helpers.just
 
-# Configuration checks: justfile, JSON, TOML, YAML/CFF, GitHub Actions workflows
-lint-config: justfile-fmt-check cargo-lock-check json-check toml-ci yaml-ci github-actions-check
-
-# Documentation linting: Markdown + spell checking + release-version references
-lint-docs: markdown-ci docs-version-check
-
+# Check Markdown formatting and raw line length.
+[group('validation')]
 markdown-check: _ensure-rumdl
     #!/usr/bin/env bash
     set -euo pipefail
@@ -672,10 +424,8 @@ markdown-check: _ensure-rumdl
         echo "No markdown files found to check."
     fi
 
-markdown-ci: markdown-check spell-check
-    @echo "✅ Markdown checks complete!"
-
-# Shell, markdown, and YAML quality
+# Apply automatic Markdown fixes.
+[group('validation')]
 markdown-fix: _ensure-rumdl
     #!/usr/bin/env bash
     set -euo pipefail
@@ -693,8 +443,8 @@ markdown-fix: _ensure-rumdl
         echo "No markdown files found to format."
     fi
 
-markdown-lint: markdown-check
-
+# Launch one source notebook in JupyterLab.
+[group('notebooks and papers')]
 notebook notebook="notebooks/00_quickstart.ipynb": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
@@ -702,12 +452,19 @@ notebook notebook="notebooks/00_quickstart.ipynb": _ensure-uv
     mkdir -p "$notebook_cache/.ipython" "$notebook_cache/.matplotlib"
     MPLBACKEND=Agg IPYTHONDIR="$notebook_cache/.ipython" MPLCONFIGDIR="$notebook_cache/.matplotlib" uv run --group notebooks jupyter lab --ServerApp.open_browser=True --LabApp.open_browser=True "{{ notebook }}"
 
-notebook-check: notebook-lint
+# Run routine non-executing notebook validation.
+[group('notebooks and papers')]
+notebook-check: _ensure-uv
+    uv run --group dev --group notebooks notebook-check lint --repo-root .
     @echo "📓 Notebook checks complete!"
 
+# Clear outputs from one source notebook in place.
+[group('notebooks and papers')]
 notebook-clear-outputs notebook="notebooks/00_quickstart.ipynb": _ensure-uv
     uv run --group notebooks jupyter nbconvert --clear-output --inplace "{{ notebook }}"
 
+# Clear outputs from every source notebook in place.
+[group('notebooks and papers')]
 notebook-clear-outputs-all: _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
@@ -724,6 +481,24 @@ notebook-clear-outputs-all: _ensure-uv
         echo "No notebooks found to clear."
     fi
 
+# Execute one notebook into target/notebooks without modifying its source.
+[group('notebooks and papers')]
+notebook-execute notebook="notebooks/00_quickstart.ipynb" output_dir="target/notebooks" timeout="600": _ensure-uv
+    #!/usr/bin/env bash
+    set -euo pipefail
+    output_path="$(pwd)/{{ output_dir }}"
+    notebook_stem="$(basename "{{ notebook }}" .ipynb)"
+    notebook_output_dir="$output_path/$notebook_stem"
+    mkdir -p "$output_path/.ipython" "$output_path/.matplotlib" "$notebook_output_dir"
+    MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout={{ timeout }} --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "$notebook_output_dir" "{{ notebook }}"
+
+# Check notebook structure and output hygiene without extracted-code linting.
+[group('notebooks and papers')]
+notebook-output-check: _ensure-uv
+    uv run --group dev --group notebooks notebook-check lint --repo-root . --no-ruff --no-format --no-ty
+
+# Restore tracked source notebooks and remove generated notebook artifacts.
+[group('notebooks and papers')]
 notebook-reset-from-git source="index":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -755,58 +530,25 @@ notebook-reset-from-git source="index":
     find notebooks -type d -name .ipynb_checkpoints -prune -exec rm -rf {} +
     printf 'Restored %s tracked source notebook(s) from %s and removed target/notebooks.\n' "$tracked_count" "$restored_from"
 
-notebook-execute notebook="notebooks/00_quickstart.ipynb" output_dir="target/notebooks" timeout="600": _ensure-uv
-    #!/usr/bin/env bash
-    set -euo pipefail
-    output_path="$(pwd)/{{ output_dir }}"
-    notebook_stem="$(basename "{{ notebook }}" .ipynb)"
-    notebook_output_dir="$output_path/$notebook_stem"
-    mkdir -p "$output_path/.ipython" "$output_path/.matplotlib" "$notebook_output_dir"
-    MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout={{ timeout }} --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "$notebook_output_dir" "{{ notebook }}"
-
-notebook-lint: _ensure-uv
-    uv run --group dev --group notebooks notebook-check lint --repo-root .
-
-notebook-output-check: _ensure-uv
-    uv run --group dev --group notebooks notebook-check lint --repo-root . --no-ruff --no-format --no-ty
-
+# Install the optional notebook dependency group.
+[group('notebooks and papers')]
 notebook-setup: _ensure-uv
     uv sync --group notebooks
 
-# Build the CLI used by paper notebooks before nbconvert starts its execution timer.
-paper-cli:
-    cargo build --profile perf --features cli --bin delaunay
+# Run one 3D and one 4D direct Pachner stress workload with topology-scope reports enabled.
+[group('benchmarks and performance')]
+pachner-stress attempts="100" validate_every="10" mode="round-trip": (_pachner-stress-dim "3d" "9000" attempts validate_every "target/pachner_stress/3d" mode) (_pachner-stress-dim "4d" "1000" attempts validate_every "target/pachner_stress/4d" mode)
 
-# Refresh the canonical validation figures reused by documentation and papers.
-paper-figures: validation-doc-figures
-    @echo "📊 Paper figures refreshed under docs/assets/validation"
+# Run one 3D direct Pachner stress workload with topology-scope reports enabled.
+[group('benchmarks and performance')]
+pachner-stress-3d attempts="100" vertices="9000" validate_every="10" output_dir="target/pachner_stress/3d" mode="round-trip": (_pachner-stress-dim "3d" vertices attempts validate_every output_dir mode)
 
-# Refresh reviewer-facing validation diagrams from the reproducible notebook.
-validation-doc-figures: _ensure-uv paper-cli
-    #!/usr/bin/env bash
-    set -euo pipefail
-    mkdir -p docs/assets/validation
-    DELAUNAY_BINARY="{{ perf_delaunay_binary }}" DELAUNAY_VALIDATION_DOC_FIGURE_DIR="docs/assets/validation" just notebook-execute notebooks/01_validation.ipynb target/docs/notebooks
+# Run one 4D direct Pachner stress workload with topology-scope reports enabled.
+[group('benchmarks and performance')]
+pachner-stress-4d attempts="100" vertices="1000" validate_every="10" output_dir="target/pachner_stress/4d" mode="round-trip": (_pachner-stress-dim "4d" vertices attempts validate_every output_dir mode)
 
-# Deliberately refresh the slow notebook-backed spherical README hero.
-spherical-readme-hero: _ensure-uv paper-cli
-    #!/usr/bin/env bash
-    set -euo pipefail
-    DELAUNAY_SPHERICAL_HERO_FIGURE="docs/assets/readme/delaunay_spherical_readme.png" just notebook-execute notebooks/02_spherical_hero.ipynb target/docs/notebooks 1800
-
-# Format publication-facing TeX sources.
-paper-tex-fmt: _ensure-tex-fmt
-    tex-fmt papers/*.tex
-
-# Check publication-facing TeX formatting and lint diagnostics.
-paper-tex-lint: _ensure-chktex _ensure-tex-fmt
-    #!/usr/bin/env bash
-    set -euo pipefail
-    tex-fmt --check papers/*.tex
-    # 24 conflicts with tex-fmt's indented figure labels.
-    chktex -q -n 1 -n 8 -n 24 -n 46 papers/*.tex
-
-# Compile one paper with Tectonic and copy the reviewer PDF beside its TeX source.
+# Compile one paper with Tectonic under target/papers/.
+[group('notebooks and papers')]
 paper-build paper="validation": _ensure-tectonic _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
@@ -819,7 +561,6 @@ paper-build paper="validation": _ensure-tectonic _ensure-uv
             ;;
     esac
     paper_source="papers/${paper}.tex"
-    paper_pdf="papers/${paper}.pdf"
     build_dir="target/papers/${paper}"
     if [ ! -f "$paper_source" ]; then
         echo "❌ Paper source not found: $paper_source"
@@ -831,10 +572,24 @@ paper-build paper="validation": _ensure-tectonic _ensure-uv
     export SOURCE_DATE_EPOCH="$source_date_epoch"
     tectonic --keep-intermediates --keep-logs --outdir "$build_dir" "$paper_source"
     uv run paper-pdf-normalize "$build_dir/${paper}.pdf" --tex "$paper_source"
-    cp "$build_dir/${paper}.pdf" "$paper_pdf"
-    echo "📄 Paper PDF written: $paper_pdf"
+    echo "📄 Paper PDF built: $build_dir/${paper}.pdf"
 
-# Check the compiled reviewer PDF for basic readability.
+# Compile and check one paper without refreshing tracked artifacts.
+[group('notebooks and papers')]
+paper-check paper="validation": paper-tex-fmt-check paper-tex-lint (paper-build paper) && (paper-pdf-check paper)
+
+# Remove generated paper build artifacts under target/papers.
+[group('notebooks and papers')]
+paper-clean:
+    rm -rf target/papers
+
+# Build the CLI used by paper notebooks before nbconvert starts its execution timer.
+[group('notebooks and papers')]
+paper-cli:
+    cargo build --profile perf --features cli --bin delaunay
+
+# Check the target-built PDF for basic readability.
+[group('notebooks and papers')]
 paper-pdf-check paper="validation": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
@@ -846,64 +601,76 @@ paper-pdf-check paper="validation": _ensure-uv
             exit 1
             ;;
     esac
-    uv run paper-pdf-check "papers/${paper}.pdf" \
+    uv run paper-pdf-check "target/papers/${paper}/${paper}.pdf" \
         --min-pages 1 \
         --require-text "Validation Architecture in delaunay" \
         --require-text "REFERENCES" \
         --forbid-text "\\today" \
         --forbid-text "Manuscript submitted to ACM"
 
-paper-check paper="validation": paper-tex-lint
+# Refresh one tracked reviewer PDF after its non-mutating checks pass.
+[group('notebooks and papers')]
+paper-refresh paper="validation": (paper-check paper)
     #!/usr/bin/env bash
     set -euo pipefail
     paper={{ quote(paper) }}
-    just paper-build "$paper"
-    just paper-pdf-check "$paper"
-    echo "✅ Paper '${paper}' compiled and checked successfully."
+    case "$paper" in
+        ""|*[!A-Za-z0-9_-]*)
+            echo "❌ Invalid paper name: $paper"
+            echo "   Use only ASCII letters, digits, underscores, and hyphens."
+            exit 1
+            ;;
+    esac
+    source_pdf="target/papers/${paper}/${paper}.pdf"
+    reviewer_pdf="papers/${paper}.pdf"
+    cp "$source_pdf" "$reviewer_pdf"
+    echo "📄 Reviewer PDF refreshed: $reviewer_pdf"
+
+# Format publication-facing TeX sources.
+[group('notebooks and papers')]
+paper-tex-fmt: _ensure-tex-fmt
+    tex-fmt papers/*.tex
+
+# Check publication-facing TeX formatting without modifying files.
+[group('notebooks and papers')]
+paper-tex-fmt-check: _ensure-tex-fmt
+    tex-fmt --check papers/*.tex
+
+# Lint publication-facing TeX sources with ChkTeX.
+[group('notebooks and papers')]
+paper-tex-lint: _ensure-chktex
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # 24 conflicts with tex-fmt's indented figure labels.
+    chktex -q -n 1 -n 8 -n 24 -n 46 papers/*.tex
 
 # Refresh notebook-owned paper figures, lint TeX, compile, and sanity-check PDFs.
-papers: paper-figures paper-check
+[group('notebooks and papers')]
+papers: validation-doc-figures (paper-refresh "validation")
     @echo "📚 Paper workflow complete!"
 
-paper-clean:
-    rm -rf target/papers
-
 # Generate a same-machine dev-mode baseline for a GitHub ref.
+[group('benchmarks and performance')]
 perf-baseline ref="main": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
     uv run benchmark-utils generate-ref-baseline --ref "{{ ref }}" --out baseline-artifact --dev
 
+# Generate a scratch same-machine baseline at an explicit output path.
+[group('benchmarks and performance')]
 perf-baseline-to out ref="main": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
     uv run benchmark-utils generate-ref-baseline --ref "{{ ref }}" --out "{{ out }}" --dev
 
+# Compare the current tree with one dev-mode baseline file.
+[group('benchmarks and performance')]
 perf-compare file threshold="7.5": _ensure-uv
     uv run benchmark-utils compare --baseline "{{ file }}" --threshold {{ threshold }} --dev
 
-# Compare the current tree against the latest published release in temp worktrees.
-performance-local: _ensure-uv
-    uv run benchmark-utils performance-local
-
-_performance-tag-pair-state current_tag baseline_tag:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    current_tag="{{ current_tag }}"
-    baseline_tag="{{ baseline_tag }}"
-    if [[ -n "$current_tag" || -n "$baseline_tag" ]]; then
-        if [[ -z "$current_tag" || -z "$baseline_tag" ]]; then
-            echo "current_tag and baseline_tag must be provided together" >&2
-            echo "invalid"
-        else
-            echo "explicit"
-        fi
-    else
-        echo "inferred"
-    fi
-
 # Compare stored GitHub Release benchmark assets without local cargo runs.
-performance-github-assets current_tag="" baseline_tag="": _ensure-uv
+[group('benchmarks and performance')]
+perf-github-assets current_tag="" baseline_tag="": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
     current_tag="{{ current_tag }}"
@@ -918,32 +685,18 @@ performance-github-assets current_tag="" baseline_tag="": _ensure-uv
         uv run benchmark-utils performance-github-assets
     fi
 
-# Generate local release-signal measurements in temp worktrees, then promote/archive docs.
-performance-release current_tag="" baseline_tag="": _ensure-uv
-    #!/usr/bin/env bash
-    set -euo pipefail
-    current_tag="{{ current_tag }}"
-    baseline_tag="{{ baseline_tag }}"
-    tag_pair_state="$(just --quiet _performance-tag-pair-state "$current_tag" "$baseline_tag")"
-    if [[ "$tag_pair_state" == "invalid" ]]; then
-        exit 2
-    fi
-    if [[ "$tag_pair_state" == "explicit" ]]; then
-        uv run benchmark-utils performance-release "$current_tag" "$baseline_tag"
-    else
-        uv run benchmark-utils performance-release
-    fi
-
+# Show detailed performance-check, benchmark, and profiling workflows.
+[group('benchmarks and performance')]
 perf-help:
     @echo "Performance Analysis Commands:"
     @echo "  just bench-latest          # Run curated release-signal Criterion benchmarks"
     @echo "  just bench-latest-vs-last  # Run latest and compare against saved 'last'"
     @echo "  just bench-compare [base]  # Render a Markdown report from saved Criterion baselines"
     @echo "  just bench-save-baseline <tag> # Save release-signal Criterion baseline"
-    @echo "  just bench-save-last       # Save release-signal Criterion baseline as 'last'"
-    @echo "  just performance-local     # Compare current tree against latest release locally"
-    @echo "  just performance-github-assets # Compare stored GitHub Release benchmark assets"
-    @echo "  just performance-release   # Promote release-to-release performance docs"
+    @echo "  just bench-save-baseline last # Save release-signal Criterion baseline as 'last'"
+    @echo "  just perf-local           # Compare current tree against latest release locally"
+    @echo "  just perf-github-assets   # Compare stored GitHub Release benchmark assets"
+    @echo "  just perf-release         # Promote release-to-release performance docs"
     @echo "  just perf-large-scale-smoke # Quick pre-push 2D-5D wall-clock smoke guard"
     @echo "  just perf-no-regressions   # Fast pre-PR guard with a cached same-machine main baseline"
     @echo "  just perf-vs-ref <ref> [threshold] # Compare current tree vs a cached same-machine ref baseline"
@@ -999,6 +752,7 @@ perf-help:
     @echo "  just profile 1.97.0 v0.7.5 # v0.7.5 code on Rust 1.97.0"
 
 # Quick pre-push 2D-5D large-scale wall-clock smoke guard.
+[group('benchmarks and performance')]
 perf-large-scale-smoke max_secs="60": _ensure-nextest
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1078,15 +832,41 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
     echo ""
     echo "✅ Large-scale smoke guard passed for 2D-5D"
 
+# Compare the current tree against the latest published release in temp worktrees.
+[group('benchmarks and performance')]
+perf-local: _ensure-uv
+    uv run benchmark-utils performance-local
+
 # Fast pre-PR performance guard against a cached same-machine main baseline.
+[group('benchmarks and performance')]
 perf-no-regressions threshold="7.5": _ensure-uv
     uv run benchmark-utils compare-ref --ref main --threshold {{ threshold }} --dev --output benches/worktree_vs_main_compare_results.txt
 
+# Generate local release-signal measurements in temp worktrees, then promote/archive docs.
+[group('benchmarks and performance')]
+perf-release current_tag="" baseline_tag="": _ensure-uv
+    #!/usr/bin/env bash
+    set -euo pipefail
+    current_tag="{{ current_tag }}"
+    baseline_tag="{{ baseline_tag }}"
+    tag_pair_state="$(just --quiet _performance-tag-pair-state "$current_tag" "$baseline_tag")"
+    if [[ "$tag_pair_state" == "invalid" ]]; then
+        exit 2
+    fi
+    if [[ "$tag_pair_state" == "explicit" ]]; then
+        uv run benchmark-utils performance-release "$current_tag" "$baseline_tag"
+    else
+        uv run benchmark-utils performance-release
+    fi
+
+# Compare the current tree against a cached same-machine ref baseline.
+[group('benchmarks and performance')]
 perf-vs-ref ref threshold="7.5": _ensure-uv
     uv run benchmark-utils compare-ref --ref "{{ ref }}" --threshold {{ threshold }} --dev
 
 # Run the selected CI benchmark suite for one compiler/code pair.
-profile toolchain="" code_ref="current":
+[group('benchmarks and performance')]
+profile toolchain="" code_ref="current": _ensure-jq
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -1174,13 +954,19 @@ profile toolchain="" code_ref="current":
             2>&1 | tee "$run_dir/ci_performance_suite.log"
     )
 
-profile-dev:
+# Profile 3D construction with Samply in the development configuration.
+[group('benchmarks and performance')]
+profile-dev: _ensure-samply
     PROFILING_DEV_MODE=1 samply record cargo bench --profile perf --bench profiling_suite -- "construction/3D/5000v/construct"
 
-profile-mem:
+# Profile allocation-heavy construction with Samply.
+[group('benchmarks and performance')]
+profile-mem: _ensure-samply
     samply record cargo bench --profile perf --bench profiling_suite --features count-allocations -- memory_profiling
 
 # Pre-publish validation: checks crates.io metadata rules that cargo publish --dry-run does NOT catch
+# Validate crates.io metadata and run cargo publish --dry-run.
+[group('release')]
 publish-check: _ensure-jq
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1242,34 +1028,54 @@ publish-check: _ensure-jq
     echo ""
     echo "✅ Publish check passed!"
 
-python-check: _ensure-uv
-    uv run ruff format --check scripts/
-    uv run ruff check scripts/
-    just python-typecheck
+# Run every non-mutating Python source check.
+[group('validation')]
+python-check: python-format-check python-lint python-typecheck
+    @echo "✅ Python source checks complete!"
 
-python-ci: python-check test-python
-    @echo "✅ Python checks complete!"
-
-# Python code quality
+# Apply Ruff lint fixes and formatting to Python source.
+[group('validation')]
 python-fix: _ensure-uv
     uv run ruff check scripts/ --fix
     uv run ruff format scripts/
 
-python-lint: python-check
+# Check Python formatting with Ruff.
+[group('validation')]
+python-format-check: _ensure-uv
+    uv run ruff format --check scripts/
 
+# Lint Python source with Ruff.
+[group('validation')]
+python-lint: _ensure-uv
+    uv run ruff check scripts/
+
+# Synchronize development Python dependencies from the lockfile.
+[group('build and setup')]
 python-sync: _ensure-uv
     uv sync --group dev
 
+# Type-check Python support code with ty.
+[group('validation')]
 python-typecheck: _ensure-uv
     uv run ty check scripts/ --error all
 
-rust-core-check: fmt-check clippy-all-targets doc-check semgrep semgrep-test
+# Run the opt-in companion binary with the CLI feature and perf profile.
+[group('build and setup')]
+run *args:
+    cargo run --profile perf --features cli --bin delaunay -- {{ args }}
+
+# Run the complete non-mutating Rust validation surface.
+[group('validation')]
+rust-core-check: fmt-check clippy doc-check semgrep semgrep-test
     @echo "✅ Rust core checks complete!"
 
 # Repository-owned Semgrep rules for project-specific Rust diagnostics.
+[group('validation')]
 semgrep: _ensure-uv
     uv run semgrep --error --strict --timeout 120 --config semgrep.yaml .
 
+# Test the repository-owned Semgrep rules against their fixtures.
+[group('validation')]
 semgrep-test: _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1295,25 +1101,18 @@ semgrep-test: _ensure-uv
         SEMGREP_SEND_METRICS=off SEMGREP_SETTINGS_FILE="$state_dir/settings.yml" uv run semgrep scan --test --strict --config "$config_path" "$fixture"
     done < <(find tests/semgrep -type f ! -name '*.fixed' -print0)
 
-# Development setup
-setup: setup-tools
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "Setting up delaunay development environment..."
-    echo "Note: Rust toolchain and components managed by rust-toolchain.toml (if present)"
-    echo ""
-    echo "Installing Python tooling..."
-    uv sync --group dev
-    echo ""
-    echo "Building project..."
-    cargo build
+# Install required tools and build the development profile.
+[group('build and setup')]
+setup: setup-tools build
     echo "✅ Setup complete! Run 'just help-workflows' to see available commands."
 
-# Development tooling installation (best-effort)
+# Install and verify pinned repository development tools.
 #
 # Note: this recipe is intentionally self-contained. If it grows further, consider splitting
 # it into smaller helper recipes (e.g. cargo tool installs, verification).
-setup-tools:
+[doc('Install and verify pinned repository development tools.')]
+[group('build and setup')]
+setup-tools: _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -1327,10 +1126,6 @@ setup-tools:
     echo ""
 
     echo "Ensuring uv-managed Python tooling..."
-    if ! have uv; then
-        echo "❌ 'uv' not found. Install uv from https://github.com/astral-sh/uv and re-run: just setup-tools"
-        exit 1
-    fi
     uv sync --group dev
     echo ""
 
@@ -1384,6 +1179,13 @@ setup-tools:
         cargo install --locked samply
     else
         echo "  ✓ samply"
+    fi
+
+    if ! have cargo-machete; then
+        echo "  ⏳ Installing cargo-machete (cargo)..."
+        cargo install --locked cargo-machete
+    else
+        echo "  ✓ cargo-machete"
     fi
 
     installed_taplo_version=""
@@ -1503,8 +1305,8 @@ setup-tools:
     echo "Verifying required commands are available..."
     missing=0
 
-    cmds=(uv jq pkg-config taplo dprint tectonic tex-fmt rumdl git-cliff typos zizmor chktex)
-    cmds+=(cargo-nextest cargo-llvm-cov)
+    cmds=(uv jq pkg-config taplo dprint tectonic tex-fmt rumdl git-cliff typos zizmor chktex samply)
+    cmds+=(cargo-nextest cargo-llvm-cov cargo-machete)
 
     for cmd in "${cmds[@]}"; do
         if have "$cmd"; then
@@ -1533,25 +1335,14 @@ setup-tools:
     echo ""
     echo "✅ Tooling setup complete."
 
-# Shell scripts: lint/check (non-mutating)
-shell-check: _ensure-shellcheck _ensure-shfmt
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    while IFS= read -r -d '' file; do
-        files+=("$file")
-    done < <(git ls-files -z '*.sh')
-    if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 -n4 uv run shellcheck -x
-        printf '%s\0' "${files[@]}" | xargs -0 uv run shfmt -d
-    else
-        echo "No shell files found to check."
-    fi
+# Run ShellCheck and verify shfmt formatting.
+[group('validation')]
+shell-check: shell-lint shell-fmt-check
+    @echo "✅ Shell checks complete!"
 
-shell-fix: shell-fmt
-
-# Shell scripts: format (mutating)
-shell-fmt: _ensure-shfmt
+# Format tracked shell scripts with shfmt.
+[group('validation')]
+shell-fix: _ensure-shfmt
     #!/usr/bin/env bash
     set -euo pipefail
     files=()
@@ -1566,80 +1357,107 @@ shell-fmt: _ensure-shfmt
     fi
     # Note: justfiles are not shell scripts and are excluded from shellcheck
 
-shell-lint: shell-check
+# Check tracked shell-script formatting with shfmt.
+[group('validation')]
+shell-fmt-check: _ensure-shfmt
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '*.sh')
+    if [ "${#files[@]}" -gt 0 ]; then
+        printf '%s\0' "${files[@]}" | xargs -0 uv run shfmt -d
+    else
+        echo "No shell files found to check."
+    fi
+
+# Lint tracked shell scripts with ShellCheck.
+[group('validation')]
+shell-lint: _ensure-shellcheck
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '*.sh')
+    if [ "${#files[@]}" -gt 0 ]; then
+        printf '%s\0' "${files[@]}" | xargs -0 -n4 uv run shellcheck -x
+    else
+        echo "No shell files found to lint."
+    fi
 
 # Spell check (typos)
+[group('validation')]
 spell-check: _ensure-typos
     #!/usr/bin/env bash
     set -euo pipefail
     files=()
-    # Use -z for NUL-delimited output to handle filenames with spaces.
-    #
-    # Note: For renames/copies, `git status --porcelain -z` emits *two* NUL-separated paths.
-    # The ordering can differ depending on the porcelain output, so we read both and
-    # spell-check whichever one exists on disk.
-    while IFS= read -r -d '' status_line; do
-        status="${status_line:0:2}"
-        filename="${status_line:3}"
-
-        # For renames/copies, consume the second path token to keep parsing in sync.
-        # Prefer the path that exists on disk to avoid passing stale paths to typos.
-        if [[ "$status" == *"R"* || "$status" == *"C"* ]]; then
-            if IFS= read -r -d '' other_path; then
-                if [ ! -e "$filename" ] && [ -e "$other_path" ]; then
-                    filename="$other_path"
-                fi
-            fi
-        fi
-
-        # Skip deletions (file may no longer exist).
-        if [[ "$status" == *"D"* ]]; then
-            continue
-        fi
-
+    # Check the complete repository surface in clean CI while including new,
+    # unignored files during local iteration.
+    while IFS= read -r -d '' filename; do
+        [ -e "$filename" ] || continue
+        [ "$filename" = "typos.toml" ] && continue
         files+=("$filename")
-    done < <(git status --porcelain -z --ignored=no)
+    done < <(git ls-files -z --cached --others --exclude-standard)
     if [ "${#files[@]}" -gt 0 ]; then
         # Exclude typos.toml itself: it intentionally contains allowlisted fragments.
         printf '%s\0' "${files[@]}" | xargs -0 -n100 typos --config typos.toml --force-exclude --exclude typos.toml --
     else
-        echo "No modified files to spell-check."
+        echo "No repository files to spell-check."
     fi
 
+# Deliberately refresh the slow notebook-backed spherical README hero.
+[group('notebooks and papers')]
+spherical-readme-hero: _ensure-uv paper-cli
+    #!/usr/bin/env bash
+    set -euo pipefail
+    DELAUNAY_SPHERICAL_HERO_FIGURE="docs/assets/readme/delaunay_spherical_readme.png" just notebook-execute notebooks/02_spherical_hero.ipynb target/docs/notebooks 1800
+
 # Create an annotated git tag from the CHANGELOG.md section for the given version
+[group('release')]
 tag version: python-sync
     uv run tag-release {{ version }}
 
 # Replace an existing annotated tag from the CHANGELOG.md section.
+[group('release')]
 tag-force version: python-sync
     uv run tag-release {{ version }} --force
 
-# Testing
-# test: runs each default test bucket once.
-test: test-all
+# Run every default Rust and Python test bucket once.
+[group('workflows')]
+test: test-rust test-python
     @echo "✅ Test workflow passed!"
 
-# test-all: runs Rust and Python tests.
-test-all: test-rust test-python
-    @echo "✅ All tests passed!"
-
+# Run public allocation-contract integration tests.
+[group('tests and coverage')]
 test-allocation: _ensure-nextest
     cargo nextest run --profile ci --test allocation_api --features count-allocations -- --nocapture
 
+# Run CLI-feature integration tests in the release profile.
+[group('tests and coverage')]
+test-cli: _ensure-nextest
+    cargo nextest run --release --profile ci --features cli --test cli
+
+# Run diagnostics-feature integration tests with captured output.
+[group('diagnostics')]
 test-diagnostics: _ensure-nextest
     cargo nextest run --profile ci --test circumsphere_debug_tools --features diagnostics -- --nocapture
 
-# test-doc: runs Rust doctests in release profile.
+# Run Rust doctests in the release profile.
+[group('tests and coverage')]
 test-doc:
     cargo test --doc --release --verbose
 
 # test-integration: runs all default integration tests under the 10s per-test budget.
+[group('tests and coverage')]
 test-integration: _ensure-nextest
-    cargo nextest run --release --profile ci --tests
+    cargo nextest run --release --profile ci --test '*'
 
 # Compile release integration tests without running them.
+[group('tests and coverage')]
 test-integration-compile: _ensure-nextest
-    cargo nextest run --release --tests --no-run
+    cargo nextest run --release --test '*' --no-run
 
 # test-integration-fast: runs integration tests but skips proptests (tests prefixed with `prop_`)
 #
@@ -1647,58 +1465,44 @@ test-integration-compile: _ensure-nextest
 # To run the full (slow) property suite, use: just test-integration
 #
 # Note: `--skip prop_` is a substring filter applied by the Rust test harness.
+[doc('Run release integration tests while skipping property tests.')]
+[group('tests and coverage')]
 test-integration-fast: _ensure-nextest
-    cargo nextest run --release --profile ci --tests -- --skip prop_
+    cargo nextest run --release --profile ci --test '*' -- --skip prop_
 
+# Run Python support-script tests with pytest.
+[group('tests and coverage')]
 test-python: _ensure-uv
     uv run pytest
 
-test-release: test-rust-ci test-doc
-
-# test-rust: runs each default Rust correctness target class once.
-test-rust: test-rust-ci test-doc
+# Run every default Rust correctness target class once.
+[group('tests and coverage')]
+test-rust: test-unit test-integration test-cli test-doc
     @echo "✅ Rust tests passed!"
-
-# test-rust-ci: runs debug lib unit tests, then release lib, integration, and CLI tests.
-test-rust-ci: _ensure-nextest
-    cargo nextest run --profile debug --lib
-    cargo nextest run --release --profile ci --lib --tests
-    cargo nextest run --release --profile ci --features cli --test cli
 
 # Run correctness tests that exceed the 10s default-suite budget.
 # Slow tests run in release mode because debug exact-predicate paths can turn
 # a slow correctness check into a local timeout.
+[doc('Run release correctness tests that exceed the default per-test budget.')]
+[group('tests and coverage')]
 test-slow: _ensure-nextest
     cargo nextest run --release --profile slow --features slow-tests
     cargo test --doc --release --features slow-tests
 
-test-slow-release: test-slow
-
-# test-unit: runs Rust lib unit tests in debug and release profiles.
+# Run Rust lib unit tests in debug and release profiles.
+[group('tests and coverage')]
 test-unit: _ensure-nextest
     cargo nextest run --profile debug --lib
     cargo nextest run --release --profile ci --lib
 
-# Check TOML files parse cleanly.
-toml-check: _ensure-uv
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    while IFS= read -r -d '' file; do
-        files+=("$file")
-    done < <(git ls-files -z '*.toml')
-    if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 -I {} uv run python -c "import sys, tomllib; exec(\"with open(sys.argv[1], 'rb') as f:\\n    tomllib.load(f)\"); print(f'{sys.argv[1]} is valid TOML')" {}
-    else
-        echo "No TOML files found to check."
-    fi
-
-toml-ci: toml-check toml-lint toml-fmt-check
+# Run TOML parsing, lint, and formatting checks.
+[group('validation')]
+toml-check: toml-parse-check toml-lint toml-fmt-check
     @echo "✅ TOML checks complete!"
 
-toml-fix: toml-fmt
-
-toml-fmt: _ensure-taplo
+# Format tracked TOML files with Taplo.
+[group('validation')]
+toml-fix: _ensure-taplo
     #!/usr/bin/env bash
     set -euo pipefail
     files=()
@@ -1711,6 +1515,8 @@ toml-fmt: _ensure-taplo
         echo "No TOML files found to format."
     fi
 
+# Check tracked TOML formatting with Taplo.
+[group('validation')]
 toml-fmt-check: _ensure-taplo
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1724,6 +1530,8 @@ toml-fmt-check: _ensure-taplo
         echo "No TOML files found to check."
     fi
 
+# Lint tracked TOML files with Taplo.
+[group('validation')]
 toml-lint: _ensure-taplo
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1737,10 +1545,36 @@ toml-lint: _ensure-taplo
         echo "No TOML files found to lint."
     fi
 
+# Check that tracked TOML files parse cleanly.
+[group('validation')]
+toml-parse-check: _ensure-uv
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '*.toml')
+    if [ "${#files[@]}" -gt 0 ]; then
+        printf '%s\0' "${files[@]}" | xargs -0 -I {} uv run python -c "import sys, tomllib; exec(\"with open(sys.argv[1], 'rb') as f:\\n    tomllib.load(f)\"); print(f'{sys.argv[1]} is valid TOML')" {}
+    else
+        echo "No TOML files found to check."
+    fi
+
 # Check for unused direct Cargo dependencies.
+[group('validation')]
 unused-deps: _ensure-cargo-machete
     cargo machete
 
+# Refresh reviewer-facing validation diagrams from the reproducible notebook.
+[group('notebooks and papers')]
+validation-doc-figures: _ensure-uv paper-cli
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p docs/assets/validation
+    DELAUNAY_BINARY="{{ perf_delaunay_binary }}" DELAUNAY_VALIDATION_DOC_FIGURE_DIR="docs/assets/validation" just notebook-execute notebooks/01_validation.ipynb target/docs/notebooks
+
+# Verify repository-owned source-pattern count invariants.
+[group('validation')]
 verify-expect-counts:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1764,11 +1598,13 @@ verify-expect-counts:
 
     check_count 'src/**/*.rs doc-comment .expect(' 0 '^\s*//[/!].*\.expect\(' src
 
+# Run YAML/CFF lint and formatting checks.
+[group('validation')]
 yaml-check: yaml-fmt-check yaml-lint
-
-yaml-ci: yaml-check citation-check
     @echo "✅ YAML/CFF checks complete!"
 
+# Format tracked YAML/CFF files with dprint.
+[group('validation')]
 yaml-fix: _ensure-dprint
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1783,6 +1619,8 @@ yaml-fix: _ensure-dprint
         echo "No YAML files found to format."
     fi
 
+# Check tracked YAML/CFF formatting with dprint.
+[group('validation')]
 yaml-fmt-check: _ensure-dprint
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1797,6 +1635,8 @@ yaml-fmt-check: _ensure-dprint
         echo "No YAML files found to check."
     fi
 
+# Lint tracked YAML/CFF files with yamllint.
+[group('validation')]
 yaml-lint: _ensure-yamllint
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1811,5 +1651,7 @@ yaml-lint: _ensure-yamllint
         echo "No YAML files found to lint."
     fi
 
+# Audit GitHub Actions workflows with zizmor.
+[group('validation')]
 zizmor: _ensure-zizmor
     zizmor .github

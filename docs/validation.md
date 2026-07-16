@@ -12,8 +12,8 @@ The deterministic [validation notebook](../notebooks/01_validation.ipynb)
 renders the same five-layer hierarchy described below. Refresh the tracked
 reviewer diagrams with `just validation-doc-figures`; routine notebook checks
 write only under `target/`.
-The reviewer-facing artifact guide that indexes this notebook workflow and its
-paper-claim mapping is tracked in [#408](https://github.com/acgetchell/delaunay/issues/408).
+The [reviewer artifact guide](../papers/ARTIFACT.md) indexes this notebook
+workflow and its paper-claim mapping.
 
 <img src="assets/validation/validation_hierarchy.png" alt="Five-level validation hierarchy" width="760">
 

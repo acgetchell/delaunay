@@ -51,9 +51,8 @@ use crate::core::collections::{
 };
 use crate::core::facet::{FacetError, FacetHandle, FacetView};
 use crate::core::query::QueryError;
-use crate::core::tds::TdsError;
+use crate::core::tds::{Tds, TdsError};
 use crate::core::traits::data_type::DataType;
-use crate::core::traits::facet_cache::FacetCacheProvider;
 use crate::core::triangulation::Triangulation;
 use crate::core::util::checked_facet_key_from_vertex_keys;
 use crate::core::vertex::Vertex;
@@ -64,12 +63,8 @@ use crate::geometry::traits::coordinate::{
     CoordinateConversionError, CoordinateValidationError, DEFAULT_TOLERANCE_F64,
 };
 use crate::geometry::util::{safe_usize_to_scalar, squared_norm};
-use arc_swap::ArcSwapOption;
 use std::marker::PhantomData;
-use std::sync::{
-    Arc, OnceLock,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::{Arc, OnceLock};
 use thiserror::Error;
 
 // Import Orientation for predicates
@@ -290,11 +285,11 @@ pub enum ConvexHullConstructionError {
 /// ## Logical Immutability Design
 ///
 /// Once created, a `ConvexHull` cannot be modified. There are no public mutating methods for the hull topology.
-/// However, **internal caches may update** via interior mutability (`ArcSwapOption` for the facet cache,
-/// `AtomicU64` for generation tracking), allowing performance optimizations without requiring `&mut self`.
+/// However, the internal facet cache initializes lazily through [`OnceLock`], allowing repeated
+/// queries to reuse derived incidence data without requiring `&mut self`.
 ///
 /// This design ensures:
-/// - Thread-safe sharing without locking (cache updates use lock-free atomics)
+/// - Thread-safe sharing with one-time synchronized cache initialization
 /// - Clear ownership semantics - a hull belongs to a specific TDS state
 /// - Prevention of stale hull misuse (validated via generation counters)
 ///
@@ -435,9 +430,8 @@ pub struct ConvexHull<U, V, const D: usize> {
     /// accessors (`try_facets(triangulation)`, `facet_handles()`, `facet()`, `number_of_facets()`)
     /// to access hull facets.
     hull_facets: Vec<FacetHandle>,
-    /// Cache for the facet-to-simplices mapping to avoid rebuilding it for each facet check
-    /// Uses `ArcSwapOption` for lock-free atomic updates when cache needs invalidation
-    facet_to_simplices_cache: ArcSwapOption<FacetToSimplicesMap>,
+    /// Lazily initialized facet-to-simplices mapping for this immutable hull snapshot.
+    facet_to_simplices_cache: OnceLock<Result<FacetToSimplicesMap, TdsError>>,
     /// Immutable triangulation generation at hull creation time.
     /// Set once in [`ConvexHull::try_from_triangulation`] and never modified. Used to detect stale hulls.
     /// Uses `OnceLock` to express the "set once, read many" semantic contract.
@@ -448,10 +442,6 @@ pub struct ConvexHull<U, V, const D: usize> {
     /// facet handles from being accepted against a different triangulation whose generation happens
     /// to match.
     creation_identity: OnceLock<Arc<uuid::Uuid>>,
-    /// Cache generation counter, updated when cache is rebuilt.
-    /// Can be reset to 0 by `invalidate_cache()` to force cache rebuild.
-    /// Uses `Arc<AtomicU64>` for consistent tracking across cloned `ConvexHull` instances.
-    cached_generation: Arc<AtomicU64>,
     /// Phantom data to mark unused type parameters
     _phantom: PhantomData<(U, V)>,
 }
@@ -837,8 +827,8 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
     /// ```
     #[must_use]
     pub fn is_valid_for_triangulation<K>(&self, tri: &Triangulation<K, U, V, D>) -> bool {
-        // Use creation_generation (immutable) for validity check, not cached_generation (mutable)
-        // Empty hull (with creation_generation unset) is always valid - it has no facets to be stale
+        // Empty hulls have no facets to become stale; constructed hulls use immutable
+        // creation metadata to detect changes to the source triangulation.
         let Some(&creation_generation) = self.creation_generation.get() else {
             return self.is_empty();
         };
@@ -981,77 +971,15 @@ impl<U, V, const D: usize> ConvexHull<U, V, D> {
 }
 
 impl<U, V, const D: usize> ConvexHull<U, V, D> {
-    /// Invalidates the internal facet-to-simplices cache and resets the cached generation counter
+    /// Initializes the derived facet map once for this immutable hull snapshot.
     ///
-    /// This method forces the cache to be rebuilt on the next visibility test.
-    /// It can be useful for manual cache management.
-    ///
-    /// # Two-Generation Design
-    ///
-    /// This method resets only the **cache generation** (`cached_generation`) to 0, forcing
-    /// cache rebuild on next access. The **creation generation** (`creation_generation`) remains
-    /// immutable and is never modified after construction.
-    ///
-    /// This separation ensures:
-    /// - Cache invalidation doesn't break stale hull detection
-    /// - `is_valid_for_triangulation()` always returns accurate results based on creation generation
-    /// - Stale hulls are caught even after calling `invalidate_cache()`
-    ///
-    /// # Interior Mutability
-    ///
-    /// This method takes `&self` (not `&mut self`) and is safe to call on shared hulls
-    /// due to interior mutability via `ArcSwapOption` (for the facet cache) and `AtomicU64`
-    /// (for cache generation tracking). These lock-free atomic operations allow cache invalidation
-    /// without exclusive mutable access.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
-    /// use delaunay::prelude::query::ConvexHull;
-    ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::prelude::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Insertion(#[from] delaunay::prelude::InsertionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// #     #[error("expected tetrahedron hull to have a first facet")]
-    /// #     MissingFacet,
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// // Create a 3D tetrahedron
-    /// let vertices = vec![
-    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
-    /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulationBuilder::new(&vertices).build()?;
-    /// let hull =
-    ///     ConvexHull::try_from_triangulation(dt.as_triangulation())?;
-    ///
-    /// // Manually invalidate the cache (note: takes &self, not &mut self)
-    /// hull.invalidate_cache();
-    ///
-    /// // The next visibility test will rebuild the cache
-    /// // ... perform visibility operations ...
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn invalidate_cache(&self) {
-        // Clear the cache using ArcSwapOption::store(None)
-        self.facet_to_simplices_cache.store(None);
-
-        // Reset only cached_generation to force rebuild on next access.
-        // creation_generation is NEVER modified - it remains the immutable snapshot from creation.
-        // Use Release ordering to ensure consistency with Acquire loads by readers
-        self.cached_generation.store(0, Ordering::Release);
+    /// Cache failures are stable for the snapshot: changing the source TDS would
+    /// make the hull stale before another cache lookup can occur.
+    fn try_facet_cache(&self, tds: &Tds<U, V, D>) -> Result<&FacetToSimplicesMap, TdsError> {
+        self.facet_to_simplices_cache
+            .get_or_init(|| tds.build_facet_to_simplices_map())
+            .as_ref()
+            .map_err(Clone::clone)
     }
 }
 
@@ -1185,12 +1113,10 @@ where
         let tds_gen = tds.generation();
         Ok(Self {
             hull_facets,
-            facet_to_simplices_cache: ArcSwapOption::empty(),
+            facet_to_simplices_cache: OnceLock::new(),
             // Immutable snapshot of triangulation generation at creation - never changes
             creation_generation: OnceLock::from(tds_gen),
             creation_identity: OnceLock::from(Arc::clone(tds.identity())),
-            // Mutable cache generation - can be reset by invalidate_cache()
-            cached_generation: Arc::new(AtomicU64::new(tds_gen)),
             _phantom: PhantomData,
         })
     }
@@ -1228,11 +1154,11 @@ where
     ///
     /// # Note
     ///
-    /// This method uses cached facet-to-simplices mapping for optimal performance. The cache is
-    /// automatically built if it doesn't exist or has been invalidated.
+    /// This method uses a cached facet-to-simplices mapping for optimal performance. The cache is
+    /// initialized once on first use and reused for the immutable hull snapshot.
     ///
     /// For batch visibility checking (e.g., [`Self::find_visible_facets`]), consider using the internal
-    /// helper that accepts a pre-loaded cache to avoid redundant atomic loads.
+    /// helper that accepts the derived facet map directly.
     ///
     /// # Errors
     ///
@@ -1315,23 +1241,18 @@ where
         self.ensure_current_for_construction(tri)?;
 
         // Get or build the cached facet-to-simplices mapping
-        let facet_to_simplices_arc = self
-            .try_get_or_build_facet_cache(tds)
+        let facet_to_simplices = self
+            .try_facet_cache(tds)
             .map_err(|source| ConvexHullConstructionError::FacetCacheBuildFailed { source })?;
 
         // Delegate to internal helper with pre-loaded cache
-        self.is_facet_visible_from_point_with_cache(
-            facet_handle,
-            point,
-            tri,
-            facet_to_simplices_arc.as_ref(),
-        )
+        self.is_facet_visible_from_point_with_cache(facet_handle, point, tri, facet_to_simplices)
     }
 
     /// Internal helper for visibility testing with a pre-loaded cache.
     ///
-    /// This method avoids redundant atomic loads of the facet cache, which is beneficial
-    /// when performing batch visibility checks (e.g., in [`Self::find_visible_facets`]).
+    /// This method avoids repeated cache lookups when performing batch visibility
+    /// checks (e.g., in [`Self::find_visible_facets`]).
     ///
     /// # Arguments
     ///
@@ -1363,10 +1284,7 @@ where
     {
         let tds = &tri.tds;
 
-        // Two-generation design: creation_generation (immutable) vs cached_generation (mutable)
-        // - creation_generation: Set once at try_from_triangulation(), never changes. Used for stale detection.
-        // - cached_generation: Can be reset to 0 by invalidate_cache() to force cache rebuild.
-        // Always check creation-generation and TDS identity for stale detection.
+        // Always check creation generation and TDS identity for stale detection.
         self.ensure_current_for_construction(tri)?;
 
         // Derive facet vertex keys directly from the simplex to avoid UUID↔key roundtrips.
@@ -1698,11 +1616,10 @@ where
         // Fail fast if hull is stale relative to this TDS (using immutable creation_generation)
         self.ensure_current_for_construction(tri)?;
 
-        // Optimization: Load cache once before the loop to avoid redundant atomic loads
-        let facet_cache_arc = self
-            .try_get_or_build_facet_cache(tds)
+        // Resolve the cache once before the loop.
+        let facet_cache = self
+            .try_facet_cache(tds)
             .map_err(|source| ConvexHullConstructionError::FacetCacheBuildFailed { source })?;
-        let facet_cache = facet_cache_arc.as_ref();
 
         let mut visible_facets = Vec::new();
 
@@ -2050,26 +1967,13 @@ where
     }
 }
 
-// Implementation of crate-private facet-cache plumbing for ConvexHull.
-// Keep this payload-agnostic; cache storage and generation checks do not need `DataType`.
-impl<U, V, const D: usize> FacetCacheProvider<U, V, D> for ConvexHull<U, V, D> {
-    fn facet_cache(&self) -> &ArcSwapOption<FacetToSimplicesMap> {
-        &self.facet_to_simplices_cache
-    }
-
-    fn cached_generation(&self) -> &AtomicU64 {
-        self.cached_generation.as_ref()
-    }
-}
-
 impl<U, V, const D: usize> Default for ConvexHull<U, V, D> {
     fn default() -> Self {
         Self {
             hull_facets: Vec::new(),
-            facet_to_simplices_cache: ArcSwapOption::empty(),
+            facet_to_simplices_cache: OnceLock::new(),
             creation_generation: OnceLock::new(), // Empty - indicates invalid/uninitialized hull
             creation_identity: OnceLock::new(),
-            cached_generation: Arc::new(AtomicU64::new(0)),
             _phantom: PhantomData,
         }
     }
@@ -2092,7 +1996,6 @@ mod tests {
     };
     use crate::core::algorithms::incremental_insertion::InsertionError;
     use crate::core::tds::{Tds, TdsError};
-    use crate::core::traits::facet_cache::FacetCacheProvider;
     use crate::core::util::{checked_facet_key_from_vertex_keys, facet_view_to_vertices};
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::geometry::traits::coordinate::{
@@ -2103,7 +2006,6 @@ mod tests {
     use num_traits::NumCast;
     use std::assert_matches;
     use std::error::Error;
-    use std::sync::atomic::Ordering;
     use std::thread;
 
     #[cfg(feature = "diagnostics")]
@@ -2397,24 +2299,6 @@ mod tests {
             empty_hull.facet_handles().count(),
             0,
             "Empty hull's facet-handle iterator should be empty"
-        );
-
-        // Test cache behavior on empty hull
-        let empty_cache = empty_hull.facet_cache().load();
-        assert!(
-            empty_cache.is_none(),
-            "Empty hull should have no cache initially"
-        );
-
-        let empty_generation = empty_hull.cached_generation().load(Ordering::Acquire);
-        assert_eq!(empty_generation, 0, "Empty hull should have generation 0");
-
-        // Test invalidation on empty hull
-        empty_hull.invalidate_cache();
-        let invalidated_generation = empty_hull.cached_generation().load(Ordering::Acquire);
-        assert_eq!(
-            invalidated_generation, 0,
-            "Empty hull generation should remain 0 after invalidation"
         );
     }
 
@@ -3905,48 +3789,6 @@ mod tests {
     }
 
     #[test]
-    fn test_invalidate_cache() {
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-        ];
-        let dt = create_triangulation(&vertices);
-        let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
-
-        // Test cache invalidation
-        hull.invalidate_cache();
-
-        // Verify we can still perform operations after cache invalidation
-        let test_point = Point::try_new([2.0, 2.0, 2.0]).expect("finite point coordinates");
-        let result = hull.is_point_outside(&test_point, dt.as_triangulation());
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_facet_cache_provider_implementation() {
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-        ];
-        let dt = create_triangulation(&vertices);
-        let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
-
-        // Test FacetCacheProvider trait implementation
-        let _facet_cache = hull.facet_cache();
-        let cached_gen = hull.cached_generation();
-        let tds_gen = dt.topology_generation();
-        assert_eq!(
-            cached_gen.load(std::sync::atomic::Ordering::Acquire),
-            tds_gen,
-            "Hull generation should match TDS generation"
-        );
-    }
-
-    #[test]
     fn test_error_types_display_formatting() {
         // Test ConvexHullValidationError display
         let validation_error = ConvexHullValidationError::InvalidFacet {
@@ -4281,349 +4123,28 @@ mod tests {
         test_debug!("✓ Numeric cast error handling tested successfully");
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "test keeps cache invalidation scenarios together"
-    )]
     #[test]
-    fn test_cache_invalidation_behavior() {
-        test_debug!("Testing cache invalidation behavior in ConvexHull");
-
-        // Create initial triangulation
+    fn test_facet_cache_initializes_once() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]).unwrap(),
             vertex!([1.0, 0.0, 0.0]).unwrap(),
             vertex!([0.0, 1.0, 0.0]).unwrap(),
             vertex!([0.0, 0.0, 1.0]).unwrap(),
         ];
-        let mut dt = create_triangulation(&vertices);
+        let dt = create_triangulation(&vertices);
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
 
-        // Get initial generation values
-        let initial_tds_generation = dt.topology_generation();
-        let initial_hull_generation = hull.cached_generation().load(Ordering::Acquire);
+        assert!(hull.facet_to_simplices_cache.get().is_none());
 
-        test_debug!("  Initial TDS generation: {initial_tds_generation}");
-        test_debug!("  Initial hull cached generation: {initial_hull_generation}");
+        let cache_before = hull.try_facet_cache(dt.tds()).unwrap();
+        assert!(!cache_before.is_empty());
+        assert!(hull.facet_to_simplices_cache.get().is_some());
 
-        // ConvexHull keeps an independent snapshot for staleness detection
-        // Since generation is now private, we can't compare pointers directly
-        // But we can verify they track independently by checking values
-
-        // Verify initial generations match (hull starts with snapshot of TDS generation)
-        assert_eq!(
-            initial_tds_generation, initial_hull_generation,
-            "Initial generations should match since ConvexHull snapshots TDS generation"
-        );
-
-        // Test initial cache building - first visibility test should build the cache
-        let test_point = Point::try_new([2.0, 2.0, 2.0]).expect("finite point coordinates");
-        let facet = hull.facet(0).unwrap();
-
-        test_debug!("  Performing initial visibility test to build cache...");
-        let result1 = hull.is_facet_visible_from_point(facet, &test_point, dt.as_triangulation());
-        assert!(result1.is_ok(), "Initial visibility test should succeed");
-
-        // Cache should now be built, generations should still match
-        let post_cache_tds_gen = dt.topology_generation();
-        let post_cache_hull_gen = hull.cached_generation().load(Ordering::Acquire);
-
-        test_debug!(
-            "  After cache build - TDS gen: {post_cache_tds_gen}, Hull gen: {post_cache_hull_gen}"
-        );
-        assert_eq!(
-            post_cache_tds_gen, post_cache_hull_gen,
-            "Generations should still match after cache building"
-        );
-
-        // Verify cache was built
-        let cache_arc = hull.facet_cache().load();
+        let cache_after = hull.try_facet_cache(dt.tds()).unwrap();
         assert!(
-            cache_arc.is_some(),
-            "Cache should exist after first visibility test"
+            std::ptr::eq(cache_before, cache_after),
+            "the initialized facet cache should be reused"
         );
-
-        test_debug!("  ✓ Cache successfully built and generations synchronized");
-
-        // Test validity checking before TDS modification
-        test_debug!("  Testing validity checking...");
-        assert!(
-            hull.is_valid_for_triangulation(dt.as_triangulation()),
-            "Hull should be valid for initial TDS"
-        );
-
-        // Test TDS modification by adding a new vertex
-        test_debug!("  Testing TDS modification and hull invalidation...");
-        let old_generation = dt.topology_generation();
-        let stale_hull_gen = hull.cached_generation().load(Ordering::Acquire);
-
-        // Add a new vertex - this will bump the generation
-        let new_vertex = vertex!([0.5, 0.5, 0.5]).unwrap(); // Interior point
-        dt.insert_vertex(new_vertex)
-            .expect("Failed to insert vertex into DelaunayTriangulation");
-
-        let modified_tds_gen = dt.topology_generation();
-        test_debug!("  After TDS modification (added vertex):");
-        test_debug!("    TDS generation: {modified_tds_gen}");
-        test_debug!("    Hull cached generation: {stale_hull_gen}");
-
-        // Hull snapshot is now stale relative to TDS
-        assert!(
-            modified_tds_gen > old_generation,
-            "Generation should be incremented after adding vertex"
-        );
-        assert!(
-            modified_tds_gen > stale_hull_gen,
-            "TDS generation should be ahead of hull's cached generation"
-        );
-
-        // Test validity checking after TDS modification
-        assert!(
-            !hull.is_valid_for_triangulation(dt.as_triangulation()),
-            "Hull should be invalid for modified TDS"
-        );
-
-        test_debug!("  ✓ Generation change correctly detected - hull is now invalid");
-
-        // IMPORTANT: After TDS modification, the old hull's facet handles are invalid!
-        // We must rebuild the hull to get fresh facet handles
-        test_debug!("  Rebuilding hull after TDS modification...");
-        let new_hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
-
-        // The new hull should be valid and have matching generation
-        assert!(
-            new_hull.is_valid_for_triangulation(dt.as_triangulation()),
-            "New hull should be valid for modified TDS"
-        );
-        let new_hull_gen = new_hull.cached_generation().load(Ordering::Acquire);
-        test_debug!("    New hull generation: {new_hull_gen}");
-        assert_eq!(
-            new_hull_gen, modified_tds_gen,
-            "New hull should have same generation as modified TDS"
-        );
-
-        // Get a fresh facet handle from the new hull
-        let new_facet = new_hull.facet(0).unwrap();
-
-        // Test visibility with the new hull and fresh facet handle
-        test_debug!("  Testing visibility with rebuilt hull...");
-        let result2 =
-            new_hull.is_facet_visible_from_point(new_facet, &test_point, dt.as_triangulation());
-        assert!(
-            result2.is_ok(),
-            "Visibility test with rebuilt hull should succeed"
-        );
-
-        // Verify the cache was built for the new hull
-        let cache_arc = new_hull.facet_cache().load();
-        assert!(
-            cache_arc.is_some(),
-            "Cache should exist after visibility test on new hull"
-        );
-
-        test_debug!("  ✓ Hull rebuilt successfully after TDS modification");
-
-        // Test manual cache invalidation on the new hull
-        test_debug!("  Testing manual cache invalidation...");
-
-        // Store current generation
-        let pre_invalidation_gen = new_hull.cached_generation().load(Ordering::Acquire);
-
-        // Manually invalidate cache
-        new_hull.invalidate_cache();
-
-        // Check that cache was cleared
-        let post_invalidation_cache = new_hull.facet_cache().load();
-        assert!(
-            post_invalidation_cache.is_none(),
-            "Cache should be None after manual invalidation"
-        );
-
-        // Check that generation was reset to 0
-        let post_invalidation_gen = new_hull.cached_generation().load(Ordering::Acquire);
-        assert_eq!(
-            post_invalidation_gen, 0,
-            "Generation should be reset to 0 after manual invalidation"
-        );
-
-        test_debug!("    Generation before invalidation: {pre_invalidation_gen}");
-        test_debug!("    Generation after invalidation: {post_invalidation_gen}");
-
-        // Next visibility test should rebuild cache
-        let result3 =
-            new_hull.is_facet_visible_from_point(new_facet, &test_point, dt.as_triangulation());
-        assert!(
-            result3.is_ok(),
-            "Visibility test after manual invalidation should succeed"
-        );
-
-        // Cache should be rebuilt
-        let rebuilt_cache = new_hull.facet_cache().load();
-        assert!(
-            rebuilt_cache.is_some(),
-            "Cache should be rebuilt after visibility test"
-        );
-
-        // Generation should be updated to current TDS generation
-        let final_hull_gen = new_hull.cached_generation().load(Ordering::Acquire);
-        let final_tds_gen = dt.topology_generation();
-        assert_eq!(
-            final_hull_gen, final_tds_gen,
-            "Hull generation should match TDS generation after cache rebuild"
-        );
-
-        test_debug!("    Final TDS generation: {final_tds_gen}");
-        test_debug!("    Final hull generation: {final_hull_gen}");
-
-        test_debug!("  ✓ Manual cache invalidation working correctly");
-
-        // Note: We verified that:
-        // 1. The initial hull works correctly with the initial TDS
-        // 2. After TDS modification, the old hull is correctly detected as invalid
-        // 3. A new hull can be built for the modified TDS
-        // 4. The new hull works correctly with the modified TDS
-        // 5. Manual cache invalidation works as expected
-        test_debug!("  All tests verified correct hull and cache management");
-
-        // Verify that all visibility tests succeeded
-        assert!(
-            result1.is_ok(),
-            "First visibility test (original hull) should succeed"
-        );
-        assert!(
-            result2.is_ok(),
-            "Second visibility test (new hull) should succeed"
-        );
-        assert!(
-            result3.is_ok(),
-            "Third visibility test (after cache invalidation) should succeed"
-        );
-
-        test_debug!("  ✓ Hull rebuilding and cache management working correctly");
-
-        // Test concurrent access safety using the new hull
-        test_debug!("  Testing thread safety of cache operations...");
-
-        let test_results: Vec<_> = (0..10)
-            .map(|i| {
-                let x = NumCast::from(i).unwrap_or(0.0f64).mul_add(0.1, 2.0);
-                let test_pt = Point::try_new([x, 2.0, 2.0]).expect("finite point coordinates");
-                new_hull.is_facet_visible_from_point(new_facet, &test_pt, dt.as_triangulation())
-            })
-            .collect();
-
-        // All operations should succeed
-        for (i, result) in test_results.iter().enumerate() {
-            assert!(
-                result.is_ok(),
-                "Concurrent visibility test {i} should succeed"
-            );
-        }
-
-        test_debug!("  ✓ Thread safety test passed");
-
-        test_debug!("✓ All cache invalidation behavior tests passed successfully!");
-    }
-
-    #[test]
-    fn test_try_get_or_build_facet_cache() {
-        test_debug!("Testing try_get_or_build_facet_cache method");
-
-        // Create a triangulation
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-        ];
-        let mut dt = create_triangulation(&vertices);
-        let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
-
-        // Initially, cache should be empty
-        let initial_cache = hull.facet_cache().load();
-        assert!(initial_cache.is_none(), "Cache should be empty initially");
-
-        // First call should build the cache
-        test_debug!("  Testing initial cache building...");
-        let cache1 = hull
-            .try_get_or_build_facet_cache(dt.tds())
-            .expect("Failed to build cache");
-        assert!(
-            !cache1.is_empty(),
-            "Cache should not be empty after building"
-        );
-
-        // Verify cache is now stored
-        let stored_cache = hull.facet_cache().load();
-        assert!(
-            stored_cache.is_some(),
-            "Cache should be stored after building"
-        );
-
-        // Second call with same generation should reuse cache
-        test_debug!("  Testing cache reuse with same generation...");
-        let cache2 = hull
-            .try_get_or_build_facet_cache(dt.tds())
-            .expect("Failed to reuse cache");
-        assert_eq!(
-            cache1.len(),
-            cache2.len(),
-            "Cache content should be identical on reuse"
-        );
-
-        // Verify the cache content is identical (cache reuse)
-        assert_eq!(
-            cache1.len(),
-            cache2.len(),
-            "Cached content should be identical when generation matches"
-        );
-        // Verify cache contains same keys
-        for key in cache1.keys() {
-            assert!(
-                cache2.contains_key(key),
-                "Reused cache should contain same keys"
-            );
-        }
-
-        // Modify triangulation by adding a vertex to trigger generation change
-        test_debug!("  Testing cache invalidation with generation change...");
-        let old_generation = dt.topology_generation();
-
-        // Add a new vertex to trigger generation bump
-        let new_vertex = vertex!([0.5, 0.5, 0.5]).unwrap(); // Interior point
-        dt.insert_vertex(new_vertex)
-            .expect("Failed to insert vertex");
-
-        let new_generation = dt.topology_generation();
-        assert!(
-            new_generation > old_generation,
-            "Generation should increase after adding vertex"
-        );
-
-        // Next call should rebuild cache due to generation change
-        let cache3 = hull
-            .try_get_or_build_facet_cache(dt.tds())
-            .expect("Failed to rebuild cache");
-
-        // The cache content might be different since we added a vertex
-        // but it should be a valid cache
-        assert!(!cache3.is_empty(), "Rebuilt cache should not be empty");
-
-        // Rebuilt cache may have different content due to TDS changes
-        // We just verify it's a valid cache (non-empty)
-        assert!(
-            !cache3.is_empty(),
-            "Rebuilt cache should be non-empty and valid"
-        );
-
-        // Verify generation was updated
-        let updated_generation = hull.cached_generation().load(Ordering::Acquire);
-        assert_eq!(
-            updated_generation, new_generation,
-            "Hull generation should match TDS generation after rebuild"
-        );
-
-        test_debug!("  ✓ Cache building, reuse, and invalidation working correctly");
     }
 
     #[test]
@@ -4643,7 +4164,7 @@ mod tests {
         // Test that cache contains keys derivable by the key derivation method
         test_debug!("  Testing cache-key derivation consistency...");
         let cache = hull
-            .try_get_or_build_facet_cache(dt.tds())
+            .try_facet_cache(dt.tds())
             .expect("Failed to build cache");
 
         // For each facet in the hull, derive its key and check it exists in cache
@@ -4707,64 +4228,6 @@ mod tests {
 
         test_debug!("  Visibility result: {}", visibility_result.unwrap());
         test_debug!("  ✓ Integration between helper methods working correctly");
-    }
-
-    #[test]
-    fn test_facet_cache_build_failed_error() {
-        test_debug!("Testing FacetCacheBuildFailed error path");
-
-        // This test is challenging because we need to trigger a TdsError
-        // during facet cache building. In practice, this is rare with valid TDS objects.
-        // We'll test the error propagation pattern by verifying the error types are properly
-        // connected and that the method signature returns the right error type.
-
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-        ];
-        let dt = create_triangulation(&vertices);
-        let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
-
-        // Test that normal cache building succeeds and returns the right error type
-        let test_facet = hull.facet(0).unwrap();
-        let test_point = Point::try_new([2.0, 2.0, 2.0]).expect("finite point coordinates");
-
-        // Call the method that should propagate TdsError as FacetCacheBuildFailed
-        let result =
-            hull.is_facet_visible_from_point(test_facet, &test_point, dt.as_triangulation());
-
-        // In the normal case, this should succeed
-        assert!(
-            result.is_ok(),
-            "Normal visibility test should succeed, got error: {:?}",
-            result.err()
-        );
-
-        // Verify that the method returns ConvexHullConstructionError (not FacetError)
-        // This ensures our error hierarchy changes are properly implemented
-        match result {
-            Ok(_) => test_debug!("  ✓ Normal case succeeded as expected"),
-            Err(e) => {
-                // If there is an error, verify it's the right type
-                test_debug!("  Error type verification: {e:?}");
-                // The fact that it compiles with ConvexHullConstructionError shows the type is correct
-            }
-        }
-
-        // Test that the error propagation chain is intact by using a method that
-        // calls try_get_or_build_facet_cache internally
-        let visibility_result = hull.find_visible_facets(&test_point, dt.as_triangulation());
-        assert!(
-            visibility_result.is_ok(),
-            "find_visible_facets should succeed in normal case"
-        );
-
-        test_debug!("  ✓ FacetCacheBuildFailed error path properly configured");
-        test_debug!(
-            "  Note: Actual cache build failure requires corrupted TDS, which is hard to create in tests"
-        );
     }
 
     #[test]
@@ -4901,7 +4364,7 @@ mod tests {
                 let test_point = Point::try_new([2.0 + thread_offset, 2.0, 2.0])
                     .expect("finite point coordinates");
 
-                // This will internally call try_get_or_build_facet_cache
+                // This initializes or reuses the shared facet cache.
                 let visible_facets =
                     hull_clone.find_visible_facets(&test_point, dt_clone.as_triangulation())?;
 
@@ -4951,7 +4414,7 @@ mod tests {
         test_debug!("  Testing cache consistency after concurrent access...");
 
         // Verify cache is in a consistent state after concurrent access
-        let cache = hull.try_get_or_build_facet_cache(dt.tds()).unwrap();
+        let cache = hull.try_facet_cache(dt.tds()).unwrap();
         assert!(
             !cache.is_empty(),
             "Cache should be populated after concurrent access"
@@ -4969,99 +4432,6 @@ mod tests {
         test_debug!(
             "  Note: This test verifies basic thread safety, not high-contention scenarios"
         );
-    }
-
-    #[test]
-    fn test_invalidate_cache_behavior() {
-        test_debug!("Testing cache invalidation behavior");
-
-        // Create a triangulation
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-        ];
-        let dt = create_triangulation(&vertices);
-        let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
-
-        // Build initial cache
-        test_debug!("  Building initial cache...");
-        let initial_cache = hull.try_get_or_build_facet_cache(dt.tds()).unwrap();
-        assert!(
-            !initial_cache.is_empty(),
-            "Initial cache should not be empty"
-        );
-
-        // Verify cache is stored
-        let stored_cache = hull.facet_cache().load();
-        assert!(stored_cache.is_some(), "Cache should be stored");
-
-        // Check initial generation
-        let initial_gen = hull.cached_generation().load(Ordering::Acquire);
-        let expected_gen = dt.topology_generation();
-        assert_eq!(
-            initial_gen, expected_gen,
-            "Initial cached generation should match TDS generation"
-        );
-
-        // Manually invalidate cache
-        test_debug!("  Manually invalidating cache...");
-        hull.invalidate_cache();
-
-        // Verify cache is cleared
-        let cleared_cache = hull.facet_cache().load();
-        assert!(
-            cleared_cache.is_none(),
-            "Cache should be cleared after invalidation"
-        );
-
-        // Verify generation is reset
-        let reset_gen = hull.cached_generation().load(Ordering::Acquire);
-        assert_eq!(
-            reset_gen, 0,
-            "Generation should be reset to 0 after invalidation"
-        );
-
-        // Rebuild cache after invalidation
-        test_debug!("  Rebuilding cache after invalidation...");
-        let rebuilt_cache = hull.try_get_or_build_facet_cache(dt.tds()).unwrap();
-        assert!(
-            !rebuilt_cache.is_empty(),
-            "Rebuilt cache should not be empty"
-        );
-
-        // Verify cache is stored again
-        let restored_cache = hull.facet_cache().load();
-        assert!(
-            restored_cache.is_some(),
-            "Cache should be restored after rebuild"
-        );
-
-        // Generation should be updated to TDS generation
-        let final_gen = hull.cached_generation().load(Ordering::Acquire);
-        let tds_gen = dt.topology_generation();
-        assert_eq!(
-            final_gen, tds_gen,
-            "Generation should match TDS generation after rebuild"
-        );
-
-        // Verify functionality still works after invalidation/rebuild cycle
-        test_debug!("  Testing functionality after invalidation/rebuild...");
-        let test_point = Point::try_new([2.0, 2.0, 2.0]).expect("finite point coordinates");
-        let visible_facets = hull.find_visible_facets(&test_point, dt.as_triangulation());
-        assert!(
-            visible_facets.is_ok(),
-            "Visibility testing should work after invalidation/rebuild"
-        );
-
-        let facets_found = visible_facets.unwrap();
-        assert!(
-            !facets_found.is_empty(),
-            "Outside point should see visible facets after rebuild"
-        );
-
-        test_debug!("  ✓ Cache invalidation and rebuild working correctly");
     }
 
     #[test]
@@ -6715,452 +6085,6 @@ mod tests {
         test_debug!("  ✓ Large dataset performance tests completed");
     }
 
-    // ============================================================================
-    // ADVANCED CACHE INVALIDATION EDGE CASE TESTS
-    // ============================================================================
-    // These tests focus on edge cases in cache invalidation, concurrent access
-    // patterns, and generation counter behavior.
-
-    #[test]
-    fn test_generation_counter_edge_cases() {
-        test_debug!("Testing generation counter edge cases and overflow scenarios");
-
-        // Create a basic triangulation for testing
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-        ];
-        let mut dt = create_triangulation(&vertices);
-        let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
-
-        test_debug!("  Testing rapid generation changes...");
-
-        // Record initial generation
-        let initial_generation = dt.topology_generation();
-        let initial_hull_generation = hull.cached_generation().load(Ordering::Acquire);
-
-        test_debug!("    Initial TDS generation: {initial_generation}");
-        test_debug!("    Initial hull generation: {initial_hull_generation}");
-
-        // Rapidly modify the TDS to increment generation many times
-        for i in 0..20 {
-            let new_vertex =
-                vertex!([<f64 as From<_>>::from(i).mul_add(0.01, 0.1), 0.1, 0.1]).unwrap();
-            if dt.insert_vertex(new_vertex).is_ok() {
-                let current_gen = dt.topology_generation();
-                test_debug!("    After modification {i}: TDS generation = {current_gen}");
-
-                // Test that hull detects staleness
-                let hull_gen = hull.cached_generation().load(Ordering::Acquire);
-                if hull_gen > 0 && hull_gen < current_gen {
-                    test_debug!(
-                        "      ✓ Hull generation ({hull_gen}) correctly behind TDS ({current_gen})"
-                    );
-                }
-            } else {
-                // Some additions might fail, which is okay
-            }
-        }
-
-        test_debug!("  Testing cache rebuild with high generation values...");
-
-        let final_generation = dt.topology_generation();
-        test_debug!("    Final TDS generation: {final_generation}");
-
-        // Force cache rebuild
-        let test_point = Point::try_new([2.0, 2.0, 2.0]).expect("finite point coordinates");
-        let visibility_result = hull.is_point_outside(&test_point, dt.as_triangulation());
-        match visibility_result {
-            Ok(is_outside) => {
-                let updated_hull_gen = hull.cached_generation().load(Ordering::Acquire);
-                test_debug!("    After cache rebuild: hull generation = {updated_hull_gen}");
-                assert_eq!(
-                    updated_hull_gen, final_generation,
-                    "Hull generation should match TDS after rebuild"
-                );
-                test_debug!(
-                    "    ✓ Cache rebuild with high generation successful: point outside = {is_outside}"
-                );
-            }
-            Err(e) => {
-                test_debug!("    Cache rebuild failed: {e}");
-            }
-        }
-
-        test_debug!("  Testing manual invalidation with high generation values...");
-
-        // Test manual invalidation
-        hull.invalidate_cache();
-        let invalidated_gen = hull.cached_generation().load(Ordering::Acquire);
-        assert_eq!(
-            invalidated_gen, 0,
-            "Generation should be reset to 0 after manual invalidation"
-        );
-        test_debug!("    ✓ Manual invalidation correctly reset generation to 0");
-
-        // Test rebuild after manual invalidation
-        let rebuild_result = hull.is_point_outside(&test_point, dt.as_triangulation());
-        match rebuild_result {
-            Ok(_) => {
-                let rebuilt_gen = hull.cached_generation().load(Ordering::Acquire);
-                assert_eq!(
-                    rebuilt_gen, final_generation,
-                    "Generation should match TDS after rebuild from manual invalidation"
-                );
-                test_debug!("    ✓ Rebuild after manual invalidation successful");
-            }
-            Err(e) => {
-                test_debug!("    Rebuild after manual invalidation failed: {e}");
-            }
-        }
-
-        test_debug!("  ✓ Generation counter edge cases tested");
-    }
-
-    #[test]
-    fn test_cache_consistency_under_stress() {
-        test_debug!("Testing cache consistency under rapid operations");
-
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-        ];
-        let dt = create_triangulation(&vertices);
-        let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
-
-        test_debug!("  Testing rapid cache invalidation and rebuild cycles...");
-
-        let num_cycles = 50;
-        let test_points = [
-            Point::try_new([2.0, 2.0, 2.0]).expect("finite point coordinates"),
-            Point::try_new([1.5, 1.5, 1.5]).expect("finite point coordinates"),
-            Point::try_new([0.1, 0.1, 0.1]).expect("finite point coordinates"),
-            Point::try_new([10.0, 10.0, 10.0]).expect("finite point coordinates"),
-        ];
-
-        for cycle in 0..num_cycles {
-            // Invalidate cache
-            hull.invalidate_cache();
-
-            // Verify cache is cleared
-            let cache_after_invalidation = hull.facet_cache().load();
-            assert!(
-                cache_after_invalidation.is_none(),
-                "Cache should be None after invalidation"
-            );
-
-            let generation_after_invalidation = hull.cached_generation().load(Ordering::Acquire);
-            assert_eq!(
-                generation_after_invalidation, 0,
-                "Generation should be 0 after invalidation"
-            );
-
-            // Test multiple operations that should trigger cache rebuild
-            for (i, test_point) in test_points.iter().enumerate() {
-                let visibility_result = hull.is_point_outside(test_point, dt.as_triangulation());
-                match visibility_result {
-                    Ok(is_outside) => {
-                        // After first operation, cache should be rebuilt
-                        if i == 0 {
-                            let cache_after_rebuild = hull.facet_cache().load();
-                            assert!(
-                                cache_after_rebuild.is_some(),
-                                "Cache should exist after first operation"
-                            );
-
-                            let generation_after_rebuild =
-                                hull.cached_generation().load(Ordering::Acquire);
-                            assert!(
-                                generation_after_rebuild > 0,
-                                "Generation should be updated after rebuild"
-                            );
-                        }
-
-                        test_debug!("    Cycle {cycle}, Point {i}: outside = {is_outside}");
-                    }
-                    Err(e) => {
-                        panic!("Visibility test failed in cycle {cycle}, point {i}: {e:?}");
-                    }
-                }
-            }
-
-            // Verify cache remains consistent throughout the cycle
-            let final_cache = hull.facet_cache().load();
-            assert!(final_cache.is_some(), "Cache should exist at end of cycle");
-
-            let final_generation = hull.cached_generation().load(Ordering::Acquire);
-            let tds_generation = dt.topology_generation();
-            assert_eq!(
-                final_generation, tds_generation,
-                "Hull generation should match TDS at end of cycle"
-            );
-
-            if (cycle + 1) % 10 == 0 {
-                test_debug!("    Completed {cycle} invalidation/rebuild cycles");
-            }
-        }
-
-        test_debug!("    ✓ Completed {num_cycles} invalidation/rebuild cycles successfully");
-
-        test_debug!("  Testing cache reuse efficiency...");
-
-        // Test that cache is reused when generation hasn't changed
-        let cache_before = hull.facet_cache().load();
-        let generation_before = hull.cached_generation().load(Ordering::Acquire);
-
-        // Perform multiple operations without TDS changes
-        for i in 0..10 {
-            let test_point =
-                Point::try_new([<f64 as From<_>>::from(i).mul_add(0.1, 1.0), 2.0, 2.0])
-                    .expect("finite point coordinates");
-            let result = hull.is_point_outside(&test_point, dt.as_triangulation());
-            assert!(result.is_ok(), "Visibility test {i} should succeed");
-        }
-
-        let cache_after = hull.facet_cache().load();
-        let generation_after = hull.cached_generation().load(Ordering::Acquire);
-
-        // Cache should exist before and after operations
-        assert!(
-            cache_before.is_some(),
-            "Cache should exist before operations"
-        );
-        assert!(cache_after.is_some(), "Cache should exist after operations");
-
-        // Check that the cache contains the same data (indicating reuse)
-        if let (Some(before_arc), Some(after_arc)) = (&*cache_before, &*cache_after) {
-            // Compare Arc pointer equality for reuse detection
-            let cache_reused = Arc::ptr_eq(before_arc, after_arc);
-            test_debug!("    Cache reused: {cache_reused}");
-
-            // For this test, we expect cache to be reused since generation didn't change
-            assert!(
-                cache_reused,
-                "Cache Arc should be reused when generation unchanged"
-            );
-            test_debug!("    ✓ Cache efficiently reused across multiple operations");
-        } else {
-            panic!("Cache should exist both before and after operations");
-        }
-
-        assert_eq!(
-            generation_before, generation_after,
-            "Generation should remain unchanged"
-        );
-
-        test_debug!("  ✓ Cache consistency under stress tested");
-    }
-
-    #[test]
-    fn test_memory_usage_and_cleanup() {
-        test_debug!("Testing memory usage patterns and cleanup behavior");
-
-        test_debug!("  Testing cache memory cleanup...");
-
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-        ];
-        let dt = create_triangulation(&vertices);
-        let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
-
-        // Build cache
-        let test_point = Point::try_new([2.0, 2.0, 2.0]).expect("finite point coordinates");
-        let _ = hull.is_point_outside(&test_point, dt.as_triangulation());
-
-        // Verify cache exists
-        let cache_exists = hull.facet_cache().load();
-        assert!(
-            cache_exists.is_some(),
-            "Cache should exist after visibility test"
-        );
-
-        // Manual invalidation should clear the cache
-        hull.invalidate_cache();
-        let cache_after_invalidation = hull.facet_cache().load();
-        assert!(
-            cache_after_invalidation.is_none(),
-            "Cache should be None after invalidation"
-        );
-
-        // Cache should rebuild on next operation
-        let _ = hull.is_point_outside(&test_point, dt.as_triangulation());
-        let cache_rebuilt = hull.facet_cache().load();
-        assert!(
-            cache_rebuilt.is_some(),
-            "Cache should be rebuilt after invalidation"
-        );
-
-        test_debug!("    ✓ Cache memory cleanup behavior correct");
-
-        test_debug!("  Testing multiple hull instances with shared TDS...");
-
-        // Create multiple hull instances from the same triangulation
-        let hull1: ConvexHull<(), (), 3> =
-            ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
-        let hull2: ConvexHull<(), (), 3> =
-            ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
-
-        // Each should have independent cache
-        let _ = hull1.is_point_outside(&test_point, dt.as_triangulation());
-        let _ = hull2.is_point_outside(&test_point, dt.as_triangulation());
-
-        let cache1 = hull1.facet_cache().load();
-        let cache2 = hull2.facet_cache().load();
-
-        if let (Some(cache1_arc), Some(cache2_arc)) = (&*cache1, &*cache2) {
-            // Caches should be independent (different Arc instances)
-            // but might have the same content
-            test_debug!("    Hull1 cache size: {}", cache1_arc.len());
-            test_debug!("    Hull2 cache size: {}", cache2_arc.len());
-
-            // They should have the same content but be independent instances
-            assert_eq!(
-                cache1_arc.len(),
-                cache2_arc.len(),
-                "Cache sizes should be equal"
-            );
-            test_debug!("    ✓ Multiple hull instances have independent but equivalent caches");
-        } else {
-            panic!("Both hulls should have caches after operations");
-        }
-
-        // Test that invalidating one doesn't affect the other
-        hull1.invalidate_cache();
-
-        let hull1_cache_after_invalidation = hull1.facet_cache().load();
-        let hull2_cache_after_hull1_invalidation = hull2.facet_cache().load();
-
-        assert!(
-            hull1_cache_after_invalidation.is_none(),
-            "Hull1 cache should be None after invalidation"
-        );
-        assert!(
-            hull2_cache_after_hull1_invalidation.is_some(),
-            "Hull2 cache should still exist"
-        );
-
-        test_debug!("    ✓ Independent cache invalidation working correctly");
-
-        test_debug!("  ✓ Memory usage and cleanup patterns tested");
-    }
-
-    /// Regression test for the bug where stale hulls could silently revalidate after `invalidate_cache()`.
-    ///
-    /// Bug description: Before the two-generation design (`creation_generation` + `cached_generation`),
-    /// calling `invalidate_cache()` would set the single generation counter to 0. This allowed
-    /// stale hulls to bypass staleness detection, rebuild the cache with the new TDS generation,
-    /// and then report as "valid" via `is_valid_for_triangulation()` despite having facet handles that
-    /// reference the old TDS topology.
-    ///
-    /// Expected behavior: Hull remains invalid for the modified TDS even after cache invalidation.
-    #[test]
-    fn test_stale_hull_detection_after_invalidate_cache() {
-        test_debug!("Testing stale hull detection after invalidate_cache (regression test)");
-
-        // Step 1: Create hull from initial DelaunayTriangulation
-        let mut dt = DelaunayTriangulation::builder(&[
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-        ])
-        .build()
-        .unwrap();
-        let initial_gen = dt.topology_generation();
-        let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
-
-        // Verify hull is valid initially
-        assert!(
-            hull.is_valid_for_triangulation(dt.as_triangulation()),
-            "Hull should be valid for initial triangulation"
-        );
-        test_debug!("  ✓ Hull created with generation {initial_gen}");
-
-        // Step 2: Mutate triangulation (increases generation)
-        dt.insert_vertex(vertex![0.5, 0.5, 0.5].unwrap()).unwrap();
-        let new_gen = dt.topology_generation();
-        assert_ne!(
-            initial_gen, new_gen,
-            "Triangulation generation should increase after mutation"
-        );
-        test_debug!("  ✓ Triangulation mutated, generation increased to {new_gen}");
-
-        // Verify hull is now invalid (stale)
-        assert!(
-            !hull.is_valid_for_triangulation(dt.as_triangulation()),
-            "Hull should be invalid after triangulation modification"
-        );
-        test_debug!("  ✓ Hull correctly detected as stale");
-
-        // Step 3: Call invalidate_cache() (the critical operation that triggered the bug)
-        hull.invalidate_cache();
-        test_debug!("  ✓ Called invalidate_cache()");
-
-        // Step 4: Try to use the hull (this would trigger cache rebuild in the old buggy code)
-        let test_point = Point::try_new([2.0, 2.0, 2.0]).expect("finite point coordinates");
-        let visibility_result = hull.find_visible_facets(&test_point, dt.as_triangulation());
-
-        // The visibility operation should fail with StaleHull error
-        assert!(
-            visibility_result.is_err(),
-            "Visibility operation should fail on stale hull even after invalidate_cache()"
-        );
-
-        if let Err(ConvexHullConstructionError::StaleHull {
-            hull_generation,
-            tds_generation,
-        }) = visibility_result
-        {
-            assert_eq!(
-                hull_generation, initial_gen,
-                "Error should report hull's creation generation"
-            );
-            assert_eq!(
-                tds_generation, new_gen,
-                "Error should report current TDS generation"
-            );
-            test_debug!("  ✓ Visibility operation correctly failed with StaleHull error");
-        } else {
-            panic!("Expected StaleHull error, got: {visibility_result:?}");
-        }
-
-        // Step 5: CRITICAL CHECK - is_valid_for_triangulation() must STILL return false
-        // This is the key test that catches the bug
-        assert!(
-            !hull.is_valid_for_triangulation(dt.as_triangulation()),
-            "BUG DETECTED: Hull should STILL be invalid for modified triangulation after invalidate_cache()"
-        );
-        test_debug!(
-            "  ✓ CRITICAL: is_valid_for_triangulation() correctly returns false after cache invalidation"
-        );
-
-        // Step 6: Verify that creating a new hull works correctly
-        let new_hull: ConvexHull<(), (), 3> =
-            ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
-        assert!(
-            new_hull.is_valid_for_triangulation(dt.as_triangulation()),
-            "New hull should be valid for modified triangulation"
-        );
-        let new_visibility_result =
-            new_hull.find_visible_facets(&test_point, dt.as_triangulation());
-        assert!(
-            new_visibility_result.is_ok(),
-            "Visibility operation should succeed on new hull"
-        );
-        test_debug!("  ✓ New hull works correctly with modified TDS");
-
-        test_debug!(
-            "  ✓ Regression test passed: stale hull detection works correctly after invalidate_cache()"
-        );
-    }
-
     #[test]
     fn test_hull_rejects_different_tds_with_same_generation() {
         let vertices = [
@@ -7254,7 +6178,7 @@ mod tests {
             DelaunayTriangulation::builder(&vertices).build().unwrap();
         let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
 
-        let cache_before = hull.try_get_or_build_facet_cache(dt.tds()).unwrap();
+        let cache_before = hull.try_facet_cache(dt.tds()).unwrap();
         assert!(!cache_before.is_empty());
 
         let creation_generation = hull
@@ -7302,10 +6226,10 @@ mod tests {
             "hull cache key should remain valid after failed insert rollback"
         );
 
-        let cache_after = hull.try_get_or_build_facet_cache(dt.tds()).unwrap();
+        let cache_after = hull.try_facet_cache(dt.tds()).unwrap();
         assert!(
-            Arc::ptr_eq(&cache_before, &cache_after),
-            "facet cache should be reused when rollback restores the same generation"
+            std::ptr::eq(cache_before, cache_after),
+            "facet cache should be reused after a failed insertion rolls back"
         );
 
         let outside = Point::try_new([2.0, 2.0, 2.0]).expect("finite point coordinates");
@@ -7636,151 +6560,4 @@ mod tests {
     test_convex_hull_dimension!(3, test_convex_hull_3d_comprehensive);
     test_convex_hull_dimension!(4, test_convex_hull_4d_comprehensive);
     test_convex_hull_dimension!(5, test_convex_hull_5d_comprehensive);
-
-    // ============================================================================
-    // CACHE LIFECYCLE MANAGEMENT TESTS
-    // ============================================================================
-
-    #[test]
-    fn test_cache_lifecycle_multiple_operations() {
-        test_debug!("Testing cache lifecycle through multiple operations");
-
-        let dt = create_triangulation(&[
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-        ]);
-        let hull = ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
-
-        let test_point = Point::try_new([2.0, 2.0, 2.0]).expect("finite point coordinates");
-
-        test_debug!("  Initial state: cache already built during construction");
-        let initial_gen = hull.cached_generation().load(Ordering::Acquire);
-        assert!(
-            initial_gen > 0,
-            "Generation should be set after construction"
-        );
-
-        test_debug!("  First operation: should build cache");
-        hull.find_visible_facets(&test_point, dt.as_triangulation())
-            .unwrap();
-        assert!(
-            hull.facet_cache().load().is_some(),
-            "Cache should be built after first operation"
-        );
-        let gen_after_build = hull.cached_generation().load(Ordering::Acquire);
-        assert!(
-            gen_after_build > 0,
-            "Generation should be updated after build"
-        );
-
-        test_debug!("  Second operation: should reuse cache");
-        let gen_before_reuse = hull.cached_generation().load(Ordering::Acquire);
-        hull.find_visible_facets(&test_point, dt.as_triangulation())
-            .unwrap();
-        let gen_after_reuse = hull.cached_generation().load(Ordering::Acquire);
-        assert_eq!(
-            gen_after_reuse, gen_before_reuse,
-            "Generation should not change when reusing cache"
-        );
-
-        test_debug!("  Manual invalidation: should clear cache and reset generation");
-        hull.invalidate_cache();
-        assert!(
-            hull.facet_cache().load().is_none(),
-            "Cache should be cleared after invalidation"
-        );
-        let gen_after_invalidation = hull.cached_generation().load(Ordering::Acquire);
-        assert_eq!(
-            gen_after_invalidation, 0,
-            "Generation should be reset to 0 after invalidation"
-        );
-
-        // Verify that cache was actually cleared from non-zero state
-        assert!(
-            gen_before_reuse > 0,
-            "Should have had cache before invalidation"
-        );
-
-        test_debug!("  Operation after invalidation: should rebuild cache");
-        hull.find_visible_facets(&test_point, dt.as_triangulation())
-            .unwrap();
-        assert!(
-            hull.facet_cache().load().is_some(),
-            "Cache should be rebuilt"
-        );
-        let gen_after_rebuild = hull.cached_generation().load(Ordering::Acquire);
-        assert!(
-            gen_after_rebuild > 0,
-            "Generation should be updated after rebuild"
-        );
-
-        test_debug!("  ✓ Cache lifecycle behaves correctly through all operations");
-    }
-
-    #[test]
-    fn test_cache_independence_multiple_hulls() {
-        test_debug!("Testing cache independence between multiple hull instances");
-
-        let dt = create_triangulation(&[
-            vertex!([0.0, 0.0, 0.0]).unwrap(),
-            vertex!([1.0, 0.0, 0.0]).unwrap(),
-            vertex!([0.0, 1.0, 0.0]).unwrap(),
-            vertex!([0.0, 0.0, 1.0]).unwrap(),
-        ]);
-
-        test_debug!("  Creating first hull and building cache...");
-        let hull1: ConvexHull<(), (), 3> =
-            ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
-        let test_point = Point::try_new([2.0, 2.0, 2.0]).expect("finite point coordinates");
-        hull1
-            .find_visible_facets(&test_point, dt.as_triangulation())
-            .unwrap();
-
-        test_debug!("  Creating second hull from same triangulation...");
-        let hull2: ConvexHull<(), (), 3> =
-            ConvexHull::try_from_triangulation(dt.as_triangulation()).unwrap();
-
-        test_debug!("  Second hull also has cache built during construction...");
-        let hull2_gen_initial = hull2.cached_generation().load(Ordering::Acquire);
-        assert!(
-            hull2_gen_initial > 0,
-            "Hull2 should have cache built during construction"
-        );
-
-        test_debug!("  Building cache in second hull...");
-        hull2
-            .find_visible_facets(&test_point, dt.as_triangulation())
-            .unwrap();
-        let hull2_gen = hull2.cached_generation().load(Ordering::Acquire);
-        assert!(hull2_gen > 0, "Hull2 should have built cache");
-
-        // Both should have cache
-        assert!(
-            hull1.facet_cache().load().is_some(),
-            "Hull1 should have cache"
-        );
-        assert!(
-            hull2.facet_cache().load().is_some(),
-            "Hull2 should have cache"
-        );
-
-        test_debug!("  Invalidating first hull cache...");
-        hull1.invalidate_cache();
-
-        // Hull1 should be cleared
-        assert!(
-            hull1.facet_cache().load().is_none(),
-            "Hull1 cache should be cleared"
-        );
-
-        // Hull2 should still have cache (independent instances)
-        assert!(
-            hull2.facet_cache().load().is_some(),
-            "Hull2 cache should be independent"
-        );
-
-        test_debug!("  ✓ Cache independence between multiple hull instances verified");
-    }
 }

@@ -344,7 +344,7 @@ pub(crate) fn ordered_lifted_edge(
 /// Represents toroidal topological space with periodic boundaries.
 ///
 /// Toroidal spaces have periodic boundary conditions defined by a
-/// fundamental domain. For example, a 2-torus (T²) has Euler
+/// fundamental domain. For example, `T^2` has Euler
 /// characteristic χ = 0.
 ///
 /// The dimension `D` is a const generic parameter that must match the
@@ -680,15 +680,15 @@ mod tests {
 
     #[test]
     fn test_different_domains() {
-        // 2D unit square torus
+        // T^2 with a unit-square fundamental domain.
         let unit_torus = ToroidalSpace::<2>::unit();
         assert_eq!(unit_torus.fundamental_domain(), Some(&[1.0, 1.0][..]));
 
-        // 2D rectangular torus
+        // T^2 with a rectangular fundamental domain.
         let rect_torus = ToroidalSpace::<2>::try_new([2.0, 3.0]).unwrap();
         assert_eq!(rect_torus.fundamental_domain(), Some(&[2.0, 3.0][..]));
 
-        // 3D cube torus
+        // T^3 with a cubic fundamental domain.
         let cube_torus = ToroidalSpace::<3>::unit();
         assert_eq!(cube_torus.fundamental_domain(), Some(&[1.0, 1.0, 1.0][..]));
     }
@@ -707,9 +707,9 @@ mod tests {
         assert_relative_eq!(space.domain().periods()[0], 1.0);
         assert_relative_eq!(space.domain().periods()[1], 1.0);
         assert_relative_eq!(space.domain().periods()[2], 1.0);
-        let space2d = ToroidalSpace::<2>::unit();
-        assert_relative_eq!(space2d.domain().periods()[0], 1.0);
-        assert_relative_eq!(space2d.domain().periods()[1], 1.0);
+        let space_t2 = ToroidalSpace::<2>::unit();
+        assert_relative_eq!(space_t2.domain().periods()[0], 1.0);
+        assert_relative_eq!(space_t2.domain().periods()[1], 1.0);
     }
 
     #[test]

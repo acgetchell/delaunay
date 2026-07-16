@@ -1680,7 +1680,7 @@ mod tests {
         (tds, [v0, v1, v2, v3, v4], [c1, c2])
     }
 
-    fn build_wedge_two_spheres_share_vertex_tds_2d()
+    fn build_wedge_two_s2_complexes_share_vertex_tds()
     -> (Tds<(), (), 2>, VertexKey, SimplexKey, SimplexKey) {
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
@@ -2415,7 +2415,7 @@ mod tests {
 
     #[test]
     fn test_build_ridge_star_map_for_simplices_2d_includes_full_star_for_shared_vertex() {
-        let (tds, v0, incident, _nonincident) = build_wedge_two_spheres_share_vertex_tds_2d();
+        let (tds, v0, incident, _nonincident) = build_wedge_two_s2_complexes_share_vertex_tds();
 
         let map = build_ridge_star_map_for_simplices(&tds, [incident]).unwrap();
         assert_eq!(map.len(), 3);

@@ -92,7 +92,6 @@ Slow/stress coverage:
 
 ```bash
 just test-slow
-just test-slow-release
 ```
 
 The intended contract for slow property tests is `#[cfg(feature = "slow-tests")]`

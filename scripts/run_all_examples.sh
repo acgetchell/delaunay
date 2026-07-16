@@ -21,7 +21,8 @@ DESCRIPTION:
     Automatically discovers and runs Cargo examples in examples/:
       - examples/<name>.rs
       - examples/<name>/main.rs
-    All examples run in release mode (--release).
+    Ordinary examples run in release mode with default features. Feature-gated
+    examples run in release mode with their required features.
 
 OPTIONS:
     -h, --help     Show this help message and exit
@@ -35,6 +36,7 @@ EXAMPLES:
 
 NOTES:
     - All examples run in release mode for better performance
+    - Feature-gated examples are rebuilt and run with their required features
     - Examples are discovered automatically from the examples/ directory
     - Output is shown in real-time as examples execute
     - Script exits with error code if any example fails
@@ -131,22 +133,35 @@ case "$(uname -s)" in
 MINGW* | MSYS* | CYGWIN*) EXE_SUFFIX=".exe" ;;
 esac
 
-for example in "${all_examples[@]}"; do
-	echo "=== Running $example ==="
-	example_binary="${PROJECT_ROOT}/target/release/examples/${example}${EXE_SUFFIX}"
+# Run one already-built example with the repository's timeout contract.
+run_example_binary() {
+	local label="$1"
+	local example="$2"
+	echo "=== Running $label ==="
+	local example_binary="${PROJECT_ROOT}/target/release/examples/${example}${EXE_SUFFIX}"
 	if [[ ! -x "$example_binary" ]]; then
 		error_exit "Built example binary not found or not executable: $example_binary"
 	fi
 	if [[ -n "$TIMEOUT_CMD" ]]; then
-		DURATION="${EXAMPLE_TIMEOUT:-600s}"
-		# If DURATION has no unit suffix, assume seconds
-		case "$DURATION" in *[a-zA-Z]) ;; *) DURATION="${DURATION}s" ;; esac
-		"$TIMEOUT_CMD" --preserve-status --signal=TERM --kill-after=10s "$DURATION" \
+		local duration="${EXAMPLE_TIMEOUT:-600s}"
+		# If the duration has no unit suffix, assume seconds.
+		case "$duration" in *[a-zA-Z]) ;; *) duration="${duration}s" ;; esac
+		"$TIMEOUT_CMD" --preserve-status --signal=TERM --kill-after=10s "$duration" \
 			"$example_binary" || error_exit "Example $example failed!"
 	else
 		"$example_binary" || error_exit "Example $example failed!"
 	fi
+}
+
+for example in "${all_examples[@]}"; do
+	# The diagnostics binary has a default-feature stub; run its real path below.
+	[[ "$example" == "diagnostics" ]] && continue
+	run_example_binary "$example" "$example"
 done
+
+echo "Building feature-gated examples..."
+cargo build --release --features diagnostics --example diagnostics
+run_example_binary "diagnostics (features: diagnostics)" "diagnostics"
 
 echo
 echo "=============================================="

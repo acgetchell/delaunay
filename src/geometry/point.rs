@@ -134,6 +134,25 @@ impl<const D: usize> Default for ValidatedCoordinates<D> {
 /// assert_eq!(p.coords(), &[1.0, 2.0]);
 /// # Ok::<(), delaunay::prelude::geometry::CoordinateValidationError>(())
 /// ```
+///
+/// Points support lexicographic comparison and can be used directly as hash
+/// keys. Signed zero is canonicalized, so equivalent coordinates compare and
+/// hash identically:
+///
+/// ```rust
+/// use std::collections::HashSet;
+///
+/// use delaunay::prelude::geometry::{CoordinateValidationError, Point};
+///
+/// let first = Point::try_new([0.0, -0.0])?;
+/// let equivalent = Point::try_new([-0.0, 0.0])?;
+/// let later = Point::try_new([1.0, 0.0])?;
+///
+/// assert_eq!(first, equivalent);
+/// assert!(first < later);
+/// assert_eq!(HashSet::from([first, equivalent, later]).len(), 2);
+/// # Ok::<(), CoordinateValidationError>(())
+/// ```
 pub struct Point<const D: usize> {
     /// The coordinates of the point.
     coords: ValidatedCoordinates<D>,
@@ -443,7 +462,7 @@ where
     }
 }
 
-/// Enable conversions from Point to coordinate arrays - using Coordinate trait
+/// Converts an owned [`Point`] into its coordinate array.
 impl<const D: usize> From<Point<D>> for [f64; D] {
     /// # Example
     ///
@@ -460,6 +479,7 @@ impl<const D: usize> From<Point<D>> for [f64; D] {
     }
 }
 
+/// Copies the coordinates of a borrowed [`Point`] into an array.
 impl<const D: usize> From<&Point<D>> for [f64; D] {
     /// # Example
     ///

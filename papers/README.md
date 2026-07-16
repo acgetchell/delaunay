@@ -2,6 +2,11 @@
 
 This directory contains publication-facing prose for `delaunay`.
 
+[`ARTIFACT.md`](ARTIFACT.md) is the reviewer-facing v0.8.0 software artifact
+index. It records release identity, reproduction commands, evidence links, and
+known limits without replacing the canonical technical documentation or adding
+manuscript prose.
+
 The repository keeps three validation artifacts with distinct ownership:
 
 - `docs/validation.md` is the canonical developer-facing validation contract.

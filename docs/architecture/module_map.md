@@ -44,8 +44,7 @@ ordering, see [`module_patterns.md`](module_patterns.md).
   spatial acceleration structures.
 - `algorithms/` - incremental insertion, flips, point location, and
   PL-manifold repair algorithms.
-- `traits/` - core boundary/data trait definitions and internal facet-cache
-  plumbing.
+- `traits/` - core boundary/data trait definitions and facet-incidence analysis.
 - `util/` - shared helpers for UUIDs, hashing, deduplication, allocation
   measurement, facet keys, Jaccard diagnostics, Hilbert ordering, and
   canonical point order.
@@ -111,7 +110,7 @@ coordinate model/API rather than loosening ordinary `f64` APIs.
 - `repair.rs` - Delaunay repair policies, rebuild config, and repair outcomes.
 - `serialization.rs` - conversion to/from `Tds` with topology metadata reset
   rules.
-- `spherical.rs` - bounded `S^2`/`S^3` spherical construction,
+- `spherical.rs` - bounded `S^2`/`S^3` construction,
   realization-validation, and empty-cap Delaunay backend using the topology
   space coordinate/metric backend.
 - `validation.rs` - implemented Level 5 Geometric Predicate APIs for Delaunay

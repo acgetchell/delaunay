@@ -7,6 +7,8 @@ Historical design notes, investigations, and completed optimization roadmaps liv
 
 ## Start here
 
+- [`../papers/ARTIFACT.md`](../papers/ARTIFACT.md): v0.8.0 reviewer reproduction paths, claim map, evidence, and limits.
+- [`../examples/README.md`](../examples/README.md): public-workflow coverage across runnable Rust examples and notebooks.
 - [`api_design.md`](api_design.md): construction, vertex lifecycle, and Pachner move APIs.
 - [`topology.md`](topology.md): Level 3 Intrinsic PL Topology invariants (manifold checks, orientability, Euler characteristic).
 - [`validation.md`](validation.md): the five-level validation model (Levels 1–5) and how to configure it.

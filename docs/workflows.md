@@ -288,49 +288,46 @@ fn main() -> Result<(), RepairExampleError> {
 }
 ```
 
-## Builder API: toroidal construction modes
+## Builder API: toroidal construction
 
-Toroidal construction has two modes. `.try_canonicalized_toroidal([..])` wraps vertices into the
-fundamental domain before Euclidean construction. `.try_toroidal([..])`
-uses the image-point method to build a true periodic quotient in the validated
-2D and compact 3D cases.
+`.try_toroidal([..])` uses the image-point method to build a periodic quotient
+in the validated `T^2` and compact `T^3` cases.
 
 ```rust
 use delaunay::prelude::construction::{
     DelaunayResult, DelaunayTriangulationBuilder, vertex,
 };
+use delaunay::prelude::geometry::RobustKernel;
 
 fn main() -> DelaunayResult<()> {
-    // 2D Euclidean triangulation after wrapping inputs into a unit square domain
     let vertices = vec![
-        vertex![0.1, 0.1]?,
-        vertex![0.9, 0.9]?,
-        vertex![0.5, 0.5]?,
+        vertex![0.2, 0.3]?,
+        vertex![0.8, 0.1]?,
+        vertex![0.5, 0.7]?,
+        vertex![0.1, 0.9]?,
+        vertex![0.6, 0.4]?,
+        vertex![0.3, 0.5]?,
+        vertex![0.9, 0.2]?,
     ];
 
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-        .try_canonicalized_toroidal([1.0, 1.0])
-        ? // input coordinate canonicalization
-        .build()?;
+    let dt = DelaunayTriangulationBuilder::new(&vertices)
+        .try_toroidal([1.0, 1.0])?
+        .build_with_kernel(&RobustKernel::new())?;
 
-    // Subsequent insertions are standard Euclidean insertions; canonicalize
-    // additional points at the call site if they come from the same domain.
-    dt.insert_vertex(vertex![0.2, 0.3]?)?;
-    dt.insert_vertex(vertex![0.9, 0.7]?)?;
+    dt.validate()?;
+    assert!(dt.global_topology().is_periodic());
     Ok(())
 }
 ```
 
 **Key points:**
 
-- **Domain wrapping**: Initial vertex coordinates are canonicalized (wrapped) to the
-  fundamental domain `[0, period)` for each dimension before Euclidean construction
-- **Manifold topology**: `.try_canonicalized_toroidal([..])` does not assign closed toroidal
-  topology or rewire opposite boundary facets; use `.try_toroidal([..])` for a true quotient
-- **Construction modes**:
-  - `.try_canonicalized_toroidal([..])`: Euclidean construction after wrapping inputs
-  - `.try_toroidal([..])`: periodic image-point construction; currently validated as a true
-    toroidal quotient in 2D and compact 3D; 4D/5D fail fast pending issue #416
+- **Domain wrapping**: Construction canonicalizes input coordinates into the
+  fundamental domain before generating periodic image points.
+- **Manifold topology**: Opposite boundary facets are identified in the quotient,
+  which is represented as closed toroidal topology.
+- **Validated dimensions**: `T^2` and compact `T^3` are release-covered;
+  `T^4`/`T^5` fail fast pending issue #416.
 
 For more details, see `docs/topology.md` and the toroidal section in the main `README.md`.
 

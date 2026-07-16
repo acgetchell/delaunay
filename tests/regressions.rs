@@ -550,7 +550,7 @@ fn regression_periodic_neighbor_validation_uses_lifted_vertex_offsets() {
         .try_toroidal([1.0_f64; 2])
         .unwrap()
         .build_with_kernel(&kernel)
-        .expect("periodic 2D build should succeed");
+        .expect("periodic T^2 build should succeed");
 
     assert!(
         dt.simplices()

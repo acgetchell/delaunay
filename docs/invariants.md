@@ -385,13 +385,10 @@ known.
 The default model is a finite Euclidean triangulation of a point set. In that setting, boundary
 facets are expected unless the simplex complex represents a closed manifold by construction.
 
-Toroidal workflows are integrated as first-class topology options:
+Toroidal workflows are integrated as a first-class topology option:
 
-- `.try_canonicalized_toroidal()` canonicalizes coordinates into the fundamental domain, then
-  builds a Euclidean triangulation of the wrapped point set. It does not assign closed
-  toroidal manifold topology or identify opposite boundary facets.
 - `.try_toroidal(...)` constructs a periodic image-point triangulation over neighboring
-  fundamental domains. The 2D and compact 3D paths are validated periodic quotients; 4D/5D
+  fundamental domains. The `T^2` and compact `T^3` paths are validated periodic quotients; `T^4`/`T^5`
   periodic construction fails fast until quotient selection scales to routine release validation
   under issue #416.
 

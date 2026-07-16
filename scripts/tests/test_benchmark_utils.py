@@ -285,9 +285,9 @@ def test_render_criterion_comparison_report_includes_release_workflow_footer(tmp
     assert "- **Raw Criterion data**: `target/criterion/`" in report
     assert "- **Rust**: rustc test" in report
     assert "| validate_3d/750 | 2.00 ms | 1.00 ms | **-50.0%** | 2.00x |" in report
-    assert "just performance-local" in report
-    assert "just performance-github-assets" in report
-    assert "just performance-release <current-tag> <previous-tag>" in report
+    assert "just perf-local" in report
+    assert "just perf-github-assets" in report
+    assert "just perf-release <current-tag> <previous-tag>" in report
 
 
 def test_write_criterion_comparison_report_reports_no_baseline(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

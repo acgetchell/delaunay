@@ -308,7 +308,7 @@ def _readme_tag_references(path: Path) -> list[VersionReference]:
 
 
 _BENCHMARK_CURRENT_TAG_RE = re.compile(
-    r"just performance-(?:github-assets|local|release)\s+v"
+    r"just perf-(?:github-assets|local|release)\s+v"
     r"(?P<version>[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)(?=\s|`)"
 )
 

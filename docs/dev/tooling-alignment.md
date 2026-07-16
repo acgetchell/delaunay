@@ -41,9 +41,16 @@ Both repositories now share the same core Rust and Python support-tooling loop:
 - `justfile` is the local entry point for formatting, linting, tests,
   coverage, Semgrep, changelog, setup commands, and supported Cargo feature
   surface checks.
-- `just check`, `just lint-config`, and `just ci` verify the justfile with
-  `just --fmt --check`; `just fix` applies the matching `just --fmt` formatter.
+- `just check`, `just check-config`, and `just ci` verify the root and imported
+  helper justfiles; `just fix` applies the matching formatter.
   This keeps the check/fix command contract aligned with the dotfiles repository.
+- `scripts/tests/test_justfile_discoverability.py` owns semantic Just surface
+  invariants by querying Just's parsed JSON: lexicographic source order,
+  documented and grouped public recipes, a safe default workflow, unique public
+  implementations, and resolvable GitHub Actions tool pins. Do not duplicate
+  these whole-file or cross-file checks with regex-based Semgrep rules. Semgrep
+  remains appropriate for local textual conventions such as documented
+  check-before-fix command order.
 - `scripts/` contains typed Python helpers for changelog, tag, benchmark,
   coverage, subprocess, and hardware workflows.
 
@@ -68,11 +75,11 @@ The useful updates ported in this pass are:
   dependency graph stays on the current reviewed toolchain baseline. Delaunay
   previously used lower-bound specifiers for those tools, which allowed local
   and CI environments to drift away from that reviewed baseline.
-- Local just helpers now version-check the pinned `just`, `cargo-nextest`,
-  `taplo-cli`, `dprint`, `rumdl`, `typos-cli`, and `zizmor` tools instead of
-  accepting any installed version. Delaunay does not currently pin or invoke
-  `cargo-instruments`; no `cargo-instruments` alignment was needed in this
-  pass.
+- Local just helpers now version-check the pinned `uv`, `just`,
+  `cargo-nextest`, `taplo-cli`, `dprint`, `rumdl`, `typos-cli`, and `zizmor`
+  tools instead of accepting any installed version. Delaunay does not currently
+  pin or invoke `cargo-instruments`; no `cargo-instruments` alignment was needed
+  in this pass.
 - GitHub Actions Cargo tool installation now uses
   `taiki-e/cache-cargo-install-action` where Delaunay previously used
   `taiki-e/install-action`, matching the sibling workflow pattern for pinned
@@ -111,8 +118,6 @@ The useful updates ported in this pass are:
 - `just changelog-unreleased <version>`, implemented with
   `GIT_CLIFF_OFFLINE=true git-cliff --tag`, so release PR changelogs no longer
   need temporary local release tags.
-- `just changelog-tag <version>` as a compatibility alias for the canonical
-  `just tag <version>` flow.
 - `cliff.toml` improvements for escaped Rust generic angle brackets, GitHub
   `...` compare links, release-prep commit filtering, dependency grouping, and
   `Closes #N` cleanup.
@@ -269,17 +274,17 @@ The useful updates ported in this pass are:
   `baseline-artifact/` and `baseline-artifacts/` paths, while
   `.github/workflows/generate-baseline.yml` remains manual-only for
   compatibility with ad-hoc CI-runner artifact comparisons.
-- The release-performance command surface now matches `la-stack` at the
-  high-level workflow boundary: `bench-latest`, `bench-latest-vs-last`,
-  `bench-compare`, `bench-save-baseline`, `bench-save-last`,
-  `performance-local`, `performance-github-assets`, and `performance-release`.
+- The release-performance command surface separates long measurement workflows
+  under `bench-*` from bounded comparisons and release orchestration under
+  `perf-*`: `bench-latest`, `bench-latest-vs-last`, `bench-compare`,
+  `bench-save-baseline`, `perf-local`, `perf-github-assets`, and `perf-release`.
   Delaunay keeps its own release-signal suite behind those names:
   `ci_performance_suite`, `circumsphere_containment`, `cold_path_predicates`,
   `topology_guarantee_construction`, and `locate`. Text `baseline_results.txt`
   files remain the CI regression format, while Criterion saved baselines and
   `target/bench-reports/*.md` reports own local and curated release comparison
   evidence. The release asset workflow packages raw Criterion data for the
-  release-signal set so `performance-github-assets` can compare stored releases
+  release-signal set so `perf-github-assets` can compare stored releases
   without local benchmark runs.
 
 ## CI Shape Evaluation
@@ -507,6 +512,10 @@ The following previously deferred checks are now repository-owned Semgrep rules:
   layer-local aggregate reports, and `validate()` / `validation_report()` for
   cumulative roll-ups. Plain `is_valid()` remains reserved for unambiguous
   element and TDS owners.
+- `delaunay.docs.topological-space-notation` distinguishes fixed manifold names
+  from dimensional labels: prose uses `T^n`/`S^n`, Rust identifiers use
+  `tn`/`sn`, and labels such as `2D`/`3D` remain available for algorithm,
+  coordinate, ambient, and simplicial-complex dimensions.
 
 ## Retired Repository Rules
 

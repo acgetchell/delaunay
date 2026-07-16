@@ -2398,7 +2398,7 @@ mod tests {
         vertex!(coords).unwrap()
     }
 
-    /// Builds the 2×2×2 periodic Freudenthal triangulation of the unit 3-torus.
+    /// Builds the 2×2×2 periodic Freudenthal triangulation of the unit `T^3`.
     ///
     /// This fixture bypasses periodic quotient selection so validation coverage
     /// remains independent of the 3D construction-scaling work tracked in #416.
@@ -3970,7 +3970,7 @@ mod tests {
     }
 
     #[test]
-    fn is_valid_pl_manifold_mode_rejects_cone_on_torus_in_3d_even_when_connected() {
+    fn is_valid_pl_manifold_mode_rejects_cone_on_t2_in_3d_even_when_connected() {
         const N: usize = 3;
         const M: usize = 3;
 

@@ -1375,7 +1375,7 @@ mod tests {
         tds
     }
 
-    /// Build two closed 2D sphere complexes sharing one vertex, yielding a
+    /// Build two closed `S^2` complexes sharing one vertex, yielding a
     /// disconnected ridge link at that shared vertex.
     fn make_disconnected_ridge_link_tds() -> Tds<(), (), 2> {
         let mut tds: Tds<(), (), 2> = Tds::empty();

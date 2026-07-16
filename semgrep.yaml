@@ -1934,6 +1934,46 @@ rules:
       (?i)(?:\b4-level validation hierarchy\b|\bfour levels of validation\b|\blevel 4:\s*delaunay
       property\b|\bdelaunay property\s*\(level 4\)|\bdelaunay level 4 validation\b|\brepair\s*/\s*verify\b[^\n]*\bdelaunay property\b)
 
+  - id: delaunay.docs.topological-space-notation
+    languages:
+      - regex
+    severity: WARNING
+    message: >-
+      Name fixed tori and spheres as T^n/S^n in prose and tn/sn in Rust
+      identifiers; reserve labels such as 2D and 3D for dimensionality.
+    metadata:
+      category: maintainability
+      rationale: >-
+        Explicit manifold notation distinguishes a periodic quotient such as
+        T^3 from an ordinary three-dimensional Euclidean triangulation.
+    paths:
+      include:
+        - "/AGENTS.md"
+        - "/README.md"
+        - "/CITATION.cff"
+        - "/docs/**/*.md"
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/tests/**/*.md"
+        - "/tests/semgrep/docs/**/*.md"
+        - "/examples/**/*.rs"
+        - "/examples/**/*.md"
+        - "/benches/**/*.rs"
+        - "/benches/**/*.md"
+        - "/scripts/**/*.md"
+      exclude:
+        - "/docs/archive/**"
+    pattern-either:
+      - pattern-regex: '(?im)^.*?\b(?:[2-5]D|(?:two|three|four|five)[ -]dimensional)\s+(?:(?:periodic|compact|unit|square|cube|cubic|rectangular)\s+){0,4}(?:toroidal|torus)\b' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?im)^.*?\btoroidal\s+(?:construction|quotient|path|case|input|domain|fixture|triangulation|build)[^,;\n]{0,60}\b[2-5]D\b' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?i)\b[2-5]D\s+spherical\s+(?:Delaunay\s+)?(?:construction|triangulation|prototype|integration)\b' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?i)\bspherical\s+(?:Delaunay\s+)?(?:construction|triangulation|prototype|integration)[^,;\n]{0,60}\b[2-5]D\b' # yamllint disable-line rule:line-length
+      - pattern-regex: '\b[ST][2-5]\b'
+      - pattern-regex: >-
+          (?i)\b(?:[a-z0-9]+_)*(?:toroidal|spherical)(?:_[a-z0-9]+)*_[2-5]d(?:_[a-z0-9]+)*\b
+      - pattern-regex: >-
+          (?i)\b(?:[a-z0-9]+_)*[2-5]d(?:_[a-z0-9]+)*_(?:toroidal|spherical)(?:_[a-z0-9]+)*\b
+
   - id: delaunay.paper.validation-figures-use-canonical-assets
     languages:
       - regex

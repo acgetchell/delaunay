@@ -841,15 +841,6 @@ pub enum DelaunayConstructionFailure {
         topology: TopologyKind,
     },
 
-    /// Canonicalized toroidal construction was combined with non-Euclidean topology metadata.
-    #[error(
-        "canonicalized toroidal construction produces a Euclidean triangulation; requested {topology:?} topology metadata is unsupported"
-    )]
-    CanonicalizedUnsupportedGlobalTopology {
-        /// Requested topology kind that would misclassify Euclidean boundary facets.
-        topology: TopologyKind,
-    },
-
     /// Periodic image-point construction was combined with conflicting explicit topology metadata.
     #[error(
         "periodic image-point construction derives {expected_mode:?} toroidal topology with domain {expected_periods:?}; requested {requested_topology:?} metadata conflicts (mode={requested_mode:?}, domain={requested_periods:?})"
@@ -998,7 +989,7 @@ pub enum DelaunayConstructionFailure {
         search_attempts: usize,
     },
 
-    /// Periodic quotient selection left boundary facets in a 2D quotient.
+    /// Periodic quotient selection left boundary facets in a `T^2` quotient.
     #[error(
         "periodic quotient selection left {boundary_facet_count} boundary facets after {search_attempts} attempts"
     )]
@@ -1019,9 +1010,9 @@ pub enum DelaunayConstructionFailure {
         selected_simplex_count: usize,
     },
 
-    /// Periodic quotient selection did not reach χ = 0 in 2D.
+    /// Periodic quotient selection did not reach χ = 0 on `T^2`.
     #[error(
-        "periodic quotient selection could not reach χ = 0 in 2D; best |χ|={best_abs_chi} after {search_attempts} attempts"
+        "periodic quotient selection could not reach χ = 0 on T^2; best |χ|={best_abs_chi} after {search_attempts} attempts"
     )]
     PeriodicQuotientSelectionEulerCharacteristic {
         /// Best absolute Euler-characteristic residual observed.
@@ -5451,7 +5442,6 @@ where
                     | DelaunayConstructionFailure::InsertionNeighborWiring { .. }
                     | DelaunayConstructionFailure::UnsupportedPeriodicDimension { .. }
                     | DelaunayConstructionFailure::EuclideanUnsupportedGlobalTopology { .. }
-                    | DelaunayConstructionFailure::CanonicalizedUnsupportedGlobalTopology { .. }
                     | DelaunayConstructionFailure::PeriodicImageConflictingGlobalTopology { .. }
                     | DelaunayConstructionFailure::SpatialIndexConstruction { .. }
                     | DelaunayConstructionFailure::InsertionRealizationValidation { .. }

@@ -902,61 +902,6 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         self.simplices.iter()
     }
 
-    /// Returns an iterator over all simplex values (without keys) in the triangulation.
-    ///
-    /// This is a convenience method that simplifies the common pattern of iterating over
-    /// `simplices().map(|(_, simplex)| simplex)`. It provides read-only access to simplex objects
-    /// when you don't need the simplex keys.
-    ///
-    /// # Returns
-    ///
-    /// An iterator over `&Simplex<V, D>` references.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use delaunay::prelude::*;
-    ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Insertion(#[from] delaunay::prelude::insertion::InsertionError),
-    /// #     #[error(transparent)]
-    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
-    /// #     #[error(transparent)]
-    /// #     TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Invariant(#[from] delaunay::prelude::tds::InvariantError),
-    /// #     #[error(transparent)]
-    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
-    /// #     #[error(transparent)]
-    /// #     Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
-    /// #     #[error(transparent)]
-    /// #     Validation(#[from] delaunay::DelaunayTriangulationValidationError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// let vertices = [
-    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
-    /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-    ///
-    /// for (_, simplex) in dt.simplices() {
-    ///     println!("Simplex has {} vertices", simplex.number_of_vertices());
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn simplices_values(&self) -> impl Iterator<Item = &Simplex<V, D>> {
-        self.simplices.values()
-    }
-
     /// Returns an iterator over all vertices in the triangulation.
     ///
     /// This method provides read-only access to the vertices collection without
@@ -2214,53 +2159,6 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     #[must_use]
     pub(crate) fn vertex_mut(&mut self, vertex_key: VertexKey) -> Option<&mut Vertex<U, D>> {
         self.vertices.get_mut(vertex_key)
-    }
-
-    /// Checks if a simplex key exists in the triangulation.
-    ///
-    /// # Arguments
-    ///
-    /// * `simplex_key` - The key to check
-    ///
-    /// # Returns
-    ///
-    /// `true` if the simplex exists, `false` otherwise.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use delaunay::prelude::*;
-    ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)] Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
-    /// #     #[error(transparent)] Insertion(#[from] delaunay::prelude::insertion::InsertionError),
-    /// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
-    /// #     #[error(transparent)] TdsConstruction(#[from] delaunay::prelude::tds::TdsConstructionError),
-    /// #     #[error(transparent)] Invariant(#[from] delaunay::prelude::tds::InvariantError),
-    /// #     #[error(transparent)] Facet(#[from] delaunay::prelude::tds::FacetError),
-    /// #     #[error(transparent)] Simplex(#[from] delaunay::prelude::tds::SimplexValidationError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] delaunay::prelude::geometry::CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// let vertices = [
-    ///     delaunay::vertex![0.0, 0.0]?,
-    ///     delaunay::vertex![1.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 1.0]?,
-    /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-    /// let Some((simplex_key, _)) = dt.simplices().next() else {
-    ///     return Ok(());
-    /// };
-    /// assert!(dt.contains_simplex(simplex_key));
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[inline]
-    #[must_use]
-    pub fn contains_simplex_key(&self, simplex_key: SimplexKey) -> bool {
-        self.simplices.contains_key(simplex_key)
     }
 
     /// Checks if a vertex key exists in the triangulation.

@@ -22,7 +22,7 @@ abstract: >-
   Rust crate providing D-dimensional Delaunay triangulations and convex hulls
   constructed with a PL-manifold (default) or pseudomanifold guarantee on
   finite point sets. Euclidean construction is explicitly tested in 2D through
-  5D, periodic toroidal construction is validated in 2D and for compact 3D
+  5D, periodic toroidal construction is validated on T² and for compact T³
   inputs, and bounded spherical S²/S³ construction is available as a prototype.
   Uses exact predicates and Simulation of Simplicity for robustness and
   degeneracy handling, and Hilbert curves for deterministic insertion ordering

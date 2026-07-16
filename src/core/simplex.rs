@@ -804,41 +804,6 @@ impl<V, const D: usize> Simplex<V, D> {
             .any(|vkey| other.vertices.contains(vkey))
     }
 
-    /// Returns an iterator over the vertex keys, paired with their indices.
-    ///
-    /// Useful for operations that need both the key and its position.
-    ///
-    /// # Returns
-    ///
-    /// An iterator yielding `(usize, &VertexKey)` pairs.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use delaunay::prelude::*;
-    ///
-    /// # fn main() -> DelaunayResult<()> {
-    /// let vertices = vec![
-    ///     delaunay::vertex![0.0, 0.0]?,
-    ///     delaunay::vertex![1.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 1.0]?,
-    /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
-    /// let Some((_, simplex)) = dt.simplices().next() else {
-    ///     return Ok(());
-    /// };
-    ///
-    /// for (idx, &vkey) in simplex.vertices_enumerated() {
-    ///     println!("Vertex {:?} at position {}", vkey, idx);
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[inline]
-    pub fn vertices_enumerated(&self) -> impl Iterator<Item = (usize, &VertexKey)> {
-        self.vertices.iter().enumerate()
-    }
-
     /// Returns the neighbor keys for this simplex without allocating.
     ///
     /// Neighbors are stored as keys (not UUIDs) for direct TDS access.
