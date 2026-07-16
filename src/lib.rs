@@ -648,7 +648,6 @@ mod core {
     /// Traits for Delaunay triangulation data structures.
     pub mod traits {
         pub mod data_type;
-        pub mod facet_cache;
         pub mod facet_incidence_analysis;
         pub use data_type::*;
     }

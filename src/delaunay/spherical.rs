@@ -2163,7 +2163,7 @@ mod tests {
 
         triangulation
             .validate_topology()
-            .expect("5-simplex boundary is intrinsically S4");
+            .expect("5-simplex boundary is intrinsically S^4");
         assert_matches!(
             triangulation.validate_realization(),
             Err(SphericalDelaunayValidationError::UnsupportedLayer {

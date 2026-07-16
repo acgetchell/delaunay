@@ -10,7 +10,7 @@ snapshots live in [`archive/`](archive/).
 The v0.7.8 line is the current pre-v0.8.0 cleanup baseline. It keeps the
 performance-summary work from v0.7.7, closes the release-facing documentation
 and doctest hygiene pass, tightens default test-suite budgets, validates compact
-3D toroidal quotient construction, and restores failed topology-repair
+`T^3` quotient construction, and restores failed topology-repair
 workflows to their pre-call state when fallback rebuild does not succeed.
 
 Key takeaways from v0.7.8:
@@ -19,7 +19,7 @@ Key takeaways from v0.7.8:
   long-running correctness work routed through `slow-tests`.
 - Public examples and doctests avoid release-hostile unwrap/expect patterns in
   favor of typed `Result` wrappers or non-degenerate examples.
-- Compact 3D toroidal quotients are validated through topology and Delaunay
+- Compact `T^3` quotients are validated through topology and Delaunay
   checks before being returned; higher-dimensional quotient construction fails
   fast until scalable follow-up work lands.
 - `delaunayize_by_flips` preserves the incoming triangulation on topology

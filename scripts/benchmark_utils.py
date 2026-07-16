@@ -2672,20 +2672,20 @@ Local performance reports are generated in isolated temporary worktrees:
 
 ```bash
 # Local development: compare the current tree with the latest release
-just performance-local
+just perf-local
 
 # Release PR: update docs/PERFORMANCE.md and archive the previous report
-just performance-release
+just perf-release
 
 # GitHub Release benchmark assets
-just performance-github-assets
+just perf-github-assets
 
 # Explicit repair
-just performance-release <current-tag> <previous-tag>
+just perf-release <current-tag> <previous-tag>
 ```
 
-`just performance-local` writes `target/bench-reports/performance.md`.
-`just performance-github-assets` writes `target/bench-reports/github-assets-performance.md`.
+`just perf-local` writes `target/bench-reports/performance.md`.
+`just perf-github-assets` writes `target/bench-reports/github-assets-performance.md`.
 
 Release-comparison commands are release evidence, not routine pre-`just ci` checks.
 Older curated release-to-release reports are archived in `docs/archive/performance/`.

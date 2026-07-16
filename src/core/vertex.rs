@@ -802,8 +802,19 @@ impl<U, const D: usize> PartialOrd for Vertex<U, D> {
     }
 }
 
-/// Enable implicit conversion from Vertex to coordinate array
-/// This allows using `Into` to convert from `Vertex` to `[f64; D]`
+/// Converts an owned [`Vertex`] into its coordinate array.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::construction::{Vertex, vertex};
+/// use delaunay::prelude::geometry::CoordinateConversionError;
+///
+/// let vertex: Vertex<(), 3> = vertex![1.0, 2.0, 3.0]?;
+/// let coordinates: [f64; 3] = vertex.into();
+/// assert_eq!(coordinates, [1.0, 2.0, 3.0]);
+/// # Ok::<(), CoordinateConversionError>(())
+/// ```
 impl<U, const D: usize> From<Vertex<U, D>> for [f64; D] {
     #[inline]
     fn from(vertex: Vertex<U, D>) -> [f64; D] {
@@ -811,8 +822,20 @@ impl<U, const D: usize> From<Vertex<U, D>> for [f64; D] {
     }
 }
 
-/// Enable implicit conversion from Vertex reference to coordinate array
-/// This allows `&vertex` to be implicitly converted to `[f64; D]` for coordinate access
+/// Copies the coordinates of a borrowed [`Vertex`] into an array.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::construction::{Vertex, vertex};
+/// use delaunay::prelude::geometry::CoordinateConversionError;
+///
+/// let vertex: Vertex<(), 3> = vertex![4.0, 5.0, 6.0]?;
+/// let coordinates: [f64; 3] = (&vertex).into();
+/// assert_eq!(coordinates, [4.0, 5.0, 6.0]);
+/// assert_eq!(vertex.point().coords(), &[4.0, 5.0, 6.0]);
+/// # Ok::<(), CoordinateConversionError>(())
+/// ```
 impl<U, const D: usize> From<&Vertex<U, D>> for [f64; D] {
     #[inline]
     fn from(vertex: &Vertex<U, D>) -> [f64; D] {
@@ -820,8 +843,19 @@ impl<U, const D: usize> From<&Vertex<U, D>> for [f64; D] {
     }
 }
 
-/// Enable implicit conversion from Vertex reference to Point
-/// This allows `&vertex` to be implicitly converted to `Point<D>`
+/// Copies the [`Point`] from a borrowed [`Vertex`].
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::construction::{Vertex, vertex};
+/// use delaunay::prelude::geometry::{CoordinateConversionError, Point};
+///
+/// let vertex: Vertex<(), 2> = vertex![1.0, 2.0]?;
+/// let point: Point<2> = (&vertex).into();
+/// assert_eq!(point, *vertex.point());
+/// # Ok::<(), CoordinateConversionError>(())
+/// ```
 impl<U, const D: usize> From<&Vertex<U, D>> for Point<D> {
     #[inline]
     fn from(vertex: &Vertex<U, D>) -> Self {

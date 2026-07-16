@@ -385,7 +385,7 @@ pub enum TriangulationConstructionError {
         search_attempts: usize,
     },
 
-    /// Periodic quotient selection left boundary facets in a 2D quotient.
+    /// Periodic quotient selection left boundary facets in a `T^2` quotient.
     #[error(
         "Periodic quotient selection left {boundary_facet_count} boundary facets after {search_attempts} attempts"
     )]
@@ -406,9 +406,9 @@ pub enum TriangulationConstructionError {
         selected_simplex_count: usize,
     },
 
-    /// Periodic quotient selection did not reach χ = 0 in 2D.
+    /// Periodic quotient selection did not reach χ = 0 on `T^2`.
     #[error(
-        "Periodic quotient selection could not reach χ = 0 in 2D; best |χ|={best_abs_chi} after {search_attempts} attempts"
+        "Periodic quotient selection could not reach χ = 0 on T^2; best |χ|={best_abs_chi} after {search_attempts} attempts"
     )]
     PeriodicQuotientSelectionEulerCharacteristic {
         /// Best absolute Euler-characteristic residual observed.

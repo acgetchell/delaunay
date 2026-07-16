@@ -1,9 +1,10 @@
 #![forbid(unsafe_code)]
 
-//! # 3D/4D Triangulation and Convex Hull Workflow
+//! # 3D/4D/5D Triangulation and Convex Hull Workflow
 //!
-//! This example builds seeded 3D and 4D Delaunay triangulations, traverses
-//! basic topology, extracts convex hulls, and runs hull queries.
+//! This example builds seeded 3D through 5D Delaunay triangulations, traverses
+//! basic topology, locates points, evaluates simplex quality, extracts convex
+//! hulls, and runs hull queries.
 //!
 //! Run it with:
 //!
@@ -14,16 +15,17 @@
 use std::num::NonZeroUsize;
 use std::time::Instant;
 
+use delaunay::prelude::algorithms::LocateError;
 use delaunay::prelude::construction::{
-    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder,
-    DelaunayTriangulationConstructionError, RetryPolicy,
+    ConstructionOptions, DedupPolicy, DelaunayTriangulation, DelaunayTriangulationBuilder,
+    DelaunayTriangulationConstructionError, RetryPolicy, try_vertices_from_points,
 };
 use delaunay::prelude::generators::{
     RandomPointGenerationError, generate_random_points_in_range_seeded,
 };
 use delaunay::prelude::geometry::{
     AdaptiveKernel, CoordinateConversionError, CoordinateRange, CoordinateRangeError,
-    CoordinateValidationError,
+    CoordinateValidationError, QualityError, normalized_volume, radius_ratio,
 };
 use delaunay::prelude::query::{
     ConvexHull, ConvexHullConstructionError, Point, QueryError, TopologyIndexBuildError,
@@ -41,6 +43,10 @@ enum WorkflowExampleError {
     TopologyIndex(#[from] TopologyIndexBuildError),
     #[error(transparent)]
     Query(#[from] QueryError),
+    #[error(transparent)]
+    Locate(#[from] LocateError),
+    #[error(transparent)]
+    Quality(#[from] QualityError),
     #[error("convex hull operation failed: {source}")]
     ConvexHull {
         #[source]
@@ -56,6 +62,8 @@ enum WorkflowExampleError {
     PointGeneration(#[from] RandomPointGenerationError),
     #[error("point count {point_count} is too large for centroid normalization")]
     PointCountTooLarge { point_count: usize },
+    #[error("{dimension}D triangulation unexpectedly contains no simplices")]
+    EmptyTriangulation { dimension: usize },
 }
 
 impl From<ConvexHullConstructionError> for WorkflowExampleError {
@@ -71,9 +79,12 @@ fn main() -> Result<(), WorkflowExampleError> {
     run_case::<3>("3D", 750, 873, bounds)?;
     println!();
     run_case::<4>("4D", 75, 531, bounds)?;
+    println!();
+    run_case::<5>("5D", 18, 421, bounds)?;
     Ok(())
 }
 
+/// Runs the same construction, query, quality, and hull workflow in one dimension.
 fn run_case<const D: usize>(
     label: &str,
     point_count: usize,
@@ -81,11 +92,13 @@ fn run_case<const D: usize>(
     bounds: CoordinateRange<f64>,
 ) -> Result<(), WorkflowExampleError> {
     let points = generate_random_points_in_range_seeded::<D>(point_count, bounds, seed)?;
-    let vertices = delaunay::try_vertices_from_points(&points)?;
-    let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
-        attempts: retry_attempts()?,
-        base_seed: Some(seed),
-    });
+    let vertices = try_vertices_from_points(&points)?;
+    let options = ConstructionOptions::default()
+        .with_dedup_policy(DedupPolicy::Exact)
+        .with_retry_policy(RetryPolicy::Shuffled {
+            attempts: retry_attempts()?,
+            base_seed: Some(seed),
+        });
 
     println!("{label} Delaunay triangulation ({point_count} seeded points)");
     let start = Instant::now();
@@ -114,6 +127,18 @@ fn run_case<const D: usize>(
     let inside = centroid_point(&points)?;
     let outside = Point::try_new([bounds.max() * 2.5; D])?;
 
+    let location = dt.locate(&inside, None)?;
+    println!("  centroid location: {location:?}");
+
+    let Some((simplex_key, _)) = dt.simplices().next() else {
+        return Err(WorkflowExampleError::EmptyTriangulation { dimension: D });
+    };
+    println!(
+        "  first-simplex quality: radius ratio {:.6}, normalized volume {:.6}",
+        radius_ratio(dt.as_triangulation(), simplex_key)?,
+        normalized_volume(dt.as_triangulation(), simplex_key)?
+    );
+
     println!(
         "  hull query: centroid outside? {}",
         hull.is_point_outside(&inside, dt.as_triangulation())?
@@ -136,10 +161,12 @@ fn run_case<const D: usize>(
     Ok(())
 }
 
+/// Returns the non-zero retry count used by every dimension in this example.
 fn retry_attempts() -> Result<NonZeroUsize, WorkflowExampleError> {
     NonZeroUsize::new(6).ok_or(WorkflowExampleError::ZeroRetryAttempts)
 }
 
+/// Computes a finite centroid used for point-location and hull-containment queries.
 fn centroid_point<const D: usize>(points: &[Point<D>]) -> Result<Point<D>, WorkflowExampleError> {
     let mut coords = [0.0; D];
     for point in points {

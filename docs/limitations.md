@@ -64,23 +64,16 @@ selection, duplicate handling, exact predicate details, and retry semantics.
 
 Euclidean construction is the default and best-covered path.
 
-Toroidal support has two modes:
-
-- `.try_canonicalized_toroidal([..])` canonicalizes vertices into the fundamental domain, then
-  builds the Euclidean Delaunay triangulation of the wrapped point set. It does
-  not identify opposite boundary facets. The 2D and 3D canonical toroidal
-  construction paths are part of routine release coverage.
-- `.try_toroidal([..])` uses the 3^D image-point method to construct a
-  true periodic quotient with rewired neighbor pointers. This path is release
-  covered in 2D and compact 3D, where periodic triangulations validate as
-  closed tori through Levels 1-5, including translation-normalized Level 2
-  stored-orientation coherence and Level 3 intrinsic orientability. Construction
-  moves each canonical coordinate
-  by at most about 2^-32 of its domain period using a deterministic perturbation
-  that resolves periodic covering-space degeneracies while preserving vertex
-  UUIDs and payloads.
-  4D/5D periodic construction fails fast until issue #416 makes quotient
-  selection scalable and diagnosable enough for release validation.
+`.try_toroidal([..])` uses the 3^D image-point method to construct a periodic
+quotient with rewired neighbor pointers. This path is release covered on `T^2`
+and compact `T^3`, where periodic triangulations validate as closed tori through
+Levels 1-5, including translation-normalized Level 2 stored-orientation
+coherence and Level 3 intrinsic orientability. Construction moves each
+canonical coordinate by at most about 2^-32 of its domain period using a
+deterministic perturbation that resolves periodic covering-space degeneracies
+while preserving vertex UUIDs and payloads.
+`T^4`/`T^5` periodic construction fails fast until issue #416 makes quotient
+selection scalable and diagnosable enough for release validation.
 
 Spherical topologies provide public metadata and behavior-model support for
 projecting finite nonzero coordinates onto the unit sphere. The bounded
@@ -88,7 +81,7 @@ projecting finite nonzero coordinates onto the unit sphere. The bounded
 construction from points in `R^3`/`R^4` by ambient convex-hull duality. Its
 validation surface keeps Level 3 Intrinsic PL Topology separate from spherical
 Level 4 realization validation and spherical Level 5 empty-cap / hull-facet predicates. Full
-2D-5D spherical integration, richer spherical realization diagnostics, and
+`S^2`-`S^5` integration, richer spherical realization diagnostics, and
 integration with the ordinary mutable triangulation/editing surface remain
 tracked by issue #414. Hyperbolic topologies remain public metadata and
 behavior-model scaffolds.

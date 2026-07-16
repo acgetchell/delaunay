@@ -121,13 +121,10 @@ pub enum TopologyKind {
 /// Construction mode metadata for toroidal triangulations.
 ///
 /// This distinguishes between:
-/// - canonicalized builds (`.try_canonicalized_toroidal(...)`) and
-/// - true periodic quotient builds (`.try_toroidal(...)`).
+/// - image-point quotient construction, and
+/// - explicit quotient connectivity supplied by a caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToroidalConstructionMode {
-    /// Canonicalized toroidal mode: coordinates are wrapped into the fundamental domain
-    /// before Euclidean triangulation construction.
-    Canonicalized,
     /// Periodic toroidal mode: 3^D image-point construction with periodic quotient
     /// neighbor rewiring.
     PeriodicImagePoint,
@@ -442,9 +439,6 @@ impl<const D: usize> GlobalTopology<D> {
 
     /// Returns `true` for toroidal global topology metadata.
     ///
-    /// This includes both canonicalized metadata and true periodic image-point
-    /// metadata; use [`Self::is_periodic`] when the distinction matters.
-    ///
     /// # Examples
     ///
     /// ```rust
@@ -453,13 +447,12 @@ impl<const D: usize> GlobalTopology<D> {
     /// };
     ///
     /// # fn main() -> Result<(), ToroidalDomainError> {
-    /// let canonicalized = GlobalTopology::<2>::try_toroidal(
+    /// let toroidal = GlobalTopology::<2>::try_toroidal(
     ///     [1.0, 1.0],
-    ///     ToroidalConstructionMode::Canonicalized,
+    ///     ToroidalConstructionMode::PeriodicImagePoint,
     /// )?;
     ///
-    /// assert!(canonicalized.is_toroidal());
-    /// assert!(!canonicalized.is_periodic());
+    /// assert!(toroidal.is_toroidal());
     /// # Ok(())
     /// # }
     /// ```
@@ -468,10 +461,7 @@ impl<const D: usize> GlobalTopology<D> {
         matches!(self, Self::Toroidal { .. })
     }
 
-    /// Returns `true` when this represents a true periodic image-point toroidal build.
-    ///
-    /// Canonicalized toroidal metadata wraps coordinates into a domain but leaves
-    /// connectivity Euclidean, so it is toroidal but not periodic in this sense.
+    /// Returns `true` when this represents a periodic image-point toroidal build.
     ///
     /// # Examples
     ///
@@ -804,10 +794,6 @@ mod tests {
     #[test]
     fn test_toroidal_construction_mode_debug() {
         assert_eq!(
-            format!("{:?}", ToroidalConstructionMode::Canonicalized),
-            "Canonicalized"
-        );
-        assert_eq!(
             format!("{:?}", ToroidalConstructionMode::PeriodicImagePoint),
             "PeriodicImagePoint"
         );
@@ -841,7 +827,7 @@ mod tests {
 
         let toroidal = GlobalTopology::<2>::Toroidal {
             domain: ToroidalDomain::try_new([1.0, 2.0]).unwrap(),
-            mode: ToroidalConstructionMode::Canonicalized,
+            mode: ToroidalConstructionMode::PeriodicImagePoint,
         };
         assert_eq!(toroidal.kind(), TopologyKind::Toroidal);
     }
@@ -854,7 +840,7 @@ mod tests {
 
         let toroidal = GlobalTopology::<2>::Toroidal {
             domain: ToroidalDomain::try_new([1.0, 1.0]).unwrap(),
-            mode: ToroidalConstructionMode::Canonicalized,
+            mode: ToroidalConstructionMode::PeriodicImagePoint,
         };
         assert!(!toroidal.allows_boundary());
     }
@@ -867,7 +853,7 @@ mod tests {
 
         let toroidal = GlobalTopology::<2>::Toroidal {
             domain: ToroidalDomain::try_new([1.0, 1.0]).unwrap(),
-            mode: ToroidalConstructionMode::Canonicalized,
+            mode: ToroidalConstructionMode::PeriodicImagePoint,
         };
         assert!(!toroidal.is_euclidean());
     }
@@ -880,7 +866,7 @@ mod tests {
 
         let toroidal = GlobalTopology::<2>::Toroidal {
             domain: ToroidalDomain::try_new([1.0, 1.0]).unwrap(),
-            mode: ToroidalConstructionMode::Canonicalized,
+            mode: ToroidalConstructionMode::PeriodicImagePoint,
         };
         assert!(toroidal.is_toroidal());
     }
@@ -890,13 +876,6 @@ mod tests {
         assert!(!GlobalTopology::<3>::Euclidean.is_periodic());
         assert!(!GlobalTopology::<3>::Spherical.is_periodic());
         assert!(!GlobalTopology::<3>::Hyperbolic.is_periodic());
-
-        // Test different toroidal modes
-        let canonicalized = GlobalTopology::<2>::Toroidal {
-            domain: ToroidalDomain::try_new([1.0, 1.0]).unwrap(),
-            mode: ToroidalConstructionMode::Canonicalized,
-        };
-        assert!(!canonicalized.is_periodic());
 
         let periodic = GlobalTopology::<2>::Toroidal {
             domain: ToroidalDomain::try_new([1.0, 1.0]).unwrap(),
@@ -922,15 +901,15 @@ mod tests {
 
         let toroidal1 = GlobalTopology::<2>::Toroidal {
             domain: ToroidalDomain::try_new([1.0, 2.0]).unwrap(),
-            mode: ToroidalConstructionMode::Canonicalized,
+            mode: ToroidalConstructionMode::PeriodicImagePoint,
         };
         let toroidal2 = GlobalTopology::<2>::Toroidal {
             domain: ToroidalDomain::try_new([1.0, 2.0]).unwrap(),
-            mode: ToroidalConstructionMode::Canonicalized,
+            mode: ToroidalConstructionMode::PeriodicImagePoint,
         };
         let toroidal3 = GlobalTopology::<2>::Toroidal {
             domain: ToroidalDomain::try_new([1.0, 2.0]).unwrap(),
-            mode: ToroidalConstructionMode::PeriodicImagePoint,
+            mode: ToroidalConstructionMode::Explicit,
         };
 
         assert_eq!(toroidal1, toroidal2);
@@ -943,7 +922,7 @@ mod tests {
 
         let toroidal = GlobalTopology::<2>::Toroidal {
             domain: ToroidalDomain::try_new([1.5, 2.5]).unwrap(),
-            mode: ToroidalConstructionMode::Canonicalized,
+            mode: ToroidalConstructionMode::PeriodicImagePoint,
         };
         let debug_str = format!("{toroidal:?}");
         assert!(debug_str.contains("Toroidal"));
@@ -1005,14 +984,16 @@ mod tests {
     #[test]
     fn test_global_topology_try_toroidal_parses_domain() {
         let topology =
-            GlobalTopology::try_toroidal([1.0, 2.0], ToroidalConstructionMode::Canonicalized)
+            GlobalTopology::try_toroidal([1.0, 2.0], ToroidalConstructionMode::PeriodicImagePoint)
                 .unwrap();
         assert_eq!(topology.kind(), TopologyKind::Toroidal);
-        assert!(!topology.is_periodic());
+        assert!(topology.is_periodic());
 
-        let err =
-            GlobalTopology::<2>::try_toroidal([0.0, 2.0], ToroidalConstructionMode::Canonicalized)
-                .unwrap_err();
+        let err = GlobalTopology::<2>::try_toroidal(
+            [0.0, 2.0],
+            ToroidalConstructionMode::PeriodicImagePoint,
+        )
+        .unwrap_err();
         assert_matches!(
             err,
             ToroidalDomainError::InvalidPeriod { axis: 0, period }

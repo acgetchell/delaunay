@@ -1,7 +1,7 @@
 //! Property-based tests for toroidal coordinate and periodic-simplex invariants.
 //!
 //! Verifies two fundamental properties of [`canonicalize_point`] and exercises
-//! transformed 2D periodic quotient constructions through the public builder:
+//! transformed `T^2` periodic quotient constructions through the public builder:
 //! - **In-domain**: the result always lies in `[0, L_i)` for every axis `i`.
 //! - **Idempotent**: applying canonicalization twice gives the same result as once.
 //! - **Periodic construction invariance**: axis reflection and input permutation
@@ -25,8 +25,8 @@ fn positive_period() -> impl Strategy<Value = f64> {
     (0.0001_f64..=100.0_f64).prop_filter("must be positive finite", |p| p.is_finite() && *p > 0.0)
 }
 
-/// Generates a 2D toroidal domain `[L_x, L_y]`.
-fn domain_2d() -> impl Strategy<Value = [f64; 2]> {
+/// Generates a `T^2` domain `[L_x, L_y]`.
+fn domain_t2() -> impl Strategy<Value = [f64; 2]> {
     [positive_period(), positive_period()]
 }
 
@@ -38,7 +38,7 @@ fn coords_2d() -> impl Strategy<Value = [f64; 2]> {
 
 /// Builds a proven non-degenerate fixture after axis reflection and input reordering.
 #[cfg(feature = "slow-tests")]
-fn transformed_periodic_vertices_2d(
+fn transformed_periodic_vertices_t2(
     reflected_axes: [bool; 2],
     priorities: [u16; 7],
 ) -> Vec<Vertex<(), 2>> {
@@ -73,7 +73,7 @@ fn transformed_periodic_vertices_2d(
 proptest! {
     /// Canonicalized coordinates always lie in `[0, L_i)` for every axis.
     #[test]
-    fn prop_canonicalize_in_domain(domain in domain_2d(), mut coords in coords_2d()) {
+    fn prop_canonicalize_in_domain(domain in domain_t2(), mut coords in coords_2d()) {
         let space = ToroidalSpace::<2>::try_new(domain).unwrap();
         space.canonicalize_point(&mut coords);
         for (i, &period) in domain.iter().enumerate() {
@@ -87,7 +87,7 @@ proptest! {
 
     /// `canonicalize_point` is idempotent: applying it twice is the same as once.
     #[test]
-    fn prop_canonicalize_idempotent(domain in domain_2d(), mut coords in coords_2d()) {
+    fn prop_canonicalize_idempotent(domain in domain_t2(), mut coords in coords_2d()) {
         let space = ToroidalSpace::<2>::try_new(domain).unwrap();
         space.canonicalize_point(&mut coords);
         let once = coords;
@@ -113,7 +113,7 @@ proptest! {
         reflected_axes in prop::array::uniform2(any::<bool>()),
         priorities in prop::array::uniform7(any::<u16>()),
     ) {
-        let vertices = transformed_periodic_vertices_2d(reflected_axes, priorities);
+        let vertices = transformed_periodic_vertices_t2(reflected_axes, priorities);
         let kernel = RobustKernel::new();
         let build_result = DelaunayTriangulationBuilder::new(&vertices)
             .try_toroidal([1.0_f64; 2])

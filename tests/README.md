@@ -432,7 +432,7 @@ Tests error handling for coordinate conversion operations, particularly focusing
 - Mixed problematic coordinate combinations
 - Error message validation and context
 
-**Run with:** `cargo test --test coordinate_conversion_errors` or `just test-release`
+**Run with:** `cargo test --test coordinate_conversion_errors` or `just test-integration`
 
 ### 📊 Performance and Memory Testing
 
@@ -458,7 +458,7 @@ not in the default test suite.
 
 ```bash
 # Run all integration tests (recommended)
-just test-release
+just test-integration
 
 # Run with verbose output for debugging
 just test-diagnostics
@@ -483,7 +483,7 @@ measurements, run tests in release mode:
 
 ```bash
 # Recommended: Run in release mode
-just test-release
+just test-integration
 
 # Debug mode with verbose output
 just test-diagnostics
@@ -559,7 +559,7 @@ Before releases, run the full integration test suite:
 
 ```bash
 # Complete test validation
-just test-release
+just test-integration
 
 # Verify allocation measurement wiring
 just test-allocation

@@ -155,7 +155,7 @@ enum DelaunayCommand {
 enum DelaunayCommandArgs {
     /// Generate a random Delaunay triangulation or visualization export.
     Generate(GenerateArgs),
-    /// Emit a deterministic S2 triangulation for the notebook-backed README hero.
+    /// Emit a deterministic `S^2` triangulation for the notebook-backed README hero.
     SphericalHero(SphericalHeroArgs),
     /// Emit deterministic validation-level failure examples for notebooks.
     ValidationDemo(ValidationDemoArgs),
@@ -189,7 +189,7 @@ struct SphericalHeroArgs {
 }
 
 impl SphericalHeroArgs {
-    /// Validate the S2 vertex count.
+    /// Validate the `S^2` vertex count.
     fn into_validated(self) -> Result<SphericalHeroConfig, CliError> {
         let vertices =
             u32::try_from(self.vertices).map_err(|_| CliError::SphericalHeroVertexCount {
@@ -209,7 +209,7 @@ impl SphericalHeroArgs {
     }
 }
 
-/// Validated deterministic S2 hero configuration.
+/// Validated deterministic `S^2` hero configuration.
 #[derive(Debug)]
 struct SphericalHeroConfig {
     vertices: NonZeroU32,
@@ -434,7 +434,7 @@ struct ConvexHullFacetRecord<const D: usize> {
     coordinates: Vec<Vec<f64>>,
 }
 
-/// Detached S2 triangulation rendered by the spherical hero notebook.
+/// Detached `S^2` triangulation rendered by the spherical hero notebook.
 #[derive(Debug, Serialize)]
 struct SphericalHeroExport {
     schema: &'static str,
@@ -534,7 +534,7 @@ fn run_validation_demo(config: &ValidationDemoConfig) -> Result<(), CliError> {
     Ok(())
 }
 
-/// Build and emit a deterministic S2 Delaunay triangulation in R3.
+/// Build and emit a deterministic `S^2` Delaunay triangulation in `R^3`.
 fn run_spherical_hero(config: &SphericalHeroConfig) -> Result<(), CliError> {
     let vertex_count = config.vertices.get();
     let count = f64::from(vertex_count);

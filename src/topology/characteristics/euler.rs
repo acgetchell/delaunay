@@ -447,8 +447,8 @@ fn insert_simplices_of_size(
 /// The boundary forms a (D-1)-sphere S^(D-1):
 /// - 2D triangulation: boundary is S¹ (circle) with χ = 0
 /// - 3D triangulation: boundary is S² (sphere) with χ = 2
-/// - 4D triangulation: boundary is S³ (3-sphere) with χ = 0
-/// - 5D triangulation: boundary is S⁴ (4-sphere) with χ = 2
+/// - 4D triangulation: boundary is S³ with χ = 0
+/// - 5D triangulation: boundary is S⁴ with χ = 2
 /// - Generally: χ(S^k) = 1 + (-1)^k
 ///
 /// # Examples
@@ -1136,7 +1136,7 @@ mod tests {
     }
 
     #[test]
-    fn test_classify_triangulation_closed_sphere_2d_surface() {
+    fn test_classify_triangulation_closed_s2_surface() {
         let tds = build_closed_2d_surface_tds();
 
         let classification = classify_triangulation(&tds, GlobalTopology::Euclidean).unwrap();

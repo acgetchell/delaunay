@@ -48,31 +48,31 @@ Common maintainer flows:
 - Before pushing performance-sensitive Rust or benchmark changes: run
   `just perf-large-scale-smoke`, then `just perf-no-regressions` when the work
   is PR-ready.
-- During release PR preparation: run `just performance-release` to update
+- During release PR preparation: run `just perf-release` to update
   `docs/PERFORMANCE.md` and archive the previous curated report.
 - After a GitHub Release publishes: confirm the release benchmark workflow
   attached `delaunay-vX.Y.Z-criterion-baseline.tar.gz`; use
-  `just performance-github-assets <current-tag> <baseline-tag>` when you need a
+  `just perf-github-assets <current-tag> <baseline-tag>` when you need a
   report from stored release assets.
 
 Criterion saved-baseline reports use Cargo's Criterion output under
-`target/criterion/`. Save a baseline with `just bench-save-last` or
-`just bench-save-baseline <tag>` from the baseline checkout, then run fresh
+`target/criterion/`. Save a baseline with `just bench-save-baseline <tag>` from
+the baseline checkout, then run fresh
 release-signal measurements from the current checkout with `just bench-latest`
 and render a Markdown comparison with `just bench-compare <baseline>`.
 `just bench-latest-vs-last` combines the fresh measurement and report rendering
-for the common local saved-baseline case. Use `just performance-local` when you
+for the common local saved-baseline case. Use `just perf-local` when you
 want the tool to manage isolated baseline/current worktrees for you.
 
-The `performance-*` recipes consume local worktrees or published release
+The `perf-*` release recipes consume local worktrees or published release
 assets:
 
-- `just performance-local` runs local release-signal benchmarks in isolated
+- `just perf-local` runs local release-signal benchmarks in isolated
   temporary worktrees and writes `target/bench-reports/performance.md`.
-- `just performance-github-assets` compares stored GitHub Release assets
+- `just perf-github-assets` compares stored GitHub Release assets
   without local Cargo benchmark runs and writes
   `target/bench-reports/github-assets-performance.md`.
-- `just performance-release` generates the curated local comparison, promotes
+- `just perf-release` generates the curated local comparison, promotes
   it into `docs/PERFORMANCE.md`, and archives the previous committed report
   under `docs/archive/performance/`.
 
@@ -81,7 +81,7 @@ Use explicit tag pairs only for release repair or regeneration:
 ```bash
 TAG=vX.Y.Z
 PREVIOUS_TAG=vX.Y.W
-just performance-release "$TAG" "$PREVIOUS_TAG"
+just perf-release "$TAG" "$PREVIOUS_TAG"
 ```
 
 Do not use release-comparison commands as a routine pre-`just ci` step.
@@ -126,10 +126,10 @@ allocation checks, or targeted diagnostics.
 | Compare latest measurements against saved `last` Criterion baseline | `just bench-latest-vs-last` |
 | Render a Markdown report from existing Criterion results | `just bench-compare [baseline]` |
 | Save a named release-signal Criterion baseline | `just bench-save-baseline <tag>` |
-| Save the previous-release Criterion baseline as `last` | `just bench-save-last` |
-| Compare current tree against latest published release locally | `just performance-local` |
-| Compare stored GitHub Release benchmark assets | `just performance-github-assets [current-tag baseline-tag]` |
-| Promote curated release-to-release performance docs | `just performance-release [current-tag baseline-tag]` |
+| Save the previous-release Criterion baseline as `last` | `just bench-save-baseline last` |
+| Compare current tree against latest published release locally | `just perf-local` |
+| Compare stored GitHub Release benchmark assets | `just perf-github-assets [current-tag baseline-tag]` |
+| Promote curated release-to-release performance docs | `just perf-release [current-tag baseline-tag]` |
 | Allocation-contract microbenchmarks | `just bench-allocations` |
 | Persist/update the default local baseline artifact | `just perf-baseline` |
 | Generate a scratch baseline without replacing the default | `just perf-baseline-to <out> [ref]` |
@@ -241,7 +241,7 @@ that mirrors the sibling `la-stack` workflow:
 
 ```bash
 # In the baseline checkout, usually the previous release:
-just bench-save-last
+just bench-save-baseline last
 
 # In the current checkout:
 just bench-latest-vs-last
@@ -257,26 +257,26 @@ location without pulling in broad profiling or allocation-only runs. Use
 `just bench-compare <baseline>` to render
 `target/bench-reports/performance.md` from existing Criterion `new` output and a
 saved baseline such as `last` or `v0.7.8`. If the baseline and current
-checkouts are easy to confuse, prefer `just performance-local`. Use
+checkouts are easy to confuse, prefer `just perf-local`. Use
 `uv run benchmark-utils bench-compare --scope all-benches` only when you
 explicitly want an exploratory report over every Criterion result already
 present under `target/criterion/`.
 
-Use the `performance-*` family for release-to-release reports generated in
+Use the `perf-*` family for release-to-release reports generated in
 isolated temporary worktrees:
 
 ```bash
-just performance-local
-just performance-github-assets
-just performance-release
-just performance-release "$TAG" "$PREVIOUS_TAG"
+just perf-local
+just perf-github-assets
+just perf-release
+just perf-release "$TAG" "$PREVIOUS_TAG"
 ```
 
-`performance-local` compares the current package version against the latest
+`perf-local` compares the current package version against the latest
 stable published release using local benchmark runs and writes
-`target/bench-reports/performance.md`. `performance-github-assets` compares
+`target/bench-reports/performance.md`. `perf-github-assets` compares
 stored GitHub Release benchmark assets without local Cargo benchmark runs and
-writes `target/bench-reports/github-assets-performance.md`. `performance-release`
+writes `target/bench-reports/github-assets-performance.md`. `perf-release`
 promotes one curated local comparison into `docs/PERFORMANCE.md` and archives
 the previous curated report under `docs/archive/performance/`. Explicit
 `<current-tag> <baseline-tag>` arguments repair or regenerate a specific release

@@ -91,7 +91,7 @@ fn spherical_s2_tetrahedron_hull_facets_are_triangles() {
     let triangulation = SphericalDelaunayBuilder::<2>::try_new(points)
         .expect("tetrahedron points should canonicalize")
         .build()
-        .expect("tetrahedron hull should construct spherical S2 Delaunay simplices");
+        .expect("tetrahedron hull should construct spherical S^2 Delaunay simplices");
 
     assert_eq!(triangulation.dimension(), 2);
     assert_eq!(triangulation.ambient_dimension(), 3);
@@ -159,7 +159,7 @@ fn spherical_s3_simplex_boundary_facets_are_tetrahedra() {
     let triangulation = SphericalDelaunayBuilder::<3>::try_new(points)
         .expect("4-simplex points should canonicalize")
         .build()
-        .expect("4-simplex hull should construct spherical S3 Delaunay simplices");
+        .expect("4-simplex hull should construct spherical S^3 Delaunay simplices");
 
     assert_eq!(triangulation.dimension(), 3);
     assert_eq!(triangulation.ambient_dimension(), 4);
@@ -187,9 +187,9 @@ fn spherical_s3_near_antipodal_fixture_constructs() {
     ];
 
     let triangulation = SphericalDelaunayBuilder::<3>::try_new(points)
-        .expect("near-antipodal S3 points should canonicalize")
+        .expect("near-antipodal S^3 points should canonicalize")
         .build()
-        .expect("near-antipodal S3 fixture should construct");
+        .expect("near-antipodal S^3 fixture should construct");
 
     assert_eq!(triangulation.dimension(), 3);
     assert_eq!(triangulation.ambient_dimension(), 4);
@@ -202,7 +202,7 @@ fn spherical_s3_near_antipodal_fixture_constructs() {
     );
     triangulation
         .validate_delaunay()
-        .expect("near-antipodal S3 fixture should satisfy spherical Level 5");
+        .expect("near-antipodal S^3 fixture should satisfy spherical Level 5");
 }
 
 #[test]
@@ -239,7 +239,7 @@ fn spherical_zero_vector_is_rejected() {
 #[test]
 fn spherical_point_rejects_invalid_coordinates_and_radius() {
     let wrong_arity = SphericalPoint::<2>::try_new([1.0, 0.0])
-        .expect_err("S2 points require three ambient coordinates");
+        .expect_err("S^2 points require three ambient coordinates");
     assert_matches!(
         wrong_arity,
         SphericalPointError::InvalidAmbientCoordinateCount {
@@ -267,7 +267,7 @@ fn spherical_point_rejects_invalid_coordinates_and_radius() {
 #[test]
 fn spherical_simplex_rejects_invalid_public_inputs() {
     let wrong_arity = SphericalSimplex::<2>::try_new(vec![0, 1], 3)
-        .expect_err("S2 simplices require three vertices");
+        .expect_err("S^2 simplices require three vertices");
     assert_matches!(
         wrong_arity,
         SphericalSimplexError::InvalidArity {
@@ -325,7 +325,7 @@ fn spherical_builder_reports_typed_boundary_errors() {
     let err = SphericalDelaunayBuilder::<2>::try_new(too_few_points)
         .expect("valid points should canonicalize before hull cardinality checks")
         .build()
-        .expect_err("S2 hull construction requires at least four points");
+        .expect_err("S^2 hull construction requires at least four points");
     assert_matches!(
         err,
         SphericalDelaunayConstructionError::InsufficientVertices {
@@ -418,9 +418,9 @@ fn spherical_dimension_outside_prototype_is_typed() {
     ];
 
     let err = SphericalDelaunayBuilder::<4>::try_new(points)
-        .expect("S4 inputs should canonicalize before prototype dispatch")
+        .expect("S^4 inputs should canonicalize before prototype dispatch")
         .build()
-        .expect_err("S4 is outside the bounded prototype");
+        .expect_err("S^4 is outside the bounded prototype");
     assert_matches!(
         err,
         SphericalDelaunayConstructionError::UnsupportedDimension {

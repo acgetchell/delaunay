@@ -70,6 +70,7 @@ jobs:
         shell: bash
         run: |
           {
+            echo "CARGO_MACHETE_VERSION=$(just --evaluate cargo_machete_version)"
             echo "CARGO_NEXTEST_VERSION=$(just --evaluate nextest_version)"
             echo "DPRINT_VERSION=$(just --evaluate dprint_version)"
             echo "RUMDL_VERSION=$(just --evaluate rumdl_version)"
@@ -92,6 +93,11 @@ jobs:
 
       - name: Sync Python tooling
         run: uv sync --locked --group dev
+
+      - name: Install cargo-machete
+        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
+        with:
+          tool: cargo-machete@${{ steps.tool_versions.outputs.CARGO_MACHETE_VERSION }}
 
       - name: Install cargo-nextest
         uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7

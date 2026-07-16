@@ -3073,7 +3073,7 @@ mod tests {
 
     #[test]
     fn test_validate_ridge_links_rejects_wedge_at_vertex_in_2d() {
-        let (tds, v0, _incident, _nonincident) = build_wedge_two_spheres_share_vertex_tds_2d();
+        let (tds, v0, _incident, _nonincident) = build_wedge_two_s2_complexes_share_vertex_tds();
 
         // Sanity: pseudomanifold-with-boundary checks pass (in fact, this complex is closed).
         let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
@@ -3104,9 +3104,9 @@ mod tests {
         }
     }
 
-    fn build_wedge_two_spheres_share_vertex_tds_2d()
+    fn build_wedge_two_s2_complexes_share_vertex_tds()
     -> (Tds<(), (), 2>, VertexKey, SimplexKey, SimplexKey) {
-        // Two closed 2D spheres (boundaries of tetrahedra) that share a single vertex.
+        // Two closed S^2 complexes (boundaries of tetrahedra) that share a single vertex.
         // This is a pseudomanifold (every edge has degree 2), but not a PL 2-manifold:
         // the shared vertex has a disconnected link (two disjoint cycles).
         let mut tds: Tds<(), (), 2> = Tds::empty();
@@ -3231,7 +3231,7 @@ mod tests {
 
     #[test]
     fn test_validate_ridge_links_for_simplices_rejects_wedge_at_vertex_in_2d() {
-        let (tds, v0, incident, _nonincident) = build_wedge_two_spheres_share_vertex_tds_2d();
+        let (tds, v0, incident, _nonincident) = build_wedge_two_s2_complexes_share_vertex_tds();
 
         let expected_ridge_key = facet_key_from_vertices(&[v0]);
 
@@ -3259,14 +3259,14 @@ mod tests {
     fn test_validate_ridge_links_for_simplices_only_checks_ridges_touched_by_input_simplices() {
         // The wedge complex is globally invalid, but local ridge-link validation should only
         // consider ridges incident to the provided simplices.
-        let (tds, _v0, _incident, nonincident) = build_wedge_two_spheres_share_vertex_tds_2d();
+        let (tds, _v0, _incident, nonincident) = build_wedge_two_s2_complexes_share_vertex_tds();
 
         // Validate a triangle that does NOT touch the shared vertex; this should not detect the wedge.
         assert!(validate_ridge_links_for_simplices(&tds, [nonincident]).is_ok());
     }
 
-    fn build_cone_on_torus_tds() -> (Tds<(), (), 3>, VertexKey) {
-        // Construct a 3D simplicial complex that is a cone over a triangulated 2-torus.
+    fn build_cone_on_t2_tds() -> (Tds<(), (), 3>, VertexKey) {
+        // Construct a 3D simplicial complex that is a cone over a triangulated T^2.
         //
         // This is a pseudomanifold and passes ridge-link validation, but is NOT a PL 3-manifold:
         // the apex vertex has link homeomorphic to T^2 instead of S^2.
@@ -3276,7 +3276,7 @@ mod tests {
 
         let mut tds: Tds<(), (), 3> = Tds::empty();
 
-        // Build a small triangulated torus using a periodic 3x3 grid.
+        // Build a small triangulated T^2 using a periodic 3x3 grid.
         let mut v: [[VertexKey; M]; N] = [[VertexKey::from(KeyData::from_ffi(0)); M]; N];
         for (i, row) in v.iter_mut().enumerate() {
             for (j, slot) in row.iter_mut().enumerate() {
@@ -3320,11 +3320,11 @@ mod tests {
 
     #[test]
     fn test_ridge_links_insufficient_for_pl_manifold() {
-        // Classic counterexample: a cone over a 2-torus.
+        // Classic counterexample: a cone over T^2.
         //
         // NOTE: This test is the canonical coverage for the cone-on-torus singularity and replaces the
-        // previously-duplicated `test_validate_vertex_links_rejects_cone_on_torus_in_3d` after consolidation.
-        let (tds, apex) = build_cone_on_torus_tds();
+        // previously duplicated `test_validate_vertex_links_rejects_cone_on_t2_in_3d` after consolidation.
+        let (tds, apex) = build_cone_on_t2_tds();
 
         let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
         let facet_to_simplices = validated_facet_map(&facet_to_simplices);
@@ -3535,7 +3535,7 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_vertex_links_accepts_cone_on_sphere_in_3d() {
+    fn test_validate_vertex_links_accepts_cone_on_s2_in_3d() {
         // Cone on the boundary of a tetrahedron (S^2).
         // The apex link is S^2, so this IS a valid PL 3-manifold (a 3-ball).
 

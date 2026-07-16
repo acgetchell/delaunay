@@ -141,7 +141,7 @@ def test_readme_tag_references_reject_longer_non_semver_tags(tmp_path: Path, tag
     assert check_docs_version_sync._readme_tag_references(readme) == []
 
 
-@pytest.mark.parametrize("recipe", ["performance-github-assets", "performance-local", "performance-release"])
+@pytest.mark.parametrize("recipe", ["perf-github-assets", "perf-local", "perf-release"])
 def test_find_version_mismatches_reports_stale_benchmark_current_tags(tmp_path: Path, recipe: str) -> None:
     """The first explicit benchmark release tag is the current release tag."""
     _write_project(tmp_path)
@@ -150,7 +150,7 @@ def test_find_version_mismatches_reports_stale_benchmark_current_tags(tmp_path: 
     workflows = docs / "workflows.md"
     workflows.write_text(
         f"| Release workflow | `just {recipe} v1.2.2 v1.2.1` |\n"
-        "```bash\njust performance-release v1.2.3 v1.2.2\n```\n"
+        "```bash\njust perf-release v1.2.3 v1.2.2\n```\n"
         "Historical v1.2.1 behavior remains documented.\n",
         encoding="utf-8",
     )
@@ -168,7 +168,7 @@ def test_benchmark_current_tag_references_ignore_baselines_and_historical_prose(
     """Only the current-tag argument is checked for benchmark examples."""
     benchmarking = tmp_path / "BENCHMARKING.md"
     benchmarking.write_text(
-        "just performance-release v1.2.3 v1.2.2\nThe v1.2.2 harness compares against v1.2.1.\n",
+        "just perf-release v1.2.3 v1.2.2\nThe v1.2.2 harness compares against v1.2.1.\n",
         encoding="utf-8",
     )
 
@@ -201,7 +201,7 @@ def test_find_version_mismatches_ignores_historical_docs_and_test_fixtures(tmp_p
     archive.mkdir(parents=True)
     fixtures = tmp_path / "tests" / "fixtures"
     fixtures.mkdir(parents=True)
-    stale_snippet = 'delaunay = "0.1.0"\njust performance-release v0.1.0 v0.0.9\n'
+    stale_snippet = 'delaunay = "0.1.0"\njust perf-release v0.1.0 v0.0.9\n'
     (tmp_path / "CHANGELOG.md").write_text(stale_snippet, encoding="utf-8")
     (archive / "old.md").write_text(stale_snippet, encoding="utf-8")
     (fixtures / "example.md").write_text(stale_snippet, encoding="utf-8")

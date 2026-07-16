@@ -439,7 +439,12 @@ Current migration targets for API-normalization work:
   `DelaunayTriangulationBuilder::new(&vertices).build()?` and its fluent
   option setters/terminal variants as the canonical default-kernel workflow,
   with `DelaunayTriangulation::builder(&vertices)` acceptable only as a terse
-  builder alias in tests and benchmarks. Do not add local helpers whose whole
+  builder alias in tests and benchmarks. Public examples must not discard a
+  successfully constructed triangulation with an underscore-prefixed binding.
+  End-to-end construction examples with no more specific follow-on operation
+  should retain the result and finish with `dt.validate()?`; examples teaching
+  another API should use the result for that operation instead of adding a
+  redundant validation call mechanically. Do not add local helpers whose whole
   purpose is hiding `DelaunayTriangulation::builder(...).build()` or the
   equivalent `DelaunayTriangulationBuilder::new(...).build()` chain; such
   helpers mask API friction instead of testing the canonical fluent workflow.

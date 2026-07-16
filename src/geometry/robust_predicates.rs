@@ -1129,7 +1129,7 @@ mod tests {
     const PERIODIC_IMAGE_JITTER_UNITS: i64 = 64;
     const PERIODIC_FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
     const PERIODIC_FNV_PRIME: u64 = 0x0100_0000_01b3;
-    type PeriodicWitness3d = ([Point<3>; 4], Point<3>, InSphere, InSphere);
+    type PeriodicWitnessT3 = ([Point<3>; 4], Point<3>, InSphere, InSphere);
 
     fn periodic_builder_perturb_units(canon_idx: usize, axis: usize) -> i64 {
         let mut h = PERIODIC_FNV_OFFSET_BASIS;
@@ -1155,7 +1155,7 @@ mod tests {
         i64::try_from(h % span).expect("residue fits in i64") - PERIODIC_IMAGE_JITTER_UNITS
     }
 
-    fn periodic_3d_canonical_points() -> Vec<Point<3>> {
+    fn periodic_t3_canonical_points() -> Vec<Point<3>> {
         vec![
             Point::try_new([0.1_f64, 0.2, 0.3]).expect("finite point coordinates"),
             Point::try_new([0.4, 0.7, 0.1]).expect("finite point coordinates"),
@@ -1174,7 +1174,7 @@ mod tests {
         ]
     }
 
-    fn periodic_3d_builder_style_expansion(canonical_points: &[Point<3>]) -> Vec<Point<3>> {
+    fn periodic_t3_builder_style_expansion(canonical_points: &[Point<3>]) -> Vec<Point<3>> {
         let canonical_f64: Vec<[f64; 3]> = canonical_points
             .iter()
             .enumerate()
@@ -1234,11 +1234,11 @@ mod tests {
         expanded
     }
 
-    fn find_periodic_3d_inconsistency_witness(
+    fn find_periodic_t3_inconsistency_witness(
         expanded: &[Point<3>],
         seed: u64,
         sample_budget: usize,
-    ) -> Option<PeriodicWitness3d> {
+    ) -> Option<PeriodicWitnessT3> {
         let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
         let n = expanded.len();
         if n < 5 {
@@ -1281,14 +1281,14 @@ mod tests {
     }
 
     #[test]
-    fn test_periodic_3d_inconsistency_witness_search_seeded() {
-        let canonical_points = periodic_3d_canonical_points();
-        let expanded = periodic_3d_builder_style_expansion(&canonical_points);
-        let witness = find_periodic_3d_inconsistency_witness(&expanded, 0x2100_0003, 200_000);
+    fn test_periodic_t3_inconsistency_witness_search_seeded() {
+        let canonical_points = periodic_t3_canonical_points();
+        let expanded = periodic_t3_builder_style_expansion(&canonical_points);
+        let witness = find_periodic_t3_inconsistency_witness(&expanded, 0x2100_0003, 200_000);
 
         if let Some((simplex, test_point, det, dist)) = witness {
             panic!(
-                "Found periodic-3D determinant-vs-distance inconsistency: \
+                "Found periodic T^3 determinant-vs-distance inconsistency: \
                  determinant={det:?}, distance={dist:?}, simplex={simplex:?}, \
                  test_point={test_point:?}"
             );

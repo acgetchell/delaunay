@@ -197,6 +197,11 @@ enforce that contract.
   runs as invalid evidence.
 - Tests should verify mathematical, geometric, and topological invariants.
   Dimension-generic tests should cover 2D through 5D whenever feasible.
+- Distinguish a named topological space from an algorithm or coordinate
+  dimension. In prose and doc comments, write fixed tori and spheres as
+  `T^2`/`T^3` and `S^2`/`S^3` (Unicode superscripts are equivalent); use
+  `t2`/`t3` and `s2`/`s3` in Rust identifiers. Reserve labels such as `2D` and
+  `3D` for dimensionality rather than topology.
 
 ## Where Detailed Rules Live
 

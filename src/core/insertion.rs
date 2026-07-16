@@ -67,14 +67,6 @@ const DEFAULT_PERTURBATION_RETRIES: usize = 3;
 /// Headroom used when rebuilding the duplicate-coordinate grid for a larger tolerance.
 const DUPLICATE_INDEX_REBUILD_GROWTH_FACTOR: f64 = 2.0;
 
-/// Telemetry: counts how often the topology safety-net recovered from a Level 3 validation
-/// failure by retrying insertion with a star-split of the containing simplex.
-///
-/// This is a process-wide counter across all triangulation instances.
-///
-/// This counter is intentionally lightweight and can be polled by production workloads
-/// to see whether this recovery path is frequently used.
-static TOPOLOGY_SAFETY_NET_STAR_SPLIT_FALLBACK_SUCCESSES: AtomicU64 = AtomicU64::new(0);
 static DUPLICATE_DETECTION_TOTAL: AtomicU64 = AtomicU64::new(0);
 static DUPLICATE_DETECTION_GRID_USED: AtomicU64 = AtomicU64::new(0);
 static DUPLICATE_DETECTION_GRID_FALLBACKS: AtomicU64 = AtomicU64::new(0);
@@ -394,28 +386,6 @@ where
     U: DataType,
     V: DataType,
 {
-    /// Returns the number of times the topology safety-net recovered from a Level 3
-    /// validation failure by retrying insertion with a star-split of the containing simplex.
-    ///
-    /// This is a process-wide counter (across all triangulation instances) intended for
-    /// production telemetry. A high value suggests the cavity-based insertion frequently
-    /// creates transient invalid topology that is being masked by the fallback.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::geometry::FastKernel;
-    /// use delaunay::prelude::Triangulation;
-    ///
-    /// let count = Triangulation::<FastKernel<f64>, (), (), 3>
-    ///     ::topology_safety_net_star_split_fallback_successes();
-    /// assert!(count >= 0);
-    /// ```
-    #[must_use]
-    pub fn topology_safety_net_star_split_fallback_successes() -> u64 {
-        TOPOLOGY_SAFETY_NET_STAR_SPLIT_FALLBACK_SUCCESSES.load(Ordering::Relaxed)
-    }
-
     /// Returns duplicate-detection telemetry if enabled via `DELAUNAY_DUPLICATE_METRICS`.
     ///
     /// This is a process-wide counter (across all triangulation instances). It reports how often
@@ -1349,10 +1319,6 @@ where
                         fallback_validation_err,
                     ));
                 }
-
-                // Telemetry: the fallback succeeded, meaning we recovered from a topology
-                // validation failure without surfacing an insertion error to the caller.
-                TOPOLOGY_SAFETY_NET_STAR_SPLIT_FALLBACK_SUCCESSES.fetch_add(1, Ordering::Relaxed);
 
                 #[cfg(debug_assertions)]
                 tracing::debug!(

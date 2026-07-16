@@ -418,52 +418,6 @@ fn pachner_feasibility_rejects_stale_facet_like_attempt_2d() {
 }
 
 #[test]
-fn pachner_feasibility_agrees_with_toroidal_2d_k1_insert() {
-    let dt = build_canonicalized_toroidal_dt_2d();
-    let simplex_key = first_simplex_generic(&dt);
-    let vertex: Vertex<(), 2> = vertex!(simplex_centroid_generic(&dt, simplex_key))
-        .expect("toroidal simplex centroid should be a finite vertex");
-    let vertex_uuid = vertex.uuid();
-    let pachner_move = PachnerMove::K1Insert {
-        simplex_key,
-        vertex,
-    };
-
-    let proposal = dt
-        .propose_pachner(pachner_move)
-        .expect("toroidal k=1 proposal parsing should accept a simplex centroid");
-    let feasibility = proposal
-        .can_attempt_on(&dt)
-        .expect("toroidal k=1 feasibility should accept a simplex centroid")
-        .clone();
-    assert_pachner_feasibility_contract(
-        &feasibility,
-        BistellarFlipKind::k1(2),
-        FlipDirection::Forward,
-    );
-    assert!(feasibility.inserted_face_vertices.is_none());
-
-    let mut trial = dt;
-    let result = proposal
-        .attempt_on(&mut trial)
-        .expect("toroidal k=1 attempt should agree with feasibility");
-    let inserted_vertex = vertex_key_by_uuid(&trial, vertex_uuid)
-        .expect("successful k=1 attempt should allocate the inserted vertex key");
-    assert_eq!(result.kind, feasibility.kind);
-    assert_eq!(result.direction, feasibility.direction);
-    assert_eq!(result.removed_simplices, feasibility.removed_simplices);
-    assert_eq!(
-        result.removed_face_vertices,
-        feasibility.removed_face_vertices
-    );
-    assert_eq!(result.inserted_face_vertices.as_slice(), &[inserted_vertex]);
-    trial
-        .as_triangulation()
-        .validate()
-        .expect("toroidal k=1 attempt should preserve topology validity");
-}
-
-#[test]
 fn pachner_feasibility_rejects_duplicate_k1_insert_uuid_without_mutating() {
     let dt = build_single_triangle_dt_2d();
     let simplex_key = first_simplex_generic(&dt);
@@ -681,22 +635,6 @@ fn build_single_triangle_dt_2d() -> Dt2 {
         .topology_guarantee(TopologyGuarantee::PLManifold)
         .build_with_kernel(&RobustKernel::new())
         .expect("single-triangle fixture should build")
-}
-
-/// Builds a canonicalized 2D toroidal fixture with live periodic topology metadata.
-fn build_canonicalized_toroidal_dt_2d() -> Dt2 {
-    let vertices = vec![
-        vertex!([0.2, 0.3]).expect("toroidal fixture coordinate"),
-        vertex!([1.8, 0.1]).expect("toroidal fixture coordinate"),
-        vertex!([0.5, 0.7]).expect("toroidal fixture coordinate"),
-        vertex!([-0.4, 0.9]).expect("toroidal fixture coordinate"),
-    ];
-
-    DelaunayTriangulationBuilder::new(&vertices)
-        .try_canonicalized_toroidal([1.0, 1.0])
-        .expect("canonicalized toroidal domain should parse")
-        .build_with_kernel(&RobustKernel::new())
-        .expect("canonicalized toroidal fixture should build")
 }
 
 /// Searches the 2D fixture for an edge facet whose public k=2 move succeeds.

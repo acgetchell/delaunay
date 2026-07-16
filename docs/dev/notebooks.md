@@ -19,7 +19,7 @@ Every markdown, code, and raw cell must have a unique, stable, descriptive
 - do not use random-looking IDs or generic names such as `cell-1`
 - preserve an existing ID when editing a cell unless its purpose changes
 
-`just notebook-lint` enforces presence, uniqueness, and lowercase kebab-case.
+`just notebook-check` enforces presence, uniqueness, and lowercase kebab-case.
 Stable IDs make notebook diffs, review comments, and nbformat validation easier
 to follow.
 
@@ -33,12 +33,11 @@ in a fresh kernel.
 Routine validation is lint-only:
 
 ```bash
-just notebook-lint
 just notebook-check
 ```
 
-These commands validate notebook structure and metadata, extract code cells,
-and run Ruff and ty without executing notebooks.
+This command validates notebook structure and metadata, extracts code cells,
+and runs Ruff and ty without executing notebooks.
 
 Execute one notebook deliberately when the task requires runtime validation:
 
@@ -66,8 +65,6 @@ artifact and through a named recipe. Current named workflows include:
   `docs/assets/readme/delaunay_spherical_readme.png`
 - `just validation-doc-figures` for validation figures under
   `docs/assets/validation/`
-- `just paper-figures`, which delegates to the canonical validation-figure
-  refresh
 
 Canonical tracked figures belong under `docs/assets/`. Documentation and papers
 should reference the same canonical asset instead of maintaining duplicate

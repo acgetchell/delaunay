@@ -160,29 +160,6 @@ fn test_builder_build_with_statistics_euclidean_records_telemetry() {
     assert!(dt.validate().is_ok());
 }
 
-/// Canonicalized toroidal construction has the same fluent statistics terminal.
-#[test]
-fn test_builder_build_with_statistics_canonicalized_toroidal_records_telemetry() {
-    let vertices = vec![
-        vertex!([0.2_f64, 0.3]).unwrap(),
-        vertex!([1.8, 0.1]).unwrap(),
-        vertex!([0.5, 0.7]).unwrap(),
-        vertex!([-0.4, 0.9]).unwrap(),
-    ];
-    let (dt, stats) = DelaunayTriangulationBuilder::new(&vertices)
-        .try_canonicalized_toroidal([1.0, 1.0])
-        .unwrap()
-        .build_with_statistics()
-        .expect("canonicalized toroidal statistics build should succeed");
-
-    assert_eq!(dt.number_of_vertices(), stats.inserted);
-    assert_eq!(stats.total_skipped(), 0);
-    assert!(stats.total_attempts >= stats.inserted);
-    assert!(stats.telemetry.has_data());
-    assert!(stats.telemetry.construction_total_nanos > 0);
-    assert!(dt.validate().is_ok());
-}
-
 // =============================================================================
 // Convenience entry point
 // =============================================================================
@@ -199,214 +176,6 @@ fn test_builder_convenience() {
         .build()
         .expect("builder() convenience method should succeed");
     assert_eq!(dt.number_of_vertices(), 3);
-    assert!(dt.validate().is_ok());
-}
-
-/// `DelaunayTriangulation::builder()` with canonicalized toroidal wrapping.
-#[test]
-fn test_builder_canonicalized_toroidal_convenience() {
-    let vertices = vec![
-        vertex!([0.2_f64, 0.3]).unwrap(),
-        vertex!([1.8, 0.1]).unwrap(), // → (0.8, 0.1)
-        vertex!([0.5, 0.7]).unwrap(),
-        vertex!([-0.4, 0.9]).unwrap(), // → (0.6, 0.9)
-    ];
-    let dt = DelaunayTriangulation::builder(&vertices)
-        .try_canonicalized_toroidal([1.0, 1.0])
-        .unwrap()
-        .build()
-        .expect("canonicalized toroidal builder should succeed");
-    assert_eq!(dt.number_of_vertices(), 4);
-    assert!(dt.as_triangulation().validate().is_ok());
-}
-
-// =============================================================================
-// Canonicalized toroidal path
-// =============================================================================
-
-/// Out-of-domain coordinates are canonicalized: the resulting triangulation
-/// is geometrically identical to building directly from the wrapped coordinates.
-#[test]
-fn test_builder_canonicalized_toroidal_canonicalizes_coordinates() {
-    // Canonical (already-wrapped) coordinates
-    let canonical_vertices = vec![
-        vertex!([0.2_f64, 0.3]).unwrap(),
-        vertex!([0.8, 0.1]).unwrap(),
-        vertex!([0.5, 0.7]).unwrap(),
-        vertex!([0.6, 0.9]).unwrap(),
-    ];
-    // Out-of-domain equivalents
-    let shifted_vertices = vec![
-        vertex!([2.2_f64, 3.3]).unwrap(), // → (0.2, 0.3)
-        vertex!([-0.2, 1.1]).unwrap(),    // → (0.8, 0.1)
-        vertex!([1.5, 0.7]).unwrap(),     // → (0.5, 0.7)
-        vertex!([-0.4, 2.9]).unwrap(),    // → (0.6, 0.9)
-    ];
-
-    let dt_canonical = DelaunayTriangulationBuilder::new(&canonical_vertices)
-        .try_canonicalized_toroidal([1.0, 1.0])
-        .unwrap()
-        .build()
-        .expect("canonical build should succeed");
-
-    let dt_shifted = DelaunayTriangulationBuilder::new(&shifted_vertices)
-        .try_canonicalized_toroidal([1.0, 1.0])
-        .unwrap()
-        .build()
-        .expect("shifted build should succeed");
-
-    assert_eq!(
-        dt_canonical.number_of_vertices(),
-        dt_shifted.number_of_vertices(),
-        "Both inputs should produce the same number of vertices after canonicalization"
-    );
-    assert_eq!(
-        dt_canonical.number_of_simplices(),
-        dt_shifted.number_of_simplices(),
-        "Both inputs should produce the same number of simplices after canonicalization"
-    );
-}
-
-/// Full Levels 1-3 validation passes after canonicalizing inputs into a toroidal domain.
-#[test]
-fn test_builder_canonicalized_toroidal_validates_2d() {
-    let vertices = vec![
-        vertex!([0.2_f64, 0.3]).unwrap(),
-        vertex!([0.8, 0.1]).unwrap(),
-        vertex!([0.5, 0.7]).unwrap(),
-        vertex!([0.1, 0.9]).unwrap(),
-    ];
-    let dt = DelaunayTriangulationBuilder::new(&vertices)
-        .try_canonicalized_toroidal([1.0, 1.0])
-        .unwrap()
-        .build()
-        .expect("canonicalized toroidal build should succeed");
-
-    assert!(
-        dt.as_triangulation().validate().is_ok(),
-        "Levels 1-3 validation should pass after toroidal-domain input canonicalization"
-    );
-}
-
-/// Level 5 (Delaunay property) validation passes after toroidal-domain input canonicalization.
-#[test]
-fn test_builder_canonicalized_toroidal_delaunay_property_valid_2d() {
-    let vertices = vec![
-        vertex!([0.2_f64, 0.3]).unwrap(),
-        vertex!([0.8, 0.1]).unwrap(),
-        vertex!([0.5, 0.7]).unwrap(),
-        vertex!([0.1, 0.9]).unwrap(),
-    ];
-    let dt = DelaunayTriangulationBuilder::new(&vertices)
-        .try_canonicalized_toroidal([1.0, 1.0])
-        .unwrap()
-        .build()
-        .expect("canonicalized toroidal build should succeed");
-
-    assert!(
-        dt.validate().is_ok(),
-        "Full Levels 1-4 validation should pass after toroidal-domain input canonicalization"
-    );
-}
-
-/// `dim()` is 2 for four non-degenerate 2D points.
-#[test]
-fn test_builder_canonicalized_toroidal_2d_euler_dimension() {
-    let vertices = vec![
-        vertex!([0.2_f64, 0.3]).unwrap(),
-        vertex!([0.8, 0.1]).unwrap(),
-        vertex!([0.5, 0.7]).unwrap(),
-        vertex!([0.1, 0.9]).unwrap(),
-    ];
-    let dt = DelaunayTriangulationBuilder::new(&vertices)
-        .try_canonicalized_toroidal([1.0, 1.0])
-        .unwrap()
-        .build()
-        .expect("build should succeed");
-
-    assert_eq!(
-        dt.dim(),
-        2,
-        "Four 2D points should produce a 2-dimensional triangulation"
-    );
-}
-
-/// Building with canonicalized toroidal wrapping on already-canonical input matches Euclidean construction.
-#[test]
-fn test_builder_canonicalized_toroidal_matches_euclidean_on_canonical_input() {
-    let vertices = vec![
-        vertex!([0.1_f64, 0.2]).unwrap(),
-        vertex!([0.8, 0.3]).unwrap(),
-        vertex!([0.4, 0.9]).unwrap(),
-    ];
-    let dt_euclidean = DelaunayTriangulationBuilder::new(&vertices)
-        .build()
-        .expect("euclidean build should succeed");
-    let dt_toroidal = DelaunayTriangulationBuilder::new(&vertices)
-        .try_canonicalized_toroidal([1.0, 1.0])
-        .unwrap()
-        .build()
-        .expect("canonicalized toroidal build should succeed");
-
-    assert_eq!(
-        dt_euclidean.number_of_vertices(),
-        dt_toroidal.number_of_vertices()
-    );
-    assert_eq!(
-        dt_euclidean.number_of_simplices(),
-        dt_toroidal.number_of_simplices()
-    );
-}
-
-/// Larger 2D canonicalized toroidal point set — full Level 1–4 validation.
-///
-/// Uses eight hand-picked, well-separated points to stay in general position
-/// with the default `FastKernel`, exercising the canonicalized toroidal build path
-/// beyond the minimal 3–4 vertex cases covered by other tests.
-#[test]
-fn test_builder_canonicalized_toroidal_larger_point_set_2d() {
-    let vertices = vec![
-        vertex!([0.1_f64, 0.2]).unwrap(),
-        vertex!([0.6, 0.1]).unwrap(),
-        vertex!([0.9, 0.4]).unwrap(),
-        vertex!([0.7, 0.8]).unwrap(),
-        vertex!([0.3, 0.7]).unwrap(),
-        vertex!([0.48, 0.52]).unwrap(),
-        vertex!([0.15, 0.85]).unwrap(),
-        vertex!([0.8, 0.65]).unwrap(),
-    ];
-    let dt = DelaunayTriangulationBuilder::new(&vertices)
-        .try_canonicalized_toroidal([1.0, 1.0])
-        .unwrap()
-        .build()
-        .expect("larger canonicalized toroidal build should succeed");
-
-    assert_eq!(dt.number_of_vertices(), 8);
-    assert!(dt.validate().is_ok(), "Full validation should pass");
-}
-
-// =============================================================================
-// Custom kernel
-// =============================================================================
-
-/// `build_with_kernel` with `RobustKernel` works for a 3D canonicalized toroidal case.
-#[test]
-fn test_builder_canonicalized_toroidal_robust_kernel_3d() {
-    let vertices = vec![
-        vertex!([0.2_f64, 0.3, 0.4]).unwrap(),
-        vertex!([0.8, 0.1, 0.2]).unwrap(),
-        vertex!([0.5, 0.7, 0.6]).unwrap(),
-        vertex!([0.1, 0.9, 0.3]).unwrap(),
-        vertex!([0.6, 0.4, 0.8]).unwrap(),
-    ];
-    let kernel = RobustKernel::new();
-    let dt = DelaunayTriangulationBuilder::new(&vertices)
-        .try_canonicalized_toroidal([1.0, 1.0, 1.0])
-        .unwrap()
-        .build_with_kernel(&kernel)
-        .expect("canonicalized toroidal robust kernel 3D build should succeed");
-
-    assert_eq!(dt.number_of_vertices(), 5);
     assert!(dt.validate().is_ok());
 }
 
@@ -439,7 +208,7 @@ fn toroidal_vertices<const D: usize>() -> Vec<Vertex<(), D>> {
         .collect()
 }
 
-fn compact_toroidal_vertices_3d() -> Vec<Vertex<(), 3>> {
+fn compact_toroidal_vertices_t3() -> Vec<Vertex<(), 3>> {
     vec![
         vertex!([0.2_f64, 0.3, 0.4]).unwrap(),
         vertex!([0.8, 0.1, 0.2]).unwrap(),
@@ -481,13 +250,13 @@ fn count_boundary_facets<K, U, V, const D: usize>(dt: &DelaunayTriangulation<K, 
         .unwrap()
 }
 
-/// `toroidal` builds a valid 2D periodic triangulation with χ = 0.
+/// `toroidal` builds a valid periodic triangulation of `T^2` with χ = 0.
 ///
 /// Verifies structural validity and χ = 0 directly.
 /// See the macro-generated toroidal validation tests for the full
 /// `PLManifold` and Level 4 `validate()` paths.
 #[test]
-fn test_builder_toroidal_chi_zero_2d() {
+fn test_builder_toroidal_chi_zero_t2() {
     let dt = build_toroidal_triangulation::<2>();
 
     assert!(
@@ -498,7 +267,7 @@ fn test_builder_toroidal_chi_zero_2d() {
     let chi = euler_characteristic(&counts);
     assert_eq!(
         chi, 0,
-        "Euler characteristic of periodic 2D triangulation must be 0 (torus)"
+        "Euler characteristic of a periodic T^2 triangulation must be 0"
     );
 
     let semantic_result = dt.euler_check().unwrap();
@@ -588,7 +357,7 @@ macro_rules! gen_toroidal_validation_test {
             /// this also exercises cumulative Levels 1-5 periodic validation.
             #[test]
             $(#[$attr])?
-            fn [<test_builder_toroidal_validate_ $label _ $dim d>]() {
+            fn [<test_builder_toroidal_validate_ $label _t $dim>]() {
                 let dt = build_toroidal_triangulation::<$dim>();
 
                 let topology_result = dt.as_triangulation().validate();
@@ -613,16 +382,16 @@ macro_rules! gen_toroidal_validation_test {
 
 gen_toroidal_validation_test!(2, levels_1_to_5, true);
 
-/// Compact 3D construction preserves canonical identity and validates topology and Delaunay predicates.
+/// Compact `T^3` construction preserves canonical identity and validates topology and Delaunay predicates.
 #[test]
-fn test_builder_toroidal_3d_compact_quotient_validates_topology_and_delaunay() {
-    let vertices = compact_toroidal_vertices_3d();
+fn test_builder_toroidal_t3_compact_quotient_validates_topology_and_delaunay() {
+    let vertices = compact_toroidal_vertices_t3();
     let kernel = RobustKernel::new();
     let dt = DelaunayTriangulationBuilder::new(&vertices)
         .try_toroidal([1.0_f64; 3])
         .unwrap()
         .build_with_kernel(&kernel)
-        .expect("compact periodic 3D quotient should succeed");
+        .expect("compact periodic T^3 quotient should succeed");
 
     assert_eq!(dt.number_of_vertices(), vertices.len());
     assert!(dt.number_of_simplices() > 0);
@@ -667,12 +436,12 @@ fn test_builder_toroidal_3d_compact_quotient_validates_topology_and_delaunay() {
     }));
 }
 
-/// Compact 3D construction remains valid after input reversal and an orientation-reversing map.
+/// Compact `T^3` construction remains valid after input reversal and an orientation-reversing map.
 #[test]
-fn test_builder_toroidal_3d_compact_quotient_handles_adversarial_transforms() {
-    let mut reversed = compact_toroidal_vertices_3d();
+fn test_builder_toroidal_t3_compact_quotient_handles_adversarial_transforms() {
+    let mut reversed = compact_toroidal_vertices_t3();
     reversed.reverse();
-    let reflected = compact_toroidal_vertices_3d()
+    let reflected = compact_toroidal_vertices_t3()
         .iter()
         .map(|vertex| {
             let [x, y, z]: [f64; 3] = vertex.into();
@@ -686,7 +455,7 @@ fn test_builder_toroidal_3d_compact_quotient_handles_adversarial_transforms() {
             .try_toroidal([1.0_f64; 3])
             .unwrap()
             .build_with_kernel(&kernel)
-            .expect("transformed compact periodic 3D quotient should succeed");
+            .expect("transformed compact periodic T^3 quotient should succeed");
 
         assert_eq!(dt.number_of_vertices(), vertices.len());
         assert!(dt.number_of_simplices() > 0);
@@ -702,14 +471,14 @@ fn test_builder_toroidal_3d_compact_quotient_handles_adversarial_transforms() {
 /// Exhaustive periodic all-translates intersection validation belongs to the slow bucket.
 #[cfg(feature = "slow-tests")]
 #[test]
-fn test_builder_toroidal_3d_compact_quotient_validates_levels_1_to_5() {
-    let vertices = compact_toroidal_vertices_3d();
+fn test_builder_toroidal_t3_compact_quotient_validates_levels_1_to_5() {
+    let vertices = compact_toroidal_vertices_t3();
     let kernel = RobustKernel::new();
     let dt = DelaunayTriangulationBuilder::new(&vertices)
         .try_toroidal([1.0_f64; 3])
         .unwrap()
         .build_with_kernel(&kernel)
-        .expect("compact periodic 3D quotient should succeed");
+        .expect("compact periodic T^3 quotient should succeed");
 
     assert!(dt.validate().is_ok());
 }
@@ -718,7 +487,7 @@ macro_rules! gen_toroidal_high_dim_guardrail_test {
     ($dim:literal) => {
         pastey::paste! {
             #[test]
-            fn [<test_builder_toroidal_ $dim d_fails_fast_until_scalable_quotient>]() {
+            fn [<test_builder_toroidal_t $dim _fails_fast_until_scalable_quotient>]() {
                 let vertices = toroidal_vertices::<$dim>();
                 let kernel = RobustKernel::new();
                 let err = DelaunayTriangulationBuilder::new(&vertices)
@@ -1643,7 +1412,7 @@ fn test_explicit_error_variant_incompatible_topology() {
 
     let err = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
         .unwrap()
-        .try_canonicalized_toroidal([1.0, 1.0])
+        .try_toroidal([1.0, 1.0])
         .unwrap()
         .build()
         .unwrap_err();

@@ -46,16 +46,17 @@ create the annotated release tag from the matching changelog section.
 ### Notebook utilities
 
 ```bash
-just notebook-lint
 just notebook-check
+just notebook-execute notebooks/00_quickstart.ipynb
 just notebook-reset-from-git
 uv run --group dev --group notebooks notebook-check --help
 ```
 
 `notebook-check` validates notebook JSON, rejects committed outputs and
-execution counts, extracts code cells for Ruff and ty, and can execute notebooks
-headlessly. The `just notebook-check` recipe writes executed notebooks under
-`target/notebooks/<notebook-stem>/` and leaves source notebooks unchanged.
+execution counts, and extracts code cells for Ruff and ty without executing
+notebooks. `just notebook-execute` runs one notebook headlessly, writes the
+executed notebook and generated artifacts under
+`target/notebooks/<notebook-stem>/`, and leaves the source notebook unchanged.
 `just notebook-reset-from-git` restores tracked source notebooks from the Git
 index, or from an explicit source such as `HEAD`, and removes generated
 notebook artifacts and Jupyter checkpoints.

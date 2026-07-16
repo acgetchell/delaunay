@@ -69,11 +69,11 @@ changed surface.
 
 | Touched surface | Iteration validation | Final validation |
 |-----|-----|-----|
-| Markdown documentation (`*.md`) | `just markdown-check` | `just markdown-ci`; add `just docs-version-check` for release/versioned references |
+| Markdown documentation (`*.md`) | `just markdown-check` | `just check-docs` |
 | Python under `scripts/` | Targeted pytest or `just test-python`; add `just python-check` for logic/style | `just python-check` and `just test-python` |
-| Jupyter notebooks (`notebooks/**/*.ipynb`) | `just notebook-lint` | `just notebook-check` |
+| Jupyter notebooks (`notebooks/**/*.ipynb`) | `just notebook-check` | `just notebook-check` |
 | Paper sources and figures (`papers/**/*`, paper notebooks) | `just paper-check` | `just papers` |
-| Configuration only (JSON, TOML, YAML, CFF, workflows) | Matching config validator | `just lint-config` |
+| Configuration only (JSON, TOML, YAML, CFF, workflows) | Matching config validator | `just check-config` |
 | Rust unit tests only (`#[cfg(test)]` in `src/**`) | Targeted `cargo test --lib <filter>` or `just test-unit` | `just test-unit` |
 | Rust doctests only (`///` examples or crate docs) | Targeted `cargo test --doc --release <filter>` or `just test-doc` | `just test-doc` |
 | Rust integration tests only (`tests/**`) | Targeted `cargo nextest run --test <name>` or `just test-integration-fast` | `just test-integration` |
@@ -89,10 +89,8 @@ focused test bucket covers the change unless you intentionally want the full
 default test suite. When a diff touches multiple focused test surfaces, compose
 the matching recipes once each; for example, run `just test-doc` and
 `just test-integration` for doctest plus integration-test changes. Broad Rust
-correctness workflows such as `just test-rust` and `just ci` use
-`just test-rust-ci`, which runs Rust lib unit tests, default-feature integration
-tests, and feature-gated CLI integration tests in release-profile nextest
-invocations.
+correctness workflows compose `just test-unit`, `just test-integration`,
+`just test-cli`, and `just test-doc` through `just test-rust`.
 
 During fast code-writing cycles, start with the smallest changed test or
 doctest rather than the whole focused bucket. For single-item rustdoc edits, run
@@ -115,6 +113,19 @@ broad benchmark-suite changes.
 ## Justfile Usage
 
 This repository standardizes development tasks through the `justfile`.
+
+Run bare `just` for the curated workflow guide and `just --list` for the
+complete grouped command reference. Public recipes are documented, grouped,
+and kept in lexicographic source order so both views are easy to scan. Each
+public recipe owns one distinct operation; broader workflows compose those
+recipes instead of repeating their commands. Shared private guards and
+parameterized implementation helpers live in `just/helpers.just`.
+
+Tool-version variables in the root `justfile` are the source of truth for both
+local setup and GitHub Actions. `just setup-tools` installs or synchronizes the
+repository toolchain, while private `_ensure-*` dependencies fail fast when a
+required tool or pinned version is unavailable during an individual recipe.
+`just setup` composes `setup-tools` with the development build.
 
 Agents should **prefer running `just` commands instead of invoking the
 underlying tools directly**. The justfile ensures the correct flags,
@@ -149,7 +160,7 @@ just fix
 
 Run checks before mutating fixers; formatting drift should be understood before
 `just fix` rewrites files. The focused mutating recipes are `just fmt` for Rust
-and `just justfile-fmt` for the justfile.
+and `just justfile-fmt` for the root and helper justfiles.
 
 ---
 
@@ -235,6 +246,7 @@ This runs:
 - JSON/TOML/YAML/CFF checks
 - Python lint/typecheck
 - notebook hygiene and extracted-code checks
+- shell script formatting and lint checks
 - Rust core lint, documentation, and Semgrep checks
 - benchmark harness compile checks
 - Rust lib unit tests
@@ -255,38 +267,32 @@ measured workflow maintains its triangulation, predicate, topology, and
 diagnostic invariants.
 
 `just ci` is the comprehensive error-catching validation path used by GitHub
-Actions. It is a flat union of leaf validators rather than a nested call to
-`just check`. The target classes are kept separate: `rust-core-check` covers
-formatting, all-targets Clippy, rustdoc, and Semgrep; `bench-compile` compiles
-benchmark harnesses once; `test-rust-ci` compiles and runs Rust lib unit tests
-in debug and release profiles, then runs default-feature integration tests and
-feature-gated CLI integration tests in release-profile nextest invocations;
-`test-doc` compiles and runs Rust doctests once in release profile;
-`notebook-check` lints notebooks without executing them.
+Actions. It composes `just check`, `just test`, `just bench-compile`, and
+`just examples`. The target classes remain orthogonal: `rust-core-check` covers
+formatting, all-targets Clippy, rustdoc, and Semgrep; `unused-deps` checks direct
+Cargo dependency hygiene; `test-rust` composes unit, integration, CLI, and
+doctest buckets; `notebook-check` validates notebooks without executing them.
 Routine notebook checks are lint-only. Execute one notebook deliberately with
 `just notebook-execute` or use its named artifact-refresh recipe. There is no
 aggregate recipe that executes every notebook.
 
-`just test` is tests-only. `test-integration-compile` and `bench-test-compile`
-are explicit no-run smoke recipes for cases where a compile-only check is the
-desired validator; do not run them before `test-integration` unless you
-intentionally want a separate compile-only pass. `test-unit` runs lib unit
+`just test` is tests-only. `test-integration-compile` is an explicit no-run
+smoke recipe for cases where a compile-only check is the desired validator; do
+not run it before `test-integration` unless you intentionally want a separate
+compile-only pass. `test-unit` runs lib unit
 tests in both debug and release profiles so debug assertions and default
 overflow checks remain covered; the nextest `debug` profile gives slower debug
 geometry paths a finite 60-second watchdog. `test-integration` runs a focused
-release-profile nextest bucket. Broad test and CI workflows use `test-rust-ci`
-to provide the same two-profile unit coverage while compiling release lib and
-integration tests together.
+release-profile nextest bucket. `test-cli` owns the feature-gated CLI tests,
+and `test-rust` composes every Rust test class once.
 
 ```bash
 just ci
 just test
 just rust-core-check
-just test-rust-ci
+just test-rust
 just notebook-check
 just bench-compile
-just test-integration-compile
-just bench-test-compile
 ```
 
 Commands that run benchmarks and produce performance data use the `perf`
@@ -299,18 +305,15 @@ just bench-latest
 just bench-latest-vs-last
 just bench-compare
 just bench-save-baseline v0.7.8
-just bench-save-last
-just performance-local
-just performance-github-assets
-just performance-release
+just perf-local
+just perf-github-assets
+just perf-release
 just perf-baseline
 just perf-compare
 just perf-vs-ref
 just perf-no-regressions
 just bench-perf-summary
 just bench-pachner-stress
-just bench-pachner-stress-3d
-just bench-pachner-stress-4d
 cargo bench --profile perf --bench ci_performance_suite
 ```
 
@@ -336,7 +339,7 @@ topology scope only (Levels 1-3); the large Level 4 realization overlap scan is
 deferred to the dedicated realization-validation work. The CLI supports
 `round-trip` and `random-walk` modes; `round-trip` is the default. Pass explicit
 `attempts`, `vertices`, and `validate_every` arguments for soak runs. Use
-`just bench-pachner-stress*` when Criterion timing statistics for stable 4D move
+`just bench-pachner-stress` when Criterion timing statistics for stable 4D move
 and inverse fixtures are needed.
 
 Some repair benchmarks need feature-gated fixtures that deliberately construct
@@ -366,14 +369,14 @@ suite for local saved-baseline comparisons. It runs
 `ci_performance_suite`, `circumsphere_containment`, `cold_path_predicates`,
 `topology_guarantee_construction`, and `locate`, leaving `target/criterion/new`
 data suitable for `just bench-compare`. Save the previous release signal as
-`last` with `just bench-save-last` from the baseline checkout, or save an
-explicit baseline name with `just bench-save-baseline <tag>`. Use
-`just performance-local` when you want the tool to manage isolated
+`last` with `just bench-save-baseline last` from the baseline checkout, or save
+an explicit baseline name with the same recipe. Use `just perf-local` when you
+want the tool to manage isolated
 baseline/current worktrees.
 
 ```bash
 # In the baseline checkout, usually the previous release:
-just bench-save-last
+just bench-save-baseline last
 
 # In the current checkout:
 just bench-latest-vs-last
@@ -387,12 +390,12 @@ Use lower-level `uv run benchmark-utils bench-compare --scope all-benches` only
 when you explicitly want an exploratory report over every Criterion result
 already present under `target/criterion/`.
 
-Use `just performance-local` for an isolated temp-worktree comparison of the
+Use `just perf-local` for an isolated temp-worktree comparison of the
 current package version against the latest stable published release. It writes
 `target/bench-reports/performance.md` and runs local benchmarks. Use
-`just performance-github-assets` when you want to compare stored GitHub Release
-benchmark assets without local Cargo benchmark runs. Use
-`just performance-release` in release PRs to promote one curated comparison into
+`just perf-github-assets` when you want to compare stored GitHub Release
+benchmark assets without local Cargo benchmark runs. Use `just perf-release`
+in release PRs to promote one curated comparison into
 `docs/PERFORMANCE.md`, archiving the previous curated report under
 `docs/archive/performance/`. The GitHub-asset and release-promotion recipes also
 accept explicit `<current-tag> <baseline-tag>` pairs for repair paths.
@@ -519,6 +522,8 @@ Examples must:
 ## Spell Checking
 
 Documentation and comments are spell‑checked.
+`just spell-check` scans every tracked file plus unignored files that are new in
+the working tree, so the same recipe covers clean CI checkouts and local work.
 
 Run:
 
@@ -557,7 +562,6 @@ standards as repository scripts.
 Commands:
 
 ```bash
-just notebook-lint
 just notebook-check
 just notebook-execute notebooks/00_quickstart.ipynb
 just notebook-clear-outputs-all
@@ -600,34 +604,41 @@ Commands:
 
 ```bash
 just paper-cli
-just paper-figures
+just validation-doc-figures
+just paper-tex-fmt-check
 just paper-tex-lint
 just paper-build
 just paper-pdf-check
 just paper-check
+just paper-refresh
 just papers
 ```
 
 `just paper-cli` builds the local `delaunay` binary used by paper notebooks
-before nbconvert starts its execution timeout. `just paper-figures` refreshes
-the canonical PNG files under `docs/assets/validation/`, which are reused directly
-by `papers/validation.tex`. Ordinary notebook validation does not refresh
-tracked figures. `just paper-tex-lint` runs `tex-fmt --check`
-and `chktex` over `papers/*.tex`. `just paper-build` compiles
-`papers/validation.tex` with Tectonic in `target/papers/validation/` and copies
-the reading copy to `papers/validation.pdf`. `just paper-pdf-check` uses the
-uv-managed `paper-pdf-check` helper to verify the PDF opens, has pages, includes
-expected title/reference text, and does not contain the literal `\today`.
-`just paper-check` lints, builds, and sanity-checks a paper without refreshing
-figures. `just papers` runs the full figure, lint, build, and PDF-check path.
+before nbconvert starts its execution timeout. `just validation-doc-figures`
+refreshes the canonical PNG files under `docs/assets/validation/`, which are
+reused directly by `papers/validation.tex`. Ordinary notebook validation does
+not refresh tracked figures. `just paper-tex-fmt-check` runs `tex-fmt --check`,
+and `just paper-tex-lint` runs `chktex` over `papers/*.tex`. `just paper-build`
+compiles
+`papers/validation.tex` with Tectonic in `target/papers/validation/` without
+changing tracked files. `just paper-pdf-check` uses the uv-managed
+`paper-pdf-check` helper to verify that target-built PDF opens, has pages,
+includes expected title/reference text, and does not contain the literal
+`\today`. `just paper-check` lints, builds, and sanity-checks a paper without
+refreshing tracked artifacts. `just paper-refresh` runs that check before
+copying the target-built PDF to `papers/validation.pdf`. `just papers` refreshes
+the canonical figures and reviewer PDF through those named artifact owners.
 
 Tectonic and `tex-fmt` are pinned Cargo-installed tools. `chktex` comes from a
-TeX distribution or system package manager. Building Tectonic from Cargo also
-requires `pkg-config` and development headers for its native bridge libraries,
-including fontconfig, FreeType, Graphite2, HarfBuzz, ICU, libpng, and zlib.
+TeX distribution or system package manager. Installing or upgrading Tectonic
+from Cargo also requires `pkg-config` and development headers for its native
+bridge libraries, including fontconfig, FreeType, Graphite2, HarfBuzz, ICU,
+libpng, and zlib. When the pinned Tectonic version is absent,
 `just setup-tools` checks ICU locally and auto-detects common Homebrew ICU
-pkg-config directories before it asks for a manual `PKG_CONFIG_PATH`; paper CI
-installs the platform native package set explicitly.
+pkg-config directories before it asks for a manual `PKG_CONFIG_PATH`; an
+already-correct Tectonic installation does not require those native build
+prerequisites. Paper CI installs the platform native package set explicitly.
 
 Reviewer-facing validation diagrams under `docs/assets/validation/` use the
 same deterministic notebook with a separate explicit output switch:
@@ -649,13 +660,9 @@ non-mutating check before the mutating fixer in user-facing command examples.
 Commands:
 
 ```bash
-just markdown-ci
 just markdown-check
 just markdown-fix
 ```
-
-`just markdown-lint` remains as a compatibility alias for `just
-markdown-check`.
 
 ---
 
@@ -701,7 +708,14 @@ shfmt
 shellcheck
 ```
 
-Run via CI or `just` commands.
+Run the focused non-mutating validator with:
+
+```bash
+just shell-check
+```
+
+`just shell-check` composes the focused `just shell-lint` and
+`just shell-fmt-check` leaves, and `just ci` includes the aggregate check.
 
 ---
 
@@ -751,20 +765,20 @@ just action-lint
 | Check formatting | `just fmt-check` |
 | Check justfile formatting | `just justfile-fmt-check` |
 | Apply formatters/auto-fixes | `just fix` |
-| Validate Markdown-only changes | `just markdown-ci` |
+| Validate Markdown-only changes | `just check-docs` |
 | Validate release-version references | `just docs-version-check` |
 | Validate `Cargo.toml`/`Cargo.lock` synchronization | `just cargo-lock-check` |
-| Validate configuration-only changes | `just lint-config` |
+| Validate configuration-only changes | `just check-config` |
 | Validate Python scripts/tests | `just python-check` and `just test-python` |
 | Validate notebook changes | `just notebook-check` |
+| Validate shell script changes | `just shell-check` |
 | Validate core Rust checks | `just rust-core-check` |
 | Run all default test buckets | `just test` |
 | Run Rust tests only | `just test-rust` |
-| Run Rust CI nextest buckets, including CLI | `just test-rust-ci` |
+| Run CLI-feature integration tests | `just test-cli` |
 | Run Rust lib unit tests only | `just test-unit` |
 | Run doctests only | `just test-doc` |
 | Run integration tests | `just test-integration` |
-| Run all tests | `just test-all` |
 | Compile benchmark harnesses | `just bench-compile` |
 | Compile release integration tests without running | `just test-integration-compile` |
 | Run examples | `just examples` |
@@ -783,13 +797,14 @@ CI enforces:
 - `Cargo.toml`/`Cargo.lock` synchronization
 - Python lint, type checks, and tests
 - notebook hygiene and extracted-code checks
+- shell script formatting and lint checks
 - core Rust formatting, Clippy, rustdoc, and Semgrep checks
 - Rust unit, doctest, and integration tests
 - benchmark harness compilation
 - examples
 
 Rust warnings are denied by the manifest lint policy and Clippy warnings are
-denied by the `just clippy` / `just clippy-all-targets` invocations. Keep any
+denied by `just clippy`. Keep any
 intentional warning-level exceptions explicit in `Cargo.toml`.
 
 Agents must ensure changes pass the appropriate local validator before

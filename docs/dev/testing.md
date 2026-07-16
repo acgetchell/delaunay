@@ -377,14 +377,13 @@ Default test recipes are split by target class:
 - `just test-unit` runs Rust lib unit tests in debug and release profiles.
 - `just test-doc` runs Rust doctests in release profile.
 - `just test-integration` runs Rust integration tests.
+- `just test-cli` runs feature-gated CLI integration tests.
 - `just test-python` runs Python tests.
 
 For test-only changes, run only the matching focused recipe. If multiple test
 target classes changed, compose those focused recipes once each. Use
-`just test` when you intentionally want the full default test suite; broad Rust
-test workflows use `just test-rust-ci` so debug-only unit behavior is covered
-before lib unit and integration tests compile together under the release
-profile.
+`just test` when you intentionally want the full default test suite;
+`just test-rust` composes the four Rust target classes once each.
 During iteration, prefer the targeted changed-test commands in
 [`commands.md`](commands.md); reserve full focused recipes such as
 `just test-doc`, `just test-unit`, and `just test-integration` for final bucket
@@ -410,10 +409,10 @@ Run all default test buckets:
 just test
 ```
 
-Run Rust lib unit tests and integration tests in the CI release-profile nextest bucket:
+Run every default Rust test class:
 
 ```bash
-just test-rust-ci
+just test-rust
 ```
 
 Run Rust lib unit tests:
@@ -440,10 +439,10 @@ Run Python tests:
 just test-python
 ```
 
-Run all tests:
+Run feature-gated CLI integration tests:
 
 ```bash
-just test-all
+just test-cli
 ```
 
 Run the slow correctness bucket:

@@ -95,7 +95,7 @@ fn main() -> DelaunayResult<()> {
 
 ### Advanced Construction: `DelaunayTriangulationBuilder`
 
-For advanced configuration (domain wrapping, toroidal topology, custom validation policies, etc.),
+For advanced configuration (toroidal topology, custom validation policies, etc.),
 use `DelaunayTriangulationBuilder`:
 
 ```rust
@@ -105,16 +105,14 @@ use delaunay::prelude::construction::{
 use delaunay::prelude::validation::ValidationPolicy;
 
 fn main() -> DelaunayResult<()> {
-    // Euclidean triangulation of points canonicalized into a toroidal domain.
+    // Euclidean triangulation with an explicit topology guarantee.
     let vertices = vec![
-        vertex![0.1, 0.1]?,
-        vertex![0.9, 0.9]?,
-        vertex![0.5, 0.5]?,
+        vertex![0.0, 0.0]?,
+        vertex![1.0, 0.0]?,
+        vertex![0.0, 1.0]?,
     ];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-        .try_canonicalized_toroidal([1.0, 1.0])
-        ? // Wrap input coordinates before Euclidean construction.
         .topology_guarantee(TopologyGuarantee::PLManifoldStrict)
         .build()?;
 
@@ -128,10 +126,8 @@ fn main() -> DelaunayResult<()> {
 
 **When to use the Builder:**
 
-- **Toroidal construction**: Use `.try_toroidal()` for periodic image-point construction or
-  `.try_canonicalized_toroidal()` for Euclidean construction after wrapping input coordinates
-  into explicit domain periods.
-  The periodic image-point path is release-validated in 2D and compact 3D; 4D/5D
+- **Toroidal construction**: Use `.try_toroidal([1.0, 1.0])` for periodic image-point construction.
+  This path is release-validated on `T^2` and compact `T^3`; `T^4`/`T^5`
   fail fast pending scalable quotient construction in issue #416.
 - **Custom topology guarantees**: Set stricter or more relaxed manifold checks
 - **Custom validation policies**: Configure `ValidationPolicy` via
@@ -548,10 +544,11 @@ The separation serves several purposes:
 
 ## Examples
 
-See the following examples for practical demonstrations:
+See the [runnable workflow coverage index](../examples/README.md) for the full
+examples/notebooks split. The examples most directly related to this design are:
 
 - `examples/topology_editing.rs` - 2D+3D example showing both APIs
-- `examples/triangulation_and_hull.rs` - 3D/4D Builder API, traversal, and convex hull queries
+- `examples/triangulation_and_hull.rs` - 3D–5D Builder API, traversal, quality, location, and convex hull queries
 - `examples/delaunayize_repair.rs` - Delaunayize workflow (2D/3D/4D, flip-then-repair, custom config)
 
 ## Delaunayize Workflow

@@ -7,9 +7,9 @@ use super::incidence::SimplexIncidenceRemoval;
 use super::storage::{SimplexUuidSortKey, Tds};
 use super::{SimplexKey, TdsRollbackTransaction, VertexKey};
 use crate::core::collections::{
-    CLEANUP_OPERATION_BUFFER_SIZE, Entry, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE,
-    NeighborBuffer, SimplexKeySet, SimplexRemovalBuffer, SmallBuffer, VertexKeySet,
-    fast_hash_map_with_capacity, fast_hash_set_with_capacity,
+    CLEANUP_OPERATION_BUFFER_SIZE, Entry, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeySet,
+    SimplexRemovalBuffer, SmallBuffer, VertexKeySet, fast_hash_map_with_capacity,
+    fast_hash_set_with_capacity,
 };
 use crate::core::simplex::{NeighborSlot, Simplex};
 use crate::core::vertex::Vertex;
@@ -1308,80 +1308,6 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     // =========================================================================
     // KEY-BASED NEIGHBOR OPERATIONS
     // =========================================================================
-
-    /// Finds neighbor simplex keys for a given simplex without UUID lookups.
-    ///
-    /// This is the key-based version of neighbor retrieval that avoids
-    /// UUID→Key conversions in the hot path.
-    ///
-    /// # Arguments
-    ///
-    /// * `simplex_key` - The key of the simplex whose neighbors to find
-    ///
-    /// # Returns
-    ///
-    /// A buffer of `Option<SimplexKey>` where `None` indicates no neighbor
-    /// at that position (boundary facet). Uses stack allocation for typical dimensions.
-    ///
-    /// **Special case**: If the simplex does not exist (invalid `simplex_key`), returns a buffer
-    /// filled with `None` values. This is a non-panicking fallback that allows callers to
-    /// distinguish "simplex missing" from "no neighbors assigned" by checking simplex existence
-    /// separately with `simplex()` if needed.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::geometry::CoordinateConversionError;
-    /// use delaunay::prelude::triangulation::{
-    ///     FastKernel, Triangulation, TriangulationConstructionError,
-    /// };
-    ///
-    /// # #[derive(Debug, thiserror::Error)]
-    /// # enum ExampleError {
-    /// #     #[error(transparent)]
-    /// #     Construction(#[from] TriangulationConstructionError),
-    /// #     #[error(transparent)]
-    /// #     Coordinate(#[from] CoordinateConversionError),
-    /// # }
-    /// # fn main() -> Result<(), ExampleError> {
-    /// let vertices = [
-    ///     delaunay::vertex![0.0, 0.0]?,
-    ///     delaunay::vertex![1.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 1.0]?,
-    /// ];
-    /// let tds =
-    ///     Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices)?;
-    /// let Some((simplex_key, _)) = tds.simplices().next() else {
-    ///     return Ok(());
-    /// };
-    ///
-    /// // Get neighbors for existing simplex
-    /// let neighbors = tds.find_neighbors_by_key(simplex_key);
-    /// assert_eq!(neighbors.len(), 3); // D+1 for 2D
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[must_use]
-    pub fn find_neighbors_by_key(
-        &self,
-        simplex_key: SimplexKey,
-    ) -> NeighborBuffer<Option<SimplexKey>> {
-        let mut neighbors = NeighborBuffer::new();
-        neighbors.resize(D + 1, None);
-
-        let Some(simplex) = self.simplex(simplex_key) else {
-            return neighbors;
-        };
-
-        if let Some(neighbors_from_simplex) = simplex.neighbor_keys() {
-            // Use zip to avoid potential OOB if neighbors_from_simplex.len() > D+1 (malformed data)
-            for (slot, neighbor_key_opt) in neighbors.iter_mut().zip(neighbors_from_simplex) {
-                *slot = neighbor_key_opt;
-            }
-        }
-
-        neighbors
-    }
 
     fn validate_neighbor_update_matches_facet_incidence(
         &self,
@@ -2728,8 +2654,8 @@ mod tests {
         let result = tds.remove_simplices_by_keys(&[first_removed, second_removed]);
 
         assert!(result.is_err());
-        assert!(tds.contains_simplex_key(first_removed));
-        assert!(tds.contains_simplex_key(second_removed));
+        assert!(tds.contains_simplex(first_removed));
+        assert!(tds.contains_simplex(second_removed));
         assert_eq!(tds.generation(), generation_before);
         assert_eq!(
             tds.vertex_to_simplices_index()
@@ -2820,7 +2746,7 @@ mod tests {
         let err = tds.remove_simplices_by_keys(&[requested]).unwrap_err();
 
         assert_matches!(err.as_tds_error(), TdsError::SimplexNotFound { .. });
-        assert!(tds.contains_simplex_key(requested));
+        assert!(tds.contains_simplex(requested));
         assert_eq!(tds.generation(), generation_before);
         assert_eq!(
             tds.vertex_to_simplices_index()
@@ -3032,15 +2958,6 @@ mod tests {
             assert!(tds.simplices.contains_key(incident));
             assert!(tds.simplex(incident).unwrap().contains_vertex(vertex_key));
         }
-    }
-
-    #[test]
-    fn test_find_neighbors_by_key_returns_none_buffer_for_missing_simplex() {
-        let tds: Tds<(), (), 2> = Tds::empty();
-        let missing = SimplexKey::from(KeyData::from_ffi(u64::MAX));
-        let neighbors = tds.find_neighbors_by_key(missing);
-        assert_eq!(neighbors.len(), 3);
-        assert!(neighbors.iter().all(Option::is_none));
     }
 
     #[test]
@@ -3868,7 +3785,7 @@ mod tests {
             tds.remove_simplices_by_keys(&[simplex, simplex]).unwrap(),
             1
         );
-        assert!(!tds.contains_simplex_key(simplex));
+        assert!(!tds.contains_simplex(simplex));
         assert_eq!(tds.number_of_simplices(), 0);
         assert!(tds.is_valid().is_ok());
     }

@@ -62,6 +62,7 @@ delaunay/
 │   ├── 01_validation.ipynb
 │   └── 02_spherical_hero.ipynb
 ├── papers/
+│   ├── ARTIFACT.md
 │   ├── README.md
 │   ├── validation.bib
 │   ├── validation.pdf
@@ -128,10 +129,14 @@ find . -type f \( -name "*.rs" -o -name "*.md" -o -name "*.toml" -o -name "*.yml
 - `benches/` contains Criterion benchmark harnesses, shared benchmark fixtures,
   and performance-result documentation. Timing-based measurements belong here,
   not in unit tests.
-- `examples/` contains user-facing API demos and workflow examples.
-- `notebooks/` contains reproducible visualization and analysis notebooks.
-- `papers/` contains publication-facing TeX/BibTeX sources and tracked reviewer
-  PDFs. Paper figures reuse canonical assets under `docs/assets/`.
+- `examples/` contains copyable, compile-checked Rust API workflows.
+- `notebooks/` contains reproducible visualization and analysis workflows that
+  orchestrate the Rust CLI. The combined public-workflow coverage map lives in
+  `examples/README.md`.
+- `papers/` contains the reviewer artifact index, publication-facing
+  TeX/BibTeX sources, and tracked reviewer PDFs. The artifact index is software
+  release packaging rather than author-owned manuscript prose. Paper figures
+  reuse canonical assets under `docs/assets/`.
 - `docs/` contains user documentation, contributor guidance, architecture
   references, archived design notes, and templates.
 - `docs/dev/` contains operational rules for agents and contributors, indexed
@@ -147,6 +152,10 @@ find . -type f \( -name "*.rs" -o -name "*.md" -o -name "*.toml" -o -name "*.yml
 - `Cargo.toml` uses an explicit package allowlist so crates.io artifacts carry
   the public library surface, examples, benchmarks, integration tests, and
   active documentation without bundling CI-only tooling or archived notes.
+- `papers/ARTIFACT.md` is included in the crates.io allowlist as a reviewer
+  signpost, but its canonical commands require the repository-only `justfile`,
+  scripts, and release-workflow surfaces. The executable reviewer bundle is the
+  GitHub/Zenodo release snapshot.
 - `rust-toolchain.toml` pins the MSRV toolchain and uses a lean profile with
   only repository-required components.
 - `pyproject.toml` owns Python support-tooling dependencies and validation

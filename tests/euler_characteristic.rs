@@ -269,7 +269,7 @@ fn test_5d_single_simplex() {
 // =============================================================================
 
 #[test]
-fn test_2d_toroidal_explicit_construction_rejected() {
+fn test_t2_explicit_toroidal_construction_rejected() {
     // 3×3 periodic grid torus (T²): 9 vertices, 18 triangles.
     // Each quad (i,j) is split into two triangles with periodic wrapping.
     // Vertex layout: v(row, col) = row * 3 + col.
@@ -322,7 +322,7 @@ fn test_2d_toroidal_explicit_construction_rejected() {
 }
 
 #[test]
-fn test_3d_toroidal_explicit_construction_rejected() {
+fn test_t3_explicit_toroidal_construction_rejected() {
     // 3×3×3 periodic Freudenthal triangulation of T³.
     //
     // The Freudenthal (Kuhn) triangulation decomposes each unit cube into D! = 6
@@ -462,8 +462,8 @@ macro_rules! test_complex_with_interior {
             // Expected boundary χ values:
             // - 2D: boundary is S¹ (circle) → χ = 0
             // - 3D: boundary is S² (sphere) → χ = 2
-            // - 4D: boundary is S³ (3-sphere) → χ = 0
-            // - 5D: boundary is S⁴ (4-sphere) → χ = 2
+            // - 4D: boundary is S³ → χ = 0
+            // - 5D: boundary is S⁴ → χ = 2
             // Generally: χ(S^k) = 1 + (-1)^k
             let boundary_counts = dt.boundary_simplex_counts().unwrap();
             let boundary_chi = euler::euler_characteristic(&boundary_counts);

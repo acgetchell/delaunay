@@ -272,35 +272,42 @@ the codebase.
 
 ### Toroidal topology support
 
-Toroidal workflows use two explicit `DelaunayTriangulationBuilder` modes:
-canonicalized coordinate wrapping and true periodic quotient construction. The
-periodic path is release-validated in 2D and for compact 3D inputs:
+Toroidal workflows use periodic quotient construction through
+`DelaunayTriangulationBuilder`. The image-point path is release-validated on
+`T^2` and for compact `T^3` inputs:
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+use delaunay::prelude::construction::{
+    DelaunayResult, DelaunayTriangulationBuilder, vertex,
+};
+use delaunay::prelude::geometry::RobustKernel;
 
-// 2D Euclidean triangulation after wrapping inputs into a toroidal domain
-let vertices = vec![
-    vertex![0.1, 0.1]?,
-    vertex![0.9, 0.9]?,
-    // ...
-];
+fn main() -> DelaunayResult<()> {
+    let vertices = vec![
+        vertex![0.2, 0.3]?,
+        vertex![0.8, 0.1]?,
+        vertex![0.5, 0.7]?,
+        vertex![0.1, 0.9]?,
+        vertex![0.6, 0.4]?,
+        vertex![0.3, 0.5]?,
+        vertex![0.9, 0.2]?,
+    ];
 
-let dt = DelaunayTriangulationBuilder::new(&vertices)
-    .try_canonicalized_toroidal([1.0, 1.0])? // Canonicalized toroidal construction
-    .build()?;
+    let dt = DelaunayTriangulationBuilder::new(&vertices)
+        .try_toroidal([1.0, 1.0])?
+        .build_with_kernel(&RobustKernel::new())?;
+
+    dt.validate()?;
+    Ok(())
+}
 ```
 
-Canonicalized toroidal construction wraps coordinates into the fundamental
-domain before building a Euclidean triangulation of the wrapped point set. It
-does not attach toroidal manifold topology to the output and does not rewire
-opposite boundary facets. For a true periodic quotient, use
-`.try_toroidal([..])`; the validated image-point path currently covers 2D
-and compact 3D fixtures. 4D/5D periodic quotients fail fast pending scalable
-construction work in issue #416.
+The validated image-point path currently covers `T^2` and compact `T^3`
+fixtures. `T^4`/`T^5` periodic quotients fail fast pending scalable construction
+work in issue #416.
 
 For examples, see
-[Builder API: toroidal construction modes](workflows.md#builder-api-toroidal-construction-modes)
+[Builder API: toroidal construction](workflows.md#builder-api-toroidal-construction)
 and
 [`DelaunayTriangulationBuilder::try_toroidal`](https://docs.rs/delaunay/latest/delaunay/builder/struct.DelaunayTriangulationBuilder.html#method.try_toroidal).
 
@@ -311,7 +318,7 @@ canonicalizes finite nonzero coordinates onto the unit sphere. The bounded
 `SphericalDelaunayBuilder` prototype constructs `S^2`/`S^3` Delaunay simplices from
 ambient `R^3`/`R^4` points by convex-hull duality, while keeping Level 3
 PL-topology validation separate from spherical Level 4/5 geometry. Full
-spherical integration across 2D-5D and hyperbolic integration remain future
+spherical integration across `S^2`-`S^5` and hyperbolic integration remain future
 work.
 
 ## Triangulation editing (`src/delaunay/`)

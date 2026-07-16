@@ -15,7 +15,7 @@
 D-dimensional [Delaunay triangulations] and [convex hulls][Convex hulls] in [Rust], with exact predicates,
 deterministic degeneracy handling, explicit topology validation, and bistellar flips for finite point sets.
 
-![2D spherical Delaunay triangulation with 160 points][readme-hero]
+![S² Delaunay triangulation with 160 points][readme-hero]
 
 ## Contents
 
@@ -39,7 +39,7 @@ deterministic degeneracy handling, explicit topology validation, and bistellar f
 Rust crate providing D-dimensional [Delaunay triangulations] and [convex hulls][Convex hulls]
 constructed with a [PL-manifold] (default) or [pseudomanifold][Pseudomanifold] guarantee on finite
 point sets. Euclidean construction is explicitly tested in 2D through 5D, periodic toroidal
-construction is validated in 2D and for compact 3D inputs, and bounded spherical S²/S³ construction
+construction is validated on T² and for compact T³ inputs, and bounded spherical S²/S³ construction
 is available as a prototype. Uses [exact predicates] and [Simulation of Simplicity] for robustness and
 degeneracy handling, and [Hilbert curve]s for deterministic insertion ordering and efficient spatial indexing.
 Provides an explicit [5-level validation hierarchy][Validation Guide] on individual elements,
@@ -75,9 +75,8 @@ meshing, or production-scale dynamic remeshing.
 - [x] Configurable predicate kernels: `AdaptiveKernel` by default, `RobustKernel` for exact
   degeneracy-preserving predicates, and `FastKernel` for well-conditioned exploratory work.
 - [x] D-dimensional [Convex hulls] and [Delaunay triangulations].
-- [x] Euclidean and toroidal construction through `DelaunayTriangulationBuilder`:
-  `.try_toroidal(...)` builds the periodic image-point quotient in validated dimensions, while
-  `.try_canonicalized_toroidal(...)` wraps coordinates without quotient rewiring.
+- [x] Euclidean construction and periodic `T^2`/`T^3` image-point quotients through
+  `DelaunayTriangulationBuilder`.
 - [x] Exact predicates, stack-allocated linear algebra through [la-stack], and deterministic SoS
   degeneracy handling.
 - [x] Focused public preludes for common construction, query, geometry, repair, topology, and diagnostic
@@ -143,13 +142,15 @@ fn main() -> DelaunayResult<()> {
 
     assert_eq!(dt.dim(), 3);
     assert_eq!(dt.number_of_vertices(), 4);
-    assert!(dt.validate().is_ok());
+    dt.validate()?;
     Ok(())
 }
 ```
 
-For toroidal domains, auxiliary vertex/simplex data, insertion statistics, vertex deletion, and
-explicit flips, see [`docs/workflows.md`](docs/workflows.md).
+For runnable Rust workflows spanning toroidal and spherical construction,
+auxiliary data, serialization, insertion statistics, deletion, queries,
+quality metrics, and explicit flips, see the
+[`examples/` coverage index](examples/README.md).
 
 ### Notebook and binary
 
@@ -167,8 +168,8 @@ visualization and convex-hull JSON, and writes a transparent preview under
 `target/notebooks/00_quickstart/`.
 The notebook and `just run` recipes enable the Cargo `cli` feature, which pulls in the binary and
 notebook-support dependencies; ordinary library builds do not need them.
-The reviewer-facing artifact guide and paper-claim mapping that consume this
-visual-inspection workflow are tracked in [#408](https://github.com/acgetchell/delaunay/issues/408).
+The [reviewer artifact guide](papers/ARTIFACT.md) and paper-claim mapping consume
+this visual-inspection workflow without duplicating its implementation.
 For validation-layer failure visuals, open
 [`notebooks/01_validation.ipynb`](notebooks/01_validation.ipynb);
 it runs `delaunay validation-demo` and renders generated validation figures for docs and papers.
@@ -260,11 +261,12 @@ exposition, see [`papers/validation.tex`](papers/validation.tex) and the compile
 
 ## 🗺️ Documentation Map
 
+- [Artifact Guide](papers/ARTIFACT.md) - v0.8.0 reviewer reproduction paths, claim map, evidence, and limits.
 - [API Design](docs/api_design.md) - construction, vertex lifecycle, and explicit Pachner moves.
 - [Benchmarks](benches/README.md) - Criterion suites, perf-profile workflow, release summaries, and canary sizes.
 - [Code Organization](docs/code_organization.md) - Architecture hub with links to module maps, focused preludes, and file layout.
 - [Diagnostics](docs/diagnostics.md) - Structured reports, telemetry, and debug switches.
-- [Examples](examples/README.md) - Runnable examples for construction, hulls, topology editing, diagnostics, and repair.
+- [Examples and Notebooks](examples/README.md) - Coverage map for runnable Rust workflows and visual computational artifacts.
 - [Invariants](docs/invariants.md) - Topological and geometric invariants enforced by the crate.
 - [Limitations](docs/limitations.md) - Supported dimensions, predicate limits, toroidal modes, and feature gaps.
 - [Mesh Export](docs/mesh_export.md) - Stable UUID-based simplicial-complex export for notebooks and downstream tools.
@@ -329,12 +331,8 @@ Current routine coverage targets 2D through 5D. Exact orientation is available t
 in-sphere is available through D=5. For D≥6, in-sphere classification relies on symbolic perturbation
 and deterministic tie-breaking because the determinant exceeds the current stack-matrix limit.
 
-Toroidal support has two modes:
-
-- `.try_canonicalized_toroidal([..])` wraps coordinates into the fundamental domain before Euclidean
-  construction.
-- `.try_toroidal([..])` builds a true periodic quotient through the image-point method; it is validated
-  in 2D and compact 3D, while 4D/5D fail fast pending scalable quotient work.
+`.try_toroidal([..])` builds a periodic quotient through the image-point method. It is validated on
+`T^2` and compact `T^3`, while `T^4`/`T^5` fail fast pending scalable quotient work.
 
 Not implemented today: constrained Delaunay triangulations, Voronoi diagram extraction, built-in
 visualization, massively parallel/GPU construction, out-of-core meshing, full spherical integration

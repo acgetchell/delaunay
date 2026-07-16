@@ -975,8 +975,8 @@ mod tests {
         assert!(dt.validate().is_ok());
     }
 
-    fn wedge_two_spheres_share_vertex_tds_2d() -> (Tds<(), (), 2>, SimplexKey, SimplexKey) {
-        // Two closed 2D spheres (boundaries of tetrahedra) sharing one vertex are
+    fn wedge_two_s2_complexes_share_vertex_tds() -> (Tds<(), (), 2>, SimplexKey, SimplexKey) {
+        // Two closed S^2 complexes (boundaries of tetrahedra) sharing one vertex are
         // pseudomanifold but not PL-manifold: the shared vertex has a disconnected link.
         let mut tds: Tds<(), (), 2> = Tds::empty();
 
@@ -1089,7 +1089,8 @@ mod tests {
     #[test]
     fn test_validate_ridge_links_after_full_reseed_repair_uses_mutation_frontier() {
         init_tracing();
-        let (tds, incident_to_invalid_ridge, nonincident) = wedge_two_spheres_share_vertex_tds_2d();
+        let (tds, incident_to_invalid_ridge, nonincident) =
+            wedge_two_s2_complexes_share_vertex_tds();
         let dt = DelaunayTriangulationCandidate::assemble(
             tds,
             AdaptiveKernel::new(),
