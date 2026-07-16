@@ -819,19 +819,19 @@ pub fn insphere<const D: usize>(
 /// # Robustness
 ///
 /// Both the orientation sub-predicate and the lifted insphere determinant use a
-/// three-stage evaluation (via internal helpers `insphere_from_matrix` and
-/// `orientation_from_matrix`):
+/// filtered-exact evaluation (via internal helpers
+/// `try_insphere_from_matrix` and `try_orientation_from_matrix`):
 /// 1. **f64 fast filter** with adaptive tolerance — resolves well-conditioned cases
 ///    without allocating.
 /// 2. **Exact Bareiss** via [`la_stack::Matrix::det_sign_exact`] — provably correct
 ///    sign for finite matrix entries.
-/// 3. **Indeterminate fallback** — if exact arithmetic cannot run (non-finite
-///    entries), the helpers return `BOUNDARY` / `DEGENERATE` directly.  No
-///    additional floating-point sign classification is performed.
 ///
-/// This makes `insphere_lifted` provably correct for finite inputs. For additional
-/// robustness strategies (symbolic perturbation, consistency checking), use
-/// [`crate::geometry::kernel::RobustKernel`].
+/// Relative-coordinate or lifted-norm overflow is returned as a typed
+/// coordinate-conversion error before determinant evaluation. Therefore a
+/// returned classification has a provably correct sign, while finite inputs
+/// whose lifted intermediates are not representable fail explicitly. For
+/// additional robustness strategies (symbolic perturbation, consistency
+/// checking), use [`crate::geometry::kernel::RobustKernel`].
 ///
 /// # Algorithm
 ///
@@ -2372,7 +2372,7 @@ mod tests {
     }
 
     // =======================================================================
-    // insphere_from_matrix Stage 2 & Stage 3 coverage
+    // Exact matrix evaluation and typed boundary-failure coverage
     // =======================================================================
 
     #[test]

@@ -33,24 +33,27 @@ Treat partial items as still open until their acceptance notes are satisfied.
   orthogonal construction, insertion, query, repair, orientation, validation,
   and serialization modules. The remaining large-file targets are `core/algorithms/flips.rs`
   and, if future review warrants another split, the TDS validation/mutation modules.
-- [ ] **7. Replace full-TDS clone rollback with journaled or localized rollback.**
-  This remains the largest performance opportunity. Tracked for v0.8.0 in
-  #364.
+- [x] **7. Audit full-TDS clone rollback and centralize transactional mutation.**
+  Scoped rollback guards now centralize failure-atomic TDS and triangulation
+  mutation, with detached scratch workspaces retained where copy-on-success is
+  the intended algorithm. Closed in #364; valid 2D removal rollback behavior
+  was completed in #448.
 - [x] **8. Harden robust insphere against squared-norm overflow.**
   Share the relative-coordinate formulation with `AdaptiveKernel::in_sphere`
   or return a typed error for non-finite squared norms.
 - [x] **9. Strengthen `OnSuspicion` validation coverage.**
   Normal-path validation now runs pseudomanifold checks, with PL guarantees
   layering ridge and vertex-link checks as required.
-- [ ] **10. Replace nested `Option` neighbors with a typed enum.**
-  Make unassigned neighbors distinct from assigned boundary slots and hide raw
-  mutation behind accessors. Deferred beyond v0.7.8 and tracked in #387.
+- [x] **10. Replace nested `Option` neighbors with a typed enum.**
+  `NeighborSlot` distinguishes unassigned, boundary, and neighboring-simplex
+  states, while raw neighbor mutation remains behind TDS-owned accessors.
+  Closed in #387.
 - [x] **11. Gate `simplices_mut()` out of production builds.**
   The raw storage accessor was deleted; tests now use narrower mutation paths
   or exercise lower-level helpers directly.
-- [ ] **12. Confirm clone semantics for linear-algebra error variants.**
-  Verify `LaError: Clone` and keep parent error enums honestly cloneable.
-  Deferred beyond v0.7.8 and tracked in #384.
+- [x] **12. Confirm clone semantics for linear-algebra error variants.**
+  `LaError` clone behavior and the parent error enums were audited together;
+  clone bounds now reflect their payload semantics. Closed in #384.
 - [x] **13. Make strict insphere consistency test control isolated.**
   The once-init strict-insphere env snapshot is now named and documented as
   process-wide, while unit tests use a thread-local override guard instead of
@@ -72,9 +75,9 @@ Treat partial items as still open until their acceptance notes are satisfied.
   transactional rollback instead of being cloned/restored or discarded; committed
   removals prune the deleted key, and query paths continue validating grid hits
   against the live TDS.
-- [ ] **17. Add a leaner adaptive orientation fast path.**
-  Avoid paying the diagnostic plus exact predicate path when SoS is unnecessary.
-  Deferred beyond v0.7.8 and tracked in #256.
+- [x] **17. Add a leaner adaptive orientation fast path.**
+  The adaptive kernel uses the filtered orientation sign before exact/SoS
+  fallback, and the affected 2D-5D property tests are enabled. Closed in #256.
 - [x] **18. Avoid fresh UUID allocation for rollback snapshots.**
   Rollback snapshots now preserve identity with `Arc::clone`; ordinary `Clone`
   intentionally keeps fresh runtime identity.
@@ -102,19 +105,19 @@ Treat partial items as still open until their acceptance notes are satisfied.
 - [x] **23. Reconsider skipped insertions as success outcomes.**
   Make skipped duplicate and degeneracy outcomes harder for callers to ignore.
   Closed for v0.7.8 in #386.
-- [ ] **24. Make `Simplex` encapsulation consistent.**
-  Private neighbor storage plus accessors is the likely direction. Tracked for
-  v0.8.0+ in #387.
-- [ ] **25. Protect `Vertex::incident_simplex` mutation.**
-  Introduce a checked setter or newtype so invalid incident-simplex links are
-  harder to construct. Tracked for v0.8.0+ in #387.
+- [x] **24. Make `Simplex` encapsulation consistent.**
+  Neighbor storage is private and mutation is routed through the validated TDS
+  surface. Closed in #387.
+- [x] **25. Protect `Vertex::incident_simplex` mutation.**
+  The field and setter are crate-private, with public read access and TDS-owned
+  repair/assignment paths. Closed in #387.
 - [x] **26. Revisit public `core` module naming.**
   Keep `crate::core` as the internal implementation namespace, and expose the
   public low-level surface through curated modules and focused preludes such as
   `tds`, `collections`, `algorithms`, and `query`. Closed for v0.7.8 in #388.
-- [ ] **27. Normalize boxing policy in Delaunay repair error variants.**
-  Pick a consistent enum-size and payload strategy. Deferred beyond v0.7.8 and
-  tracked in #384.
+- [x] **27. Normalize boxing policy in Delaunay repair error variants.**
+  Large recursive/diagnostic payloads follow the audited boxing policy while
+  lightweight classification remains inline. Closed in #384.
 
 ## Testing Gaps
 

@@ -249,9 +249,8 @@ Higher-level
 when they also mutate insertion hints, spatial indexes, or repair bookkeeping;
 the guard must restore or intentionally invalidate that auxiliary state
 alongside the TDS. Do not wrap only the TDS when owner-coupled state can change.
-Issue #364 tracks this rollback-infrastructure coverage; issue #448 remains the
-separate `remove_vertex` orientation-correctness follow-up and should not be
-folded into infrastructure-only cleanup.
+Issue #364 completed the rollback-infrastructure audit; the separate
+`remove_vertex` orientation-correctness work was resolved in #448.
 
 Detached trial/scratch workspaces are a separate pattern: they may use
 `clone_for_rollback`/`clone_from_for_rollback` directly when the canonical owner

@@ -6,8 +6,13 @@ Tests data models, parsing functions, and formatting utilities for benchmark pro
 """
 
 import re
+from dataclasses import replace
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from benchmark_models import (
     BenchmarkData,
@@ -418,12 +423,6 @@ class TestFormattingFunctions:
         assert benchmark.time_mean == 110.0
         assert benchmark.time_unit == "µs"
 
-        # Test negative values
-        benchmark2 = BenchmarkData(1000, "3D")
-        success = parse_time_data(benchmark2, "Time: [-1.0, 0.0, 1.0] µs")
-        assert success is True
-        assert benchmark2.time_mean == 0.0
-
         # Test flexible whitespace
         benchmark3 = BenchmarkData(1000, "3D")
         success = parse_time_data(benchmark3, "Time:   [ 100.0 ,  110.0,   120.0 ]   µs")
@@ -447,6 +446,30 @@ class TestFormattingFunctions:
         assert success is True
         assert benchmark2.throughput_mean == 9090.9
         assert benchmark2.throughput_unit == "Kelem/s"
+
+    @pytest.mark.parametrize(
+        ("parser", "line"),
+        [
+            (parse_time_data, "Time: [-1.0, 1.0, 2.0] µs"),
+            (parse_time_data, "Time: [0.0, 1.0, 2.0] µs"),
+            (parse_time_data, "Time: [1.0, 3.0, 2.0] µs"),
+            (parse_time_data, "Time: [1.0, 1e999, 1e999] µs"),
+            (parse_throughput_data, "Throughput: [-1.0, 1.0, 2.0] Kelem/s"),
+            (parse_throughput_data, "Throughput: [1.0, 3.0, 2.0] Kelem/s"),
+            (parse_throughput_data, "Throughput: [1.0, 1e999, 1e999] Kelem/s"),
+        ],
+    )
+    def test_parsers_reject_nonphysical_intervals(
+        self,
+        parser: Callable[[BenchmarkData, str], bool],
+        line: str,
+    ) -> None:
+        """Malformed intervals must not mutate an existing benchmark record."""
+        expected = BenchmarkData(1000, "3D").with_timing(1.0, 2.0, 3.0, "ns").with_throughput(4.0, 5.0, 6.0, "elem/s")
+        benchmark = replace(expected)
+
+        assert parser(benchmark, line) is False
+        assert benchmark == expected
 
     def test_format_benchmark_tables_dimension_sorting(self) -> None:
         """Test that dimensions are sorted numerically rather than lexically."""
