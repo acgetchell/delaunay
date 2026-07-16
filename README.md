@@ -142,7 +142,7 @@ fn main() -> DelaunayResult<()> {
 
     assert_eq!(dt.dim(), 3);
     assert_eq!(dt.number_of_vertices(), 4);
-    assert!(dt.validate().is_ok());
+    dt.validate()?;
     Ok(())
 }
 ```

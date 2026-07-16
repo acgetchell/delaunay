@@ -77,8 +77,7 @@
 //!     .build_with_kernel(&kernel)?;
 //!
 //! assert_eq!(dt.number_of_vertices(), 7);
-//! // Every vertex has a valid incident simplex (no boundary).
-//! assert!(dt.is_valid_structure().is_ok());
+//! dt.validate()?;
 //! # Ok(())
 //! # }
 //! ```
@@ -1074,7 +1073,8 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// # fn main() -> DelaunayResult<()> {
     /// // No vertex data (U = () inferred)
     /// let vertices = vec![delaunay::vertex![0.0, 0.0]?, delaunay::vertex![1.0, 0.0]?, delaunay::vertex![0.0, 1.0]?];
-    /// let _dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
+    /// dt.validate()?;
     ///
     /// // Typed vertex data (U = i32 inferred)
     /// let typed: [Vertex<i32, 2>; 3] = [
@@ -1082,7 +1082,8 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     ///     delaunay::vertex![1.0, 0.0; data = 2]?,
     ///     delaunay::vertex![0.0, 1.0; data = 3]?,
     /// ];
-    /// let _dt = DelaunayTriangulationBuilder::new(&typed).build()?;
+    /// let typed_dt = DelaunayTriangulationBuilder::new(&typed).build()?;
+    /// typed_dt.validate()?;
     /// # Ok(())
     /// # }
     /// ```
@@ -1317,7 +1318,7 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     ///     .build_with_kernel(&kernel)?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 7);
-    /// assert!(dt.is_valid_structure().is_ok());
+    /// dt.validate()?;
     /// # Ok(())
     /// # }
     /// ```
@@ -1362,6 +1363,7 @@ impl<'v, U, V, const D: usize> DelaunayTriangulationBuilder<'v, U, D, V> {
     ///     .build_with_kernel(&kernel)?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 7);
+    /// dt.validate()?;
     /// # Ok(())
     /// # }
     /// ```
@@ -1981,17 +1983,6 @@ where
             let vertices = self.vertices;
             let topology_guarantee = self.topology_guarantee;
             let construction_options = self.construction_options;
-            match self.topology {
-                BuilderTopology::Euclidean => {}
-                BuilderTopology::PeriodicImagePoint(_) => {
-                    return Self::record_construction_total_timing(
-                        self.build_with_kernel(kernel)
-                            .map(Self::with_minimal_success_statistics)
-                            .map_err(Self::with_default_error_statistics),
-                        construction_started,
-                    );
-                }
-            }
 
             Self::reject_euclidean_non_euclidean_topology(global_topology)
                 .map_err(Self::with_default_error_statistics)

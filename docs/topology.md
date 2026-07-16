@@ -277,22 +277,29 @@ Toroidal workflows use periodic quotient construction through
 `T^2` and for compact `T^3` inputs:
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+use delaunay::prelude::construction::{
+    DelaunayResult, DelaunayTriangulationBuilder, vertex,
+};
 use delaunay::prelude::geometry::RobustKernel;
 
-let vertices = vec![
-    vertex![0.2, 0.3]?,
-    vertex![0.8, 0.1]?,
-    vertex![0.5, 0.7]?,
-    vertex![0.1, 0.9]?,
-    vertex![0.6, 0.4]?,
-    vertex![0.3, 0.5]?,
-    vertex![0.9, 0.2]?,
-];
+fn main() -> DelaunayResult<()> {
+    let vertices = vec![
+        vertex![0.2, 0.3]?,
+        vertex![0.8, 0.1]?,
+        vertex![0.5, 0.7]?,
+        vertex![0.1, 0.9]?,
+        vertex![0.6, 0.4]?,
+        vertex![0.3, 0.5]?,
+        vertex![0.9, 0.2]?,
+    ];
 
-let dt = DelaunayTriangulationBuilder::new(&vertices)
-    .try_toroidal([1.0, 1.0])?
-    .build_with_kernel(&RobustKernel::new())?;
+    let dt = DelaunayTriangulationBuilder::new(&vertices)
+        .try_toroidal([1.0, 1.0])?
+        .build_with_kernel(&RobustKernel::new())?;
+
+    dt.validate()?;
+    Ok(())
+}
 ```
 
 The validated image-point path currently covers `T^2` and compact `T^3`

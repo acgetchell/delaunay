@@ -76,10 +76,12 @@ The useful updates ported in this pass are:
   previously used lower-bound specifiers for those tools, which allowed local
   and CI environments to drift away from that reviewed baseline.
 - Local just helpers now version-check the pinned `uv`, `just`,
-  `cargo-nextest`, `taplo-cli`, `dprint`, `rumdl`, `typos-cli`, and `zizmor`
-  tools instead of accepting any installed version. Delaunay does not currently
-  pin or invoke `cargo-instruments`; no `cargo-instruments` alignment was needed
-  in this pass.
+  `cargo-nextest`, `cargo-machete`, `taplo-cli`, `dprint`, `git-cliff`, `rumdl`,
+  `samply`, `typos-cli`, and `zizmor` tools instead of accepting any installed
+  version. Named guards share one parameterized exact-version helper while
+  retaining task-specific entry points. Delaunay does not currently pin or
+  invoke `cargo-instruments`; no `cargo-instruments` alignment was needed in
+  this pass.
 - GitHub Actions Cargo tool installation now uses
   `taiki-e/cache-cargo-install-action` where Delaunay previously used
   `taiki-e/install-action`, matching the sibling workflow pattern for pinned
@@ -240,8 +242,9 @@ The useful updates ported in this pass are:
   `taiki-e/cache-cargo-install-action`/`cargo install --locked` pattern before
   the corresponding recipes run. Pinned Rust CLI tools are installed through
   Cargo rather than Homebrew so local setup cannot drift from CI pins. The CI
-  build matrix runs `just ci` on Linux, macOS, and Windows after syncing the
-  locked uv dev group and installing the pinned Cargo tools. The papers workflow
+  build matrix runs `just ci`, including `cargo machete` dependency hygiene, on
+  Linux, macOS, and Windows after syncing the locked uv dev group and installing
+  the pinned Cargo tools. The papers workflow
   runs on macOS, installs `chktex` from the TeX distribution when the runner
   does not already provide it, and installs the native bridge-library packages
   required when compiling Tectonic from Cargo. GitHub Actions bootstrap only
@@ -280,8 +283,8 @@ The useful updates ported in this pass are:
   `bench-save-baseline`, `perf-local`, `perf-github-assets`, and `perf-release`.
   Delaunay keeps its own release-signal suite behind those names:
   `ci_performance_suite`, `circumsphere_containment`, `cold_path_predicates`,
-  `topology_guarantee_construction`, and `locate`. Text `baseline_results.txt`
-  files remain the CI regression format, while Criterion saved baselines and
+  `topology_guarantee_construction`, and `locate`. Plain-text
+  `baseline_results.txt` files remain the CI regression format, while Criterion saved baselines and
   `target/bench-reports/*.md` reports own local and curated release comparison
   evidence. The release asset workflow packages raw Criterion data for the
   release-signal set so `perf-github-assets` can compare stored releases

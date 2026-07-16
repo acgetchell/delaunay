@@ -126,7 +126,7 @@ fn main() -> DelaunayResult<()> {
 
 **When to use the Builder:**
 
-- **Toroidal construction**: Use `.try_toroidal()` for periodic image-point construction.
+- **Toroidal construction**: Use `.try_toroidal([1.0, 1.0])` for periodic image-point construction.
   This path is release-validated on `T^2` and compact `T^3`; `T^4`/`T^5`
   fail fast pending scalable quotient construction in issue #416.
 - **Custom topology guarantees**: Set stricter or more relaxed manifold checks

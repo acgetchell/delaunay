@@ -30,27 +30,9 @@ _ensure-actionlint: _ensure-uv
     set -euo pipefail
     uv run actionlint -version >/dev/null
 
-_ensure-cargo-llvm-cov:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    installed_version=""
-    if command -v cargo-llvm-cov >/dev/null; then
-        installed_version="$(cargo llvm-cov --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_version" != "{{ cargo_llvm_cov_version }}" ]]; then
-        echo "❌ 'cargo-llvm-cov' {{ cargo_llvm_cov_version }} not found. See 'just setup-tools' or install:"
-        echo "   cargo install --locked cargo-llvm-cov --version {{ cargo_llvm_cov_version }}"
-        exit 1
-    fi
+_ensure-cargo-llvm-cov: (_ensure-pinned-cargo-tool "cargo-llvm-cov" "cargo-llvm-cov" cargo_llvm_cov_version "llvm-cov")
 
-_ensure-cargo-machete:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if ! cargo machete --version >/dev/null 2>&1; then
-        echo "❌ 'cargo-machete' not found. Install with:"
-        echo "   cargo install --locked cargo-machete"
-        exit 1
-    fi
+_ensure-cargo-machete: (_ensure-pinned-cargo-tool "cargo-machete" "cargo-machete" cargo_machete_version)
 
 _ensure-chktex:
     #!/usr/bin/env bash
@@ -60,67 +42,43 @@ _ensure-chktex:
         exit 1
     }
 
-_ensure-dprint:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    installed_version=""
-    if command -v dprint >/dev/null; then
-        installed_version="$(dprint --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_version" != "{{ dprint_version }}" ]]; then
-        echo "❌ 'dprint' {{ dprint_version }} not found. See 'just setup-tools' or install:"
-        echo "   cargo install --locked dprint --version {{ dprint_version }}"
-        exit 1
-    fi
+_ensure-dprint: (_ensure-pinned-cargo-tool "dprint" "dprint" dprint_version)
 
-_ensure-git-cliff:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v git-cliff >/dev/null || {
-        echo "❌ 'git-cliff' not found. Install with:"
-        echo "   cargo install --locked git-cliff"
-        exit 1
-    }
+_ensure-git-cliff: (_ensure-pinned-cargo-tool "git-cliff" "git-cliff" git_cliff_version)
 
 _ensure-jq:
     #!/usr/bin/env bash
     set -euo pipefail
     command -v jq >/dev/null || { echo "❌ 'jq' not found. Install jq and ensure it is on PATH."; exit 1; }
 
-_ensure-nextest:
+_ensure-nextest: (_ensure-pinned-cargo-tool "cargo-nextest" "cargo-nextest" nextest_version)
+
+_ensure-pinned-cargo-tool binary package version cargo_subcommand="":
     #!/usr/bin/env bash
     set -euo pipefail
+
+    binary="{{ binary }}"
+    package="{{ package }}"
+    version="{{ version }}"
+    cargo_subcommand="{{ cargo_subcommand }}"
+
     installed_version=""
-    if cargo nextest --version >/dev/null 2>&1; then
-        installed_version="$(cargo nextest --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    if command -v "$binary" >/dev/null; then
+        if [[ -n "$cargo_subcommand" ]]; then
+            installed_version="$(cargo "$cargo_subcommand" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+        else
+            installed_version="$("$binary" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+        fi
     fi
-    if [[ "$installed_version" != "{{ nextest_version }}" ]]; then
-        echo "❌ 'cargo-nextest' {{ nextest_version }} not found. See 'just setup-tools' or install:"
-        echo "   cargo install --locked cargo-nextest --version {{ nextest_version }}"
+    if [[ "$installed_version" != "$version" ]]; then
+        echo "❌ '$binary' $version not found. See 'just setup-tools' or install:"
+        echo "   cargo install --locked $package --version $version"
         exit 1
     fi
 
-_ensure-rumdl:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    installed_version=""
-    if command -v rumdl >/dev/null; then
-        installed_version="$(rumdl --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_version" != "{{ rumdl_version }}" ]]; then
-        echo "❌ 'rumdl' {{ rumdl_version }} not found. See 'just setup-tools' or install:"
-        echo "   cargo install --locked rumdl --version {{ rumdl_version }}"
-        exit 1
-    fi
+_ensure-rumdl: (_ensure-pinned-cargo-tool "rumdl" "rumdl" rumdl_version)
 
-_ensure-samply:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v samply >/dev/null || {
-        echo "❌ 'samply' not found. See 'just setup-tools' or install:"
-        echo "   cargo install --locked samply"
-        exit 1
-    }
+_ensure-samply: (_ensure-pinned-cargo-tool "samply" "samply" samply_version)
 
 _ensure-shellcheck: _ensure-uv
     #!/usr/bin/env bash
@@ -132,57 +90,13 @@ _ensure-shfmt: _ensure-uv
     set -euo pipefail
     uv run shfmt --version >/dev/null
 
-_ensure-taplo:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    installed_version=""
-    if command -v taplo >/dev/null; then
-        installed_version="$(taplo --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_version" != "{{ taplo_version }}" ]]; then
-        echo "❌ 'taplo' {{ taplo_version }} not found. See 'just setup-tools' or install:"
-        echo "   cargo install --locked taplo-cli --version {{ taplo_version }}"
-        exit 1
-    fi
+_ensure-taplo: (_ensure-pinned-cargo-tool "taplo" "taplo-cli" taplo_version)
 
-_ensure-tectonic:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    installed_version=""
-    if command -v tectonic >/dev/null; then
-        installed_version="$(tectonic --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_version" != "{{ tectonic_version }}" ]]; then
-        echo "❌ 'tectonic' {{ tectonic_version }} not found. See 'just setup-tools' or install:"
-        echo "   cargo install --locked tectonic --version {{ tectonic_version }}"
-        exit 1
-    fi
+_ensure-tectonic: (_ensure-pinned-cargo-tool "tectonic" "tectonic" tectonic_version)
 
-_ensure-tex-fmt:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    installed_version=""
-    if command -v tex-fmt >/dev/null; then
-        installed_version="$(tex-fmt --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_version" != "{{ tex_fmt_version }}" ]]; then
-        echo "❌ 'tex-fmt' {{ tex_fmt_version }} not found. See 'just setup-tools' or install:"
-        echo "   cargo install --locked tex-fmt --version {{ tex_fmt_version }}"
-        exit 1
-    fi
+_ensure-tex-fmt: (_ensure-pinned-cargo-tool "tex-fmt" "tex-fmt" tex_fmt_version)
 
-_ensure-typos:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    installed_version=""
-    if command -v typos >/dev/null; then
-        installed_version="$(typos --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_version" != "{{ typos_version }}" ]]; then
-        echo "❌ 'typos' {{ typos_version }} not found. See 'just setup-tools' or install:"
-        echo "   cargo install --locked typos-cli --version {{ typos_version }}"
-        exit 1
-    fi
+_ensure-typos: (_ensure-pinned-cargo-tool "typos" "typos-cli" typos_version)
 
 _ensure-uv:
     #!/usr/bin/env bash
@@ -202,18 +116,7 @@ _ensure-yamllint: _ensure-uv
     set -euo pipefail
     uv run yamllint --version >/dev/null
 
-_ensure-zizmor:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    installed_version=""
-    if command -v zizmor >/dev/null; then
-        installed_version="$(zizmor --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_version" != "{{ zizmor_version }}" ]]; then
-        echo "❌ 'zizmor' {{ zizmor_version }} not found. See 'just setup-tools' or install:"
-        echo "   cargo install --locked zizmor --version {{ zizmor_version }}"
-        exit 1
-    fi
+_ensure-zizmor: (_ensure-pinned-cargo-tool "zizmor" "zizmor" zizmor_version)
 
 [private]
 _pachner-stress-dim label vertices attempts validate_every output_dir mode:

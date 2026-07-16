@@ -24,7 +24,7 @@ def run_just(*args: str) -> subprocess.CompletedProcess[str]:
         cwd=REPO_ROOT,
         check=True,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
     )
 
 
@@ -51,6 +51,36 @@ def test_bare_just_shows_curated_help() -> None:
 
     assert result.stdout.startswith("Recommended workflows:\n")
     assert "Use 'just --list' for the complete grouped recipe reference." in result.stdout
+
+
+def test_check_code_includes_dependency_hygiene() -> None:
+    """The comprehensive code check should include unused dependency analysis."""
+    dependencies = {dependency["recipe"] for dependency in just_recipes()["check-code"]["dependencies"]}
+
+    assert "unused-deps" in dependencies
+
+
+def test_cargo_tool_guards_reuse_pinned_helper() -> None:
+    """Named Cargo-tool guards should share one exact-version implementation."""
+    recipes = just_recipes()
+    guard_names = (
+        "_ensure-cargo-llvm-cov",
+        "_ensure-cargo-machete",
+        "_ensure-dprint",
+        "_ensure-git-cliff",
+        "_ensure-nextest",
+        "_ensure-rumdl",
+        "_ensure-samply",
+        "_ensure-taplo",
+        "_ensure-tectonic",
+        "_ensure-tex-fmt",
+        "_ensure-typos",
+        "_ensure-zizmor",
+    )
+
+    for name in guard_names:
+        dependencies = {dependency["recipe"] for dependency in recipes[name]["dependencies"]}
+        assert "_ensure-pinned-cargo-tool" in dependencies, name
 
 
 def test_public_recipes_have_one_group_and_a_description() -> None:

@@ -15,11 +15,14 @@ perf_delaunay_binary := "target/perf/delaunay" + binary_extension
 
 cargo_audit_version := "0.22.2"
 cargo_llvm_cov_version := "0.8.7"
+cargo_machete_version := "0.9.2"
 clippy_sarif_version := "0.8.0"
 dprint_version := "0.55.2"
+git_cliff_version := "2.13.1"
 just_version := "1.56.0"
 nextest_version := "0.9.140"
 rumdl_version := "0.2.34"
+samply_version := "0.13.1"
 sarif_fmt_version := "0.8.0"
 taplo_version := "0.10.0"
 tectonic_version := "0.16.9"
@@ -180,9 +183,9 @@ changelog-unreleased version: _ensure-git-cliff _ensure-rumdl python-sync
 check: check-code check-config check-docs
     @echo "✅ Checks complete!"
 
-# Check Rust, Python, notebooks, and shell scripts.
+# Check Rust and dependency hygiene, Python, notebooks, and shell scripts.
 [group('validation')]
-check-code: rust-core-check python-check notebook-check shell-check
+check-code: rust-core-check unused-deps python-check notebook-check shell-check
 
 # Check justfile, JSON, TOML, YAML/CFF, and GitHub Actions configuration.
 [group('validation')]
@@ -1107,9 +1110,6 @@ setup: setup-tools build
     echo "✅ Setup complete! Run 'just help-workflows' to see available commands."
 
 # Install and verify pinned repository development tools.
-#
-# Note: this recipe is intentionally self-contained. If it grows further, consider splitting
-# it into smaller helper recipes (e.g. cargo tool installs, verification).
 [doc('Install and verify pinned repository development tools.')]
 [group('build and setup')]
 setup-tools: _ensure-uv
@@ -1121,8 +1121,66 @@ setup-tools: _ensure-uv
 
     have() { command -v "$1" >/dev/null 2>&1; }
 
+    installed_cargo_tool_version() {
+        local binary="$1"
+        local cargo_subcommand="${2:-}"
+
+        if ! have "$binary"; then
+            return 0
+        fi
+        if [[ -n "$cargo_subcommand" ]]; then
+            cargo "$cargo_subcommand" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true
+        else
+            "$binary" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true
+        fi
+    }
+
+    ensure_pinned_cargo_tool() {
+        local binary="$1"
+        local package="$2"
+        local expected_version="$3"
+        local cargo_subcommand="${4:-}"
+        local installed_version
+
+        installed_version="$(installed_cargo_tool_version "$binary" "$cargo_subcommand")"
+        if [[ "$installed_version" != "$expected_version" ]]; then
+            echo "  ⏳ Installing $package $expected_version (cargo)..."
+            cargo install --locked "$package" --version "$expected_version"
+        else
+            echo "  ✓ $binary $expected_version"
+        fi
+    }
+
+    ensure_tectonic_build_dependencies() {
+        echo "Ensuring native dependencies needed to install Tectonic..."
+        if ! have pkg-config; then
+            echo "❌ 'pkg-config' not found. Install pkg-config before building Tectonic from Cargo."
+            exit 1
+        fi
+        if ! pkg-config --exists icu-uc; then
+            shopt -s nullglob
+            for candidate in \
+                /opt/homebrew/opt/icu4c*/lib/pkgconfig \
+                /usr/local/opt/icu4c*/lib/pkgconfig; do
+                if [ -d "$candidate" ]; then
+                    export PKG_CONFIG_PATH="$candidate${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+                    break
+                fi
+            done
+            shopt -u nullglob
+        fi
+        if ! pkg-config --exists icu-uc; then
+            echo "❌ 'icu-uc' was not found by pkg-config."
+            echo "   Install ICU development files, or set PKG_CONFIG_PATH to the directory containing icu-uc.pc."
+            exit 1
+        fi
+        echo "  ✓ pkg-config can resolve icu-uc"
+        echo ""
+    }
+
     echo "This recipe installs pinned Rust CLI tools through cargo."
-    echo "External prerequisites that must already be on PATH: uv, jq, rustup, cargo, chktex, pkg-config, and ICU development files."
+    echo "External prerequisites that must already be on PATH: uv, jq, rustup, cargo, and chktex."
+    echo "pkg-config and ICU development files are required only when the pinned Tectonic version must be installed."
     echo ""
 
     echo "Ensuring uv-managed Python tooling..."
@@ -1137,130 +1195,7 @@ setup-tools: _ensure-uv
     rustup component add clippy rustfmt rust-docs rust-src
     echo ""
 
-    echo "Ensuring paper native build dependencies..."
-    if ! have pkg-config; then
-        echo "❌ 'pkg-config' not found. Install pkg-config before building Tectonic from Cargo."
-        exit 1
-    fi
-    if ! pkg-config --exists icu-uc; then
-        shopt -s nullglob
-        for candidate in \
-            /opt/homebrew/opt/icu4c*/lib/pkgconfig \
-            /usr/local/opt/icu4c*/lib/pkgconfig; do
-            if [ -d "$candidate" ]; then
-                export PKG_CONFIG_PATH="$candidate${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-                break
-            fi
-        done
-        shopt -u nullglob
-    fi
-    if ! pkg-config --exists icu-uc; then
-        echo "❌ 'icu-uc' was not found by pkg-config."
-        echo "   Install ICU development files, or set PKG_CONFIG_PATH to the directory containing icu-uc.pc."
-        exit 1
-    fi
-    echo "  ✓ pkg-config can resolve icu-uc"
-    echo ""
-
     echo "Ensuring cargo tools..."
-    installed_just_version=""
-    if command -v just >/dev/null; then
-        installed_just_version="$(just --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_just_version" != "{{ just_version }}" ]]; then
-        echo "  ⏳ Installing just {{ just_version }} (cargo)..."
-        cargo install --locked just --version {{ just_version }}
-    else
-        echo "  ✓ just {{ just_version }}"
-    fi
-
-    if ! have samply; then
-        echo "  ⏳ Installing samply (cargo)..."
-        cargo install --locked samply
-    else
-        echo "  ✓ samply"
-    fi
-
-    if ! have cargo-machete; then
-        echo "  ⏳ Installing cargo-machete (cargo)..."
-        cargo install --locked cargo-machete
-    else
-        echo "  ✓ cargo-machete"
-    fi
-
-    installed_taplo_version=""
-    if command -v taplo >/dev/null; then
-        installed_taplo_version="$(taplo --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_taplo_version" != "{{ taplo_version }}" ]]; then
-        echo "  ⏳ Installing taplo-cli {{ taplo_version }} (cargo)..."
-        cargo install --locked taplo-cli --version {{ taplo_version }}
-    else
-        echo "  ✓ taplo {{ taplo_version }}"
-    fi
-
-    installed_dprint_version=""
-    if command -v dprint >/dev/null; then
-        installed_dprint_version="$(dprint --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_dprint_version" != "{{ dprint_version }}" ]]; then
-        echo "  ⏳ Installing dprint {{ dprint_version }} (cargo)..."
-        cargo install --locked dprint --version {{ dprint_version }}
-    else
-        echo "  ✓ dprint {{ dprint_version }}"
-    fi
-
-    installed_tectonic_version=""
-    if command -v tectonic >/dev/null; then
-        installed_tectonic_version="$(tectonic --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_tectonic_version" != "{{ tectonic_version }}" ]]; then
-        echo "  ⏳ Installing tectonic {{ tectonic_version }} (cargo)..."
-        cargo install --locked tectonic --version {{ tectonic_version }}
-    else
-        echo "  ✓ tectonic {{ tectonic_version }}"
-    fi
-
-    installed_tex_fmt_version=""
-    if command -v tex-fmt >/dev/null; then
-        installed_tex_fmt_version="$(tex-fmt --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_tex_fmt_version" != "{{ tex_fmt_version }}" ]]; then
-        echo "  ⏳ Installing tex-fmt {{ tex_fmt_version }} (cargo)..."
-        cargo install --locked tex-fmt --version {{ tex_fmt_version }}
-    else
-        echo "  ✓ tex-fmt {{ tex_fmt_version }}"
-    fi
-
-    installed_rumdl_version=""
-    if command -v rumdl >/dev/null; then
-        installed_rumdl_version="$(rumdl --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_rumdl_version" != "{{ rumdl_version }}" ]]; then
-        echo "  ⏳ Installing rumdl {{ rumdl_version }} (cargo)..."
-        cargo install --locked rumdl --version {{ rumdl_version }}
-    else
-        echo "  ✓ rumdl {{ rumdl_version }}"
-    fi
-
-    installed_typos_version=""
-    if command -v typos >/dev/null; then
-        installed_typos_version="$(typos --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_typos_version" != "{{ typos_version }}" ]]; then
-        echo "  ⏳ Installing typos-cli {{ typos_version }} (cargo)..."
-        cargo install --locked typos-cli --version {{ typos_version }}
-    else
-        echo "  ✓ typos {{ typos_version }}"
-    fi
-
-    if ! have git-cliff; then
-        echo "  ⏳ Installing git-cliff (cargo)..."
-        cargo install --locked git-cliff
-    else
-        echo "  ✓ git-cliff"
-    fi
-
     if ! rustup component list --installed | grep -q '^llvm-tools'; then
         echo "  ⏳ Installing llvm-tools-preview (rustup)..."
         rustup component add llvm-tools-preview
@@ -1268,44 +1203,28 @@ setup-tools: _ensure-uv
         echo "  ✓ llvm-tools-preview"
     fi
 
-    installed_nextest_version=""
-    if cargo nextest --version >/dev/null 2>&1; then
-        installed_nextest_version="$(cargo nextest --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    ensure_pinned_cargo_tool cargo-llvm-cov cargo-llvm-cov "{{ cargo_llvm_cov_version }}" llvm-cov
+    ensure_pinned_cargo_tool cargo-machete cargo-machete "{{ cargo_machete_version }}"
+    ensure_pinned_cargo_tool cargo-nextest cargo-nextest "{{ nextest_version }}"
+    ensure_pinned_cargo_tool dprint dprint "{{ dprint_version }}"
+    ensure_pinned_cargo_tool git-cliff git-cliff "{{ git_cliff_version }}"
+    ensure_pinned_cargo_tool just just "{{ just_version }}"
+    ensure_pinned_cargo_tool rumdl rumdl "{{ rumdl_version }}"
+    ensure_pinned_cargo_tool samply samply "{{ samply_version }}"
+    ensure_pinned_cargo_tool taplo taplo-cli "{{ taplo_version }}"
+    if [[ "$(installed_cargo_tool_version tectonic)" != "{{ tectonic_version }}" ]]; then
+        ensure_tectonic_build_dependencies
     fi
-    if [[ "$installed_nextest_version" != "{{ nextest_version }}" ]]; then
-        echo "  ⏳ Installing cargo-nextest {{ nextest_version }} (cargo)..."
-        cargo install --locked cargo-nextest --version {{ nextest_version }}
-    else
-        echo "  ✓ cargo-nextest {{ nextest_version }}"
-    fi
-
-    installed_llvm_cov_version=""
-    if command -v cargo-llvm-cov >/dev/null; then
-        installed_llvm_cov_version="$(cargo llvm-cov --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_llvm_cov_version" != "{{ cargo_llvm_cov_version }}" ]]; then
-        echo "  ⏳ Installing cargo-llvm-cov {{ cargo_llvm_cov_version }} (cargo)..."
-        cargo install --locked cargo-llvm-cov --version {{ cargo_llvm_cov_version }}
-    else
-        echo "  ✓ cargo-llvm-cov {{ cargo_llvm_cov_version }}"
-    fi
-
-    installed_zizmor_version=""
-    if command -v zizmor >/dev/null; then
-        installed_zizmor_version="$(zizmor --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_zizmor_version" != "{{ zizmor_version }}" ]]; then
-        echo "  ⏳ Installing zizmor {{ zizmor_version }} (cargo)..."
-        cargo install --locked zizmor --version {{ zizmor_version }}
-    else
-        echo "  ✓ zizmor {{ zizmor_version }}"
-    fi
+    ensure_pinned_cargo_tool tectonic tectonic "{{ tectonic_version }}"
+    ensure_pinned_cargo_tool tex-fmt tex-fmt "{{ tex_fmt_version }}"
+    ensure_pinned_cargo_tool typos typos-cli "{{ typos_version }}"
+    ensure_pinned_cargo_tool zizmor zizmor "{{ zizmor_version }}"
 
     echo ""
     echo "Verifying required commands are available..."
     missing=0
 
-    cmds=(uv jq pkg-config taplo dprint tectonic tex-fmt rumdl git-cliff typos zizmor chktex samply)
+    cmds=(uv jq taplo dprint tectonic tex-fmt rumdl git-cliff typos zizmor chktex samply)
     cmds+=(cargo-nextest cargo-llvm-cov cargo-machete)
 
     for cmd in "${cmds[@]}"; do

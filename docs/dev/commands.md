@@ -269,9 +269,9 @@ diagnostic invariants.
 `just ci` is the comprehensive error-catching validation path used by GitHub
 Actions. It composes `just check`, `just test`, `just bench-compile`, and
 `just examples`. The target classes remain orthogonal: `rust-core-check` covers
-formatting, all-targets Clippy, rustdoc, and Semgrep; `test-rust` composes unit,
-integration, CLI, and doctest buckets; `notebook-check` validates notebooks
-without executing them.
+formatting, all-targets Clippy, rustdoc, and Semgrep; `unused-deps` checks direct
+Cargo dependency hygiene; `test-rust` composes unit, integration, CLI, and
+doctest buckets; `notebook-check` validates notebooks without executing them.
 Routine notebook checks are lint-only. Execute one notebook deliberately with
 `just notebook-execute` or use its named artifact-refresh recipe. There is no
 aggregate recipe that executes every notebook.
@@ -293,7 +293,6 @@ just rust-core-check
 just test-rust
 just notebook-check
 just bench-compile
-just test-integration-compile
 ```
 
 Commands that run benchmarks and produce performance data use the `perf`
@@ -632,12 +631,14 @@ copying the target-built PDF to `papers/validation.pdf`. `just papers` refreshes
 the canonical figures and reviewer PDF through those named artifact owners.
 
 Tectonic and `tex-fmt` are pinned Cargo-installed tools. `chktex` comes from a
-TeX distribution or system package manager. Building Tectonic from Cargo also
-requires `pkg-config` and development headers for its native bridge libraries,
-including fontconfig, FreeType, Graphite2, HarfBuzz, ICU, libpng, and zlib.
+TeX distribution or system package manager. Installing or upgrading Tectonic
+from Cargo also requires `pkg-config` and development headers for its native
+bridge libraries, including fontconfig, FreeType, Graphite2, HarfBuzz, ICU,
+libpng, and zlib. When the pinned Tectonic version is absent,
 `just setup-tools` checks ICU locally and auto-detects common Homebrew ICU
-pkg-config directories before it asks for a manual `PKG_CONFIG_PATH`; paper CI
-installs the platform native package set explicitly.
+pkg-config directories before it asks for a manual `PKG_CONFIG_PATH`; an
+already-correct Tectonic installation does not require those native build
+prerequisites. Paper CI installs the platform native package set explicitly.
 
 Reviewer-facing validation diagrams under `docs/assets/validation/` use the
 same deterministic notebook with a separate explicit output switch:
