@@ -6,6 +6,7 @@ for benchmark data processing. It provides the core data structures used
 throughout the benchmark infrastructure.
 """
 
+import math
 import re
 from dataclasses import dataclass
 
@@ -177,6 +178,11 @@ def parse_benchmark_header(line: str) -> BenchmarkData | None:
 # the regex patterns below using re.compile() for better performance.
 
 
+def _is_valid_positive_interval(values: list[float]) -> bool:
+    """Return whether values form a finite, positive low/mean/high interval."""
+    return len(values) == 3 and all(math.isfinite(value) and value > 0.0 for value in values) and values[0] <= values[1] <= values[2]
+
+
 def parse_time_data(benchmark: BenchmarkData, line: str) -> bool:
     """
     Parse time data lines to extract timing information.
@@ -189,7 +195,7 @@ def parse_time_data(benchmark: BenchmarkData, line: str) -> bool:
         True if data was parsed successfully, False otherwise
     """
     # Match pattern like "Time: [100.0, 110.0, 120.0] µs"
-    # Support scientific notation (1.2e3), negative values, and flexible whitespace
+    # Support scientific notation (1.2e3) and flexible whitespace.
     match = re.match(r"^Time:\s*\[([0-9eE+.\-,\s]+)\]\s+(.+)$", line.strip())
     if match:
         try:
@@ -198,7 +204,7 @@ def parse_time_data(benchmark: BenchmarkData, line: str) -> bool:
             unit = match.group(2)
             values = [float(x.strip()) for x in values_str.split(",")]
 
-            if len(values) == 3:
+            if _is_valid_positive_interval(values):
                 benchmark.time_low = values[0]
                 benchmark.time_mean = values[1]
                 benchmark.time_high = values[2]
@@ -230,7 +236,7 @@ def parse_throughput_data(benchmark: BenchmarkData, line: str) -> bool:
         True if data was parsed successfully, False otherwise
     """
     # Match pattern like "Throughput: [8000.0, 9090.9, 10000.0] Kelem/s"
-    # Support scientific notation (1.2e3), negative values, and flexible whitespace
+    # Support scientific notation (1.2e3) and flexible whitespace.
     match = re.match(r"^Throughput:\s*\[([0-9eE+.\-,\s]+)\]\s+(.+)$", line.strip())
     if match:
         try:
@@ -239,7 +245,7 @@ def parse_throughput_data(benchmark: BenchmarkData, line: str) -> bool:
             unit = match.group(2)
             values = [float(x.strip()) for x in values_str.split(",")]
 
-            if len(values) == 3:
+            if _is_valid_positive_interval(values):
                 benchmark.throughput_low = values[0]
                 benchmark.throughput_mean = values[1]
                 benchmark.throughput_high = values[2]

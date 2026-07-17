@@ -100,11 +100,13 @@ When in doubt, favor the invariant over the convenient edit.
 ### Numerical Correctness
 
 - Geometric predicates (`insphere`, `insphere_lifted`, `orientation`) use the
-  three-stage pattern from `src/geometry/predicates.rs`:
+  filtered-exact pattern from `src/geometry/predicates.rs`:
   - Stage 1: provable f64 fast filter with a Shewchuk-style error bound.
   - Stage 2: exact sign via Bareiss in `la-stack`.
-  - Stage 3: deterministic `InSphere::BOUNDARY` /
-    `Orientation::DEGENERATE` fallback for non-finite inputs.
+- Lifted-coordinate construction rejects non-finite or unrepresentable
+  intermediates with a typed error before determinant evaluation; it must not
+  silently classify them as `InSphere::BOUNDARY` or
+  `Orientation::DEGENERATE`.
 - No f64 operation may silently lose sign information. Avoid patterns such as
   `unwrap_or(NaN)`, `unwrap_or(f64::INFINITY)`, or "return `true` on error."
 - Algorithms cite their source in `REFERENCES.md` and document conditioning

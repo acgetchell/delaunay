@@ -147,7 +147,7 @@ _pachner-stress-dim label vertices attempts validate_every output_dir mode:
     mkdir -p "$output_dir"
 
     echo "Pachner stress ${label}/${mode}: ${vertices} vertices, ${attempts} attempted moves."
-    echo "Validation scope: topology (Levels 1-3; Level 4 embedding overlap scan deferred to #483)."
+    echo "Validation scope: topology (Levels 1-3; Level 4 realization overlap scan deferred to #482)."
     cargo run --locked --profile perf --features cli --bin delaunay -- \
         pachner-stress \
         --dimension "$label" \

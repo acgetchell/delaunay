@@ -11,7 +11,8 @@
 //!   better-shaped simplices. An equilateral simplex has a radius ratio close to
 //!   the dimension-dependent optimal value.
 //! - **Normalized Volume**: Volume divided by the D-th power of the average edge length.
-//!   Provides a scale-invariant measure of simplex shape quality.
+//!   Provides a scale-invariant measure of simplex shape quality above the
+//!   documented absolute degeneracy floor.
 //!
 //! # References
 //!
@@ -429,10 +430,11 @@ where
 /// Computes the normalized volume quality metric for a simplex.
 ///
 /// This metric provides a scale-invariant measure of simplex quality by dividing
-/// the volume by the D-th power of the average edge length. It avoids the numerical
-/// issues that can arise when computing inradius for very small simplices. Volume
-/// and edge-length-power degeneracy checks use the D-th power of the scale-aware
-/// length epsilon so comparisons have matching physical dimensions.
+/// the volume by the D-th power of the average edge length. Accepted simplices
+/// retain that scale invariance, while an absolute `1e-12` length floor rejects
+/// smaller scales as numerically degenerate. Volume and edge-length-power
+/// degeneracy checks use the D-th power of the scale-aware length epsilon so
+/// comparisons have matching physical dimensions.
 ///
 /// # Quality Interpretation
 ///

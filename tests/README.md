@@ -236,7 +236,9 @@ that a valid SoS implementation must satisfy.
 
 **Test Coverage:**
 
-- **Orientation Non-Degeneracy**: SoS orientation always returns ±1 for exactly degenerate (co-hyperplanar) inputs
+- **Orientation Non-Degeneracy**: SoS orientation returns ±1 for
+  first-order-resolvable exactly degenerate (co-hyperplanar) inputs and a typed
+  `VanishingSosCofactors` error when every first-order cofactor vanishes
 - **Orientation Determinism**: same degenerate input always produces the same sign
 - **Orientation Translation Invariance**: shifting all points by a constant integer offset preserves the sign
 - **Insphere Non-Degeneracy**: SoS insphere always returns ±1 for exactly co-spherical (hyper-rectangle vertex) inputs
