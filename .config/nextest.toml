@@ -69,3 +69,11 @@ success-output = "never"
 fail-fast = false
 retries = 0
 slow-timeout = { period = "900s", terminate-after = 1 }
+
+# Full Levels 1-5 validation at the bounded 2D-5D regression scales is
+# CPU-intensive. Give each large-scale case the complete worker pool so
+# concurrent slow fixtures cannot consume its 600-second internal wall-clock
+# budget. Broader Level 4 and Level 5 performance work remains in #482/#483.
+[[profile.slow.overrides]]
+filter = 'test(debug_large_scale_)'
+threads-required = "num-cpus"

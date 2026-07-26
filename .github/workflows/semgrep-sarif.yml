@@ -67,7 +67,7 @@ jobs:
         id: semgrep
         run: |
           set +e
-          uv run semgrep \
+          uv run --locked semgrep \
             --error \
             --strict \
             --timeout 30 \

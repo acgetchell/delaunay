@@ -19,17 +19,17 @@ cargo_machete_version := "0.9.2"
 clippy_sarif_version := "0.8.0"
 dprint_version := "0.55.2"
 git_cliff_version := "2.13.1"
-just_version := "1.56.0"
+just_version := "1.57.0"
 nextest_version := "0.9.140"
-rumdl_version := "0.2.34"
+rumdl_version := "0.2.43"
 samply_version := "0.13.1"
 sarif_fmt_version := "0.8.0"
 taplo_version := "0.10.0"
 tectonic_version := "0.16.9"
 tex_fmt_version := "0.5.7"
 typos_version := "1.48.0"
-uv_version := "0.11.29"
-zizmor_version := "1.26.1"
+uv_version := "0.11.32"
+zizmor_version := "1.28.0"
 
 # Common cargo-llvm-cov arguments for all coverage runs.
 # Excludes benches/examples from reports while allowing integration tests to
@@ -340,6 +340,7 @@ help-workflows:
     @echo "  just notebook-execute   # Execute one notebook under target/notebooks"
     @echo "  just validation-doc-figures # Refresh canonical validation figures"
     @echo "  just paper-check        # Lint, build, and check without tracked changes"
+    @echo "  just paper-artifact-check # Compare the build with the reviewer PDF"
     @echo "  just paper-refresh      # Check, then refresh one tracked reviewer PDF"
     @echo "  just papers             # Refresh figures and the validation reviewer PDF"
     @echo ""
@@ -550,6 +551,22 @@ pachner-stress-3d attempts="100" vertices="9000" validate_every="10" output_dir=
 [group('benchmarks and performance')]
 pachner-stress-4d attempts="100" vertices="1000" validate_every="10" output_dir="target/pachner_stress/4d" mode="round-trip": (_pachner-stress-dim "4d" vertices attempts validate_every output_dir mode)
 
+# Check that one target-built paper is structurally equivalent to its tracked reviewer PDF.
+[group('notebooks and papers')]
+paper-artifact-check paper="validation": (paper-check paper)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    paper={{ quote(paper) }}
+    case "$paper" in
+        ""|*[!A-Za-z0-9_-]*)
+            echo "❌ Invalid paper name: $paper"
+            echo "   Use only ASCII letters, digits, underscores, and hyphens."
+            exit 1
+            ;;
+    esac
+    uv run paper-pdf-check "target/papers/${paper}/${paper}.pdf" \
+        --reference "papers/${paper}.pdf"
+
 # Compile one paper with Tectonic under target/papers/.
 [group('notebooks and papers')]
 paper-build paper="validation": _ensure-tectonic _ensure-uv
@@ -751,8 +768,8 @@ perf-help:
     @echo "                              # 4D random-walk Pachner diagnostics with CSV/JSON artifacts"
     @echo "  just bench-ci              # Final optimized CI-suite benchmark run"
     @echo "  just profile v0.7.5        # v0.7.5 code on its declared Rust toolchain"
-    @echo "  just profile 1.97.0        # Current tree on Rust 1.97.0"
-    @echo "  just profile 1.97.0 v0.7.5 # v0.7.5 code on Rust 1.97.0"
+    @echo "  just profile 1.97.1        # Current tree on Rust 1.97.1"
+    @echo "  just profile 1.97.1 v0.7.5 # v0.7.5 code on Rust 1.97.1"
 
 # Quick pre-push 2D-5D large-scale wall-clock smoke guard.
 [group('benchmarks and performance')]
@@ -782,8 +799,8 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
         echo ""
         echo "▶ ${dimension}: ${test_name} (${n_points} vertices, ${max_secs}s cap)"
         # Construction wall-clock guard: validate Levels 1-3 + Level 5 only.
-        # Level 4 embedding overlap validation runs at scale under `just test-slow`
-        # (full scope); see issue #482.
+        # Level 4 retains bounded full-scope regression coverage under
+        # `just test-slow`; broader Level 4/5 work remains in #482/#483.
         if env \
             DELAUNAY_BULK_PROGRESS_EVERY="$progress_every" \
             DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS="$max_secs" \
@@ -1075,7 +1092,7 @@ rust-core-check: fmt-check clippy doc-check semgrep semgrep-test
 # Repository-owned Semgrep rules for project-specific Rust diagnostics.
 [group('validation')]
 semgrep: _ensure-uv
-    uv run semgrep --error --strict --timeout 120 --config semgrep.yaml .
+    uv run --locked semgrep --error --strict --timeout 120 --config semgrep.yaml .
 
 # Test the repository-owned Semgrep rules against their fixtures.
 [group('validation')]
@@ -1101,7 +1118,7 @@ semgrep-test: _ensure-uv
         mkdir -p "$state_dir"
         uv run python scripts/semgrep_fixture_config.py "$fixture" "$PWD/semgrep.yaml" "$config_path"
 
-        SEMGREP_SEND_METRICS=off SEMGREP_SETTINGS_FILE="$state_dir/settings.yml" uv run semgrep scan --test --strict --config "$config_path" "$fixture"
+        SEMGREP_SEND_METRICS=off SEMGREP_SETTINGS_FILE="$state_dir/settings.yml" uv run --locked semgrep scan --test --strict --config "$config_path" "$fixture"
     done < <(find tests/semgrep -type f ! -name '*.fixed' -print0)
 
 # Install required tools and build the development profile.
@@ -1139,34 +1156,75 @@ setup-tools: _ensure-uv
 
     ensure_tectonic_build_dependencies() {
         echo "Ensuring native dependencies needed to install Tectonic..."
+
+        local candidate homebrew_repository package platform sdk_version
+        local -a missing_pkg_config_packages=()
+        local -a required_pkg_config_packages=(freetype2 graphite2 icu-uc libpng zlib)
+
+        platform="$(uname -s)"
+        if [ "$platform" != "Darwin" ]; then
+            required_pkg_config_packages=(fontconfig freetype2 graphite2 icu-uc libpng openssl zlib)
+        fi
+
+        append_pkg_config_path() {
+            local directory="$1"
+            if [ -d "$directory" ] && [[ ":${PKG_CONFIG_PATH:-}:" != *":$directory:"* ]]; then
+                export PKG_CONFIG_PATH="${PKG_CONFIG_PATH:+$PKG_CONFIG_PATH:}$directory"
+            fi
+        }
+
         if ! have pkg-config; then
-            echo "❌ 'pkg-config' not found. Install pkg-config before building Tectonic from Cargo."
+            echo "❌ 'pkg-config' was not found. Install pkgconf or pkg-config before building Tectonic from Cargo."
             exit 1
         fi
-        if ! pkg-config --exists icu-uc; then
-            shopt -s nullglob
-            for candidate in \
-                /opt/homebrew/opt/icu4c*/lib/pkgconfig \
-                /usr/local/opt/icu4c*/lib/pkgconfig; do
-                if [ -d "$candidate" ]; then
-                    export PKG_CONFIG_PATH="$candidate${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-                    break
-                fi
-            done
-            shopt -u nullglob
+
+        shopt -s nullglob
+        for candidate in \
+            /opt/homebrew/lib/pkgconfig \
+            /opt/homebrew/share/pkgconfig \
+            /opt/homebrew/opt/{fontconfig,freetype,graphite2,icu4c*,libpng}/lib/pkgconfig \
+            /usr/local/lib/pkgconfig \
+            /usr/local/share/pkgconfig \
+            /usr/local/opt/{fontconfig,freetype,graphite2,icu4c*,libpng}/lib/pkgconfig; do
+            append_pkg_config_path "$candidate"
+        done
+        shopt -u nullglob
+
+        if have brew && have xcrun && sdk_version="$(xcrun --sdk macosx --show-sdk-version 2>/dev/null)"; then
+            homebrew_repository="$(brew --repository)"
+            append_pkg_config_path "$homebrew_repository/Library/Homebrew/os/mac/pkgconfig/${sdk_version%%.*}"
         fi
-        if ! pkg-config --exists icu-uc; then
-            echo "❌ 'icu-uc' was not found by pkg-config."
-            echo "   Install ICU development files, or set PKG_CONFIG_PATH to the directory containing icu-uc.pc."
+
+        for package in "${required_pkg_config_packages[@]}"; do
+            if ! pkg-config --exists "$package"; then
+                missing_pkg_config_packages+=("$package")
+            fi
+        done
+        if (( ${#missing_pkg_config_packages[@]} )); then
+            echo "❌ pkg-config could not resolve: ${missing_pkg_config_packages[*]}"
+            echo "   Install the missing native development files, or add their metadata directories to PKG_CONFIG_PATH."
             exit 1
         fi
-        echo "  ✓ pkg-config can resolve icu-uc"
+        echo "  ✓ pkg-config can resolve Tectonic's native dependencies"
         echo ""
+    }
+
+    ensure_pinned_tectonic() {
+        local expected_version="{{ tectonic_version }}"
+
+        if cargo_tool_has_exact_version tectonic "$expected_version"; then
+            echo "  ✓ tectonic $expected_version"
+            return
+        fi
+
+        ensure_tectonic_build_dependencies
+        echo "  ⏳ Installing tectonic $expected_version (cargo)..."
+        cargo install --locked tectonic --version "$expected_version"
     }
 
     echo "This recipe installs pinned Rust CLI tools through cargo."
     echo "External prerequisites that must already be on PATH: uv, jq, rustup, cargo, and chktex."
-    echo "pkg-config and ICU development files are required only when the pinned Tectonic version must be installed."
+    echo "pkg-config, plus native development files, is required only when the pinned Tectonic version must be installed."
     echo ""
 
     echo "Ensuring uv-managed Python tooling..."
@@ -1198,10 +1256,7 @@ setup-tools: _ensure-uv
     ensure_pinned_cargo_tool rumdl rumdl "{{ rumdl_version }}"
     ensure_pinned_cargo_tool samply samply "{{ samply_version }}"
     ensure_pinned_cargo_tool taplo taplo-cli "{{ taplo_version }}"
-    if ! cargo_tool_has_exact_version tectonic "{{ tectonic_version }}"; then
-        ensure_tectonic_build_dependencies
-    fi
-    ensure_pinned_cargo_tool tectonic tectonic "{{ tectonic_version }}"
+    ensure_pinned_tectonic
     ensure_pinned_cargo_tool tex-fmt tex-fmt "{{ tex_fmt_version }}"
     ensure_pinned_cargo_tool typos typos-cli "{{ typos_version }}"
     ensure_pinned_cargo_tool zizmor zizmor "{{ zizmor_version }}"

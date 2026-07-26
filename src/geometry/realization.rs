@@ -41,8 +41,13 @@
 
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::geometry::point::{Point, ValidatedCoordinates};
+use crate::geometry::predicates::Orientation;
+use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::InvalidCoordinateValue;
-use la_stack::{BigInt, BigRational, FromPrimitive, Signed};
+use crate::geometry::util::simplex_lp::{
+    IntersectionLinearProgramResult, coordinates_are_identical, intersection_via_linear_program,
+    shared_face_fast_confinement,
+};
 use thiserror::Error;
 
 /// Stack-backed buffer for per-simplex realization labels and coordinates.
@@ -608,28 +613,141 @@ where
     L: Clone + Eq,
 {
     let shared_labels = shared_labels(first, second);
-    let second_vertices_in_first = barycentric_coordinates_of_vertices(second, first)?;
-    let intersection_vertices = intersection_polytope_vertices(&second_vertices_in_first);
+    if shared_face_fast_confinement(first, second, &shared_labels) {
+        return Ok(());
+    }
+    let basis_orientation = realization_orientation(first);
+    if basis_orientation == Some(Orientation::DEGENERATE) {
+        return Err(SimplexIntersectionFailure::SingularBarycentricBasis);
+    }
+    if let Some(orientation) = basis_orientation
+        && (simplex_is_strictly_outside_a_facet(first, second, orientation)
+            || realization_orientation(second).is_some_and(|second_orientation| {
+                second_orientation != Orientation::DEGENERATE
+                    && simplex_is_strictly_outside_a_facet(second, first, second_orientation)
+            })
+            || intersection_is_confined_by_orientation(first, second, &shared_labels, orientation))
+    {
+        return Ok(());
+    }
 
-    for beta in intersection_vertices {
-        let alpha = alpha_from_beta(&beta, &second_vertices_in_first);
-        let first_only_witness_labels =
-            positive_nonshared_labels(&alpha, first.labels(), &shared_labels);
-        let second_only_witness_labels =
-            positive_nonshared_labels(&beta, second.labels(), &shared_labels);
+    match intersection_via_linear_program(
+        first,
+        second,
+        &shared_labels,
+        basis_orientation.is_none(),
+    ) {
+        IntersectionLinearProgramResult::Valid => Ok(()),
+        IntersectionLinearProgramResult::Invalid(witness) => {
+            Err(SimplexIntersectionFailure::IntersectionOutsideSharedFace { witness })
+        }
+        IntersectionLinearProgramResult::SingularBarycentricBasis => {
+            Err(SimplexIntersectionFailure::SingularBarycentricBasis)
+        }
+    }
+}
 
-        if !first_only_witness_labels.is_empty() || !second_only_witness_labels.is_empty() {
-            return Err(SimplexIntersectionFailure::IntersectionOutsideSharedFace {
-                witness: SimplexIntersectionWitness {
-                    shared: shared_labels,
-                    first_only_witness: first_only_witness_labels,
-                    second_only_witness: second_only_witness_labels,
-                },
-            });
+/// Computes one simplex orientation through the filtered-exact predicate path.
+fn realization_orientation<L, const D: usize>(
+    simplex: &LabeledSimplexRealization<L, D>,
+) -> Option<Orientation> {
+    let points: SimplexRealizationBuffer<_> = (0..simplex.coordinates().len())
+        .filter_map(|index| simplex.point_at(index))
+        .collect();
+    robust_orientation(&points).ok()
+}
+
+/// Proves disjointness when one simplex lies strictly beyond a facet of another.
+///
+/// Replacing facet-opposite basis vertex `i` with a point `p` scales the basis
+/// orientation by the barycentric coordinate of `p` at `i`. If every vertex of
+/// the other simplex has the opposite non-zero sign for one `i`, convexity
+/// places that entire simplex in the open exterior half-space.
+fn simplex_is_strictly_outside_a_facet<L, const D: usize>(
+    basis: &LabeledSimplexRealization<L, D>,
+    other: &LabeledSimplexRealization<L, D>,
+    basis_orientation: Orientation,
+) -> bool {
+    let basis_points: SimplexRealizationBuffer<_> = (0..basis.coordinates().len())
+        .filter_map(|index| basis.point_at(index))
+        .collect();
+
+    (0..basis.labels().len()).any(|basis_index| {
+        (0..other.coordinates().len()).all(|other_index| {
+            let Some(other_point) = other.point_at(other_index) else {
+                return false;
+            };
+            let mut replaced_points = basis_points.clone();
+            replaced_points[basis_index] = other_point;
+            robust_orientation(&replaced_points).is_ok_and(|orientation| {
+                orientation != basis_orientation && orientation != Orientation::DEGENERATE
+            })
+        })
+    })
+}
+
+/// Uses filtered-exact orientation signs to prove confinement to the shared face.
+///
+/// Replacing basis vertex `i` with a point `p` changes the orientation
+/// determinant by the barycentric coordinate of `p` at `i`. Therefore, when
+/// every vertex of the other simplex has a zero or opposite determinant sign
+/// for each non-shared basis vertex, convexity proves that any point in both
+/// simplices has zero weight outside the shared face.
+fn intersection_is_confined_by_orientation<L, const D: usize>(
+    basis: &LabeledSimplexRealization<L, D>,
+    other: &LabeledSimplexRealization<L, D>,
+    shared_labels: &[L],
+    basis_orientation: Orientation,
+) -> bool
+where
+    L: Eq,
+{
+    for shared_label in shared_labels {
+        let Some(basis_index) = basis
+            .labels()
+            .iter()
+            .position(|candidate| candidate == shared_label)
+        else {
+            return false;
+        };
+        let Some(other_index) = other
+            .labels()
+            .iter()
+            .position(|candidate| candidate == shared_label)
+        else {
+            return false;
+        };
+        if !coordinates_are_identical(
+            &basis.coordinates()[basis_index],
+            &other.coordinates()[other_index],
+        ) {
+            return false;
         }
     }
 
-    Ok(())
+    let basis_points: SimplexRealizationBuffer<_> = (0..basis.coordinates().len())
+        .filter_map(|index| basis.point_at(index))
+        .collect();
+
+    for (basis_index, basis_label) in basis.labels().iter().enumerate() {
+        if shared_labels.contains(basis_label) {
+            continue;
+        }
+        for other_index in 0..other.coordinates().len() {
+            let Some(other_point) = other.point_at(other_index) else {
+                return false;
+            };
+            let mut replaced_points = basis_points.clone();
+            replaced_points[basis_index] = other_point;
+            let Ok(replaced_orientation) = robust_orientation(&replaced_points) else {
+                return false;
+            };
+            if replaced_orientation == basis_orientation {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Collects labels common to two simplex realizations so witnesses can distinguish shared faces.
@@ -646,259 +764,6 @@ where
         .filter(|label| second.labels().contains(label))
         .cloned()
         .collect()
-}
-
-/// Expresses every vertex of one simplex in the barycentric basis of another.
-fn barycentric_coordinates_of_vertices<L, const D: usize>(
-    vertices: &LabeledSimplexRealization<L, D>,
-    basis: &LabeledSimplexRealization<L, D>,
-) -> Result<Vec<Vec<BigRational>>, SimplexIntersectionFailure<L>> {
-    vertices
-        .coordinates()
-        .iter()
-        .map(|coords| barycentric_coordinates(coords, basis))
-        .collect()
-}
-
-/// Computes exact barycentric coordinates of one point in one simplex basis.
-fn barycentric_coordinates<L, const D: usize>(
-    point: &[f64; D],
-    simplex: &LabeledSimplexRealization<L, D>,
-) -> Result<Vec<BigRational>, SimplexIntersectionFailure<L>> {
-    if D == 0 {
-        return Ok(vec![rational_one()]);
-    }
-
-    let origin = &simplex.coordinates()[0];
-    let mut matrix = vec![vec![rational_zero(); D]; D];
-    let mut rhs = vec![rational_zero(); D];
-
-    for axis in 0..D {
-        let origin_coord = rational_from_f64(origin[axis]);
-        rhs[axis] = rational_from_f64(point[axis]) - origin_coord.clone();
-        for (column, matrix_value) in matrix[axis].iter_mut().enumerate() {
-            *matrix_value =
-                rational_from_f64(simplex.coordinates()[column + 1][axis]) - origin_coord.clone();
-        }
-    }
-
-    let lambdas = solve_rational_system(matrix, rhs)
-        .ok_or(SimplexIntersectionFailure::SingularBarycentricBasis)?;
-    let lambda_sum = lambdas
-        .iter()
-        .fold(rational_zero(), |acc, value| acc + value.clone());
-    let mut barycentric = Vec::with_capacity(D + 1);
-    barycentric.push(rational_one() - lambda_sum);
-    barycentric.extend(lambdas);
-    Ok(barycentric)
-}
-
-/// Enumerates candidate vertices of the intersection polytope in second-simplex weights.
-fn intersection_polytope_vertices(
-    second_vertices_in_first: &[Vec<BigRational>],
-) -> Vec<Vec<BigRational>> {
-    let variable_count = second_vertices_in_first.len();
-    let active_count = variable_count.saturating_sub(1);
-    let constraint_count = variable_count * 2;
-    let mut active_set = Vec::with_capacity(active_count);
-    let mut vertices = Vec::new();
-
-    enumerate_active_sets(
-        constraint_count,
-        active_count,
-        0,
-        &mut active_set,
-        &mut |active_constraints| {
-            if let Some(beta) =
-                intersection_vertex_for_active_set(second_vertices_in_first, active_constraints)
-                && beta_is_feasible(&beta, second_vertices_in_first)
-            {
-                vertices.push(beta);
-            }
-        },
-    );
-
-    vertices
-}
-
-/// Recursively enumerates active constraint sets for the simplex-intersection LP.
-fn enumerate_active_sets<F>(
-    constraint_count: usize,
-    active_count: usize,
-    start: usize,
-    active_set: &mut Vec<usize>,
-    on_active_set: &mut F,
-) where
-    F: FnMut(&[usize]),
-{
-    if active_set.len() == active_count {
-        on_active_set(active_set);
-        return;
-    }
-
-    let remaining = active_count - active_set.len();
-    let last_start = constraint_count.saturating_sub(remaining);
-    for constraint in start..=last_start {
-        active_set.push(constraint);
-        enumerate_active_sets(
-            constraint_count,
-            active_count,
-            constraint + 1,
-            active_set,
-            on_active_set,
-        );
-        active_set.pop();
-    }
-}
-
-/// Solves one active-constraint system and returns the candidate beta weights.
-fn intersection_vertex_for_active_set(
-    second_vertices_in_first: &[Vec<BigRational>],
-    active_constraints: &[usize],
-) -> Option<Vec<BigRational>> {
-    let variable_count = second_vertices_in_first.len();
-    let mut matrix = Vec::with_capacity(variable_count);
-    let mut rhs = Vec::with_capacity(variable_count);
-
-    matrix.push(vec![rational_one(); variable_count]);
-    rhs.push(rational_one());
-
-    for &constraint in active_constraints {
-        matrix.push(constraint_coefficients(
-            second_vertices_in_first,
-            constraint,
-        ));
-        rhs.push(rational_zero());
-    }
-
-    solve_rational_system(matrix, rhs)
-}
-
-/// Builds coefficients for either a beta non-negativity or alpha non-negativity constraint.
-fn constraint_coefficients(
-    second_vertices_in_first: &[Vec<BigRational>],
-    constraint: usize,
-) -> Vec<BigRational> {
-    let variable_count = second_vertices_in_first.len();
-    if constraint < variable_count {
-        let mut coefficients = vec![rational_zero(); variable_count];
-        coefficients[constraint] = rational_one();
-        return coefficients;
-    }
-
-    let alpha_index = constraint - variable_count;
-    second_vertices_in_first
-        .iter()
-        .map(|barycentric| barycentric[alpha_index].clone())
-        .collect()
-}
-
-/// Checks whether beta weights and the induced alpha weights are all non-negative.
-fn beta_is_feasible(beta: &[BigRational], second_vertices_in_first: &[Vec<BigRational>]) -> bool {
-    beta.iter().all(|value| !value.is_negative())
-        && alpha_from_beta(beta, second_vertices_in_first)
-            .iter()
-            .all(|value| !value.is_negative())
-}
-
-/// Converts second-simplex beta weights into first-simplex alpha weights.
-fn alpha_from_beta(
-    beta: &[BigRational],
-    second_vertices_in_first: &[Vec<BigRational>],
-) -> Vec<BigRational> {
-    let variable_count = second_vertices_in_first.len();
-    let mut alpha = vec![rational_zero(); variable_count];
-
-    for (beta_index, beta_value) in beta.iter().enumerate() {
-        for (alpha_index, alpha_value) in alpha.iter_mut().enumerate() {
-            *alpha_value = alpha_value.clone()
-                + beta_value.clone() * second_vertices_in_first[beta_index][alpha_index].clone();
-        }
-    }
-
-    alpha
-}
-
-/// Returns labels whose barycentric coordinates witness mass outside the shared face.
-fn positive_nonshared_labels<L>(
-    barycentric: &[BigRational],
-    labels: &[L],
-    shared_labels: &[L],
-) -> SimplexRealizationBuffer<L>
-where
-    L: Clone + Eq,
-{
-    labels
-        .iter()
-        .zip(barycentric)
-        .filter(|(label, coordinate)| !shared_labels.contains(label) && coordinate.is_positive())
-        .map(|(label, _coordinate)| label.clone())
-        .collect()
-}
-
-#[expect(
-    clippy::needless_range_loop,
-    reason = "index-based elimination keeps pivot row/column operations explicit"
-)]
-/// Solves a square rational linear system by Gaussian elimination.
-fn solve_rational_system(
-    mut matrix: Vec<Vec<BigRational>>,
-    mut rhs: Vec<BigRational>,
-) -> Option<Vec<BigRational>> {
-    let dimension = rhs.len();
-    if matrix.len() != dimension || matrix.iter().any(|row| row.len() != dimension) {
-        return None;
-    }
-
-    for pivot_col in 0..dimension {
-        let pivot_row =
-            (pivot_col..dimension).find(|&row| matrix[row][pivot_col] != rational_zero())?;
-        if pivot_row != pivot_col {
-            matrix.swap(pivot_col, pivot_row);
-            rhs.swap(pivot_col, pivot_row);
-        }
-
-        let pivot_value = matrix[pivot_col][pivot_col].clone();
-        for row in pivot_col + 1..dimension {
-            if matrix[row][pivot_col] == rational_zero() {
-                continue;
-            }
-            let factor = matrix[row][pivot_col].clone() / pivot_value.clone();
-            matrix[row][pivot_col] = rational_zero();
-            for col in pivot_col + 1..dimension {
-                matrix[row][col] =
-                    matrix[row][col].clone() - factor.clone() * matrix[pivot_col][col].clone();
-            }
-            rhs[row] = rhs[row].clone() - factor * rhs[pivot_col].clone();
-        }
-    }
-
-    let mut solution = vec![rational_zero(); dimension];
-    for row in (0..dimension).rev() {
-        let mut sum = rhs[row].clone();
-        for col in row + 1..dimension {
-            sum -= matrix[row][col].clone() * solution[col].clone();
-        }
-        solution[row] = sum / matrix[row][row].clone();
-    }
-
-    Some(solution)
-}
-
-/// Converts a finite f64 to an exact rational value for barycentric predicates.
-fn rational_from_f64(value: f64) -> BigRational {
-    BigRational::from_f64(value)
-        .expect("validated finite f64 coordinates must convert to BigRational")
-}
-
-/// Returns the additive identity used throughout exact barycentric arithmetic.
-fn rational_zero() -> BigRational {
-    BigRational::from_integer(BigInt::from(0))
-}
-
-/// Returns the multiplicative identity used throughout exact barycentric arithmetic.
-fn rational_one() -> BigRational {
-    BigRational::from_integer(BigInt::from(1))
 }
 
 #[cfg(test)]
@@ -986,6 +851,26 @@ mod tests {
         assert!(
             validate_simplex_realizations_intersect_only_in_shared_faces(&first, &second).is_ok()
         );
+    }
+
+    #[test]
+    fn orientation_confinement_rejects_mismatched_shared_coordinates() {
+        let first =
+            LabeledSimplexRealization::try_new([0, 1, 2], [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+                .unwrap();
+        let second = LabeledSimplexRealization::try_new(
+            [0, 3, 4],
+            [[-1.0, -1.0], [-2.0, -1.0], [-1.0, -2.0]],
+        )
+        .unwrap();
+        let orientation = realization_orientation(&first).expect("standard triangle is oriented");
+
+        assert!(!intersection_is_confined_by_orientation(
+            &first,
+            &second,
+            &[0],
+            orientation,
+        ));
     }
 
     #[test]

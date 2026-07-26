@@ -110,10 +110,13 @@ release characterization, not a portable performance promise:
   defaults to 36,000 vertices, 3D defaults to 7,500 vertices, 4D defaults to
   800 vertices, and 5D defaults to 140 vertices. Pass `n` explicitly when a
   run must match a documented scale exactly.
-- The raw `slow-tests` harness defaults use slightly heavier defaults for some
-  dimensions (currently 40,000 vertices in 2D, 900 vertices in 4D, and
-  150 vertices in 5D). Prefer the `just` helpers for routine
-  acceptance/profiling runs.
+- The raw `slow-tests` harness defaults are 40,000 vertices in 2D, 7,500 in
+  3D, 100 in 4D, and 50 in 5D. The 4D and 5D defaults are deliberately bounded
+  release-regression probes, not scale or performance evidence. Broader Level 4
+  realization and Level 5 Delaunay validation work remains in
+  [#482](https://github.com/acgetchell/delaunay/issues/482) and
+  [#483](https://github.com/acgetchell/delaunay/issues/483) for v0.8.1.
+  Prefer the `just` helpers for explicit acceptance and profiling runs.
 
 Current 2D scale envelope:
 

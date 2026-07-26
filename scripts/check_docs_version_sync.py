@@ -1,7 +1,5 @@
 """Check release-version references against the Cargo package version."""
 
-from __future__ import annotations
-
 import argparse
 import os
 import re

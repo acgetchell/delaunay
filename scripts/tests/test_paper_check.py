@@ -1,26 +1,34 @@
 """Tests for the paper PDF sanity checker."""
 
-from typing import TYPE_CHECKING, cast
+from pathlib import Path
+from typing import cast
 
 import pytest
 from pypdf.errors import PyPdfError
 
 from paper_check import PdfCheckOptions, PdfInspectionError, PositivePageCount, check_pdf, main
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
 
 class FakePage:
     """Minimal pypdf page stand-in."""
 
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str, *, media_box: tuple[float, float, float, float] = (0.0, 0.0, 612.0, 792.0)) -> None:
         """Create a fake page with extractable text."""
         self._text = text
+        self.mediabox = FakeRectangle(media_box)
+        self.cropbox = FakeRectangle(media_box)
 
     def extract_text(self) -> str:
         """Return fake extracted page text."""
         return self._text
+
+
+class FakeRectangle:
+    """Minimal pypdf rectangle stand-in."""
+
+    def __init__(self, coordinates: tuple[float, float, float, float]) -> None:
+        """Create one fake page rectangle."""
+        self.left, self.bottom, self.right, self.top = coordinates
 
 
 class FakeReader:
@@ -50,6 +58,9 @@ def raise_pypdf_error(_path: str) -> FakeReader:
 
 class BrokenPage:
     """Minimal pypdf page stand-in that raises an extraction error."""
+
+    mediabox = FakeRectangle((0.0, 0.0, 612.0, 792.0))
+    cropbox = mediabox
 
     def extract_text(self) -> str:
         """Raise a fake pypdf extraction error."""
@@ -156,13 +167,80 @@ def test_check_pdf_wraps_pypdf_reader_errors(tmp_path: Path, monkeypatch: pytest
         check_pdf(PdfCheckOptions(pdf=pdf, min_pages=min_pages(1), required_text=(), forbidden_text=()))
 
 
-def test_check_pdf_wraps_pypdf_text_extraction_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_pdf_wraps_pypdf_page_inspection_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pdf = write_pdf_stub(tmp_path)
 
     monkeypatch.setattr("paper_check.PdfReader", FakeReaderWithBrokenPage)
 
-    with pytest.raises(PdfInspectionError, match="failed to extract text from page 1"):
+    with pytest.raises(PdfInspectionError, match="failed to inspect page 1"):
         check_pdf(PdfCheckOptions(pdf=pdf, min_pages=min_pages(1), required_text=(), forbidden_text=()))
+
+
+def test_check_pdf_accepts_structurally_equivalent_reference(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pdf = write_pdf_stub(tmp_path)
+    reference = tmp_path / "reference.pdf"
+    reference.write_bytes(b"%PDF-1.7\n")
+    monkeypatch.setattr("paper_check.PdfReader", FakeReader)
+
+    inspection = check_pdf(
+        PdfCheckOptions(
+            pdf=pdf,
+            min_pages=min_pages(1),
+            required_text=(),
+            forbidden_text=(),
+            reference=reference,
+        )
+    )
+
+    assert inspection.page_count == 1
+
+
+def test_check_pdf_rejects_reference_with_different_page_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pdf = write_pdf_stub(tmp_path)
+    reference = tmp_path / "reference.pdf"
+    reference.write_bytes(b"%PDF-1.7\n")
+
+    def fake_reader(path: str) -> FakeReader:
+        text = "stale reviewer text" if Path(path) == reference else "rebuilt paper text"
+        return FakeReader(path, text=text)
+
+    monkeypatch.setattr("paper_check.PdfReader", fake_reader)
+
+    with pytest.raises(PdfInspectionError, match="reference page 1 text differs"):
+        check_pdf(
+            PdfCheckOptions(
+                pdf=pdf,
+                min_pages=min_pages(1),
+                required_text=(),
+                forbidden_text=(),
+                reference=reference,
+            )
+        )
+
+
+def test_check_pdf_rejects_reference_with_different_page_geometry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pdf = write_pdf_stub(tmp_path)
+    reference = tmp_path / "reference.pdf"
+    reference.write_bytes(b"%PDF-1.7\n")
+
+    def fake_reader(path: str) -> FakeReader:
+        reader = FakeReader(path)
+        if Path(path) == reference:
+            reader.pages = [FakePage("Validation Architecture in delaunay", media_box=(0.0, 0.0, 600.0, 792.0))]
+        return reader
+
+    monkeypatch.setattr("paper_check.PdfReader", fake_reader)
+
+    with pytest.raises(PdfInspectionError, match="reference page 1 media box differs"):
+        check_pdf(
+            PdfCheckOptions(
+                pdf=pdf,
+                min_pages=min_pages(1),
+                required_text=(),
+                forbidden_text=(),
+                reference=reference,
+            )
+        )
 
 
 def test_main_reports_success_to_stdout(capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

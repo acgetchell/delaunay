@@ -701,6 +701,7 @@ pub mod geometry {
         pub mod measures;
         pub mod norms;
         pub mod point_generation;
+        pub(crate) mod simplex_lp;
         pub mod triangulation_generation;
 
         // Re-export all public utility items for ergonomic `crate::geometry::util::*` access.

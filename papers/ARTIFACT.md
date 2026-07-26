@@ -19,7 +19,7 @@ documents remain the source of truth for their respective contracts.
 | Commit | The commit peeled from `v0.8.0` | `git rev-list -n 1 v0.8.0` |
 | GitHub archive | [`delaunay` at `v0.8.0`][source-tag] | Tag and commit must agree |
 | Crate | [`delaunay` 0.8.0 on crates.io][crate-release] | Package version must be `0.8.0` |
-| Rust | 1.97.0 | `rustc --version` and [`rust-toolchain.toml`](../rust-toolchain.toml) |
+| Rust | 1.97.1 | `rustc --version` and [`rust-toolchain.toml`](../rust-toolchain.toml) |
 | Zenodo collection | [`10.5281/zenodo.16931097`][zenodo-concept] | Stable software concept DOI |
 | Zenodo v0.8.0 record | Published by [the final release audit][release-audit] | Version DOI, tag, and commit must match this release |
 
@@ -59,7 +59,7 @@ snapshot for executable reproduction.
 
 ## Environment and setup
 
-The repository pins Rust 1.97.0 in both [`Cargo.toml`](../Cargo.toml) and
+The repository pins Rust 1.97.1 in both [`Cargo.toml`](../Cargo.toml) and
 [`rust-toolchain.toml`](../rust-toolchain.toml). From the exact release
 checkout, install the repository-owned tools and dependencies with:
 
@@ -342,7 +342,7 @@ describes a published artifact:
 2. Run `just ci-slow`, `just papers`, and `just publish-check` from the release
    commit.
 3. Run `just bench-perf-summary` after the version bump and verify the checked-in
-   summary records v0.8.0, the release commit, Rust 1.97.0, and hardware metadata.
+   summary records v0.8.0, the release commit, Rust 1.97.1, and hardware metadata.
 4. Inspect `cargo package --list` and confirm the documented crates.io packaging
    decision remains true.
 5. Create the annotated `v0.8.0` tag from the release commit, then publish the
