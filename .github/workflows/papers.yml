@@ -19,6 +19,7 @@ on:
     paths:
       - ".github/workflows/papers.yml"
       - ".github/actions/setup-just/action.yml"
+      - "docs/assets/validation/**"
       - "justfile"
       - "notebooks/01_validation.ipynb"
       - "papers/**"
@@ -36,6 +37,7 @@ on:
     paths:
       - ".github/workflows/papers.yml"
       - ".github/actions/setup-just/action.yml"
+      - "docs/assets/validation/**"
       - "justfile"
       - "notebooks/01_validation.ipynb"
       - "papers/**"
@@ -105,7 +107,7 @@ jobs:
       - name: Install paper system dependencies
         run: |
           brew update
-          brew install fontconfig freetype graphite2 harfbuzz icu4c libpng pkgconf zlib
+          brew install freetype graphite2 icu4c libpng pkgconf zlib
           icu_pkg_config="$(brew --prefix icu4c)/lib/pkgconfig"
           zlib_pkg_config="$(brew --prefix zlib)/lib/pkgconfig"
           export PKG_CONFIG_PATH="$icu_pkg_config:$zlib_pkg_config${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
@@ -130,14 +132,16 @@ jobs:
         with:
           tool: tex-fmt@${{ steps.tool_versions.outputs.TEX_FMT_VERSION }}
 
-      - name: Build papers
-        run: just papers
-
-      - name: Verify paper artifacts are current
+      - name: Build and compare papers
         run: |
-          if [[ -n "$(git status --porcelain -- papers/validation.pdf papers/generated)" ]]; then
-            git status --short -- papers/validation.pdf papers/generated
-            echo "::error::Paper artifacts changed after 'just papers'."
-            echo "Run 'just papers' and commit the regenerated PDF/PNG outputs."
+          just validation-doc-figures
+          just paper-artifact-check
+
+      - name: Verify paper figures are current
+        run: |
+          if [[ -n "$(git status --porcelain -- docs/assets/validation)" ]]; then
+            git status --short -- docs/assets/validation
+            echo "::error::Paper figures changed after 'just validation-doc-figures'."
+            echo "Run 'just validation-doc-figures' and commit the regenerated PNG outputs."
             exit 1
           fi

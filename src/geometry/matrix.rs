@@ -281,6 +281,18 @@ mod tests {
     }
 
     #[test]
+    fn solve_exact_runtime_system_rejects_malformed_shapes() {
+        assert_eq!(
+            solve_exact_runtime_system(&[vec![1.0, 0.0]], &[1.0, 0.0]),
+            None
+        );
+        assert_eq!(
+            solve_exact_runtime_system(&[vec![1.0], vec![0.0, 1.0]], &[1.0, 0.0]),
+            None
+        );
+    }
+
+    #[test]
     fn la_index_error_maps_to_matrix_error_with_context() {
         let err = StackMatrixDispatchError::from(LaError::index_out_of_bounds(3, 4, 2));
 

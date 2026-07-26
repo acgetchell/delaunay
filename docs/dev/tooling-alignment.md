@@ -244,10 +244,9 @@ The useful updates ported in this pass are:
   `taiki-e/cache-cargo-install-action`/`cargo install --locked` pattern before
   the corresponding recipes run. Pinned Rust CLI tools are installed through
   Cargo rather than Homebrew so local setup cannot drift from CI pins. The
-  local Tectonic bootstrap likewise avoids a permanent `pkg-config` installation:
-  when that command is absent, `just setup-tools` obtains it ephemerally through
-  `pkgx` for the dependency probe and Cargo installation. The external native
-  bridge libraries and their pkg-config metadata remain platform-managed. The CI
+  local Tectonic bootstrap requires the platform-managed `pkg-config` command
+  (commonly provided by `pkgconf`) alongside the external native bridge
+  libraries and their metadata. The CI
   build matrix runs `just ci`, including `cargo machete` dependency hygiene, on
   Linux, macOS, and Windows after syncing the locked uv dev group and installing
   the pinned Cargo tools. The papers workflow

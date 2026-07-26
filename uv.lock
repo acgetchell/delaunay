@@ -499,13 +499,13 @@ dev = [
 ]
 notebooks = [
     { name = "ipykernel", specifier = ">=7.3.0" },
-    { name = "jupyterlab", specifier = ">=4.6.1" },
-    { name = "matplotlib", specifier = ">=3.11.0" },
+    { name = "jupyterlab", specifier = ">=4.6.2" },
+    { name = "matplotlib", specifier = ">=3.11.1" },
     { name = "nbclient", specifier = ">=0.11.0" },
     { name = "nbconvert", specifier = ">=7.17.1" },
     { name = "nbformat", specifier = ">=5.10.4" },
     { name = "plotly", specifier = ">=6.9.0" },
-    { name = "polars", specifier = ">=1.42.1" },
+    { name = "polars", specifier = ">=1.43.0" },
 ]
 
 [[package]]

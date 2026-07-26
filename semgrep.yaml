@@ -2142,6 +2142,27 @@ rules:
         - "/tests/semgrep/**"
     pattern-regex: '^\s*except\s+Exception(?:\s+as\s+\w+)?\s*:'
 
+  - id: delaunay.python.no-future-annotations-on-python314
+    languages:
+      - python
+    severity: WARNING
+    message: >-
+      Python 3.14 defers annotations by default. Remove
+      `from __future__ import annotations`; suppress this rule with a reason
+      only when a runtime consumer intentionally requires stringified
+      annotations.
+    metadata:
+      category: maintainability
+      rationale: >-
+        The repository requires Python 3.14 or newer. The future import opts
+        into legacy stringified annotations and is deprecated, so retaining it
+        can obscure the runtime annotation semantics.
+    paths:
+      include:
+        - "/scripts/**/*.py"
+        - "/tests/semgrep/scripts/tests/python_style.py"
+    pattern: from __future__ import annotations
+
   - id: delaunay.notebook.no-pandas-table-engine
     languages:
       - generic

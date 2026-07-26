@@ -340,6 +340,7 @@ help-workflows:
     @echo "  just notebook-execute   # Execute one notebook under target/notebooks"
     @echo "  just validation-doc-figures # Refresh canonical validation figures"
     @echo "  just paper-check        # Lint, build, and check without tracked changes"
+    @echo "  just paper-artifact-check # Compare the build with the reviewer PDF"
     @echo "  just paper-refresh      # Check, then refresh one tracked reviewer PDF"
     @echo "  just papers             # Refresh figures and the validation reviewer PDF"
     @echo ""
@@ -549,6 +550,22 @@ pachner-stress-3d attempts="100" vertices="9000" validate_every="10" output_dir=
 # Run one 4D direct Pachner stress workload with topology-scope reports enabled.
 [group('benchmarks and performance')]
 pachner-stress-4d attempts="100" vertices="1000" validate_every="10" output_dir="target/pachner_stress/4d" mode="round-trip": (_pachner-stress-dim "4d" vertices attempts validate_every output_dir mode)
+
+# Check that one target-built paper is structurally equivalent to its tracked reviewer PDF.
+[group('notebooks and papers')]
+paper-artifact-check paper="validation": (paper-check paper)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    paper={{ quote(paper) }}
+    case "$paper" in
+        ""|*[!A-Za-z0-9_-]*)
+            echo "❌ Invalid paper name: $paper"
+            echo "   Use only ASCII letters, digits, underscores, and hyphens."
+            exit 1
+            ;;
+    esac
+    uv run paper-pdf-check "target/papers/${paper}/${paper}.pdf" \
+        --reference "papers/${paper}.pdf"
 
 # Compile one paper with Tectonic under target/papers/.
 [group('notebooks and papers')]
@@ -1140,25 +1157,25 @@ setup-tools: _ensure-uv
     ensure_tectonic_build_dependencies() {
         echo "Ensuring native dependencies needed to install Tectonic..."
 
-        local candidate homebrew_repository package sdk_version
-        local -a pkg_config_command=(pkg-config)
+        local candidate homebrew_repository package platform sdk_version
         local -a missing_pkg_config_packages=()
-        local -a required_pkg_config_packages=(fontconfig freetype2 graphite2 icu-uc libpng zlib)
+        local -a required_pkg_config_packages=(freetype2 graphite2 icu-uc libpng zlib)
+
+        platform="$(uname -s)"
+        if [ "$platform" != "Darwin" ]; then
+            required_pkg_config_packages=(fontconfig freetype2 graphite2 icu-uc libpng openssl zlib)
+        fi
 
         append_pkg_config_path() {
             local directory="$1"
             if [ -d "$directory" ] && [[ ":${PKG_CONFIG_PATH:-}:" != *":$directory:"* ]]; then
-                export PKG_CONFIG_PATH="$directory${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+                export PKG_CONFIG_PATH="${PKG_CONFIG_PATH:+$PKG_CONFIG_PATH:}$directory"
             fi
         }
 
         if ! have pkg-config; then
-            if ! have pkgx; then
-                echo "❌ Neither 'pkg-config' nor 'pkgx' was found. Install pkgx or pkg-config before building Tectonic from Cargo."
-                exit 1
-            fi
-            pkg_config_command=(pkgx +freedesktop.org/pkg-config pkg-config)
-            echo "  ✓ pkgx will supply pkg-config ephemerally"
+            echo "❌ 'pkg-config' was not found. Install pkgconf or pkg-config before building Tectonic from Cargo."
+            exit 1
         fi
 
         shopt -s nullglob
@@ -1179,7 +1196,7 @@ setup-tools: _ensure-uv
         fi
 
         for package in "${required_pkg_config_packages[@]}"; do
-            if ! "${pkg_config_command[@]}" --exists "$package"; then
+            if ! pkg-config --exists "$package"; then
                 missing_pkg_config_packages+=("$package")
             fi
         done
@@ -1202,16 +1219,12 @@ setup-tools: _ensure-uv
 
         ensure_tectonic_build_dependencies
         echo "  ⏳ Installing tectonic $expected_version (cargo)..."
-        if have pkg-config; then
-            cargo install --locked tectonic --version "$expected_version"
-        else
-            pkgx +freedesktop.org/pkg-config cargo install --locked tectonic --version "$expected_version"
-        fi
+        cargo install --locked tectonic --version "$expected_version"
     }
 
     echo "This recipe installs pinned Rust CLI tools through cargo."
     echo "External prerequisites that must already be on PATH: uv, jq, rustup, cargo, and chktex."
-    echo "pkgx or pkg-config, plus native development files, are required only when the pinned Tectonic version must be installed."
+    echo "pkg-config, plus native development files, is required only when the pinned Tectonic version must be installed."
     echo ""
 
     echo "Ensuring uv-managed Python tooling..."

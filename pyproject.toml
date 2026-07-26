@@ -250,12 +250,12 @@ dev = [
 ]
 notebooks = [
     "ipykernel>=7.3.0",
-    "jupyterlab>=4.6.1",
-    "matplotlib>=3.11.0",
+    "jupyterlab>=4.6.2",
+    "matplotlib>=3.11.1",
     "nbclient>=0.11.0",
     "nbconvert>=7.17.1",
     "nbformat>=5.10.4",
-    "polars>=1.42.1",
+    "polars>=1.43.0",
     "plotly>=6.9.0",
 ]
 

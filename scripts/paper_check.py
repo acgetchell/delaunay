@@ -13,17 +13,29 @@ from pypdf.errors import PyPdfError
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from pypdf.generic import RectangleObject
+
 
 class PdfInspectionError(RuntimeError):
     """Raised when a generated PDF cannot satisfy paper sanity checks."""
 
 
 @dataclass(frozen=True, slots=True)
+class PdfPageInspection:
+    """Platform-stable facts extracted from one PDF page."""
+
+    text: str
+    media_box: tuple[float, float, float, float]
+    crop_box: tuple[float, float, float, float]
+
+
+@dataclass(frozen=True, slots=True)
 class PdfInspection:
-    """Extracted PDF facts used by sanity checks."""
+    """Extracted PDF facts used by sanity and reviewer-copy checks."""
 
     page_count: int
     text: str
+    pages: tuple[PdfPageInspection, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +64,7 @@ class PdfCheckOptions:
     min_pages: PositivePageCount
     required_text: tuple[str, ...]
     forbidden_text: tuple[str, ...]
+    reference: Path | None = None
 
     def __post_init__(self) -> None:
         """Reject options that bypass the positive page-count parser."""
@@ -74,8 +87,18 @@ def parse_positive_page_count(value: str) -> PositivePageCount:
         raise argparse.ArgumentTypeError(msg) from error
 
 
+def rectangle_coordinates(rectangle: RectangleObject) -> tuple[float, float, float, float]:
+    """Return one PDF rectangle in a representation stable across pypdf objects."""
+    return (
+        float(rectangle.left),
+        float(rectangle.bottom),
+        float(rectangle.right),
+        float(rectangle.top),
+    )
+
+
 def inspect_pdf(pdf: Path) -> PdfInspection:
-    """Extract page count and text from a PDF."""
+    """Extract page count, text, and page geometry from a PDF."""
     if not pdf.is_file():
         msg = f"PDF does not exist: {pdf}"
         raise FileNotFoundError(msg)
@@ -89,14 +112,41 @@ def inspect_pdf(pdf: Path) -> PdfInspection:
         msg = f"{pdf}: encrypted PDFs are not valid reviewer copies"
         raise PdfInspectionError(msg)
 
-    text_parts: list[str] = []
+    pages: list[PdfPageInspection] = []
     for page_number, page in enumerate(reader.pages, start=1):
         try:
-            text_parts.append(page.extract_text() or "")
-        except PyPdfError as error:
-            msg = f"{pdf}: failed to extract text from page {page_number}: {error}"
+            pages.append(
+                PdfPageInspection(
+                    text=page.extract_text() or "",
+                    media_box=rectangle_coordinates(page.mediabox),
+                    crop_box=rectangle_coordinates(page.cropbox),
+                )
+            )
+        except (PyPdfError, TypeError, ValueError) as error:
+            msg = f"{pdf}: failed to inspect page {page_number}: {error}"
             raise PdfInspectionError(msg) from error
-    return PdfInspection(page_count=len(reader.pages), text="\n".join(text_parts))
+    return PdfInspection(
+        page_count=len(pages),
+        text="\n".join(page.text for page in pages),
+        pages=tuple(pages),
+    )
+
+
+def compare_pdf_structure(generated: PdfInspection, reference: PdfInspection) -> list[str]:
+    """Return structural differences that imply a stale reviewer copy."""
+    failures: list[str] = []
+    if generated.page_count != reference.page_count:
+        failures.append(f"reference has {reference.page_count} page(s), rebuilt PDF has {generated.page_count}")
+        return failures
+
+    for page_number, (generated_page, reference_page) in enumerate(zip(generated.pages, reference.pages, strict=True), start=1):
+        if generated_page.text != reference_page.text:
+            failures.append(f"reference page {page_number} text differs from rebuilt PDF")
+        if generated_page.media_box != reference_page.media_box:
+            failures.append(f"reference page {page_number} media box differs from rebuilt PDF")
+        if generated_page.crop_box != reference_page.crop_box:
+            failures.append(f"reference page {page_number} crop box differs from rebuilt PDF")
+    return failures
 
 
 def check_pdf(options: PdfCheckOptions) -> PdfInspection:
@@ -109,6 +159,9 @@ def check_pdf(options: PdfCheckOptions) -> PdfInspection:
 
     failures.extend(f"missing required text: {required!r}" for required in options.required_text if required not in inspection.text)
     failures.extend(f"found forbidden text: {forbidden!r}" for forbidden in options.forbidden_text if forbidden in inspection.text)
+    if options.reference is not None:
+        reference = inspect_pdf(options.reference)
+        failures.extend(compare_pdf_structure(inspection, reference))
 
     if failures:
         msg = f"{options.pdf}: " + "; ".join(failures)
@@ -124,6 +177,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-pages", type=parse_positive_page_count, default=PositivePageCount.from_raw(1), help="minimum acceptable page count")
     parser.add_argument("--require-text", action="append", default=None, help="text that must appear in extracted PDF text")
     parser.add_argument("--forbid-text", action="append", default=None, help="text that must not appear in extracted PDF text")
+    parser.add_argument(
+        "--reference",
+        type=Path,
+        help="tracked reviewer PDF whose page text and geometry must match",
+    )
     return parser
 
 
@@ -136,6 +194,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         min_pages=namespace.min_pages,
         required_text=tuple(namespace.require_text or ()),
         forbidden_text=tuple(namespace.forbid_text or ()),
+        reference=namespace.reference,
     )
 
     try:

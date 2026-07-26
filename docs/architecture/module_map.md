@@ -77,7 +77,8 @@ PL-manifold validation. Ridge ownership therefore belongs in `src/topology/`.
 - `traits/coordinate.rs` - coordinate abstractions and typed coordinate
   diagnostic payloads.
 - `util/` - coordinate conversions, vector norms, circumsphere computations,
-  geometric measures, point generation, and random triangulation generation.
+  geometric measures, point generation, random triangulation generation, and
+  the private `simplex_lp.rs` implementation used by realization validation.
 
 The currently supported caller-visible coordinate scalar is `f64`. Exact
 arithmetic is used internally by robust predicate fallbacks. If exact

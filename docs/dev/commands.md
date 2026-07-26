@@ -610,6 +610,7 @@ just paper-tex-lint
 just paper-build
 just paper-pdf-check
 just paper-check
+just paper-artifact-check
 just paper-refresh
 just papers
 ```
@@ -626,23 +627,27 @@ changing tracked files. `just paper-pdf-check` uses the uv-managed
 `paper-pdf-check` helper to verify that target-built PDF opens, has pages,
 includes expected title/reference text, and does not contain the literal
 `\today`. `just paper-check` lints, builds, and sanity-checks a paper without
-refreshing tracked artifacts. `just paper-refresh` runs that check before
-copying the target-built PDF to `papers/validation.pdf`. `just papers` refreshes
-the canonical figures and reviewer PDF through those named artifact owners.
+refreshing tracked artifacts. `just paper-artifact-check` additionally compares
+the rebuilt and tracked reviewer PDFs page by page using extracted text and page
+geometry, avoiding a false requirement that platform-native PDF internals be
+byte-identical. `just paper-refresh` runs the basic check before copying the
+target-built PDF to `papers/validation.pdf`. `just papers` refreshes the
+canonical figures and reviewer PDF through those named artifact owners.
 
 Tectonic and `tex-fmt` are pinned Cargo-installed tools. `chktex` comes from a
 TeX distribution or system package manager. Installing or upgrading Tectonic
 from Cargo also requires a `pkg-config` implementation and development headers
-for its externally resolved native bridge libraries, including fontconfig,
-FreeType, Graphite2, ICU, libpng, and zlib; the pinned default build vendors
-HarfBuzz. When the pinned Tectonic version is absent, `just setup-tools` uses an
-existing `pkg-config` or obtains it ephemerally with
-`pkgx +freedesktop.org/pkg-config`, then checks the complete external native
-dependency set. On macOS it auto-detects common Homebrew metadata directories,
-including the active SDK metadata used for system compression libraries, before
-it asks for a manual `PKG_CONFIG_PATH`. An already-correct Tectonic installation
-does not require those native build prerequisites. Paper CI installs the
-platform native package set explicitly.
+for its externally resolved native bridge libraries. macOS requires FreeType,
+Graphite2, ICU, libpng, and zlib, but not fontconfig. Non-Apple platforms
+additionally require fontconfig and OpenSSL. The pinned default build vendors
+HarfBuzz. When the pinned Tectonic version is absent, `just setup-tools`
+requires `pkg-config` (commonly installed as `pkgconf`) and checks the
+platform-specific external native dependency set. On macOS it auto-detects
+common Homebrew metadata
+directories, including the active SDK metadata used for system compression
+libraries, before it asks for a manual `PKG_CONFIG_PATH`. An already-correct
+Tectonic installation does not require those native build prerequisites. Paper
+CI installs the platform native package set explicitly.
 
 Reviewer-facing validation diagrams under `docs/assets/validation/` use the
 same deterministic notebook with a separate explicit output switch:

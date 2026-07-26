@@ -1,7 +1,5 @@
 """Tests for documentation and package-version synchronization checks."""
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 
 import pytest
