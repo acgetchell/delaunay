@@ -58,7 +58,7 @@ Both repositories now share the same core Rust and Python support-tooling loop:
 
 The useful updates ported in this pass are:
 
-- Rust MSRV metadata uses Rust 1.97.0 for the v0.8.0 release line.
+- Rust MSRV metadata uses Rust 1.97.1 for the v0.8.0 release line.
   `Cargo.toml`, `rust-toolchain.toml`, `clippy.toml`, contributor docs, and
   agent guidance use the same baseline so upcoming `la-stack` and
   `markov-chain-monte-carlo` releases have no MSRV conflict.
@@ -66,15 +66,17 @@ The useful updates ported in this pass are:
   `justfile`, with `cargo-nextest` on 0.9.140 and `cargo-llvm-cov` on 0.8.7,
   which is still shared across the repositories.
 - CI command-runner, Markdown, YAML formatting, and spelling tool pins now
-  track the current reviewed versions: `just` 1.56.0, `rumdl` 0.2.34,
+  track the current reviewed versions: `just` 1.57.0, `rumdl` 0.2.43,
   `dprint` 0.55.2, and `typos-cli` 1.48.0. The linter and formatter pins keep
   local setup and CI on the same reviewed releases.
 - uv-managed Python support-tool pins now use exact reviewed versions for the
-  shared dev tools: `ruff` 0.15.21, `semgrep` 1.169.0, and `ty` 0.0.59.
-  Semgrep is intentionally ahead of the older sibling baseline so its transitive
-  dependency graph stays on the current reviewed toolchain baseline. Delaunay
-  previously used lower-bound specifiers for those tools, which allowed local
-  and CI environments to drift away from that reviewed baseline.
+  shared dev tools: `ruff` 0.15.21, `semgrep` 1.171.0, and `ty` 0.0.59.
+  Semgrep still pins the vulnerable `mcp` 1.23.3 release, so the uv project
+  configuration overrides that transitive dependency to patched `mcp` 1.28.1.
+  Remove the override once Semgrep's published dependency constraint reaches
+  that version or later. Delaunay previously used lower-bound specifiers for
+  those tools, which allowed local and CI environments to drift away from that
+  reviewed baseline.
 - Local just helpers now version-check the pinned `uv`, `just`,
   `cargo-nextest`, `cargo-machete`, `taplo-cli`, `dprint`, `git-cliff`, `rumdl`,
   `samply`, `typos-cli`, and `zizmor` tools instead of accepting any installed
@@ -241,7 +243,11 @@ The useful updates ported in this pass are:
   install the same Cargo-tool pins with the sibling repositories'
   `taiki-e/cache-cargo-install-action`/`cargo install --locked` pattern before
   the corresponding recipes run. Pinned Rust CLI tools are installed through
-  Cargo rather than Homebrew so local setup cannot drift from CI pins. The CI
+  Cargo rather than Homebrew so local setup cannot drift from CI pins. The
+  local Tectonic bootstrap likewise avoids a permanent `pkg-config` installation:
+  when that command is absent, `just setup-tools` obtains it ephemerally through
+  `pkgx` for the dependency probe and Cargo installation. The external native
+  bridge libraries and their pkg-config metadata remain platform-managed. The CI
   build matrix runs `just ci`, including `cargo machete` dependency hygiene, on
   Linux, macOS, and Windows after syncing the locked uv dev group and installing
   the pinned Cargo tools. The papers workflow

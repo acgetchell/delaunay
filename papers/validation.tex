@@ -45,6 +45,28 @@
   \item \AuthorTodo{Preview the paper structure.}
 \end{itemize}
 
+Applications such as Causal Dynamical Triangulation (CDT) require a robust and
+reliable triangulation library, capable of maintaining correct properties of the
+triangulation in simulations that may alter their structure millions
+of times per
+simulation.
+These invariant properties should be verifiable during construction
+and mutation,
+and violations of these properties should be detectable and diagnosable, so that
+fixable errors may be corrected and unfixable errors may be reported.
+
+Delaunay is a Rust library for constructing and mutating triangulations with
+insertion, deletion, and bi-stellar k-flip operations, while maintaining a range
+of invariant properties important for the construction of Pseudo- and
+Piecewise-Linear (PL) manifolds,
+the evaluation of geometric predicates, and the embedding of
+triangulations in Euclidean,
+toroidal, and spherical spaces.
+
+\AuthorTodo{Qualify the preceding overview so the ordinary mutable
+  Euclidean/toroidal workflows are distinguished from the separate bounded
+\(S^2\)/\(S^3\) spherical prototype.}
+
 \section{Background and Definitions}
 
 \begin{itemize}
@@ -116,6 +138,48 @@
     stored coherence and Level 3 intrinsic orientability.}
   \item \AuthorTodo{Explain why realization validity is a precondition for
     geometric predicates.}
+  \item \AuthorTodo{Introduce two realized \(d\)-simplices with vertices
+      \(a_0,\ldots,a_d\) and \(b_0,\ldots,b_d\), vertex labels
+      \(\ell_i\) and \(m_j\), and shared-label set \(S\), then explain the exact
+      shared-face intersection program in
+    Equation~\ref{eq:shared-face-intersection-lp}.}
+    \begin{equation}
+      \label{eq:shared-face-intersection-lp}
+      \begin{aligned}
+        z^\star
+        ={}& \underset{\alpha_i,\beta_j \geq 0}{\operatorname{maximize}}
+        && \sum_{\ell_i \notin S} \alpha_i
+        + \sum_{m_j \notin S} \beta_j \\
+        & \text{\rm subject to}
+        && \sum_{i=0}^{d} \alpha_i a_i
+        = \sum_{j=0}^{d} \beta_j b_j, \\
+        &&& \sum_{i=0}^{d} \alpha_i = 1,
+        \qquad \sum_{j=0}^{d} \beta_j = 1 .
+      \end{aligned}
+    \end{equation}
+  \item \AuthorTodo{Explain the three exact outcomes: infeasibility proves the
+      simplices disjoint; \(z^\star=0\) proves every feasible intersection point
+      is confined to the shared face; and \(z^\star>0\) supplies barycentric
+    weight on non-shared labels for a typed intersection witness.}
+  \item \AuthorTodo{Explain how revised-simplex basis navigation replaces
+      exhaustive active-set enumeration of the intersection polytope on the
+      common path and removes the bottleneck exposed by the 4D and 5D Level 4
+    checks.}
+  \item \AuthorTodo{Describe the filtered-exact hierarchy: bounding-box,
+      separating-facet, orientation, and shared-face normal tests reject or
+      certify easy pairs; floating-point simplex phases propose axes and bases;
+      proved floating-point error bounds or exact rational primal/dual checks
+      certify accepted results; and active-set enumeration remains the
+    conservative fallback.}
+  \item \AuthorTodo{Describe how exact finite-\texttt{f64} systems use the
+      runtime-dispatched fraction-free Bareiss solver from \texttt{la-stack},
+    while general rational systems retain the \texttt{BigRational} fallback.}
+  \item \AuthorTodo{Treat the broader independent randomized and degenerate
+      2D--5D agreement campaign and representative before/after benchmarks as
+    v0.8.1 work tracked by issue \#482.}
+  \item \AuthorTodo{Do not present the bounded v0.8.0 4D and 5D slow-test probes
+      as performance evidence. Coordinate any Level 5 all-violations performance
+    claims with the separate v0.8.1 work in issue \#483.}
 \end{itemize}
 
 \subsection{Level 5: Geometric Predicates}

@@ -20,7 +20,7 @@
 /// wrappers such as [`determinant`] can preserve exact failure context without
 /// exposing the rest of `la-stack` to downstream callers.
 pub use la_stack::LaError;
-use la_stack::Matrix as LaMatrix;
+use la_stack::{BigRational, Matrix as LaMatrix};
 pub(crate) use la_stack::{DEFAULT_SINGULAR_TOL, SingularityReason, Vector as LaVector};
 use thiserror::Error;
 
@@ -182,6 +182,34 @@ pub(crate) fn matrix_set<const D: usize>(
     value: f64,
 ) -> Result<(), StackMatrixDispatchError> {
     m.set(row, column, value).map_err(Into::into)
+}
+
+/// Solve a runtime-sized finite `f64` system with exact fraction-free elimination.
+///
+/// The backend converts every IEEE 754 input to its exact rational value before
+/// applying Bareiss elimination, so this is an exact solve rather than a
+/// floating-point approximation.
+pub(crate) fn solve_exact_runtime_system(
+    matrix: &[Vec<f64>],
+    rhs: &[f64],
+) -> Option<Result<Vec<BigRational>, StackMatrixDispatchError>> {
+    let dimension = rhs.len();
+    if matrix.len() != dimension || matrix.iter().any(|row| row.len() != dimension) {
+        return None;
+    }
+
+    Some(try_with_la_stack_matrix!(dimension, |stack_matrix| {
+        for (row, values) in matrix.iter().enumerate() {
+            for (column, value) in values.iter().copied().enumerate() {
+                matrix_set(&mut stack_matrix, row, column, value)?;
+            }
+        }
+        let rhs_vector = LaVector::try_new(std::array::from_fn(|index| rhs[index]))?;
+        stack_matrix
+            .solve_exact(rhs_vector)
+            .map(|solution| solution.into_iter().collect())
+            .map_err(Into::into)
+    }))
 }
 
 /// Return a determinant and its certified error bound when the f64 fast filter supports the matrix size.

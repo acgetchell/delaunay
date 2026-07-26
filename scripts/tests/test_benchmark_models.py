@@ -454,9 +454,13 @@ class TestFormattingFunctions:
             (parse_time_data, "Time: [0.0, 1.0, 2.0] µs"),
             (parse_time_data, "Time: [1.0, 3.0, 2.0] µs"),
             (parse_time_data, "Time: [1.0, 1e999, 1e999] µs"),
+            (parse_time_data, "Time: [1.0, 2.0] µs"),
+            (parse_time_data, "Time: [1.0, 2.0, 3.0, 4.0] µs"),
             (parse_throughput_data, "Throughput: [-1.0, 1.0, 2.0] Kelem/s"),
             (parse_throughput_data, "Throughput: [1.0, 3.0, 2.0] Kelem/s"),
             (parse_throughput_data, "Throughput: [1.0, 1e999, 1e999] Kelem/s"),
+            (parse_throughput_data, "Throughput: [1.0, 2.0] Kelem/s"),
+            (parse_throughput_data, "Throughput: [1.0, 2.0, 3.0, 4.0] Kelem/s"),
         ],
     )
     def test_parsers_reject_nonphysical_intervals(

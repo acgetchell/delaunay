@@ -242,7 +242,7 @@ dev = [
     "actionlint-py==1.7.12.24",
     "pytest==9.1.1",
     "ruff==0.15.21",
-    "semgrep==1.169.0",
+    "semgrep==1.171.0",
     "shellcheck-py==0.11.0.1",
     "shfmt-py==4.0.0",
     "ty==0.0.59",
@@ -258,3 +258,8 @@ notebooks = [
     "polars>=1.42.1",
     "plotly>=6.9.0",
 ]
+
+[tool.uv]
+# Semgrep 1.171.0 still pins vulnerable mcp 1.23.3. Keep the patched override
+# until Semgrep's published dependency constraint moves to mcp 1.28.1 or later.
+override-dependencies = [ "mcp==1.28.1" ]

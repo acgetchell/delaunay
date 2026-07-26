@@ -31,8 +31,8 @@ Key takeaways from v0.7.8:
 ### v0.8.0 paper-facing API and topology push
 
 v0.8.0 is the next feature-bearing release and is expected to carry the larger
-work intentionally deferred from v0.7.8 cleanup. It will require Rust 1.97.0;
-the final release gate is an explicit audit of the 1.97.0 toolchain surface
+work intentionally deferred from v0.7.8 cleanup. It will require Rust 1.97.1;
+the final release gate is an explicit audit of the 1.97.1 toolchain surface
 before shipping.
 
 - **Pachner/Edit API shape (#252/#253/#350/#337):** unify the Pachner move API,
@@ -51,14 +51,25 @@ before shipping.
 - **Naming cleanup (#323):** make the breaking `Cell` → `Simplex` rename.
 - **Iterator cleanup (#353):** prefer iterator-based collection-building paths
   where that improves clarity and allocation behavior.
-- **Rust 1.97.0 release gate (#329/#496):** raise the v0.8.0 MSRV to Rust
-  1.97.0, finish the baseline `assert_matches!` cleanup, audit the new
+- **Rust 1.97.1 release gate (#329/#496):** raise the v0.8.0 MSRV to Rust
+  1.97.1, finish the baseline `assert_matches!` cleanup, audit the new
   integer/`NonZero` bit helpers against Hilbert bit-depth/index invariants,
   review `RepeatN::default` and Cargo 1.97 tooling changes for useful adoption,
-  and re-benchmark predicate `cold_path` decisions under the 1.97.0 compiler.
+  and re-benchmark predicate `cold_path` decisions under the 1.97.1 compiler.
 - **Notebook/export artifact (#64/#408):** ship the generic simplicial-complex
   JSON export, reproducible quickstart and validation notebooks, tracked
   validation diagrams, and reviewer-facing artifact instructions.
+
+### v0.8.1 validation evidence and performance follow-up
+
+- **Level 4 realization validation (#482):** complete the independent
+  randomized and degenerate 2D–5D agreement campaign for the revised
+  simplex-intersection narrow phase and record representative before/after
+  benchmarks.
+- **Level 5 Delaunay reporting (#483):** replace the Euclidean
+  all-vertices/all-simplices report bottleneck while preserving its violation
+  set, with 2D–5D agreement tests and before/after benchmarks. This work is
+  blocked by issue #482.
 
 ### v0.9.0 and later horizon
 

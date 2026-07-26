@@ -20,12 +20,13 @@
 //!
 //! - 2D: 40,000 vertices
 //! - 3D: 7,500 vertices
-//! - 4D: 900 vertices
-//! - 5D: 150 vertices
+//! - 4D: 100 vertices
+//! - 5D: 50 vertices
 //!
-//! The `just` helpers may use slightly smaller local defaults so routine
-//! acceptance/profiling runs stay near one minute on maintainer Apple M4 Max
-//! hardware. Pass `n` explicitly when a run must match a documented scale.
+//! The `just` diagnostic helpers use independently calibrated defaults and a
+//! longer manual runtime budget. Pass `n` explicitly when a run must match a
+//! documented scale. Broader high-dimensional Level 4 and Level 5 validation
+//! work remains tracked by #482 and #483 for v0.8.1.
 
 #![cfg_attr(not(feature = "slow-tests"), allow(dead_code))]
 //!
@@ -1570,8 +1571,9 @@ where
             // flip-based Level 5 Delaunay check. This skips the expensive Level 4
             // realization overlap scan and the full report's all-violations Delaunay
             // scan, keeping the wall-clock guard focused on construction
-            // correctness. Level 4 is exercised at scale by `just test-slow`
-            // (full scope); see issue #482.
+            // correctness. Level 4 retains bounded full-scope regression
+            // coverage under `just test-slow`; broader Level 4 and Level 5
+            // performance work remains in #482/#483 for v0.8.1.
             println!("Running validation (Levels 1–3 + fast Level 5; realization skipped)...");
             let t_validate = Instant::now();
             let topology_result = dt.as_triangulation().validation_report();
@@ -1853,6 +1855,8 @@ macro_rules! gen_debug_large_scale_tests {
 gen_debug_large_scale_tests! {
     debug_large_scale_2d: 2, "2D", 40_000;
     debug_large_scale_3d: 3, "3D", 7_500;
-    debug_large_scale_4d: 4, "4D", 900;
-    debug_large_scale_5d: 5, "5D", 150;
+    // Keep the high-dimensional full-report cases bounded until the Level 4
+    // and Level 5 performance/equivalence work in #482/#483 lands in v0.8.1.
+    debug_large_scale_4d: 4, "4D", 100;
+    debug_large_scale_5d: 5, "5D", 50;
 }

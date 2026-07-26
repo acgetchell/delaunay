@@ -632,13 +632,17 @@ the canonical figures and reviewer PDF through those named artifact owners.
 
 Tectonic and `tex-fmt` are pinned Cargo-installed tools. `chktex` comes from a
 TeX distribution or system package manager. Installing or upgrading Tectonic
-from Cargo also requires `pkg-config` and development headers for its native
-bridge libraries, including fontconfig, FreeType, Graphite2, HarfBuzz, ICU,
-libpng, and zlib. When the pinned Tectonic version is absent,
-`just setup-tools` checks ICU locally and auto-detects common Homebrew ICU
-pkg-config directories before it asks for a manual `PKG_CONFIG_PATH`; an
-already-correct Tectonic installation does not require those native build
-prerequisites. Paper CI installs the platform native package set explicitly.
+from Cargo also requires a `pkg-config` implementation and development headers
+for its externally resolved native bridge libraries, including fontconfig,
+FreeType, Graphite2, ICU, libpng, and zlib; the pinned default build vendors
+HarfBuzz. When the pinned Tectonic version is absent, `just setup-tools` uses an
+existing `pkg-config` or obtains it ephemerally with
+`pkgx +freedesktop.org/pkg-config`, then checks the complete external native
+dependency set. On macOS it auto-detects common Homebrew metadata directories,
+including the active SDK metadata used for system compression libraries, before
+it asks for a manual `PKG_CONFIG_PATH`. An already-correct Tectonic installation
+does not require those native build prerequisites. Paper CI installs the
+platform native package set explicitly.
 
 Reviewer-facing validation diagrams under `docs/assets/validation/` use the
 same deterministic notebook with a separate explicit output switch:
