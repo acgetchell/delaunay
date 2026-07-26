@@ -45,7 +45,8 @@ use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::InvalidCoordinateValue;
 use crate::geometry::util::simplex_lp::{
-    IntersectionLinearProgramResult, intersection_via_linear_program, shared_face_fast_confinement,
+    IntersectionLinearProgramResult, coordinates_are_identical, intersection_via_linear_program,
+    shared_face_fast_confinement,
 };
 use thiserror::Error;
 
@@ -701,6 +702,29 @@ fn intersection_is_confined_by_orientation<L, const D: usize>(
 where
     L: Eq,
 {
+    for shared_label in shared_labels {
+        let Some(basis_index) = basis
+            .labels()
+            .iter()
+            .position(|candidate| candidate == shared_label)
+        else {
+            return false;
+        };
+        let Some(other_index) = other
+            .labels()
+            .iter()
+            .position(|candidate| candidate == shared_label)
+        else {
+            return false;
+        };
+        if !coordinates_are_identical(
+            &basis.coordinates()[basis_index],
+            &other.coordinates()[other_index],
+        ) {
+            return false;
+        }
+    }
+
     let basis_points: SimplexRealizationBuffer<_> = (0..basis.coordinates().len())
         .filter_map(|index| basis.point_at(index))
         .collect();
@@ -827,6 +851,26 @@ mod tests {
         assert!(
             validate_simplex_realizations_intersect_only_in_shared_faces(&first, &second).is_ok()
         );
+    }
+
+    #[test]
+    fn orientation_confinement_rejects_mismatched_shared_coordinates() {
+        let first =
+            LabeledSimplexRealization::try_new([0, 1, 2], [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+                .unwrap();
+        let second = LabeledSimplexRealization::try_new(
+            [0, 3, 4],
+            [[-1.0, -1.0], [-2.0, -1.0], [-1.0, -2.0]],
+        )
+        .unwrap();
+        let orientation = realization_orientation(&first).expect("standard triangle is oriented");
+
+        assert!(!intersection_is_confined_by_orientation(
+            &first,
+            &second,
+            &[0],
+            orientation,
+        ));
     }
 
     #[test]

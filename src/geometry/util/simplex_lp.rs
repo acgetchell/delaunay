@@ -1279,7 +1279,10 @@ fn product_underflowed(left: f64, right: f64, product: f64) -> bool {
 }
 
 /// Compares finite coordinates exactly while treating both signed zeros alike.
-fn coordinates_are_identical<const D: usize>(left: &[f64; D], right: &[f64; D]) -> bool {
+pub(in crate::geometry) fn coordinates_are_identical<const D: usize>(
+    left: &[f64; D],
+    right: &[f64; D],
+) -> bool {
     left.iter().zip(right).all(|(left, right)| {
         let left_bits = left.to_bits();
         let right_bits = right.to_bits();
@@ -1357,6 +1360,9 @@ fn exact_axis_through_shared_face<L, const D: usize>(
 where
     L: Eq,
 {
+    if axis.len() != D || axis.iter().any(|value| !value.is_finite()) {
+        return None;
+    }
     let shared_coordinates: Vec<_> = shared_labels
         .iter()
         .map(|label| {
@@ -1368,11 +1374,11 @@ where
         })
         .collect::<Option<_>>()?;
     if shared_coordinates.is_empty() {
-        return Some(
-            axis.iter()
-                .map(|value| rational_from_f64(*value * 1024.0))
-                .collect(),
-        );
+        let scaled_axis: Vec<_> = axis.iter().map(|value| *value * 1024.0).collect();
+        if scaled_axis.iter().any(|value| !value.is_finite()) {
+            return None;
+        }
+        return Some(scaled_axis.into_iter().map(rational_from_f64).collect());
     }
 
     let constraint_matrix: Vec<Vec<f64>> = shared_coordinates
@@ -1394,6 +1400,9 @@ where
 
     let mut provisional_affine = axis.to_vec();
     provisional_affine.push(-dot_product_f64(axis, shared_coordinates[0]));
+    if provisional_affine.iter().any(|value| !value.is_finite()) {
+        return None;
+    }
     let mut exact_affine = vec![rational_zero(); D + 1];
     for free_column in free_columns {
         let weight = rational_from_f64(provisional_affine[free_column]);
@@ -2111,6 +2120,30 @@ mod tests {
         );
         assert_eq!(
             certified_dot_difference_lower_bound(&[f64::MIN_POSITIVE], &[0.5], &[0.0],),
+            None
+        );
+    }
+
+    #[test]
+    fn exact_axis_rejects_post_scaling_overflow() {
+        let simplex = LabeledSimplexRealization::try_new([0, 1], [[0.0], [1.0]]).unwrap();
+
+        assert_eq!(
+            exact_axis_through_shared_face(&simplex, &[], &[f64::MAX]),
+            None
+        );
+    }
+
+    #[test]
+    fn exact_axis_rejects_non_finite_provisional_affine_offset() {
+        let simplex = LabeledSimplexRealization::try_new(
+            [0, 1, 2],
+            [[f64::MAX, 0.0], [0.0, 1.0], [0.0, 0.0]],
+        )
+        .unwrap();
+
+        assert_eq!(
+            exact_axis_through_shared_face(&simplex, &[0], &[2.0, 0.0]),
             None
         );
     }
