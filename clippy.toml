@@ -7,3 +7,7 @@ msrv = "1.97.1"
 # Lint levels are controlled by Cargo.toml plus the `just clippy` / CI
 # invocation flags. This file contains Clippy configuration options that are
 # not lint levels.
+
+# serde_derive and thiserror-impl require syn 3, while stable zerocopy-derive
+# still requires syn 2 through Criterion and proptest.
+allowed-duplicate-crates = [ "syn" ]

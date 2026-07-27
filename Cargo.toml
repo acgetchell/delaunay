@@ -56,7 +56,7 @@ rustdoc-args = [ "--cfg", "docsrs" ]
 
 [dependencies]
 allocation-counter = { version = "0.8.1", optional = true } # for memory profiling
-clap = { version = "4.6.1", features = [ "derive" ], optional = true }
+clap = { version = "4.6.4", features = [ "derive" ], optional = true }
 la-stack = { version = "0.4.4", default-features = false, features = [ "exact" ] }
 tracing = { version = "0.1.44", default-features = false, features = [ "std" ] }
 rustc-hash = "2.1.3" # Fast non-cryptographic hashing for performance
@@ -64,18 +64,18 @@ smallvec = { version = "1.15.2", features = [ "serde" ] } # Stack allocation for
 num-traits = "0.2.19"
 ordered-float = { version = "5.3.0", features = [ "serde" ] }
 rand = "0.10.2"
-serde = { version = "1.0.228", features = [ "derive" ] }
-serde_json = { version = "1.0.150", optional = true }
+serde = { version = "1.0.229", features = [ "derive" ] }
+serde_json = { version = "1.0.151", optional = true }
 slotmap = { version = "1.1.1", features = [ "serde" ] }
-thiserror = "2.0.18"
-uuid = { version = "1.23.5", features = [ "v4", "serde", "fast-rng" ] }
+thiserror = "2.0.19"
+uuid = { version = "1.24.0", features = [ "v4", "serde", "fast-rng" ] }
 
 [dev-dependencies]
 approx = "0.5.1"
 criterion = { version = "0.8.2", features = [ "html_reports" ] }
 pastey = "0.2.3"
 proptest = "1.11.0"
-serde_json = "1.0.150"
+serde_json = "1.0.151"
 sysinfo = { version = "0.39.6", default-features = false, features = [ "system" ] } # Process memory monitoring for benchmarks
 tracing-subscriber = { version = "0.3.23", features = [ "env-filter" ] }
 

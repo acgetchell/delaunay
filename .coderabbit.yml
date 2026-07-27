@@ -13,7 +13,7 @@ reviews:
   auto_title_instructions: ""
   review_status: true
   commit_status: true
-  fail_commit_status: false
+  fail_commit_status: true
   collapse_walkthrough: false
   changed_files_summary: true
   sequence_diagrams: true
