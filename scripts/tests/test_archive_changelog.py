@@ -477,6 +477,10 @@ class TestArchiveChangelog:
         assert list(tmp_path.glob(".CHANGELOG.md.*.tmp")) == []
         assert list(tmp_path.glob(".CHANGELOG.md.*.bak")) == []
 
+    @pytest.mark.skipif(
+        os.name == "nt",
+        reason="Windows does not expose POSIX owner/group/other permission bits",
+    )
     @pytest.mark.parametrize("requested_umask", [0o000, 0o077])
     def test_new_file_creation_is_owner_only_regardless_of_umask(
         self,
