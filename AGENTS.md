@@ -219,7 +219,6 @@ enforce that contract.
 | Jupyter notebook cells, execution, and tracked artifacts | `docs/dev/notebooks.md` |
 | Python support scripts | `docs/dev/python.md` |
 | Debug environment variables | `docs/dev/debug_env_vars.md` |
-| Tooling alignment and workflow/config rationale | `docs/dev/tooling-alignment.md` |
 | Architecture hub and focused architecture links | `docs/code_organization.md` |
 
 ## Agent Expectations

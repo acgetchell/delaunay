@@ -121,7 +121,6 @@ in this guide:
 | Project layout and module architecture | [docs/code_organization.md][code-organization] |
 | Examples | [examples/README.md][examples-readme] |
 | Benchmarks, baselines, and performance workflows | [benches/README.md][benches-readme] |
-| Tooling and CI alignment rationale | [docs/dev/tooling-alignment.md][tooling-alignment] |
 | Validation layers and invariants | [docs/validation.md][validation], [docs/invariants.md][invariants] |
 | Citations and bibliography | [CITATION.cff][citation], [REFERENCES.md][references] |
 | Releases and changelog generation | [docs/RELEASING.md][releasing], [CHANGELOG.md][changelog] |
@@ -204,7 +203,6 @@ the commands you already tried.
 [dev-python]: docs/dev/python.md
 [dev-rust]: docs/dev/rust.md
 [dev-testing]: docs/dev/testing.md
-[tooling-alignment]: docs/dev/tooling-alignment.md
 [validation]: docs/validation.md
 [invariants]: docs/invariants.md
 [citation]: CITATION.cff

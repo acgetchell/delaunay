@@ -1,5 +1,5 @@
 [build-system]
-requires = [ "setuptools>=65.0.0", "wheel" ]
+requires = [ "setuptools>=77.0.0", "wheel" ]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,14 +8,14 @@ version = "0.7.8"
 description = "Python utility scripts for the delaunay Rust library"
 readme = "README.md"
 requires-python = ">=3.14"
-license = { text = "BSD-3-Clause" }
+license = "BSD-3-Clause"
+license-files = [ "LICENSE" ]
 authors = [ { name = "Adam Getchell", email = "adam@adamgetchell.org" } ]
 keywords = [ "delaunay", "triangulation", "benchmarking", "utilities" ]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: BSD License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.14",
@@ -54,6 +54,7 @@ tag-release = "tag_release:main"
 package-dir = { "" = "scripts" }
 py-modules = [
     "archive_changelog",
+    "benchmark_models",
     "benchmark_utils",
     "check_docs_version_sync",
     "hardware_utils",
@@ -180,6 +181,7 @@ max-complexity = 10
 [tool.ruff.lint.isort]
 known-first-party = [
     "archive_changelog",
+    "benchmark_models",
     "benchmark_utils",
     "check_docs_version_sync",
     "hardware_utils",

@@ -33,8 +33,9 @@ For quick TeX iteration without regenerating notebook-owned figures, run:
 just paper-check
 ```
 
-That recipe lints the source, rebuilds the PDF, and runs the uv-managed
-`paper-pdf-check` sanity check against the reviewer copy.
+That recipe lints the source, rebuilds the target PDF, and runs the uv-managed
+`paper-pdf-check` sanity check on that build. Run `just paper-artifact-check`
+to compare the target build with the tracked reviewer copy.
 
 Tracked paper files:
 

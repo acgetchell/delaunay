@@ -20,7 +20,6 @@ remains the architecture hub.
 | [`notebooks.md`](notebooks.md) | Notebook cell IDs, source hygiene, deliberate execution, and tracked artifacts |
 | [`python.md`](python.md) | Python support-script typing, subprocess mocks, exceptions, and parser contracts |
 | [`debug_env_vars.md`](debug_env_vars.md) | `DELAUNAY_*` diagnostic and debugging environment variables |
-| [`tooling-alignment.md`](tooling-alignment.md) | Cross-repository tooling comparison, rationale, and alignment notes |
 
 ## Maintenance
 

@@ -348,9 +348,13 @@ just bench-pachner-stress
 - accepted-move microcases for the unified 4D Pachner API facade
 - forward/inverse round-trip cases for the same 4D move supports
 
-The `just pachner-stress*` recipes run one direct CLI diagnostic workload at the
-default issue-scale target: 10,000 vertices in 3D and 1,000 vertices in 4D, with
-100,000 attempted Pachner steps and topology validation every 1,000 attempts.
+The `just pachner-stress` recipe runs 9,000 vertices in 3D and 1,000 vertices in
+4D; the dimension-specific recipes use the same defaults. These recipes default
+to 100 attempted Pachner steps with topology validation every 10 attempts. The
+direct `delaunay pachner-stress` CLI has larger soak-test defaults: 10,000
+vertices in 3D or 1,000 in 4D, 100,000 attempts, and validation every 1,000
+attempts.
+
 The default `round-trip` mode commits a forward move and its inverse when a
 candidate is locally valid. The `random-walk` mode commits accepted moves over
 an evolving triangulation. Both modes write progress CSV and summary JSON under
@@ -364,11 +368,12 @@ Use `just bench-pachner-stress*` for Criterion timing evidence. Criterion
 requires at least 10 samples. The benchmark recipe measures stable accepted
 move fixtures and corresponding forward/inverse round trips.
 
-The stress cases validate topology plus the Level 4 realization invariant that
-arbitrary Pachner moves are expected to preserve; Level 5 Delaunay validity is
-not a postcondition of arbitrary topology edits. Invalid local candidates are
-counted as candidate misses or proposal rejections, while successfully planned
-Pachner proposals commit directly.
+The stress cases currently validate topology scope only (Levels 1-3). The
+large Level 4 realization overlap scan is deferred to dedicated realization
+validation, and Level 5 Delaunay validity is not a postcondition of arbitrary
+topology edits. Invalid local candidates are counted as candidate misses or
+proposal rejections, while successfully planned Pachner proposals commit
+directly.
 
 Useful overrides:
 

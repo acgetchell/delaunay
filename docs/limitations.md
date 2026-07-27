@@ -42,9 +42,12 @@ The stack-allocated exact determinant path supports matrices up to 7×7:
 - Exact insphere: D ≤ 5, because insphere uses a `(D + 2) × (D + 2)`
   determinant.
 
-For D ≥ 5, predicate evaluation falls through to exact arithmetic more often;
-for D ≥ 6, insphere classification relies on symbolic perturbation and
-deterministic tie-breaking rather than exact insphere determinants.
+For D ≥ 5, predicate evaluation falls through to exact arithmetic more often.
+For D ≥ 6, exact insphere determinants are unavailable: classification first
+uses the floating-point circumcenter/radius distance predicate, then applies
+symbolic perturbation only when that predicate reports a boundary or fails.
+This fallback is deterministic but does not provide exact-sign protection for
+near-degenerate D ≥ 6 inputs.
 
 ## Numerical Robustness
 
@@ -92,86 +95,34 @@ before relying on the Delaunay property.
 
 ## Large-Scale Behavior
 
-The historical 3D 35/1000-point and 4D 100/500-point seeded correctness
-reproducers have been rechecked and fixed. The later 4D 3000-point work is now
-a runtime/observability characterization target rather than a known correctness
-failure. Details are archived in
+Large-scale construction is single-threaded and in-memory, and its cost rises
+rapidly with dimension and exact-predicate frequency. The
+`debug-large-scale-{2,3,4,5}d` recipes are release-mode acceptance and
+profiling runs, not Criterion benchmarks or portable performance promises.
+Current workloads, calibrated defaults, and maintainer-hardware timings live in
+the [benchmark guide](../benches/README.md#release-mode-debug-defaults); the
+`justfile` remains authoritative for command defaults.
+
+Benchmark evidence is retained with its owning workflow rather than copied
+here. [`../benches/PERFORMANCE_RESULTS.md`](../benches/PERFORMANCE_RESULTS.md)
+is the committed generated snapshot, with prior snapshots preserved in Git
+history. Release-to-release reports and raw Criterion data use the workflow
+documented in the [benchmark guide](../benches/README.md#how-the-workflow-fits-together).
+Dated large-scale correctness and performance investigations are preserved in
+the [May 2026 characterization snapshot](archive/performance/large-scale-debug-characterization-2026-05.md),
+with the underlying 3D/4D correctness investigations in
 [`archive/known_issues_4d_2026-04-23.md`](archive/known_issues_4d_2026-04-23.md)
 and [`archive/issue_204_investigation.md`](archive/issue_204_investigation.md).
 
-The current 2D–5D large-scale debug envelope is an operational baseline for
-release characterization, not a portable performance promise:
+The historical 3D and 4D seeded correctness reproducers described there have
+been fixed. Thousands-point 4D construction remains a manual characterization
+workload because of runtime, while 5D acceptance uses much smaller bounded
+fixtures and 1,000-point feasibility remains tracked by
+[#342](https://github.com/acgetchell/delaunay/issues/342). These fixture sizes
+describe current test and profiling coverage, not maximum supported input
+sizes.
 
-- `just debug-large-scale-{2,3,4,5}d [n] [repair_every]` runs the same
-  release-mode `slow-tests` harness shape across dimensions: deterministic point
-  generation, batch construction, final flip repair, and `validation_report`
-  for Levels 1–5.
-- The `just` helper defaults are dimension-aware rather than identical: 2D
-  defaults to 36,000 vertices, 3D defaults to 7,500 vertices, 4D defaults to
-  800 vertices, and 5D defaults to 140 vertices. Pass `n` explicitly when a
-  run must match a documented scale exactly.
-- The raw `slow-tests` harness defaults are 40,000 vertices in 2D, 7,500 in
-  3D, 100 in 4D, and 50 in 5D. The 4D and 5D defaults are deliberately bounded
-  release-regression probes, not scale or performance evidence. Broader Level 4
-  realization and Level 5 Delaunay validation work remains in
-  [#482](https://github.com/acgetchell/delaunay/issues/482) and
-  [#483](https://github.com/acgetchell/delaunay/issues/483) for v0.8.1.
-  Prefer the `just` helpers for explicit acceptance and profiling runs.
-
-Current 2D scale envelope:
-
-- `just debug-large-scale-2d` defaults to 36,000 vertices for the
-  near-one-minute 2D path.
-- `just debug-large-scale-2d 40000 1` is the current heavier release-mode
-  acceptance probe for the 40,000-vertex 2D path.
-- The 2026-05-14 local run inserted all 40,000 vertices with zero skips, final
-  repair performed 0 flips, and `validation_report` passed in about 66 seconds
-  total wall time.
-
-Current 3D scale envelope:
-
-- `just debug-large-scale-3d 7500 1` is the current release-mode acceptance
-  harness for the 7,500-vertex 3D path.
-- This helper is the default near-one-minute acceptance/profiling target for
-  final flip repair and `validation_report` coverage across Levels 1–5.
-- Wall time is hardware- and load-sensitive. Recent Apple M4 Max-class local
-  runs complete in roughly 56 seconds; treat that as an envelope, not a
-  portable guarantee.
-- `just debug-large-scale-3d 10000 1` is a heavier characterization probe that
-  has also passed final Levels 1–5 validation; use it when the 10,000-vertex
-  envelope matters more than one-minute feedback.
-
-Current 4D scale envelope:
-
-- `just debug-large-scale-4d 800 1` is the current release-mode acceptance
-  harness for the 800-vertex 4D path. A recent local run inserted all
-  800 vertices with zero skips, final repair performed 0 flips, and
-  `validation_report` passed in about 52 seconds total wall time.
-- `just debug-large-scale-4d 3000 1` remains a manual characterization scale for
-  #340 rather than a default acceptance run.
-- Keep 4D thousands-point runs out of routine CI unless they are reduced to a
-  bounded fixture; use release mode and the large-scale debug harness when
-  characterizing this regime.
-- Exact predicates can dominate runtime on near-degenerate inputs. Improving
-  adaptive predicate performance is tracked separately from correctness.
-
-Current 5D scale envelope:
-
-- `just debug-large-scale-5d` defaults to 140 vertices for the near-one-minute
-  5D path.
-- `just debug-large-scale-5d 150 1` is the current heavier practical 5D
-  acceptance probe. The 2026-05-14 local run inserted all 150 vertices with
-  zero skips, final repair performed 0 flips, and `validation_report` passed in
-  about 62 seconds total wall time.
-- The 50-vertex 5D probe remains useful for quick local checks and measured
-  about 7 seconds as a single release-mode debug run; Criterion uses an even
-  smaller 25-vertex canary so repeated samples stay practical.
-- `just debug-large-scale-5d 1000 1` remains the #342 feasibility target. On
-  2026-05-14 it exceeded the 1800-second manual harness timeout before the
-  construction summary completed, so do not treat 1000-point 5D as a default
-  acceptance scale until the shared high-dimensional bottleneck is reduced.
-
-For reproducible large-scale diagnostics, see
+For reproducible diagnostic controls, see
 [`dev/debug_env_vars.md`](dev/debug_env_vars.md).
 
 ## Feature Gaps
