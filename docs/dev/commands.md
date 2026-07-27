@@ -812,6 +812,21 @@ CI enforces:
 - benchmark harness compilation
 - examples
 
+The default portability contract runs the same `just ci` recipe on Linux,
+macOS, and Windows. Optimize bootstrap and caching without silently reducing
+that platform coverage; a narrower matrix requires an explicit replacement for
+each lost portability check.
+
+The root `justfile` owns managed tool-version pins. After bootstrapping `just`
+through `.github/actions/setup-just`, workflows resolve those pins with
+`just --evaluate` instead of repeating version literals. Rust workflow caches
+must keep `cache-bin: false`: restoring `${CARGO_HOME}/bin` can replace
+rustup-managed Cargo shims with stale or host-incompatible binaries.
+
+`.codacy.yml` owns Codacy engine and path policy. Keep Codacy feedback aligned
+with repository validators rather than establishing an independent style or
+static-analysis regime.
+
 Rust warnings are denied by the manifest lint policy and Clippy warnings are
 denied by `just clippy`. Keep any
 intentional warning-level exceptions explicit in `Cargo.toml`.

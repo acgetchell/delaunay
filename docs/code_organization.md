@@ -64,6 +64,6 @@ into architecture docs; link to the command guide instead.
 - When files move, update the focused architecture document that owns that
   surface rather than growing this hub.
 - When command names, validation recipes, or tool policy change, start from
-  [`dev/README.md`](dev/README.md), then update [`dev/commands.md`](dev/commands.md) or
-  [`dev/tooling-alignment.md`](dev/tooling-alignment.md), not this file.
+  [`dev/README.md`](dev/README.md), then update the focused owner it identifies,
+  usually [`dev/commands.md`](dev/commands.md), not this file.
 - Keep this hub small enough to load as part of every agent session.

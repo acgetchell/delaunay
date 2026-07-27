@@ -51,7 +51,7 @@ action-lint: _ensure-actionlint
         files+=("$file")
     done < <(git ls-files -z '.github/workflows/*.yml' '.github/workflows/*.yaml')
     if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 uv run actionlint
+        printf '%s\0' "${files[@]}" | xargs -0 uv run --locked actionlint
     else
         echo "No workflow files found to lint."
     fi
@@ -74,7 +74,7 @@ bench-ci:
 # Render a Markdown comparison against a saved Criterion baseline.
 [group('benchmarks and performance')]
 bench-compare baseline="last" suite="release-signal": _ensure-uv
-    uv run benchmark-utils bench-compare "{{ baseline }}" --suite "{{ suite }}"
+    uv run --locked benchmark-utils bench-compare "{{ baseline }}" --suite "{{ suite }}"
 
 # Compile benchmark harnesses without running them.
 [group('benchmarks and performance')]
@@ -102,7 +102,7 @@ bench-pachner-stress samples="10": (_bench-pachner-stress samples)
 # Generate a release performance summary from fresh perf-profile benchmark runs.
 [group('benchmarks and performance')]
 bench-perf-summary: _ensure-uv
-    uv run benchmark-utils generate-summary --run-benchmarks --profile perf
+    uv run --locked benchmark-utils generate-summary --run-benchmarks --profile perf
 
 # Save a Criterion baseline for a Delaunay benchmark suite.
 [group('benchmarks and performance')]
@@ -164,8 +164,8 @@ changelog: _ensure-git-cliff _ensure-rumdl python-sync
     #!/usr/bin/env bash
     set -euo pipefail
     GIT_CLIFF_OFFLINE=true git-cliff -o CHANGELOG.md
-    uv run postprocess-changelog
-    uv run archive-changelog
+    uv run --locked postprocess-changelog
+    uv run --locked archive-changelog
     rumdl fmt --silent CHANGELOG.md docs/archive/changelog/*.md
 
 # Generate the changelog as if releasing the requested version.
@@ -174,8 +174,8 @@ changelog-unreleased version: _ensure-git-cliff _ensure-rumdl python-sync
     #!/usr/bin/env bash
     set -euo pipefail
     GIT_CLIFF_OFFLINE=true git-cliff --tag {{ version }} -o CHANGELOG.md
-    uv run postprocess-changelog
-    uv run archive-changelog
+    uv run --locked postprocess-changelog
+    uv run --locked archive-changelog
     rumdl fmt --silent CHANGELOG.md docs/archive/changelog/*.md
 
 # Run every non-mutating validator outside the test suites.
@@ -402,6 +402,7 @@ markdown-check: _ensure-rumdl
     set -euo pipefail
     files=()
     while IFS= read -r -d '' file; do
+        [ -e "$file" ] || continue
         case "$file" in
             CHANGELOG.md|docs/archive/*) continue ;;
         esac
@@ -435,6 +436,7 @@ markdown-fix: _ensure-rumdl
     set -euo pipefail
     files=()
     while IFS= read -r -d '' file; do
+        [ -e "$file" ] || continue
         case "$file" in
             CHANGELOG.md|docs/archive/*) continue ;;
         esac
@@ -454,18 +456,18 @@ notebook notebook="notebooks/00_quickstart.ipynb": _ensure-uv
     set -euo pipefail
     notebook_cache="$(pwd)/target/notebooks"
     mkdir -p "$notebook_cache/.ipython" "$notebook_cache/.matplotlib"
-    MPLBACKEND=Agg IPYTHONDIR="$notebook_cache/.ipython" MPLCONFIGDIR="$notebook_cache/.matplotlib" uv run --group notebooks jupyter lab --ServerApp.open_browser=True --LabApp.open_browser=True "{{ notebook }}"
+    MPLBACKEND=Agg IPYTHONDIR="$notebook_cache/.ipython" MPLCONFIGDIR="$notebook_cache/.matplotlib" uv run --locked --group notebooks jupyter lab --ServerApp.open_browser=True --LabApp.open_browser=True "{{ notebook }}"
 
 # Run routine non-executing notebook validation.
 [group('notebooks and papers')]
 notebook-check: _ensure-uv
-    uv run --group dev --group notebooks notebook-check lint --repo-root .
+    uv run --locked --group dev --group notebooks notebook-check lint --repo-root .
     @echo "📓 Notebook checks complete!"
 
 # Clear outputs from one source notebook in place.
 [group('notebooks and papers')]
 notebook-clear-outputs notebook="notebooks/00_quickstart.ipynb": _ensure-uv
-    uv run --group notebooks jupyter nbconvert --clear-output --inplace "{{ notebook }}"
+    uv run --locked --group notebooks jupyter nbconvert --clear-output --inplace "{{ notebook }}"
 
 # Clear outputs from every source notebook in place.
 [group('notebooks and papers')]
@@ -479,7 +481,7 @@ notebook-clear-outputs-all: _ensure-uv
     found=0
     while IFS= read -r notebook; do
         found=1
-        uv run --group notebooks jupyter nbconvert --clear-output --inplace "$notebook"
+        uv run --locked --group notebooks jupyter nbconvert --clear-output --inplace "$notebook"
     done < <(find notebooks -type f -name '*.ipynb' ! -path '*/.ipynb_checkpoints/*' | sort)
     if [ "$found" -eq 0 ]; then
         echo "No notebooks found to clear."
@@ -494,12 +496,12 @@ notebook-execute notebook="notebooks/00_quickstart.ipynb" output_dir="target/not
     notebook_stem="$(basename "{{ notebook }}" .ipynb)"
     notebook_output_dir="$output_path/$notebook_stem"
     mkdir -p "$output_path/.ipython" "$output_path/.matplotlib" "$notebook_output_dir"
-    MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout={{ timeout }} --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "$notebook_output_dir" "{{ notebook }}"
+    MPLBACKEND=Agg IPYTHONDIR="$output_path/.ipython" MPLCONFIGDIR="$output_path/.matplotlib" uv run --locked --group notebooks jupyter nbconvert --execute --ExecutePreprocessor.timeout={{ timeout }} --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir "$notebook_output_dir" "{{ notebook }}"
 
 # Check notebook structure and output hygiene without extracted-code linting.
 [group('notebooks and papers')]
 notebook-output-check: _ensure-uv
-    uv run --group dev --group notebooks notebook-check lint --repo-root . --no-ruff --no-format --no-ty
+    uv run --locked --group dev --group notebooks notebook-check lint --repo-root . --no-ruff --no-format --no-ty
 
 # Restore tracked source notebooks and remove generated notebook artifacts.
 [group('notebooks and papers')]
@@ -537,7 +539,7 @@ notebook-reset-from-git source="index":
 # Install the optional notebook dependency group.
 [group('notebooks and papers')]
 notebook-setup: _ensure-uv
-    uv sync --group notebooks
+    uv sync --locked --group notebooks
 
 # Run one 3D and one 4D direct Pachner stress workload with topology-scope reports enabled.
 [group('benchmarks and performance')]
@@ -564,7 +566,7 @@ paper-artifact-check paper="validation": (paper-check paper)
             exit 1
             ;;
     esac
-    uv run paper-pdf-check "target/papers/${paper}/${paper}.pdf" \
+    uv run --locked paper-pdf-check "target/papers/${paper}/${paper}.pdf" \
         --reference "papers/${paper}.pdf"
 
 # Compile one paper with Tectonic under target/papers/.
@@ -588,10 +590,10 @@ paper-build paper="validation": _ensure-tectonic _ensure-uv
     fi
     rm -rf "$build_dir"
     mkdir -p "$build_dir"
-    source_date_epoch="$(uv run paper-source-date-epoch "$paper_source")"
+    source_date_epoch="$(uv run --locked paper-source-date-epoch "$paper_source")"
     export SOURCE_DATE_EPOCH="$source_date_epoch"
     tectonic --keep-intermediates --keep-logs --outdir "$build_dir" "$paper_source"
-    uv run paper-pdf-normalize "$build_dir/${paper}.pdf" --tex "$paper_source"
+    uv run --locked paper-pdf-normalize "$build_dir/${paper}.pdf" --tex "$paper_source"
     echo "📄 Paper PDF built: $build_dir/${paper}.pdf"
 
 # Compile and check one paper without refreshing tracked artifacts.
@@ -621,7 +623,7 @@ paper-pdf-check paper="validation": _ensure-uv
             exit 1
             ;;
     esac
-    uv run paper-pdf-check "target/papers/${paper}/${paper}.pdf" \
+    uv run --locked paper-pdf-check "target/papers/${paper}/${paper}.pdf" \
         --min-pages 1 \
         --require-text "Validation Architecture in delaunay" \
         --require-text "REFERENCES" \
@@ -674,19 +676,19 @@ papers: validation-doc-figures (paper-refresh "validation")
 perf-baseline ref="main": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
-    uv run benchmark-utils generate-ref-baseline --ref "{{ ref }}" --out baseline-artifact --dev
+    uv run --locked benchmark-utils generate-ref-baseline --ref "{{ ref }}" --out baseline-artifact --dev
 
 # Generate a scratch same-machine baseline at an explicit output path.
 [group('benchmarks and performance')]
 perf-baseline-to out ref="main": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
-    uv run benchmark-utils generate-ref-baseline --ref "{{ ref }}" --out "{{ out }}" --dev
+    uv run --locked benchmark-utils generate-ref-baseline --ref "{{ ref }}" --out "{{ out }}" --dev
 
 # Compare the current tree with one dev-mode baseline file.
 [group('benchmarks and performance')]
 perf-compare file threshold="7.5": _ensure-uv
-    uv run benchmark-utils compare --baseline "{{ file }}" --threshold {{ threshold }} --dev
+    uv run --locked benchmark-utils compare --baseline "{{ file }}" --threshold {{ threshold }} --dev
 
 # Compare stored GitHub Release benchmark assets without local cargo runs.
 [group('benchmarks and performance')]
@@ -700,9 +702,9 @@ perf-github-assets current_tag="" baseline_tag="": _ensure-uv
         exit 2
     fi
     if [[ "$tag_pair_state" == "explicit" ]]; then
-        uv run benchmark-utils performance-github-assets "$current_tag" "$baseline_tag"
+        uv run --locked benchmark-utils performance-github-assets "$current_tag" "$baseline_tag"
     else
-        uv run benchmark-utils performance-github-assets
+        uv run --locked benchmark-utils performance-github-assets
     fi
 
 # Show detailed performance-check, benchmark, and profiling workflows.
@@ -855,12 +857,12 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
 # Compare the current tree against the latest published release in temp worktrees.
 [group('benchmarks and performance')]
 perf-local: _ensure-uv
-    uv run benchmark-utils performance-local
+    uv run --locked benchmark-utils performance-local
 
 # Fast pre-PR performance guard against a cached same-machine main baseline.
 [group('benchmarks and performance')]
 perf-no-regressions threshold="7.5": _ensure-uv
-    uv run benchmark-utils compare-ref --ref main --threshold {{ threshold }} --dev --output benches/worktree_vs_main_compare_results.txt
+    uv run --locked benchmark-utils compare-ref --ref main --threshold {{ threshold }} --dev --output benches/worktree_vs_main_compare_results.txt
 
 # Generate local release-signal measurements in temp worktrees, then promote/archive docs.
 [group('benchmarks and performance')]
@@ -874,15 +876,15 @@ perf-release current_tag="" baseline_tag="": _ensure-uv
         exit 2
     fi
     if [[ "$tag_pair_state" == "explicit" ]]; then
-        uv run benchmark-utils performance-release "$current_tag" "$baseline_tag"
+        uv run --locked benchmark-utils performance-release "$current_tag" "$baseline_tag"
     else
-        uv run benchmark-utils performance-release
+        uv run --locked benchmark-utils performance-release
     fi
 
 # Compare the current tree against a cached same-machine ref baseline.
 [group('benchmarks and performance')]
 perf-vs-ref ref threshold="7.5": _ensure-uv
-    uv run benchmark-utils compare-ref --ref "{{ ref }}" --threshold {{ threshold }} --dev
+    uv run --locked benchmark-utils compare-ref --ref "{{ ref }}" --threshold {{ threshold }} --dev
 
 # Run the selected CI benchmark suite for one compiler/code pair.
 [group('benchmarks and performance')]
@@ -1056,28 +1058,28 @@ python-check: python-format-check python-lint python-typecheck
 # Apply Ruff lint fixes and formatting to Python source.
 [group('validation')]
 python-fix: _ensure-uv
-    uv run ruff check scripts/ --fix
-    uv run ruff format scripts/
+    uv run --locked ruff check scripts/ --fix
+    uv run --locked ruff format scripts/
 
 # Check Python formatting with Ruff.
 [group('validation')]
 python-format-check: _ensure-uv
-    uv run ruff format --check scripts/
+    uv run --locked ruff format --check scripts/
 
 # Lint Python source with Ruff.
 [group('validation')]
 python-lint: _ensure-uv
-    uv run ruff check scripts/
+    uv run --locked ruff check scripts/
 
 # Synchronize development Python dependencies from the lockfile.
 [group('build and setup')]
 python-sync: _ensure-uv
-    uv sync --group dev
+    uv sync --locked --group dev
 
 # Type-check Python support code with ty.
 [group('validation')]
 python-typecheck: _ensure-uv
-    uv run ty check scripts/ --error all
+    uv run --locked ty check scripts/ --error all
 
 # Run the opt-in companion binary with the CLI feature and perf profile.
 [group('build and setup')]
@@ -1116,7 +1118,7 @@ semgrep-test: _ensure-uv
         state_dir="$state_root/${rel%.*}"
         mkdir -p "$(dirname "$config_path")"
         mkdir -p "$state_dir"
-        uv run python scripts/semgrep_fixture_config.py "$fixture" "$PWD/semgrep.yaml" "$config_path"
+        uv run --locked python scripts/semgrep_fixture_config.py "$fixture" "$PWD/semgrep.yaml" "$config_path"
 
         SEMGREP_SEND_METRICS=off SEMGREP_SETTINGS_FILE="$state_dir/settings.yml" uv run --locked semgrep scan --test --strict --config "$config_path" "$fixture"
     done < <(find tests/semgrep -type f ! -name '*.fixed' -print0)
@@ -1228,7 +1230,7 @@ setup-tools: _ensure-uv
     echo ""
 
     echo "Ensuring uv-managed Python tooling..."
-    uv sync --group dev
+    uv sync --locked --group dev
     echo ""
 
     echo "Ensuring Rust toolchain + components..."
@@ -1278,7 +1280,7 @@ setup-tools: _ensure-uv
     done
 
     for cmd in actionlint shellcheck shfmt yamllint; do
-        if uv run "$cmd" --version >/dev/null 2>&1 || uv run "$cmd" -version >/dev/null 2>&1; then
+        if uv run --locked "$cmd" --version >/dev/null 2>&1 || uv run --locked "$cmd" -version >/dev/null 2>&1; then
             echo "  ✓ $cmd (uv)"
         else
             echo "  ✗ $cmd (uv)"
@@ -1311,7 +1313,7 @@ shell-fix: _ensure-shfmt
     done < <(git ls-files -z '*.sh')
     if [ "${#files[@]}" -gt 0 ]; then
         echo "🧹 shfmt -w (${#files[@]} files)"
-        printf '%s\0' "${files[@]}" | xargs -0 uv run shfmt -w
+        printf '%s\0' "${files[@]}" | xargs -0 uv run --locked shfmt -w
     else
         echo "No shell files found to format."
     fi
@@ -1327,7 +1329,7 @@ shell-fmt-check: _ensure-shfmt
         files+=("$file")
     done < <(git ls-files -z '*.sh')
     if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 uv run shfmt -d
+        printf '%s\0' "${files[@]}" | xargs -0 uv run --locked shfmt -d
     else
         echo "No shell files found to check."
     fi
@@ -1342,7 +1344,7 @@ shell-lint: _ensure-shellcheck
         files+=("$file")
     done < <(git ls-files -z '*.sh')
     if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 -n4 uv run shellcheck -x
+        printf '%s\0' "${files[@]}" | xargs -0 -n4 uv run --locked shellcheck -x
     else
         echo "No shell files found to lint."
     fi
@@ -1377,12 +1379,12 @@ spherical-readme-hero: _ensure-uv paper-cli
 # Create an annotated git tag from the CHANGELOG.md section for the given version
 [group('release')]
 tag version: python-sync
-    uv run tag-release {{ version }}
+    uv run --locked tag-release {{ version }}
 
 # Replace an existing annotated tag from the CHANGELOG.md section.
 [group('release')]
 tag-force version: python-sync
-    uv run tag-release {{ version }} --force
+    uv run --locked tag-release {{ version }} --force
 
 # Run every default Rust and Python test bucket once.
 [group('workflows')]
@@ -1433,7 +1435,7 @@ test-integration-fast: _ensure-nextest
 # Run Python support-script tests with pytest.
 [group('tests and coverage')]
 test-python: _ensure-uv
-    uv run pytest
+    uv run --locked pytest
 
 # Run every default Rust correctness target class once.
 [group('tests and coverage')]
@@ -1515,7 +1517,7 @@ toml-parse-check: _ensure-uv
         files+=("$file")
     done < <(git ls-files -z '*.toml')
     if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 -I {} uv run python -c "import sys, tomllib; exec(\"with open(sys.argv[1], 'rb') as f:\\n    tomllib.load(f)\"); print(f'{sys.argv[1]} is valid TOML')" {}
+        printf '%s\0' "${files[@]}" | xargs -0 -I {} uv run --locked python -c "import sys, tomllib; exec(\"with open(sys.argv[1], 'rb') as f:\\n    tomllib.load(f)\"); print(f'{sys.argv[1]} is valid TOML')" {}
     else
         echo "No TOML files found to check."
     fi
@@ -1606,7 +1608,7 @@ yaml-lint: _ensure-yamllint
     done < <(git ls-files -z '*.yml' '*.yaml' 'CITATION.cff')
     if [ "${#files[@]}" -gt 0 ]; then
         echo "🔍 yamllint (${#files[@]} YAML/CFF files)"
-        uv run yamllint --strict -c .yamllint "${files[@]}"
+        uv run --locked yamllint --strict -c .yamllint "${files[@]}"
     else
         echo "No YAML files found to lint."
     fi

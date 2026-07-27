@@ -32,6 +32,7 @@ Agents must follow these rules when modifying or adding Rust code.
 - [Testing Expectations](#testing-expectations)
 - [Performance](#performance)
 - [External Dependencies](#external-dependencies)
+- [Toolchain and Package Boundary](#toolchain-and-package-boundary)
 - [Formatting and Lints](#formatting-and-lints)
 - [API Stability](#api-stability)
 - [Logging and Diagnostics](#logging-and-diagnostics)
@@ -1018,6 +1019,26 @@ Before adding a dependency, consider:
 2. MSRV compatibility
 3. maintenance status
 4. dependency tree size
+
+---
+
+## Toolchain and Package Boundary
+
+`Cargo.toml` owns the MSRV, and `rust-toolchain.toml` pins local and CI Rust to
+that version. Keep the toolchain profile minimal and the default component set
+limited to `clippy`, `rustfmt`, and `rust-src`; workflows or developers that
+need cross targets or additional components should install them explicitly.
+
+The explicit `Cargo.toml` package `include` list is the crates.io distribution
+boundary. Keep it aligned with the public library, examples, benchmarks,
+integration tests, active documentation, citation/release metadata, and assets
+needed by docs.rs or published examples. Do not add CI-only tooling, Python
+automation, or unrelated repository history to the crate artifact. Validate
+changes to this boundary with:
+
+```bash
+just publish-check
+```
 
 ---
 
