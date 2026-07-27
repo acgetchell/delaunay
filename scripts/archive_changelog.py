@@ -102,7 +102,7 @@ def _minor_key(version: str) -> str:
     return f"{parts[0]}.{parts[1]}"
 
 
-def _version_sort_key(label: str) -> tuple[bool, tuple[int, ...], tuple[tuple[int, int | str], ...]]:
+def _version_sort_key(label: str) -> tuple[bool, tuple[int, ...], tuple[tuple[int, int, str], ...]]:
     """Return a sort key for a version label that orders by semantic version.
 
     Non-numeric labels (e.g. ``unreleased``) sort after all numeric versions.
@@ -124,9 +124,9 @@ def _version_sort_key(label: str) -> tuple[bool, tuple[int, ...], tuple[tuple[in
         return (True, (), ())
 
     if not separator:
-        prerelease_key: tuple[tuple[int, int | str], ...] = ((2, ""),)
+        prerelease_key: tuple[tuple[int, int, str], ...] = ((2, 0, ""),)
     else:
-        prerelease_key = tuple((0, int(part)) if part.isdecimal() else (1, part) for part in prerelease.split("."))
+        prerelease_key = tuple((0, int(part), "") if part.isdecimal() else (1, 0, part) for part in prerelease.split("."))
 
     return (False, nums, prerelease_key)
 
@@ -135,9 +135,7 @@ def _is_strictly_older(version: str, preceding_version: str) -> bool:
     """Return whether *version* has lower SemVer precedence than its predecessor."""
     version_key = _version_sort_key(version)
     preceding_key = _version_sort_key(preceding_version)
-    if version_key == preceding_key:
-        return False
-    return sorted((preceding_version, version), key=_version_sort_key, reverse=True) == [preceding_version, version]
+    return version_key < preceding_key
 
 
 def _extract_link_defs(text: str) -> tuple[str, dict[str, str]]:
@@ -287,13 +285,13 @@ def group_by_minor(
 # ---------------------------------------------------------------------------
 
 
-def _open_sibling_temporary(path: Path, suffix: str, mode: int) -> tuple[int, Path]:
-    """Create a collision-resistant temporary file beside *path*."""
+def _open_sibling_temporary(path: Path, suffix: str) -> tuple[int, Path]:
+    """Create an owner-only collision-resistant temporary file beside *path*."""
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0)
     for _attempt in range(100):
         candidate = path.with_name(f".{path.name}.{secrets.token_hex(12)}{suffix}")
         try:
-            return os.open(candidate, flags, mode), candidate
+            return os.open(candidate, flags, 0o600), candidate
         except FileExistsError:
             continue
 
@@ -304,8 +302,7 @@ def _open_sibling_temporary(path: Path, suffix: str, mode: int) -> tuple[int, Pa
 def _stage_text(path: Path, text: str) -> Path:
     """Write and sync *text* to an unpublished sibling of *path*."""
     existing_mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else None
-    creation_mode = 0o600 if existing_mode is not None else 0o666
-    descriptor, staged_path = _open_sibling_temporary(path, ".tmp", creation_mode)
+    descriptor, staged_path = _open_sibling_temporary(path, ".tmp")
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             handle.write(text)
@@ -321,7 +318,7 @@ def _stage_text(path: Path, text: str) -> Path:
 
 def _stage_backup(path: Path) -> Path:
     """Copy and sync *path* to an unpublished rollback backup."""
-    descriptor, backup_path = _open_sibling_temporary(path, ".bak", 0o600)
+    descriptor, backup_path = _open_sibling_temporary(path, ".bak")
     os.close(descriptor)
     try:
         shutil.copyfile(path, backup_path)
@@ -719,6 +716,13 @@ def main() -> None:
     archive_dir = Path(args.archive_dir) if args.archive_dir else None
     try:
         archive_changelog(changelog, archive_dir)
+    except BaseExceptionGroup as err:
+        rollback_errors, unhandled = err.split((OSError, ValueError))
+        if rollback_errors is not None:
+            print(f"Error: {changelog}: {err}", file=sys.stderr)
+        if unhandled is not None:
+            raise unhandled from None
+        raise SystemExit(1) from None
     except (OSError, ValueError) as err:
         print(f"Error: {changelog}: {err}", file=sys.stderr)
         raise SystemExit(1) from None

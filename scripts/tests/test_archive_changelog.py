@@ -447,7 +447,7 @@ class TestArchiveChangelog:
             msg = "simulated publication failure"
             raise OSError(msg)
 
-        monkeypatch.setattr("archive_changelog.os.replace", reject_replace)
+        monkeypatch.setattr(archive_changelog_module, "_replace_path", reject_replace)
 
         with pytest.raises(OSError, match="simulated publication failure"):
             _write_text_atomic(path, "# Changelog\n\nReplacement content.\n")
@@ -477,9 +477,14 @@ class TestArchiveChangelog:
         assert list(tmp_path.glob(".CHANGELOG.md.*.tmp")) == []
         assert list(tmp_path.glob(".CHANGELOG.md.*.bak")) == []
 
-    def test_new_file_creation_respects_restrictive_umask(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("requested_umask", [0o000, 0o077])
+    def test_new_file_creation_is_owner_only_regardless_of_umask(
+        self,
+        tmp_path: Path,
+        requested_umask: int,
+    ) -> None:
         path = tmp_path / "new.md"
-        previous_umask = os.umask(0o077)
+        previous_umask = os.umask(requested_umask)
         try:
             _write_text_atomic(path, "Private until the caller decides otherwise.\n")
         finally:
@@ -615,6 +620,71 @@ class TestArchiveChangelog:
         assert "Traceback" not in captured.err
         assert changelog.read_text(encoding="utf-8") == invalid_text
         assert not archive_dir.exists()
+
+    def test_cli_reports_rollback_exception_group_without_traceback(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        changelog = tmp_path / "CHANGELOG.md"
+        changelog.write_text(_full_changelog(), encoding="utf-8")
+        archive_dir = tmp_path / "archive"
+        rollback_failure = BaseExceptionGroup(
+            "Changelog publication failed and rollback was incomplete",
+            [OSError("publication failed"), OSError("rollback failed")],
+        )
+
+        def reject_archive(_changelog: Path, _archive_dir: Path | None) -> None:
+            raise rollback_failure
+
+        monkeypatch.setattr(archive_changelog_module, "archive_changelog", reject_archive)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["archive-changelog", str(changelog), "--archive-dir", str(archive_dir)],
+        )
+
+        with pytest.raises(SystemExit) as exit_info:
+            main()
+
+        captured = capsys.readouterr()
+        assert exit_info.value.code == 1
+        assert captured.out == ""
+        assert captured.err.startswith(f"Error: {changelog}: Changelog publication failed")
+        assert "Traceback" not in captured.err
+
+    def test_cli_reraises_unhandled_exception_group_members(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        changelog = tmp_path / "CHANGELOG.md"
+        changelog.write_text(_full_changelog(), encoding="utf-8")
+        archive_dir = tmp_path / "archive"
+        mixed_failure = BaseExceptionGroup(
+            "Changelog publication interrupted during rollback",
+            [OSError("rollback failed"), KeyboardInterrupt()],
+        )
+
+        def interrupt_archive(_changelog: Path, _archive_dir: Path | None) -> None:
+            raise mixed_failure
+
+        monkeypatch.setattr(archive_changelog_module, "archive_changelog", interrupt_archive)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["archive-changelog", str(changelog), "--archive-dir", str(archive_dir)],
+        )
+
+        with pytest.raises(BaseExceptionGroup) as error_info:
+            main()
+
+        captured = capsys.readouterr()
+        assert error_info.value.subgroup(KeyboardInterrupt) is not None
+        assert error_info.value.subgroup(OSError) is None
+        assert captured.err.startswith(f"Error: {changelog}: Changelog publication interrupted")
 
     def test_no_versions_no_op(self, tmp_path: Path) -> None:
         changelog = tmp_path / "CHANGELOG.md"

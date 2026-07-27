@@ -1,6 +1,6 @@
 # delaunay
 
-[![DOI](https://zenodo.org/badge/729897852.svg)](https://doi.org/10.5281/zenodo.16931097)
+[![DOI](https://badgen.net/badge/DOI/10.5281%2Fzenodo.16931097/blue)](https://doi.org/10.5281/zenodo.16931097)
 [![Crates.io](https://badgen.net/crates/v/delaunay)](https://crates.io/crates/delaunay)
 [![Downloads](https://badgen.net/crates/d/delaunay)](https://crates.io/crates/delaunay)
 [![License](https://badgen.net/github/license/acgetchell/delaunay)](https://github.com/acgetchell/delaunay/blob/main/LICENSE)
