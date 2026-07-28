@@ -105,11 +105,17 @@ _ATX_HEADING_RE = re.compile(r"^(?P<level>#{1,6})\s+(?P<title>.*?)(?:\s+#+\s*)?$
 # inside one release section.
 _FOLLOWUP_HEADING_SUFFIX_RE = re.compile(r"\s+-\s+Follow-up(?:\s+\d+)?$")
 
-# Markdown code spans used in generated heading titles.
+# Markdown code spans used in generated text.
 _CODE_SPAN_RE = re.compile(r"`([^`]*)`")
 
-# Bare glob-like identifiers in headings can be parsed as emphasis by linters.
-_WILDCARD_IDENTIFIER_RE = re.compile(r"(?<![`A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*\*+[A-Za-z0-9_*]*)(?![`A-Za-z0-9_])")
+# Bare glob-like identifiers can be parsed as emphasis by Markdown linters.
+# Include Rust paths in the match so ``Type::method*`` becomes one code span,
+# while excluding emphasis delimiters such as ``*word*`` and ``**word**``.
+_WILDCARD_IDENTIFIER_RE = re.compile(
+    r"(?<![`*A-Za-z0-9_:])"
+    r"((?:[A-Za-z_][A-Za-z0-9_]*::)*\.?[A-Za-z_][A-Za-z0-9_]*(?:\*+[A-Za-z0-9_]+|\*))"
+    r"(?![`A-Za-z0-9_*])"
+)
 
 # Preferred names for known repeated historical body headings.
 _DUPLICATE_HEADING_REPLACEMENTS = {
@@ -1225,23 +1231,19 @@ def _normalize_entry_heading(line: str, current_entry_summary: str | None) -> st
     return f"#### {title}"
 
 
-def _code_span_heading_wildcards(line: str) -> str:
-    """Wrap bare wildcard identifiers in heading titles with code spans."""
-    match = _ATX_HEADING_RE.match(line)
-    if match is None:
-        return line
+def _code_span_wildcard_identifiers(line: str) -> str:
+    """Wrap bare wildcard identifiers outside existing code spans."""
 
     def code_span(match: re.Match[str]) -> str:
         return f"`{match.group(1)}`"
 
-    title_parts = re.split(r"(`[^`]+`)", match.group("title"))
-    title = "".join(part if part.startswith("`") and part.endswith("`") else _WILDCARD_IDENTIFIER_RE.sub(code_span, part) for part in title_parts)
-    return f"{match.group('level')} {title}"
+    parts = re.split(r"(`[^`]+`)", line)
+    return "".join(part if part.startswith("`") and part.endswith("`") else _WILDCARD_IDENTIFIER_RE.sub(code_span, part) for part in parts)
 
 
 def _normalize_entry_heading_text(line: str) -> str:
-    """Apply final cleanup for generated entry-local headings."""
-    return _code_span_heading_wildcards(line)
+    """Apply final cleanup for generated changelog prose and headings."""
+    return _code_span_wildcard_identifiers(line)
 
 
 def normalize_entry_headings_text(text: str) -> str:

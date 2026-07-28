@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.8.0] - 2026-07-27
+## [0.8.0] - 2026-07-28
 
 ### ⚠️ Breaking Changes
 
@@ -387,7 +387,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Make DelaunayTriangulationBuilder the canonical construction API, with
     default simplex storage, typed simplex-data selection, kernel terminals, and
     statistics terminals in one staged workflow.
-  - Remove the legacy DelaunayTriangulation::try_new* and try_with_* batch
+  - Remove the legacy `DelaunayTriangulation::try_new*` and `try_with_*` batch
     constructor family, and update examples, benches, docs, preludes, and
     semgrep rules to use builder chains.
   - Add post-construction simplex-data filling from closures or secondary maps
@@ -453,6 +453,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Synchronize validation APIs, layered errors, and backend-specific
     realization guarantees.
   - Refresh the mechanical paper table and author TODO scaffolding without replacing manuscript prose.
+- Condition benchmark bullet on staged summary [`d0e3af1`](https://github.com/acgetchell/delaunay/commit/d0e3af12750b508fe788144195ee5af4c8c87cab)
+
+  - Add the benchmark commit bullet only when PERFORMANCE_RESULTS.md is staged.
+  - Omit both the summary file and its bullet when no benchmark summary changed.
 
 ### Fixed
 
