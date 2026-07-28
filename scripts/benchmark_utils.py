@@ -203,7 +203,6 @@ RELEASE_SIGNAL_BENCH_TARGETS = (
     "ci_performance_suite",
     "circumsphere_containment",
     "cold_path_predicates",
-    "topology_guarantee_construction",
     "locate",
 )
 RELEASE_SIGNAL_GROUP_PREFIXES = (
@@ -222,7 +221,6 @@ RELEASE_SIGNAL_GROUP_PREFIXES = (
     "5d",
     "edge_cases_",
     "predicates",
-    "topology_guarantee_construction",
     "locate",
 )
 BENCH_TARGET_SUITES = {
@@ -3133,8 +3131,8 @@ def _run_saved_baseline_for_suite(*, worktree: Path, baseline_tag: str, suite: s
 
 
 def _run_latest_for_suite(*, worktree: Path, suite: str, env: dict[str, str] | None) -> None:
-    """Run latest release-signal benchmarks for a suite."""
-    if (worktree / "justfile").exists():
+    """Run current benchmarks for a suite."""
+    if suite == "release-signal" and (worktree / "justfile").exists():
         _run_tool("just", ["bench-latest"], cwd=worktree, timeout=RELEASE_BENCH_TIMEOUT_SECONDS, env=env)
         return
     for target in _bench_targets_for_suite(worktree, suite):

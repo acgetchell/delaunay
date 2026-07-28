@@ -88,6 +88,7 @@ class ReferenceKind(StrEnum):
     """A release surface whose version must match Cargo.toml."""
 
     BENCHMARK_CURRENT_TAG = "benchmark workflow current tag"
+    CARGO_ADD = "cargo add command"
     CARGO_LOCK = "Cargo.lock root package"
     CITATION = "CITATION.cff version"
     DEPENDENCY_SNIPPET = "documentation dependency snippet"
@@ -281,6 +282,30 @@ def _dependency_references(path: Path, package_name: str) -> list[VersionReferen
     return references
 
 
+def _cargo_add_regex(package_name: str) -> re.Pattern[str]:
+    """Build a regex for cargo-add commands naming *package_name*."""
+    escaped_name = re.escape(package_name)
+    return re.compile(rf"(?<![\w.-])cargo\s+add\b[^`\n]*?(?<![\w.-]){escaped_name}@(?P<version>[^\s`]+)")
+
+
+def _cargo_add_references(path: Path, package_name: str) -> list[VersionReference]:
+    """Return cargo-add command references in a Markdown file."""
+    cargo_add_re = _cargo_add_regex(package_name)
+    references: list[VersionReference] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        references.extend(
+            VersionReference(
+                path=path,
+                line=line_number,
+                version=match.group("version"),
+                kind=ReferenceKind.CARGO_ADD,
+                text=line.strip(),
+            )
+            for match in cargo_add_re.finditer(line)
+        )
+    return references
+
+
 _README_TAG_LINK_RE = re.compile(
     r"https://(?:github\.com/acgetchell/delaunay/(?:blob|raw|tree)/|raw\.githubusercontent\.com/acgetchell/delaunay/)"
     r"(?:v(?P<version>[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)"
@@ -334,6 +359,7 @@ def _version_references(root: Path, package: PackageInfo) -> list[VersionReferen
     ]
     for path in _iter_markdown_files(root):
         references.extend(_dependency_references(path, package.name))
+        references.extend(_cargo_add_references(path, package.name))
         references.extend(_benchmark_current_tag_references(path))
     references.extend(_readme_tag_references(root / "README.md"))
     return references

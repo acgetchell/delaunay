@@ -105,11 +105,18 @@ _ATX_HEADING_RE = re.compile(r"^(?P<level>#{1,6})\s+(?P<title>.*?)(?:\s+#+\s*)?$
 # inside one release section.
 _FOLLOWUP_HEADING_SUFFIX_RE = re.compile(r"\s+-\s+Follow-up(?:\s+\d+)?$")
 
-# Markdown code spans used in generated heading titles.
+# Markdown code spans used in generated text.
 _CODE_SPAN_RE = re.compile(r"`([^`]*)`")
 
-# Bare glob-like identifiers in headings can be parsed as emphasis by linters.
-_WILDCARD_IDENTIFIER_RE = re.compile(r"(?<![`A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*\*+[A-Za-z0-9_*]*)(?![`A-Za-z0-9_])")
+# Bare glob-like identifiers can be parsed as emphasis by Markdown linters.
+# Match complete slash-delimited paths and Rust paths so suffixes are never
+# wrapped in isolation; the inline-span scanner below excludes real emphasis.
+_WILDCARD_IDENTIFIER_RE = re.compile(
+    r"(?<![`*A-Za-z0-9_:/.-])"
+    r"((?:\.?[A-Za-z_][A-Za-z0-9_.-]*/)*(?:[A-Za-z_][A-Za-z0-9_]*::)*"
+    r"\.?[A-Za-z_][A-Za-z0-9_-]*\*+(?:[A-Za-z0-9_-]+)?(?:\.[A-Za-z0-9_-]+)*)"
+    r"(?![`A-Za-z0-9_*/-])"
+)
 
 # Preferred names for known repeated historical body headings.
 _DUPLICATE_HEADING_REPLACEMENTS = {
@@ -207,6 +214,57 @@ def _backtick_span_end(text: str, start: int) -> int | None:
         if run_end - run_start == delimiter_length:
             return run_end
         position = run_end
+    return None
+
+
+def _delimiter_run_end(text: str, start: int, delimiter: str) -> int:
+    """Return the exclusive end of one repeated Markdown delimiter run."""
+    end = start + 1
+    while end < len(text) and text[end] == delimiter:
+        end += 1
+    return end
+
+
+def _is_left_flanking_asterisk_run(text: str, start: int, end: int) -> bool:
+    """Return whether an asterisk run can open Markdown emphasis."""
+    before = text[start - 1] if start > 0 else " "
+    after = text[end] if end < len(text) else " "
+    before_is_punctuation = not before.isalnum() and not before.isspace()
+    after_is_punctuation = not after.isalnum() and not after.isspace()
+    return not after.isspace() and (not after_is_punctuation or before.isspace() or before_is_punctuation)
+
+
+def _is_right_flanking_asterisk_run(text: str, start: int, end: int) -> bool:
+    """Return whether an asterisk run can close Markdown emphasis."""
+    before = text[start - 1] if start > 0 else " "
+    after = text[end] if end < len(text) else " "
+    before_is_punctuation = not before.isalnum() and not before.isspace()
+    after_is_punctuation = not after.isalnum() and not after.isspace()
+    return not before.isspace() and (not before_is_punctuation or after.isspace() or after_is_punctuation)
+
+
+def _asterisk_emphasis_span_end(text: str, start: int) -> int | None:
+    """Return the end of an emphasis span with a matching asterisk run."""
+    opener_end = _delimiter_run_end(text, start, "*")
+    delimiter_length = opener_end - start
+    if not _is_left_flanking_asterisk_run(text, start, opener_end):
+        return None
+
+    position = opener_end
+    while position < len(text):
+        if text[position] == "`":
+            code_span_end = _backtick_span_end(text, position)
+            if code_span_end is not None:
+                position = code_span_end
+                continue
+        if text[position] != "*":
+            position += 1
+            continue
+
+        closer_end = _delimiter_run_end(text, position, "*")
+        if closer_end - position == delimiter_length and _is_right_flanking_asterisk_run(text, position, closer_end):
+            return closer_end
+        position = closer_end
     return None
 
 
@@ -1225,23 +1283,38 @@ def _normalize_entry_heading(line: str, current_entry_summary: str | None) -> st
     return f"#### {title}"
 
 
-def _code_span_heading_wildcards(line: str) -> str:
-    """Wrap bare wildcard identifiers in heading titles with code spans."""
-    match = _ATX_HEADING_RE.match(line)
-    if match is None:
-        return line
+def _code_span_wildcard_identifiers(line: str) -> str:
+    """Wrap bare wildcard identifiers outside code and emphasis spans."""
 
     def code_span(match: re.Match[str]) -> str:
         return f"`{match.group(1)}`"
 
-    title_parts = re.split(r"(`[^`]+`)", match.group("title"))
-    title = "".join(part if part.startswith("`") and part.endswith("`") else _WILDCARD_IDENTIFIER_RE.sub(code_span, part) for part in title_parts)
-    return f"{match.group('level')} {title}"
+    result: list[str] = []
+    plain_start = 0
+    position = 0
+    while position < len(line):
+        span_end: int | None = None
+        if line[position] == "`":
+            span_end = _backtick_span_end(line, position)
+        elif line[position] == "*":
+            span_end = _asterisk_emphasis_span_end(line, position)
+
+        if span_end is None:
+            position += 1
+            continue
+
+        result.append(_WILDCARD_IDENTIFIER_RE.sub(code_span, line[plain_start:position]))
+        result.append(line[position:span_end])
+        position = span_end
+        plain_start = position
+
+    result.append(_WILDCARD_IDENTIFIER_RE.sub(code_span, line[plain_start:]))
+    return "".join(result)
 
 
 def _normalize_entry_heading_text(line: str) -> str:
-    """Apply final cleanup for generated entry-local headings."""
-    return _code_span_heading_wildcards(line)
+    """Apply final cleanup for generated changelog prose and headings."""
+    return _code_span_wildcard_identifiers(line)
 
 
 def normalize_entry_headings_text(text: str) -> str:

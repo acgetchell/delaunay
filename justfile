@@ -25,7 +25,7 @@ rumdl_version := "0.2.43"
 samply_version := "0.13.1"
 sarif_fmt_version := "0.8.0"
 taplo_version := "0.10.0"
-tectonic_version := "0.16.9"
+tectonic_version := "0.17.0"
 tex_fmt_version := "0.5.7"
 typos_version := "1.48.0"
 uv_version := "0.11.32"
@@ -88,7 +88,6 @@ bench-latest:
     cargo bench --profile perf --bench ci_performance_suite
     cargo bench --profile perf --bench circumsphere_containment
     cargo bench --profile perf --bench cold_path_predicates
-    cargo bench --profile perf --bench topology_guarantee_construction
     cargo bench --profile perf --bench locate
 
 # Run latest measurements and render the latest-vs-last performance report.
@@ -113,7 +112,7 @@ bench-save-baseline tag suite="release-signal":
     suite="{{ suite }}"
     case "$suite" in
         release-signal)
-            targets=(ci_performance_suite circumsphere_containment cold_path_predicates topology_guarantee_construction locate)
+            targets=(ci_performance_suite circumsphere_containment cold_path_predicates locate)
             ;;
         ci)
             targets=(ci_performance_suite)

@@ -222,7 +222,8 @@ just docs-version-check
 
 This compares the Cargo package version against `Cargo.lock`, `pyproject.toml`,
 `uv.lock`, `CITATION.cff`, release-pinned README links, active documentation
-dependency snippets, and current-tag benchmark workflow examples.
+dependency and `cargo add` snippets, and current-tag benchmark workflow
+examples.
 
 ---
 
@@ -367,11 +368,13 @@ regenerates `benches/PERFORMANCE_RESULTS.md`.
 Use `just bench-latest` when you need the curated release-signal Criterion
 suite for local saved-baseline comparisons. It runs
 `ci_performance_suite`, `circumsphere_containment`, `cold_path_predicates`,
-`topology_guarantee_construction`, and `locate`, leaving `target/criterion/new`
-data suitable for `just bench-compare`. Save the previous release signal as
-`last` with `just bench-save-baseline last` from the baseline checkout, or save
-an explicit baseline name with the same recipe. Use `just perf-local` when you
-want the tool to manage isolated
+and `locate`, leaving `target/criterion/new` data suitable for
+`just bench-compare`. The manual `topology_guarantee_construction` suite remains
+available through `just bench-save-baseline <tag> topology` and
+`uv run benchmark-utils perf-local --suite topology`. Save the previous release
+signal as `last` with `just bench-save-baseline last` from the baseline
+checkout, or save an explicit baseline name with the same recipe. Use
+`just perf-local` when you want the tool to manage isolated
 baseline/current worktrees.
 
 ```bash

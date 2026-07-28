@@ -118,7 +118,7 @@ Choose the path that matches your use case:
 Add the crate to your project:
 
 ```bash
-cargo add delaunay@0.7.8
+cargo add delaunay@0.8.0
 ```
 
 Use `cargo add delaunay` instead if you want Cargo to select the newest published release.
