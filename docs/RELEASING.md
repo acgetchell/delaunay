@@ -203,21 +203,27 @@ git diff --cached --check
 git --no-pager diff --cached --stat
 git --no-pager diff --cached
 
+benchmark_bullet=""
+if ! git diff --cached --quiet -- benches/PERFORMANCE_RESULTS.md; then
+    benchmark_bullet=$'\n- Refresh release benchmark summary'
+fi
+
 git commit -m "chore(release): release $TAG
 
 - Bump version to $TAG
 - Update citation and utility package metadata
 - Update changelog with latest changes
-- Update documentation for release
-- Refresh release benchmark summary"
+- Update documentation for release${benchmark_bullet}"
 ```
 
 If the initial status includes unrelated work, stop and separate it before
 running `git add --all`; do not stage a mixed worktree merely because it is on a
 release branch.
 
-If no checked-in benchmark summary changed, omit `benches/PERFORMANCE_RESULTS.md`
-from the commit and omit the benchmark bullet.
+The commit template adds its benchmark bullet only when
+`benches/PERFORMANCE_RESULTS.md` is present in the staged diff. If no checked-in
+benchmark summary changed, ensure that file is absent from the staged diff; the
+file and its benchmark bullet are then both omitted.
 
 7. Push the branch and open a PR
 
