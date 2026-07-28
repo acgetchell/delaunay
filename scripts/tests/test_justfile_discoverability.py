@@ -8,11 +8,14 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+import benchmark_utils
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 JUSTFILE = REPO_ROOT / "justfile"
 HELPER_JUSTFILE = REPO_ROOT / "just" / "helpers.just"
 RECIPE_DECLARATION = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*)(?:\s+.*?)?:(?=\s|$)", re.MULTILINE)
 WORKFLOW_VERSION_LOOKUP = re.compile(r"just --evaluate ([a-z0-9_]+_version)")
+RELEASE_SIGNAL_TARGETS = re.compile(r"^\s*release-signal\)\s*\n\s*targets=\(([^)]*)\)", re.MULTILINE)
 
 
 def run_just(*args: str) -> subprocess.CompletedProcess[str]:
@@ -58,6 +61,21 @@ def test_check_code_includes_dependency_hygiene() -> None:
     dependencies = {dependency["recipe"] for dependency in just_recipes()["check-code"]["dependencies"]}
 
     assert "unused-deps" in dependencies
+
+
+def test_release_signal_benchmark_recipes_match_python_runner() -> None:
+    """Just and Python should select the same curated release benchmark targets."""
+    justfile_text = JUSTFILE.read_text(encoding="utf-8")
+    suite_match = RELEASE_SIGNAL_TARGETS.search(justfile_text)
+    assert suite_match is not None
+    saved_baseline_targets = tuple(suite_match.group(1).split())
+
+    latest = run_just("--dry-run", "bench-latest")
+    latest_targets = tuple(re.findall(r"--bench ([A-Za-z0-9_-]+)", latest.stdout + latest.stderr))
+    expected = benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS
+
+    assert saved_baseline_targets == expected
+    assert latest_targets == expected
 
 
 def test_cargo_tool_guards_reuse_pinned_helper() -> None:

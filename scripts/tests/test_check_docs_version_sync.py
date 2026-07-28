@@ -72,6 +72,22 @@ def test_find_version_mismatches_reports_stale_dependency_snippets(tmp_path: Pat
     assert mismatches[0].package.version == "1.2.3"
 
 
+def test_find_version_mismatches_reports_stale_cargo_add_commands(tmp_path: Path) -> None:
+    """Stale cargo-add commands are reported without matching other packages."""
+    _write_project(
+        tmp_path,
+        readme=("cargo add delaunay@1.2.3\n`cargo add --features diagnostics delaunay@1.2.2`\ncargo add la-stack@0.4.1\n"),
+    )
+
+    mismatches = check_docs_version_sync.find_version_mismatches(tmp_path)
+
+    assert len(mismatches) == 1
+    assert mismatches[0].reference.kind is check_docs_version_sync.ReferenceKind.CARGO_ADD
+    assert mismatches[0].reference.path == tmp_path / "README.md"
+    assert mismatches[0].reference.line == 2
+    assert mismatches[0].reference.version == "1.2.2"
+
+
 def test_find_version_mismatches_handles_reordered_inline_table_keys(tmp_path: Path) -> None:
     """Inline Cargo dependency tables can put version after other keys."""
     _write_project(tmp_path)

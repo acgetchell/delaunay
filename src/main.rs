@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![deny(dead_code_pub_in_binary)]
 
 //! Companion command-line entrypoint for notebook and diagnostic workflows.
 

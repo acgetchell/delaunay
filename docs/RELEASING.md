@@ -99,10 +99,10 @@ just docs-version-check
 ```
 
 The automated check covers package metadata, lockfiles, citation version,
-release-pinned README links, active documentation dependency snippets, and
-current-tag arguments in benchmark workflow examples. Historical prose,
-archived reports, baseline arguments, and tool versions intentionally remain
-independent of the current package version.
+release-pinned README links, active documentation dependency and `cargo add`
+snippets, and current-tag arguments in benchmark workflow examples. Historical
+prose, archived reports, baseline arguments, and tool versions intentionally
+remain independent of the current package version.
 
 3. Generate the release changelog
 
@@ -184,10 +184,24 @@ just ci
 just publish-check
 ```
 
-6. Stage and commit release artifacts
+6. Review, stage, and commit the release branch
+
+Release workflows can update tracked files and create new archive files, and a
+critical release fix may legitimately touch source or tooling outside a fixed
+metadata list. Keep the dedicated release branch clean of unrelated work,
+review the complete release delta, and then stage all intended changes:
 
 ```bash
-git add Cargo.toml Cargo.lock CITATION.cff pyproject.toml uv.lock CHANGELOG.md docs/ benches/PERFORMANCE_RESULTS.md
+git status --short
+git diff HEAD --check
+git --no-pager diff HEAD --stat
+
+# After confirming every changed and untracked path belongs in the release PR:
+git add --all
+git status --short
+git diff --cached --check
+git --no-pager diff --cached --stat
+git --no-pager diff --cached
 
 git commit -m "chore(release): release $TAG
 
@@ -198,8 +212,12 @@ git commit -m "chore(release): release $TAG
 - Refresh release benchmark summary"
 ```
 
+If the initial status includes unrelated work, stop and separate it before
+running `git add --all`; do not stage a mixed worktree merely because it is on a
+release branch.
+
 If no checked-in benchmark summary changed, omit `benches/PERFORMANCE_RESULTS.md`
-from the staged files and omit the benchmark bullet.
+from the commit and omit the benchmark bullet.
 
 7. Push the branch and open a PR
 

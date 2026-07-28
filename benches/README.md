@@ -250,11 +250,10 @@ just bench-compare last
 
 `just bench-latest` runs Delaunay's curated release-signal set:
 `ci_performance_suite`, `circumsphere_containment`, `cold_path_predicates`,
-`topology_guarantee_construction`, and `locate`. This set covers public
-construction and validation workflows, circumsphere/insphere query families,
-hot and cold predicate paths, topology guarantee construction, and point
-location without pulling in broad profiling or allocation-only runs. Use
-`just bench-compare <baseline>` to render
+and `locate`. This set covers public construction and validation workflows,
+circumsphere/insphere query families, hot and cold predicate paths, and point
+location without pulling in broad profiling, allocation-only runs, or the
+manual topology policy suite. Use `just bench-compare <baseline>` to render
 `target/bench-reports/performance.md` from existing Criterion `new` output and a
 saved baseline such as `last` or `v0.7.8`. If the baseline and current
 checkouts are easy to confuse, prefer `just perf-local`. Use

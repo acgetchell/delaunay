@@ -236,6 +236,40 @@ def test_collect_criterion_comparisons_filters_release_signal_scope(tmp_path: Pa
     assert comparison.speedup == pytest.approx(2.0)
 
 
+def test_release_signal_excludes_manual_topology_benchmark() -> None:
+    """Release comparisons should not run the explicitly selected topology suite."""
+    assert "topology_guarantee_construction" not in benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS
+    assert "topology_guarantee_construction" not in benchmark_utils.RELEASE_SIGNAL_GROUP_PREFIXES
+    assert benchmark_utils.BENCH_TARGET_SUITES["topology"] == ("topology_guarantee_construction",)
+    assert benchmark_utils.BENCH_COMPARE_GROUP_PREFIXES_BY_SUITE["topology"] == ("topology_guarantee_construction",)
+
+
+def test_run_latest_for_explicit_suite_bypasses_release_signal_recipe(tmp_path: Path) -> None:
+    """A named suite should run its own Cargo targets even when Just is present."""
+    (tmp_path / "justfile").write_text("", encoding=UTF8)
+    (tmp_path / "Cargo.toml").write_text(
+        '[[bench]]\nname = "topology_guarantee_construction"\n',
+        encoding=UTF8,
+    )
+
+    with patch("benchmark_utils._run_tool") as run_tool:
+        benchmark_utils._run_latest_for_suite(worktree=tmp_path, suite="topology", env=None)
+
+    run_tool.assert_called_once_with(
+        "cargo",
+        [
+            "bench",
+            "--profile",
+            benchmark_utils.BENCHMARK_BUILD_FLAVOR,
+            "--bench",
+            "topology_guarantee_construction",
+        ],
+        cwd=tmp_path,
+        timeout=benchmark_utils.RELEASE_BENCH_TIMEOUT_SECONDS,
+        env=None,
+    )
+
+
 @pytest.mark.parametrize("point_estimate", [float("nan"), float("inf"), 0.0, -1.0])
 def test_collect_criterion_comparisons_rejects_invalid_point_estimates(tmp_path: Path, point_estimate: float) -> None:
     """Saved Criterion baseline comparison should fail on non-physical timings."""
