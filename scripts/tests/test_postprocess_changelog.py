@@ -636,6 +636,20 @@ class TestIndentedHeadingNormalization:
         assert "Tolerate NFS `.nfs*` lock files." in result
         assert "Preserve [**breaking**], *emphasis*, and existing `already_*` markup." in result
 
+    def test_full_pipeline_preserves_matching_run_code_spans(self) -> None:
+        content = "# Changelog\n\n## [1.0.0]\n\n### Changed\n\n- Preserve ``foo`bar*`` and ``foo`bar*`baz`` while wrapping qux*.\n"
+
+        result = postprocess_text(content)
+
+        assert "Preserve ``foo`bar*`` and ``foo`bar*`baz`` while wrapping `qux*`." in result
+
+    def test_full_pipeline_preserves_wildcard_like_emphasis(self) -> None:
+        content = "# Changelog\n\n## [1.0.0]\n\n### Changed\n\n- Preserve *foo/bar* and *foo bar* while wrapping foo/bar* and qux*.\n"
+
+        result = postprocess_text(content)
+
+        assert "Preserve *foo/bar* and *foo bar* while wrapping `foo/bar*` and `qux*`." in result
+
     def test_full_pipeline_normalizes_indented_bold_entry_headings(self, tmp_path: Path) -> None:
         f = tmp_path / "CHANGELOG.md"
         f.write_text(

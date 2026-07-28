@@ -221,7 +221,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Document spherical support as a Level 4/5 backend extension, with full 2D-5D integration and mutable-triangulation support still called out as future work.
   - Add the validation paper sources, BibTeX, generated PNG figures, tracked reviewer PDF, and papers README.
   - Rename the validation notebook to notebooks/01_validation.ipynb and make it generate reproducible validation hierarchy and failure figures.
-  - Add just papers and paper-* recipes plus a dedicated papers.yml CI workflow using Tectonic, tex-fmt, chktex, uv, and notebook-generated figures.
+  - Add just papers and `paper-*` recipes plus a dedicated papers.yml CI workflow using Tectonic, tex-fmt, chktex, uv, and notebook-generated figures.
   - Add uv-managed paper support CLIs for PDF sanity checks, deterministic PDF metadata normalization, and TeX source-date extraction.
   - Include paper artifacts in the packaged crate and ignore LaTeX build intermediates.
   - Update local/CI cargo-nextest pins and setup/tooling guidance for the new paper toolchain.
@@ -549,6 +549,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Lock uv-backed workflows and include the complete console-script module closure in Python packages.
   - Consolidate durable tooling guidance, correct documented predicate and validation limits, and archive historical performance observations.
   - Refresh validation-paper metadata and clarify reviewer-artifact comparisons.
+- Prevent wildcard changelog prose from parsing as emphasis [`291439d`](https://github.com/acgetchell/delaunay/commit/291439d2786eb6a88fb272bff1e69106adedefcf)
+
+  - Code-span wildcard Rust API paths and filename globs throughout generated prose.
+  - Preserve Markdown emphasis and existing code spans during normalization.
+  - Regenerate the v0.8.0 changelog and completed-series archives.
 
 ### Maintenance
 
