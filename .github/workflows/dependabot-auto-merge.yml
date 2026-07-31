@@ -1,15 +1,19 @@
 name: Dependabot review and auto-merge
 
-on:
+"on":
   pull_request:
     types:
       - opened
       - reopened
       - ready_for_review
+      - synchronize
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
-  issues: write
   pull-requests: write
 
 jobs:
@@ -21,12 +25,83 @@ jobs:
     steps:
       - name: Request CodeRabbit review
         env:
-          GH_TOKEN: ${{ github.token }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr comment "$PR_URL" --body "@coderabbitai review"
+          # Dependabot-triggered workflows receive Dependabot secrets.
+          GH_TOKEN: ${{ secrets.CODERABBIT_REVIEW_TOKEN }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::error::CODERABBIT_REVIEW_TOKEN is not configured."
+            exit 1
+          fi
 
-      - name: Enable auto-merge
+          token_owner="$(gh api user --jq '.login')"
+          if [[ "$token_owner" != "acgetchell" ]]; then
+            echo "::error::CODERABBIT_REVIEW_TOKEN must belong to acgetchell."
+            exit 1
+          fi
+
+          marker="<!-- coderabbit-review-request:${PR_HEAD_SHA} -->"
+          comments="$(
+            gh api --paginate \
+              "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --jq '.[] | select(.user.login == "acgetchell") | .body'
+          )"
+          if grep -Fxq -- "$marker" <<< "$comments"; then
+            echo "CodeRabbit review already requested for ${PR_HEAD_SHA}."
+            exit 0
+          fi
+          body="$(printf '@coderabbitai review\n\n%s' "$marker")"
+          gh api \
+            --method POST \
+            "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --raw-field body="$body"
+
+      - name: Wait for CodeRabbit approval
+        id: coderabbit-approval
+        timeout-minutes: 60
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          while true; do
+            current_head_sha="$(
+              gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha'
+            )"
+            if [[ "$current_head_sha" != "$PR_HEAD_SHA" ]]; then
+              echo "::error::PR head changed while waiting for CodeRabbit approval."
+              exit 1
+            fi
+
+            review_state="$(
+              gh api --paginate \
+                "repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews?per_page=100" |
+                jq --raw-output --slurp --arg sha "$PR_HEAD_SHA" '[.[][] | select(
+                  .user.login == "coderabbitai[bot]" and
+                  .commit_id == $sha
+                )] | last | .state // empty'
+            )"
+            if [[ "$review_state" == "APPROVED" ]]; then
+              echo "approved_head_sha=${PR_HEAD_SHA}" >> "$GITHUB_OUTPUT"
+              break
+            fi
+
+            sleep 15
+          done
+
+      - name: Wait for required checks
+        timeout-minutes: 60
         env:
           GH_TOKEN: ${{ github.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr merge --auto --squash "$PR_URL"
+        run: gh pr checks --required --watch --fail-fast "$PR_URL"
+
+      - name: Squash approved PR head
+        env:
+          APPROVED_HEAD_SHA: ${{ steps.coderabbit-approval.outputs.approved_head_sha }}
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --squash --match-head-commit "$APPROVED_HEAD_SHA" "$PR_URL"
