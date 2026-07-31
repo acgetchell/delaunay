@@ -129,6 +129,25 @@ class TestValidateSemver:
 
 
 class TestCreateTag:
+    def test_next_step_sets_release_title(
+        self,
+        tmp_path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        changelog = tmp_path / "CHANGELOG.md"
+        with (
+            patch("tag_release._tag_exists", return_value=False),
+            patch("tag_release.find_changelog", return_value=changelog),
+            patch(
+                "tag_release.extract_changelog_section",
+                return_value=("## v1.2.3\n\n- Fixed\n", changelog),
+            ),
+            patch("tag_release.run_git_command_with_input"),
+        ):
+            create_tag("v1.2.3")
+
+        assert "gh release create v1.2.3 --title v1.2.3 --notes-from-tag" in capsys.readouterr().out
+
     def test_truncated_message_uses_posix_source_url(
         self,
         tmp_path,
