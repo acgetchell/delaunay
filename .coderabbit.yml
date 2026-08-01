@@ -11,10 +11,11 @@ reviews:
   high_level_summary_in_walkthrough: false
   auto_title_placeholder: "@coderabbitai"
   auto_title_instructions: ""
-  # Publish only the legacy commit status consumed by the main-branch ruleset.
-  # The review-progress path creates a second GitHub check run for the same review.
-  review_progress: false
-  commit_status: true
+  review_status: true
+  # Publish CodeRabbit's canonical GitHub check run for ruleset enforcement.
+  review_progress: true
+  # Do not mirror the review through GitHub's legacy commit-status API.
+  commit_status: false
   fail_commit_status: true
   collapse_walkthrough: false
   changed_files_summary: true
