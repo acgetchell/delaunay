@@ -56,7 +56,7 @@ rustdoc-args = [ "--cfg", "docsrs" ]
 
 [dependencies]
 allocation-counter = { version = "0.8.1", optional = true } # for memory profiling
-clap = { version = "4.6.4", features = [ "derive" ], optional = true }
+clap = { version = "4.6.5", features = [ "derive" ], optional = true }
 la-stack = { version = "0.4.4", default-features = false, features = [ "exact" ] }
 tracing = { version = "0.1.44", default-features = false, features = [ "std" ] }
 rustc-hash = "2.1.3" # Fast non-cryptographic hashing for performance
