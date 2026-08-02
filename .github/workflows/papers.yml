@@ -76,11 +76,34 @@ jobs:
 
       - name: Export paper tool versions
         id: tool_versions
+        shell: bash
         run: |
+          set -euo pipefail
+
+          resolve_version() {
+            local name="$1"
+            local value
+
+            if ! value="$(just --evaluate "$name")"; then
+              echo "::error::Failed to resolve $name from justfile" >&2
+              return 1
+            fi
+            if [[ -z "$value" ]]; then
+              echo "::error::Resolved empty $name from justfile" >&2
+              return 1
+            fi
+
+            printf '%s\n' "$value"
+          }
+
+          tectonic_version="$(resolve_version tectonic_version)"
+          tex_fmt_version="$(resolve_version tex_fmt_version)"
+          uv_version="$(resolve_version uv_version)"
+
           {
-            echo "TECTONIC_VERSION=$(just --evaluate tectonic_version)"
-            echo "TEX_FMT_VERSION=$(just --evaluate tex_fmt_version)"
-            echo "UV_VERSION=$(just --evaluate uv_version)"
+            echo "TECTONIC_VERSION=$tectonic_version"
+            echo "TEX_FMT_VERSION=$tex_fmt_version"
+            echo "UV_VERSION=$uv_version"
           } >> "$GITHUB_OUTPUT"
 
       - name: Set up Python

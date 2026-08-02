@@ -21,15 +21,15 @@ dprint_version := "0.55.2"
 git_cliff_version := "2.13.1"
 just_version := "1.57.0"
 nextest_version := "0.9.140"
-rumdl_version := "0.2.47"
+rumdl_version := "0.2.48"
 samply_version := "0.13.1"
 sarif_fmt_version := "0.8.0"
 taplo_version := "0.10.0"
 tectonic_version := "0.17.0"
 tex_fmt_version := "0.5.7"
 typos_version := "1.48.0"
-uv_version := "0.12.0"
-zizmor_version := "1.28.0"
+uv_version := "0.12.1"
+zizmor_version := "1.29.0"
 
 # Common cargo-llvm-cov arguments for all coverage runs.
 # Excludes benches/examples from reports while allowing integration tests to

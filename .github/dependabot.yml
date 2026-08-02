@@ -5,6 +5,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "tuesday"
+      time: "03:00"
+      timezone: "America/Los_Angeles"
     cooldown:
       default-days: 7
     open-pull-requests-limit: 10
@@ -22,6 +25,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "tuesday"
+      time: "04:00"
+      timezone: "America/Los_Angeles"
     cooldown:
       default-days: 7
     open-pull-requests-limit: 10
@@ -39,6 +45,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "tuesday"
+      time: "05:00"
+      timezone: "America/Los_Angeles"
     cooldown:
       default-days: 7
     open-pull-requests-limit: 10
