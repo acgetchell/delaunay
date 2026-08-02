@@ -177,10 +177,21 @@ def parse_execution_count(value: Any, *, path: Path, index: int) -> int | None:
     raise TypeError(msg)
 
 
+def parse_nbformat(value: Any, *, path: Path) -> int:
+    """Parse the supported notebook format version."""
+    if not isinstance(value, int) or isinstance(value, bool) or value != 4:
+        msg = f"{path}: expected nbformat to be the integer 4, got {value!r}"
+        raise ValueError(msg)
+    return value
+
+
 def parse_notebook_cell(raw_cell: Any, *, path: Path, index: int) -> NotebookCell:
     """Parse a raw nbformat cell into validated notebook metadata."""
     if not isinstance(raw_cell, dict):
         msg = f"{path}: cell {index}: expected cell to be an object"
+        raise TypeError(msg)
+    if not isinstance(raw_cell.get("metadata"), dict):
+        msg = f"{path}: cell {index}: expected metadata to be an object"
         raise TypeError(msg)
     return NotebookCell(
         index=index,
@@ -202,9 +213,7 @@ def load_notebook(path: Path) -> NotebookDocument:
     if not isinstance(notebook, dict):
         msg = f"{path}: expected notebook JSON to be an object"
         raise TypeError(msg)
-    if notebook.get("nbformat") != 4:
-        msg = f"{path}: expected nbformat 4, got {notebook.get('nbformat')!r}"
-        raise ValueError(msg)
+    nbformat = parse_nbformat(notebook.get("nbformat"), path=path)
     cells = notebook.get("cells")
     if not isinstance(cells, list):
         msg = f"{path}: expected notebook cells to be a list"
@@ -215,7 +224,7 @@ def load_notebook(path: Path) -> NotebookDocument:
         raise TypeError(msg)
     return NotebookDocument(
         path=path,
-        nbformat=4,
+        nbformat=nbformat,
         nbformat_minor=nbformat_minor,
         cells=tuple(parse_notebook_cell(cell, path=path, index=index) for index, cell in enumerate(cells, start=1)),
     )

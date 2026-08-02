@@ -112,12 +112,16 @@ def test_load_notebook_rejects_non_object_json(tmp_path: Path) -> None:
         load_notebook(notebook)
 
 
-def test_load_notebook_rejects_wrong_nbformat(tmp_path: Path) -> None:
-    """Only nbformat v4 notebooks are supported."""
-    notebook = tmp_path / "old-format.ipynb"
-    notebook.write_text('{"cells": [], "nbformat": 3, "nbformat_minor": 0, "metadata": {}}', encoding="utf-8")
+@pytest.mark.parametrize("nbformat", [3, 4.0, True, False])
+def test_load_notebook_rejects_non_v4_integer_nbformat(tmp_path: Path, nbformat: float | bool) -> None:
+    """Only the JSON integer token 4 is a supported nbformat version."""
+    notebook = tmp_path / "bad-format.ipynb"
+    notebook.write_text(
+        json.dumps({"cells": [], "nbformat": nbformat, "nbformat_minor": 0, "metadata": {}}),
+        encoding="utf-8",
+    )
 
-    with pytest.raises(ValueError, match="expected nbformat 4"):
+    with pytest.raises(ValueError, match="expected nbformat to be the integer 4"):
         load_notebook(notebook)
 
 
@@ -154,6 +158,15 @@ def test_load_notebook_rejects_bad_outputs_shape(tmp_path: Path) -> None:
     write_notebook(notebook, [code_cell("x = 1", outputs={"output_type": "stream"})])
 
     with pytest.raises(TypeError, match="outputs must be a list"):
+        load_notebook(notebook)
+
+
+def test_load_notebook_rejects_non_object_cell_metadata(tmp_path: Path) -> None:
+    """Every notebook cell must provide a JSON metadata object."""
+    notebook = tmp_path / "bad-cell-metadata.ipynb"
+    write_notebook(notebook, [{**code_cell("x = 1"), "metadata": []}])
+
+    with pytest.raises(TypeError, match=r"cell 1: expected metadata to be an object"):
         load_notebook(notebook)
 
 
