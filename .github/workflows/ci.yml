@@ -69,15 +69,42 @@ jobs:
         id: tool_versions
         shell: bash
         run: |
+          set -euo pipefail
+
+          resolve_version() {
+            local name="$1"
+            local value
+
+            if ! value="$(just --evaluate "$name")"; then
+              echo "::error::Failed to resolve $name from justfile" >&2
+              return 1
+            fi
+            if [[ -z "$value" ]]; then
+              echo "::error::Resolved empty $name from justfile" >&2
+              return 1
+            fi
+
+            printf '%s\n' "$value"
+          }
+
+          cargo_machete_version="$(resolve_version cargo_machete_version)"
+          cargo_nextest_version="$(resolve_version nextest_version)"
+          dprint_version="$(resolve_version dprint_version)"
+          rumdl_version="$(resolve_version rumdl_version)"
+          taplo_version="$(resolve_version taplo_version)"
+          typos_version="$(resolve_version typos_version)"
+          uv_version="$(resolve_version uv_version)"
+          zizmor_version="$(resolve_version zizmor_version)"
+
           {
-            echo "CARGO_MACHETE_VERSION=$(just --evaluate cargo_machete_version)"
-            echo "CARGO_NEXTEST_VERSION=$(just --evaluate nextest_version)"
-            echo "DPRINT_VERSION=$(just --evaluate dprint_version)"
-            echo "RUMDL_VERSION=$(just --evaluate rumdl_version)"
-            echo "TAPLO_VERSION=$(just --evaluate taplo_version)"
-            echo "TYPOS_VERSION=$(just --evaluate typos_version)"
-            echo "UV_VERSION=$(just --evaluate uv_version)"
-            echo "ZIZMOR_VERSION=$(just --evaluate zizmor_version)"
+            echo "CARGO_MACHETE_VERSION=$cargo_machete_version"
+            echo "CARGO_NEXTEST_VERSION=$cargo_nextest_version"
+            echo "DPRINT_VERSION=$dprint_version"
+            echo "RUMDL_VERSION=$rumdl_version"
+            echo "TAPLO_VERSION=$taplo_version"
+            echo "TYPOS_VERSION=$typos_version"
+            echo "UV_VERSION=$uv_version"
+            echo "ZIZMOR_VERSION=$zizmor_version"
           } >> "$GITHUB_OUTPUT"
 
       - name: Set up Python
