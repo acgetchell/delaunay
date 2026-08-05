@@ -14,9 +14,14 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
-    # Group all updates together
+    # Group version and security updates separately
     groups:
       github-actions:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      github-actions-security:
+        applies-to: security-updates
         patterns:
           - "*"
 
@@ -34,9 +39,14 @@ updates:
     labels:
       - "dependencies"
       - "rust"
-    # Group all updates together
+    # Group version and security updates separately
     groups:
       dependencies:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      rust-security:
+        applies-to: security-updates
         patterns:
           - "*"
 
@@ -56,5 +66,10 @@ updates:
       - "python"
     groups:
       dependencies:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      python-security:
+        applies-to: security-updates
         patterns:
           - "*"
