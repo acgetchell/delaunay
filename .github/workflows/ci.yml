@@ -123,34 +123,34 @@ jobs:
         run: uv sync --locked --group dev
 
       - name: Install cargo-machete
-        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
+        uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389 # v3.0.8
         with:
           tool: cargo-machete@${{ steps.tool_versions.outputs.CARGO_MACHETE_VERSION }}
 
       - name: Install cargo-nextest
-        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
+        uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389 # v3.0.8
         with:
           tool: cargo-nextest@${{ steps.tool_versions.outputs.CARGO_NEXTEST_VERSION }}
 
       - name: Install rumdl (for Markdown linting)
-        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
+        uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389 # v3.0.8
         with:
           tool: rumdl@${{ steps.tool_versions.outputs.RUMDL_VERSION }}
 
       - name: Install dprint (for YAML formatting)
-        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
+        uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389 # v3.0.8
         with:
           tool: dprint@${{ steps.tool_versions.outputs.DPRINT_VERSION }}
 
       - name: Install typos-cli
-        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
+        uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389 # v3.0.8
         with:
           tool: typos-cli@${{ steps.tool_versions.outputs.TYPOS_VERSION }}
 
       - name: Install taplo (for TOML formatting and linting)
         id: install-taplo
         continue-on-error: ${{ matrix.os == 'windows-latest' }}
-        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
+        uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389 # v3.0.8
         with:
           tool: taplo-cli@${{ steps.tool_versions.outputs.TAPLO_VERSION }}
 
@@ -162,7 +162,7 @@ jobs:
           TAPLO_VERSION: ${{ steps.tool_versions.outputs.TAPLO_VERSION }}
 
       - name: Install zizmor
-        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
+        uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389 # v3.0.8
         with:
           tool: zizmor@${{ steps.tool_versions.outputs.ZIZMOR_VERSION }}
 
