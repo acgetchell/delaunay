@@ -247,7 +247,7 @@ dev = [
     "semgrep==1.172.0",
     "shellcheck-py==0.11.0.1",
     "shfmt-py==4.0.0",
-    "ty==0.0.65",
+    "ty==0.0.66",
     "yamllint==1.38.0",
 ]
 notebooks = [
@@ -257,7 +257,7 @@ notebooks = [
     "nbclient>=0.11.0",
     "nbconvert>=7.17.1",
     "nbformat>=5.10.4",
-    "polars>=1.43.0",
+    "polars>=1.43.2",
     "plotly>=6.9.0",
 ]
 
