@@ -112,7 +112,7 @@ allocation checks, or targeted diagnostics.
 | `delete_vertex.rs` | Vertex deletion and rollback cost | 2D-5D fixed cases | ~1-5 min | Vertex deletion |
 | `locate.rs` | Point-location facet-walk latency (no-hint vs exact-hint) | 2D-5D fixed cases | ~1-3 min | Locate/walk tuning |
 | `tds_clone.rs` | `Tds::clone()` snapshot cost | Deterministic 2D-5D triangulations | ~1-3 min | Rollback design baselines |
-| `topology_guarantee_construction.rs` | Cost of topology guarantee modes | 2D-5D construction cases | ~5-15 min | Manual topology policy work |
+| `topology_guarantee_construction.rs` | Cost of topology guarantee modes | 2D-5D construction cases | ~45-60 min | Manual topology policy work |
 
 ## Selection Guide
 

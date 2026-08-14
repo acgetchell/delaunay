@@ -18,7 +18,6 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee, vertex};
 use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::CoordinateRange;
-use delaunay::prelude::repair::DelaunayRepairPolicy;
 use delaunay::prelude::validation::ValidationPolicy;
 use std::hint::black_box;
 use std::time::Duration;
@@ -69,20 +68,17 @@ fn bench_dimension<const D: usize>(
                             TopologyGuarantee::Pseudomanifold,
                         );
 
-                    // Exercise topology validation cost under each guarantee and disable
-                    // flip-based Delaunay repair for consistent comparison.
+                    // Exercise topology validation cost under each guarantee while retaining
+                    // the production repair policy so every measured result stays valid.
                     dt.set_validation_policy(ValidationPolicy::Always);
-                    dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
 
                     for v in vertices {
-                        // Use the statistics API so retryable degeneracies can be skipped
-                        // (transactional rollback) instead of aborting the benchmark.
                         if let Err(error) = dt.insert_with_statistics(*v) {
-                            abort_benchmark(format_args!("non-retryable insertion error: {error}"));
+                            abort_benchmark(format_args!("insertion error: {error}"));
                         }
                     }
                     // Completion-time PL-manifold certification when required.
-                    let _ = dt.as_triangulation().validate_at_completion();
+                    dt.as_triangulation().validate_at_completion().or_abort();
 
                     black_box(dt)
                 });
@@ -100,16 +96,15 @@ fn bench_dimension<const D: usize>(
                         );
 
                     dt.set_validation_policy(ValidationPolicy::Always);
-                    dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
 
                     for v in vertices {
                         if let Err(error) = dt.insert_with_statistics(*v) {
-                            abort_benchmark(format_args!("non-retryable insertion error: {error}"));
+                            abort_benchmark(format_args!("insertion error: {error}"));
                         }
                     }
 
                     // Completion-time PL-manifold certification when required.
-                    let _ = dt.as_triangulation().validate_at_completion();
+                    dt.as_triangulation().validate_at_completion().or_abort();
 
                     black_box(dt)
                 });
@@ -127,15 +122,14 @@ fn bench_dimension<const D: usize>(
                         );
 
                     dt.set_validation_policy(ValidationPolicy::Always);
-                    dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
 
                     for v in vertices {
                         if let Err(error) = dt.insert_with_statistics(*v) {
-                            abort_benchmark(format_args!("non-retryable insertion error: {error}"));
+                            abort_benchmark(format_args!("insertion error: {error}"));
                         }
                     }
                     // Completion-time PL-manifold certification when required.
-                    let _ = dt.as_triangulation().validate_at_completion();
+                    dt.as_triangulation().validate_at_completion().or_abort();
 
                     black_box(dt)
                 });
