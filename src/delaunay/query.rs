@@ -2822,6 +2822,7 @@ mod tests {
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::traits::coordinate::InvalidCoordinateValue;
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
+    use crate::triangulation::EuclideanDelaunayReportDomain;
     use crate::vertex;
     use approx::assert_relative_eq;
     use slotmap::KeyData;
@@ -3308,6 +3309,7 @@ mod tests {
                 tri: Triangulation::new_empty(FastKernel::new()),
                 insertion_state: DelaunayInsertionState::new(),
                 spatial_index: None,
+                euclidean_report_domain: EuclideanDelaunayReportDomain::Unproven,
             };
 
         assert_eq!(
@@ -3326,6 +3328,7 @@ mod tests {
                 tri: Triangulation::new_empty(FastKernel::new()),
                 insertion_state: DelaunayInsertionState::new(),
                 spatial_index: None,
+                euclidean_report_domain: EuclideanDelaunayReportDomain::Unproven,
             };
 
         dt.fill_simplex_data(|_, _| Payload);
@@ -3340,6 +3343,7 @@ mod tests {
                 tri: Triangulation::new_empty(FastKernel::new()),
                 insertion_state: DelaunayInsertionState::new(),
                 spatial_index: None,
+                euclidean_report_domain: EuclideanDelaunayReportDomain::Unproven,
             };
         let data = SimplexSecondaryMap::new();
 

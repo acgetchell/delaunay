@@ -110,6 +110,7 @@ use crate::topology::traits::{
     ToroidalDomainError,
 };
 use crate::triangulation::DelaunayTriangulation;
+use crate::triangulation::EuclideanDelaunayReportDomain;
 use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
 use core::{cmp::Ordering, fmt};
 use num_traits::ToPrimitive;
@@ -4031,6 +4032,7 @@ where
             },
             insertion_state: DelaunayInsertionState::new(),
             spatial_index: None,
+            euclidean_report_domain: EuclideanDelaunayReportDomain::CompletePointSet,
         };
 
         // During batch construction, use suspicion-driven validation instead of
@@ -4163,6 +4165,7 @@ where
             },
             insertion_state: DelaunayInsertionState::new(),
             spatial_index: None,
+            euclidean_report_domain: EuclideanDelaunayReportDomain::CompletePointSet,
         };
 
         // During batch construction, use suspicion-driven validation instead of
@@ -5086,6 +5089,11 @@ where
             ),
             insertion_state: DelaunayInsertionState::new(),
             spatial_index: HashGridIndex::try_new(duplicate_tolerance).ok(),
+            euclidean_report_domain: if global_topology.is_euclidean() {
+                EuclideanDelaunayReportDomain::CompletePointSet
+            } else {
+                EuclideanDelaunayReportDomain::Unproven
+            },
         }
     }
 }

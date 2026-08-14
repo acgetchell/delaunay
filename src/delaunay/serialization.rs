@@ -94,6 +94,7 @@ mod tests {
     use crate::core::validation::{TopologyGuarantee, ValidationPolicy};
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::topology::traits::topological_space::GlobalTopology;
+    use crate::triangulation::EuclideanDelaunayReportDomain;
     use crate::vertex;
     use std::sync::Once;
 
@@ -175,6 +176,7 @@ mod tests {
                 },
                 insertion_state: DelaunayInsertionState::new(),
                 spatial_index: None,
+                euclidean_report_domain: EuclideanDelaunayReportDomain::Unproven,
             };
 
         let json = serde_json::to_string(&dt).unwrap();

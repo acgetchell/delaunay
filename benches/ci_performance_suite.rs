@@ -160,9 +160,18 @@ fn operation_benchmark_ids(group: &str, prefix: &str) -> String {
 
 fn validation_benchmark_ids() -> String {
     [
-        format!("validation/{{validate_3d,validate_3d_adversarial}}/{CANARY_COUNT_3D}"),
-        format!("validation/{{validate_4d,validate_4d_adversarial}}/{CANARY_COUNT_4D}"),
-        format!("validation/{{validate_5d,validate_5d_adversarial}}/{CANARY_COUNT_5D}"),
+        format!(
+            "validation/{{is_valid_delaunay_2d,is_valid_delaunay_2d_adversarial,delaunay_report_2d,delaunay_report_2d_adversarial}}/{CANARY_COUNT_2D}"
+        ),
+        format!(
+            "validation/{{validate_3d,validate_3d_adversarial,is_valid_delaunay_3d,is_valid_delaunay_3d_adversarial,delaunay_report_3d,delaunay_report_3d_adversarial}}/{CANARY_COUNT_3D}"
+        ),
+        format!(
+            "validation/{{validate_4d,validate_4d_adversarial,is_valid_delaunay_4d,is_valid_delaunay_4d_adversarial,delaunay_report_4d,delaunay_report_4d_adversarial}}/{CANARY_COUNT_4D}"
+        ),
+        format!(
+            "validation/{{validate_5d,validate_5d_adversarial,is_valid_delaunay_5d,is_valid_delaunay_5d_adversarial,delaunay_report_5d,delaunay_report_5d_adversarial}}/{CANARY_COUNT_5D}"
+        ),
     ]
     .join(";")
 }
@@ -238,10 +247,10 @@ fn api_benchmark_entries() -> Vec<ApiBenchmarkEntry> {
         },
         ApiBenchmarkEntry {
             group: "validation",
-            public_api: "DelaunayTriangulation::validate",
-            dimensions: "3,4,5",
+            public_api: "DelaunayTriangulation::{validate,is_valid_delaunay,delaunay_report}",
+            dimensions: "2,3,4,5",
             benchmark_ids: validation_benchmark_ids(),
-            note: "cumulative_levels_1_through_5_on_well_conditioned_and_adversarial_inputs",
+            note: "cumulative_and_level_5_report_validation_on_well_conditioned_and_adversarial_inputs",
         },
         ApiBenchmarkEntry {
             group: "incremental_insert",
@@ -1306,6 +1315,48 @@ fn bench_validate_case<const D: usize>(
     );
 }
 
+fn bench_delaunay_validation_case<const D: usize>(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    dimension: usize,
+    dataset: Dataset,
+    count: usize,
+    dt: &BenchTriangulation<D>,
+) {
+    group.throughput(Throughput::Elements(count as u64));
+    group.bench_function(
+        BenchmarkId::new(
+            format!("is_valid_delaunay_{dimension}d{}", dataset.suffix()),
+            count,
+        ),
+        |b| {
+            b.iter(|| match black_box(dt.is_valid_delaunay()) {
+                Ok(()) => {}
+                Err(error) => {
+                    abort_benchmark(format_args!(
+                        "{dimension}D benchmark triangulation should be Delaunay: {error}"
+                    ));
+                }
+            });
+        },
+    );
+    group.bench_function(
+        BenchmarkId::new(
+            format!("delaunay_report_{dimension}d{}", dataset.suffix()),
+            count,
+        ),
+        |b| {
+            b.iter(|| match black_box(dt.delaunay_report()) {
+                Ok(()) => {}
+                Err(error) => {
+                    abort_benchmark(format_args!(
+                        "{dimension}D benchmark triangulation should have a valid Delaunay report: {error:?}"
+                    ));
+                }
+            });
+        },
+    );
+}
+
 fn bench_insert_case<const D: usize>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     dimension: usize,
@@ -1557,6 +1608,38 @@ fn benchmark_convex_hull_queries(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_validation_dimension<const D: usize>(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    dimension: usize,
+    seed: u64,
+    count: usize,
+    include_cumulative_validation: bool,
+) {
+    let triangulation = prepare_dt::<D>(seed, count);
+    if include_cumulative_validation {
+        bench_validate_case(
+            group,
+            dimension,
+            Dataset::WellConditioned,
+            count,
+            &triangulation,
+        );
+    }
+    bench_delaunay_validation_case(
+        group,
+        dimension,
+        Dataset::WellConditioned,
+        count,
+        &triangulation,
+    );
+
+    let adversarial = prepare_adv_dt::<D>(seed, count);
+    if include_cumulative_validation {
+        bench_validate_case(group, dimension, Dataset::Adversarial, count, &adversarial);
+    }
+    bench_delaunay_validation_case(group, dimension, Dataset::Adversarial, count, &adversarial);
+}
+
 fn benchmark_validation(c: &mut Criterion) {
     print_manifest_once();
     if discover_seeds_enabled() {
@@ -1565,56 +1648,10 @@ fn benchmark_validation(c: &mut Criterion) {
     let mut group = c.benchmark_group("validation");
     group.sample_size(15);
 
-    let dt_3d = prepare_dt::<3>(123, CANARY_COUNT_3D);
-    bench_validate_case(
-        &mut group,
-        3,
-        Dataset::WellConditioned,
-        CANARY_COUNT_3D,
-        &dt_3d,
-    );
-    let dt_3d_adversarial = prepare_adv_dt::<3>(123, CANARY_COUNT_3D);
-    bench_validate_case(
-        &mut group,
-        3,
-        Dataset::Adversarial,
-        CANARY_COUNT_3D,
-        &dt_3d_adversarial,
-    );
-
-    let dt_4d = prepare_dt::<4>(456, CANARY_COUNT_4D);
-    bench_validate_case(
-        &mut group,
-        4,
-        Dataset::WellConditioned,
-        CANARY_COUNT_4D,
-        &dt_4d,
-    );
-    let dt_4d_adversarial = prepare_adv_dt::<4>(456, CANARY_COUNT_4D);
-    bench_validate_case(
-        &mut group,
-        4,
-        Dataset::Adversarial,
-        CANARY_COUNT_4D,
-        &dt_4d_adversarial,
-    );
-
-    let dt_5d = prepare_dt::<5>(789, CANARY_COUNT_5D);
-    bench_validate_case(
-        &mut group,
-        5,
-        Dataset::WellConditioned,
-        CANARY_COUNT_5D,
-        &dt_5d,
-    );
-    let dt_5d_adversarial = prepare_adv_dt::<5>(789, CANARY_COUNT_5D);
-    bench_validate_case(
-        &mut group,
-        5,
-        Dataset::Adversarial,
-        CANARY_COUNT_5D,
-        &dt_5d_adversarial,
-    );
+    bench_validation_dimension::<2>(&mut group, 2, 42, CANARY_COUNT_2D, false);
+    bench_validation_dimension::<3>(&mut group, 3, 123, CANARY_COUNT_3D, true);
+    bench_validation_dimension::<4>(&mut group, 4, 456, CANARY_COUNT_4D, true);
+    bench_validation_dimension::<5>(&mut group, 5, 789, CANARY_COUNT_5D, true);
 
     group.finish();
 }

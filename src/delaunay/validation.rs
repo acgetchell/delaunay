@@ -9,9 +9,11 @@
 #![forbid(unsafe_code)]
 
 use crate::core::algorithms::flips::{
-    DelaunayRepairError, verify_triangulation_via_flip_predicates,
+    DelaunayRepairError, verify_complete_euclidean_tds_via_robust_flip_predicates,
+    verify_triangulation_via_flip_predicates,
 };
 use crate::core::algorithms::incremental_insertion::InsertionError;
+use crate::core::collections::ViolationBuffer;
 use crate::core::operations::DelaunayInsertionState;
 use crate::core::realization::TriangulationRealizationValidationError;
 use crate::core::tds::{
@@ -31,6 +33,7 @@ use crate::geometry::kernel::Kernel;
 use crate::repair::DelaunayRepairOperation;
 use crate::topology::traits::topological_space::GlobalTopology;
 use crate::triangulation::DelaunayTriangulation;
+use crate::triangulation::EuclideanDelaunayReportDomain;
 use std::num::NonZeroUsize;
 use thiserror::Error;
 
@@ -83,6 +86,7 @@ impl<K, U, V, const D: usize> DelaunayTriangulationCandidate<K, U, V, D> {
                 },
                 insertion_state: DelaunayInsertionState::new(),
                 spatial_index: None,
+                euclidean_report_domain: EuclideanDelaunayReportDomain::Unproven,
             },
         }
     }
@@ -599,10 +603,15 @@ where
 
     /// Builds a Level 5 Delaunay-property report.
     ///
-    /// Euclidean triangulations use the all-violations empty-circumsphere scan.
-    /// Non-Euclidean topologies currently use the topology-aware flip verifier
-    /// and report the first violation it finds; this avoids applying an
-    /// ordinary Euclidean circumsphere scan to periodic charts.
+    /// Euclidean triangulations produced by complete point-set insertion first
+    /// use robust local flip predicates as an O(simplices) validity certificate.
+    /// A successful certificate avoids the all-vertices empty-circumsphere scan.
+    /// Explicit, reconstructed, or otherwise unproven connectivity delegates
+    /// directly to the global scan; a failed or inconclusive local certificate
+    /// also falls back so invalid reports retain every violating simplex and the
+    /// same typed details. Non-Euclidean topologies use the topology-aware flip
+    /// verifier and report the first violation it finds, avoiding an ordinary
+    /// Euclidean circumsphere scan in periodic charts.
     ///
     /// # Errors
     ///
@@ -631,7 +640,7 @@ where
     /// ```
     pub fn delaunay_report(&self) -> Result<(), TriangulationValidationReport> {
         if self.global_topology().is_euclidean() {
-            return match tds_delaunay_violation_report(self.tds(), None) {
+            return match self.delaunay_violation_report(None) {
                 Ok(report) if report.is_valid() => Ok(()),
                 Ok(report) => Err(TriangulationValidationReport {
                     violations: report
@@ -675,8 +684,14 @@ where
     ///
     /// This is the high-level owner-bound counterpart to the TDS-level
     /// [`delaunay_violation_report`](crate::delaunay_violation_report) helper.
-    /// It keeps callers on the `DelaunayTriangulation` API while returning the
-    /// same typed, key-oriented diagnostics.
+    /// For a full Euclidean report over connectivity proven to triangulate the
+    /// complete point set, it first uses O(simplices) robust local flip predicates
+    /// as a validity certificate. Explicit, reconstructed, and other unproven
+    /// connectivity delegates directly to the TDS-level brute-force scan. A
+    /// failed or inconclusive certificate also delegates so the returned
+    /// violation set and typed diagnostics remain exact. Subset reports delegate
+    /// directly because a global invalidity outside the subset says nothing
+    /// about the requested simplices.
     ///
     /// # Errors
     ///
@@ -708,6 +723,20 @@ where
         &self,
         simplices_to_check: Option<&[SimplexKey]>,
     ) -> Result<DelaunayViolationReport, DelaunayValidationError> {
+        if simplices_to_check.is_none()
+            && self.global_topology().is_euclidean()
+            && self.euclidean_report_domain.supports_local_certificate()
+            && verify_complete_euclidean_tds_via_robust_flip_predicates(self.tds()).is_ok()
+        {
+            return Ok(DelaunayViolationReport {
+                number_of_vertices: self.number_of_vertices(),
+                number_of_simplices: self.number_of_simplices(),
+                checked_simplices: self.number_of_simplices(),
+                violating_simplices: ViolationBuffer::new(),
+                violation_details: Vec::new(),
+            });
+        }
+
         tds_delaunay_violation_report(self.tds(), simplices_to_check)
     }
 
@@ -1120,18 +1149,43 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::builder::DelaunayTriangulationBuilder;
+    use crate::construction::ConstructionOptions;
     use crate::core::algorithms::flips::{
         DelaunayRepairDiagnostics, DelaunayRepairPostconditionFailure, RepairQueueOrder,
     };
     use crate::core::simplex::Simplex;
     use crate::core::tds::{SimplexKey, TriangulationConstructionState, VertexKey};
     use crate::core::vertex::Vertex;
+    use crate::geometry::coordinate_range::CoordinateRange;
     use crate::geometry::kernel::AdaptiveKernel;
+    use crate::geometry::point::Point;
+    use crate::geometry::traits::coordinate::CoordinateConversionError;
+    use crate::geometry::util::generate_random_points_in_range_seeded;
     use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
     use std::{error::Error, sync::Once};
     use uuid::Uuid;
+
+    #[derive(Clone, Debug)]
+    struct PanickingKernel;
+
+    impl<const D: usize> Kernel<D> for PanickingKernel {
+        type Scalar = f64;
+
+        fn orientation(&self, _points: &[Point<D>]) -> Result<i32, CoordinateConversionError> {
+            panic!("the structured report must not call its owner's kernel")
+        }
+
+        fn in_sphere(
+            &self,
+            _simplex_points: &[Point<D>],
+            _test_point: &Point<D>,
+        ) -> Result<i32, CoordinateConversionError> {
+            panic!("the structured report must not call its owner's kernel")
+        }
+    }
 
     fn test_vertex<const D: usize>(coords: [f64; D]) -> Vertex<(), D> {
         vertex!(coords).unwrap()
@@ -1223,6 +1277,141 @@ mod tests {
         DelaunayVerificationError::from(DelaunayRepairError::PostconditionFailed {
             reason: Box::new(DelaunayRepairPostconditionFailure::Disconnected { simplex_count: 1 }),
         })
+    }
+
+    fn randomized_delaunay<const D: usize>(
+        base_seed: u64,
+    ) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
+        let bounds = CoordinateRange::try_new(-10.0, 10.0).unwrap();
+        for offset in 0..32 {
+            let points = generate_random_points_in_range_seeded::<D>(
+                D + 8,
+                bounds,
+                base_seed.wrapping_add(offset),
+            )
+            .unwrap();
+            let vertices: Vec<_> = points
+                .iter()
+                .map(|point| test_vertex(*point.coords()))
+                .collect();
+            if let Ok(triangulation) = DelaunayTriangulationBuilder::new(&vertices).build() {
+                return triangulation;
+            }
+        }
+
+        panic!("failed to build seeded randomized {D}D Delaunay test fixture");
+    }
+
+    fn shared_facet_flip_adversary<const D: usize>()
+    -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
+        let dim = u32::try_from(D).unwrap();
+        let high_apex_coordinate = 1.1 / f64::from(dim);
+        let mut vertices = Vec::with_capacity(D + 2);
+        vertices.push(test_vertex([0.0; D]));
+        for axis in 0..D {
+            let mut coordinates = [0.0; D];
+            coordinates[axis] = 1.0;
+            vertices.push(test_vertex(coordinates));
+        }
+        vertices.push(test_vertex([high_apex_coordinate; D]));
+
+        let low_simplex = (0..=D).collect();
+        let mut high_simplex: Vec<usize> = (1..=D).collect();
+        high_simplex.push(D + 1);
+        let simplices = vec![low_simplex, high_simplex];
+
+        DelaunayTriangulationBuilder::try_from_vertices_and_simplices(&vertices, &simplices)
+            .unwrap()
+            .construction_options(
+                ConstructionOptions::default().without_final_delaunay_enforcement(),
+            )
+            .build()
+            .unwrap()
+    }
+
+    fn assert_randomized_full_report_matches_brute_force<const D: usize>() {
+        for seed in [0x483, 0x483_0001, 0x483_0002] {
+            let triangulation = randomized_delaunay::<D>(seed);
+            assert!(triangulation.verify_via_flip_predicates().is_ok());
+
+            let optimized = triangulation.delaunay_violation_report(None).unwrap();
+            let brute_force = tds_delaunay_violation_report(triangulation.tds(), None).unwrap();
+            assert_eq!(optimized, brute_force);
+        }
+    }
+
+    fn assert_adversarial_full_report_matches_brute_force<const D: usize>() {
+        let triangulation = shared_facet_flip_adversary::<D>();
+        assert!(triangulation.verify_via_flip_predicates().is_err());
+
+        let optimized = triangulation.delaunay_violation_report(None).unwrap();
+        let brute_force = tds_delaunay_violation_report(triangulation.tds(), None).unwrap();
+        assert_eq!(optimized, brute_force);
+    }
+
+    macro_rules! generate_full_report_agreement_tests {
+        ($dimension:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<randomized_full_report_matches_brute_force_ $dimension d>]() {
+                    assert_randomized_full_report_matches_brute_force::<$dimension>();
+                }
+
+                #[test]
+                fn [<adversarial_full_report_matches_brute_force_ $dimension d>]() {
+                    assert_adversarial_full_report_matches_brute_force::<$dimension>();
+                }
+            }
+        };
+    }
+
+    generate_full_report_agreement_tests!(2);
+    generate_full_report_agreement_tests!(3);
+    generate_full_report_agreement_tests!(4);
+    generate_full_report_agreement_tests!(5);
+
+    #[test]
+    fn complete_point_set_report_uses_robust_predicates_instead_of_owner_kernel() {
+        let source = randomized_delaunay::<2>(0x483_1001);
+        assert_eq!(
+            source.euclidean_report_domain,
+            EuclideanDelaunayReportDomain::CompletePointSet
+        );
+
+        let mut triangulation = DelaunayTriangulationCandidate::assemble(
+            source.tds().clone(),
+            PanickingKernel,
+            source.topology_guarantee(),
+            source.global_topology(),
+        )
+        .into_repairable_delaunay_for_test();
+        triangulation.euclidean_report_domain = EuclideanDelaunayReportDomain::CompletePointSet;
+
+        let report = triangulation.delaunay_violation_report(None).unwrap();
+        let brute_force = tds_delaunay_violation_report(triangulation.tds(), None).unwrap();
+        assert_eq!(report, brute_force);
+    }
+
+    #[test]
+    fn unproven_connectivity_bypasses_local_certificate() {
+        let source = shared_facet_flip_adversary::<2>();
+        assert_eq!(
+            source.euclidean_report_domain,
+            EuclideanDelaunayReportDomain::Unproven
+        );
+
+        let triangulation = DelaunayTriangulationCandidate::assemble(
+            source.tds().clone(),
+            PanickingKernel,
+            source.topology_guarantee(),
+            source.global_topology(),
+        )
+        .into_repairable_delaunay_for_test();
+
+        let report = triangulation.delaunay_violation_report(None).unwrap();
+        let brute_force = tds_delaunay_violation_report(triangulation.tds(), None).unwrap();
+        assert!(!report.is_valid());
+        assert_eq!(report, brute_force);
     }
 
     #[test]
