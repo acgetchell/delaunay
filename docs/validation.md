@@ -767,10 +767,12 @@ enough for future regular, weighted, Gabriel, alpha, constrained, or related pre
 - **Time**:
   - `DelaunayTriangulation::is_valid_delaunay()` (Level 5 only): O(simplices) local flip-predicate verification.
   - `DelaunayTriangulation::validate()` (Levels 1–5): Levels 1-4 plus O(simplices) local flip-predicate verification.
-  - `DelaunayTriangulation::delaunay_report()` and `validation_report()`: Levels 1-4 plus O(simplices)
-    when complete Euclidean point-set provenance and robust local predicates certify a valid report. Unproven
-    connectivity, or a failed or inconclusive local certificate, falls back to the exact
-    O(simplices × vertices) empty-circumsphere scan.
+  - `DelaunayTriangulation::delaunay_report()` (Level 5 only): O(simplices) when complete Euclidean
+    point-set provenance and robust local predicates certify a valid report; O(simplices × vertices)
+    for the exact fallback when Euclidean connectivity is unproven or the local certificate fails or
+    is inconclusive.
+  - `DelaunayTriangulation::validation_report()` (Levels 1–5): Levels 1-4 plus the certified
+    O(simplices) Level 5 path, or Levels 1-4 plus the O(simplices × vertices) Level 5 fallback.
 - **Space**: O(1) validation workspace for the local verifier; report output and fallback working sets
   scale with the number of reported violations.
 

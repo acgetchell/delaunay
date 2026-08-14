@@ -3293,6 +3293,18 @@ mod tests {
     }
 
     #[test]
+    fn successful_global_topology_change_invalidates_euclidean_report_domain() {
+        let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
+        dt.euclidean_report_domain = EuclideanDelaunayReportDomain::CompletePointSet;
+
+        dt.try_set_global_topology(GlobalTopology::Hyperbolic)
+            .expect("empty topology should accept hyperbolic metadata");
+
+        assert_eq!(dt.global_topology(), GlobalTopology::Hyperbolic);
+        assert!(!dt.euclidean_report_domain.supports_local_certificate());
+    }
+
+    #[test]
     fn mutable_repair_tds_access_invalidates_euclidean_report_domain() {
         let vertices = standard_simplex_vertices::<2>();
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
