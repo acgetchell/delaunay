@@ -20,7 +20,8 @@ use crate::core::triangulation::Triangulation;
 /// stronger proof is added at their assembly boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EuclideanDelaunayReportDomain {
-    /// Incremental construction triangulated the complete Euclidean point set.
+    /// Incremental construction triangulated the complete Euclidean point set,
+    /// and no later mutation revoked its Levels 1–4 proof.
     CompletePointSet,
     /// The assembly path did not prove the local-to-global certificate domain.
     Unproven,
@@ -103,6 +104,14 @@ pub struct DelaunayTriangulation<K, U, V, const D: usize> {
     /// keys from an insertion that did not commit.
     pub(crate) spatial_index: Option<HashGridIndex<D>>,
     /// Proof domain for the Euclidean local-to-global report fast path.
+    ///
+    /// `CompletePointSet` is valid only while the TDS remains the complete,
+    /// Levels 1–4-valid Euclidean triangulation established by incremental
+    /// point-set construction. Assembly from external connectivity, vertex
+    /// removal, mutable repair access, topology-only edits, and global-topology
+    /// changes must reset this to `Unproven` before the local certificate can
+    /// be reused. Idempotently reapplying the current topology preserves the
+    /// existing proof.
     pub(crate) euclidean_report_domain: EuclideanDelaunayReportDomain,
 }
 

@@ -7434,9 +7434,8 @@ where
 ///
 /// # Errors
 ///
-/// Returns [`DelaunayRepairError::PostconditionFailed`] if a robust local
-/// predicate detects a violation, or [`DelaunayRepairError::VerificationFailed`]
-/// if verification cannot evaluate the local predicates.
+/// Returns any [`DelaunayRepairError`] surfaced by the topology-aware local
+/// verifier, including predicate, connectivity, and postcondition failures.
 pub(crate) fn verify_complete_euclidean_tds_via_robust_flip_predicates<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
 ) -> Result<(), DelaunayRepairError>
@@ -7444,7 +7443,7 @@ where
     U: DataType,
     V: DataType,
 {
-    verify_delaunay_with_topology(tds, &RobustKernel::new(), GlobalTopology::DEFAULT)
+    verify_delaunay_with_topology(tds, &RobustKernel::new(), GlobalTopology::Euclidean)
 }
 
 /// Verify the Delaunay property via local flip predicates under a global topology model.

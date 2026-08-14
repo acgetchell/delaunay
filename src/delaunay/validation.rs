@@ -1393,20 +1393,35 @@ mod tests {
     }
 
     #[test]
+    fn failed_complete_point_set_certificate_falls_back_to_global_report() {
+        let mut triangulation = shared_facet_flip_adversary::<2>();
+        triangulation.euclidean_report_domain = EuclideanDelaunayReportDomain::CompletePointSet;
+
+        let report = triangulation.delaunay_violation_report(None).unwrap();
+        let brute_force = tds_delaunay_violation_report(triangulation.tds(), None).unwrap();
+        assert!(!report.is_valid());
+        assert_eq!(report, brute_force);
+    }
+
+    #[test]
     fn unproven_connectivity_bypasses_local_certificate() {
-        let source = shared_facet_flip_adversary::<2>();
-        assert_eq!(
-            source.euclidean_report_domain,
-            EuclideanDelaunayReportDomain::Unproven
+        let tds = tds_from_2d_vertices_and_simplices(
+            &[[0.0, 0.0], [2.0, 0.0], [0.0, 2.0], [0.25, 0.25]],
+            &[vec![0, 1, 2]],
         );
+        assert!(verify_complete_euclidean_tds_via_robust_flip_predicates(&tds).is_ok());
 
         let triangulation = DelaunayTriangulationCandidate::assemble(
-            source.tds().clone(),
+            tds,
             PanickingKernel,
-            source.topology_guarantee(),
-            source.global_topology(),
+            TopologyGuarantee::Pseudomanifold,
+            GlobalTopology::Euclidean,
         )
         .into_repairable_delaunay_for_test();
+        assert_eq!(
+            triangulation.euclidean_report_domain,
+            EuclideanDelaunayReportDomain::Unproven
+        );
 
         let report = triangulation.delaunay_violation_report(None).unwrap();
         let brute_force = tds_delaunay_violation_report(triangulation.tds(), None).unwrap();

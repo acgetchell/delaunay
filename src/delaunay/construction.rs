@@ -5071,9 +5071,11 @@ where
 
     /// Creates an empty Delaunay wrapper with explicit validation and topology context.
     ///
-    /// Repair and builder paths use this before inserting vertices so subsequent
-    /// topology validation observes the same global topology as the source
-    /// triangulation or construction mode.
+    /// Repair and builder paths use this before incrementally inserting every
+    /// vertex, so Euclidean callers establish a complete point-set domain while
+    /// subsequent topology validation observes the same global topology as the
+    /// source triangulation or construction mode. Callers that populate the TDS
+    /// through another assembly path must reset the report domain to `Unproven`.
     pub(crate) fn with_empty_kernel_and_topology_context(
         kernel: K,
         topology_guarantee: TopologyGuarantee,

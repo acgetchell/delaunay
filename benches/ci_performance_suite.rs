@@ -161,7 +161,7 @@ fn operation_benchmark_ids(group: &str, prefix: &str) -> String {
 fn validation_benchmark_ids() -> String {
     [
         format!(
-            "validation/{{is_valid_delaunay_2d,is_valid_delaunay_2d_adversarial,delaunay_report_2d,delaunay_report_2d_adversarial}}/{CANARY_COUNT_2D}"
+            "validation/{{validate_2d,validate_2d_adversarial,is_valid_delaunay_2d,is_valid_delaunay_2d_adversarial,delaunay_report_2d,delaunay_report_2d_adversarial}}/{CANARY_COUNT_2D}"
         ),
         format!(
             "validation/{{validate_3d,validate_3d_adversarial,is_valid_delaunay_3d,is_valid_delaunay_3d_adversarial,delaunay_report_3d,delaunay_report_3d_adversarial}}/{CANARY_COUNT_3D}"
@@ -1648,7 +1648,7 @@ fn benchmark_validation(c: &mut Criterion) {
     let mut group = c.benchmark_group("validation");
     group.sample_size(15);
 
-    bench_validation_dimension::<2>(&mut group, 2, 42, CANARY_COUNT_2D, false);
+    bench_validation_dimension::<2>(&mut group, 2, 42, CANARY_COUNT_2D, true);
     bench_validation_dimension::<3>(&mut group, 3, 123, CANARY_COUNT_3D, true);
     bench_validation_dimension::<4>(&mut group, 4, 456, CANARY_COUNT_4D, true);
     bench_validation_dimension::<5>(&mut group, 5, 789, CANARY_COUNT_5D, true);

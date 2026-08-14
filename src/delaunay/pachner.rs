@@ -1070,6 +1070,7 @@ where
         let result = self.tri.flip_k1_insert_topology(simplex_key, vertex);
         if result.is_ok() {
             self.invalidate_repair_caches();
+            self.invalidate_euclidean_report_domain();
         }
         result
     }
@@ -1078,6 +1079,7 @@ where
         let result = self.tri.flip_k1_remove_topology(vertex_key);
         if result.is_ok() {
             self.invalidate_repair_caches();
+            self.invalidate_euclidean_report_domain();
         }
         result
     }
@@ -1086,6 +1088,7 @@ where
         let result = self.tri.flip_k2_topology(facet);
         if result.is_ok() {
             self.invalidate_locate_hint_cache();
+            self.invalidate_euclidean_report_domain();
         }
         result
     }
@@ -1097,6 +1100,7 @@ where
         let result = self.tri.flip_k2_inverse_from_edge_topology(edge);
         if result.is_ok() {
             self.invalidate_locate_hint_cache();
+            self.invalidate_euclidean_report_domain();
         }
         result
     }
@@ -1105,6 +1109,7 @@ where
         let result = self.tri.flip_k3_topology(ridge);
         if result.is_ok() {
             self.invalidate_locate_hint_cache();
+            self.invalidate_euclidean_report_domain();
         }
         result
     }
@@ -1116,6 +1121,7 @@ where
         let result = self.tri.flip_k3_inverse_from_triangle_topology(triangle);
         if result.is_ok() {
             self.invalidate_locate_hint_cache();
+            self.invalidate_euclidean_report_domain();
         }
         result
     }
@@ -1198,6 +1204,7 @@ mod tests {
         let mut dt = triangle_dt();
         let simplex_key = first_simplex_key(&dt);
         let previous_generation = dt.topology_generation();
+        assert!(dt.euclidean_report_domain.supports_local_certificate());
 
         let result = dt
             .propose_pachner(PachnerMove::K1Insert {
@@ -1216,6 +1223,7 @@ mod tests {
         dt.as_triangulation()
             .validate()
             .expect("topology-scope Pachner move should preserve Levels 1-3");
+        assert!(!dt.euclidean_report_domain.supports_local_certificate());
     }
 
     #[test]

@@ -864,7 +864,7 @@ pub use crate::tds::{
 pub use crate::topology::spaces::spherical::{
     SphericalMetric, SphericalPoint, SphericalPointError,
 };
-pub use crate::triangulation::*;
+pub use crate::triangulation::DelaunayTriangulation;
 pub use crate::validation::{
     DelaunayTriangulationValidationError, DelaunayVerificationError, DelaunayVerificationErrorKind,
 };
