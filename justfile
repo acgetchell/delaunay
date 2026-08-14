@@ -21,7 +21,7 @@ dprint_version := "0.55.2"
 git_cliff_version := "2.13.1"
 just_version := "1.58.0"
 nextest_version := "0.9.143"
-rumdl_version := "0.2.54"
+rumdl_version := "0.2.55"
 samply_version := "0.13.1"
 sarif_fmt_version := "0.8.0"
 taplo_version := "0.10.0"
@@ -89,6 +89,7 @@ bench-latest:
     cargo bench --profile perf --bench circumsphere_containment
     cargo bench --profile perf --bench cold_path_predicates
     cargo bench --profile perf --bench locate
+    cargo bench --profile perf --bench realization_validation
 
 # Run latest measurements and render the latest-vs-last performance report.
 [group('benchmarks and performance')]
@@ -112,7 +113,7 @@ bench-save-baseline tag suite="release-signal":
     suite="{{ suite }}"
     case "$suite" in
         release-signal)
-            targets=(ci_performance_suite circumsphere_containment cold_path_predicates locate)
+            targets=(ci_performance_suite circumsphere_containment cold_path_predicates locate realization_validation)
             ;;
         ci)
             targets=(ci_performance_suite)
@@ -313,6 +314,11 @@ help-workflows:
     @echo "  just fix                # Apply repository formatters and safe auto-fixes"
     @echo "  just test               # Default Rust and Python test buckets"
     @echo "  just ci                 # GitHub-equivalent default validation suite"
+    @echo ""
+    @echo "Setup and maintenance:"
+    @echo "  just setup              # Install pinned tools and build the development profile"
+    @echo "  just setup-tools        # Install and verify pinned repository tools"
+    @echo "  just update             # Update dependency locks and repo-owned Cargo tools"
     @echo ""
     @echo "Focused checks:"
     @echo "  just check-code         # Rust, Python, notebooks, and shell"
@@ -1525,6 +1531,52 @@ toml-parse-check: _ensure-uv
 [group('validation')]
 unused-deps: _ensure-cargo-machete
     cargo machete
+
+# Update dependency locks and locally installed Cargo tools owned by this repository.
+[group('build and setup')]
+update: update-dependencies update-cargo-tools
+    @echo "✅ Repository dependencies and tools updated."
+
+# Update locally installed Cargo CLI tools owned by `setup-tools`.
+[doc('Update locally installed Cargo CLI tools owned by setup-tools; review root pins afterward.')]
+[group('build and setup')]
+update-cargo-tools:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if ! command -v cargo-install-update >/dev/null 2>&1; then
+        echo "❌ 'cargo-install-update' not found. Install it with:"
+        echo "   cargo install --locked cargo-update"
+        exit 1
+    fi
+
+    packages=(
+        cargo-llvm-cov
+        cargo-machete
+        cargo-nextest
+        dprint
+        git-cliff
+        just
+        rumdl
+        samply
+        taplo-cli
+        tectonic
+        tex-fmt
+        typos-cli
+        zizmor
+    )
+    cargo install-update --locked "${packages[@]}"
+
+    echo ""
+    echo "Review the root justfile pins before running setup-tools or CI;"
+    echo "those workflows intentionally enforce the declared versions."
+
+# Update Cargo and uv lockfiles within declared constraints, then sync uv dev tools.
+[group('build and setup')]
+update-dependencies: _ensure-uv
+    cargo update
+    uv lock --upgrade-group dev
+    uv sync --locked --group dev
 
 # Refresh reviewer-facing validation diagrams from the reproducible notebook.
 [group('notebooks and papers')]

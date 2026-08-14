@@ -380,12 +380,42 @@ where
     }
 }
 
+/// Runs the pre-optimization active-set predicate without newer confinement shortcuts.
+///
+/// Exactly degenerate second simplices can represent a shared point with positive
+/// weight on non-shared labels. The historical predicate reports that witness,
+/// whereas a geometric confinement shortcut would erase the label-level overlap.
+pub(in crate::geometry) fn intersection_via_legacy_active_sets<L, const D: usize>(
+    first: &LabeledSimplexRealization<L, D>,
+    second: &LabeledSimplexRealization<L, D>,
+    shared_labels: &[L],
+) -> IntersectionLinearProgramResult<L>
+where
+    L: Clone + Eq,
+{
+    intersection_via_active_sets_impl(first, second, shared_labels, None, false)
+}
+
 /// Preserves the exact active-set fallback when revised-simplex setup fails.
 fn intersection_via_active_sets<L, const D: usize>(
     first: &LabeledSimplexRealization<L, D>,
     second: &LabeledSimplexRealization<L, D>,
     shared_labels: &[L],
     precomputed_barycentric: Option<&[Vec<BigRational>]>,
+) -> IntersectionLinearProgramResult<L>
+where
+    L: Clone + Eq,
+{
+    intersection_via_active_sets_impl(first, second, shared_labels, precomputed_barycentric, true)
+}
+
+/// Implements active-set enumeration with an optional nondegenerate confinement certificate.
+fn intersection_via_active_sets_impl<L, const D: usize>(
+    first: &LabeledSimplexRealization<L, D>,
+    second: &LabeledSimplexRealization<L, D>,
+    shared_labels: &[L],
+    precomputed_barycentric: Option<&[Vec<BigRational>]>,
+    allow_confinement_certificate: bool,
 ) -> IntersectionLinearProgramResult<L>
 where
     L: Clone + Eq,
@@ -401,11 +431,13 @@ where
         &computed_barycentric
     };
 
-    if intersection_is_confined_to_shared_face(
-        second_vertices_in_first,
-        first.labels(),
-        shared_labels,
-    ) {
+    if allow_confinement_certificate
+        && intersection_is_confined_to_shared_face(
+            second_vertices_in_first,
+            first.labels(),
+            shared_labels,
+        )
+    {
         return IntersectionLinearProgramResult::Valid;
     }
 
@@ -1884,7 +1916,19 @@ fn rational_one() -> BigRational {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geometry::realization::{
+        SimplexIntersectionFailure, validate_simplex_realizations_intersect_only_in_shared_faces,
+    };
+    use proptest::prelude::*;
     use std::assert_matches;
+
+    /// Classification shared by the optimized predicate and legacy exact oracle.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum IntersectionClassification {
+        Valid,
+        Invalid,
+        SingularBarycentricBasis,
+    }
 
     /// Builds the standard D-simplex with vertices at the origin and coordinate axes.
     fn standard_simplex_coordinates<const D: usize>() -> Vec<[f64; D]> {
@@ -1896,6 +1940,151 @@ mod tests {
             coordinates.push(vertex);
         }
         coordinates
+    }
+
+    /// Reconstructs the pre-optimization exact active-set decision for agreement tests.
+    fn legacy_active_set_classification<L, const D: usize>(
+        first: &LabeledSimplexRealization<L, D>,
+        second: &LabeledSimplexRealization<L, D>,
+        shared_labels: &[L],
+    ) -> IntersectionClassification
+    where
+        L: Eq,
+    {
+        let Some(second_vertices_in_first) = barycentric_coordinates_of_vertices(second, first)
+        else {
+            return IntersectionClassification::SingularBarycentricBasis;
+        };
+
+        for beta in intersection_polytope_vertices(&second_vertices_in_first) {
+            let alpha = alpha_from_beta(&beta, &second_vertices_in_first);
+            let first_has_nonshared_weight = first
+                .labels()
+                .iter()
+                .zip(&alpha)
+                .any(|(label, weight)| !shared_labels.contains(label) && weight.is_positive());
+            let second_has_nonshared_weight = second
+                .labels()
+                .iter()
+                .zip(&beta)
+                .any(|(label, weight)| !shared_labels.contains(label) && weight.is_positive());
+            if first_has_nonshared_weight || second_has_nonshared_weight {
+                return IntersectionClassification::Invalid;
+            }
+        }
+
+        IntersectionClassification::Valid
+    }
+
+    /// Classifies one pair through the public optimized Level 4 predicate.
+    fn optimized_classification<L, const D: usize>(
+        first: &LabeledSimplexRealization<L, D>,
+        second: &LabeledSimplexRealization<L, D>,
+    ) -> IntersectionClassification
+    where
+        L: Clone + Eq,
+    {
+        match validate_simplex_realizations_intersect_only_in_shared_faces(first, second) {
+            Ok(()) => IntersectionClassification::Valid,
+            Err(SimplexIntersectionFailure::IntersectionOutsideSharedFace { .. }) => {
+                IntersectionClassification::Invalid
+            }
+            Err(SimplexIntersectionFailure::SingularBarycentricBasis) => {
+                IntersectionClassification::SingularBarycentricBasis
+            }
+        }
+    }
+
+    /// Builds a random-grid pair while preserving coordinates for shared labels.
+    fn random_grid_pair<const D: usize>(
+        raw_second_coordinates: &[i16],
+        shared_count: usize,
+    ) -> (
+        LabeledSimplexRealization<usize, D>,
+        LabeledSimplexRealization<usize, D>,
+        Vec<usize>,
+    ) {
+        let first_coordinates = standard_simplex_coordinates::<D>();
+        let mut second_coordinates = Vec::with_capacity(D + 1);
+        for (vertex_index, first_coordinates) in first_coordinates.iter().enumerate() {
+            if vertex_index < shared_count {
+                second_coordinates.push(*first_coordinates);
+                continue;
+            }
+
+            let mut coordinates = [0.0; D];
+            let start = vertex_index * D;
+            for (axis, coordinate) in coordinates.iter_mut().enumerate() {
+                *coordinate = f64::from(raw_second_coordinates[start + axis]);
+            }
+            second_coordinates.push(coordinates);
+        }
+
+        let first = LabeledSimplexRealization::try_new(0..=D, first_coordinates)
+            .expect("standard simplex is valid");
+        let second_labels = (0..=D).map(|vertex_index| {
+            if vertex_index < shared_count {
+                vertex_index
+            } else {
+                D + 1 + vertex_index
+            }
+        });
+        let second = LabeledSimplexRealization::try_new(second_labels, second_coordinates)
+            .expect("generated labels and finite coordinates are valid");
+        let shared_labels = (0..shared_count).collect();
+        (first, second, shared_labels)
+    }
+
+    /// Builds nondegenerate simplices whose intersection is exactly a lower-dimensional shared face.
+    fn boundary_degenerate_pair<const D: usize>(
+        shared_count: usize,
+        transverse_scale: f64,
+    ) -> (
+        LabeledSimplexRealization<usize, D>,
+        LabeledSimplexRealization<usize, D>,
+        Vec<usize>,
+    ) {
+        let first_coordinates = standard_simplex_coordinates::<D>();
+        let mut second_coordinates = first_coordinates[..shared_count].to_vec();
+        for axis in shared_count.saturating_sub(1)..D {
+            let mut coordinates = [0.0; D];
+            coordinates[axis] = -transverse_scale;
+            second_coordinates.push(coordinates);
+        }
+
+        let first = LabeledSimplexRealization::try_new(0..=D, first_coordinates)
+            .expect("standard simplex is valid");
+        let second_labels = (0..shared_count).chain(D + 1..2 * D + 2 - shared_count);
+        let second = LabeledSimplexRealization::try_new(second_labels, second_coordinates)
+            .expect("boundary-degenerate simplex is valid");
+        let shared_labels = (0..shared_count).collect();
+        (first, second, shared_labels)
+    }
+
+    /// Verifies optimized and legacy exact classifications for one pair.
+    fn assert_optimized_agrees_with_legacy<const D: usize>(
+        first: &LabeledSimplexRealization<usize, D>,
+        second: &LabeledSimplexRealization<usize, D>,
+        shared_labels: &[usize],
+    ) {
+        assert_eq!(
+            optimized_classification(first, second),
+            legacy_active_set_classification(first, second, shared_labels),
+            "optimized classifier disagreed with the legacy exact active-set oracle"
+        );
+        assert_eq!(
+            optimized_classification(second, first),
+            legacy_active_set_classification(second, first, shared_labels),
+            "optimized classifier disagreed with the legacy exact active-set oracle after swapping simplex order"
+        );
+    }
+
+    /// Checks the exact-degeneracy regression where non-shared vertices collapse
+    /// onto the only shared vertex.
+    fn assert_collapsed_simplex_agreement<const D: usize>() {
+        let raw_second_coordinates = vec![0; (D + 1) * D];
+        let (first, second, shared_labels) = random_grid_pair::<D>(&raw_second_coordinates, 1);
+        assert_optimized_agrees_with_legacy(&first, &second, &shared_labels);
     }
 
     /// Builds two D-simplices that meet exactly in the facet opposite the last axis.
@@ -1949,6 +2138,10 @@ mod tests {
             intersection_via_linear_program(&first, &second, &shared, false),
             IntersectionLinearProgramResult::Valid
         );
+        assert_matches!(
+            intersection_via_active_sets(&first, &second, &shared, None),
+            IntersectionLinearProgramResult::Valid
+        );
 
         let mut provisional_axis = vec![0.0; D];
         provisional_axis[D - 1] = 1.0;
@@ -1978,6 +2171,74 @@ mod tests {
                 if !witness.first_only_witness.is_empty()
                     && !witness.second_only_witness.is_empty()
         );
+    }
+
+    macro_rules! generate_intersection_agreement_tests {
+        ($dim:literal, $random_test:ident, $boundary_test:ident) => {
+            proptest! {
+                #![proptest_config(ProptestConfig {
+                    cases: 16,
+                    ..ProptestConfig::default()
+                })]
+
+                #[test]
+                fn $random_test(
+                    raw_second_coordinates in proptest::collection::vec(
+                        -4_i16..=4,
+                        ($dim + 1) * $dim,
+                    ),
+                    shared_count in 0_usize..=$dim + 1,
+                ) {
+                    let (first, second, shared_labels) = random_grid_pair::<$dim>(
+                        &raw_second_coordinates,
+                        shared_count,
+                    );
+                    assert_optimized_agrees_with_legacy(&first, &second, &shared_labels);
+                }
+
+                #[test]
+                fn $boundary_test(
+                    shared_count in 1_usize..$dim,
+                    scale_exponent in 0_u8..=40,
+                ) {
+                    let transverse_scale = 2.0_f64.powi(-i32::from(scale_exponent));
+                    let (first, second, shared_labels) = boundary_degenerate_pair::<$dim>(
+                        shared_count,
+                        transverse_scale,
+                    );
+                    assert_optimized_agrees_with_legacy(&first, &second, &shared_labels);
+                }
+            }
+        };
+    }
+
+    generate_intersection_agreement_tests!(
+        2,
+        optimized_intersection_agrees_with_legacy_random_2d,
+        optimized_intersection_agrees_with_legacy_boundary_degenerate_2d
+    );
+    generate_intersection_agreement_tests!(
+        3,
+        optimized_intersection_agrees_with_legacy_random_3d,
+        optimized_intersection_agrees_with_legacy_boundary_degenerate_3d
+    );
+    generate_intersection_agreement_tests!(
+        4,
+        optimized_intersection_agrees_with_legacy_random_4d,
+        optimized_intersection_agrees_with_legacy_boundary_degenerate_4d
+    );
+    generate_intersection_agreement_tests!(
+        5,
+        optimized_intersection_agrees_with_legacy_random_5d,
+        optimized_intersection_agrees_with_legacy_boundary_degenerate_5d
+    );
+
+    #[test]
+    fn optimized_intersection_agrees_with_legacy_for_collapsed_simplices_2d_to_5d() {
+        assert_collapsed_simplex_agreement::<2>();
+        assert_collapsed_simplex_agreement::<3>();
+        assert_collapsed_simplex_agreement::<4>();
+        assert_collapsed_simplex_agreement::<5>();
     }
 
     #[test]

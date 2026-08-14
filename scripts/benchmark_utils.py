@@ -204,6 +204,7 @@ RELEASE_SIGNAL_BENCH_TARGETS = (
     "circumsphere_containment",
     "cold_path_predicates",
     "locate",
+    "realization_validation",
 )
 RELEASE_SIGNAL_GROUP_PREFIXES = (
     "tds_new_",
@@ -222,6 +223,7 @@ RELEASE_SIGNAL_GROUP_PREFIXES = (
     "edge_cases_",
     "predicates",
     "locate",
+    "realization_",
 )
 BENCH_TARGET_SUITES = {
     "release-signal": RELEASE_SIGNAL_BENCH_TARGETS,

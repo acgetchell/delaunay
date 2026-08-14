@@ -244,6 +244,29 @@ def test_release_signal_excludes_manual_topology_benchmark() -> None:
     assert benchmark_utils.BENCH_COMPARE_GROUP_PREFIXES_BY_SUITE["topology"] == ("topology_guarantee_construction",)
 
 
+def test_release_signal_includes_realization_validation_benchmark() -> None:
+    """Release comparisons should retain the focused Level 4 regression signal."""
+    assert "realization_validation" in benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS
+    assert "realization_" in benchmark_utils.RELEASE_SIGNAL_GROUP_PREFIXES
+
+
+def test_realization_validation_stable_ids_survive_saved_baseline_comparison(tmp_path: Path) -> None:
+    """Level 4 comparisons should match on dimension and fixed input size."""
+    benchmark_ids = (
+        ("realization_validation", "2d", "500v"),
+        ("realization_validation", "3d", "20v"),
+        ("realization_validation", "4d", "10v"),
+        ("realization_validation", "5d", "8v"),
+    )
+    for benchmark_id in benchmark_ids:
+        write_named_estimate(tmp_path, benchmark_id, "new", 1_000_000.0)
+        write_named_estimate(tmp_path, benchmark_id, "last", 2_000_000.0)
+
+    comparisons = collect_criterion_comparisons(tmp_path / "criterion", "last")
+
+    assert {comparison.benchmark_id for comparison in comparisons} == {"/".join(benchmark_id) for benchmark_id in benchmark_ids}
+
+
 def test_run_latest_for_explicit_suite_bypasses_release_signal_recipe(tmp_path: Path) -> None:
     """A named suite should run its own Cargo targets even when Just is present."""
     (tmp_path / "justfile").write_text("", encoding=UTF8)

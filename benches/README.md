@@ -108,6 +108,7 @@ allocation checks, or targeted diagnostics.
 | `pachner_stress.rs` | Unified Pachner move API stress | Accepted 4D microcases plus forward/inverse round trips | Manual | Pachner move workflow tuning |
 | `pl_manifold_repair.rs` | Over-shared facet and targeted topology repair | 2D/3D synthetic repair fixtures | <1 min | PL-manifold repair tuning |
 | `profiling_suite.rs` | Large-scale construction, memory, query, validation profiling | 2D/3D 10k, 4D 3k, 5D 1k | ~2-3 hr | Manual/monthly |
+| `realization_validation.rs` | Level 4 narrow phase and whole validation | Realistic/near-degenerate 2D-5D | ~1-5 min | Level 4 tuning |
 | `delete_vertex.rs` | Vertex deletion and rollback cost | 2D-5D fixed cases | ~1-5 min | Vertex deletion |
 | `locate.rs` | Point-location facet-walk latency (no-hint vs exact-hint) | 2D-5D fixed cases | ~1-3 min | Locate/walk tuning |
 | `tds_clone.rs` | `Tds::clone()` snapshot cost | Deterministic 2D-5D triangulations | ~1-3 min | Rollback design baselines |
@@ -146,9 +147,11 @@ allocation checks, or targeted diagnostics.
 | Unified Pachner move stress | `just pachner-stress` |
 | PL-manifold repair path | `cargo bench --profile perf --features bench --bench pl_manifold_repair -- --noplot` |
 | Large-scale scaling suite | `cargo bench --profile perf --bench profiling_suite -- --noplot` |
+| Level 4 realization validation | `cargo bench --profile perf --bench realization_validation -- --noplot` |
 | Vertex deletion mutation baseline | `cargo bench --profile perf --bench delete_vertex -- --noplot` |
 | Point-location facet walk | `cargo bench --profile perf --bench locate -- --noplot` |
 | One-dimension acceptance/profiling run | `just debug-large-scale-{2,3,4,5}d [n] [repair_every]` |
+| Isolated 32k-vertex 2D Level 4 acceptance run | `DELAUNAY_LARGE_DEBUG_VALIDATION=realization just debug-large-scale-2d 32000` |
 | Deep profiling | `cargo bench --profile perf --bench profiling_suite --features count-allocations` |
 
 ## Profiles And Local Guards
@@ -250,10 +253,11 @@ just bench-compare last
 
 `just bench-latest` runs Delaunay's curated release-signal set:
 `ci_performance_suite`, `circumsphere_containment`, `cold_path_predicates`,
-and `locate`. This set covers public construction and validation workflows,
-circumsphere/insphere query families, hot and cold predicate paths, and point
-location without pulling in broad profiling, allocation-only runs, or the
-manual topology policy suite. Use `just bench-compare <baseline>` to render
+`locate`, and `realization_validation`. This set covers public construction and
+validation workflows, circumsphere/insphere query families, hot and cold
+predicate paths, point location, and Level 4 exact intersection validation
+without pulling in broad profiling, allocation-only runs, or the manual
+topology policy suite. Use `just bench-compare <baseline>` to render
 `target/bench-reports/performance.md` from existing Criterion `new` output and a
 saved baseline such as `last` or `v0.7.8`. If the baseline and current
 checkouts are easy to confuse, prefer `just perf-local`. Use

@@ -71,6 +71,8 @@
 //! DELAUNAY_LARGE_DEBUG_VALIDATE_EVERY=2000 \
 //! # Maximum skipped-vertex percentage before the run fails (default: 5.0)
 //! DELAUNAY_LARGE_DEBUG_MAX_SKIP_PCT=5.0 \
+//! # Final validation scope: "full" (default), "realization" (Level 4 only), or "construction"
+//! DELAUNAY_LARGE_DEBUG_VALIDATION=realization \
 //! # Allow any number of skipped vertices (bypasses DELAUNAY_LARGE_DEBUG_MAX_SKIP_PCT)
 //! DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 \
 //! # Skip the final flip-based repair pass (faster, but may leave Delaunay violations)
@@ -618,6 +620,8 @@ fn debug_mode_from_env() -> DebugMode {
 enum ValidationScope {
     /// Cumulative Levels 1–5, including the Level 4 realization overlap scan.
     Full,
+    /// Level 4 realization validation only, for isolated overlap-scan acceptance timings.
+    Realization,
     /// Construction correctness only: Levels 1–3 (structure + topology) plus
     /// Level 5 (Delaunay property), skipping the expensive Level 4 realization
     /// overlap scan. Used by the `perf-large-scale-smoke` wall-clock guard.
@@ -628,6 +632,7 @@ impl ValidationScope {
     const fn name(self) -> &'static str {
         match self {
             Self::Full => "full",
+            Self::Realization => "realization",
             Self::Construction => "construction",
         }
     }
@@ -643,11 +648,18 @@ fn validation_scope_from_env() -> ValidationScope {
         return ValidationScope::Full;
     }
 
+    if raw.eq_ignore_ascii_case("realization") {
+        return ValidationScope::Realization;
+    }
+
     if raw.eq_ignore_ascii_case("construction") {
         return ValidationScope::Construction;
     }
 
-    panic!("invalid DELAUNAY_LARGE_DEBUG_VALIDATION={raw:?} (expected 'full' or 'construction')");
+    panic!(
+        "invalid DELAUNAY_LARGE_DEBUG_VALIDATION={raw:?} \
+         (expected 'full', 'realization', or 'construction')"
+    );
 }
 
 fn seed_for_case<const D: usize>(base_seed: u64, n_points: usize) -> u64 {
@@ -1566,14 +1578,29 @@ where
                 return outcome;
             }
         }
+        ValidationScope::Realization => {
+            println!("Running is_valid_realization (Level 4 only)...");
+            let t_validate = Instant::now();
+            let validation_result = dt.as_triangulation().is_valid_realization();
+            println!("is_valid_realization wall time: {:?}", t_validate.elapsed());
+            if let Err(error) = validation_result {
+                println!("Realization (Level 4) validation failed: {error}");
+                let outcome = DebugOutcome::ValidationFailure {
+                    kind: InvariantKind::Realization,
+                    details: format!("{error}"),
+                };
+                print_abort_summary::<D>(&outcome, seed, n_points, "final validation");
+                return outcome;
+            }
+        }
         ValidationScope::Construction => {
             // Levels 1–3 (structure + topology) plus the fast O(simplices)
             // flip-based Level 5 Delaunay check. This skips the expensive Level 4
             // realization overlap scan and the full report's all-violations Delaunay
             // scan, keeping the wall-clock guard focused on construction
             // correctness. Level 4 retains bounded full-scope regression
-            // coverage under `just test-slow`; broader Level 4 and Level 5
-            // performance work remains in #482/#483 for v0.8.1.
+            // coverage under `just test-slow`; broader Level 5 performance work
+            // remains in #483 for v0.8.1.
             println!("Running validation (Levels 1–3 + fast Level 5; realization skipped)...");
             let t_validate = Instant::now();
             let topology_result = dt.as_triangulation().validation_report();

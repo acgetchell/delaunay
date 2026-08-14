@@ -127,6 +127,17 @@ repository toolchain, while private `_ensure-*` dependencies fail fast when a
 required tool or pinned version is unavailable during an individual recipe.
 `just setup` composes `setup-tools` with the development build.
 
+Use `just update` for deliberate dependency and tool maintenance. It composes
+`just update-dependencies`, which updates `Cargo.lock` and the uv `dev` group
+within the constraints declared by `Cargo.toml` and `pyproject.toml`, with
+`just update-cargo-tools`, which upgrades only the locally installed Cargo CLI
+packages owned by `setup-tools`. The Cargo tool updater requires
+`cargo-install-update` from the `cargo-update` package and does not touch other
+Cargo-installed executables or uv's user-global tool environments. Review and
+update the root tool-version pins after a Cargo tool upgrade; `setup-tools` and
+CI intentionally continue enforcing those declared versions. Exact uv
+dependencies remain pinned until their declarations are changed intentionally.
+
 Agents should **prefer running `just` commands instead of invoking the
 underlying tools directly**. The justfile ensures the correct flags,
 configuration, and tool ordering are used.
@@ -368,7 +379,7 @@ regenerates `benches/PERFORMANCE_RESULTS.md`.
 Use `just bench-latest` when you need the curated release-signal Criterion
 suite for local saved-baseline comparisons. It runs
 `ci_performance_suite`, `circumsphere_containment`, `cold_path_predicates`,
-and `locate`, leaving `target/criterion/new` data suitable for
+`locate`, and `realization_validation`, leaving `target/criterion/new` data suitable for
 `just bench-compare`. The manual `topology_guarantee_construction` suite remains
 available through `just bench-save-baseline <tag> topology` and
 `uv run benchmark-utils perf-local --suite topology`. Save the previous release
@@ -794,6 +805,8 @@ just action-lint
 | Compile benchmark harnesses | `just bench-compile` |
 | Compile release integration tests without running | `just test-integration-compile` |
 | Run examples | `just examples` |
+| Update dependency locks and repo-owned Cargo tools | `just update` |
+| Update only Cargo and uv dependency locks | `just update-dependencies` |
 | Run full GitHub-equivalent CI | `just ci` |
 | Run perf-profile benchmarks | `just bench` |
 
