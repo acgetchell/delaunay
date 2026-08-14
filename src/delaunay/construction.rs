@@ -110,6 +110,7 @@ use crate::topology::traits::{
     ToroidalDomainError,
 };
 use crate::triangulation::DelaunayTriangulation;
+use crate::triangulation::EuclideanDelaunayReportDomain;
 use crate::validation::{DelaunayTriangulationValidationError, DelaunayVerificationError};
 use core::{cmp::Ordering, fmt};
 use num_traits::ToPrimitive;
@@ -4031,6 +4032,7 @@ where
             },
             insertion_state: DelaunayInsertionState::new(),
             spatial_index: None,
+            euclidean_report_domain: EuclideanDelaunayReportDomain::CompletePointSet,
         };
 
         // During batch construction, use suspicion-driven validation instead of
@@ -4163,6 +4165,7 @@ where
             },
             insertion_state: DelaunayInsertionState::new(),
             spatial_index: None,
+            euclidean_report_domain: EuclideanDelaunayReportDomain::CompletePointSet,
         };
 
         // During batch construction, use suspicion-driven validation instead of
@@ -5068,9 +5071,11 @@ where
 
     /// Creates an empty Delaunay wrapper with explicit validation and topology context.
     ///
-    /// Repair and builder paths use this before inserting vertices so subsequent
-    /// topology validation observes the same global topology as the source
-    /// triangulation or construction mode.
+    /// Repair and builder paths use this before incrementally inserting every
+    /// vertex, so Euclidean callers establish a complete point-set domain while
+    /// subsequent topology validation observes the same global topology as the
+    /// source triangulation or construction mode. Callers that populate the TDS
+    /// through another assembly path must reset the report domain to `Unproven`.
     pub(crate) fn with_empty_kernel_and_topology_context(
         kernel: K,
         topology_guarantee: TopologyGuarantee,
@@ -5086,6 +5091,11 @@ where
             ),
             insertion_state: DelaunayInsertionState::new(),
             spatial_index: HashGridIndex::try_new(duplicate_tolerance).ok(),
+            euclidean_report_domain: if global_topology.is_euclidean() {
+                EuclideanDelaunayReportDomain::CompletePointSet
+            } else {
+                EuclideanDelaunayReportDomain::Unproven
+            },
         }
     }
 }

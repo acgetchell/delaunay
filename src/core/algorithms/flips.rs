@@ -52,7 +52,7 @@ use crate::core::triangulation::Triangulation;
 use crate::core::util::stable_hash_u64_slice;
 use crate::core::validation::{TopologyGuarantee, TriangulationValidationError};
 use crate::core::vertex::Vertex;
-use crate::geometry::kernel::Kernel;
+use crate::geometry::kernel::{Kernel, RobustKernel};
 use crate::geometry::point::Point;
 use crate::geometry::predicates::{Orientation, simplex_orientation_fast_filter_sign};
 use crate::geometry::robust_predicates::robust_orientation;
@@ -7421,6 +7421,29 @@ where
         &triangulation.kernel,
         triangulation.global_topology,
     )
+}
+
+/// Verifies a complete Euclidean point-set triangulation with robust local predicates.
+///
+/// This is the certificate predicate used by the structured Level 5 report.
+/// It deliberately ignores the owner's generic kernel because the report's
+/// fallback oracle is defined by the unperturbed robust empty-sphere predicate.
+/// Callers must separately prove that the complex triangulates the complete
+/// Euclidean point set; local predicates are not a global certificate for
+/// arbitrary explicit or constrained connectivity.
+///
+/// # Errors
+///
+/// Returns any [`DelaunayRepairError`] surfaced by the topology-aware local
+/// verifier, including predicate, connectivity, and postcondition failures.
+pub(crate) fn verify_complete_euclidean_tds_via_robust_flip_predicates<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+) -> Result<(), DelaunayRepairError>
+where
+    U: DataType,
+    V: DataType,
+{
+    verify_delaunay_with_topology(tds, &RobustKernel::new(), GlobalTopology::Euclidean)
 }
 
 /// Verify the Delaunay property via local flip predicates under a global topology model.

@@ -28,7 +28,7 @@ taplo_version := "0.10.0"
 tectonic_version := "0.17.0"
 tex_fmt_version := "0.5.7"
 typos_version := "1.49.0"
-uv_version := "0.12.3"
+uv_version := "0.12.4"
 zizmor_version := "1.29.0"
 
 # Common cargo-llvm-cov arguments for all coverage runs.

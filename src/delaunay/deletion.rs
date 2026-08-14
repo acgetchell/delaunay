@@ -303,6 +303,7 @@ where
                 if let Some(index) = delaunay.spatial_index.as_mut() {
                     index.remove_vertex(&vertex_key, &removed_vertex_coords);
                 }
+                delaunay.invalidate_euclidean_report_domain();
                 transaction.commit();
                 Ok(simplices_removed)
             }
@@ -646,6 +647,10 @@ mod tests {
         dt.spatial_index = Some(spatial_index);
         assert!(dt.insertion_state.last_inserted_simplex.is_some());
         assert!(dt.spatial_index.is_some());
+        assert!(
+            dt.euclidean_report_domain.supports_local_certificate(),
+            "incremental construction should establish the report domain"
+        );
 
         dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
         let removed_simplices = dt.delete_vertex(vertex_key).unwrap();
@@ -665,6 +670,10 @@ mod tests {
         );
         assert!(!found_removed_key);
         assert!(dt.as_triangulation().validate().is_ok());
+        assert!(
+            !dt.euclidean_report_domain.supports_local_certificate(),
+            "vertex deletion must revoke the complete-point-set proof"
+        );
     }
 
     #[test]

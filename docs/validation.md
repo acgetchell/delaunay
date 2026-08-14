@@ -767,15 +767,22 @@ enough for future regular, weighted, Gabriel, alpha, constrained, or related pre
 - **Time**:
   - `DelaunayTriangulation::is_valid_delaunay()` (Level 5 only): O(simplices) local flip-predicate verification.
   - `DelaunayTriangulation::validate()` (Levels 1–5): Levels 1-4 plus O(simplices) local flip-predicate verification.
-  - `DelaunayTriangulation::validation_report()` (Levels 1–5): Levels 1-4 plus O(simplices) local flip-predicate verification.
-- **Space**: O(1) additional space (aside from temporary working sets)
+  - `DelaunayTriangulation::delaunay_report()` (Level 5 only): O(simplices) when complete Euclidean
+    point-set provenance and robust local predicates certify a valid report; O(simplices × vertices)
+    for the exact fallback when Euclidean connectivity is unproven or the local certificate fails or
+    is inconclusive.
+  - `DelaunayTriangulation::validation_report()` (Levels 1–5): Levels 1-4 plus the certified
+    O(simplices) Level 5 path, or Levels 1-4 plus the O(simplices × vertices) Level 5 fallback.
+- **Space**: O(1) validation workspace for the local verifier; report output and fallback working sets
+  scale with the number of reported violations.
 
 ### When to Use
 
 - **Critical Applications**: When Delaunay guarantees are essential (interpolation, mesh quality)
 - **Tests**: After construction to verify correctness
 - **Debug**: Investigating geometric issues or suspected violations
-- **Avoid**: Hot loops (still O(simplices); use for spot checks / tests)
+- **Avoid**: Report generation in hot loops, especially when connectivity is unproven and may require the
+  O(simplices × vertices) fallback. The boolean `is_valid_delaunay()` check remains O(simplices).
 
 ### Example
 
@@ -841,7 +848,9 @@ Start: Do you need to validate?
   intersections, using bounding boxes before exact rational witness construction.
 - Level 5 `DelaunayTriangulation::is_valid_delaunay()` verifies the implemented Delaunay predicate
   family via local flip predicates after Level 4 realization validation.
-- A brute-force empty-circumsphere check would be O(simplices × vertices) and is not used by `is_valid_delaunay()`.
+- The O(simplices × vertices) brute-force empty-circumsphere check is not used by
+  `is_valid_delaunay()`, but report APIs use it when connectivity lacks complete-point-set provenance or
+  the local certificate fails or is inconclusive.
 
 In practice, `DelaunayTriangulation::validate()` is usually dominated by Level 3 Intrinsic PL Topology work or
 Level 4 pairwise realization checks, depending on mesh size and overlap candidates.
@@ -1014,7 +1023,7 @@ converge, consider the opt-in heuristic rebuild fallback via
 | 4 | `Triangulation::validate_realization()` | `triangulation` | O(simplices × D²) + O(simplices² × f(D)) |
 | 5 | `DelaunayTriangulation::is_valid_delaunay()` | `delaunay` | O(simplices) |
 | 5 | `DelaunayTriangulation::validate()` | `delaunay` | Levels 1-4 + O(simplices) |
-| — | `DelaunayTriangulation::validation_report()` | `delaunay` | Levels 1-4 + O(simplices) |
+| — | `DelaunayTriangulation::validation_report()` | `delaunay` | Levels 1-4 + O(simplices) certified fast path; O(simplices × vertices) fallback |
 
 ---
 

@@ -10,6 +10,31 @@ use crate::core::operations::DelaunayInsertionState;
 use crate::core::tds::{TopologyOwner, TopologyOwnerId};
 use crate::core::triangulation::Triangulation;
 
+/// Provenance required for replacing a global Euclidean empty-sphere scan with
+/// local robust flip predicates.
+///
+/// Local Delaunay predicates certify the global empty-sphere property only
+/// when the complex triangulates the complete Euclidean point set. Incremental
+/// point-set construction establishes that domain; explicit, reconstructed,
+/// and quotient connectivity must continue to use the global scan unless a
+/// stronger proof is added at their assembly boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EuclideanDelaunayReportDomain {
+    /// Incremental construction triangulated the complete Euclidean point set,
+    /// and no later mutation revoked its Levels 1–4 proof.
+    CompletePointSet,
+    /// The assembly path did not prove the local-to-global certificate domain.
+    Unproven,
+}
+
+impl EuclideanDelaunayReportDomain {
+    /// Returns whether robust local predicates can certify a global empty report.
+    #[must_use]
+    pub const fn supports_local_certificate(self) -> bool {
+        matches!(self, Self::CompletePointSet)
+    }
+}
+
 /// Delaunay triangulation with incremental insertion support.
 ///
 /// # Type Parameters
@@ -78,6 +103,16 @@ pub struct DelaunayTriangulation<K, U, V, const D: usize> {
     /// cache can survive transactional rollbacks even if they leave behind stale
     /// keys from an insertion that did not commit.
     pub(crate) spatial_index: Option<HashGridIndex<D>>,
+    /// Proof domain for the Euclidean local-to-global report fast path.
+    ///
+    /// `CompletePointSet` is valid only while the TDS remains the complete,
+    /// Levels 1–4-valid Euclidean triangulation established by incremental
+    /// point-set construction. Assembly from external connectivity, vertex
+    /// removal, mutable repair access, topology-only edits, and global-topology
+    /// changes must reset this to `Unproven` before the local certificate can
+    /// be reused. Idempotently reapplying the current topology preserves the
+    /// existing proof.
+    pub(crate) euclidean_report_domain: EuclideanDelaunayReportDomain,
 }
 
 impl<K, U, V, const D: usize> TopologyOwner for DelaunayTriangulation<K, U, V, D> {

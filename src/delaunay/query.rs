@@ -44,7 +44,7 @@ use crate::topology::traits::topological_space::{GlobalTopology, TopologyError, 
 use crate::topology::traits::{
     GlobalTopologyModelError, global_topology_model::GlobalTopologyModel,
 };
-use crate::triangulation::DelaunayTriangulation;
+use crate::triangulation::{DelaunayTriangulation, EuclideanDelaunayReportDomain};
 use crate::validation::DelaunayTriangulationValidationError;
 use thiserror::Error;
 
@@ -1233,6 +1233,11 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
         self.insertion_state.last_inserted_simplex = None;
     }
 
+    /// Revokes the proof required to replace the global Euclidean report scan.
+    pub(crate) const fn invalidate_euclidean_report_domain(&mut self) {
+        self.euclidean_report_domain = EuclideanDelaunayReportDomain::Unproven;
+    }
+
     pub(crate) fn invalidate_repair_caches(&mut self) {
         self.invalidate_locate_hint_cache();
         self.spatial_index = None;
@@ -1241,9 +1246,11 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
     /// Returns mutable TDS access for crate-internal repair algorithms.
     ///
     /// Repair passes may rewrite topology and invalidate locate hints, so this
-    /// deliberately clears the ephemeral caches before handing out the borrow.
+    /// deliberately clears the ephemeral caches and complete-point-set proof
+    /// before handing out the borrow.
     pub(crate) fn tds_mut_for_repair(&mut self) -> &mut Tds<U, V, D> {
         self.invalidate_repair_caches();
+        self.invalidate_euclidean_report_domain();
         &mut self.tri.tds
     }
 
@@ -1713,8 +1720,14 @@ impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D> {
         &mut self,
         global_topology: GlobalTopology<D>,
     ) -> Result<(), DelaunayTriangulationValidationError> {
+        let topology_changed = self.global_topology() != global_topology;
         match self.tri.try_set_global_topology(global_topology) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                if topology_changed {
+                    self.invalidate_euclidean_report_domain();
+                }
+                Ok(())
+            }
             Err(InvariantError::Tds(err)) => Err(err.into()),
             Err(InvariantError::Triangulation(err)) => Err(err.into()),
             Err(InvariantError::Realization(err)) => Err(err.into()),
@@ -3242,6 +3255,7 @@ mod tests {
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::builder(&vertices).build().unwrap();
+        assert!(dt.euclidean_report_domain.supports_local_certificate());
 
         let err = dt
             .try_set_global_topology(GlobalTopology::Spherical)
@@ -3259,7 +3273,49 @@ mod tests {
                 )
         );
         assert_eq!(dt.global_topology(), GlobalTopology::Euclidean);
+        assert!(dt.euclidean_report_domain.supports_local_certificate());
         assert!(dt.validate().is_ok());
+    }
+
+    #[test]
+    fn idempotent_global_topology_set_preserves_euclidean_report_domain() {
+        let vertices = standard_simplex_vertices::<2>();
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulationBuilder::new(&vertices)
+                .build()
+                .unwrap();
+        assert!(dt.euclidean_report_domain.supports_local_certificate());
+
+        dt.try_set_global_topology(GlobalTopology::Euclidean)
+            .unwrap();
+
+        assert!(dt.euclidean_report_domain.supports_local_certificate());
+    }
+
+    #[test]
+    fn successful_global_topology_change_invalidates_euclidean_report_domain() {
+        let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
+        dt.euclidean_report_domain = EuclideanDelaunayReportDomain::CompletePointSet;
+
+        dt.try_set_global_topology(GlobalTopology::Hyperbolic)
+            .expect("empty topology should accept hyperbolic metadata");
+
+        assert_eq!(dt.global_topology(), GlobalTopology::Hyperbolic);
+        assert!(!dt.euclidean_report_domain.supports_local_certificate());
+    }
+
+    #[test]
+    fn mutable_repair_tds_access_invalidates_euclidean_report_domain() {
+        let vertices = standard_simplex_vertices::<2>();
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulationBuilder::new(&vertices)
+                .build()
+                .unwrap();
+        assert!(dt.euclidean_report_domain.supports_local_certificate());
+
+        let _ = dt.tds_mut_for_repair();
+
+        assert!(!dt.euclidean_report_domain.supports_local_certificate());
     }
 
     #[test]
@@ -3308,6 +3364,7 @@ mod tests {
                 tri: Triangulation::new_empty(FastKernel::new()),
                 insertion_state: DelaunayInsertionState::new(),
                 spatial_index: None,
+                euclidean_report_domain: EuclideanDelaunayReportDomain::Unproven,
             };
 
         assert_eq!(
@@ -3326,6 +3383,7 @@ mod tests {
                 tri: Triangulation::new_empty(FastKernel::new()),
                 insertion_state: DelaunayInsertionState::new(),
                 spatial_index: None,
+                euclidean_report_domain: EuclideanDelaunayReportDomain::Unproven,
             };
 
         dt.fill_simplex_data(|_, _| Payload);
@@ -3340,6 +3398,7 @@ mod tests {
                 tri: Triangulation::new_empty(FastKernel::new()),
                 insertion_state: DelaunayInsertionState::new(),
                 spatial_index: None,
+                euclidean_report_domain: EuclideanDelaunayReportDomain::Unproven,
             };
         let data = SimplexSecondaryMap::new();
 
