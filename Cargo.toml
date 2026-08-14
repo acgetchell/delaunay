@@ -134,6 +134,11 @@ path = "benches/profiling_suite.rs"
 harness = false
 
 [[bench]]
+name = "realization_validation"
+path = "benches/realization_validation.rs"
+harness = false
+
+[[bench]]
 name = "pachner_stress"
 path = "benches/pachner_stress.rs"
 harness = false

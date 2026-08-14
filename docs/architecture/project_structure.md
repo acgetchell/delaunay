@@ -32,6 +32,7 @@ delaunay/
 │   ├── pachner_stress.rs
 │   ├── pl_manifold_repair.rs
 │   ├── profiling_suite.rs
+│   ├── realization_validation.rs
 │   ├── tds_clone.rs
 │   └── topology_guarantee_construction.rs
 ├── docs/

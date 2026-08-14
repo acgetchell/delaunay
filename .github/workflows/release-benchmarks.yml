@@ -86,6 +86,7 @@ jobs:
           cargo bench --profile perf --bench cold_path_predicates
           cargo bench --profile perf --bench topology_guarantee_construction
           cargo bench --profile perf --bench locate
+          cargo bench --profile perf --bench realization_validation
           uv run benchmark-utils write-baseline \
             --ref "$RELEASE_TAG" \
             --output release-benchmark-artifacts/baseline_results.txt

@@ -143,6 +143,26 @@ def test_uv_backed_recipes_reuse_pinned_guard() -> None:
         assert "_ensure-uv" in dependencies, name
 
 
+def test_update_workflow_composes_scoped_dependency_and_tool_updates() -> None:
+    """Update recipes should cover repo state without touching unrelated global tools."""
+    recipes = just_recipes()
+    update_dependencies = {dependency["recipe"] for dependency in recipes["update"]["dependencies"]}
+
+    assert update_dependencies == {"update-cargo-tools", "update-dependencies"}
+
+    dependency_result = run_just("--dry-run", "update-dependencies")
+    dependency_update = dependency_result.stdout + dependency_result.stderr
+    assert "cargo update" in dependency_update
+    assert "uv lock --upgrade-group dev" in dependency_update
+    assert "uv sync --locked --group dev" in dependency_update
+
+    tool_result = run_just("--dry-run", "update-cargo-tools")
+    tool_update = tool_result.stdout + tool_result.stderr
+    assert "cargo install-update --locked" in tool_update
+    assert "cargo install-update --all" not in tool_update
+    assert "uv tool upgrade" not in tool_update
+
+
 def test_workflow_tool_version_lookups_resolve_from_just() -> None:
     """GitHub Actions tool pins should resolve from the shared Just variables."""
     workflow_text = "\n".join(path.read_text(encoding="utf-8") for path in sorted((REPO_ROOT / ".github" / "workflows").glob("*.yml")))

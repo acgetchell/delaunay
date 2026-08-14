@@ -45,7 +45,8 @@ use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::InvalidCoordinateValue;
 use crate::geometry::util::simplex_lp::{
-    IntersectionLinearProgramResult, coordinates_are_identical, intersection_via_linear_program,
+    IntersectionLinearProgramResult, coordinates_are_identical,
+    intersection_via_legacy_active_sets, intersection_via_linear_program,
     shared_face_fast_confinement,
 };
 use thiserror::Error;
@@ -613,30 +614,44 @@ where
     L: Clone + Eq,
 {
     let shared_labels = shared_labels(first, second);
-    if shared_face_fast_confinement(first, second, &shared_labels) {
-        return Ok(());
-    }
     let basis_orientation = realization_orientation(first);
     if basis_orientation == Some(Orientation::DEGENERATE) {
         return Err(SimplexIntersectionFailure::SingularBarycentricBasis);
     }
+    let second_orientation = realization_orientation(second);
+    if second_orientation == Some(Orientation::DEGENERATE) {
+        return intersection_result(intersection_via_legacy_active_sets(
+            first,
+            second,
+            &shared_labels,
+        ));
+    }
+    if shared_face_fast_confinement(first, second, &shared_labels) {
+        return Ok(());
+    }
     if let Some(orientation) = basis_orientation
         && (simplex_is_strictly_outside_a_facet(first, second, orientation)
-            || realization_orientation(second).is_some_and(|second_orientation| {
-                second_orientation != Orientation::DEGENERATE
-                    && simplex_is_strictly_outside_a_facet(second, first, second_orientation)
+            || second_orientation.is_some_and(|orientation| {
+                simplex_is_strictly_outside_a_facet(second, first, orientation)
             })
             || intersection_is_confined_by_orientation(first, second, &shared_labels, orientation))
     {
         return Ok(());
     }
 
-    match intersection_via_linear_program(
+    intersection_result(intersection_via_linear_program(
         first,
         second,
         &shared_labels,
         basis_orientation.is_none(),
-    ) {
+    ))
+}
+
+/// Maps one private exact-intersection result onto the public typed error surface.
+fn intersection_result<L>(
+    result: IntersectionLinearProgramResult<L>,
+) -> Result<(), SimplexIntersectionFailure<L>> {
+    match result {
         IntersectionLinearProgramResult::Valid => Ok(()),
         IntersectionLinearProgramResult::Invalid(witness) => {
             Err(SimplexIntersectionFailure::IntersectionOutsideSharedFace { witness })
