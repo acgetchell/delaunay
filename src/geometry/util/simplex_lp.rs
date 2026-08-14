@@ -2138,6 +2138,10 @@ mod tests {
             intersection_via_linear_program(&first, &second, &shared, false),
             IntersectionLinearProgramResult::Valid
         );
+        assert_matches!(
+            intersection_via_active_sets(&first, &second, &shared, None),
+            IntersectionLinearProgramResult::Valid
+        );
 
         let mut provisional_axis = vec![0.0; D];
         provisional_axis[D - 1] = 1.0;

@@ -155,6 +155,8 @@ def test_update_workflow_composes_scoped_dependency_and_tool_updates() -> None:
     assert "cargo update" in dependency_update
     assert "uv lock --upgrade-group dev" in dependency_update
     assert "uv sync --locked --group dev" in dependency_update
+    assert "cargo install-update --all" not in dependency_update
+    assert "uv tool upgrade" not in dependency_update
 
     tool_result = run_just("--dry-run", "update-cargo-tools")
     tool_update = tool_result.stdout + tool_result.stderr
