@@ -294,8 +294,9 @@ not run it before `test-integration` unless you intentionally want a separate
 compile-only pass. `test-unit` runs lib unit
 tests in both debug and release profiles so debug assertions and default
 overflow checks remain covered. The nextest `debug` profile preserves the
-default 10-second watchdog, with a 60-second override only for the two periodic
-builder cases whose debug exact-geometry cost is platform-sensitive.
+default 10-second watchdog, with 60-second overrides for the two periodic
+builder cases whose debug exact-geometry cost is platform-sensitive and, on
+Windows only, two randomized 5D agreement checks at the timeout boundary.
 `test-integration` runs a focused release-profile nextest bucket. Selected 4D
 property families retain that default coverage with a Windows-only 60-second
 override because their release runtimes sit at the 10-second boundary on
