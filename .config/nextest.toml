@@ -45,12 +45,50 @@ path = "test-results/junit.xml"
 store-success-output = false
 store-failure-output = true
 
+[[profile.ci.overrides]]
+# These promoted 4D property families finish with little or no margin under
+# the 10-second budget on Windows runners. Keep the normal budget elsewhere.
+platform = 'cfg(windows)'
+filter = '''
+(
+    binary(=proptest_convex_hull)
+    | binary(=proptest_facet)
+    | binary(=proptest_orientation)
+    | binary(=proptest_simplex)
+    | binary(=proptest_tds)
+) & test(/_4d$/)
+'''
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+[[profile.ci.overrides]]
+# These two 4D Delaunay properties also sit at the Windows timeout boundary;
+# other 4D properties in the same binary retain the normal 10-second budget.
+platform = 'cfg(windows)'
+filter = '''
+binary(=proptest_delaunay_triangulation)
+& test(/^(prop_duplicate_coordinates_rejected_4d|prop_insertion_order_robustness_4d)$/)
+'''
+slow-timeout = { period = "60s", terminate-after = 1 }
+
 [profile.debug]
 # Debug assertions and overflow checks make exact-geometry paths slower than
-# their release counterparts. Keep a finite watchdog without weakening CI's
-# release/default 10-second budget.
+# their release counterparts. Inherit the default 10-second budget and grant
+# extra headroom only to named platform-sensitive cases.
 inherits = "ci"
 retries = 0
+
+[[profile.debug.overrides]]
+filter = 'test(=builder::tests::test_builder_toroidal_t2_smoke) | test(=builder::tests::test_builder_toroidal_accepts_matching_explicit_global_topology)'
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+[[profile.debug.overrides]]
+# These randomized 5D agreement checks finish at the 10-second boundary on
+# Windows runners. Keep the normal budget on other platforms.
+platform = 'cfg(windows)'
+filter = '''
+test(=geometry::util::simplex_lp::tests::optimized_intersection_agrees_with_legacy_random_5d)
+| test(=validation::tests::randomized_full_report_matches_brute_force_5d)
+'''
 slow-timeout = { period = "60s", terminate-after = 1 }
 
 [profile.coverage]

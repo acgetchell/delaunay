@@ -463,13 +463,11 @@ fn test_builder_toroidal_t3_compact_quotient_handles_adversarial_transforms() {
         assert!(dt.is_valid_structure().is_ok());
         assert!(dt.as_triangulation().validate().is_ok());
         assert!(dt.is_valid_delaunay().is_ok());
-        #[cfg(feature = "slow-tests")]
         assert!(dt.validate().is_ok());
     }
 }
 
-/// Exhaustive periodic all-translates intersection validation belongs to the slow bucket.
-#[cfg(feature = "slow-tests")]
+/// Exhaustive periodic all-translates intersection validation stays within the default budget.
 #[test]
 fn test_builder_toroidal_t3_compact_quotient_validates_levels_1_to_5() {
     let vertices = compact_toroidal_vertices_t3();

@@ -96,7 +96,6 @@ fn flip_fixtures_cover_minimal_3d_k1_roundtrip() {
 }
 
 /// Verifies the stable 3D public k=1 fixture workflow.
-#[cfg(feature = "slow-tests")]
 #[test]
 fn flip_fixtures_cover_stable_3d_k1_roundtrip() {
     verify_3d_fixture_move(STABLE_POINTS_3D, CandidateFilter::Any, FlipMoveKind::K1);
@@ -127,7 +126,6 @@ fn flip_fixtures_cover_stable_3d_k3_forward() {
 }
 
 /// Verifies the adversarial 3D public k=1 roundtrip workflow.
-#[cfg(feature = "slow-tests")]
 #[test]
 fn flip_fixtures_cover_adversarial_3d_k1_roundtrip() {
     verify_3d_fixture_move(

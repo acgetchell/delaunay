@@ -336,7 +336,7 @@ macro_rules! gen_simplex_vertex_count {
 
 gen_tds_validity!(2);
 gen_tds_validity!(3);
-gen_tds_validity!(4, #[cfg(feature = "slow-tests")]);
+gen_tds_validity!(4);
 gen_tds_validity!(5, #[cfg(feature = "slow-tests")]);
 
 // =============================================================================
@@ -347,7 +347,7 @@ gen_neighbor_symmetry!(2);
 
 gen_neighbor_symmetry!(3);
 
-gen_neighbor_symmetry!(4, #[cfg(feature = "slow-tests")]);
+gen_neighbor_symmetry!(4);
 
 gen_neighbor_symmetry!(5, #[cfg(feature = "slow-tests")]);
 
@@ -359,7 +359,7 @@ gen_neighbor_index_semantics!(2);
 
 gen_neighbor_index_semantics!(3);
 
-gen_neighbor_index_semantics!(4, #[cfg(feature = "slow-tests")]);
+gen_neighbor_index_semantics!(4);
 
 gen_neighbor_index_semantics!(5, #[cfg(feature = "slow-tests")]);
 
@@ -371,7 +371,7 @@ gen_simplex_vertices_exist_in_tds!(2);
 
 gen_simplex_vertices_exist_in_tds!(3);
 
-gen_simplex_vertices_exist_in_tds!(4, #[cfg(feature = "slow-tests")]);
+gen_simplex_vertices_exist_in_tds!(4);
 
 gen_simplex_vertices_exist_in_tds!(5, #[cfg(feature = "slow-tests")]);
 
@@ -383,7 +383,7 @@ gen_no_duplicate_simplices!(2);
 
 gen_no_duplicate_simplices!(3);
 
-gen_no_duplicate_simplices!(4, #[cfg(feature = "slow-tests")]);
+gen_no_duplicate_simplices!(4);
 
 gen_no_duplicate_simplices!(5, #[cfg(feature = "slow-tests")]);
 
@@ -395,7 +395,7 @@ gen_dimension_consistency!(2, 3);
 
 gen_dimension_consistency!(3, 4);
 
-gen_dimension_consistency!(4, 5, #[cfg(feature = "slow-tests")]);
+gen_dimension_consistency!(4, 5);
 
 gen_dimension_consistency!(5, 6, #[cfg(feature = "slow-tests")]);
 
@@ -407,7 +407,7 @@ gen_vertex_count_consistency!(2);
 
 gen_vertex_count_consistency!(3);
 
-gen_vertex_count_consistency!(4, #[cfg(feature = "slow-tests")]);
+gen_vertex_count_consistency!(4);
 
 gen_vertex_count_consistency!(5, #[cfg(feature = "slow-tests")]);
 
@@ -419,7 +419,7 @@ gen_simplex_vertex_count!(2, 3);
 
 gen_simplex_vertex_count!(3, 4);
 
-gen_simplex_vertex_count!(4, 5, #[cfg(feature = "slow-tests")]);
+gen_simplex_vertex_count!(4, 5);
 
 gen_simplex_vertex_count!(5, 6, #[cfg(feature = "slow-tests")]);
 
@@ -457,7 +457,7 @@ gen_is_valid_topology!(2);
 
 gen_is_valid_topology!(3);
 
-gen_is_valid_topology!(4, #[cfg(feature = "slow-tests")]);
+gen_is_valid_topology!(4);
 
 gen_is_valid_topology!(5, #[cfg(feature = "slow-tests")]);
 

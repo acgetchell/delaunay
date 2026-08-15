@@ -646,9 +646,9 @@ fn regression_issue_307_4d_bulk_repair_keeps_positive_orientation() {
 /// inserts 500/500 vertices with zero skips and passes full Level 1–4
 /// validation.
 ///
-/// Gated behind `slow-tests` because batch insertion currently takes ~4 min
-/// wall time in release mode (still well below the previous ~10 min retry
-/// exhaustion); run with:
+/// Gated behind `slow-tests` because the deterministic 500-point 4D repair
+/// workload exceeds the default-suite 10-second budget in release mode; run
+/// with:
 ///
 /// ```bash
 /// cargo test --release --test regressions --features slow-tests \
