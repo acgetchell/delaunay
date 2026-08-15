@@ -14,6 +14,10 @@
 //! - Round-trip conversions preserve values where possible
 //! - Non-finite values (NaN, Infinity) are properly rejected
 
+#[macro_use]
+#[path = "common/proptest_config.rs"]
+mod proptest_config;
+
 use approx::assert_relative_eq;
 use delaunay::prelude::geometry::*;
 use num_traits::cast;
@@ -45,7 +49,7 @@ fn safe_usize() -> impl Strategy<Value = usize> {
 // f64 input -> f64 output should match exactly
 macro_rules! gen_safe_scalar_to_f64_ok_f64 {
     () => {
-        proptest! {
+        repo_proptest! {
             #[test]
             fn prop_safe_scalar_to_f64_succeeds_for_finite_f64(value in finite_f64()) {
                 let result: Result<f64, _> = safe_scalar_to_f64(value);
@@ -59,7 +63,7 @@ macro_rules! gen_safe_scalar_to_f64_ok_f64 {
 // f64 input -> f64 output
 macro_rules! gen_safe_scalar_from_f64_ok_f64 {
     () => {
-        proptest! {
+        repo_proptest! {
             #[test]
             fn prop_safe_scalar_from_f64_succeeds_for_finite_f64(value in finite_f64()) {
                 let result: Result<f64, _> = safe_scalar_from_f64(value);
@@ -73,7 +77,7 @@ macro_rules! gen_safe_scalar_from_f64_ok_f64 {
 // Round-trip scalar tests
 macro_rules! gen_round_trip_scalar_f64_f64 {
     () => {
-        proptest! {
+        repo_proptest! {
             #[test]
             fn prop_round_trip_f64_f64(value in finite_f64()) {
                 let converted: Result<f64, _> = safe_scalar_to_f64(value);
@@ -87,7 +91,7 @@ macro_rules! gen_round_trip_scalar_f64_f64 {
 }
 
 // Non-finite rejection tests
-proptest! {
+repo_proptest! {
     /// Property: safe_scalar_to_f64 rejects non-finite values
     #[test]
     fn prop_safe_scalar_to_f64_rejects_non_finite(value in non_finite_f64()) {
@@ -117,7 +121,7 @@ gen_round_trip_scalar_f64_f64!();
 macro_rules! gen_safe_usize_to_scalar_succeeds {
     ($name:ident, $ty:ty, $strategy:ident) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<$name>](value in $strategy()) {
                     let result: Result<$ty, _> = safe_usize_to_scalar(value);
@@ -134,7 +138,7 @@ macro_rules! gen_safe_usize_to_scalar_succeeds {
 macro_rules! gen_safe_usize_exact_small_values {
     ($name:ident, $ty:ty, $upper:expr) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<$name>](value in 0..=$upper) {
                     let result: Result<$ty, _> = safe_usize_to_scalar(value);
@@ -179,7 +183,7 @@ gen_safe_usize_preserves_const!(prop_safe_usize_preserves_zero, 0_usize, 0.0_f64
 gen_safe_usize_preserves_const!(prop_safe_usize_preserves_one, 1_usize, 1.0_f64, f64, 1e-15);
 
 // Monotonicity test retained for f64
-proptest! {
+repo_proptest! {
     /// Property: safe_usize_to_scalar is monotonic for safe values
     #[test]
     fn prop_safe_usize_monotonic(value1 in safe_usize(), value2 in safe_usize()) {
@@ -213,7 +217,7 @@ proptest! {
 macro_rules! gen_safe_coords_to_f64 {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_safe_coords_to_f64_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
                     let result = safe_coords_to_f64(&coords);
@@ -232,7 +236,7 @@ macro_rules! gen_safe_coords_to_f64 {
 macro_rules! gen_safe_coords_from_f64 {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_safe_coords_from_f64_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
                     let result: Result<[f64; $dim], _> = safe_coords_from_f64(&coords);
@@ -251,7 +255,7 @@ macro_rules! gen_safe_coords_from_f64 {
 macro_rules! gen_round_trip_coords_f64_exact {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_round_trip_coords_ $dim d _exact>](coords in prop::array::[<uniform $dim>](finite_f64())) {
                     let to_f64 = safe_coords_to_f64(&coords);
@@ -279,7 +283,7 @@ gen_safe_coords_from_f64!(3);
 gen_round_trip_coords_f64_exact!(4);
 
 // Keep 3D rejection tests
-proptest! {
+repo_proptest! {
     /// Property: Coordinate array with one NaN is rejected
     #[test]
     fn prop_coords_reject_nan_3d(good_coord in finite_f64(), nan_index in 0..3_usize) {
@@ -318,7 +322,7 @@ fn prop_zero_coords_convert_correctly_3d() {
     }
 }
 
-proptest! {
+repo_proptest! {
 
     /// Property: Negative coordinates convert correctly
     #[test]

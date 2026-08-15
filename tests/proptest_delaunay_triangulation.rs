@@ -31,6 +31,10 @@
 //! local flip configurations (O(simplices)) instead of the naive O(simplices × vertices) brute-force.
 //! This provides ~40-100x speedup for property-based testing while remaining equally correct.
 
+#[macro_use]
+#[path = "common/proptest_config.rs"]
+mod proptest_config;
+
 use delaunay::prelude::construction::{
     ConstructionOptions, DedupPolicy, DelaunayRepairPolicy, DelaunayTriangulation,
     TopologyGuarantee, Vertex,
@@ -42,6 +46,7 @@ use delaunay::try_vertices_from_points;
 use delaunay::vertex;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
+use proptest_config::{repository_default, with_default_cases};
 use rand::{SeedableRng, seq::SliceRandom};
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -666,12 +671,9 @@ fn regression_insertion_order_3d_case_001() {
 macro_rules! gen_incremental_insertion_validity {
     ($dim:literal, $min:literal, $max:literal $(, cases = $cases:literal)? $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 $(
-                    #![proptest_config(Config {
-                        cases: $cases,
-                        ..Config::default()
-                    })]
+                    #![proptest_config(with_default_cases($cases))]
                 )?
                 $(#[$attr])*
                 #[test]
@@ -740,7 +742,7 @@ macro_rules! gen_incremental_insertion_validity {
 }
 
 gen_incremental_insertion_validity!(2, 3, 5);
-proptest! {
+repo_proptest! {
     #[test]
     fn prop_incremental_insertion_maintains_validity_3d(
         initial_points in prop::collection::vec(vertex_3d(), 4..=6),
@@ -811,11 +813,8 @@ proptest! {
 gen_incremental_insertion_validity!(4, 5, 7);
 gen_incremental_insertion_validity!(5, 6, 8, cases = 12);
 
-proptest! {
-    #![proptest_config(Config {
-        cases: 64,
-        ..Config::default()
-    })]
+repo_proptest! {
+    #![proptest_config(with_default_cases(64))]
 
     #[test]
     fn prop_on_suspicion_validates_cocircular_2d_sequences(
@@ -847,7 +846,7 @@ proptest! {
 macro_rules! gen_non_finite_insert_rejection_tests {
     ($($dim:literal),+ $(,)?) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 $(
                     #[test]
                     fn [<prop_non_finite_point_rejected_before_insert_preserves_topology_ $dim d>](
@@ -880,7 +879,7 @@ gen_non_finite_insert_rejection_tests!(2, 3, 4, 5);
 macro_rules! gen_duplicate_coords_test {
     ($dim:literal, $min:literal, $max:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 /// Tests that duplicate coordinates are rejected during insertion.
                 ///
                 /// **Status**: Active in the default suite in 2D/3D/4D; 5D remains
@@ -968,7 +967,7 @@ macro_rules! empty_circumsphere_vertices {
 macro_rules! test_empty_circumsphere {
     ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
-proptest! {
+repo_proptest! {
                 /// Property: For every simplex, no other vertex lies strictly inside
                 /// the circumsphere defined by that simplex (Delaunay condition).
                 $(#[$attr])*
@@ -1046,9 +1045,8 @@ macro_rules! gen_high_dim_delaunay_smoke {
                 init_tracing();
 
                 let config = Config {
-                    cases: 6,
                     max_shrink_iters: 16,
-                    ..Config::default()
+                    ..with_default_cases(6)
                 };
                 let target_cases = config.cases;
                 let mut runner = TestRunner::new(config);
@@ -1247,7 +1245,7 @@ gen_high_dim_delaunay_smoke!(5, 7, 9);
 macro_rules! gen_insertion_order_robustness_test {
     ($dim:literal, $min_vertices:literal, $max_vertices:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 /// Property: Delaunay triangulations remain valid across different insertion orders.
                 ///
                 /// **Status**: Passing - validates insertion-order robustness.
@@ -1411,7 +1409,7 @@ fn prop_insertion_order_robustness_3d() {
 
     init_tracing();
 
-    let config = Config::default();
+    let config = repository_default();
     let target_cases = config.cases;
     let mut runner = TestRunner::new(config);
 
@@ -1714,7 +1712,7 @@ macro_rules! gen_insertion_order_robustness_high_dim_impl {
 
                 init_tracing();
 
-                let config = Config::default();
+                let config = repository_default();
                 let target_cases = config.cases;
                 let mut runner = TestRunner::new(config);
 
@@ -1944,7 +1942,7 @@ macro_rules! gen_duplicate_cloud_test {
                 })
             }
 
-            proptest! {
+            repo_proptest! {
                 /// Property: Random clouds with duplicates and near-duplicates
                 /// produce triangulations that are globally Delaunay for the kept subset.
                 ///

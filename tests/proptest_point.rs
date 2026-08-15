@@ -8,6 +8,10 @@
 //! - Coordinate extraction consistency
 //! - Non-finite coordinate rejection and scalar special-value determinism
 
+#[macro_use]
+#[path = "common/proptest_config.rs"]
+mod proptest_config;
+
 use delaunay::prelude::geometry::*;
 use proptest::prelude::*;
 use rustc_hash::FxHasher;
@@ -61,7 +65,7 @@ fn hash_point<T: Hash>(point: &T) -> u64 {
 macro_rules! gen_equal_points_equal_hashes {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_equal_points_equal_hashes_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
                     let p1 = Point::try_new(coords).expect("finite point coordinates");
@@ -77,7 +81,7 @@ macro_rules! gen_equal_points_equal_hashes {
 macro_rules! gen_equality_reflexive {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_equality_reflexive_ $dim d>](point in [<point_ $dim d>]()) {
                     prop_assert_eq!(point, point);
@@ -90,7 +94,7 @@ macro_rules! gen_equality_reflexive {
 macro_rules! gen_equality_symmetric {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_equality_symmetric_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
                     let p1 = Point::try_new(coords).expect("finite point coordinates");
@@ -106,7 +110,7 @@ macro_rules! gen_equality_symmetric {
 macro_rules! gen_equality_transitive {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_equality_transitive_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
                     let p1 = Point::try_new(coords).expect("finite point coordinates");
@@ -124,7 +128,7 @@ macro_rules! gen_equality_transitive {
 macro_rules! gen_hashmap_key_usage {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_hashmap_key_usage_ $dim d>](
                     point1 in [<point_ $dim d>](),
@@ -153,7 +157,7 @@ macro_rules! gen_hashmap_key_usage {
 macro_rules! gen_coordinate_roundtrip {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_coordinate_roundtrip_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
                     let point = Point::try_new(coords).expect("finite point coordinates");
@@ -169,7 +173,7 @@ macro_rules! gen_coordinate_roundtrip {
 macro_rules! gen_into_conversion_matches_coords {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_into_conversion_matches_coords_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
                     let point = Point::try_new(coords).expect("finite point coordinates");
@@ -187,7 +191,7 @@ macro_rules! gen_into_conversion_matches_coords {
 macro_rules! gen_get_method_consistency {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_get_method_consistency_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
                     let point = Point::try_new(coords).expect("finite point coordinates");
@@ -205,7 +209,7 @@ macro_rules! gen_get_method_consistency {
 macro_rules! gen_finite_coordinates_validate {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_finite_coordinates_validate_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
                     let point = Point::try_new(coords).expect("finite point coordinates");
@@ -219,7 +223,7 @@ macro_rules! gen_finite_coordinates_validate {
 macro_rules! gen_infinite_coordinates_fail_validation {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_infinite_coordinates_fail_validation_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
                     let mut arr = coords;
@@ -251,7 +255,7 @@ macro_rules! gen_infinite_coordinates_fail_validation {
 macro_rules! gen_nan_coordinates_fail_validation {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_nan_coordinates_fail_validation_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
                     let mut arr = coords;
@@ -273,7 +277,7 @@ macro_rules! gen_nan_coordinates_fail_validation {
 macro_rules! gen_ordering_equal_consistency {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_ordering_consistent_with_equality_ $dim d>](coords in prop::array::[<uniform $dim>](finite_f64())) {
                     let p1 = Point::try_new(coords).expect("finite point coordinates");
@@ -290,7 +294,7 @@ macro_rules! gen_ordering_equal_consistency {
 macro_rules! gen_ordering_antisymmetric {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_ordering_antisymmetric_ $dim d>](p1 in [<point_ $dim d>](), p2 in [<point_ $dim d>]()) {
                     match (p1.partial_cmp(&p2), p2.partial_cmp(&p1)) {
@@ -308,7 +312,7 @@ macro_rules! gen_ordering_antisymmetric {
 macro_rules! gen_ordering_transitive {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_ordering_transitive_ $dim d>](p1 in [<point_ $dim d>](), p2 in [<point_ $dim d>](), p3 in [<point_ $dim d>]()) {
                     if p1.partial_cmp(&p2) == Some(Ordering::Less) && p2.partial_cmp(&p3) == Some(Ordering::Less) {
@@ -323,7 +327,7 @@ macro_rules! gen_ordering_transitive {
 macro_rules! gen_nan_handling_consistency {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_nan_handling_consistency_ $dim d>](finite_coord in finite_f64()) {
                     let mut arr = [finite_coord; $dim];

@@ -6,6 +6,10 @@
 //! - Insphere transitivity and symmetry properties
 //! - Robustness under small perturbations
 
+#[macro_use]
+#[path = "common/proptest_config.rs"]
+mod proptest_config;
+
 use delaunay::prelude::geometry::*;
 use proptest::prelude::*;
 
@@ -51,7 +55,7 @@ fn point_5d() -> impl Strategy<Value = Point<5>> {
 macro_rules! gen_orientation_sign_flip {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_orientation_sign_flip_ $dim d>](
                     simplex in prop::collection::vec([<point_ $dim d>](), $dim + 1)
@@ -90,7 +94,7 @@ macro_rules! gen_orientation_sign_flip {
 macro_rules! gen_orientation_cyclic_invariance {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_orientation_cyclic_invariance_ $dim d>](
                     simplex in prop::collection::vec([<point_ $dim d>](), $dim + 1)
@@ -118,7 +122,7 @@ macro_rules! gen_orientation_cyclic_invariance {
 macro_rules! gen_insphere_simplex_vertices_on_boundary {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_insphere_simplex_vertices_on_boundary_ $dim d>](
                     simplex in prop::collection::vec([<point_ $dim d>](), $dim + 1)
@@ -142,7 +146,7 @@ macro_rules! gen_insphere_simplex_vertices_on_boundary {
 macro_rules! gen_insphere_inward_scaling_inside {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_insphere_inward_scaling_makes_point_inside_ $dim d>](
                     simplex in prop::collection::vec([<point_ $dim d>](), $dim + 1)
@@ -185,7 +189,7 @@ macro_rules! gen_insphere_inward_scaling_inside {
 macro_rules! gen_insphere_distant_point_outside_by_radius {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_insphere_distant_point_is_outside_ $dim d>](
                     simplex in prop::collection::vec([<point_ $dim d>](), $dim + 1)
@@ -225,7 +229,7 @@ macro_rules! gen_insphere_distant_point_outside_by_radius {
 macro_rules! gen_insphere_scale_center_outside {
     ($dim:literal) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 #[test]
                 fn [<prop_insphere_scaling_makes_point_outside_ $dim d>](
                     simplex in prop::collection::vec([<point_ $dim d>](), $dim + 1)
@@ -278,7 +282,7 @@ gen_insphere_distant_point_outside_by_radius!(5);
 gen_insphere_scale_center_outside!(4);
 gen_insphere_scale_center_outside!(5);
 
-proptest! {
+repo_proptest! {
     /// Large translations near the f64 squared-norm overflow boundary should
     /// not change robust insphere classification when the local simplex scale
     /// remains finite.
@@ -337,7 +341,7 @@ proptest! {
 // CROSS-PREDICATE CONSISTENCY TESTS
 // =============================================================================
 
-proptest! {
+repo_proptest! {
     /// Property: If a simplex has DEGENERATE orientation, insphere tests
     /// on that simplex may fail or return inconsistent results.
     ///

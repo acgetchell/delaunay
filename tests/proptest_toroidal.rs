@@ -7,6 +7,10 @@
 //! - **Periodic construction invariance**: axis reflection and input permutation
 //!   preserve Levels 1-5 validity for the validated unit-domain fixture.
 
+#[macro_use]
+#[path = "common/proptest_config.rs"]
+mod proptest_config;
+
 use delaunay::prelude::construction::{DelaunayTriangulationBuilder, Vertex};
 use delaunay::prelude::geometry::RobustKernel;
 use delaunay::prelude::topology::spaces::{TopologicalSpace, ToroidalSpace};
@@ -66,7 +70,7 @@ fn transformed_periodic_vertices_t2(
 // Tests
 // =============================================================================
 
-proptest! {
+repo_proptest! {
     /// Canonicalized coordinates always lie in `[0, L_i)` for every axis.
     #[test]
     fn prop_canonicalize_in_domain(domain in domain_t2(), mut coords in coords_2d()) {
@@ -99,9 +103,7 @@ proptest! {
     }
 }
 
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(32))]
-
+repo_proptest! {
     /// Periodic quotient construction remains valid under axis reflections and input permutation.
     #[test]
     fn prop_periodic_quotient_reflection_and_permutation_preserve_invariants(

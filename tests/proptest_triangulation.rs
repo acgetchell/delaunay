@@ -34,6 +34,10 @@
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
+#[macro_use]
+#[path = "common/proptest_config.rs"]
+mod proptest_config;
+
 use ::uuid::Uuid;
 use delaunay::prelude::construction::{
     DelaunayTriangulation, DelaunayTriangulationBuilder, TopologyGuarantee,
@@ -44,6 +48,7 @@ use delaunay::try_vertices_from_points;
 use delaunay::vertex;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
+use proptest_config::with_default_cases;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -188,7 +193,7 @@ where
 macro_rules! test_simplex_quality_properties {
     ($dim:literal, $num_points:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 /// Property: Radius ratio R/r ≥ D for non-degenerate D-simplices
                 $(#[$attr])*
                 #[test]
@@ -375,7 +380,7 @@ macro_rules! test_simplex_quality_properties {
 macro_rules! test_quality_properties {
     ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
 
                 /// Property: Radius ratio is always positive for valid simplices
                 $(#[$attr])*
@@ -702,7 +707,7 @@ test_quality_properties!(5, 7, 16, #[cfg(feature = "slow-tests")]);
 macro_rules! test_facet_topology_invariant {
     ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 /// Property: All simplices in a valid triangulation have no over-shared facets
                 $(#[$attr])*
                 #[test]
@@ -823,9 +828,8 @@ macro_rules! gen_high_dim_facet_topology_smoke {
                 }
 
                 let config = Config {
-                    cases: 6,
                     max_shrink_iters: 16,
-                    ..Config::default()
+                    ..with_default_cases(6)
                 };
                 let target_cases = config.cases;
                 let mut runner = TestRunner::new(config);

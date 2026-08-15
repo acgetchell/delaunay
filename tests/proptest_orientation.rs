@@ -10,6 +10,10 @@
 
 #![forbid(unsafe_code)]
 
+#[macro_use]
+#[path = "common/proptest_config.rs"]
+mod proptest_config;
+
 use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::insertion::InsertionOutcome;
@@ -25,7 +29,7 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 macro_rules! gen_orientation_construction_and_tamper_props {
     ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 /// Property: every successfully constructed triangulation is coherently oriented.
                 $(#[$attr])*
                 #[test]
@@ -119,7 +123,7 @@ macro_rules! gen_orientation_construction_and_tamper_props {
 macro_rules! gen_orientation_incremental_props {
     ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
-            proptest! {
+            repo_proptest! {
                 /// Property: after each successful insertion, orientation remains coherent.
                 $(#[$attr])*
                 #[test]
