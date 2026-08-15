@@ -1416,7 +1416,8 @@ test-diagnostics: _ensure-nextest
 test-doc:
     cargo test --doc --release --verbose
 
-# test-integration: runs all default integration tests under the 10s per-test budget.
+# Run default integration tests in release mode under the normal 10-second budget.
+# Narrow platform-specific overrides grant headroom to boundary-running cases.
 [group('tests and coverage')]
 test-integration: _ensure-nextest
     cargo nextest run --release --profile ci --test '*'

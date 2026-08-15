@@ -97,7 +97,7 @@ Property-based tests for Tds (Triangulation Data Structure) combinatorial/topolo
 
 **Dimensions Tested:** 2D-5D; 5D full TDS property variants over the 10-second budget run through `just test-slow`.
 
-**Run with:** `cargo test --test proptest_tds` or included in `just test`
+**Run with:** `cargo test --release --test proptest_tds` or included in `just test`
 
 #### [`proptest_orientation.rs`](./proptest_orientation.rs)
 
@@ -111,7 +111,7 @@ Property-based tests focused on coherent orientation invariants in the TDS layer
 
 **Dimensions Tested:** 2D-5D; 5D full orientation property variants over the 10-second budget run through `just test-slow`.
 
-**Run with:** `cargo test --test proptest_orientation` or included in `just test`
+**Run with:** `cargo test --release --test proptest_orientation` or included in `just test`
 
 #### [`proptest_triangulation.rs`](./proptest_triangulation.rs)
 
@@ -169,7 +169,7 @@ Property-based tests for `DelaunayTriangulation` invariants (all Delaunay-specif
 
 **Dimensions Tested:** 2D-5D; variants over the 10-second budget run through `just test-slow`.
 
-**Run with:** `cargo test --test proptest_delaunay_triangulation` or included in `just test`
+**Run with:** `cargo test --release --test proptest_delaunay_triangulation` or included in `just test`
 
 #### [`proptest_simplex.rs`](./proptest_simplex.rs)
 

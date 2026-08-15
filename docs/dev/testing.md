@@ -388,6 +388,11 @@ have a 60-second override because debug exact-geometry cost varies materially
 by platform. They remain in the normal suite because they cover distinct public
 builder contracts and are fast in release builds.
 
+The release integration profile similarly grants 60 seconds on Windows only
+to the promoted 4D property families that sit at the 10-second boundary there.
+The overrides combine platform, integration-binary, and test-name filters so
+unrelated tests and non-Windows platforms retain the normal budget.
+
 For test-only changes, run only the matching focused recipe. If multiple test
 target classes changed, compose those focused recipes once each. Use
 `just test` when you intentionally want the full default test suite;

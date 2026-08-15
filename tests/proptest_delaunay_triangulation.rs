@@ -883,7 +883,8 @@ macro_rules! gen_duplicate_coords_test {
             proptest! {
                 /// Tests that duplicate coordinates are rejected during insertion.
                 ///
-                /// **Status**: Active in 2D/3D. 4D/5D remain ignored for runtime (slow in test-integration).
+                /// **Status**: Active in the default suite in 2D/3D/4D; 5D remains
+                /// gated by `slow-tests`.
                 $(#[$attr])*
                 #[test]
                 fn [<prop_duplicate_coordinates_rejected_ $dim d>](

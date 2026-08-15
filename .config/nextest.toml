@@ -45,6 +45,31 @@ path = "test-results/junit.xml"
 store-success-output = false
 store-failure-output = true
 
+[[profile.ci.overrides]]
+# These promoted 4D property families finish with little or no margin under
+# the 10-second budget on Windows runners. Keep the normal budget elsewhere.
+platform = 'cfg(windows)'
+filter = '''
+(
+    binary(=proptest_convex_hull)
+    | binary(=proptest_facet)
+    | binary(=proptest_orientation)
+    | binary(=proptest_simplex)
+    | binary(=proptest_tds)
+) & test(/_4d$/)
+'''
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+[[profile.ci.overrides]]
+# These two 4D Delaunay properties also sit at the Windows timeout boundary;
+# other 4D properties in the same binary retain the normal 10-second budget.
+platform = 'cfg(windows)'
+filter = '''
+binary(=proptest_delaunay_triangulation)
+& test(/^(prop_duplicate_coordinates_rejected_4d|prop_insertion_order_robustness_4d)$/)
+'''
+slow-timeout = { period = "60s", terminate-after = 1 }
+
 [profile.debug]
 # Debug assertions and overflow checks make exact-geometry paths slower than
 # their release counterparts. Inherit the default 10-second budget and grant
